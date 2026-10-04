@@ -84,183 +84,9 @@ class FilterViewModel: ObservableObject {
         let batchSize: Int = 10
         switch filterType {
         case .albums:
-            #if DEBUG
-            if shouldForceEmptyFilterData(filterType: .albums) {
-                await MainActor.run {
-                    self.albumLoadErrorMessage = nil
-                    self.albums.removeAll()
-                    self.albumCoverURLByID.removeAll()
-                }
-                return
-            }
-            #endif
-
-            await MainActor.run {
-                self.albumLoadErrorMessage = nil
-            }
-            if shouldReset {
-                await MainActor.run {
-                    albums.removeAll()
-                    albumCoverURLByID.removeAll()
-                }
-            }
-
-            let fetchedAlbums: [Album]
-            do {
-                fetchedAlbums = try await ImmichAPIService.shared.getAllAlbums(size: coverLimit)
-            } catch {
-                await MainActor.run {
-                    self.albumLoadErrorMessage = String(
-                        localized: "Unable to load albums. Check your network or server settings.")
-                }
-                return
-            }
-
-            await MainActor.run {
-                self.albums = fetchedAlbums
-            }
-
-            let existingIDs: Set<String> =
-                shouldReset
-                ? []
-                : await MainActor.run { Set(self.albumCoverURLByID.keys) }
-
-            var newAlbumURLs: [String: URL] = [:]
-
-            for start in stride(from: 0, to: fetchedAlbums.count, by: batchSize) {
-
-                let end = min(start + batchSize, fetchedAlbums.count)
-
-                let batch = fetchedAlbums[start..<end]
-
-                await withTaskGroup(of: (String, URL?).self) { group in
-                    for album in batch {
-                        let albumID = album.id
-                        if existingIDs.contains(albumID) { continue }
-
-                        guard let thumbID = album.albumThumbnailAssetId, !thumbID.isEmpty else {
-                            continue
-                        }
-
-                        group.addTask {
-                            do {
-
-                                let url = try await ImmichAPIService.shared.getThumbnailURL(
-                                    id: thumbID, size: .thumbnail)
-                                return (albumID, url)
-                            } catch {
-                                Self.logger.error(
-                                    "Failed to load album cover, id: \(albumID, privacy: .private), error: \(String(describing: error), privacy: .private)"
-                                )
-                                return (albumID, nil)
-                            }
-                        }
-                    }
-
-                    for await (albumID, url) in group {
-                        if let url {
-                            newAlbumURLs[albumID] = url
-                        }
-                    }
-
-                }
-            }
-            await MainActor.run {
-                if shouldReset {
-
-                    albumCoverURLByID = newAlbumURLs
-                } else {
-                    albumCoverURLByID.merge(newAlbumURLs) { _, new in new }
-                }
-            }
-
+            await loadAlbumCoverURLs(coverLimit: coverLimit, shouldReset: shouldReset, batchSize: batchSize)
         case .people:
-            #if DEBUG
-            if shouldForceEmptyFilterData(filterType: .people) {
-                await MainActor.run {
-
-                    self.peopleLoadErrorMessage = nil
-                    self.people.removeAll()
-                    self.peopleCoverURLByID.removeAll()
-                    self.personAssetsCountByID.removeAll()
-                }
-                return
-            }
-            #endif
-
-            await MainActor.run {
-                self.peopleLoadErrorMessage = nil
-            }
-            if shouldReset {
-                await MainActor.run {
-                    people.removeAll()
-                    peopleCoverURLByID.removeAll()
-                }
-            }
-
-            let fetchedPeople: [People]
-            do {
-                fetchedPeople = try await ImmichAPIService.shared.getAllPeople(size: coverLimit)
-            } catch {
-                await MainActor.run {
-                    self.peopleLoadErrorMessage = String(
-                        localized: "Unable to load people list. Check your network or server settings.")
-                }
-                return
-            }
-
-            #if DEBUG
-            let preparedPeople = peopleAdjustedForTesting(fetchedPeople)
-            #else
-            let preparedPeople = fetchedPeople
-            #endif
-
-            await MainActor.run {
-                people = preparedPeople
-            }
-
-            let existingPeopleIDs: Set<String> =
-                shouldReset
-                ? []
-                : await MainActor.run { Set(self.peopleCoverURLByID.keys) }
-
-            var newPeopleURLs: [String: URL] = [:]
-            for start in stride(from: 0, to: preparedPeople.count, by: batchSize) {
-                let end = min(start + batchSize, preparedPeople.count)
-                let batch = preparedPeople[start..<end]
-                await withTaskGroup(of: (String, URL?).self) { group in
-                    for person in batch {
-                        if person.id.isEmpty { continue }
-                        let peopleID = person.id
-                        if existingPeopleIDs.contains(peopleID) { continue }
-                        group.addTask {
-                            do {
-                                let url = try await ImmichAPIService.shared.getPeopleThumbnailURL(id: peopleID)
-                                return (peopleID, url)
-                            } catch {
-                                Self.logger.error(
-                                    "Failed to fetch person thumbnail, id: \(person.id, privacy: .private), error: \(String(describing: error), privacy: .private)"
-                                )
-                                return (peopleID, nil)
-                            }
-                        }
-                    }
-
-                    for await (peopleID, url) in group {
-                        if let url {
-                            newPeopleURLs[peopleID] = url
-                        }
-                    }
-
-                }
-            }
-            await MainActor.run {
-                if shouldReset {
-                    peopleCoverURLByID = newPeopleURLs
-                } else {
-                    peopleCoverURLByID.merge(newPeopleURLs) { _, new in new }
-                }
-            }
+            await loadPeopleCoverURLs(coverLimit: coverLimit, shouldReset: shouldReset, batchSize: batchSize)
         }
     }
 
@@ -529,4 +355,185 @@ extension FilterViewModel {
 
         return viewModel
     }
+    private func loadAlbumCoverURLs(coverLimit: Int?, shouldReset: Bool, batchSize: Int) async {
+        #if DEBUG
+        if shouldForceEmptyFilterData(filterType: .albums) {
+            await MainActor.run {
+                self.albumLoadErrorMessage = nil
+                self.albums.removeAll()
+                self.albumCoverURLByID.removeAll()
+            }
+            return
+        }
+        #endif
+
+        await MainActor.run {
+            self.albumLoadErrorMessage = nil
+        }
+        if shouldReset {
+            await MainActor.run {
+                albums.removeAll()
+                albumCoverURLByID.removeAll()
+            }
+        }
+
+        let fetchedAlbums: [Album]
+        do {
+            fetchedAlbums = try await ImmichAPIService.shared.getAllAlbums(size: coverLimit)
+        } catch {
+            await MainActor.run {
+                self.albumLoadErrorMessage = String(
+                    localized: "Unable to load albums. Check your network or server settings.")
+            }
+            return
+        }
+
+        await MainActor.run {
+            self.albums = fetchedAlbums
+        }
+
+        let existingIDs: Set<String> =
+            shouldReset
+            ? []
+            : await MainActor.run { Set(self.albumCoverURLByID.keys) }
+
+        var newAlbumURLs: [String: URL] = [:]
+
+        for start in stride(from: 0, to: fetchedAlbums.count, by: batchSize) {
+
+            let end = min(start + batchSize, fetchedAlbums.count)
+
+            let batch = fetchedAlbums[start..<end]
+
+            await withTaskGroup(of: (String, URL?).self) { group in
+                for album in batch {
+                    let albumID = album.id
+                    if existingIDs.contains(albumID) { continue }
+
+                    guard let thumbID = album.albumThumbnailAssetId, !thumbID.isEmpty else {
+                        continue
+                    }
+
+                    group.addTask {
+                        do {
+
+                            let url = try await ImmichAPIService.shared.getThumbnailURL(
+                                id: thumbID, size: .thumbnail)
+                            return (albumID, url)
+                        } catch {
+                            Self.logger.error(
+                                "Failed to load album cover, id: \(albumID, privacy: .private), error: \(String(describing: error), privacy: .private)"
+                            )
+                            return (albumID, nil)
+                        }
+                    }
+                }
+
+                for await (albumID, url) in group {
+                    if let url {
+                        newAlbumURLs[albumID] = url
+                    }
+                }
+
+            }
+        }
+        await MainActor.run {
+            if shouldReset {
+
+                albumCoverURLByID = newAlbumURLs
+            } else {
+                albumCoverURLByID.merge(newAlbumURLs) { _, new in new }
+            }
+        }
+    }
+
+    private func loadPeopleCoverURLs(coverLimit: Int?, shouldReset: Bool, batchSize: Int) async {
+        #if DEBUG
+        if shouldForceEmptyFilterData(filterType: .people) {
+            await MainActor.run {
+
+                self.peopleLoadErrorMessage = nil
+                self.people.removeAll()
+                self.peopleCoverURLByID.removeAll()
+                self.personAssetsCountByID.removeAll()
+            }
+            return
+        }
+        #endif
+
+        await MainActor.run {
+            self.peopleLoadErrorMessage = nil
+        }
+        if shouldReset {
+            await MainActor.run {
+                people.removeAll()
+                peopleCoverURLByID.removeAll()
+            }
+        }
+
+        let fetchedPeople: [People]
+        do {
+            fetchedPeople = try await ImmichAPIService.shared.getAllPeople(size: coverLimit)
+        } catch {
+            await MainActor.run {
+                self.peopleLoadErrorMessage = String(
+                    localized: "Unable to load people list. Check your network or server settings.")
+            }
+            return
+        }
+
+        #if DEBUG
+        let preparedPeople = peopleAdjustedForTesting(fetchedPeople)
+        #else
+        let preparedPeople = fetchedPeople
+        #endif
+
+        await MainActor.run {
+            people = preparedPeople
+        }
+
+        let existingPeopleIDs: Set<String> =
+            shouldReset
+            ? []
+            : await MainActor.run { Set(self.peopleCoverURLByID.keys) }
+
+        var newPeopleURLs: [String: URL] = [:]
+        for start in stride(from: 0, to: preparedPeople.count, by: batchSize) {
+            let end = min(start + batchSize, preparedPeople.count)
+            let batch = preparedPeople[start..<end]
+            await withTaskGroup(of: (String, URL?).self) { group in
+                for person in batch {
+                    if person.id.isEmpty { continue }
+                    let peopleID = person.id
+                    if existingPeopleIDs.contains(peopleID) { continue }
+                    group.addTask {
+                        do {
+                            let url = try await ImmichAPIService.shared.getPeopleThumbnailURL(id: peopleID)
+                            return (peopleID, url)
+                        } catch {
+                            Self.logger.error(
+                                "Failed to fetch person thumbnail, id: \(person.id, privacy: .private), error: \(String(describing: error), privacy: .private)"
+                            )
+                            return (peopleID, nil)
+                        }
+                    }
+                }
+
+                for await (peopleID, url) in group {
+                    if let url {
+                        newPeopleURLs[peopleID] = url
+                    }
+                }
+
+            }
+        }
+        await MainActor.run {
+            if shouldReset {
+                peopleCoverURLByID = newPeopleURLs
+            } else {
+                peopleCoverURLByID.merge(newPeopleURLs) { _, new in new }
+            }
+        }
+    }
+
 }

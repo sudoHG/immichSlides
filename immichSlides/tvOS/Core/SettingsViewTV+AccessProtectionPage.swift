@@ -51,107 +51,11 @@ extension SettingsViewTV {
                 }
 
                 if isAccessProtectionEnabled && isAccessProtectionRecoveryNeeded {
-                    TVSettingsSectionBlock(
-                        title: "Recovery",
-                        subtitle: "An access protection state issue was detected."
-                    ) {
-                        TVSettingsStatusBanner(text: "Access Protection State Issue", tint: .orange)
-
-                        Text("Reset access protection first, then set the PIN again.")
-                            .font(.system(size: 18, weight: .regular))
-                            .foregroundStyle(.secondary)
-
-                        TVSettingsActionRow(
-                            title: "Reset Access Protection",
-                            value: "Clear Error State",
-                            valueTint: .orange,
-                            accessibilityIdentifier: "settings.pin.resetProtection.button",
-                            action: onResetProtection
-                        )
-                        .focused($focusedDetailItem, equals: .accessProtectionReset)
-                    }
+                    accessProtectionRecoverySection
                 } else if isAccessProtectionEnabled {
-                    TVSettingsSectionBlock(
-                        title: "Turn Off Access Protection",
-                        subtitle: "Enter the current PIN before turning it off."
-                    ) {
-                        pinInputRow(
-                            title: "Enter Current PIN",
-                            value: disablePin,
-                            target: .disablePin,
-                            focusTarget: .accessProtectionDisablePin
-                        )
-
-                        TVSettingsActionRow(
-                            title: "Turn Off Access Protection",
-                            value: "Current PIN Required",
-                            valueTint: .secondary,
-                            isEnabled: disablePin.count == AccessProtectionPIN.digitCount,
-                            accessibilityIdentifier: "settings.pin.disable.button",
-                            action: onDisableProtection
-                        )
-                    }
-
-                    Divider()
-
-                    TVSettingsSectionBlock(
-                        title: "Change PIN",
-                        subtitle: "Enter the current PIN, new PIN, and confirmation PIN in order."
-                    ) {
-                        pinInputRow(
-                            title: "Current PIN",
-                            value: currentPinForChange,
-                            target: .currentPinForChange
-                        )
-
-                        pinInputRow(
-                            title: "New PIN (6 digits)",
-                            value: newPin,
-                            target: .newPin
-                        )
-
-                        pinInputRow(
-                            title: "Confirm New PIN",
-                            value: newPinConfirm,
-                            target: .newPinConfirm
-                        )
-
-                        TVSettingsActionRow(
-                            title: "Save New PIN",
-                            value: "Current PIN and New PIN Required",
-                            valueTint: .secondary,
-                            isEnabled: canChangePIN,
-                            accessibilityIdentifier: "settings.pin.change.button",
-                            action: onChangePIN
-                        )
-                    }
+                    accessProtectionEnabledSections
                 } else {
-                    TVSettingsSectionBlock(
-                        title: "Turn On Access Protection",
-                        subtitle: "Set a PIN first, then enter it again to confirm."
-                    ) {
-                        pinInputRow(
-                            title: "Set PIN (6 digits)",
-                            value: enablePin,
-                            target: .enablePin,
-                            focusTarget: .accessProtectionEnablePin
-                        )
-
-                        pinInputRow(
-                            title: "Confirm PIN",
-                            value: enablePinConfirm,
-                            target: .enablePinConfirm
-                        )
-
-                        TVSettingsActionRow(
-                            title: "Turn On Access Protection",
-                            value: "PIN Setup and Confirmation Required",
-                            valueTint: .secondary,
-                            isEnabled: canEnablePIN,
-                            accessibilityIdentifier: "settings.pin.enable.button",
-                            action: onEnableProtection
-                        )
-                    }
+                    accessProtectionDisabledSection
                 }
 
             }
@@ -311,4 +215,115 @@ extension SettingsViewTV {
 
         return String(repeating: "●", count: value.count)
     }
+    @ViewBuilder
+    private var accessProtectionRecoverySection: some View {
+        TVSettingsSectionBlock(
+            title: "Recovery",
+            subtitle: "An access protection state issue was detected."
+        ) {
+            TVSettingsStatusBanner(text: "Access Protection State Issue", tint: .orange)
+
+            Text("Reset access protection first, then set the PIN again.")
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(.secondary)
+
+            TVSettingsActionRow(
+                title: "Reset Access Protection",
+                value: "Clear Error State",
+                valueTint: .orange,
+                accessibilityIdentifier: "settings.pin.resetProtection.button",
+                action: onResetProtection
+            )
+            .focused($focusedDetailItem, equals: .accessProtectionReset)
+        }
+    }
+
+    @ViewBuilder
+    private var accessProtectionEnabledSections: some View {
+        TVSettingsSectionBlock(
+            title: "Turn Off Access Protection",
+            subtitle: "Enter the current PIN before turning it off."
+        ) {
+            pinInputRow(
+                title: "Enter Current PIN",
+                value: disablePin,
+                target: .disablePin,
+                focusTarget: .accessProtectionDisablePin
+            )
+
+            TVSettingsActionRow(
+                title: "Turn Off Access Protection",
+                value: "Current PIN Required",
+                valueTint: .secondary,
+                isEnabled: disablePin.count == AccessProtectionPIN.digitCount,
+                accessibilityIdentifier: "settings.pin.disable.button",
+                action: onDisableProtection
+            )
+        }
+
+        Divider()
+
+        TVSettingsSectionBlock(
+            title: "Change PIN",
+            subtitle: "Enter the current PIN, new PIN, and confirmation PIN in order."
+        ) {
+            pinInputRow(
+                title: "Current PIN",
+                value: currentPinForChange,
+                target: .currentPinForChange
+            )
+
+            pinInputRow(
+                title: "New PIN (6 digits)",
+                value: newPin,
+                target: .newPin
+            )
+
+            pinInputRow(
+                title: "Confirm New PIN",
+                value: newPinConfirm,
+                target: .newPinConfirm
+            )
+
+            TVSettingsActionRow(
+                title: "Save New PIN",
+                value: "Current PIN and New PIN Required",
+                valueTint: .secondary,
+                isEnabled: canChangePIN,
+                accessibilityIdentifier: "settings.pin.change.button",
+                action: onChangePIN
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var accessProtectionDisabledSection: some View {
+        TVSettingsSectionBlock(
+            title: "Turn On Access Protection",
+            subtitle: "Set a PIN first, then enter it again to confirm."
+        ) {
+            pinInputRow(
+                title: "Set PIN (6 digits)",
+                value: enablePin,
+                target: .enablePin,
+                focusTarget: .accessProtectionEnablePin
+            )
+
+            pinInputRow(
+                title: "Confirm PIN",
+                value: enablePinConfirm,
+                target: .enablePinConfirm
+            )
+
+            TVSettingsActionRow(
+                title: "Turn On Access Protection",
+                value: "PIN Setup and Confirmation Required",
+                valueTint: .secondary,
+                isEnabled: canEnablePIN,
+                accessibilityIdentifier: "settings.pin.enable.button",
+                action: onEnableProtection
+            )
+        }
+    }
+
 }
