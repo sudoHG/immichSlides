@@ -15,7 +15,7 @@ import Testing
 struct PlaybackPoolResolverLiveIntegrationTests {
 
     private nonisolated static let liveConfiguration = TestServerConfiguration.current
-    private nonisolated static let liveEnabled = liveConfiguration != nil
+    private nonisolated static let isLiveEnabled = liveConfiguration != nil
 
     private func configureLiveServer() {
         guard let configuration = Self.liveConfiguration else { return }
@@ -186,7 +186,7 @@ struct PlaybackPoolResolverLiveIntegrationTests {
     }
 
     @Test(
-        .enabled(if: liveEnabled, "No local live config; a skip does not mean live membership was verified")
+        .enabled(if: isLiveEnabled, "No local live config; a skip does not mean live membership was verified")
     )
     func `single album rule independently verifies every asset belongs to the selected album with no duplicates`()
         async throws
@@ -220,7 +220,7 @@ struct PlaybackPoolResolverLiveIntegrationTests {
     }
 
     @Test(
-        .enabled(if: liveEnabled, "No local live config; a skip does not mean live membership was verified")
+        .enabled(if: isLiveEnabled, "No local live config; a skip does not mean live membership was verified")
     )
     func
         `normal person rule independently verifies every asset's people include the selected person with no duplicates`()
@@ -260,7 +260,7 @@ struct PlaybackPoolResolverLiveIntegrationTests {
     }
 
     @Test(
-        .enabled(if: liveEnabled, "No local live config; a skip does not mean live membership was verified")
+        .enabled(if: isLiveEnabled, "No local live config; a skip does not mean live membership was verified")
     )
     func `solo rule returns only qualified assets when non-empty, and an empty result never counts as passing`()
         async throws
@@ -304,7 +304,7 @@ struct PlaybackPoolResolverLiveIntegrationTests {
     }
 
     @Test(
-        .enabled(if: liveEnabled, "No local live config; a skip does not mean live membership was verified")
+        .enabled(if: isLiveEnabled, "No local live config; a skip does not mean live membership was verified")
     )
     func `when the same person is filtered as both normal and soloOnly, a non-empty result must qualify by soloOnly`()
         async throws
@@ -349,7 +349,7 @@ struct PlaybackPoolResolverLiveIntegrationTests {
     }
 
     @Test(
-        .enabled(if: liveEnabled, "No local live config; a skip does not mean live membership was verified")
+        .enabled(if: isLiveEnabled, "No local live config; a skip does not mean live membership was verified")
     )
     func `album and person union rule requires every asset in the album or with the person, with no duplicates`()
         async throws
@@ -380,10 +380,10 @@ struct PlaybackPoolResolverLiveIntegrationTests {
 
             let loaded = try await independentlyLoadedAssets(from: result, api: api)
             for asset in loaded {
-                let inSelectedAlbum = try await albumIDsContaining(assetID: asset.id).contains(albumId)
-                let inSelectedPerson = containsSelectedPerson(asset, personId: personId)
+                let isInSelectedAlbum = try await albumIDsContaining(assetID: asset.id).contains(albumId)
+                let isInSelectedPerson = containsSelectedPerson(asset, personId: personId)
                 #expect(
-                    inSelectedAlbum || inSelectedPerson,
+                    isInSelectedAlbum || isInSelectedPerson,
                     "independently fetched asset belongs to neither selected album nor selected person"
                 )
             }
@@ -391,7 +391,7 @@ struct PlaybackPoolResolverLiveIntegrationTests {
     }
 
     @Test(
-        .enabled(if: liveEnabled, "No local live config; a skip does not mean live membership was verified")
+        .enabled(if: isLiveEnabled, "No local live config; a skip does not mean live membership was verified")
     )
     func `the cooling pool blocks on too few samples and reduces overlap once the pool is large enough`() async throws {
         try await runWithIsolatedLiveServer {

@@ -134,7 +134,7 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         else {
             return
         }
-        clock.now = (incoming.fadeStartTime ?? clock.now) + 0.5
+        clock.now = (incoming.fadeStartTime ?? clock.now) + SceneTransitionDiagnostic.firstVisibleTickOffsetSeconds
         viewModel.incomingBecameVisible(
             ScenePresentationLayerIdentity(
                 generation: incoming.identity.generation,

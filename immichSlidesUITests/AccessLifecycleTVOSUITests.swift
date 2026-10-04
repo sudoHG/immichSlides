@@ -198,7 +198,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
                 "suite": "pause-next-continue",
                 "interval_requested": AccessLifecycleContract.requestedIntervalSeconds,
                 "interval_actual": interval.actual,
-                "desktop_closeout_required": interval.desktopCloseoutRequired,
+                "desktop_closeout_required": interval.shouldRequireIntervalReview,
                 "interval_options": AccessLifecycleContract.tvOSSelectableIntervals,
                 "timeline": timeline
             ]
@@ -266,8 +266,8 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         )
         try AccessLifecycleContract.assertSystemPauseActivation(
             activation: systemPauseActivation,
-            processRebuilt: didRebuildProcess,
-            homeLeftAppRunning: didHomeLeaveAppRunning
+            didRebuildProcess: didRebuildProcess,
+            didHomeLeaveAppRunning: didHomeLeaveAppRunning
         )
         XCTAssertTrue(
             waitUntilOnSlideShowLayer(app: app, timeout: 3),
@@ -289,7 +289,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
                 "suite": "background-return",
                 "interval_requested": AccessLifecycleContract.requestedIntervalSeconds,
                 "interval_actual": interval.actual,
-                "desktop_closeout_required": interval.desktopCloseoutRequired,
+                "desktop_closeout_required": interval.shouldRequireIntervalReview,
                 "wait_seconds": waitSeconds,
                 "home_left_app_running": didHomeLeaveAppRunning,
                 "process_rebuilt": didRebuildProcess,
@@ -691,9 +691,9 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
 
     private func writePasswordProtectionPayload(pins: StrictE2EPrivatePINInput) throws {
         try AccessLifecycleContract.assertKnownRequests(requests)
-        let d01 = try AccessLifecycleContract.d01Verdict(
+        let d01 = try AccessLifecycleContract.pinStorageVerdict(
             storageKind: "uitest_userdefaults",
-            xctestConfigPresent: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            isXCTestConfigPresent: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         )
         let screenshotNames = [
             "pin-enabled",
@@ -905,8 +905,8 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         do {
             try AccessLifecycleContract.assertSystemPauseActivation(
                 activation: systemPauseActivation,
-                processRebuilt: didRebuildProcess,
-                homeLeftAppRunning: didHomeLeaveAppRunning
+                didRebuildProcess: didRebuildProcess,
+                didHomeLeaveAppRunning: didHomeLeaveAppRunning
             )
             try AccessLifecycleContract.assertSystemPauseIdentityTiming(
                 screenshotOrder: screenshotOrder
@@ -1150,7 +1150,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         do {
             try AccessLifecycleContract.assertSettingsOpen(
                 identifiers: observedLayerIdentifiers(app: app),
-                requirePlaybackItem: false
+                shouldRequirePlaybackItem: false
             )
         } catch {
             XCTFail(String(describing: error))
@@ -1266,9 +1266,9 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         do {
             try AccessLifecycleContract.assertSettingsReturnWake(
                 identifiers: identifiersBeforePress,
-                transitionComplete: true,
-                hiddenWakeReceiverFocused: focusedBeforePress,
-                hiddenWakeReceiverFocusStable: true,
+                isTransitionComplete: true,
+                isHiddenWakeReceiverFocused: focusedBeforePress,
+                isHiddenWakeReceiverFocusStable: true,
                 consecutiveFocusedObservations: consecutive,
                 directionalPressCount: 1,
                 beforeScreenshot: beforeName,
@@ -1360,7 +1360,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         do {
             try AccessLifecycleContract.assertReturnedToSlideshow(
                 identifiers: observedLayerIdentifiers(app: app),
-                requireSettingsButton: false
+                shouldRequireSettingsButton: false
             )
         } catch {
             XCTFail(String(describing: error))
@@ -1528,8 +1528,8 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         try AccessLifecycleContract.assertNoForcedDisplayMode([:])
         try AccessLifecycleContract.assertSystemPauseActivation(
             activation: systemPauseActivation,
-            processRebuilt: didRebuildProcess,
-            homeLeftAppRunning: didHomeLeaveAppRunning
+            didRebuildProcess: didRebuildProcess,
+            didHomeLeaveAppRunning: didHomeLeaveAppRunning
         )
         try AccessLifecycleContract.assertSystemPauseIdentityTiming(
             screenshotOrder: screenshotOrder
@@ -1610,17 +1610,17 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
             homeVisible = app.buttons["settings.item.playback"].isHittable
         }
         let identity = AccessLifecycleContract.tvosSettingsPageIdentity(
-            playbackSettingsContentVisible: contentVisible,
-            homeEntryVisible: homeVisible,
-            homeUniqueVisible: homeUnique
+            isPlaybackSettingsContentVisible: contentVisible,
+            isHomeEntryVisible: homeVisible,
+            isHomeUniqueVisible: homeUnique
         )
         try AccessLifecycleContract.assertTVOSHomeUniqueBeatsPlaybackRowLabel(
-            homeUniqueVisible: homeUnique,
-            classifiedAsPlayback: identity == "playback"
+            isHomeUniqueVisible: homeUnique,
+            isClassifiedAsPlayback: identity == "playback"
         )
         try AccessLifecycleContract.assertTVOSPageIdentityNotInferredFromMissingFocus(
-            playbackSettingsContentVisible: contentVisible && homeUnique == false,
-            classifiedAsHome: identity == "home"
+            isPlaybackSettingsContentVisible: contentVisible && homeUnique == false,
+            isClassifiedAsHome: identity == "home"
         )
         let homePlayback = app.buttons["settings.item.playback"]
         if identity == "home" {
@@ -1641,8 +1641,8 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
             _ = tryMoveFocus(.down, to: autoPlayLink, maximumPresses: 8)
         }
         try AccessLifecycleContract.assertTVOSPlaybackSettingsEntered(
-            autoPlayLinkFocused: autoPlayLink.hasFocus,
-            homePlaybackFocused: homePlayback.exists && homePlayback.hasFocus
+            isAutoPlayLinkFocused: autoPlayLink.hasFocus,
+            isHomePlaybackFocused: homePlayback.exists && homePlayback.hasFocus
         )
     }
 
@@ -1721,8 +1721,8 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         // not allowed. EXIF lives in the display items subpage, so the generic return to playback settings
         // does not apply here.
         try AccessLifecycleContract.assertTVOSFocusSearchMustNotUseOnlyDownWhenTargetAbove(
-            targetWasAboveFocus: true,
-            usedOnlyDown: false
+            didTargetAppearAboveFocus: true,
+            didUseOnlyDown: false
         )
         try ensureInsidePlaybackSettingsPage(app: app)
         selectPlaybackToggle(
@@ -1755,7 +1755,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
     @MainActor
     private func configureTVOSTimingPlaybackSettings(
         app: XCUIApplication
-    ) throws -> (actual: Int, desktopCloseoutRequired: Bool) {
+    ) throws -> (actual: Int, shouldRequireIntervalReview: Bool) {
         try enterPlaybackSettings(app: app)
         selectPlaybackToggle(
             app: app,
@@ -1888,8 +1888,8 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         try AccessLifecycleContract.assertPauseUsesVisibleIdentity(
             pauseMark: beforePause.mark,
             afterNextMark: afterNext.mark,
-            usedProgressProbe: false,
-            usedControlValueOnly: false
+            didUseProgressProbe: false,
+            didUseControlValueOnly: false
         )
 
         let holdStart = Date()

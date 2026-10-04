@@ -15,9 +15,9 @@ import Testing
 @Suite(.sharedRuntimeIsolation, .enabled(if: isEvidenceRun))
 struct FaceBoxLiveProbeTests {
     private nonisolated static let liveConfiguration = TestServerConfiguration.current
-    private nonisolated static let liveEnabled = liveConfiguration != nil
+    private nonisolated static let isLiveEnabled = liveConfiguration != nil
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     func `random live sample produces a redacted face box geometry report`() async throws {
         try await ServerConfigurationTestIsolation.run {
             configureLiveServer()

@@ -6,6 +6,10 @@ import Testing
 @MainActor
 @Suite(.serialized, .sharedPlaybackRuntimeIsolation)
 struct SmartFillMotionRuntimeIntegrationTests {
+    private let probeSlotSizePoints = CGSize(width: 400, height: 700)
+    private let portraitProbeSlotSizePoints = CGSize(width: 393, height: 852)
+    private let iPhonePortraitPlanningPixelSize = PlaybackPlanningPixelSize(width: 1179, height: 2556)
+
     @Test
     func `a full scene snapshot active time is the only product motion progress source`() throws {
         var now = 100.0
@@ -240,8 +244,8 @@ struct SmartFillMotionRuntimeIntegrationTests {
             reduceMotionEnabled: true
         )
         let geometry = MotionSlotRenderGeometry(
-            slotSize: CGSize(width: 400, height: 700),
-            imageFrameInSlot: CGRect(x: 0, y: 0, width: 400, height: 700)
+            slotSize: probeSlotSizePoints,
+            imageFrameInSlot: CGRect(origin: .zero, size: probeSlotSizePoints)
         )
         let smartFillFrame = SmartFillMotionSlotFrameResolver.resolve(
             makeFrameInput(context: context, geometry: geometry)
@@ -287,18 +291,21 @@ struct SmartFillMotionRuntimeIntegrationTests {
         engine.reduceScenePresentation(.reduceMotionChanged(true), at: 6.4)
         engine.reduceScenePresentation(.cancelUnseenManualPendingPresentation, at: 6.5)
         engine.reduceScenePresentation(.resume(.background), at: 7)
-        engine.reduceScenePresentation(.resume(.userPaused), at: 8)
+        let resumeTimeSeconds: TimeInterval = 8
+        engine.reduceScenePresentation(.resume(.userPaused), at: resumeTimeSeconds)
         // The automatic incoming decodes again behind the held photo, then the full automatic crossfade runs.
-        let readyEffects = engine.reduceScenePresentation(.targetReady(automaticIncoming.identity), at: 8)
+        let readyEffects = engine.reduceScenePresentation(
+            .targetReady(automaticIncoming.identity), at: resumeTimeSeconds)
 
         let completionDeadline = readyEffects.compactMap { effect -> TimeInterval? in
             guard case let .scheduleWakeUp(_, deadline) = effect else { return nil }
             return deadline
         }
-        #expect(completionDeadline.contains { abs($0 - 10.025) < 0.0001 })
+        let expectedCompletionDeadline = resumeTimeSeconds + ScenePresentationPacingPolicy.automatic.completionDuration
+        #expect(completionDeadline.contains { abs($0 - expectedCompletionDeadline) < 0.0001 })
 
         let resumedIncoming = try #require(
-            engine.sceneRenderSnapshot(at: 8).layers.first { $0.identity == automaticIncoming.identity }
+            engine.sceneRenderSnapshot(at: resumeTimeSeconds).layers.first { $0.identity == automaticIncoming.identity }
         )
         let fadeStart = try #require(resumedIncoming.fadeStartTime)
         let firstVisibleIncoming = try #require(
@@ -319,8 +326,8 @@ struct SmartFillMotionRuntimeIntegrationTests {
             reduceMotionEnabled: true
         )
         let geometry = MotionSlotRenderGeometry(
-            slotSize: CGSize(width: 400, height: 700),
-            imageFrameInSlot: CGRect(x: 0, y: 0, width: 400, height: 700)
+            slotSize: probeSlotSizePoints,
+            imageFrameInSlot: CGRect(origin: .zero, size: probeSlotSizePoints)
         )
         let smartFillFrame = SmartFillMotionSlotFrameResolver.resolve(
             makeFrameInput(context: context, geometry: geometry)
@@ -347,7 +354,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
             reduceMotionEnabled: false
         )
         let geometry = MotionSlotRenderGeometry(
-            slotSize: CGSize(width: 393, height: 852),
+            slotSize: portraitProbeSlotSizePoints,
             imageFrameInSlot: CGRect(
                 x: -1.346,
                 y: -18.560,
@@ -384,6 +391,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
             isMotionEnabled: true,
             reduceMotionEnabled: false
         )
+        // Fractional crop coordinates reproduce the coverage endpoint regression across the full visible window.
         let boundaryGeometry = MotionSlotRenderGeometry(
             slotSize: CGSize(width: 200, height: 120),
             imageFrameInSlot: CGRect(
@@ -414,8 +422,8 @@ struct SmartFillMotionRuntimeIntegrationTests {
         `resolver returns identity when the shared context is missing or the layer is newly created under reduce motion`()
     {
         let geometry = MotionSlotRenderGeometry(
-            slotSize: CGSize(width: 400, height: 700),
-            imageFrameInSlot: CGRect(x: 0, y: 0, width: 400, height: 700)
+            slotSize: probeSlotSizePoints,
+            imageFrameInSlot: CGRect(origin: .zero, size: probeSlotSizePoints)
         )
         let missing = SmartFillMotionSlotFrameResolver.resolve(
             makeFrameInput(context: nil, geometry: geometry)
@@ -443,8 +451,8 @@ struct SmartFillMotionRuntimeIntegrationTests {
     @Test
     func `an already started SmartFill motion keeps its frozen transform after reduce motion is toggled`() {
         let geometry = MotionSlotRenderGeometry(
-            slotSize: CGSize(width: 400, height: 700),
-            imageFrameInSlot: CGRect(x: 0, y: 0, width: 400, height: 700)
+            slotSize: probeSlotSizePoints,
+            imageFrameInSlot: CGRect(origin: .zero, size: probeSlotSizePoints)
         )
         let lifecycle = SceneLifecycleContract(configuredInterval: 5)
         let active = SmartFillMotionSlotFrameResolver.resolve(
@@ -529,8 +537,8 @@ struct SmartFillMotionRuntimeIntegrationTests {
                     slotId: slot.id,
                     assetId: slot.asset.id,
                     renderGeometry: MotionSlotRenderGeometry(
-                        slotSize: CGSize(width: 400, height: 700),
-                        imageFrameInSlot: CGRect(x: 0, y: 0, width: 400, height: 700)
+                        slotSize: probeSlotSizePoints,
+                        imageFrameInSlot: CGRect(origin: .zero, size: probeSlotSizePoints)
                     ),
                     cropRectInSource: MotionUnitRect(x: 0, y: 0, width: 1, height: 1),
                     focalSource: .slotCenterFallback
@@ -666,7 +674,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
         vm.isAutoPlay = true
         vm.updateSmartFillSurfaceForTesting(
             PlaybackSmartFillSurface(
-                pixelSize: PlaybackPlanningPixelSize(width: 1179, height: 2556),
+                pixelSize: iPhonePortraitPlanningPixelSize,
                 profile: .iPhone,
                 orientation: .portrait
             )

@@ -75,16 +75,16 @@ final class PrivatePINInputTests: XCTestCase {
 
     func testUserDefaultsStorageVerdictStaysPartial() throws {
         XCTAssertEqual(
-            try AccessLifecycleContract.d01Verdict(
+            try AccessLifecycleContract.pinStorageVerdict(
                 storageKind: "uitest_userdefaults",
-                xctestConfigPresent: true
+                isXCTestConfigPresent: true
             ),
             "PARTIAL"
         )
         XCTAssertThrowsError(
-            try AccessLifecycleContract.d01Verdict(
+            try AccessLifecycleContract.pinStorageVerdict(
                 storageKind: "keychain",
-                xctestConfigPresent: true
+                isXCTestConfigPresent: true
             )
         )
     }

@@ -5,7 +5,7 @@ import ImageIO
 import Testing
 
 @Suite
-struct StrictE2EPhotoIdentityCaptureTests {
+struct StrictE2EPhotoIdentityCaptureIOSTests {
     @Test
     func `a differently colored top overlay on a single photo does not count as a second photo`() throws {
         let png = try renderPNG(width: 480, height: 720) { context in

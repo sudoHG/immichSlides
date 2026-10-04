@@ -393,7 +393,14 @@ struct PlaybackSessionEngineTests {
         let target = try #require(engine.presentationTarget(for: started.identity))
         let profile = SceneAnimationProfile(lifecycle: target.lifecycle)
 
-        #expect(abs(target.lifecycle.longestVisibleMotionDuration - 7.3) < 0.0001)
+        let expectedMotionDurationSeconds: TimeInterval = 7.3
+        let expectedZoomOutScale: Double = 1
+        let expectedZoomInScale: Double = 1.10
+        let motionDurationToleranceSeconds: TimeInterval = 0.0001
+        let scaleComparisonTolerance: Double = 0.0001
+        #expect(
+            abs(target.lifecycle.longestVisibleMotionDuration - expectedMotionDurationSeconds)
+                < motionDurationToleranceSeconds)
         let zoomOut = profile.singlePhotoTransform(
             direction: .zoomOut,
             activeTime: target.lifecycle.longestVisibleMotionDuration,
@@ -404,8 +411,8 @@ struct PlaybackSessionEngineTests {
             activeTime: target.lifecycle.longestVisibleMotionDuration,
             isMotionEnabled: true
         )
-        #expect(abs(zoomOut.scale - 1) < 0.0001)
-        #expect(abs(zoomIn.scale - 1.10) < 0.0001)
+        #expect(abs(zoomOut.scale - expectedZoomOutScale) < scaleComparisonTolerance)
+        #expect(abs(zoomIn.scale - expectedZoomInScale) < scaleComparisonTolerance)
     }
 
     @Test

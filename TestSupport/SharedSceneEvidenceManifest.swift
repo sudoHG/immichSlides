@@ -7,6 +7,9 @@ struct SharedSceneManifestObservation: Equatable {
 }
 
 enum SharedSceneEvidenceManifest {
+    private static let minimumCanvasCoverage: Double = 0.999_999
+    private static let maximumEmptyCanvasRatio: Double = 0.000_001
+
     static func canonicalJSONData<Value: Encodable>(_ value: Value) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -37,14 +40,14 @@ enum SharedSceneEvidenceManifest {
         let hasPending = readiness.contains("pending") || readiness.contains("等待")
         let hasFailed = readiness.contains("failed") || readiness.contains("失败")
         let slotCount = Int(fields["slotCount"] ?? "") ?? 0
-        let noGap = Int(fields["gapPixelCount"] ?? "") == 0
-        let noOverlap = Int(fields["overlapPixelCount"] ?? "") == 0
+        let hasNoGap = Int(fields["gapPixelCount"] ?? "") == 0
+        let hasNoOverlap = Int(fields["overlapPixelCount"] ?? "") == 0
         let coverage = Double(fields["canvasCoverage"] ?? "") ?? 0
         let emptyCanvasRatio = Double(fields["emptyCanvasRatio"] ?? "") ?? 1
 
         return SharedSceneManifestObservation(
-            isCompleteVisibleScene: slotCount > 0 && !hasPending && !hasFailed && noGap && noOverlap
-                && coverage >= 0.999_999 && emptyCanvasRatio <= 0.000_001
+            isCompleteVisibleScene: slotCount > 0 && !hasPending && !hasFailed && hasNoGap && hasNoOverlap
+                && coverage >= minimumCanvasCoverage && emptyCanvasRatio <= maximumEmptyCanvasRatio
         )
     }
 }

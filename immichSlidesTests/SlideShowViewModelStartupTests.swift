@@ -13,6 +13,10 @@ import Testing
 @MainActor
 @Suite(.serialized, .sharedPlaybackRuntimeIsolation)
 struct SlideShowViewModelStartupTests {
+    private let initialSceneRequestPollIntervalNanoseconds: UInt64 = 30_000_000
+    // 100 polls of 30 ms retain the existing nominal three-second wait budget.
+    private let initialSceneRequestPollCount: Int = 100
+    private let persistedPlaybackIntervalSeconds: TimeInterval = 9
 
     @Test
     func `cold launch uses the stored filtered source when the default mode is filtered and criteria are non-empty`() {
@@ -522,7 +526,7 @@ struct SlideShowViewModelStartupTests {
         let firstPendingToken = vm.targetTransitionToken
         let firstPendingTargetIndex = vm.targetIndex
         let firstPendingSceneId = vm.scene(at: vm.targetIndex)?.id
-        let oldHandler = Task {
+        let oldHandlerTask = Task {
             await withCheckedContinuation { pending in
                 delayedEntry = pending
             }
@@ -537,7 +541,7 @@ struct SlideShowViewModelStartupTests {
         #expect(vm.scene(at: vm.targetIndex)?.primaryAssetId == "asset-c")
 
         delayedEntry?.resume()
-        await oldHandler.value
+        await oldHandlerTask.value
 
         #expect(vm.currentIndex == 2)
         #expect(vm.scene(at: vm.targetIndex)?.id == newerPendingSceneId)
@@ -1485,13 +1489,13 @@ struct SlideShowViewModelStartupTests {
                 orientation: .portrait
             )
         )
-        for _ in 0..<100 {
+        for _ in 0..<initialSceneRequestPollCount {
             if vm.safeCurrentScene?.smartFillReadback?.sceneType == .double,
                 Set(initialSceneRequests) == Set(["asset-0", "asset-1"])
             {
                 break
             }
-            try? await Task.sleep(nanoseconds: 30_000_000)
+            try? await Task.sleep(nanoseconds: initialSceneRequestPollIntervalNanoseconds)
         }
 
         #expect(vm.safeCurrentScene?.smartFillReadback?.sceneType == .double)
@@ -1668,7 +1672,7 @@ struct SlideShowViewModelStartupTests {
     private func savePlaybackDisplayMode(_ displayMode: PlaybackDisplayMode) {
         var settings = PlaybackSettings()
         settings.autoPlayEnabled = false
-        settings.intervalSeconds = 9
+        settings.intervalSeconds = persistedPlaybackIntervalSeconds
         settings.showExif = false
         settings.defaultPlaybackMode = .filtered
         settings.showDebugOverlay = true
@@ -1720,7 +1724,7 @@ struct SlideShowViewModelStartupTests {
         else {
             return
         }
-        let visibleTime = (incoming.fadeStartTime ?? 0) + 0.5
+        let visibleTime = (incoming.fadeStartTime ?? 0) + SceneTransitionDiagnostic.firstVisibleTickOffsetSeconds
         vm.scenePresentationTimestampProviderForTesting = { visibleTime }
         vm.incomingBecameVisible(
             ScenePresentationLayerIdentity(

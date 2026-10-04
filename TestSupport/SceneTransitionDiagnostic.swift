@@ -42,6 +42,7 @@ enum SceneTransitionDiagnostic {
     /// Both photos must show at least this share at once in some frame. A linear crossfade peaks near 0.38 and stays
     /// above it for over half of its frames; a hard switch, or an opaque photo cut in on top, stays at 0.
     static let minimumBlendOpacity = 0.1
+    static let firstVisibleTickOffsetSeconds: TimeInterval = 0.5
     private static let progressTolerance = 0.000_1
 
     /// Share of the screen covered when the layers are composited over the black backing.
@@ -115,25 +116,25 @@ enum SceneTransitionDiagnostic {
 
         let baseline = before.progress[0]
         if isPlaybackPaused {
-            let heldStill =
+            let isHeldStill =
                 !crossfade.didOutgoingProgressRewind
                 && (oldPhotoProgress + sampledCrossfadeProgress + [
                     crossfade.firstOutgoingProgress, crossfade.lastOutgoingProgress,
                     crossfade.lowestOutgoingProgress, crossfade.highestOutgoingProgress
                 ]).allSatisfy { abs($0 - baseline) <= progressTolerance }
-            return heldStill ? .outgoingHeldStill : .invalid
+            return isHeldStill ? .outgoingHeldStill : .invalid
         }
         let sampled = oldPhotoProgress + sampledCrossfadeProgress
-        let neverRewinds = zip(sampled, sampled.dropFirst()).allSatisfy { $1 >= $0 - progressTolerance }
-        let sampledCrossfadeMoves = zip(sampledCrossfadeProgress, sampledCrossfadeProgress.dropFirst())
+        let hasNoRewinds = zip(sampled, sampled.dropFirst()).allSatisfy { $1 >= $0 - progressTolerance }
+        let isSampledCrossfadeMoving = zip(sampledCrossfadeProgress, sampledCrossfadeProgress.dropFirst())
             .allSatisfy { $1 > $0 + progressTolerance }
         // Frame by frame, the old photo must keep moving through the crossfade itself, from where it was last seen held.
         let lastHeldProgress = oldPhotoProgress.last ?? baseline
-        let crossfadeMoves =
+        let isCrossfadeMoving =
             !crossfade.didOutgoingProgressRewind
             && crossfade.firstOutgoingProgress >= lastHeldProgress - progressTolerance
             && crossfade.lastOutgoingProgress > crossfade.firstOutgoingProgress + progressTolerance
-        return neverRewinds && sampledCrossfadeMoves && crossfadeMoves ? .outgoingAdvanced : .invalid
+        return hasNoRewinds && isSampledCrossfadeMoving && isCrossfadeMoving ? .outgoingAdvanced : .invalid
     }
 
     /// Reads the probe's `lastCrossfade` field:

@@ -270,7 +270,9 @@ struct ManualPlaybackLifecycleTests {
         for step in 0...30 {
             let snapshot = engine.sceneRenderSnapshot(at: 2.2 + Double(step) * 0.01)
             #expect(snapshot.underlyingPhase == .transition)
-            #expect(SceneTransitionDiagnostic.photoCoverage(of: snapshot.layers.map(\.opacity)) >= 0.5)
+            #expect(
+                SceneTransitionDiagnostic.photoCoverage(of: snapshot.layers.map(\.opacity))
+                    >= SceneTransitionDiagnostic.minimumPhotoCoverage)
         }
 
         engine.reduceScenePresentation(.transitionCompleted, at: 2.5)
@@ -551,8 +553,12 @@ struct ManualPlaybackLifecycleTests {
         let second = makeManualLifecycleTarget(sceneID: "second", interval: 5)
         let third = makeManualLifecycleTarget(sceneID: "third", interval: 5)
         startAutomaticCrossfade(from: first, to: second, in: &engine)
-        engine.reduceScenePresentation(.incomingBecameVisible(second.identity), at: 7.05)
-        engine.reduceScenePresentation(.request(target: third, source: .manualNext, readiness: .pending), at: 7.1)
+        let incomingVisibleTimeSeconds: TimeInterval = 7.05
+        let manualRequestTimeSeconds: TimeInterval = 7.1
+        let elapsedFadeProgress: Double = 0.075
+        engine.reduceScenePresentation(.incomingBecameVisible(second.identity), at: incomingVisibleTimeSeconds)
+        engine.reduceScenePresentation(
+            .request(target: third, source: .manualNext, readiness: .pending), at: manualRequestTimeSeconds)
         let beforeCancel = heldOpacity(of: second, in: engine, at: 7.3)
 
         let effects = engine.reduceScenePresentation(.cancelUnseenManualPendingPresentation, at: 7.3)
@@ -563,7 +569,11 @@ struct ManualPlaybackLifecycleTests {
                 guard case let .scheduleWakeUp(_, deadline) = effect else { return nil }
                 return deadline
             }.first)
-        #expect(abs(completion - (7.1 + 0.3 * (1 - 0.075))) < 0.001)
+        #expect(
+            abs(
+                completion
+                    - (manualRequestTimeSeconds + ScenePresentationPacingPolicy.manualReady.completionDuration
+                        * (1 - elapsedFadeProgress))) < 0.001)
 
         engine.reduceScenePresentation(.transitionCompleted, at: completion)
         let settled = engine.sceneRenderSnapshot(at: completion)

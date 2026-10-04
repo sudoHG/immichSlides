@@ -19,7 +19,7 @@ struct PlaybackRuntimeEvidenceManifestTests {
         return environment["IMMICHSLIDES_RUNTIME_VALIDATOR_REPORT_PATH"]
             ?? environment["TEST_RUNNER_IMMICHSLIDES_RUNTIME_VALIDATOR_REPORT_PATH"]
     }()
-    private nonisolated static let externalRuntimeJSONLEnabled = externalRuntimeJSONLPath?.isEmpty == false
+    private nonisolated static let isExternalRuntimeJSONLEnabled = externalRuntimeJSONLPath?.isEmpty == false
     private static let requiredStartupPhaseKeys = [
         "playbackEntryRequested",
         "assetPoolRequestStarted",
@@ -90,7 +90,8 @@ struct PlaybackRuntimeEvidenceManifestTests {
     @Test
     func `non fallback geometry not filling the canvas hard fails`() throws {
         var empty = validRecord()
-        empty["emptyCanvasRatio"] = 0.00000001
+        let positiveEmptyCanvasRatio: Double = 0.00000001
+        empty["emptyCanvasRatio"] = positiveEmptyCanvasRatio
 
         var gap = validRecord(
             sequence: 8, sceneIdHash: "scenegap888", screenshotPath: "/evidence/screenshots/seq-8-scenegap888.png")
@@ -885,7 +886,7 @@ struct PlaybackRuntimeEvidenceManifestTests {
         #expect(hasIssue(missingReport.issues, code: .missingRequiredField, field: "photoLoadPhaseDurationsMs"))
     }
 
-    @Test(.enabled(if: externalRuntimeJSONLEnabled))
+    @Test(.enabled(if: isExternalRuntimeJSONLEnabled))
     func externalRuntimeJSONLPassesValidator() throws {
         let path = try #require(Self.externalRuntimeJSONLPath)
         let payload = try String(contentsOfFile: path, encoding: .utf8)

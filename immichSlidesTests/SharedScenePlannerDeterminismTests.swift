@@ -5,6 +5,8 @@ import Testing
 @MainActor
 @Suite
 struct SharedScenePlannerDeterminismTests {
+    private let sceneSampleCountPerSurface: Int = 12
+
     private struct CatalogRow: Codable, Equatable {
         let surface: String
         let policyId: String
@@ -70,7 +72,7 @@ struct SharedScenePlannerDeterminismTests {
             fixedSeed: fixedSeed,
             catalogRows: surfaces.flatMap(catalogRows),
             plannerRows: surfaces.flatMap { surface in
-                (0..<12).map { ordinal in
+                (0..<sceneSampleCountPerSurface).map { ordinal in
                     plannerRow(surface: surface, seed: fixedSeed, ordinal: ordinal)
                 }
             }
@@ -98,7 +100,7 @@ struct SharedScenePlannerDeterminismTests {
         seed: String,
         ordinal: Int
     ) -> PlannerRow {
-        let result = PlaybackSmartFillPlanner.plan(
+        let scenePlan = PlaybackSmartFillPlanner.plan(
             PlaybackSmartFillPlannerInput(
                 surface: surface,
                 candidates: candidates,
@@ -111,21 +113,21 @@ struct SharedScenePlannerDeterminismTests {
         return PlannerRow(
             surface: surface.internalSurfaceFingerprint,
             sceneOrdinal: ordinal,
-            sceneType: result.sceneType.rawValue,
-            layoutPolicyId: result.layoutPolicyId,
-            layoutVariant: result.layoutVariant.rawValue,
-            ratioPreset: result.ratioPreset,
-            acceptedSceneSearchTier: result.acceptedSceneSearchTier.rawValue,
-            fallbackReason: result.fallbackReason?.rawValue ?? "none",
-            fallbackCategory: result.fallbackCategory.rawValue,
-            candidateWindowUsed: result.candidateWindowUsed,
-            evaluationCount: result.evaluationCount,
-            rotationStartLayoutVariant: result.rotationStartLayoutVariant.rawValue,
-            rotationStartRatioPreset: result.rotationStartRatioPreset,
-            acceptedLayoutVariant: result.acceptedLayoutVariant.rawValue,
-            acceptedRatioPreset: result.acceptedRatioPreset,
-            rotationKeyHashPrefix: result.rotationKeyHashPrefix,
-            slots: result.slots.map { slot in
+            sceneType: scenePlan.sceneType.rawValue,
+            layoutPolicyId: scenePlan.layoutPolicyId,
+            layoutVariant: scenePlan.layoutVariant.rawValue,
+            ratioPreset: scenePlan.ratioPreset,
+            acceptedSceneSearchTier: scenePlan.acceptedSceneSearchTier.rawValue,
+            fallbackReason: scenePlan.fallbackReason?.rawValue ?? "none",
+            fallbackCategory: scenePlan.fallbackCategory.rawValue,
+            candidateWindowUsed: scenePlan.candidateWindowUsed,
+            evaluationCount: scenePlan.evaluationCount,
+            rotationStartLayoutVariant: scenePlan.rotationStartLayoutVariant.rawValue,
+            rotationStartRatioPreset: scenePlan.rotationStartRatioPreset,
+            acceptedLayoutVariant: scenePlan.acceptedLayoutVariant.rawValue,
+            acceptedRatioPreset: scenePlan.acceptedRatioPreset,
+            rotationKeyHashPrefix: scenePlan.rotationKeyHashPrefix,
+            slots: scenePlan.slots.map { slot in
                 SlotRow(
                     role: slot.role.rawValue,
                     candidateReference: slot.candidateReference,

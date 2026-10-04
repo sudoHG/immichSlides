@@ -6,6 +6,12 @@ import ImageIO
 // final pool = union(all Album_i, all Person_j(mode)).
 
 enum StrictE2EFilterContract {
+    private static let minimumCropMarginRatio: Double = 0.04
+    private static let sampleWidthPixels: Int = 80
+    private static let sampleHeightPixels: Int = 80
+    private static let channelTolerance: Int = 24
+    private static let minimumMatchRatio: Double = 0.98
+
     // This only locates the full public pattern candidate in the waiting screenshot; the raw full-screen surroundings
     // must still pass the Python image contract.
     static func displayCandidatePNG(_ png: Data, evidenceDirectory: URL) throws -> Data {
@@ -27,18 +33,22 @@ enum StrictE2EFilterContract {
                 let height = Int((Double(reference.height) * scale).rounded())
                 let left = (image.width - width) / 2
                 let top = (image.height - height) / 2
-                guard Double(max(left, top)) >= Double(min(image.width, image.height)) * 0.04,
+                guard Double(max(left, top)) >= Double(min(image.width, image.height)) * minimumCropMarginRatio,
                     let crop = image.cropping(to: CGRect(x: left, y: top, width: width, height: height)),
                     let observed = displaySample(crop), let expected = displaySample(reference)
                 else { continue }
                 var matches = 0
-                for pixel in 0..<(80 * 80) {
+                for pixel in 0..<(sampleWidthPixels * sampleHeightPixels) {
                     let offset = pixel * 4
-                    if (0..<3).allSatisfy({ abs(Int(observed[offset + $0]) - Int(expected[offset + $0])) <= 24 }) {
+                    if (0..<3).allSatisfy({
+                        abs(Int(observed[offset + $0]) - Int(expected[offset + $0])) <= channelTolerance
+                    }) {
                         matches += 1
                     }
                 }
-                guard Double(matches) / Double(80 * 80) >= 0.98 else { continue }
+                guard Double(matches) / Double(sampleWidthPixels * sampleHeightPixels) >= minimumMatchRatio else {
+                    continue
+                }
                 let output = NSMutableData()
                 guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil)
                 else {
@@ -59,20 +69,20 @@ enum StrictE2EFilterContract {
 
     private static func displaySample(_ image: CGImage) -> [UInt8]? {
         guard let encodedRGB = image.copy(colorSpace: CGColorSpaceCreateDeviceRGB()) else { return nil }
-        var pixels = [UInt8](repeating: 0, count: 80 * 80 * 4)
-        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+        var pixels = [UInt8](repeating: 0, count: sampleWidthPixels * sampleHeightPixels * 4)
+        let didDraw = pixels.withUnsafeMutableBytes { buffer -> Bool in
             guard
                 let context = CGContext(
-                    data: buffer.baseAddress, width: 80, height: 80, bitsPerComponent: 8,
-                    bytesPerRow: 80 * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    data: buffer.baseAddress, width: sampleWidthPixels, height: sampleHeightPixels, bitsPerComponent: 8,
+                    bytesPerRow: sampleWidthPixels * 4, space: CGColorSpaceCreateDeviceRGB(),
                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
                 )
             else { return false }
             context.interpolationQuality = .high
-            context.draw(encodedRGB, in: CGRect(x: 0, y: 0, width: 80, height: 80))
+            context.draw(encodedRGB, in: CGRect(x: 0, y: 0, width: sampleWidthPixels, height: sampleHeightPixels))
             return true
         }
-        return drawn ? pixels : nil
+        return didDraw ? pixels : nil
     }
 
     enum AssertionError: LocalizedError {

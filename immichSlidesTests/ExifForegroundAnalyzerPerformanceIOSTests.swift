@@ -1,5 +1,5 @@
 //
-//  ExifForegroundAnalyzerPerformanceTests.swift
+//  ExifForegroundAnalyzerPerformanceIOSTests.swift
 //  immichSlidesTests
 //
 //  Compares the run time of the three EXIF text-color algorithms; does not assert millisecond thresholds.
@@ -14,7 +14,7 @@ import UIKit
 
 @Suite(.enabled(if: isEvidenceRun))
 @MainActor
-struct ExifForegroundAnalyzerPerformanceTests {
+struct ExifForegroundAnalyzerPerformanceIOSTests {
 
     private func timedMs(_ block: () -> Void) -> Double {
         let start = CFAbsoluteTimeGetCurrent()

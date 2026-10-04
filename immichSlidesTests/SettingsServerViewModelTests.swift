@@ -4,6 +4,8 @@ import Testing
 
 @Suite(.serialized, .sharedRuntimeIsolation)
 struct SettingsServerViewModelTests {
+    private let retryDelayNanoseconds: UInt64 = 1_000_000_000
+    private let settlingYieldCount: Int = 6
 
     @Test
     @MainActor
@@ -45,7 +47,7 @@ struct SettingsServerViewModelTests {
             delayAction: { _ in
                 await delayGate.wait()
             },
-            automaticRetryDelaySchedule: [1_000_000_000]
+            automaticRetryDelaySchedule: [retryDelayNanoseconds]
         )
 
         viewModel.serverURL = "http://192.168.1.20:2283"
@@ -238,7 +240,7 @@ struct SettingsServerViewModelTests {
 
     @MainActor
     private func settleAsyncWork() async {
-        for _ in 0..<6 {
+        for _ in 0..<settlingYieldCount {
             await Task.yield()
         }
     }

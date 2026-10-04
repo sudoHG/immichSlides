@@ -3,7 +3,7 @@ import Testing
 @testable import immichSlides
 
 @Suite
-struct FilterSummaryNavigationIdentityTests {
+struct FilterSummaryNavigationIdentityIOSTests {
     @Test
     func `album and people entries use distinct stable identifiers`() {
         #expect(FilterSummarySelectionCardKind.album.accessibilityIdentifier == "filterSummary.album.button")

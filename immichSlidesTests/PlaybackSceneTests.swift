@@ -13,6 +13,7 @@ import Testing
 @MainActor
 @Suite
 struct PlaybackSceneTests {
+    private let geometryComparisonTolerance: CGFloat = 0.000_001
 
     @Test
     func `single photo scene generates a stable scene id and slot id`() {
@@ -264,10 +265,10 @@ struct PlaybackSceneTests {
             cropRect: PlaybackPlanningRect(x: 0.25, y: 0, width: 0.5, height: 1)
         )
 
-        #expect(abs(placement.imageFrame.minX - -50) < 0.000_001)
-        #expect(abs(placement.imageFrame.minY - 0) < 0.000_001)
-        #expect(abs(placement.imageFrame.width - 200) < 0.000_001)
-        #expect(abs(placement.imageFrame.height - 100) < 0.000_001)
+        #expect(abs(placement.imageFrame.minX - -50) < geometryComparisonTolerance)
+        #expect(abs(placement.imageFrame.minY - 0) < geometryComparisonTolerance)
+        #expect(abs(placement.imageFrame.width - 200) < geometryComparisonTolerance)
+        #expect(abs(placement.imageFrame.height - 100) < geometryComparisonTolerance)
     }
 
     @Test

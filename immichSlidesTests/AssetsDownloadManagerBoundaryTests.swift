@@ -167,7 +167,7 @@ struct AssetsDownloadManagerBoundaryTests {
             priority: .low
         )
 
-        let highPriorityRequest = Task {
+        let highPriorityRequestTask = Task {
             await manager.loadPhoto(assetId: assetId, size: .fullsize, priority: .high)
         }
         await Task.yield()
@@ -178,7 +178,7 @@ struct AssetsDownloadManagerBoundaryTests {
         #expect(manager.runningPhotoLoadPriorityForTesting(assetId: assetId, size: .fullsize) == .high)
 
         seededTask.cancel()
-        await highPriorityRequest.value
+        await highPriorityRequestTask.value
         manager.clearSeededRunningPhotoLoadForTesting(assetId: assetId, size: .fullsize)
     }
 
