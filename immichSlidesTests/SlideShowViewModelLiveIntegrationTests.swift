@@ -12,9 +12,11 @@ import Testing
 @MainActor
 @Suite(.sharedRuntimeIsolation)
 struct SlideShowViewModelLiveIntegrationTests {
+    private let albumQueryLimit: Int = 5
+    private let personQueryLimit: Int = 1000
 
     private nonisolated static let liveConfiguration = TestServerConfiguration.current
-    private nonisolated static let liveEnabled = liveConfiguration != nil
+    private nonisolated static let isLiveEnabled = liveConfiguration != nil
     private nonisolated static let personWindowEvidencePath = resolvePersonWindowEvidencePath(
         environment: ProcessInfo.processInfo.environment,
         temporaryDirectory: FileManager.default.temporaryDirectory
@@ -41,7 +43,7 @@ struct SlideShowViewModelLiveIntegrationTests {
         }
     }
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     @MainActor
     func `random mode loadAssets finishes loading and returns assets`() async {
 
@@ -56,13 +58,13 @@ struct SlideShowViewModelLiveIntegrationTests {
         }
     }
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     @MainActor
     func `filtered mode loadAssets finishes loading and returns assets`() async throws {
 
         try await runWithIsolatedLiveServer {
             let api = ImmichAPIService.shared
-            let albums = try await api.getAllAlbums(size: 5)
+            let albums = try await api.getAllAlbums(size: albumQueryLimit)
             let albumId = try #require(albums.first?.id)
 
             let selection = FilterSelection(
@@ -78,7 +80,7 @@ struct SlideShowViewModelLiveIntegrationTests {
         }
     }
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     @MainActor
     func `random mode prepareInitialAssets finishes preloading the first frame`() async {
 
@@ -91,7 +93,7 @@ struct SlideShowViewModelLiveIntegrationTests {
         }
     }
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     @MainActor
     func `live qa_playback_sequence evidence is sanitized`() async throws {
         try await runWithIsolatedLiveServer {
@@ -170,7 +172,9 @@ struct SlideShowViewModelLiveIntegrationTests {
             })
         )
         if visibleLayer.role == .incoming {
-            let visibleTime = (visibleLayer.fadeStartTime ?? ProcessInfo.processInfo.systemUptime) + 0.5
+            let visibleTime =
+                (visibleLayer.fadeStartTime ?? ProcessInfo.processInfo.systemUptime)
+                + SceneTransitionDiagnostic.firstVisibleTickOffsetSeconds
             vm.scenePresentationTimestampProviderForTesting = { visibleTime }
         }
         let displayedLayer = try #require(
@@ -288,7 +292,7 @@ struct SlideShowViewModelLiveIntegrationTests {
     }
 
     @Test(
-        .enabled(if: liveEnabled, "No local live config; a skip does not mean live dedup was verified")
+        .enabled(if: isLiveEnabled, "No local live config; a skip does not mean live dedup was verified")
     )
     @MainActor
     func `live person filter qa_playback_sequence recent 20 entries have no duplicates`() async throws {
@@ -296,7 +300,7 @@ struct SlideShowViewModelLiveIntegrationTests {
 
         try await runWithIsolatedLiveServer {
             let api = ImmichAPIService.shared
-            let people = try await api.getAllPeople(size: 1000)
+            let people = try await api.getAllPeople(size: personQueryLimit)
             let assetCountByPersonId = try await Self.assetCountsByPersonId(
                 for: people,
                 api: api
@@ -309,7 +313,7 @@ struct SlideShowViewModelLiveIntegrationTests {
             guard let selected else {
                 try writePersonWindowPlaybackSequenceEvidence(
                     status: "BLOCKED_DATA",
-                    skipped: true,
+                    didSkip: true,
                     reason:
                         "no unique-named person with statistics.assets>=\(Self.recentStableIdWindowSize); uniqueNamed=\(assetCountByPersonId.count)",
                     capturedLines: [],
@@ -343,7 +347,7 @@ struct SlideShowViewModelLiveIntegrationTests {
             guard vm.assets.count >= Self.recentStableIdWindowSize else {
                 try writePersonWindowPlaybackSequenceEvidence(
                     status: "BLOCKED_DATA",
-                    skipped: true,
+                    didSkip: true,
                     reason:
                         "deterministic person filter returned \(vm.assets.count) assets; need at least \(Self.recentStableIdWindowSize) for latest-20 uniqueness evidence",
                     capturedLines: capturedLines,
@@ -400,7 +404,7 @@ struct SlideShowViewModelLiveIntegrationTests {
             guard hasEnoughAdvances && hasLatestWindow else {
                 try writePersonWindowPlaybackSequenceEvidence(
                     status: "BLOCKED_DATA",
-                    skipped: true,
+                    didSkip: true,
                     reason:
                         "committedAdvanceCount=\(committedAdvanceCount), latestStableIds=\(latestStableIds.count); need \(Self.requiredAdvanceCount) advances and \(Self.recentStableIdWindowSize) stable ids",
                     capturedLines: capturedLines,
@@ -418,7 +422,7 @@ struct SlideShowViewModelLiveIntegrationTests {
 
             try writePersonWindowPlaybackSequenceEvidence(
                 status: hasNoLatestDuplicates ? "PASS" : "FAIL",
-                skipped: false,
+                didSkip: false,
                 reason: hasNoLatestDuplicates
                     ? nil
                     : "committedAdvanceCount=\(committedAdvanceCount), latestStableIds=\(latestStableIds.count), uniqueLatestStableIds=\(latestStableIdSet.count)",
@@ -435,24 +439,24 @@ struct SlideShowViewModelLiveIntegrationTests {
         }
     }
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     @MainActor
     func `calling firstPreload repeatedly is idempotent`() async {
         await runWithIsolatedLiveServer {
             let vm = SlideShowViewModel(source: .random)
             await vm.firstPreload()
             let firstCount = vm.assets.count
-            let firstFlag = vm.didFirstPreload
+            let didFirstPreload = vm.didFirstPreload
 
             await vm.firstPreload()
 
-            #expect(firstFlag)
+            #expect(didFirstPreload)
             #expect(vm.didFirstPreload)
             #expect(vm.assets.count >= firstCount)
         }
     }
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     @MainActor
     func `loadMoreAssets never shrinks the asset count`() async {
         await runWithIsolatedLiveServer {
@@ -557,7 +561,7 @@ struct SlideShowViewModelLiveIntegrationTests {
 
     private func writePersonWindowPlaybackSequenceEvidence(
         status: String,
-        skipped: Bool,
+        didSkip: Bool,
         reason: String?,
         capturedLines: [String],
         latestStableIds: [String],
@@ -576,7 +580,7 @@ struct SlideShowViewModelLiveIntegrationTests {
             # person-filter window qa_playback_sequence live evidence
 
             status=\(status)
-            skipped=\(skipped ? "true" : "false")
+            skipped=\(didSkip ? "true" : "false")
             reason=\(reason ?? "none")
             selectionRule=\(selectionRule)
             selectedAssetCount=\(selection.map { String($0.assetCount) } ?? "none")
@@ -602,21 +606,21 @@ struct SlideShowViewModelLiveIntegrationTests {
 
             """
 
-        let rawAssetIdPresent =
+        let hasRawAssetId =
             rawAssetIds
             .filter { $0.count >= 8 }
             .contains { body.contains($0) }
-        let serverURLPresent = [
+        let hasServerURL = [
             configuration?.serverURL, configuration.map { ImmichServer.normalizeServerURL($0.serverURL) }
         ]
         .compactMap { $0 }
         .filter { !$0.isEmpty }
         .contains { body.contains($0) }
-        let selectedPersonIdPresent: Bool
+        let hasSelectedPersonId: Bool
         if let personId = selection?.personId, personId.count >= 8 {
-            selectedPersonIdPresent = body.contains(personId)
+            hasSelectedPersonId = body.contains(personId)
         } else {
-            selectedPersonIdPresent = false
+            hasSelectedPersonId = false
         }
         let selectedPersonNamePresent: Bool
         if let displayName = selection?.displayName, !displayName.isEmpty {
@@ -626,14 +630,14 @@ struct SlideShowViewModelLiveIntegrationTests {
         } else {
             selectedPersonNamePresent = false
         }
-        let apiKeyPresent: Bool
+        let hasAPIKey: Bool
         if let apiKey = configuration?.apiKey, apiKey.count >= 8 {
-            apiKeyPresent = body.contains(apiKey)
+            hasAPIKey = body.contains(apiKey)
         } else {
-            apiKeyPresent = false
+            hasAPIKey = false
         }
 
-        if rawAssetIdPresent || serverURLPresent || apiKeyPresent || selectedPersonIdPresent
+        if hasRawAssetId || hasServerURL || hasAPIKey || hasSelectedPersonId
             || selectedPersonNamePresent
         {
             let privacyFailureBody = """
@@ -642,18 +646,18 @@ struct SlideShowViewModelLiveIntegrationTests {
                 status=FAIL_PRIVACY_CHECK
                 skipped=false
                 reason=evidence body would include private values; sanitized lines were not written
-                rawAssetIdPresent=\(rawAssetIdPresent)
-                serverURLPresent=\(serverURLPresent)
-                apiKeyPresent=\(apiKeyPresent)
-                selectedPersonIdPresent=\(selectedPersonIdPresent)
+                rawAssetIdPresent=\(hasRawAssetId)
+                serverURLPresent=\(hasServerURL)
+                apiKeyPresent=\(hasAPIKey)
+                selectedPersonIdPresent=\(hasSelectedPersonId)
                 selectedPersonNamePresent=\(selectedPersonNamePresent)
 
                 """
             try privacyFailureBody.write(toFile: Self.personWindowEvidencePath, atomically: true, encoding: .utf8)
-            #expect(rawAssetIdPresent == false)
-            #expect(serverURLPresent == false)
-            #expect(apiKeyPresent == false)
-            #expect(selectedPersonIdPresent == false)
+            #expect(hasRawAssetId == false)
+            #expect(hasServerURL == false)
+            #expect(hasAPIKey == false)
+            #expect(hasSelectedPersonId == false)
             #expect(selectedPersonNamePresent == false)
             return
         }

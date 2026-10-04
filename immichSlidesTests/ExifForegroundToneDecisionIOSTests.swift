@@ -7,7 +7,7 @@ import UIKit
 
 @Suite
 @MainActor
-struct ExifForegroundToneDecisionTests {
+struct ExifForegroundToneDecisionIOSTests {
 
     private func makeToneDecisionImage(
         topColor: UIColor,

@@ -381,8 +381,8 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         )
         try AccessLifecycleContract.assertSystemPauseActivation(
             activation: AccessLifecycleContract.allowedSystemPauseActivation,
-            processRebuilt: processRebuilt,
-            homeLeftAppRunning: homeLeftAppRunning
+            didRebuildProcess: processRebuilt,
+            didHomeLeaveAppRunning: homeLeftAppRunning
         )
         try assertNarrowEntryHasNoPin(app: app)
         let identityStarted = Date()
@@ -715,16 +715,16 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         try AccessLifecycleContract.assertNotSkip("ran")
         try AccessLifecycleContract.assertSettingsSource("real_settings_ui")
         try AccessLifecycleContract.assertPinFlow(
-            wrongPinEntered: false,
-            cancelStillProtected: true,
-            correctPinEntered: true,
-            restartGated: true
+            didEnterWrongPin: false,
+            isProtectedAfterCancel: true,
+            didEnterCorrectPin: true,
+            isGatedAfterRestart: true
         )
         try AccessLifecycleContract.assertKnownRequests(requests)
         try AccessLifecycleContract.assertNoRetryMasking(false)
-        let d01 = try AccessLifecycleContract.d01Verdict(
+        let d01 = try AccessLifecycleContract.pinStorageVerdict(
             storageKind: "uitest_userdefaults",
-            xctestConfigPresent: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            isXCTestConfigPresent: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         )
         let screenshotNames = [
             "pin-enabled",
@@ -977,7 +977,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         }
         let stackPreserved = openSourceLink.waitForExistence(timeout: 8)
         XCTAssertTrue(stackPreserved, "After going back, must still be on About; the back stack must not be lost.")
-        try AccessLifecycleContract.assertIPadLicenseReturn(device: "ipad", stackPreserved: stackPreserved)
+        try AccessLifecycleContract.assertIPadLicenseReturn(device: "ipad", isStackPreserved: stackPreserved)
         returnToSlideshowFromSettings(app: app)
         return ["applicable": true, "stack_preserved": stackPreserved]
     }
@@ -1549,16 +1549,16 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     private func revealPlaybackControls(app: XCUIApplication) {
         let playPause = playPauseButton(app)
         let settingsExists = app.buttons["slideshow.control.settings.button"].exists
-        if AccessLifecycleContract.playbackControlsAreRevealed(
-            playPauseHittable: playPause.exists && playPause.isHittable
+        if AccessLifecycleContract.isPlaybackControlBarRevealed(
+            isPlayPauseHittable: playPause.exists && playPause.isHittable
         ) {
             return
         }
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertPlaybackControlsRevealedByTarget(
-                playPauseHittable: playPause.exists && playPause.isHittable,
-                settingsExists: settingsExists,
-                treatedAsRevealed: false
+                isPlayPauseHittable: playPause.exists && playPause.isHittable,
+                isSettingsPresent: settingsExists,
+                isTreatedAsRevealed: false
             )
         )
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
@@ -1574,11 +1574,11 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     private func waitForPlaybackControls(app: XCUIApplication, timeout: TimeInterval) -> Bool {
         waitUntil(timeout: timeout) {
             self.dismissSystemSavePromptIfPresent(app: app, timeout: 0)
-            return AccessLifecycleContract.playbackPageHasArrived(
-                settingsExists: app.buttons["slideshow.control.settings.button"].exists,
-                nextExists: app.buttons["slideshow.control.next.button"].exists,
-                playPauseExists: self.playPauseButton(app).exists,
-                hintExists: app.descendants(matching: .any)["slideshow.entryHint.banner"].exists
+            return AccessLifecycleContract.hasPlaybackPageArrived(
+                isSettingsPresent: app.buttons["slideshow.control.settings.button"].exists,
+                isNextPresent: app.buttons["slideshow.control.next.button"].exists,
+                isPlayPausePresent: self.playPauseButton(app).exists,
+                isHintPresent: app.descendants(matching: .any)["slideshow.entryHint.banner"].exists
             )
         }
     }
@@ -1722,10 +1722,10 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     @MainActor
     private func playPauseState(_ button: XCUIElement) -> String {
         guard button.exists else {
-            return AccessLifecycleContract.playPauseControlValue(exists: false, rawValue: nil)
+            return AccessLifecycleContract.playPauseControlValue(isPresent: false, rawValue: nil)
         }
         return AccessLifecycleContract.playPauseControlValue(
-            exists: true,
+            isPresent: true,
             rawValue: button.value as? String
         )
     }
@@ -1760,8 +1760,8 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertConfirmPlayPauseWakesCanvasBeforeWait(
-                wokeCanvas: true,
-                tappedPlayPauseToWake: false
+                didWakeCanvas: true,
+                didTapPlayPauseToWake: false
             )
         )
         let visible = playPauseButton(app)
@@ -1772,9 +1772,9 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         )
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertPlaybackControlsRevealedByTarget(
-                playPauseHittable: playPauseButton(app).isHittable,
-                settingsExists: app.buttons["slideshow.control.settings.button"].exists,
-                treatedAsRevealed: true
+                isPlayPauseHittable: playPauseButton(app).isHittable,
+                isSettingsPresent: app.buttons["slideshow.control.settings.button"].exists,
+                isTreatedAsRevealed: true
             )
         )
         if tapIfNeeded && playPauseState(visible) != expected {
@@ -1958,8 +1958,8 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         try AccessLifecycleContract.assertPauseUsesVisibleIdentity(
             pauseMark: beforePause.mark,
             afterNextMark: afterNext.mark,
-            usedProgressProbe: false,
-            usedControlValueOnly: false
+            didUseProgressProbe: false,
+            didUseControlValueOnly: false
         )
 
         let holdStart = Date()
@@ -1986,14 +1986,14 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             pressIssuedElapsed: 0,
             pressReturnedElapsed: press.returned.timeIntervalSince(press.issued),
             continueOriginElapsed: 0,
-            usedReturnedAsOrigin: false
+            didUseReturnedAsOrigin: false
         )
         try AccessLifecycleContract.assertContinueClockStartsAtPress(
             confirmWaitSecondsBeforeClock: 0
         )
         try AccessLifecycleContract.assertPlayPauseNotRetappedBecauseMissing(
-            alreadyTapped: true,
-            retappedBecauseMissing: false
+            didAlreadyTap: true,
+            didRetapBecauseMissing: false
         )
         XCTAssertTrue(
             waitForPlayPauseState(app: app, expected: "pause", timeout: 4),
@@ -2080,7 +2080,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                     "status": sample.status,
                     "mark": sample.mark,
                     "mean_luma": sample.meanLuma,
-                    "control_bar_visible": sample.controlBarVisible
+                    "control_bar_visible": sample.isControlBarVisible
                 ]
             }
             var confirmationItem: [String: Any] = [
@@ -2202,7 +2202,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                     "status": sample.status,
                     "mark": sample.mark,
                     "mean_luma": jsonNumber(sample.meanLuma),
-                    "control_bar_visible": sample.controlBarVisible
+                    "control_bar_visible": sample.isControlBarVisible
                 ]
             }
             let baselineValue: Any = baselineLuma.map { jsonNumber($0) } ?? NSNull()
@@ -2263,7 +2263,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                 status: identity.status.rawValue,
                 mark: continueWatchMark(identity),
                 meanLuma: identity.meanLuma,
-                controlBarVisible: raw.controlBarVisible
+                isControlBarVisible: raw.controlBarVisible
             )
             let frame = ContinueWatchFrame(sample: sample, png: raw.png)
             frames.append(frame)
@@ -2339,7 +2339,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         }
         try AccessLifecycleContract.assertRecordingDidNotStopAtIdentityTimeout(
             lastSampleRequestElapsed: samples.last?.requestElapsed ?? 0,
-            confirmedNewImage: confirmed != nil,
+            hasConfirmedNewImage: confirmed != nil,
             intervalSeconds: interval
         )
         if let earlyPNG {
@@ -2459,7 +2459,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                     status: identity.status.rawValue,
                     mark: continueWatchMark(identity),
                     meanLuma: identity.meanLuma,
-                    controlBarVisible: raw.controlBarVisible
+                    isControlBarVisible: raw.controlBarVisible
                 )
                 samples.append(sample)
                 guard

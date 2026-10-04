@@ -74,8 +74,8 @@ final class SettingsResumeContractTests: XCTestCase {
             try AccessLifecycleContract.assertPauseUsesVisibleIdentity(
                 pauseMark: "A1",
                 afterNextMark: "A2",
-                usedProgressProbe: true,
-                usedControlValueOnly: false
+                didUseProgressProbe: true,
+                didUseControlValueOnly: false
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("progress"))
@@ -84,8 +84,8 @@ final class SettingsResumeContractTests: XCTestCase {
             try AccessLifecycleContract.assertPauseUsesVisibleIdentity(
                 pauseMark: "A1",
                 afterNextMark: "A2",
-                usedProgressProbe: false,
-                usedControlValueOnly: true
+                didUseProgressProbe: false,
+                didUseControlValueOnly: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("control value"))
@@ -94,16 +94,16 @@ final class SettingsResumeContractTests: XCTestCase {
             try AccessLifecycleContract.assertPauseUsesVisibleIdentity(
                 pauseMark: "A1",
                 afterNextMark: "A1",
-                usedProgressProbe: false,
-                usedControlValueOnly: false
+                didUseProgressProbe: false,
+                didUseControlValueOnly: false
             )
         )
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertPauseUsesVisibleIdentity(
                 pauseMark: "A1",
                 afterNextMark: "A2",
-                usedProgressProbe: false,
-                usedControlValueOnly: false
+                didUseProgressProbe: false,
+                didUseControlValueOnly: false
             )
         )
     }
@@ -273,15 +273,15 @@ final class SettingsResumeContractTests: XCTestCase {
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertSystemPauseActivation(
                 activation: "open_new_process",
-                processRebuilt: false,
-                homeLeftAppRunning: true
+                didRebuildProcess: false,
+                didHomeLeaveAppRunning: true
             )
         )
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertSystemPauseActivation(
                 activation: AccessLifecycleContract.allowedSystemPauseActivation,
-                processRebuilt: true,
-                homeLeftAppRunning: false
+                didRebuildProcess: true,
+                didHomeLeaveAppRunning: false
             )
         )
         XCTAssertThrowsError(
@@ -405,148 +405,148 @@ final class SettingsResumeContractTests: XCTestCase {
     func testTVOSIntervalSearchRequiresPlaybackSettingsPage() {
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertTVOSPlaybackSettingsEntered(
-                autoPlayLinkFocused: false,
-                homePlaybackFocused: true
+                isAutoPlayLinkFocused: false,
+                isHomePlaybackFocused: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("playback settings"))
         }
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertTVOSPlaybackSettingsEntered(
-                autoPlayLinkFocused: false,
-                homePlaybackFocused: false
+                isAutoPlayLinkFocused: false,
+                isHomePlaybackFocused: false
             )
         )
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertTVOSPlaybackSettingsEntered(
-                autoPlayLinkFocused: true,
-                homePlaybackFocused: false
+                isAutoPlayLinkFocused: true,
+                isHomePlaybackFocused: false
             )
         )
     }
 
     func testMissingPlayPauseControlIsNotPausedAndMustNotRetap() {
         XCTAssertEqual(
-            AccessLifecycleContract.playPauseControlValue(exists: false, rawValue: "play"),
+            AccessLifecycleContract.playPauseControlValue(isPresent: false, rawValue: "play"),
             ""
         )
         XCTAssertEqual(
-            AccessLifecycleContract.playPauseControlValue(exists: true, rawValue: "Play"),
+            AccessLifecycleContract.playPauseControlValue(isPresent: true, rawValue: "Play"),
             "play"
         )
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertMissingPlayPauseIsNotPaused(
-                exists: false,
-                inferredPaused: true
+                isPresent: false,
+                isInferredPaused: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("Missing controls"))
         }
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertMissingPlayPauseIsNotPaused(
-                exists: false,
-                inferredPaused: false
+                isPresent: false,
+                isInferredPaused: false
             )
         )
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertPlayPauseNotRetappedBecauseMissing(
-                alreadyTapped: true,
-                retappedBecauseMissing: true
+                didAlreadyTap: true,
+                didRetapBecauseMissing: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("tap again"))
         }
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertPlayPauseNotRetappedBecauseMissing(
-                alreadyTapped: true,
-                retappedBecauseMissing: false
+                didAlreadyTap: true,
+                didRetapBecauseMissing: false
             )
         )
     }
 
     func testSettingsExistsIsNotPlaybackControlsRevealed() {
         XCTAssertFalse(
-            AccessLifecycleContract.playbackControlsAreRevealed(playPauseHittable: false)
+            AccessLifecycleContract.isPlaybackControlBarRevealed(isPlayPauseHittable: false)
         )
         XCTAssertTrue(
-            AccessLifecycleContract.playbackControlsAreRevealed(playPauseHittable: true)
+            AccessLifecycleContract.isPlaybackControlBarRevealed(isPlayPauseHittable: true)
         )
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertPlaybackControlsRevealedByTarget(
-                playPauseHittable: false,
-                settingsExists: true,
-                treatedAsRevealed: true
+                isPlayPauseHittable: false,
+                isSettingsPresent: true,
+                isTreatedAsRevealed: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("play/pause"))
         }
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertPlaybackControlsRevealedByTarget(
-                playPauseHittable: true,
-                settingsExists: true,
-                treatedAsRevealed: true
+                isPlayPauseHittable: true,
+                isSettingsPresent: true,
+                isTreatedAsRevealed: true
             )
         )
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertPlaybackControlsRevealedByTarget(
-                playPauseHittable: false,
-                settingsExists: true,
-                treatedAsRevealed: false
+                isPlayPauseHittable: false,
+                isSettingsPresent: true,
+                isTreatedAsRevealed: false
             )
         )
     }
 
     func testPlaybackPageArrivalMustNotRequireHittable() {
         XCTAssertTrue(
-            AccessLifecycleContract.playbackPageHasArrived(
-                settingsExists: true,
-                nextExists: false,
-                playPauseExists: false,
-                hintExists: false
+            AccessLifecycleContract.hasPlaybackPageArrived(
+                isSettingsPresent: true,
+                isNextPresent: false,
+                isPlayPausePresent: false,
+                isHintPresent: false
             )
         )
         XCTAssertTrue(
-            AccessLifecycleContract.playbackPageHasArrived(
-                settingsExists: false,
-                nextExists: false,
-                playPauseExists: false,
-                hintExists: true
+            AccessLifecycleContract.hasPlaybackPageArrived(
+                isSettingsPresent: false,
+                isNextPresent: false,
+                isPlayPausePresent: false,
+                isHintPresent: true
             )
         )
         XCTAssertFalse(
-            AccessLifecycleContract.playbackPageHasArrived(
-                settingsExists: false,
-                nextExists: false,
-                playPauseExists: false,
-                hintExists: false
+            AccessLifecycleContract.hasPlaybackPageArrived(
+                isSettingsPresent: false,
+                isNextPresent: false,
+                isPlayPausePresent: false,
+                isHintPresent: false
             )
         )
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertPlaybackPageArrivalIgnoresTemporaryUnhittable(
-                existsOnPlaybackPage: true,
-                treatedAsArrived: false
+                isPresentOnPlaybackPage: true,
+                isTreatedAsArrived: false
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("temporarily unhittable"))
         }
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertPlaybackPageArrivalIgnoresTemporaryUnhittable(
-                existsOnPlaybackPage: true,
-                treatedAsArrived: true
+                isPresentOnPlaybackPage: true,
+                isTreatedAsArrived: true
             )
         )
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertPlaybackPageArrivalIgnoresTemporaryUnhittable(
-                existsOnPlaybackPage: false,
-                treatedAsArrived: true
+                isPresentOnPlaybackPage: false,
+                isTreatedAsArrived: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("before the playback page is reached"))
         }
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertPlaybackPageArrivalIgnoresTemporaryUnhittable(
-                existsOnPlaybackPage: false,
-                treatedAsArrived: false
+                isPresentOnPlaybackPage: false,
+                isTreatedAsArrived: false
             )
         )
     }
@@ -554,36 +554,36 @@ final class SettingsResumeContractTests: XCTestCase {
     func testEnterPlaybackWaitMustNotTapOrUsePrivateQuiescence() {
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertEnterPlaybackWaitDoesNotTapOrBypassQuiescence(
-                tappedCanvas: true,
-                tappedHint: false,
-                usedPrivateQuiescenceBypass: false
+                didTapCanvas: true,
+                didTapHint: false,
+                didUsePrivateQuiescenceBypass: false
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("tap the canvas or hint"))
         }
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertEnterPlaybackWaitDoesNotTapOrBypassQuiescence(
-                tappedCanvas: false,
-                tappedHint: true,
-                usedPrivateQuiescenceBypass: false
+                didTapCanvas: false,
+                didTapHint: true,
+                didUsePrivateQuiescenceBypass: false
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("tap the canvas or hint"))
         }
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertEnterPlaybackWaitDoesNotTapOrBypassQuiescence(
-                tappedCanvas: false,
-                tappedHint: false,
-                usedPrivateQuiescenceBypass: true
+                didTapCanvas: false,
+                didTapHint: false,
+                didUsePrivateQuiescenceBypass: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("private wait"))
         }
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertEnterPlaybackWaitDoesNotTapOrBypassQuiescence(
-                tappedCanvas: false,
-                tappedHint: false,
-                usedPrivateQuiescenceBypass: false
+                didTapCanvas: false,
+                didTapHint: false,
+                didUsePrivateQuiescenceBypass: false
             )
         )
     }
@@ -591,24 +591,24 @@ final class SettingsResumeContractTests: XCTestCase {
     func testConfirmPlayPauseMustWakeCanvasEvenIfHittable() {
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertConfirmPlayPauseWakesCanvasBeforeWait(
-                wokeCanvas: false,
-                tappedPlayPauseToWake: false
+                didWakeCanvas: false,
+                didTapPlayPauseToWake: false
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("Tap the canvas"))
         }
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertConfirmPlayPauseWakesCanvasBeforeWait(
-                wokeCanvas: true,
-                tappedPlayPauseToWake: true
+                didWakeCanvas: true,
+                didTapPlayPauseToWake: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("tap again"))
         }
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertConfirmPlayPauseWakesCanvasBeforeWait(
-                wokeCanvas: true,
-                tappedPlayPauseToWake: false
+                didWakeCanvas: true,
+                didTapPlayPauseToWake: false
             )
         )
     }
@@ -636,51 +636,51 @@ final class SettingsResumeContractTests: XCTestCase {
     func testTVOSPlaybackPageWithNoFocusIsNotHome() {
         XCTAssertEqual(
             AccessLifecycleContract.tvosSettingsPageIdentity(
-                playbackSettingsContentVisible: true,
-                homeEntryVisible: true,
-                homeUniqueVisible: true
+                isPlaybackSettingsContentVisible: true,
+                isHomeEntryVisible: true,
+                isHomeUniqueVisible: true
             ),
             "home"
         )
         XCTAssertEqual(
             AccessLifecycleContract.tvosSettingsPageIdentity(
-                playbackSettingsContentVisible: true,
-                homeEntryVisible: false
+                isPlaybackSettingsContentVisible: true,
+                isHomeEntryVisible: false
             ),
             "playback"
         )
         XCTAssertEqual(
             AccessLifecycleContract.tvosSettingsPageIdentity(
-                playbackSettingsContentVisible: false,
-                homeEntryVisible: true
+                isPlaybackSettingsContentVisible: false,
+                isHomeEntryVisible: true
             ),
             "home"
         )
         XCTAssertEqual(
             AccessLifecycleContract.tvosSettingsPageIdentity(
-                playbackSettingsContentVisible: false,
-                homeEntryVisible: false
+                isPlaybackSettingsContentVisible: false,
+                isHomeEntryVisible: false
             ),
             "unknown"
         )
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertTVOSPageIdentityNotInferredFromMissingFocus(
-                playbackSettingsContentVisible: true,
-                classifiedAsHome: true
+                isPlaybackSettingsContentVisible: true,
+                isClassifiedAsHome: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("settings home"))
         }
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertTVOSPageIdentityNotInferredFromMissingFocus(
-                playbackSettingsContentVisible: true,
-                classifiedAsHome: false
+                isPlaybackSettingsContentVisible: true,
+                isClassifiedAsHome: false
             )
         )
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertTVOSPlaybackSettingsEntered(
-                autoPlayLinkFocused: true,
-                homePlaybackFocused: false
+                isAutoPlayLinkFocused: true,
+                isHomePlaybackFocused: false
             )
         )
     }
@@ -691,13 +691,13 @@ final class SettingsResumeContractTests: XCTestCase {
             available: [5, 8, 10, 12, 15, 30]
         )
         XCTAssertEqual(exact.actual, 12)
-        XCTAssertFalse(exact.desktopCloseoutRequired)
+        XCTAssertFalse(exact.shouldRequireIntervalReview)
         let tv = try AccessLifecycleContract.resolveTimingInterval(
             requested: 12,
             available: AccessLifecycleContract.tvOSSelectableIntervals
         )
         XCTAssertEqual(tv.actual, 10)
-        XCTAssertTrue(tv.desktopCloseoutRequired)
+        XCTAssertTrue(tv.shouldRequireIntervalReview)
         XCTAssertFalse(AccessLifecycleContract.tvOSSelectableIntervals.contains(12))
     }
 
@@ -807,7 +807,7 @@ final class SettingsResumeContractTests: XCTestCase {
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertFirstTransitionStartOfficialPass(
                 verdict: verdict,
-                officialSigned: true
+                isOfficiallySigned: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("pending video review"))
@@ -1008,12 +1008,14 @@ final class SettingsResumeContractTests: XCTestCase {
                 request: 10.1 + Double(index) * 0.1,
                 mark: index == 40 ? "A1" : "A5",
                 luma: luma,
-                controlBar: index < 22,
+                isControlBarVisible: index < 22,
                 returnLag: 0.05
             )
         }
         let latePhotoFrames: [AccessLifecycleContract.ContinueWatchSample] = (1...12).map { index in
-            watchSample(request: 14.1 + Double(index) * 0.1, mark: "A1", luma: 0.47, controlBar: false, returnLag: 0.05)
+            watchSample(
+                request: 14.1 + Double(index) * 0.1, mark: "A1", luma: 0.47, isControlBarVisible: false, returnLag: 0.05
+            )
         }
         let controlsOnly = controlsPrefix + latePhotoFrames
         XCTAssertThrowsError(
@@ -1129,7 +1131,7 @@ final class SettingsResumeContractTests: XCTestCase {
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertRecordingDidNotStopAtIdentityTimeout(
                 lastSampleRequestElapsed: 14.0,
-                confirmedNewImage: false,
+                hasConfirmedNewImage: false,
                 intervalSeconds: 12
             )
         ) { error in
@@ -1138,14 +1140,14 @@ final class SettingsResumeContractTests: XCTestCase {
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertRecordingDidNotStopAtIdentityTimeout(
                 lastSampleRequestElapsed: 14.7,
-                confirmedNewImage: true,
+                hasConfirmedNewImage: true,
                 intervalSeconds: 12
             )
         )
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertRecordingDidNotStopAtIdentityTimeout(
                 lastSampleRequestElapsed: 18.0,
-                confirmedNewImage: false,
+                hasConfirmedNewImage: false,
                 intervalSeconds: 12
             )
         )
@@ -1166,7 +1168,7 @@ final class SettingsResumeContractTests: XCTestCase {
                 pressIssuedElapsed: 0,
                 pressReturnedElapsed: 0.29,
                 continueOriginElapsed: 0.29,
-                usedReturnedAsOrigin: true
+                didUseReturnedAsOrigin: true
             )
         ) { error in
             XCTAssertTrue(String(describing: error).contains("click return"))
@@ -1176,7 +1178,7 @@ final class SettingsResumeContractTests: XCTestCase {
                 pressIssuedElapsed: 0,
                 pressReturnedElapsed: 0.29,
                 continueOriginElapsed: 0,
-                usedReturnedAsOrigin: false
+                didUseReturnedAsOrigin: false
             )
         )
     }
@@ -1187,7 +1189,7 @@ final class SettingsResumeContractTests: XCTestCase {
                 status: "MATCH",
                 mark: "A5",
                 continueMark: "A5",
-                controlBarVisible: true
+                isControlBarVisible: true
             )
         )
         XCTAssertThrowsError(
@@ -1195,7 +1197,7 @@ final class SettingsResumeContractTests: XCTestCase {
                 status: "MATCH",
                 mark: "A5",
                 continueMark: "A5",
-                controlBarVisible: false
+                isControlBarVisible: false
             )
         )
         XCTAssertThrowsError(
@@ -1203,7 +1205,7 @@ final class SettingsResumeContractTests: XCTestCase {
                 status: "BLACK",
                 mark: "BLACK",
                 continueMark: "A5",
-                controlBarVisible: true
+                isControlBarVisible: true
             )
         )
         XCTAssertThrowsError(
@@ -1211,7 +1213,7 @@ final class SettingsResumeContractTests: XCTestCase {
                 status: "UNRECOGNIZABLE",
                 mark: "UNRECOGNIZABLE",
                 continueMark: "A5",
-                controlBarVisible: true
+                isControlBarVisible: true
             )
         )
         XCTAssertNoThrow(
@@ -1219,7 +1221,7 @@ final class SettingsResumeContractTests: XCTestCase {
                 status: "TRANSITION",
                 mark: "TRANSITION",
                 continueMark: "A5",
-                controlBarVisible: true
+                isControlBarVisible: true
             )
         )
         XCTAssertNoThrow(
@@ -1227,7 +1229,7 @@ final class SettingsResumeContractTests: XCTestCase {
                 status: "MATCH",
                 mark: "A1",
                 continueMark: "A5",
-                controlBarVisible: true
+                isControlBarVisible: true
             )
         )
         let zoomOnly = [
@@ -1258,7 +1260,7 @@ final class SettingsResumeContractTests: XCTestCase {
         mark: String,
         status: String = "MATCH",
         luma: Double = 0.5,
-        controlBar: Bool = true,
+        isControlBarVisible: Bool = true,
         returnLag: TimeInterval = 0.3,
         classifyLag: TimeInterval = 0.8
     ) -> AccessLifecycleContract.ContinueWatchSample {
@@ -1269,7 +1271,7 @@ final class SettingsResumeContractTests: XCTestCase {
             status: status,
             mark: mark,
             meanLuma: luma,
-            controlBarVisible: controlBar
+            isControlBarVisible: isControlBarVisible
         )
     }
 }

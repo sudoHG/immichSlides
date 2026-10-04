@@ -26,7 +26,7 @@ struct SlideShowViewModelAutoPlayOutgoingExifTests {
         let snapshot = try uniqueOutgoingA2Window(
             harness.viewModel,
             clock: clock,
-            requireAutoPlay: true
+            shouldRequireAutoPlay: true
         )
         let outgoing = try #require(snapshot.layers.first { $0.role == .outgoing })
         let outgoingScene = try #require(harness.viewModel.scene(for: outgoing))
@@ -49,7 +49,7 @@ struct SlideShowViewModelAutoPlayOutgoingExifTests {
         let harness = makeSinglePhotoAutoplayHarness(suffix: "pausedOutgoingExif", clock: clock)
         defer { harness.tearDown() }
 
-        _ = try uniqueOutgoingA2Window(harness.viewModel, clock: clock, requireAutoPlay: true)
+        _ = try uniqueOutgoingA2Window(harness.viewModel, clock: clock, shouldRequireAutoPlay: true)
         harness.viewModel.toggleAutoPlayFromUserInteraction()
         let snapshot = harness.viewModel.sceneRenderSnapshot
         try #require(!harness.viewModel.isAutoPlay)
@@ -71,7 +71,7 @@ struct SlideShowViewModelAutoPlayOutgoingExifTests {
         let harness = makeSinglePhotoAutoplayHarness(suffix: "resumeOutgoingExif", clock: clock)
         defer { harness.tearDown() }
 
-        _ = try uniqueOutgoingA2Window(harness.viewModel, clock: clock, requireAutoPlay: true)
+        _ = try uniqueOutgoingA2Window(harness.viewModel, clock: clock, shouldRequireAutoPlay: true)
         harness.viewModel.toggleAutoPlayFromUserInteraction()
         try #require(!harness.viewModel.isAutoPlay)
         try #require(harness.viewModel.visibleOverlayAsset?.id == "asset-a-2")
@@ -226,14 +226,14 @@ struct SlideShowViewModelAutoPlayOutgoingExifTests {
     private func uniqueOutgoingA2Window(
         _ vm: SlideShowViewModel,
         clock: PresentationClock,
-        requireAutoPlay: Bool
+        shouldRequireAutoPlay: Bool
     ) throws -> PlaybackSessionEngine.SceneRenderSnapshot {
         _ = try startAutomaticA2ToA3ReadyTransition(vm, clock: clock)
         clock.now += 0.5
         let snapshot = vm.sceneRenderSnapshot
         let outgoing = try #require(snapshot.layers.first { $0.role == .outgoing })
         let incoming = try #require(snapshot.layers.last { $0.role == .incoming })
-        if requireAutoPlay {
+        if shouldRequireAutoPlay {
             try #require(vm.isAutoPlay)
         }
         try #require(snapshot.phase == .transition)
@@ -313,7 +313,7 @@ struct SlideShowViewModelAutoPlayOutgoingExifTests {
         else {
             return
         }
-        clock.now = (incoming.fadeStartTime ?? clock.now) + 0.5
+        clock.now = (incoming.fadeStartTime ?? clock.now) + SceneTransitionDiagnostic.firstVisibleTickOffsetSeconds
         vm.incomingBecameVisible(
             ScenePresentationLayerIdentity(
                 generation: incoming.identity.generation,

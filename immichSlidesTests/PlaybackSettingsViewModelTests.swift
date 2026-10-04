@@ -416,16 +416,16 @@ struct SharedRuntimeIsolationSentinelTests {
     func `shared isolation scope restores settings, filter selection, and download state`() async {
         let settingsStore = PlaybackSettingsStore()
         let selectionStore = FilterSelectionStore()
-        let manager = AssetsDownloadManager.shared
+        let downloadManager = AssetsDownloadManager.shared
         let defaults = UserDefaults.standard
         let originalSettings = defaults.object(forKey: "playbackSettings")
         let originalSelection = defaults.object(forKey: "filterSelection")
-        let originalAssetStates = manager.assetStates
-        let originalAssetPreviewStates = manager.assetPreviewStates
-        let originalAssetThumbnailStates = manager.assetThumbnailStates
-        let originalAssetURLs = manager.assetURLs
-        let originalAssetPreviewURLs = manager.assetPreviewURLs
-        let originalAssetThumbnailURLs = manager.assetThumbnailURLs
+        let originalAssetStates = downloadManager.assetStates
+        let originalAssetPreviewStates = downloadManager.assetPreviewStates
+        let originalAssetThumbnailStates = downloadManager.assetThumbnailStates
+        let originalAssetURLs = downloadManager.assetURLs
+        let originalAssetPreviewURLs = downloadManager.assetPreviewURLs
+        let originalAssetThumbnailURLs = downloadManager.assetThumbnailURLs
         let settings = PlaybackSettings()
         let selection = FilterSelection(
             albumIds: ["u04-sentinel-album"],
@@ -437,20 +437,20 @@ struct SharedRuntimeIsolationSentinelTests {
 
         settingsStore.save(settings)
         selectionStore.save(selection)
-        manager.assetStates["u04-sentinel"] = .readyToPlay
-        manager.assetURLs["u04-sentinel"] = sentinelURL
-        manager.assetPreviewStates["u04-preview"] = .readyToPlay
-        manager.assetThumbnailStates["u04-thumbnail"] = .readyToPlay
-        manager.assetPreviewURLs["u04-preview"] = previewURL
-        manager.assetThumbnailURLs["u04-thumbnail"] = thumbnailURL
+        downloadManager.assetStates["u04-sentinel"] = .readyToPlay
+        downloadManager.assetURLs["u04-sentinel"] = sentinelURL
+        downloadManager.assetPreviewStates["u04-preview"] = .readyToPlay
+        downloadManager.assetThumbnailStates["u04-thumbnail"] = .readyToPlay
+        downloadManager.assetPreviewURLs["u04-preview"] = previewURL
+        downloadManager.assetThumbnailURLs["u04-thumbnail"] = thumbnailURL
         defer {
-            manager.resetForServerConfigurationChange()
-            manager.assetStates = originalAssetStates
-            manager.assetPreviewStates = originalAssetPreviewStates
-            manager.assetThumbnailStates = originalAssetThumbnailStates
-            manager.assetURLs = originalAssetURLs
-            manager.assetPreviewURLs = originalAssetPreviewURLs
-            manager.assetThumbnailURLs = originalAssetThumbnailURLs
+            downloadManager.resetForServerConfigurationChange()
+            downloadManager.assetStates = originalAssetStates
+            downloadManager.assetPreviewStates = originalAssetPreviewStates
+            downloadManager.assetThumbnailStates = originalAssetThumbnailStates
+            downloadManager.assetURLs = originalAssetURLs
+            downloadManager.assetPreviewURLs = originalAssetPreviewURLs
+            downloadManager.assetThumbnailURLs = originalAssetThumbnailURLs
             defaults.set(originalSettings, forKey: "playbackSettings")
             defaults.set(originalSelection, forKey: "filterSelection")
         }
@@ -458,22 +458,22 @@ struct SharedRuntimeIsolationSentinelTests {
         await ServerConfigurationTestIsolation.runWithSharedRuntimeState {
             PlaybackSettingsStore().clear()
             FilterSelectionStore().clear()
-            manager.assetStates.removeAll()
-            manager.assetURLs.removeAll()
-            manager.assetPreviewStates.removeAll()
-            manager.assetThumbnailStates.removeAll()
-            manager.assetPreviewURLs.removeAll()
-            manager.assetThumbnailURLs.removeAll()
+            downloadManager.assetStates.removeAll()
+            downloadManager.assetURLs.removeAll()
+            downloadManager.assetPreviewStates.removeAll()
+            downloadManager.assetThumbnailStates.removeAll()
+            downloadManager.assetPreviewURLs.removeAll()
+            downloadManager.assetThumbnailURLs.removeAll()
         }
 
         #expect(settingsStore.load() == settings)
         #expect(selectionStore.load() == selection)
-        #expect(manager.assetStates["u04-sentinel"] == .readyToPlay)
-        #expect(manager.assetURLs["u04-sentinel"] == sentinelURL)
-        #expect(manager.assetPreviewStates["u04-preview"] == .readyToPlay)
-        #expect(manager.assetThumbnailStates["u04-thumbnail"] == .readyToPlay)
-        #expect(manager.assetPreviewURLs["u04-preview"] == previewURL)
-        #expect(manager.assetThumbnailURLs["u04-thumbnail"] == thumbnailURL)
+        #expect(downloadManager.assetStates["u04-sentinel"] == .readyToPlay)
+        #expect(downloadManager.assetURLs["u04-sentinel"] == sentinelURL)
+        #expect(downloadManager.assetPreviewStates["u04-preview"] == .readyToPlay)
+        #expect(downloadManager.assetThumbnailStates["u04-thumbnail"] == .readyToPlay)
+        #expect(downloadManager.assetPreviewURLs["u04-preview"] == previewURL)
+        #expect(downloadManager.assetThumbnailURLs["u04-thumbnail"] == thumbnailURL)
     }
 
     @Test

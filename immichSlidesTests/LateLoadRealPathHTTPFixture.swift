@@ -41,12 +41,13 @@ final class LateLoadLocalHTTPFixture: Sendable {
         var openConnections: [ObjectIdentifier: NWConnection] = [:]
         var port: UInt16 = 0
         var boundHost: String?
-        var usesSystemAssignedPort = false
+        var isUsingSystemAssignedPort = false
     }
 
     private let stateLock = OSAllocatedUnfairLock(initialState: State())
     private let queue = DispatchQueue(label: "late-load.http")
     private static let listenerStartTimeoutSeconds: TimeInterval = 10
+    private static let receiveChunkSizeBytes: Int = 16 * 1024
     private let defaultJPEG: Data
 
     var port: UInt16 {
@@ -57,14 +58,14 @@ final class LateLoadLocalHTTPFixture: Sendable {
         stateLock.withLock { $0.boundHost }
     }
 
-    var usesSystemAssignedPort: Bool {
-        stateLock.withLock { $0.usesSystemAssignedPort }
+    var isUsingSystemAssignedPort: Bool {
+        stateLock.withLock { $0.isUsingSystemAssignedPort }
     }
 
     var isListeningOnLoopbackOnly: Bool {
         stateLock.withLock { state in
             state.boundHost == LateLoadRealPathFixture.loopbackHost
-                && state.usesSystemAssignedPort
+                && state.isUsingSystemAssignedPort
                 && state.port > 0
         }
     }
@@ -235,7 +236,7 @@ final class LateLoadLocalHTTPFixture: Sendable {
         }
         stateLock.withLock { state in
             state.boundHost = LateLoadRealPathFixture.loopbackHost
-            state.usesSystemAssignedPort = true
+            state.isUsingSystemAssignedPort = true
             state.port = rawPort
         }
     }
@@ -266,7 +267,7 @@ final class LateLoadLocalHTTPFixture: Sendable {
     }
 
     private func receiveRequest(on connection: NWConnection, buffer: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: Self.receiveChunkSizeBytes) {
             [weak self] data, _, isComplete, error in
             guard let self else { return }
             if error != nil {

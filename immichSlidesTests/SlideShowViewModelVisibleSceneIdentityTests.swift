@@ -133,14 +133,14 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
             try await fixture.start()
             #expect(fixture.isListeningOnLoopbackOnly)
             #expect(fixture.boundHost == LateLoadRealPathFixture.loopbackHost)
-            #expect(fixture.usesSystemAssignedPort)
+            #expect(fixture.isUsingSystemAssignedPort)
             #expect(fixture.port > 0)
 
             ImmichServer.clearSavedConfiguration()
             ImmichAPIService.shared.reloadServerConfiguration()
             let keyBeforeSave = ImmichAPIService.shared.getApiKey() ?? ""
 
-            var stubWriterRan = false
+            var didStubWriterRun = false
             let server = ImmichServer(
                 immichURL: ImmichServer.normalizeServerURL(
                     "http://\(LateLoadRealPathFixture.loopbackHost):\(fixture.port)"
@@ -148,21 +148,21 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
                 immichApiKey: LateLoadRealPathFixture.fixtureCredential
             )
             let didSave = server.save { _ in
-                stubWriterRan = true
+                didStubWriterRun = true
                 return true
             }
             #expect(didSave)
-            #expect(stubWriterRan)
+            #expect(didStubWriterRun)
             // Compute the Bool first so #expect does not expand the environment key or the getApiKey() literal.
-            let keyStillUnchangedAfterStubSave =
+            let isKeyUnchangedAfterStubSave =
                 (ImmichAPIService.shared.getApiKey() ?? "") == keyBeforeSave
-            #expect(keyStillUnchangedAfterStubSave)
+            #expect(isKeyUnchangedAfterStubSave)
 
             ImmichAPIService.shared.reloadServerConfiguration()
-            #expect(loadedKeyMatchesFixtureCredential())
+            #expect(isLoadedKeyFixtureCredential())
             if let envKey = ProcessInfo.processInfo.environment["IMMICH_TEST_API_KEY"], !envKey.isEmpty {
-                let usesEnvironmentKey = ImmichAPIService.shared.getApiKey() == envKey
-                #expect(!usesEnvironmentKey)
+                let isUsingEnvironmentKey = ImmichAPIService.shared.getApiKey() == envKey
+                #expect(!isUsingEnvironmentKey)
             }
             if let loadedURL = ImmichServer.load()?.immichURL {
                 #expect(loadedURL.contains("\(LateLoadRealPathFixture.loopbackHost):\(fixture.port)"))
@@ -176,17 +176,17 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
 
             let recorded = fixture.completedRequests()
             #expect(!recorded.isEmpty)
-            let allHostsAreLoopback = recorded.allSatisfy { request in
+            let isEveryHostLoopback = recorded.allSatisfy { request in
                 (request.host ?? "").hasPrefix(LateLoadRealPathFixture.loopbackHost)
             }
-            #expect(allHostsAreLoopback)
-            let sawFixtureCredential = recorded.contains { $0.apiKey == LateLoadRealPathFixture.fixtureCredential }
-            #expect(sawFixtureCredential)
-            let noForeignCredential = !recorded.contains { request in
+            #expect(isEveryHostLoopback)
+            let didSeeFixtureCredential = recorded.contains { $0.apiKey == LateLoadRealPathFixture.fixtureCredential }
+            #expect(didSeeFixtureCredential)
+            let hasNoForeignCredential = !recorded.contains { request in
                 guard let apiKey = request.apiKey, !apiKey.isEmpty else { return false }
                 return apiKey != LateLoadRealPathFixture.fixtureCredential
             }
-            #expect(noForeignCredential)
+            #expect(hasNoForeignCredential)
         }
     }
 
@@ -221,7 +221,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
                     credential: LateLoadRealPathFixture.fixtureCredential
                 )
                 #expect(didInstall)
-                #expect(loadedKeyMatchesFixtureCredential())
+                #expect(isLoadedKeyFixtureCredential())
 
                 let assetA = "late-load-real-a-\(UUID().uuidString)"
                 let assetB = "late-load-real-b-\(UUID().uuidString)"
@@ -438,7 +438,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
                     credential: LateLoadRealPathFixture.fixtureCredential
                 )
                 #expect(didInstall)
-                #expect(loadedKeyMatchesFixtureCredential())
+                #expect(isLoadedKeyFixtureCredential())
 
                 let assets = makeFixtureSetAAssets()
                 let assetIds = assets.map(\.id)
@@ -590,7 +590,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
                     credential: LateLoadRealPathFixture.fixtureCredential
                 )
                 #expect(didInstall)
-                #expect(loadedKeyMatchesFixtureCredential())
+                #expect(isLoadedKeyFixtureCredential())
 
                 let assets = makeFixtureSetAAssets()
                 let assetIds = assets.map(\.id)
@@ -742,7 +742,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         store.save(
             PlaybackSettings(
                 autoPlayEnabled: true,
-                intervalSeconds: 5,
+                intervalSeconds: Int(SceneLifecycleContract.minimumInterval),
                 displayMode: .singlePhoto
             )
         )
@@ -773,7 +773,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         try #require(vm.safeCurrentScene?.primaryAssetId == "asset-a-2")
         try #require(vm.isAutoPlay)
 
-        clock.now += 5
+        clock.now += SceneLifecycleContract.minimumInterval
         let deadline = vm.fireScheduledScenePresentationWakeUpForTesting()
         try #require(deadline != nil)
         clock.now = deadline ?? clock.now
@@ -908,7 +908,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         store.save(
             PlaybackSettings(
                 autoPlayEnabled: true,
-                intervalSeconds: 5,
+                intervalSeconds: Int(SceneLifecycleContract.minimumInterval),
                 displayMode: .smartFill
             )
         )
@@ -931,7 +931,8 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         vm.transitionWindowPreloadHookForTesting = { _, _, _ in }
         vm.updateSmartFillSurfaceForTesting(
             PlaybackSmartFillSurface(
-                pixelSize: PlaybackPlanningPixelSize(width: 2732, height: 2048),
+                pixelSize: PlaybackPlanningPixelSize(
+                    width: Self.iPadPortraitPlanningHeightPoints, height: Self.iPadPortraitPlanningWidthPoints),
                 profile: .iPad,
                 orientation: .landscape
             )
@@ -961,14 +962,14 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         try #require(didPrepareNext)
         let tokenBeforeAutoPlay = vm.targetTransitionToken
 
-        clock.now += 5
+        clock.now += SceneLifecycleContract.minimumInterval
         var deadline = vm.fireScheduledScenePresentationWakeUpForTesting()
         if vm.targetTransitionToken == tokenBeforeAutoPlay {
             let didPrepareAfterSkippedTick = await waitUntilForTesting {
                 vm.preparedSmartFillNextAssetIdsForTesting != nil
             }
             try #require(didPrepareAfterSkippedTick)
-            clock.now += 5
+            clock.now += SceneLifecycleContract.minimumInterval
             deadline = vm.fireScheduledScenePresentationWakeUpForTesting()
         }
         try #require(deadline != nil)
@@ -1017,7 +1018,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
                 credential: LateLoadRealPathFixture.fixtureCredential
             )
             #expect(didInstall)
-            #expect(loadedKeyMatchesFixtureCredential())
+            #expect(isLoadedKeyFixtureCredential())
 
             let assetId = "late-load-probe-\(UUID().uuidString)"
             prepareRealLoadPhoto(assetId: assetId, port: fixture.port)
@@ -1025,7 +1026,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         }
     }
 
-    private func loadedKeyMatchesFixtureCredential() -> Bool {
+    private func isLoadedKeyFixtureCredential() -> Bool {
         ImmichAPIService.shared.getApiKey() == LateLoadRealPathFixture.fixtureCredential
     }
 
@@ -1069,7 +1070,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         store.save(
             PlaybackSettings(
                 autoPlayEnabled: true,
-                intervalSeconds: 5,
+                intervalSeconds: Int(SceneLifecycleContract.minimumInterval),
                 displayMode: .singlePhoto
             )
         )
@@ -1104,7 +1105,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         try #require(vm.safeCurrentScene?.primaryAssetId == "asset-a-2")
         try #require(vm.isAutoPlay)
 
-        clock.now += 5
+        clock.now += SceneLifecycleContract.minimumInterval
         let deadline = vm.fireScheduledScenePresentationWakeUpForTesting()
         try #require(deadline != nil)
         clock.now = deadline ?? clock.now
@@ -1164,7 +1165,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         else {
             return
         }
-        clock.now = (incoming.fadeStartTime ?? clock.now) + 0.5
+        clock.now = (incoming.fadeStartTime ?? clock.now) + SceneTransitionDiagnostic.firstVisibleTickOffsetSeconds
         vm.incomingBecameVisible(
             ScenePresentationLayerIdentity(
                 generation: incoming.identity.generation,
@@ -1214,7 +1215,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         else {
             return
         }
-        let visibleTime = (incoming.fadeStartTime ?? 0) + 0.5
+        let visibleTime = (incoming.fadeStartTime ?? 0) + SceneTransitionDiagnostic.firstVisibleTickOffsetSeconds
         vm.scenePresentationTimestampProviderForTesting = { visibleTime }
         vm.incomingBecameVisible(
             ScenePresentationLayerIdentity(

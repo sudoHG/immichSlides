@@ -15,7 +15,7 @@ import Testing
 struct PerformanceLiveIntegrationTests {
 
     private nonisolated static let liveConfiguration = TestServerConfiguration.current
-    private nonisolated static let liveEnabled = liveConfiguration != nil
+    private nonisolated static let isLiveEnabled = liveConfiguration != nil
 
     private func configureLiveServer() {
 
@@ -82,7 +82,7 @@ struct PerformanceLiveIntegrationTests {
         print("[perf] threshold (ms) = \(String(format: "%.1f", limit))")
     }
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     func `resolver builds a 100 asset playback pool within the time threshold`() async throws {
 
         try await runWithIsolatedLiveServer {
@@ -125,7 +125,7 @@ struct PerformanceLiveIntegrationTests {
         }
     }
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     @MainActor
     func `preparing initial assets for the first frame stays within the time threshold`() async throws {
 
@@ -157,7 +157,7 @@ struct PerformanceLiveIntegrationTests {
         }
     }
 
-    @Test(.enabled(if: liveEnabled))
+    @Test(.enabled(if: isLiveEnabled))
     @MainActor
     func `loading more assets incrementally stays within the time threshold`() async throws {
 

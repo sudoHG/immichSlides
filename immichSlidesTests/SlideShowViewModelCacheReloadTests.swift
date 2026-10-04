@@ -153,13 +153,13 @@ struct SlideShowViewModelCacheReloadTests {
         currentId: String,
         neighborId: String
     ) async -> (current: [ThumbnailSize: String], neighbor: [ThumbnailSize: String]) {
-        let manager = vm.downloadManager
-        _ = manager.seedRunningPhotoLoadForTesting(
+        let downloadManager = vm.downloadManager
+        _ = downloadManager.seedRunningPhotoLoadForTesting(
             assetId: currentId,
             size: .fullsize,
             priority: .high
         )
-        _ = manager.seedRunningPhotoLoadForTesting(
+        _ = downloadManager.seedRunningPhotoLoadForTesting(
             assetId: currentId,
             size: .preview,
             priority: .high
@@ -173,7 +173,7 @@ struct SlideShowViewModelCacheReloadTests {
         var neighbor: [ThumbnailSize: String] = [:]
 
         await captureLifecycleRequestIdsInProductionOrder(
-            manager: manager,
+            downloadManager: downloadManager,
             currentId: currentId,
             neighborId: neighborId,
             size: .fullsize,
@@ -181,7 +181,7 @@ struct SlideShowViewModelCacheReloadTests {
             neighbor: &neighbor
         )
         await captureLifecycleRequestIdsInProductionOrder(
-            manager: manager,
+            downloadManager: downloadManager,
             currentId: currentId,
             neighborId: neighborId,
             size: .preview,
@@ -194,7 +194,7 @@ struct SlideShowViewModelCacheReloadTests {
     }
 
     private func captureLifecycleRequestIdsInProductionOrder(
-        manager: AssetsDownloadManager,
+        downloadManager: AssetsDownloadManager,
         currentId: String,
         neighborId: String,
         size: ThumbnailSize,
@@ -202,31 +202,31 @@ struct SlideShowViewModelCacheReloadTests {
         neighbor: inout [ThumbnailSize: String]
     ) async {
         _ = await waitUntilForTesting {
-            manager.latestLifecycleRequestIdForTesting(assetId: currentId, size: size) != nil
+            downloadManager.latestLifecycleRequestIdForTesting(assetId: currentId, size: size) != nil
         }
         captureLifecycleRequestIds(
-            manager: manager,
+            downloadManager: downloadManager,
             currentId: currentId,
             neighborId: neighborId,
             size: size,
             current: &current,
             neighbor: &neighbor
         )
-        manager.clearSeededRunningPhotoLoadForTesting(assetId: currentId, size: size)
+        downloadManager.clearSeededRunningPhotoLoadForTesting(assetId: currentId, size: size)
     }
 
     private func captureLifecycleRequestIds(
-        manager: AssetsDownloadManager,
+        downloadManager: AssetsDownloadManager,
         currentId: String,
         neighborId: String,
         size: ThumbnailSize,
         current: inout [ThumbnailSize: String],
         neighbor: inout [ThumbnailSize: String]
     ) {
-        if let requestId = manager.latestLifecycleRequestIdForTesting(assetId: currentId, size: size) {
+        if let requestId = downloadManager.latestLifecycleRequestIdForTesting(assetId: currentId, size: size) {
             current[size] = requestId
         }
-        if let requestId = manager.latestLifecycleRequestIdForTesting(assetId: neighborId, size: size) {
+        if let requestId = downloadManager.latestLifecycleRequestIdForTesting(assetId: neighborId, size: size) {
             neighbor[size] = requestId
         }
     }
@@ -244,14 +244,14 @@ struct SlideShowViewModelCacheReloadTests {
         return condition()
     }
 
-    private func markReady(assetId: String, size: ThumbnailSize, in manager: AssetsDownloadManager) {
+    private func markReady(assetId: String, size: ThumbnailSize, in downloadManager: AssetsDownloadManager) {
         switch size {
         case .fullsize:
-            manager.assetStates[assetId] = .readyToPlay
+            downloadManager.assetStates[assetId] = .readyToPlay
         case .preview:
-            manager.assetPreviewStates[assetId] = .readyToPlay
+            downloadManager.assetPreviewStates[assetId] = .readyToPlay
         case .thumbnail:
-            manager.assetThumbnailStates[assetId] = .readyToPlay
+            downloadManager.assetThumbnailStates[assetId] = .readyToPlay
         }
     }
 
@@ -269,18 +269,18 @@ struct SlideShowViewModelCacheReloadTests {
         )
     }
 
-    private func resetSharedDownloadManager(_ manager: AssetsDownloadManager) {
-        manager.assetStates = [:]
-        manager.assetPreviewStates = [:]
-        manager.assetThumbnailStates = [:]
-        manager.assetURLs = [:]
-        manager.assetPreviewURLs = [:]
-        manager.assetThumbnailURLs = [:]
-        manager.resetPlaybackImageRequestLifecycleDiagnostics()
-        manager.clearSeededRunningPhotoLoadForTesting(assetId: "current", size: .fullsize)
-        manager.clearSeededRunningPhotoLoadForTesting(assetId: "current", size: .preview)
-        manager.clearSeededRunningPhotoLoadForTesting(assetId: "neighbor", size: .fullsize)
-        manager.clearSeededRunningPhotoLoadForTesting(assetId: "neighbor", size: .preview)
+    private func resetSharedDownloadManager(_ downloadManager: AssetsDownloadManager) {
+        downloadManager.assetStates = [:]
+        downloadManager.assetPreviewStates = [:]
+        downloadManager.assetThumbnailStates = [:]
+        downloadManager.assetURLs = [:]
+        downloadManager.assetPreviewURLs = [:]
+        downloadManager.assetThumbnailURLs = [:]
+        downloadManager.resetPlaybackImageRequestLifecycleDiagnostics()
+        downloadManager.clearSeededRunningPhotoLoadForTesting(assetId: "current", size: .fullsize)
+        downloadManager.clearSeededRunningPhotoLoadForTesting(assetId: "current", size: .preview)
+        downloadManager.clearSeededRunningPhotoLoadForTesting(assetId: "neighbor", size: .fullsize)
+        downloadManager.clearSeededRunningPhotoLoadForTesting(assetId: "neighbor", size: .preview)
     }
 }
 #endif

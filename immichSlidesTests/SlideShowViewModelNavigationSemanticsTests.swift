@@ -12,6 +12,16 @@ import Testing
 @MainActor
 @Suite(.serialized, .sharedRuntimeIsolation)
 struct SlideShowViewModelNavigationSemanticsTests {
+    private let rawMemoryBudgetBytes: Int = 8 * 1024 * 1024
+    private let conservativeMemoryBudgetBytes: Int = 16 * 1024 * 1024
+    private let iPadLandscapePlanningPixelSize = PlaybackPlanningPixelSize(width: 2732, height: 2048)
+    private let iPhonePortraitPlanningPixelSize = PlaybackPlanningPixelSize(width: 1179, height: 2556)
+    private let latencyToleranceMilliseconds: Double = 0.001
+    private let conservativeMemoryHeadroomFactor: Int = 2
+    // Estimated storage headers exclude payload bytes and reserved capacity.
+    private let estimatedStringStorageOverheadBytes: Int = 32
+    private let estimatedArrayStorageOverheadBytes: Int = 32
+    private let bytesPerMiB: Double = 1_048_576.0
 
     init() {
         // Each test starts from the default display policy, so single-photo mode left by other settings tests
@@ -379,7 +389,7 @@ struct SlideShowViewModelNavigationSemanticsTests {
         resetDownloadManagerState(vm.downloadManager)
         vm.updateSmartFillSurfaceForTesting(
             PlaybackSmartFillSurface(
-                pixelSize: PlaybackPlanningPixelSize(width: 2732, height: 2048),
+                pixelSize: iPadLandscapePlanningPixelSize,
                 profile: .iPad,
                 orientation: .landscape
             )
@@ -467,7 +477,7 @@ struct SlideShowViewModelNavigationSemanticsTests {
         resetDownloadManagerState(vm.downloadManager)
         vm.updateSmartFillSurfaceForTesting(
             PlaybackSmartFillSurface(
-                pixelSize: PlaybackPlanningPixelSize(width: 1179, height: 2556),
+                pixelSize: iPhonePortraitPlanningPixelSize,
                 profile: .iPhone,
                 orientation: .portrait
             )
@@ -840,8 +850,8 @@ struct SlideShowViewModelNavigationSemanticsTests {
         )
 
         #expect(estimate.entryCount == PlaybackHistoryLedgerLimits.retainedEntryLimit)
-        #expect(estimate.rawBytes < 8 * 1024 * 1024)
-        #expect(estimate.conservativeBytes < 16 * 1024 * 1024)
+        #expect(estimate.rawBytes < rawMemoryBudgetBytes)
+        #expect(estimate.conservativeBytes < conservativeMemoryBudgetBytes)
     }
 
     @Test
@@ -1064,7 +1074,7 @@ struct SlideShowViewModelNavigationSemanticsTests {
         vm.scenePresentationTimestampProviderForTesting = { 0 }
         vm.updateSmartFillSurfaceForTesting(
             PlaybackSmartFillSurface(
-                pixelSize: PlaybackPlanningPixelSize(width: 2732, height: 2048),
+                pixelSize: iPadLandscapePlanningPixelSize,
                 profile: .iPad,
                 orientation: .landscape
             )
@@ -1121,7 +1131,8 @@ struct SlideShowViewModelNavigationSemanticsTests {
             return
         }
         if visibleLayer.role == .incoming {
-            let visibleTime = (visibleLayer.fadeStartTime ?? 0) + 0.5
+            let visibleTime =
+                (visibleLayer.fadeStartTime ?? 0) + SceneTransitionDiagnostic.firstVisibleTickOffsetSeconds
             vm.scenePresentationTimestampProviderForTesting = { visibleTime }
         }
         snapshot = vm.sceneRenderSnapshot
@@ -1190,7 +1201,9 @@ struct SlideShowViewModelNavigationSemanticsTests {
     ) {
         #expect(readback?.actionTimestamp == actionTimestamp)
         #expect(readback?.scenePublishTimestamp == scenePublishTimestamp)
-        #expect(abs((readback?.actionToSceneLatencyMilliseconds ?? -1) - latencyMilliseconds) < 0.001)
+        #expect(
+            abs((readback?.actionToSceneLatencyMilliseconds ?? -1) - latencyMilliseconds) < latencyToleranceMilliseconds
+        )
         #expect(readback?.qaDebugSummary.contains("actionTimestamp=\(format(actionTimestamp))") == true)
         #expect(readback?.qaDebugSummary.contains("scenePublishTimestamp=\(format(scenePublishTimestamp))") == true)
         #expect(readback?.qaDebugSummary.contains("actionToSceneLatencyMs=\(format(latencyMilliseconds))") == true)
@@ -1251,7 +1264,7 @@ struct SlideShowViewModelNavigationSemanticsTests {
                 partial + estimateSceneStorage(entry.scene)
             }
         // The memory estimate leaves headroom for Array/String capacity and CoW so it is not too tight.
-        let conservativeBytes = rawBytes * 2
+        let conservativeBytes = rawBytes * conservativeMemoryHeadroomFactor
         return PlaybackHistoryMemoryEstimate(
             entryCount: ledger.entries.count,
             rawBytes: rawBytes,
@@ -1349,7 +1362,7 @@ struct SlideShowViewModelNavigationSemanticsTests {
     }
 
     private func stringStorageBytes(_ value: String) -> Int {
-        32 + value.utf8.count
+        estimatedStringStorageOverheadBytes + value.utf8.count
     }
 
     private func optionalStringStorageBytes(_ value: String?) -> Int {
@@ -1358,11 +1371,11 @@ struct SlideShowViewModelNavigationSemanticsTests {
 
     private func arrayStorageBytes(count: Int, elementStride: Int) -> Int {
         guard count > 0 else { return 0 }
-        return 32 + (count * elementStride)
+        return estimatedArrayStorageOverheadBytes + (count * elementStride)
     }
 
     private func formatMiB(_ bytes: Int) -> String {
-        String(format: "%.3f", Double(bytes) / 1_048_576.0)
+        String(format: "%.3f", Double(bytes) / bytesPerMiB)
     }
 
     private func makeEstimatedHistoryScene(index: Int, slotCount: Int) -> PlaybackScene {

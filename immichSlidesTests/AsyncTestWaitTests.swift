@@ -20,19 +20,19 @@ struct AsyncTestWaitTests {
     }
 
     @Test func `sees state changed by another main actor task while yielding`() async {
-        var flag = false
-        Task { @MainActor in flag = true }
-        let satisfied = await waitUntil { flag }
+        var isConditionSatisfied = false
+        Task { @MainActor in isConditionSatisfied = true }
+        let satisfied = await waitUntil { isConditionSatisfied }
         #expect(satisfied)
     }
 
     @Test func `polls with sleep when an interval is given`() async {
-        var flag = false
+        var isConditionSatisfied = false
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(20))
-            flag = true
+            isConditionSatisfied = true
         }
-        let satisfied = await waitUntil(pollInterval: .milliseconds(1)) { flag }
+        let satisfied = await waitUntil(pollInterval: .milliseconds(1)) { isConditionSatisfied }
         #expect(satisfied)
     }
 }

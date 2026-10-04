@@ -4,6 +4,14 @@ import Foundation
 // or for real persistence; the PIN must never appear in evidence.
 
 enum AccessLifecycleContract {
+    private static let sha256HexCharacterCount: Int = 64
+    private static let timingToleranceSeconds: TimeInterval = 0.001
+    private static let luminanceTolerance: Double = 0.001
+    private static let minimumBaselineLuminance: Double = 0.1
+    private static let maximumPressReturnDelaySeconds: TimeInterval = 2
+    private static let sustainedDimmingLuminanceRatio: Double = 0.95
+    private static let requiredConsecutiveDimmingSampleCount: Int = 3
+
     enum AssertionError: LocalizedError {
         case message(String)
         var errorDescription: String? {
@@ -127,7 +135,7 @@ enum AccessLifecycleContract {
             guard let beforeValue = before[field], let afterValue = afterRestart[field] else {
                 throw AssertionError.message("Missing settings evidence")
             }
-            if !areSettingValuesEqual(beforeValue, afterValue) {
+            if !isSettingValueEqual(beforeValue, afterValue) {
                 throw AssertionError.message("Settings were not persisted")
             }
         }
@@ -137,13 +145,13 @@ enum AccessLifecycleContract {
             "showExif": true,
             "displayMode": "smartFill"
         ]
-        let unchangedDefaults = defaults.keys.allSatisfy { key in
+        let hasUnchangedDefaults = defaults.keys.allSatisfy { key in
             guard let beforeValue = before[key], let defaultValue = defaults[key] else {
                 return false
             }
-            return areSettingValuesEqual(beforeValue, defaultValue)
+            return isSettingValueEqual(beforeValue, defaultValue)
         }
-        if unchangedDefaults {
+        if hasUnchangedDefaults {
             throw AssertionError.message("Settings were not persisted")
         }
     }
@@ -214,8 +222,8 @@ enum AccessLifecycleContract {
         }
     }
 
-    static func assertAutoPlayEnabledAtBackground(_ enabled: Bool) throws {
-        if !enabled {
+    static func assertAutoPlayEnabledAtBackground(_ isEnabled: Bool) throws {
+        if !isEnabled {
             throw AssertionError.message("Autoplay must be on when entering the background")
         }
     }
@@ -267,21 +275,21 @@ enum AccessLifecycleContract {
     }
 
     static func assertPinFlow(
-        wrongPinEntered: Bool,
-        cancelStillProtected: Bool,
-        correctPinEntered: Bool,
-        restartGated: Bool
+        didEnterWrongPin: Bool,
+        isProtectedAfterCancel: Bool,
+        didEnterCorrectPin: Bool,
+        isGatedAfterRestart: Bool
     ) throws {
-        if wrongPinEntered {
+        if didEnterWrongPin {
             throw AssertionError.message("Getting in with a wrong PIN must not count as a pass")
         }
-        if !cancelStillProtected {
+        if !isProtectedAfterCancel {
             throw AssertionError.message("Protection disappearing after cancel must not count as a pass")
         }
-        if !correctPinEntered {
+        if !didEnterCorrectPin {
             throw AssertionError.message("The correct PIN must open settings")
         }
-        if !restartGated {
+        if !isGatedAfterRestart {
             throw AssertionError.message("The gate must still apply after restart")
         }
     }
@@ -295,8 +303,8 @@ enum AccessLifecycleContract {
         return identifiers.contains { $0.hasPrefix(playbackLayerPrefix) }
     }
 
-    static func assertReturnedToSlideshow(identifiers: [String], requireSettingsButton: Bool) throws {
-        if requireSettingsButton {
+    static func assertReturnedToSlideshow(identifiers: [String], shouldRequireSettingsButton: Bool) throws {
+        if shouldRequireSettingsButton {
             throw AssertionError.message("Returning to playback must not require the control bar to be visible")
         }
         if isSlideshowLayer(identifiers: identifiers) == false {
@@ -305,13 +313,13 @@ enum AccessLifecycleContract {
     }
 
     // When the PIN gate blocks the settings page, requiring the playback settings button first must fail.
-    static func assertSettingsOpen(identifiers: [String], requirePlaybackItem: Bool) throws {
-        let pinPresent = identifiers.contains { $0.hasPrefix("pinEntry.") }
-        let settingsPresent = identifiers.contains { $0.hasPrefix("settings.") }
-        if pinPresent == false && settingsPresent == false {
+    static func assertSettingsOpen(identifiers: [String], shouldRequirePlaybackItem: Bool) throws {
+        let isPinPresent = identifiers.contains { $0.hasPrefix("pinEntry.") }
+        let isSettingsPresent = identifiers.contains { $0.hasPrefix("settings.") }
+        if isPinPresent == false && isSettingsPresent == false {
             throw AssertionError.message("After opening settings, the PIN gate or the settings page must be confirmed")
         }
-        if pinPresent && requirePlaybackItem {
+        if isPinPresent && shouldRequirePlaybackItem {
             throw AssertionError.message("Playback settings must not be required while the PIN gate is still up")
         }
     }
@@ -320,20 +328,20 @@ enum AccessLifecycleContract {
     // transition completes and the hidden receiver holds focus stably.
     static func assertSettingsReturnWake(
         identifiers: [String],
-        transitionComplete: Bool,
-        hiddenWakeReceiverFocused: Bool,
-        hiddenWakeReceiverFocusStable: Bool,
+        isTransitionComplete: Bool,
+        isHiddenWakeReceiverFocused: Bool,
+        isHiddenWakeReceiverFocusStable: Bool,
         consecutiveFocusedObservations: Int,
         directionalPressCount: Int,
         beforeScreenshot: String,
         afterScreenshot: String
     ) throws {
-        try assertReturnedToSlideshow(identifiers: identifiers, requireSettingsButton: false)
-        if transitionComplete == false {
+        try assertReturnedToSlideshow(identifiers: identifiers, shouldRequireSettingsButton: false)
+        if isTransitionComplete == false {
             throw AssertionError.message("After settings return, no direction key until the transition completes")
         }
-        if hiddenWakeReceiverFocused == false
-            || hiddenWakeReceiverFocusStable == false
+        if isHiddenWakeReceiverFocused == false
+            || isHiddenWakeReceiverFocusStable == false
             || consecutiveFocusedObservations < minStableHiddenWakeFocusObservations
         {
             throw AssertionError.message("After settings return, must confirm the hidden receiver holds focus stably")
@@ -348,16 +356,16 @@ enum AccessLifecycleContract {
 
     static func assertSystemPauseActivation(
         activation: String,
-        processRebuilt: Bool,
-        homeLeftAppRunning: Bool
+        didRebuildProcess: Bool,
+        didHomeLeaveAppRunning: Bool
     ) throws {
         if activation != allowedSystemPauseActivation {
             throw AssertionError.message("System pause analog must activate the existing process, not Open or rebuild")
         }
-        if processRebuilt {
+        if didRebuildProcess {
             throw AssertionError.message("System pause analog must not rebuild the process")
         }
-        if homeLeftAppRunning == false {
+        if didHomeLeaveAppRunning == false {
             throw AssertionError.message("The process exited after Home; activate would Open/rebuild it")
         }
     }
@@ -393,8 +401,8 @@ enum AccessLifecycleContract {
 
     // Under XCTest the PIN goes through UserDefaults, which must not count as the real Keychain;
     // a Keychain failure stays PARTIAL.
-    static func d01Verdict(storageKind: String, xctestConfigPresent: Bool) throws -> String {
-        if storageKind == "keychain" && xctestConfigPresent {
+    static func pinStorageVerdict(storageKind: String, isXCTestConfigPresent: Bool) throws -> String {
+        if storageKind == "keychain" && isXCTestConfigPresent {
             throw AssertionError.message("Test UserDefaults must not pass for the real Keychain")
         }
         if storageKind == "keychain_failure" {
@@ -421,8 +429,8 @@ enum AccessLifecycleContract {
         }
     }
 
-    static func assertNoRetryMasking(_ retriesUsedToPass: Bool) throws {
-        if retriesUsedToPass {
+    static func assertNoRetryMasking(_ didUseRetriesToPass: Bool) throws {
+        if didUseRetriesToPass {
             throw AssertionError.message("Masking with retries must not count as a pass")
         }
     }
@@ -442,16 +450,18 @@ enum AccessLifecycleContract {
         if modeBefore.isEmpty || modeAfter.isEmpty || modeBefore == modeAfter {
             throw AssertionError.message("A display strategy that did not take effect must not count as a pass")
         }
-        if pngSHA256Before.count != 64 || pngSHA256After.count != 64 || pngSHA256Before == pngSHA256After {
+        if pngSHA256Before.count != sha256HexCharacterCount || pngSHA256After.count != sha256HexCharacterCount
+            || pngSHA256Before == pngSHA256After
+        {
             throw AssertionError.message("A display strategy that did not take effect must not count as a pass")
         }
     }
 
-    static func assertIPadLicenseReturn(device: String, stackPreserved: Bool) throws {
+    static func assertIPadLicenseReturn(device: String, isStackPreserved: Bool) throws {
         if device != "ipad" {
             return
         }
-        if !stackPreserved {
+        if !isStackPreserved {
             throw AssertionError.message("Losing the iPad open-source licenses back stack must not count as a pass")
         }
     }
@@ -474,7 +484,7 @@ enum AccessLifecycleContract {
         let status: String
         let mark: String
         let meanLuma: Double
-        let controlBarVisible: Bool
+        let isControlBarVisible: Bool
     }
 
     struct IPadPauseTimingEvidence {
@@ -495,7 +505,7 @@ enum AccessLifecycleContract {
     }
 
     static func resolveTimingInterval(requested: Int, available: [Int]) throws -> (
-        actual: Int, desktopCloseoutRequired: Bool
+        actual: Int, shouldRequireIntervalReview: Bool
     ) {
         if available.contains(requested) {
             return (requested, false)
@@ -511,7 +521,7 @@ enum AccessLifecycleContract {
             guard let initialValue = initial[field], let changedValue = changed[field] else {
                 throw AssertionError.message("Missing settings evidence")
             }
-            if areSettingValuesEqual(initialValue, changedValue) {
+            if isSettingValueEqual(initialValue, changedValue) {
                 throw AssertionError.message("Must change \(field) to the opposite or another value via real settings")
             }
         }
@@ -531,13 +541,13 @@ enum AccessLifecycleContract {
     static func assertPauseUsesVisibleIdentity(
         pauseMark: String,
         afterNextMark: String,
-        usedProgressProbe: Bool,
-        usedControlValueOnly: Bool
+        didUseProgressProbe: Bool,
+        didUseControlValueOnly: Bool
     ) throws {
-        if usedProgressProbe {
+        if didUseProgressProbe {
             throw AssertionError.message("Must not use the internal progress value instead of time and the screen")
         }
-        if usedControlValueOnly {
+        if didUseControlValueOnly {
             throw AssertionError.message("Photo changes while paused must not be judged by control value changes alone")
         }
         try assertPresentMark(pauseMark)
@@ -573,7 +583,7 @@ enum AccessLifecycleContract {
         if endMark != startMark {
             throw AssertionError.message("An automatic photo change during the pause hold must not count as a pass")
         }
-        if holdSeconds + 0.001 < intervalSeconds + pauseHoldBeyondIntervalSeconds {
+        if holdSeconds + timingToleranceSeconds < intervalSeconds + pauseHoldBeyondIntervalSeconds {
             throw AssertionError.message("The pause hold must last at least T+2 seconds")
         }
     }
@@ -594,59 +604,59 @@ enum AccessLifecycleContract {
     }
 
     // interval.link is also found in the settings home tree, so it cannot stand in for entering playback settings.
-    static func assertTVOSPlaybackSettingsEntered(autoPlayLinkFocused: Bool, homePlaybackFocused: Bool) throws {
-        if homePlaybackFocused || autoPlayLinkFocused == false {
+    static func assertTVOSPlaybackSettingsEntered(isAutoPlayLinkFocused: Bool, isHomePlaybackFocused: Bool) throws {
+        if isHomePlaybackFocused || isAutoPlayLinkFocused == false {
             throw AssertionError.message(
                 "After opening settings, enter playback settings before locating the interval row")
         }
     }
 
     // Do not read value when the control is not in the tree; an empty value must not count as paused.
-    static func playPauseControlValue(exists: Bool, rawValue: String?) -> String {
-        guard exists else { return "" }
+    static func playPauseControlValue(isPresent: Bool, rawValue: String?) -> String {
+        guard isPresent else { return "" }
         return (rawValue ?? "").lowercased()
     }
 
-    static func assertMissingPlayPauseIsNotPaused(exists: Bool, inferredPaused: Bool) throws {
-        if exists == false && inferredPaused {
+    static func assertMissingPlayPauseIsNotPaused(isPresent: Bool, isInferredPaused: Bool) throws {
+        if isPresent == false && isInferredPaused {
             throw AssertionError.message("Missing controls must not be treated as paused")
         }
     }
 
     static func assertPlayPauseNotRetappedBecauseMissing(
-        alreadyTapped: Bool,
-        retappedBecauseMissing: Bool
+        didAlreadyTap: Bool,
+        didRetapBecauseMissing: Bool
     ) throws {
-        if alreadyTapped && retappedBecauseMissing {
+        if didAlreadyTap && didRetapBecauseMissing {
             throw AssertionError.message("Do not tap again and toggle playback")
         }
     }
 
     // A leftover settings button that still exists cannot stand in for a hittable play/pause button.
-    static func playbackControlsAreRevealed(playPauseHittable: Bool) -> Bool {
-        playPauseHittable
+    static func isPlaybackControlBarRevealed(isPlayPauseHittable: Bool) -> Bool {
+        isPlayPauseHittable
     }
 
     // The playback page has arrived once the photo, control bar or onboarding hint is there; being temporarily
     // unhittable is not a failure.
-    static func playbackPageHasArrived(
-        settingsExists: Bool,
-        nextExists: Bool,
-        playPauseExists: Bool,
-        hintExists: Bool
+    static func hasPlaybackPageArrived(
+        isSettingsPresent: Bool,
+        isNextPresent: Bool,
+        isPlayPausePresent: Bool,
+        isHintPresent: Bool
     ) -> Bool {
-        settingsExists || nextExists || playPauseExists || hintExists
+        isSettingsPresent || isNextPresent || isPlayPausePresent || isHintPresent
     }
 
     static func assertPlaybackPageArrivalIgnoresTemporaryUnhittable(
-        existsOnPlaybackPage: Bool,
-        treatedAsArrived: Bool
+        isPresentOnPlaybackPage: Bool,
+        isTreatedAsArrived: Bool
     ) throws {
-        if existsOnPlaybackPage && treatedAsArrived == false {
+        if isPresentOnPlaybackPage && isTreatedAsArrived == false {
             throw AssertionError.message(
                 "Do not fail because the button is temporarily unhittable after the playback screen has arrived")
         }
-        if existsOnPlaybackPage == false && treatedAsArrived {
+        if isPresentOnPlaybackPage == false && isTreatedAsArrived {
             throw AssertionError.message("Do not mark playback as arrived before the playback page is reached")
         }
     }
@@ -654,28 +664,28 @@ enum AccessLifecycleContract {
     // Waiting to enter playback relies only on exists; tapping the hint or the canvas goes through XCTest animation
     // idling, and a private selector must not be used to skip it.
     static func assertEnterPlaybackWaitDoesNotTapOrBypassQuiescence(
-        tappedCanvas: Bool,
-        tappedHint: Bool,
-        usedPrivateQuiescenceBypass: Bool
+        didTapCanvas: Bool,
+        didTapHint: Bool,
+        didUsePrivateQuiescenceBypass: Bool
     ) throws {
-        if usedPrivateQuiescenceBypass {
+        if didUsePrivateQuiescenceBypass {
             throw AssertionError.message("Do not use a private wait bypass to skip XCTest quiescence")
         }
-        if tappedCanvas || tappedHint {
+        if didTapCanvas || didTapHint {
             throw AssertionError.message("Do not tap the canvas or hint while waiting for playback to load")
         }
     }
 
     static func assertPlaybackControlsRevealedByTarget(
-        playPauseHittable: Bool,
-        settingsExists: Bool,
-        treatedAsRevealed: Bool
+        isPlayPauseHittable: Bool,
+        isSettingsPresent: Bool,
+        isTreatedAsRevealed: Bool
     ) throws {
-        if treatedAsRevealed && playPauseHittable == false {
+        if isTreatedAsRevealed && isPlayPauseHittable == false {
             throw AssertionError.message(
                 "A leftover settings button must not stand in for operable play/pause controls")
         }
-        if settingsExists && playPauseHittable == false && treatedAsRevealed {
+        if isSettingsPresent && isPlayPauseHittable == false && isTreatedAsRevealed {
             throw AssertionError.message(
                 "A leftover settings button must not stand in for operable play/pause controls")
         }
@@ -684,13 +694,13 @@ enum AccessLifecycleContract {
     // The first waitForExistence round takes about 1 second, during which the 8-second auto-hide can remove the
     // button; even when it is hittable, the canvas tap must not be skipped.
     static func assertConfirmPlayPauseWakesCanvasBeforeWait(
-        wokeCanvas: Bool,
-        tappedPlayPauseToWake: Bool
+        didWakeCanvas: Bool,
+        didTapPlayPauseToWake: Bool
     ) throws {
-        if wokeCanvas == false {
+        if didWakeCanvas == false {
             throw AssertionError.message("Tap the canvas to wake it before confirming play/pause")
         }
-        if tappedPlayPauseToWake {
+        if didTapPlayPauseToWake {
             throw AssertionError.message("Do not tap again and toggle playback")
         }
     }
@@ -700,7 +710,7 @@ enum AccessLifecycleContract {
     static func assertContinueClockStartsAtPress(
         confirmWaitSecondsBeforeClock: TimeInterval
     ) throws {
-        if confirmWaitSecondsBeforeClock > 0.001 {
+        if confirmWaitSecondsBeforeClock > timingToleranceSeconds {
             throw AssertionError.message("The confirmation wait must not happen before continueAt")
         }
     }
@@ -708,39 +718,39 @@ enum AccessLifecycleContract {
     // If playback settings content is present, we are on that page; a momentary loss of focus does not mean the
     // settings home.
     static func assertTVOSHomeUniqueBeatsPlaybackRowLabel(
-        homeUniqueVisible: Bool,
-        classifiedAsPlayback: Bool
+        isHomeUniqueVisible: Bool,
+        isClassifiedAsPlayback: Bool
     ) throws {
-        if homeUniqueVisible && classifiedAsPlayback {
+        if isHomeUniqueVisible && isClassifiedAsPlayback {
             throw AssertionError.message("The settings home's playback settings label does not mean that page is open")
         }
     }
 
     static func assertTVOSFocusSearchMustNotUseOnlyDownWhenTargetAbove(
-        targetWasAboveFocus: Bool,
-        usedOnlyDown: Bool
+        didTargetAppearAboveFocus: Bool,
+        didUseOnlyDown: Bool
     ) throws {
-        if targetWasAboveFocus && usedOnlyDown {
+        if didTargetAppearAboveFocus && didUseOnlyDown {
             throw AssertionError.message("Must not press only Down when the target is above")
         }
     }
 
     static func tvosSettingsPageIdentity(
-        playbackSettingsContentVisible: Bool,
-        homeEntryVisible: Bool,
-        homeUniqueVisible: Bool = false
+        isPlaybackSettingsContentVisible: Bool,
+        isHomeEntryVisible: Bool,
+        isHomeUniqueVisible: Bool = false
     ) -> String {
-        if homeUniqueVisible { return "home" }
-        if playbackSettingsContentVisible { return "playback" }
-        if homeEntryVisible { return "home" }
+        if isHomeUniqueVisible { return "home" }
+        if isPlaybackSettingsContentVisible { return "playback" }
+        if isHomeEntryVisible { return "home" }
         return "unknown"
     }
 
     static func assertTVOSPageIdentityNotInferredFromMissingFocus(
-        playbackSettingsContentVisible: Bool,
-        classifiedAsHome: Bool
+        isPlaybackSettingsContentVisible: Bool,
+        isClassifiedAsHome: Bool
     ) throws {
-        if playbackSettingsContentVisible && classifiedAsHome {
+        if isPlaybackSettingsContentVisible && isClassifiedAsHome {
             throw AssertionError.message(
                 "Do not classify the settings home solely because focus is momentarily missing")
         }
@@ -813,7 +823,7 @@ enum AccessLifecycleContract {
     ) throws {
         try assertPresentMark(continueMark)
         let earliest = intervalSeconds - continueCaptureSlackSeconds
-        for sample in samples where sample.elapsed + 0.001 < earliest {
+        for sample in samples where sample.elapsed + timingToleranceSeconds < earliest {
             try assertPresentMark(sample.mark)
             if sample.mark != continueMark {
                 throw AssertionError.message(
@@ -836,7 +846,7 @@ enum AccessLifecycleContract {
         secondsBeforeIdentity: TimeInterval,
         intervalSeconds: TimeInterval
     ) throws {
-        if secondsBeforeIdentity + 0.001 >= intervalSeconds {
+        if secondsBeforeIdentity + timingToleranceSeconds >= intervalSeconds {
             throw AssertionError.message("On background return, do not wait a playback cycle before capturing identity")
         }
     }
@@ -863,13 +873,13 @@ enum AccessLifecycleContract {
         status: String,
         mark: String,
         continueMark: String,
-        controlBarVisible: Bool
+        isControlBarVisible: Bool
     ) -> Bool {
         if status == "BLACK" || mark == "BLACK" { return true }
         if status == "BLANK" || mark == "BLANK" { return true }
         if status == "UNRECOGNIZABLE" || mark == "UNRECOGNIZABLE" { return true }
         if isUsableSceneMark(mark) && mark == continueMark { return true }
-        if controlBarVisible == false && mark == continueMark { return true }
+        if isControlBarVisible == false && mark == continueMark { return true }
         return isAutoTransitionStart(status: status, mark: mark, continueMark: continueMark) == false
     }
 
@@ -877,13 +887,13 @@ enum AccessLifecycleContract {
         status: String,
         mark: String,
         continueMark: String,
-        controlBarVisible: Bool
+        isControlBarVisible: Bool
     ) throws {
         if isForbiddenAdvanceProxy(
             status: status,
             mark: mark,
             continueMark: continueMark,
-            controlBarVisible: controlBarVisible
+            isControlBarVisible: isControlBarVisible
         ) {
             throw AssertionError.message("Black screen, zoom, control bar gone or unrecognized is not a transition")
         }
@@ -893,15 +903,15 @@ enum AccessLifecycleContract {
         pressIssuedElapsed: TimeInterval,
         pressReturnedElapsed: TimeInterval,
         continueOriginElapsed: TimeInterval,
-        usedReturnedAsOrigin: Bool
+        didUseReturnedAsOrigin: Bool
     ) throws {
-        if usedReturnedAsOrigin {
+        if didUseReturnedAsOrigin {
             throw AssertionError.message("Do not use click return time to hide the action's elapsed time")
         }
-        if pressReturnedElapsed + 0.001 < pressIssuedElapsed {
+        if pressReturnedElapsed + timingToleranceSeconds < pressIssuedElapsed {
             throw AssertionError.message("The click return time must not be earlier than the press")
         }
-        if abs(continueOriginElapsed - pressIssuedElapsed) > 0.001 {
+        if abs(continueOriginElapsed - pressIssuedElapsed) > timingToleranceSeconds {
             throw AssertionError.message("Do not use click return time to hide the action's elapsed time")
         }
     }
@@ -912,13 +922,13 @@ enum AccessLifecycleContract {
         classifiedElapsed: TimeInterval,
         elapsedUsedForWindow: TimeInterval
     ) throws {
-        if abs(elapsedUsedForWindow - requestElapsed) > 0.001 {
+        if abs(elapsedUsedForWindow - requestElapsed) > timingToleranceSeconds {
             throw AssertionError.message("Evidence crossing the window must not pass automatically")
         }
-        if elapsedUsedForWindow == returnElapsed && returnElapsed > requestElapsed + 0.001 {
+        if elapsedUsedForWindow == returnElapsed && returnElapsed > requestElapsed + timingToleranceSeconds {
             throw AssertionError.message("Evidence crossing the window must not pass automatically")
         }
-        if elapsedUsedForWindow == classifiedElapsed && classifiedElapsed > requestElapsed + 0.001 {
+        if elapsedUsedForWindow == classifiedElapsed && classifiedElapsed > requestElapsed + timingToleranceSeconds {
             throw AssertionError.message("Evidence crossing the window must not pass automatically")
         }
     }
@@ -947,7 +957,7 @@ enum AccessLifecycleContract {
             else { return nil }
             if let previous {
                 if sample.requestElapsed < previous.returnElapsed { return nil }
-                if sample.requestElapsed - previous.returnElapsed > newStableMarkPollInterval + 0.001 {
+                if sample.requestElapsed - previous.returnElapsed > newStableMarkPollInterval + timingToleranceSeconds {
                     candidate = nil
                 }
             }
@@ -979,8 +989,8 @@ enum AccessLifecycleContract {
         pressReturnedElapsed: TimeInterval = 0
     ) throws -> IPadPauseTimingEvidence {
         guard intervalSeconds.isFinite, intervalSeconds > 0,
-            baselineLuma.isFinite, baselineLuma > 0.1,
-            pressReturnedElapsed.isFinite, (0...2).contains(pressReturnedElapsed)
+            baselineLuma.isFinite, baselineLuma > minimumBaselineLuminance,
+            pressReturnedElapsed.isFinite, (0...maximumPressReturnDelaySeconds).contains(pressReturnedElapsed)
         else {
             throw AssertionError.message("iPad pause-continue lacks valid timing or original photo brightness evidence")
         }
@@ -1000,13 +1010,13 @@ enum AccessLifecycleContract {
             if index > 0 {
                 let previous = samples[index - 1]
                 let gap = sample.requestElapsed - previous.returnElapsed
-                guard gap >= 0, gap <= newStableMarkPollInterval + 0.001 else {
+                guard gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds else {
                     throw AssertionError.message("iPad pause-continue samples are out of order or have a gap")
                 }
             }
         }
 
-        let dimmingThreshold = baselineLuma * 0.95
+        let dimmingThreshold = baselineLuma * sustainedDimmingLuminanceRatio
         var startIndex: Int?
         for index in 1..<samples.count {
             let sample = samples[index]
@@ -1037,7 +1047,7 @@ enum AccessLifecycleContract {
         let previous = samples[startIndex - 1]
         guard samples[..<startIndex].allSatisfy({ $0.status == "MATCH" && $0.mark == continueMark }),
             previous.status == "MATCH", previous.mark == continueMark,
-            previous.controlBarVisible == start.controlBarVisible,
+            previous.isControlBarVisible == start.isControlBarVisible,
             previous.meanLuma.isFinite, previous.meanLuma >= newStableMarkMinimumLuma,
             previous.requestElapsed.isFinite, previous.returnElapsed.isFinite,
             start.requestElapsed.isFinite, start.returnElapsed.isFinite,
@@ -1053,8 +1063,8 @@ enum AccessLifecycleContract {
         let latestTransitionElapsed = start.returnElapsed
         let earliestAllowed = intervalSeconds - continueCaptureSlackSeconds
         let latestAllowed = intervalSeconds + continueCaptureSlackSeconds
-        if earliestTransitionElapsed + 0.001 < earliestAllowed
-            || latestTransitionElapsed > latestAllowed + 0.001
+        if earliestTransitionElapsed + timingToleranceSeconds < earliestAllowed
+            || latestTransitionElapsed > latestAllowed + timingToleranceSeconds
         {
             throw AssertionError.message("iPad transition: conservative screenshot range must lie fully within T±2 s")
         }
@@ -1063,13 +1073,13 @@ enum AccessLifecycleContract {
                 continueMark: continueMark,
                 samples: samples,
                 minimumStableSeconds: ipadNewStableMarkConfirmWindow
-            ), stable.requestElapsed + 0.001 >= start.requestElapsed
+            ), stable.requestElapsed + timingToleranceSeconds >= start.requestElapsed
         else {
             throw AssertionError.message("iPad must keep identifying a different new photo for at least 1 second")
         }
         let stableImageDelaySeconds = stable.returnElapsed - start.requestElapsed
         if !stableImageDelaySeconds.isFinite || stableImageDelaySeconds < 0
-            || stableImageDelaySeconds > ipadStableImageDeadlineAfterTransition + 0.001
+            || stableImageDelaySeconds > ipadStableImageDeadlineAfterTransition + timingToleranceSeconds
         {
             throw AssertionError.message("iPad new photo must be stably identifiable within 4 s of transition start")
         }
@@ -1089,16 +1099,16 @@ enum AccessLifecycleContract {
         threshold: Double,
         samples: [ContinueWatchSample]
     ) -> Bool {
-        guard startIndex + 2 < samples.count else { return false }
+        guard startIndex + (requiredConsecutiveDimmingSampleCount - 1) < samples.count else { return false }
         var previous = samples[startIndex]
-        for index in (startIndex + 1)...(startIndex + 2) {
+        for index in (startIndex + 1)...(startIndex + (requiredConsecutiveDimmingSampleCount - 1)) {
             let sample = samples[index]
             let gap = sample.requestElapsed - previous.returnElapsed
             guard sample.status == "MATCH", sample.mark == continueMark,
                 sample.meanLuma.isFinite, sample.meanLuma < threshold,
-                sample.meanLuma < previous.meanLuma - 0.001,
-                sample.controlBarVisible == previous.controlBarVisible,
-                gap >= 0, gap <= newStableMarkPollInterval + 0.001
+                sample.meanLuma < previous.meanLuma - luminanceTolerance,
+                sample.isControlBarVisible == previous.isControlBarVisible,
+                gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds
             else {
                 return false
             }
@@ -1124,14 +1134,14 @@ enum AccessLifecycleContract {
 
     static func assertRecordingDidNotStopAtIdentityTimeout(
         lastSampleRequestElapsed: TimeInterval,
-        confirmedNewImage: Bool,
+        hasConfirmedNewImage: Bool,
         intervalSeconds: TimeInterval
     ) throws {
         let identityTimeout = intervalSeconds + continueCaptureSlackSeconds
-        if confirmedNewImage {
+        if hasConfirmedNewImage {
             return
         }
-        if lastSampleRequestElapsed <= identityTimeout + 0.001 {
+        if lastSampleRequestElapsed <= identityTimeout + timingToleranceSeconds {
             throw AssertionError.message("Record until a new photo is identifiable, not until the T+2 identity timeout")
         }
     }
@@ -1147,7 +1157,7 @@ enum AccessLifecycleContract {
         let ordered = samples.sorted { $0.requestElapsed < $1.requestElapsed }
 
         func hasUncertainSignal(_ sample: ContinueWatchSample) -> Bool {
-            if sample.requestElapsed + 0.001 < earliest || sample.requestElapsed > latest {
+            if sample.requestElapsed + timingToleranceSeconds < earliest || sample.requestElapsed > latest {
                 return false
             }
             if sample.status == "UNRECOGNIZABLE" || sample.mark == "UNRECOGNIZABLE" {
@@ -1176,14 +1186,14 @@ enum AccessLifecycleContract {
             }
             return .missing
         }
-        if firstStart.requestElapsed + 0.001 < earliest {
+        if firstStart.requestElapsed + timingToleranceSeconds < earliest {
             return .tooEarly(requestElapsed: firstStart.requestElapsed, mark: firstStart.mark)
         }
         if firstStart.requestElapsed > latest {
-            let earlierUncertain = ordered.contains { sample in
-                sample.requestElapsed + 0.001 < firstStart.requestElapsed && hasUncertainSignal(sample)
+            let hasEarlierUncertainEvidence = ordered.contains { sample in
+                sample.requestElapsed + timingToleranceSeconds < firstStart.requestElapsed && hasUncertainSignal(sample)
             }
-            if earlierUncertain {
+            if hasEarlierUncertainEvidence {
                 return .pendingVideoReview(reason: "No usable start in window; post-window new photo does not count")
             }
             return .tooLate(requestElapsed: firstStart.requestElapsed, mark: firstStart.mark)
@@ -1207,7 +1217,7 @@ enum AccessLifecycleContract {
             status: startStatus,
             mark: startMark,
             continueMark: continueMark,
-            controlBarVisible: true
+            isControlBarVisible: true
         )
         if isAutoTransitionStart(status: startStatus, mark: startMark, continueMark: continueMark) == false {
             throw AssertionError.message("Black screen, zoom, control bar gone or unrecognized is not a transition")
@@ -1228,20 +1238,20 @@ enum AccessLifecycleContract {
 
     static func assertFirstTransitionStartOfficialPass(
         verdict: FirstTransitionStartVerdict,
-        officialSigned: Bool
+        isOfficiallySigned: Bool
     ) throws {
         switch verdict {
         case .detected:
-            if officialSigned == false {
+            if isOfficiallySigned == false {
                 throw AssertionError.message("An in-window start was detected but not signed off")
             }
         case .pendingVideoReview:
-            if officialSigned {
+            if isOfficiallySigned {
                 throw AssertionError.message(
                     "Uncertain samples must remain pending video review; do not default to PASS")
             }
         case .tooEarly, .tooLate, .missing:
-            if officialSigned {
+            if isOfficiallySigned {
                 throw AssertionError.message("Too early/late transition or missing start cannot pass automatically")
             }
         }
@@ -1261,10 +1271,10 @@ enum AccessLifecycleContract {
                 elapsedSeconds: elapsed,
                 intervalSeconds: intervalSeconds
             )
-            try assertFirstTransitionStartOfficialPass(verdict: verdict, officialSigned: true)
+            try assertFirstTransitionStartOfficialPass(verdict: verdict, isOfficiallySigned: true)
             return true
         case .pendingVideoReview:
-            try assertFirstTransitionStartOfficialPass(verdict: verdict, officialSigned: false)
+            try assertFirstTransitionStartOfficialPass(verdict: verdict, isOfficiallySigned: false)
             return false
         case .tooEarly:
             throw AssertionError.message(
@@ -1277,7 +1287,7 @@ enum AccessLifecycleContract {
         }
     }
 
-    private static func areSettingValuesEqual(_ left: Any, _ right: Any) -> Bool {
+    private static func isSettingValueEqual(_ left: Any, _ right: Any) -> Bool {
         String(describing: left) == String(describing: right)
     }
 }

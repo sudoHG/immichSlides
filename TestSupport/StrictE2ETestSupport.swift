@@ -7,6 +7,7 @@ struct StrictE2EInput {
 }
 
 struct StrictE2EPrivatePINInput {
+    static let requiredPINLength: Int = 6
     let correct: String
     let wrong: String
 }
@@ -163,6 +164,6 @@ extension XCTestCase {
     }
 
     private func isPrivatePINFormat(_ pin: String) -> Bool {
-        pin.count == 6 && pin.allSatisfy(\.isNumber)
+        pin.count == StrictE2EPrivatePINInput.requiredPINLength && pin.allSatisfy(\.isNumber)
     }
 }

@@ -66,6 +66,45 @@ enum StrictE2EPhotoIdentity {
     private static let captureLowerLeftBox: (CGFloat, CGFloat, CGFloat, CGFloat) = (0.28, 0.58, 0.48, 0.82)
     private static let captureLowerRightBox: (CGFloat, CGFloat, CGFloat, CGFloat) = (0.52, 0.58, 0.72, 0.82)
     private static let minDisplayCropEdgePixels = 8
+    private static let sampleWidthPixels: Int = 96
+    private static let minimumSampleHeightPixels: Int = 8
+    private static let pixelChannelCount: Int = 4
+    private static let observedRowFraction: Double = 0.86
+    private static let observedColumnFraction: Double = 0.85
+    private static let overlayLeftFraction: Double = 0.72
+    private static let overlayBottomFraction: Double = 0.22
+    private static let redLuminanceWeight: Double = 0.299
+    private static let greenLuminanceWeight: Double = 0.587
+    private static let blueLuminanceWeight: Double = 0.114
+    private static let maximumChannelValue: Double = 255.0
+    private static let minimumColorLuminance: Double = 0.035
+    private static let maximumColorLuminance: Double = 0.94
+    private static let minimumColorSaturation: Double = 0.16
+    private static let greenHueRange: ClosedRange<Double> = 70...170
+    private static let blueHueRange: ClosedRange<Double> = 185...255
+    private static let purpleHueRange: ClosedRange<Double> = 265...345
+    private static let brownHueRange: ClosedRange<Double> = 8...50
+    private static let minimumMagentaSaturation: Double = 0.35
+    private static let maximumMagentaLuminance: Double = 0.55
+    private static let minimumChromaticPixelCount: Int = 18
+    private static let maximumBlackLuminance: Double = 0.10
+    private static let minimumBlankLuminance: Double = 0.86
+    private static let fixtureA1BalanceBonus: Double = 0.15
+    private static let fixtureA2GreenBonus: Double = 0.12
+    private static let fixtureA2MagentaPenalty: Double = 0.55
+    private static let fixtureA2BluePenalty: Double = 0.40
+    private static let fixtureA2BrownPenalty: Double = 0.20
+    private static let fixtureA3MagentaBonus: Double = 0.20
+    private static let fixtureA4BlueBonus: Double = 0.15
+    private static let fixtureA5BlueBonus: Double = 0.12
+    private static let fixtureA5BrownPenalty: Double = 0.45
+    private static let fixtureA5MagentaPenalty: Double = 0.25
+    private static let maximumDarkWashLuminance: Double = 0.30
+    private static let minimumDarkWashGrayFraction: Double = 0.60
+    private static let minimumMatchScore: Double = 0.045
+    private static let minimumMixedSecondScore: Double = 0.05
+    private static let closeScoreRatio: Double = 1.18
+    private static let maximumCloseScoreDifference: Double = 0.035
 
     static func overlayModel(from overlayText: String) -> String? {
         for model in ["Fixture 1", "Fixture 3", "Fixture 5"] where overlayText.contains(model) {
@@ -81,17 +120,18 @@ enum StrictE2EPhotoIdentity {
         else {
             return Result(status: .unrecognizable, mark: nil, scores: [:], meanLuma: 0, notes: ["unreadable"])
         }
-        let sampleW = 96
-        let sampleH = max(8, Int((96.0 * Double(image.height) / Double(max(1, image.width))).rounded(.down)))
-        var pixels = [UInt8](repeating: 0, count: sampleW * sampleH * 4)
-        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+        let sampleHeightPixels = max(
+            minimumSampleHeightPixels,
+            Int((Double(sampleWidthPixels) * Double(image.height) / Double(max(1, image.width))).rounded(.down)))
+        var pixels = [UInt8](repeating: 0, count: sampleWidthPixels * sampleHeightPixels * pixelChannelCount)
+        let didDraw = pixels.withUnsafeMutableBytes { buffer -> Bool in
             guard let base = buffer.baseAddress,
                 let context = CGContext(
                     data: base,
-                    width: sampleW,
-                    height: sampleH,
+                    width: sampleWidthPixels,
+                    height: sampleHeightPixels,
                     bitsPerComponent: 8,
-                    bytesPerRow: sampleW * 4,
+                    bytesPerRow: sampleWidthPixels * pixelChannelCount,
                     space: CGColorSpaceCreateDeviceRGB(),
                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
                 )
@@ -99,12 +139,12 @@ enum StrictE2EPhotoIdentity {
                 return false
             }
             context.interpolationQuality = .low
-            context.translateBy(x: 0, y: CGFloat(sampleH))
+            context.translateBy(x: 0, y: CGFloat(sampleHeightPixels))
             context.scaleBy(x: 1, y: -1)
-            context.draw(image, in: CGRect(x: 0, y: 0, width: sampleW, height: sampleH))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: sampleWidthPixels, height: sampleHeightPixels))
             return true
         }
-        guard drawn else {
+        guard didDraw else {
             return Result(status: .unrecognizable, mark: nil, scores: [:], meanLuma: 0, notes: ["undrawn"])
         }
 
@@ -113,36 +153,43 @@ enum StrictE2EPhotoIdentity {
         ]
         var lumaSum = 0.0
         var chromatic = 0
-        let observed = max(1, Int(Double(sampleW * sampleH) * 0.86 * 0.85))
-        for row in 0..<sampleH {
-            if row > Int(Double(sampleH) * 0.86) { continue }
-            for col in 0..<sampleW {
-                if col > Int(Double(sampleW) * 0.72) && row < Int(Double(sampleH) * 0.22) { continue }
-                let offset = (row * sampleW + col) * 4
+        let observed = max(
+            1, Int(Double(sampleWidthPixels * sampleHeightPixels) * observedRowFraction * observedColumnFraction))
+        for row in 0..<sampleHeightPixels {
+            if row > Int(Double(sampleHeightPixels) * observedRowFraction) { continue }
+            for col in 0..<sampleWidthPixels {
+                if col > Int(Double(sampleWidthPixels) * overlayLeftFraction)
+                    && row < Int(Double(sampleHeightPixels) * overlayBottomFraction)
+                {
+                    continue
+                }
+                let offset = (row * sampleWidthPixels + col) * pixelChannelCount
                 let red = Double(pixels[offset])
                 let green = Double(pixels[offset + 1])
                 let blue = Double(pixels[offset + 2])
-                let luma = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0
+                let luma =
+                    (redLuminanceWeight * red + greenLuminanceWeight * green + blueLuminanceWeight * blue)
+                    / maximumChannelValue
                 lumaSum += luma
-                if luma < 0.035 || luma > 0.94 { continue }
+                if luma < minimumColorLuminance || luma > maximumColorLuminance { continue }
                 let (hue, saturation) = hueSaturation(red: red, green: green, blue: blue)
-                if saturation < 0.16 || hue == nil {
+                if saturation < minimumColorSaturation || hue == nil {
                     counts["gray", default: 0] += 1
                     chromatic += 1
                     continue
                 }
                 guard let hue else { continue }
-                if (70...170).contains(hue) {
+                if greenHueRange.contains(hue) {
                     counts["green", default: 0] += 1
-                } else if (185...255).contains(hue) {
+                } else if blueHueRange.contains(hue) {
                     counts["blue", default: 0] += 1
-                } else if (265...345).contains(hue) {
-                    if saturation > 0.35 && luma < 0.55 {
+                } else if purpleHueRange.contains(hue) {
+                    if saturation > minimumMagentaSaturation && luma < maximumMagentaLuminance {
                         counts["magenta", default: 0] += 1
                     } else {
                         counts["purple", default: 0] += 1
                     }
-                } else if (8...50).contains(hue) {
+                } else if brownHueRange.contains(hue) {
                     counts["brown", default: 0] += 1
                 } else {
                     continue
@@ -151,11 +198,11 @@ enum StrictE2EPhotoIdentity {
             }
         }
         let meanLuma = lumaSum / Double(observed)
-        if chromatic < 18 {
-            if meanLuma < 0.10 {
+        if chromatic < minimumChromaticPixelCount {
+            if meanLuma < maximumBlackLuminance {
                 return Result(status: .black, mark: nil, scores: [:], meanLuma: meanLuma, notes: ["low-chroma-dark"])
             }
-            if meanLuma > 0.86 {
+            if meanLuma > minimumBlankLuminance {
                 return Result(status: .blank, mark: nil, scores: [:], meanLuma: meanLuma, notes: ["low-chroma-bright"])
             }
             return Result(status: .unrecognizable, mark: nil, scores: [:], meanLuma: meanLuma, notes: ["low-chroma"])
@@ -169,11 +216,17 @@ enum StrictE2EPhotoIdentity {
         let brown = fraction["brown"] ?? 0
         let purple = fraction["purple"] ?? 0
         let scores: [String: Double] = [
-            "A1": min(green, purple) + 0.15 * min(green, purple),
-            "A2": max(0, min(green, gray) + 0.12 * green - 0.55 * magenta - 0.40 * blue - 0.20 * brown),
-            "A3": min(magenta, brown) + 0.20 * magenta,
-            "A4": min(blue, brown) + 0.15 * blue,
-            "A5": max(0, min(green, blue) + 0.12 * blue - 0.45 * brown - 0.25 * magenta)
+            "A1": min(green, purple) + fixtureA1BalanceBonus * min(green, purple),
+            "A2": max(
+                0,
+                min(green, gray) + fixtureA2GreenBonus * green - fixtureA2MagentaPenalty * magenta
+                    - fixtureA2BluePenalty * blue - fixtureA2BrownPenalty * brown),
+            "A3": min(magenta, brown) + fixtureA3MagentaBonus * magenta,
+            "A4": min(blue, brown) + fixtureA4BlueBonus * blue,
+            "A5": max(
+                0,
+                min(green, blue) + fixtureA5BlueBonus * blue - fixtureA5BrownPenalty * brown
+                    - fixtureA5MagentaPenalty * magenta)
         ]
         let ranked = scores.sorted { $0.value > $1.value }
         let best = ranked[0]
@@ -184,7 +237,7 @@ enum StrictE2EPhotoIdentity {
             String(format: "second=%@:%0.3f", second.key, second.value)
         ]
         // The dark blurred background of an empty result has some blue/brown noise; a gray wash must not read as A4.
-        if meanLuma <= 0.30 && gray >= 0.60 {
+        if meanLuma <= maximumDarkWashLuminance && gray >= minimumDarkWashGrayFraction {
             return Result(
                 status: .unrecognizable,
                 mark: nil,
@@ -193,12 +246,16 @@ enum StrictE2EPhotoIdentity {
                 notes: notes + ["dark-gray-wash"]
             )
         }
-        if best.value < 0.045 {
+        if best.value < minimumMatchScore {
             return Result(status: .unrecognizable, mark: nil, scores: scores, meanLuma: meanLuma, notes: notes)
         }
-        let mixed = second.value >= 0.05 && Set(keyColors[best.key] ?? []).isDisjoint(with: keyColors[second.key] ?? [])
-        let close = second.value > 0 && best.value < second.value * 1.18 && (best.value - second.value) < 0.035
-        if mixed || close {
+        let isMixed =
+            second.value >= minimumMixedSecondScore
+            && Set(keyColors[best.key] ?? []).isDisjoint(with: keyColors[second.key] ?? [])
+        let isClose =
+            second.value > 0 && best.value < second.value * closeScoreRatio
+            && (best.value - second.value) < maximumCloseScoreDifference
+        if isMixed || isClose {
             return Result(status: .transition, mark: nil, scores: scores, meanLuma: meanLuma, notes: notes)
         }
         return Result(status: .match, mark: best.key, scores: scores, meanLuma: meanLuma, notes: notes)

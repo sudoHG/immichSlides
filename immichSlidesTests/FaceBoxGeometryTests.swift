@@ -14,6 +14,7 @@ import Testing
 @MainActor
 @Suite
 struct FaceBoxGeometryTests {
+    private let coordinateTolerance: CGFloat = 0.000_001
 
     @Test
     func `every EXIF orientation code uses its axis category`() {
@@ -60,10 +61,10 @@ struct FaceBoxGeometryTests {
             Issue.record("Expected a usable face box, got \(result)")
             return
         }
-        #expect(abs(rect.minX - 0.025) < 0.000_001)
-        #expect(abs(rect.minY - 0.1) < 0.000_001)
-        #expect(abs(rect.width - 0.1) < 0.000_001)
-        #expect(abs(rect.height - 0.2) < 0.000_001)
+        #expect(abs(rect.minX - 0.025) < coordinateTolerance)
+        #expect(abs(rect.minY - 0.1) < coordinateTolerance)
+        #expect(abs(rect.width - 0.1) < coordinateTolerance)
+        #expect(abs(rect.height - 0.2) < coordinateTolerance)
         #expect(relation == .match)
     }
 
@@ -154,8 +155,8 @@ struct FaceBoxGeometryTests {
             return
         }
         #expect(relation == .rotatedPair)
-        #expect(abs(rect.minX - (10.0 / 3000.0)) < 0.000_001)
-        #expect(abs(rect.minY - (20.0 / 4000.0)) < 0.000_001)
+        #expect(abs(rect.minX - (10.0 / 3000.0)) < coordinateTolerance)
+        #expect(abs(rect.minY - (20.0 / 4000.0)) < coordinateTolerance)
     }
 
     @Test
@@ -170,10 +171,10 @@ struct FaceBoxGeometryTests {
             return
         }
         #expect(relation == .mismatch)
-        #expect(abs(rect.minX - (682.0 / 1440.0)) < 0.000_001)
-        #expect(abs(rect.minY - (227.0 / 2160.0)) < 0.000_001)
-        #expect(abs(rect.width - (166.0 / 1440.0)) < 0.000_001)
-        #expect(abs(rect.height - (229.0 / 2160.0)) < 0.000_001)
+        #expect(abs(rect.minX - (682.0 / 1440.0)) < coordinateTolerance)
+        #expect(abs(rect.minY - (227.0 / 2160.0)) < coordinateTolerance)
+        #expect(abs(rect.width - (166.0 / 1440.0)) < coordinateTolerance)
+        #expect(abs(rect.height - (229.0 / 2160.0)) < coordinateTolerance)
     }
 
     @Test
@@ -188,8 +189,8 @@ struct FaceBoxGeometryTests {
             return
         }
         #expect(relation == .mismatch)
-        #expect(abs(rect.width - (100.0 / 1200.0)) < 0.000_001)
-        #expect(abs(rect.height - (200.0 / 900.0)) < 0.000_001)
+        #expect(abs(rect.width - (100.0 / 1200.0)) < coordinateTolerance)
+        #expect(abs(rect.height - (200.0 / 900.0)) < coordinateTolerance)
     }
 
     @Test

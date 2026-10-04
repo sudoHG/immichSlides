@@ -46,7 +46,7 @@ enum ServerConfigurationTestIsolation {
     @TaskLocal private static var isHeld = false
 
     static func run<T>(_ body: () async throws -> T) async rethrows -> T {
-        try await run(capturingSharedRuntimeState: false, body)
+        try await run(shouldCaptureSharedRuntimeState: false, body)
     }
 
     // Only callers that opt into sharedPlaybackRuntimeIsolation (or runWithSharedRuntimeState) clear
@@ -55,21 +55,21 @@ enum ServerConfigurationTestIsolation {
         defaults: UserDefaults = .standard,
         _ body: () async throws -> T
     ) async rethrows -> T {
-        try await run(capturingSharedRuntimeState: true, defaults: defaults, body)
+        try await run(shouldCaptureSharedRuntimeState: true, defaults: defaults, body)
     }
 
     private static func run<T>(
-        capturingSharedRuntimeState: Bool,
+        shouldCaptureSharedRuntimeState: Bool,
         defaults: UserDefaults = .standard,
         _ body: () async throws -> T
     ) async rethrows -> T {
         if isHeld {
-            guard capturingSharedRuntimeState else {
+            guard shouldCaptureSharedRuntimeState else {
                 return try await body()
             }
 
             let snapshot = await ServerConfigurationSnapshot.capture(
-                includeSharedRuntimeState: true, defaults: defaults)
+                shouldIncludeSharedRuntimeState: true, defaults: defaults)
             await snapshot.prepareForTest()
             do {
                 let result = try await body()
@@ -83,7 +83,7 @@ enum ServerConfigurationTestIsolation {
 
         await lock.acquire()
         let snapshot = await ServerConfigurationSnapshot.capture(
-            includeSharedRuntimeState: capturingSharedRuntimeState, defaults: defaults
+            shouldIncludeSharedRuntimeState: shouldCaptureSharedRuntimeState, defaults: defaults
         )
         await snapshot.prepareForTest()
 
@@ -141,10 +141,10 @@ private struct ServerConfigurationSnapshot {
     let sharedRuntime: SharedRuntimeSnapshot?
 
     @MainActor
-    static func capture(includeSharedRuntimeState: Bool, defaults: UserDefaults) -> ServerConfigurationSnapshot {
+    static func capture(shouldIncludeSharedRuntimeState: Bool, defaults: UserDefaults) -> ServerConfigurationSnapshot {
         ServerConfigurationSnapshot(
             storedServer: ImmichServer.load(),
-            sharedRuntime: includeSharedRuntimeState ? SharedRuntimeSnapshot.capture(defaults: defaults) : nil
+            sharedRuntime: shouldIncludeSharedRuntimeState ? SharedRuntimeSnapshot.capture(defaults: defaults) : nil
         )
     }
 

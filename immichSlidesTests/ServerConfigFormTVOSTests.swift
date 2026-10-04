@@ -18,7 +18,8 @@ struct ServerConfigFormTVOSTests {
 
     @Test
     func `input capsule height meets tvOS accessible tap target of >=44`() {
-        #expect(TVOSServerConfigFormMetrics.inputCapsuleHeight >= 44)
+        let minimumAccessibleInputHeightPoints: CGFloat = 44
+        #expect(TVOSServerConfigFormMetrics.inputCapsuleHeight >= minimumAccessibleInputHeightPoints)
     }
 
     @MainActor

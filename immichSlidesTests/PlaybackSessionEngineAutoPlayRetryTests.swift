@@ -12,6 +12,8 @@ import Testing
 @MainActor
 @Suite(.sharedRuntimeIsolation)
 struct PlaybackSessionEngineAutoPlayRetryTests {
+    private let intervalSeconds: TimeInterval = 5
+
     @Test
     func `automatic request first failure is recorded and issues a second attempt`() {
         var engine = PlaybackSessionEngine()
@@ -109,7 +111,7 @@ struct PlaybackSessionEngineAutoPlayRetryTests {
                 sceneID: sceneID,
                 assetID: "asset-\(sceneID)"
             ),
-            configuredInterval: 5
+            configuredInterval: intervalSeconds
         )
     }
 }

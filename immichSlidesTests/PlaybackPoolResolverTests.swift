@@ -228,9 +228,9 @@ struct PlaybackPoolResolverTests {
             )
         }
 
-        let receivedStageEvents = await waitUntil(pollInterval: .milliseconds(1)) { emittedEvents.count >= 2 }
+        let didReceiveStageEvents = await waitUntil(pollInterval: .milliseconds(1)) { emittedEvents.count >= 2 }
         resolveTask.cancel()
-        try #require(receivedStageEvents, "Timed out waiting for the resolver's stage events")
+        try #require(didReceiveStageEvents, "Timed out waiting for the resolver's stage events")
 
         #expect(
             emittedEvents.contains { event in
@@ -612,7 +612,7 @@ struct PlaybackPoolResolverTests {
     }
 
     @Test
-    func `server url validation behaves correctly`() {
+    func `server URL validation accepts HTTP URLs and rejects invalid schemes or hosts`() {
 
         let ok = ImmichServer.validateURL("https://demo.example.com:8888")
         let badScheme = ImmichServer.validateURL("ftp://demo.example.com")
@@ -624,7 +624,7 @@ struct PlaybackPoolResolverTests {
     }
 
     @Test
-    func `API key validation behaves correctly`() {
+    func `API key validation accepts a nonempty key and rejects an empty key`() {
 
         let ok = ImmichServer.validateAPIKey("abc123")
         let bad = ImmichServer.validateAPIKey("")
@@ -907,25 +907,25 @@ struct SlideShowViewModelSelectionRefreshTests {
     @Test
     func `solo only load more triggers earlier than normal mode`() {
 
-        let defaultEarly = SlideShowViewModel.shouldTriggerLoadMore(
+        let shouldLoadMoreAtDefaultEarlyPosition = SlideShowViewModel.shouldTriggerLoadMore(
             assetCount: 12,
             newIndex: 3,
             isSoloOnlyPlayback: false
         )
-        let soloEarly = SlideShowViewModel.shouldTriggerLoadMore(
+        let shouldLoadMoreAtSoloEarlyPosition = SlideShowViewModel.shouldTriggerLoadMore(
             assetCount: 12,
             newIndex: 3,
             isSoloOnlyPlayback: true
         )
-        let soloTooEarly = SlideShowViewModel.shouldTriggerLoadMore(
+        let shouldLoadMoreAtSoloTooEarlyPosition = SlideShowViewModel.shouldTriggerLoadMore(
             assetCount: 12,
             newIndex: 2,
             isSoloOnlyPlayback: true
         )
 
-        #expect(defaultEarly == false)
-        #expect(soloEarly)
-        #expect(soloTooEarly == false)
+        #expect(shouldLoadMoreAtDefaultEarlyPosition == false)
+        #expect(shouldLoadMoreAtSoloEarlyPosition)
+        #expect(shouldLoadMoreAtSoloTooEarlyPosition == false)
     }
 
     private func makeAsset(id: String) -> Asset {
