@@ -94,27 +94,9 @@ struct CodeAuditRegressionTests {
     }
 
     @Test
-    func `a ready fullsize image renders even when the preview is not ready`() {
-        // fullsize is the main image; preview is only the preferred background source.
-
-        #expect(
-            SlideItemView.shouldRenderPhoto(
-                fullsizeState: .readyToPlay,
-                previewState: .failedToDownload
-            )
-        )
-        #expect(
-            SlideItemView.shouldRenderPhoto(
-                fullsizeState: .readyToPlay,
-                previewState: .downloading
-            )
-        )
-        #expect(
-            !SlideItemView.shouldRenderPhoto(
-                fullsizeState: .downloading,
-                previewState: .readyToPlay
-            )
-        )
+    func `a photo renders only once its fullsize image is ready`() {
+        #expect(SlideItemView.shouldRenderPhoto(fullsizeState: .readyToPlay))
+        #expect(!SlideItemView.shouldRenderPhoto(fullsizeState: .downloading))
     }
 
     @Test

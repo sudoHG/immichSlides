@@ -253,13 +253,6 @@ private struct SmartFillSlotImageView: View {
     }
 
     private var slotReadiness: PlaybackSmartFillSlotReadiness {
-        #if DEBUG
-        // Only DEBUG UI tests force slot loading; release builds keep the real readiness check.
-
-        if ProcessInfo.processInfo.environment["UI_TEST_FORCE_SMARTFILL_SLOT_LOADING"] == "1" {
-            return .pending(assetId: slot.asset.id)
-        }
-        #endif
         return PlaybackSmartFillSlotReadiness.resolve(
             assetId: slot.asset.id,
             fullsizeState: downloadManager.assetStates[slot.asset.id] ?? .notStarted,

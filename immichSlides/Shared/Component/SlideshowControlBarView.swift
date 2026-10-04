@@ -418,11 +418,8 @@ struct SlideshowControlBarView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var measuredEntryHintBubbleHeight: CGFloat = 0
 
-    @Binding var currentIndex: Int
-
     @Binding var isAutoPlay: Bool
 
-    let totalCount: Int
     let isPreviousEnabled: Bool
 
     var onPrevious: () -> Void
@@ -518,9 +515,7 @@ struct SlideshowControlBarView: View {
     }
 
     init(
-        currentIndex: Binding<Int>,
         isAutoPlay: Binding<Bool>,
-        totalCount: Int,
         isPreviousEnabled: Bool = true,
         onPrevious: @escaping () -> Void,
         onNext: @escaping () -> Void,
@@ -530,9 +525,7 @@ struct SlideshowControlBarView: View {
         entryHintContent: IOSSlideshowEntryHintContent = .empty,
         onEntryHintTap: (() -> Void)? = nil
     ) {
-        self._currentIndex = currentIndex
         self._isAutoPlay = isAutoPlay
-        self.totalCount = totalCount
         self.isPreviousEnabled = isPreviousEnabled
         self.onPrevious = onPrevious
         self.onNext = onNext
@@ -691,9 +684,7 @@ private extension View {
 
 #Preview {
     SlideshowControlBarView(
-        currentIndex: .constant(0),
         isAutoPlay: .constant(true),
-        totalCount: 100,
         onPrevious: {},
         onNext: {},
         onPlayPause: {},

@@ -169,8 +169,7 @@ struct ModeSelectionViewTV: View {
         }
         .buttonStyle(ModeSelectionCardButtonStyle())
         .focused($focusedTarget, equals: focusTarget(for: mode))
-        // No longer wrapped in appTVButtonInteraction, to avoid
-        // stacking focusable on the Button and getting double focus.
+        // Do not stack focusable on the Button: that gives double focus.
 
         .focusedValue(\.modeSelectionFocusedTarget, focusTarget(for: mode).rawValue)
         .appTVDisableDefaultFocusEffect()

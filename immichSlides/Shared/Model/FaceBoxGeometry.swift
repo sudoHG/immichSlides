@@ -23,10 +23,6 @@ enum FaceBoxGeometry {
         case invalidImageDimensions
         case invalidCoordinateOrder
         case outOfBounds
-        case dimensionMismatch
-        case rotatedPairRequiresOrientationProof
-        case liveOrientationNotProven
-        case unknownOrientationRequiresFallback
     }
 
     enum ValidationResult: Equatable {
@@ -36,18 +32,6 @@ enum FaceBoxGeometry {
         var isUsable: Bool {
             if case .usable = self { return true }
             return false
-        }
-
-        var reason: UnusableReason? {
-            if case let .unusable(reason, _) = self { return reason }
-            return nil
-        }
-
-        var dimensionRelation: DimensionRelation {
-            switch self {
-            case let .usable(_, relation), let .unusable(_, relation):
-                return relation
-            }
         }
     }
 

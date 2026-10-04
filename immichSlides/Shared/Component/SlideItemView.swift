@@ -52,7 +52,7 @@ struct SlideItemView: View {
         ZStack {
             // Wait for fullsize; preview is only the blurred background and must not cover a ready original.
 
-            if Self.shouldRenderPhoto(fullsizeState: fullsizeState, previewState: previewState) {
+            if Self.shouldRenderPhoto(fullsizeState: fullsizeState) {
 
                 if let backgroundURL = backgroundURL(
                     fullsizeState: fullsizeState,
@@ -206,11 +206,7 @@ struct SlideItemView: View {
 
     // Only fullsize readiness matters; show the original even if the preview failed.
 
-    static func shouldRenderPhoto(
-        fullsizeState: AssetStates,
-        previewState: AssetStates
-    ) -> Bool {
-        let _ = previewState
+    static func shouldRenderPhoto(fullsizeState: AssetStates) -> Bool {
         return fullsizeState == .readyToPlay
     }
 

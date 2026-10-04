@@ -8216,40 +8216,6 @@
         }
       }
     },
-    "Open Website" : {
-      "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Abrir sitio web"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Web サイトを開く"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "打开网页"
-          }
-        },
-        "zh-Hant-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開啟網頁"
-          }
-        },
-        "zh-Hant-TW" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開啟網頁"
-          }
-        }
-      }
-    },
     "Open “API Keys,” create a new key, and name it immichSlides." : {
       "comment" : "API Key help sheet creation step.",
       "localizations" : {

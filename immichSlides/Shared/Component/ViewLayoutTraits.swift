@@ -31,9 +31,4 @@ struct ViewLayoutTraits {
     var isTV: Bool {
         userInterfaceIdiom == .tv
     }
-
-    var isTouchDevice: Bool {
-        userInterfaceIdiom == .phone || userInterfaceIdiom == .pad
-
-    }
 }

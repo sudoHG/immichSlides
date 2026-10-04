@@ -509,9 +509,7 @@ struct SlideShowViewIOS: View {
                     Spacer()
                     if showControlBar {
                         SlideshowControlBarView(
-                            currentIndex: .constant(viewModel.currentIndex),
                             isAutoPlay: $viewModel.isAutoPlay,
-                            totalCount: viewModel.assets.count,
                             isPreviousEnabled: viewModel.canRequestPreviousScene,
                             onPrevious: onPrevious,
                             onNext: onNext,

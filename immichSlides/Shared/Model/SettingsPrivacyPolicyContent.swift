@@ -21,10 +21,6 @@ enum SettingsPrivacyPolicyReference {
     static var entrySubtitle: String {
         NSLocalizedString("Open the full policy text in your browser.", comment: "")
     }
-
-    static var actionValue: String {
-        NSLocalizedString("Open Website", comment: "")
-    }
 }
 
 // Bundled PRIVACY_POLICY.md split into Chinese and English sections, for reading on tvOS without a browser.
@@ -33,13 +29,8 @@ struct SettingsBundledPrivacyPolicyDocument {
     struct Section: Identifiable, Hashable {
         let id: String
         let language: SettingsBundledPrivacyPolicy.Language
-        let languageHeading: String
         let title: String
         let blocks: [ContentBlock]
-
-        var body: String {
-            blocks.map(\.plainText).joined(separator: "\n\n")
-        }
     }
 
     // Split Markdown into paragraphs/lists/tables so Text does not show raw markup.
@@ -48,23 +39,6 @@ struct SettingsBundledPrivacyPolicyDocument {
         case paragraph(String)
         case bulletList([String])
         case table(Table)
-
-        var plainText: String {
-            switch self {
-            case .paragraph(let text):
-                return text
-            case .bulletList(let items):
-                return items.map { "- \($0)" }.joined(separator: "\n")
-            case .table(let table):
-                let headerText = table.headers.joined(separator: " | ")
-                let rowText = table.rows
-                    .map { $0.cells.joined(separator: " | ") }
-                    .joined(separator: "\n")
-                return [headerText, rowText]
-                    .filter { $0.isEmpty == false }
-                    .joined(separator: "\n")
-            }
-        }
     }
 
     struct Table: Hashable {
@@ -78,17 +52,7 @@ struct SettingsBundledPrivacyPolicyDocument {
     }
 
     let lastUpdatedLine: String
-    let languageHeading: String
     let sections: [Section]
-
-    var summaryText: String {
-        let parts = [
-            lastUpdatedLine.trimmingCharacters(in: .whitespacesAndNewlines),
-            SettingsPrivacyPolicyReference.urlString
-        ].filter { $0.isEmpty == false }
-
-        return parts.joined(separator: "\n\n")
-    }
 
     func sections(for language: SettingsBundledPrivacyPolicy.Language) -> [Section] {
         sections.filter { section in
@@ -206,8 +170,6 @@ enum SettingsBundledPrivacyPolicy {
 
         return SettingsBundledPrivacyPolicyDocument(
             lastUpdatedLine: lastUpdatedLine,
-            // localization-audit: parser-marker Policy body always shows both languages, regardless of UI language.
-            languageHeading: "中文 / English",
             sections: sections
         )
     }
@@ -283,7 +245,6 @@ enum SettingsBundledPrivacyPolicy {
             SettingsBundledPrivacyPolicyDocument.Section(
                 id: "\(language.displayTitle)-\(title)",
                 language: language,
-                languageHeading: language.displayTitle,
                 title: title,
                 blocks: blocks
             )
