@@ -326,6 +326,19 @@ struct PlaybackSmartFillPhotoCanvasDescriptor: Equatable, Sendable {
             )
     }
 
+    nonisolated init(pixelSize: PlaybackPlanningPixelSize) {
+        self.profile = .iPad
+        self.orientation = pixelSize.width >= pixelSize.height ? .landscape : .portrait
+        self.surfaceFingerprint = "pixel-only:\(pixelSize.width)x\(pixelSize.height)"
+        self.pointSize = PlaybackSmartFillPointSize(width: Double(pixelSize.width), height: Double(pixelSize.height))
+        self.pixelSize = pixelSize
+        self.safeAreaClass = "unknown"
+        self.hardSystemObstructionClass = "none"
+        self.renderScale = 1
+        self.unitCanvas = .fullUnitRect
+        self.canvasId = "pixel-only:\(pixelSize.width)x\(pixelSize.height)"
+    }
+
     private nonisolated static func normalizedRenderScale(_ value: Double) -> Double {
         guard value.isFinite, value > 0 else { return 1 }
         return value
