@@ -84,6 +84,11 @@ class RuleTests(unittest.TestCase):
         violations = guards.check_forbidden_symbols(path, "let cache = SDImageCache.shared\n")
         self.assertEqual(["layer-boundary"], [v.rule for v in violations])
 
+    def test_planner_split_file_must_not_reference_image_cache(self):
+        path = "immichSlides/Shared/Model/PlaybackSmartFillPlanner+X.swift"
+        violations = guards.check_forbidden_symbols(path, "let cache = SDImageCache.shared\n")
+        self.assertEqual([(path, 1, "layer-boundary")], [(v.path, v.line, v.rule) for v in violations])
+
     def test_forbidden_symbol_in_comment_is_ignored(self):
         path = "immichSlides/Shared/Model/PlaybackSmartFillPlanner.swift"
         self.assertEqual([], guards.check_forbidden_symbols(path, "// no diagnostic hooks here\nlet a = 1\n"))

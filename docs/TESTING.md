@@ -258,7 +258,12 @@ xcrun swiftc -O -parse-as-library \
     immichSlides/Shared/Model/PlaybackSmartFillLayoutPolicy.swift \
     immichSlides/Shared/Model/PlaybackSmartFillRejectReason.swift \
     immichSlides/Shared/Model/PlaybackSmartFillPlanner.swift \
+    immichSlides/Shared/Model/PlaybackSmartFillPlanner+Search.swift \
+    immichSlides/Shared/Model/PlaybackSmartFillPlanner+Evaluation.swift \
+    immichSlides/Shared/Model/PlaybackSmartFillPlanner+Geometry.swift \
+    immichSlides/Shared/Model/PlaybackSmartFillPlanner+Readback.swift \
     immichSlides/Shared/Model/PlaybackSessionEngine.swift \
+    immichSlides/Shared/Model/PlaybackSessionEngine+ScenePresentationState.swift \
     immichSlides/Shared/Model/ScenePresentationTypes.swift \
     immichSlides/Shared/Model/ScenePresentationEffect.swift \
     immichSlides/Shared/Model/SceneActiveTimeClock.swift \

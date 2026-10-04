@@ -34,7 +34,7 @@ DEBUG_ONLY_MARKERS = (
     "UI_TEST_FORCE_LONG_PERSON_NAMES",
 )
 
-# Files that must stay free of image-cache and diagnostics concepts.
+# Primary files and adjacent +*.swift splits that must stay free of image-cache and diagnostics concepts.
 FORBIDDEN_IN_FILE = {
     "immichSlides/Shared/Model/PlaybackSessionEngine.swift": (
         "SDWebImage", "SDImageCache", "PlaybackImageRequest", "cacheKey", "requestLifecycle",
@@ -187,7 +187,9 @@ def check_debug_only_markers(path: str, source: str) -> list[Violation]:
 def check_forbidden_symbols(path: str, source: str) -> list[Violation]:
     code = mask_comments(source)
     found = []
-    for symbol in FORBIDDEN_IN_FILE.get(path, ()):
+    file = Path(path)
+    primary_path = file.with_name(file.stem.split("+", 1)[0] + file.suffix).as_posix()
+    for symbol in FORBIDDEN_IN_FILE.get(primary_path, ()):
         for match in re.finditer(re.escape(symbol), code):
             found.append(Violation(path, line_of(source, match.start()), "layer-boundary",
                                    f"{symbol} must not be referenced in this file"))

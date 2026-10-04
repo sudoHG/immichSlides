@@ -113,7 +113,7 @@ Platform views only forward system events (scene phase, Reduce Motion, remote/to
 - **One owner for on-screen state.** Only the reducer decides phases, fades and history. The view model executes effects and feeds results back as events. Views do not keep their own lifecycle timers.
 - **Paused time does not count.** `SceneActiveTimeClock` excludes paused and background time. The reducer tracks pause and background as separate suspension reasons (`userPaused`, `background`), so resuming from one does not undo the other.
 - **Actors.** `SoloVisionPoolFilter` is an `actor` with a bounded LRU cache of Vision results. It is cleared when the server changes.
-- **Debug and diagnostics.** The playback sequence recorder, request lifecycle diagnostics and `UI_TEST_*` launch switches are debug-only. Production decisions must not depend on them. `scripts/check_release_guards.py` enforces this and keeps image cache and diagnostics code out of `PlaybackSessionEngine.swift` and `PlaybackSmartFillPlanner.swift`.
+- **Debug and diagnostics.** The playback sequence recorder, request lifecycle diagnostics and `UI_TEST_*` launch switches are debug-only. Production decisions must not depend on them. `scripts/check_release_guards.py` enforces this and keeps image cache and diagnostics code out of `PlaybackSessionEngine.swift`, `PlaybackSmartFillPlanner.swift` and their adjacent `<Primary>+*.swift` split files.
   `PlatformCompat` owns XCTest detection, long-person-name injection, screenshot connection prefill and the sequence recording switch. XCTest detection returns false in Release. Replay parsing, runtime evidence validation and playback readback injection are compiled only in Debug; their serialized keys stay unchanged.
 
 ## 5. Glossary
