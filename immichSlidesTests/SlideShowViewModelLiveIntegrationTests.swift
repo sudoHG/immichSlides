@@ -155,7 +155,14 @@ struct SlideShowViewModelLiveIntegrationTests {
             )
         }
 
-        let readySnapshot = vm.sceneRenderSnapshot
+        var readySnapshot = vm.sceneRenderSnapshot
+        if readySnapshot.phase == .transition,
+            readySnapshot.layers.last(where: { $0.identity == targetLayer.identity })?.isPresentationReady == false,
+            let transitionDeadline = vm.fireScheduledScenePresentationWakeUpForTesting()
+        {
+            vm.scenePresentationTimestampProviderForTesting = { transitionDeadline }
+            readySnapshot = vm.sceneRenderSnapshot
+        }
         let visibleLayer = try #require(
             readySnapshot.layers.last(where: {
                 $0.identity == targetLayer.identity
@@ -187,6 +194,11 @@ struct SlideShowViewModelLiveIntegrationTests {
         let reportedIdentity = reporter.consumeDisplayTick(currentCandidate: candidate)
         let visibleIdentity = try #require(reportedIdentity)
         vm.incomingBecameVisible(visibleIdentity)
+        if visibleLayer.role == .incoming,
+            let completionDeadline = vm.fireScheduledScenePresentationWakeUpForTesting()
+        {
+            vm.scenePresentationTimestampProviderForTesting = { completionDeadline }
+        }
     }
 
     @Test
