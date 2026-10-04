@@ -620,7 +620,9 @@ struct SlideShowViewModelLiveIntegrationTests {
         }
         let selectedPersonNamePresent: Bool
         if let displayName = selection?.displayName, !displayName.isEmpty {
-            selectedPersonNamePresent = body.contains(displayName)
+            // Whole-token scan of free-form parts only, so a short name like "A" cannot match template text.
+            let writtenValues = ([reason ?? ""] + capturedLines + latestStableIds).joined(separator: "\n")
+            selectedPersonNamePresent = Self.containsStandaloneToken(displayName, in: writtenValues)
         } else {
             selectedPersonNamePresent = false
         }
@@ -657,6 +659,23 @@ struct SlideShowViewModelLiveIntegrationTests {
         }
 
         try body.write(toFile: Self.personWindowEvidencePath, atomically: true, encoding: .utf8)
+    }
+
+    private nonisolated static func containsStandaloneToken(_ token: String, in text: String) -> Bool {
+        func isWordCharacter(_ character: Character) -> Bool { character.isLetter || character.isNumber }
+        var searchRange = text.startIndex..<text.endIndex
+        while let match = text.range(of: token, range: searchRange) {
+            let precededByWordCharacter =
+                match.lowerBound > text.startIndex
+                && isWordCharacter(text[text.index(before: match.lowerBound)])
+            let followedByWordCharacter =
+                match.upperBound < text.endIndex && isWordCharacter(text[match.upperBound])
+            if !precededByWordCharacter && !followedByWordCharacter {
+                return true
+            }
+            searchRange = match.upperBound..<text.endIndex
+        }
+        return false
     }
 
     private nonisolated static func resolvePersonWindowEvidencePath(
