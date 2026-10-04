@@ -100,13 +100,14 @@ class CheckAllTests(unittest.TestCase):
         result = self.run_check_all()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.calls()
-        self.assertEqual(len(calls), 6)
+        self.assertEqual(len(calls), 7)
         self.assertTrue(calls[0].startswith("xcrun swift-format lint --strict"))
         self.assertIn("scripts/check_test_conventions.py", calls[1])
         self.assertIn("scripts/check_release_guards.py", calls[2])
         self.assertIn("scripts/validate_localization_catalog.py", calls[3])
         self.assertIn("scripts/scan_chinese_strings.py", calls[4])
-        self.assertIn("-m unittest discover -s scripts", calls[5])
+        self.assertIn("scripts/check_required_test_tools.py", calls[5])
+        self.assertIn("-m unittest discover -s scripts", calls[6])
         self.assertIn("Xcode unit tests were skipped", result.stdout)
         self.assertIn("RESULT: PASS", result.stdout)
 
@@ -115,7 +116,13 @@ class CheckAllTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("FAIL: release guards (exit 3", result.stdout)
         self.assertIn("RESULT: FAIL (1 step(s) failed)", result.stdout)
-        self.assertEqual(len(self.calls()), 6)
+        self.assertEqual(len(self.calls()), 7)
+
+    def test_missing_test_tool_fails_without_skipping_python_tests(self):
+        result = self.run_check_all(fail_match="check_required_test_tools.py")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("FAIL: Python test prerequisites", result.stdout)
+        self.assertIn("-m unittest discover -s scripts", self.calls()[-1])
 
     def test_lint_failure_fails_the_run(self):
         result = self.run_check_all(fail_match="swift-format lint")
