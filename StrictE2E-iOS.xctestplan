@@ -1,0 +1,51 @@
+{
+  "configurations" : [
+    {
+      "id" : "A37B4D17-C6DA-46E6-8BE8-5AE6CC7CC731",
+      "name" : "Strict E2E iOS",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "key" : "STRICT_E2E_INPUT_SERVER_URL",
+        "value" : "$(STRICT_E2E_INPUT_SERVER_URL)"
+      },
+      {
+        "key" : "STRICT_E2E_INPUT_PUBLIC_KEY",
+        "value" : "$(STRICT_E2E_INPUT_PUBLIC_KEY)"
+      },
+      {
+        "key" : "STRICT_E2E_INPUT_SCENARIO",
+        "value" : "$(STRICT_E2E_INPUT_SCENARIO)"
+      },
+      {
+        "key" : "STRICT_E2E_EVIDENCE_DIR",
+        "value" : "$(STRICT_E2E_EVIDENCE_DIR)"
+      },
+      {
+        "key" : "STRICT_E2E_INPUT_SERVER_URL_B",
+        "value" : "$(STRICT_E2E_INPUT_SERVER_URL_B)"
+      }
+    ],
+    "language" : "zh-Hans",
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:immichSlides.xcodeproj",
+      "identifier" : "120E64472F0CA2A5003B1480",
+      "name" : "immichSlides"
+    }
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:immichSlides.xcodeproj",
+        "identifier" : "12F4D6672F6A9FF70049C717",
+        "name" : "immichSlidesUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

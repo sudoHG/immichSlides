@@ -1,0 +1,87 @@
+{
+  "configurations" : [
+    {
+      "id" : "E2A8CEAD-111A-4E6D-A06A-31202E08E65D",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "key" : "CG_NUMERICS_SHOW_BACKTRACE",
+        "value" : "1"
+      },
+      {
+        "key" : "UI_TEST_EXPECT_PLATFORM",
+        "value" : "tvOS"
+      }
+    ],
+    "language" : "zh-Hans",
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:immichSlides.xcodeproj",
+      "identifier" : "120E64472F0CA2A5003B1480",
+      "name" : "immichSlides"
+    }
+  },
+  "testTargets" : [
+    {
+      "skippedTests" : [
+        "AccessLifecycleTVOSUITests",
+        "AppStoreScreenshotTVOSUITests",
+        "CacheSettingsUITests",
+        "ExifToggleUITests",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterAccessibilityTextScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterLightModeScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryAlbumStateAccessibilityTextScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryAlbumStateScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryAlbumStateScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryBackButtonFocusedScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryBackButtonFocusedScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryPeopleStateScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryPeopleStateScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryStartButtonFocusedScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSModeSelectionContinueFocusedScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSModeSelectionInlineOnboardingHeaderAccessibilityTextScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSModeSelectionInlineOnboardingHeaderScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSModeSelectionInlineOnboardingHeaderScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterAccessibilityTextScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterLightModeScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterLongNamesScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsAccessProtectionAccessibilityTextScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarAccessProtectionScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarCanWakeByAnyDirectionalPress()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarLightModeContrastScreenshot()",
+        "PlaybackSmartFillTVOSVisualUITests",
+        "PrivateEvidenceDirectoryTests",
+        "ReduceMotionUITests",
+        "ServerConfigFormTVOSUITests/testTVOSFirstBootAccessibilityTextSnapshot()",
+        "ServerConfigFormTVOSUITests/testTVOSFirstBootDarkModeSnapshot()",
+        "ServerConfigFormTVOSUITests/testTVOSFirstBootLightModeSnapshot()",
+        "StrictE2EFilterTVOSUITests",
+        "StrictE2ELateImageTVOSUITests",
+        "StrictE2ESmokeUITests",
+        "StrictE2ETVOSFlowUITests"
+      ],
+      "target" : {
+        "containerPath" : "container:immichSlides.xcodeproj",
+        "identifier" : "12F4D6672F6A9FF70049C717",
+        "name" : "immichSlidesUITests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:immichSlides.xcodeproj",
+        "identifier" : "125906F62F5D4DF400188AB4",
+        "name" : "immichSlidesTests"
+      }
+    }
+  ],
+  "version" : 1
+}

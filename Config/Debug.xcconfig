@@ -1,0 +1,2 @@
+// Allow a fresh clone to build without local server credentials.
+#include? "env.xcconfig"

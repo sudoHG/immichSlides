@@ -1,0 +1,92 @@
+{
+  "configurations" : [
+    {
+      "id" : "B6BC066C-9112-4CB8-95AD-FCD9E39372B8",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "key" : "CG_NUMERICS_SHOW_BACKTRACE",
+        "value" : "1"
+      },
+      {
+        "key" : "UI_TEST_EXPECT_PLATFORM",
+        "value" : "iOS"
+      },
+      {
+        "key" : "IMMICHSLIDES_EVIDENCE",
+        "value" : "1"
+      }
+    ],
+    "language" : "zh-Hans",
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:immichSlides.xcodeproj",
+      "identifier" : "120E64472F0CA2A5003B1480",
+      "name" : "immichSlides"
+    }
+  },
+  "testTargets" : [
+    {
+      "selectedTests" : [
+        "AppStoreScreenshotUITests",
+        "FilterSummaryIOSVisualUITests/testIOSAlbumFilterTopBarIPhonePortraitScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSAlbumFilterTopBarIPhonePortraitScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterEditorVisualScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterEditorVisualScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterEditorVisualScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryOnboardingHeaderScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryOnboardingHeaderScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryOnboardingHeaderScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryVisualScreenshotIPhoneLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryVisualScreenshotIPhonePortrait()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryVisualScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSFirstBootOnboardingHeaderScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSFirstBootOnboardingHeaderScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSFirstBootOnboardingHeaderScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSModeSelectionOnboardingHeaderScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSModeSelectionOnboardingHeaderScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSModeSelectionOnboardingHeaderScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSPersonFilterTopBarIPhonePortraitScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSPersonFilterTopBarIPhonePortraitScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSSettingsAboutPageScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSSettingsAboutPageScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSSettingsAboutPageScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSSettingsServerSectionScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSSlideShowPlaybackEntryHintScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSSlideShowPlaybackEntryHintScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSSlideShowPlaybackEntryHintScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSSlideShowVisualScreenshotLight()",
+        "PlaybackRequestLifecycleDiagnosticsUITests",
+        "PlaybackSmartFillVisualUITests",
+        "PrivateEvidenceDirectoryTests",
+        "ReduceMotionUITests/testReduceMotionSystemSettingRoundTripsIOS()",
+        "VisualAuditMatrixUITests",
+        "immichSlidesUITests/testDarkModeSnapshotFilterSummary()",
+        "immichSlidesUITests/testDarkModeSnapshotModeSelection()",
+        "immichSlidesUITests/testLaunchPerformance()",
+        "immichSlidesUITests/testVisualAuditPack_FirstBootMatrixSnapshots()",
+        "immichSlidesUITests/testVisualAuditPack_InteractiveFlowSnapshots()"
+      ],
+      "target" : {
+        "containerPath" : "container:immichSlides.xcodeproj",
+        "identifier" : "12F4D6672F6A9FF70049C717",
+        "name" : "immichSlidesUITests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:immichSlides.xcodeproj",
+        "identifier" : "125906F62F5D4DF400188AB4",
+        "name" : "immichSlidesTests"
+      }
+    }
+  ],
+  "version" : 1
+}

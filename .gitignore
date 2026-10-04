@@ -1,0 +1,53 @@
+# Local environment secrets: env.xcconfig and the untracked general test plan.
+Config/env.xcconfig
+immichSlides/Config/env.xcconfig
+immichSlides.xctestplan
+.env
+*.p12
+*.p8
+*.mobileprovision
+
+# Local operating system and editor state.
+.DS_Store
+.idea/
+.vscode/
+xcuserdata/
+*.xcuserstate
+
+# DerivedData / local build caches do not help others build.
+.derivedData/
+DerivedData/
+build/
+
+# Generated privacy pages are local build output; the website lives in its own repository.
+build/privacy-site/
+
+# Do not commit SPM checkout caches; only dependency declarations and Package.resolved belong in the repository.
+.swiftpm-checkouts/
+.swiftpm/
+.build/
+
+# Temporary root-level assets; images shipped in the app belong in Assets.xcassets.
+top-shelf/
+test.png
+test-transparent.png
+test-transparent-preview.png
+
+# Local App Store screenshot exports are not committed.
+产品截图/
+
+# Local SmartFill runtime screenshots/JSONL evidence is not committed.
+.smartfill-runtime-evidence/
+
+# Reduce accidental staging of raw evidence; the Git privacy hooks enforce these boundaries.
+**/evidence/
+**/*-evidence/
+**/*_evidence/
+**/motion-runtime/
+**/runtime-video/
+**/ui-runtime/
+*.har
+*.jsonl
+*.trace
+*.tsv
+*.xcresult/

@@ -1,0 +1,30 @@
+name: Privacy Preflight Bootstrap
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  privacy-preflight-bootstrap:
+    name: privacy-preflight-bootstrap
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout full PR history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run candidate privacy gate tests
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_git_privacy_gate.py
+
+      - name: Scan PR range with candidate scanner
+        env:
+          PRIVACY_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PRIVACY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 scripts/git_privacy_gate.py \
+            --range "${PRIVACY_BASE_SHA}..${PRIVACY_HEAD_SHA}"

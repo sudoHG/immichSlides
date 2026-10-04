@@ -1,0 +1,51 @@
+{
+  "id": "fixture-asset-001",
+  "type": "IMAGE",
+  "isFavorite": true,
+  "isTrashed": false,
+  "isArchived": false,
+  "width": 4000,
+  "height": 3000,
+  "exifInfo": {
+    "make": "FixtureCam",
+    "model": "Fixture One",
+    "dateTimeOriginal": "2026-01-02T03:04:05Z",
+    "timeZone": "UTC",
+    "lensModel": "Fixture Lens",
+    "fNumber": 2.8,
+    "focalLength": 35.0,
+    "iso": 200,
+    "exposureTime": "1/125",
+    "city": "Fixture City",
+    "state": "Fixture State",
+    "country": "Fixture Country",
+    "rating": 4,
+    "exifImageWidth": 4000,
+    "exifImageHeight": 3000,
+    "orientation": "Rotate 90 CW"
+  },
+  "people": [
+    {
+      "id": "fixture-person-001",
+      "name": "",
+      "isHidden": false,
+      "isFavorite": true,
+      "faces": [
+        {
+          "id": "fixture-face-001",
+          "boundingBoxX1": 100.5,
+          "boundingBoxX2": 420.25,
+          "boundingBoxY1": 80.0,
+          "boundingBoxY2": 390.75,
+          "imageWidth": 4000,
+          "imageHeight": 3000,
+          "sourceType": "machine-learning"
+        }
+      ]
+    }
+  ],
+  "tags": [
+    "fixture-tag"
+  ],
+  "livePhotoVideoID": null
+}

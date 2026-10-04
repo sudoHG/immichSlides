@@ -1,0 +1,96 @@
+{
+  "configurations" : [
+    {
+      "id" : "6A6F3379-722A-4A52-B13B-0C5A6AB2F4A1",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "key" : "CG_NUMERICS_SHOW_BACKTRACE",
+        "value" : "1"
+      },
+      {
+        "key" : "UI_TEST_EXPECT_PLATFORM",
+        "value" : "iOS"
+      }
+    ],
+    "language" : "zh-Hans",
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:immichSlides.xcodeproj",
+      "identifier" : "120E64472F0CA2A5003B1480",
+      "name" : "immichSlides"
+    }
+  },
+  "testTargets" : [
+    {
+      "skippedTests" : [
+        "AccessLifecycleIOSUITests",
+        "AppStoreScreenshotUITests",
+        "CacheSettingsUITests",
+        "ExifToggleUITests",
+        "FilterSummaryIOSVisualUITests/testIOSAlbumFilterTopBarIPhonePortraitScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSAlbumFilterTopBarIPhonePortraitScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterEditorVisualScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterEditorVisualScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterEditorVisualScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryOnboardingHeaderScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryOnboardingHeaderScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryOnboardingHeaderScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryVisualScreenshotIPhoneLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryVisualScreenshotIPhonePortrait()",
+        "FilterSummaryIOSVisualUITests/testIOSFilterSummaryVisualScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSFirstBootOnboardingHeaderScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSFirstBootOnboardingHeaderScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSFirstBootOnboardingHeaderScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSModeSelectionOnboardingHeaderScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSModeSelectionOnboardingHeaderScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSModeSelectionOnboardingHeaderScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSPersonFilterTopBarIPhonePortraitScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSPersonFilterTopBarIPhonePortraitScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSSettingsAboutPageScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSSettingsAboutPageScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSSettingsAboutPageScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSSettingsServerSectionScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSSlideShowPlaybackEntryHintScreenshotAccessibility()",
+        "FilterSummaryIOSVisualUITests/testIOSSlideShowPlaybackEntryHintScreenshotLandscape()",
+        "FilterSummaryIOSVisualUITests/testIOSSlideShowPlaybackEntryHintScreenshotLight()",
+        "FilterSummaryIOSVisualUITests/testIOSSlideShowVisualScreenshotLight()",
+        "PlaybackRequestLifecycleDiagnosticsUITests",
+        "PlaybackSmartFillVisualUITests",
+        "PrivateEvidenceDirectoryTests",
+        "ReduceMotionUITests",
+        "RotationUITests",
+        "StrictE2EFilterIOSUITests",
+        "StrictE2EFirstBatchIOSUITests",
+        "StrictE2ELateImageIOSUITests",
+        "StrictE2ESmokeUITests",
+        "VisualAuditMatrixUITests",
+        "immichSlidesUITests/testDarkModeSnapshotFilterSummary()",
+        "immichSlidesUITests/testDarkModeSnapshotModeSelection()",
+        "immichSlidesUITests/testLaunchPerformance()",
+        "immichSlidesUITests/testVisualAuditPack_FirstBootMatrixSnapshots()",
+        "immichSlidesUITests/testVisualAuditPack_InteractiveFlowSnapshots()"
+      ],
+      "target" : {
+        "containerPath" : "container:immichSlides.xcodeproj",
+        "identifier" : "12F4D6672F6A9FF70049C717",
+        "name" : "immichSlidesUITests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:immichSlides.xcodeproj",
+        "identifier" : "125906F62F5D4DF400188AB4",
+        "name" : "immichSlidesTests"
+      }
+    }
+  ],
+  "version" : 1
+}

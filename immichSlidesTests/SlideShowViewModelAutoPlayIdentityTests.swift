@@ -1,0 +1,175 @@
+//
+//  SlideShowViewModelAutoPlayIdentityTests.swift
+//  immichSlidesTests
+//
+//  Asserts on a virtual clock that auto play switches identity, and that a foreground/background pause does
+//  not catch up on missed advances.
+//
+
+import Foundation
+import Testing
+@testable import immichSlides
+
+@MainActor
+@Suite(.sharedRuntimeIsolation)
+struct SlideShowViewModelAutoPlayIdentityTests {
+
+    @Test
+    func `autoplay switches the current identity to the next scene once the deadline passes`() {
+        let clock = VirtualClock()
+        let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock)
+        defer { store.clear() }
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        let firstIdentity = currentPresentationIdentity(viewModel)
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-0")
+
+        // The stable deadline is already set to now + interval; advance the clock, then fire, so the next scene enters
+        // grace at the deadline.
+        clock.now += 5
+        let deadline = viewModel.fireScheduledScenePresentationWakeUpForTesting()
+        #expect(deadline != nil)
+        clock.now = deadline ?? clock.now
+        // At the deadline the next scene is committed and enters grace; the visible identity changes only once the next
+        // scene is Ready.
+        completeCurrentScenePresentation(viewModel, clock: clock)
+
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-1")
+        #expect(currentPresentationIdentity(viewModel) != firstIdentity)
+    }
+
+    @Test
+    func `resuming after a background pause spanning ten intervals does not catch up or skip identities`() {
+        let clock = VirtualClock()
+        let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock)
+        defer { store.clear() }
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        let pausedIdentity = currentPresentationIdentity(viewModel)
+        let pausedAssetId = viewModel.safeCurrentScene?.primaryAssetId
+        #expect(pausedAssetId == "autoplay-0")
+
+        viewModel.suspendScenePresentationForBackground()
+        clock.now = 50
+        #expect(viewModel.fireScheduledScenePresentationWakeUpForTesting() == nil)
+        #expect(currentPresentationIdentity(viewModel) == pausedIdentity)
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == pausedAssetId)
+
+        viewModel.resumeScenePresentationFromBackground()
+        #expect(currentPresentationIdentity(viewModel) == pausedIdentity)
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-0")
+        #expect(viewModel.safeCurrentScene?.primaryAssetId != "autoplay-1")
+        #expect(viewModel.safeCurrentScene?.primaryAssetId != "autoplay-10")
+    }
+
+    private func makeIsolatedAutoPlayViewModel(
+        clock: VirtualClock
+    ) -> (SlideShowViewModel, PlaybackSettingsStore) {
+        let suiteName = "SlideShowViewModelAutoPlayIdentity.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = PlaybackSettingsStore(
+            key: "playbackSettings.autoPlayIdentity",
+            defaults: defaults
+        )
+        store.save(
+            PlaybackSettings(
+                autoPlayEnabled: true,
+                intervalSeconds: 5,
+                displayMode: .singlePhoto
+            )
+        )
+
+        let viewModel = SlideShowViewModel(
+            source: .random,
+            settingsStore: store,
+            observeSettingsChanges: false
+        )
+        viewModel.scenePresentationTimestampProviderForTesting = { clock.now }
+        viewModel.initialPhotoLoadHookForTesting = { _ in }
+        viewModel.backgroundPreloadHookForTesting = { _, _, _ in }
+        viewModel.indexChangePhotoLoadHookForTesting = { _, _ in }
+        viewModel.transitionWindowPreloadHookForTesting = { _, _, _ in }
+        viewModel.replacePlaybackAssetsForTesting(
+            (0..<12).map { makeAsset(id: "autoplay-\($0)") }
+        )
+        return (viewModel, store)
+    }
+
+    private func completeCurrentScenePresentation(
+        _ viewModel: SlideShowViewModel,
+        clock: VirtualClock
+    ) {
+        var snapshot = viewModel.sceneRenderSnapshot
+        guard snapshot.phase != .stablePhoto,
+            let targetLayer = snapshot.layers.last(where: { $0.role == .incoming }),
+            let scene = viewModel.scene(for: targetLayer)
+        else {
+            return
+        }
+
+        for slot in scene.photoSlots {
+            viewModel.rendererDecoded(
+                SceneRendererIdentity(
+                    generation: targetLayer.identity.generation,
+                    attemptID: viewModel.scenePresentationRendererAttemptID(for: targetLayer),
+                    sceneID: targetLayer.identity.sceneID,
+                    slotID: slot.id,
+                    assetID: slot.asset.id
+                )
+            )
+        }
+
+        snapshot = viewModel.sceneRenderSnapshot
+        if snapshot.phase == .transition,
+            snapshot.layers.last(where: { $0.role == .incoming })?.isPresentationReady == false,
+            let transitionDeadline = viewModel.fireScheduledScenePresentationWakeUpForTesting()
+        {
+            clock.now = transitionDeadline
+            snapshot = viewModel.sceneRenderSnapshot
+        }
+
+        guard
+            let incoming = snapshot.layers.last(where: {
+                $0.role == .incoming && $0.isPresentationReady
+            })
+        else {
+            return
+        }
+        clock.now = (incoming.fadeStartTime ?? clock.now) + 0.5
+        viewModel.incomingBecameVisible(
+            ScenePresentationLayerIdentity(
+                generation: incoming.identity.generation,
+                sceneID: incoming.identity.sceneID,
+                layerID: "scene-root"
+            )
+        )
+        if let completionDeadline = viewModel.fireScheduledScenePresentationWakeUpForTesting() {
+            clock.now = completionDeadline
+        }
+    }
+
+    private func currentPresentationIdentity(
+        _ viewModel: SlideShowViewModel
+    ) -> PlaybackSessionEngine.ScenePresentationIdentity? {
+        viewModel.sceneRenderSnapshot.currentTarget?.identity
+    }
+
+    private func makeAsset(id: String) -> Asset {
+        Asset(
+            id: id,
+            type: "IMAGE",
+            isFavorite: false,
+            isTrashed: false,
+            isArchived: false,
+            exifInfo: nil,
+            people: nil,
+            tags: nil,
+            livePhotoVideoID: nil,
+            width: 1800,
+            height: 1200
+        )
+    }
+}
+
+private final class VirtualClock {
+    var now: TimeInterval = 0
+}

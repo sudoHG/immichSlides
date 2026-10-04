@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+repository_root=$(git rev-parse --show-toplevel)
+hook_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+installed_scanner="$hook_directory/../git_privacy_gate.py"
+source_hooks_directory=
+if [ -d "$repository_root/.githooks" ]; then
+    source_hooks_directory=$(
+        CDPATH= cd -- "$repository_root/.githooks" && pwd -P
+    )
+fi
+
+if [ -n "$source_hooks_directory" ] &&
+    [ "$hook_directory" = "$source_hooks_directory" ]; then
+    scanner="$repository_root/scripts/git_privacy_gate.py"
+elif [ -r "$installed_scanner" ]; then
+    scanner=$installed_scanner
+else
+    echo "PRIVACY_GATE_ERROR scanner unavailable" >&2
+    exit 3
+fi
+
+if [ ! -r "$scanner" ]; then
+    echo "PRIVACY_GATE_ERROR scanner unavailable" >&2
+    exit 3
+fi
+
+exec python3 "$scanner" --staged

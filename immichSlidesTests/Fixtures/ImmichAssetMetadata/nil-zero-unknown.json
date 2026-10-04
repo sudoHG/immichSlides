@@ -1,0 +1,40 @@
+{
+  "id": "fixture-asset-003",
+  "type": "IMAGE",
+  "isFavorite": false,
+  "isTrashed": false,
+  "isArchived": false,
+  "width": 0,
+  "height": null,
+  "exifInfo": {
+    "exifImageWidth": 0,
+    "exifImageHeight": null,
+    "orientation": 1,
+    "fixtureUnknownExifField": "ignored"
+  },
+  "people": [
+    {
+      "id": "fixture-person-002",
+      "name": "",
+      "isHidden": true,
+      "isFavorite": false,
+      "faces": [
+        {
+          "id": null,
+          "boundingBoxX1": null,
+          "boundingBoxX2": 0,
+          "boundingBoxY1": null,
+          "boundingBoxY2": 0,
+          "imageWidth": null,
+          "imageHeight": 0,
+          "sourceType": null,
+          "fixtureUnknownFaceField": true
+        }
+      ],
+      "fixtureUnknownPersonField": "ignored"
+    }
+  ],
+  "fixtureUnknownAssetField": {
+    "ignored": true
+  }
+}

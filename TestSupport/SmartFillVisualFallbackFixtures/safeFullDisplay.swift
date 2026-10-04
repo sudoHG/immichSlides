@@ -1,0 +1,1 @@
+let forbiddenSafeFullDisplayVisualPath = "safeFullDisplay"

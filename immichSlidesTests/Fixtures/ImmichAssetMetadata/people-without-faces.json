@@ -1,0 +1,19 @@
+{
+  "id": "fixture-asset-004",
+  "type": "IMAGE",
+  "isFavorite": false,
+  "isTrashed": false,
+  "isArchived": false,
+  "width": 1024,
+  "height": 768,
+  "people": [
+    {
+      "id": "fixture-person-003",
+      "name": "",
+      "isHidden": false,
+      "isFavorite": false
+    }
+  ],
+  "tags": null,
+  "livePhotoVideoID": null
+}

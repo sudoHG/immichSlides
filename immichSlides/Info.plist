@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>IMMICH_SERVER_URL</key>
+	<string>$(IMMICH_SERVER_URL)</string>
+	<key>IMMICH_API_KEY</key>
+	<string>$(IMMICH_API_KEY)</string>
+	<key>ENABLE_DEBUG_AUTO_SERVER</key>
+	<string>$(ENABLE_DEBUG_AUTO_SERVER)</string>
+	<key>ENABLE_DEBUG_FILL_APIKEY_BUTTON</key>
+	<string>$(ENABLE_DEBUG_FILL_APIKEY_BUTTON)</string>
+	<key>ENABLE_DEBUG_SETTINGS_ENTRY</key>
+	<string>$(ENABLE_DEBUG_SETTINGS_ENTRY)</string>
+	<key>ENABLE_DEBUG_FORCE_SINGLE_PHOTO_PLAYBACK</key>
+	<string>$(ENABLE_DEBUG_FORCE_SINGLE_PHOTO_PLAYBACK)</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Used to connect to your Immich server on the local network and verify the server configuration.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- HTTPS / Keychain / CryptoKit are system capabilities, so ITSAppUsesNonExemptEncryption=false and no encryption documentation needs to be uploaded. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>
