@@ -853,6 +853,20 @@ struct PlaybackRuntimeEvidenceManifestTests {
     }
 
     @Test
+    func `startup fixture exposes complete phase timestamps and durations`() throws {
+        let record = startupFallbackRecord()
+        #expect(runtimePhaseKeyCompleteness(for: [record]) == "complete")
+        let timestamps = try #require(record["runtimePhaseTimestampsMs"] as? [String: Double])
+        let durations = try #require(record["runtimePhaseDurationsMs"] as? [String: Double])
+        var previousTimestamp: Double?
+        for phase in Self.requiredStartupPhaseKeys {
+            let timestamp = try #require(timestamps[phase])
+            #expect(durations[phase] == max(0, timestamp - (previousTimestamp ?? timestamp)))
+            previousTimestamp = timestamp
+        }
+    }
+
+    @Test
     func `photo load phase summary requires first image load chain fields`() throws {
         let record = startupFallbackRecord()
         let line = try jsonLine(record)
@@ -867,6 +881,17 @@ struct PlaybackRuntimeEvidenceManifestTests {
         #expect(parsed["firstPhotoCacheStatus"] as? String == "miss")
         #expect(parsed["firstImageDisplayedRuntimeMs"] as? Double == 170)
         #expect(parsed["firstImageLoadStatus"] as? String == "displayed")
+
+        let report = PlaybackRuntimeEvidenceManifestValidator.validateJSONLines(
+            [line], screenshotExists: { _ in true }
+        )
+        #expect(report.issues.isEmpty)
+        var missingDurations = record
+        missingDurations.removeValue(forKey: "photoLoadPhaseDurationsMs")
+        let missingReport = PlaybackRuntimeEvidenceManifestValidator.validateJSONLines(
+            [try jsonLine(missingDurations)], screenshotExists: { _ in true }
+        )
+        #expect(hasIssue(missingReport.issues, code: .missingRequiredField, field: "photoLoadPhaseDurationsMs"))
     }
 
     @Test(.enabled(if: externalRuntimeJSONLEnabled))
@@ -1025,10 +1050,14 @@ struct PlaybackRuntimeEvidenceManifestTests {
             "allVisibleSlotsReady": allVisibleSlotsReadyRuntimeMs
         ]
         record["runtimePhaseDurationsMs"] = [
-            "playbackEntryToAssetPoolReady": 10,
-            "planning": 6,
-            "publishToFirstSlotReady": firstSlotReadyRuntimeMs - firstSceneRuntimeMs,
-            "firstSlotToAllVisibleSlotsReady": allVisibleSlotsReadyRuntimeMs - firstSlotReadyRuntimeMs
+            "playbackEntryRequested": 0,
+            "assetPoolRequestStarted": 5,
+            "assetPoolReady": 5,
+            "firstScenePlanningStarted": 2,
+            "firstScenePlanned": 6,
+            "firstScenePublished": max(0, firstSceneRuntimeMs - 18),
+            "firstSlotReady": max(0, firstSlotReadyRuntimeMs - firstSceneRuntimeMs),
+            "allVisibleSlotsReady": max(0, allVisibleSlotsReadyRuntimeMs - firstSlotReadyRuntimeMs)
         ]
         record["firstSceneRuntimeMs"] = firstSceneRuntimeMs
         record["firstSlotReadyRuntimeMs"] = firstSlotReadyRuntimeMs
