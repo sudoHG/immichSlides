@@ -9,7 +9,7 @@ import SwiftUI
 import SDWebImageSwiftUI
 import SDWebImage
 
-struct IOSSelectionStageMosaic: View {
+struct SelectionStageMosaicViewIOS: View {
     enum Style {
         case album
         case people
@@ -44,7 +44,7 @@ struct IOSSelectionStageMosaic: View {
     }
 
     private func albumTile(url: URL, width: CGFloat, height: CGFloat, prominence: AlbumTileProminence) -> some View {
-        IOSGridStageImage(url: url, prominence: prominence)
+        GridStageImageViewIOS(url: url, prominence: prominence)
             .frame(width: width, height: height)
     }
 
@@ -60,7 +60,7 @@ struct IOSSelectionStageMosaic: View {
 
     private func peoplePortrait(url: URL, width: CGFloat, height: CGFloat, emphasis: PortraitBandEmphasis) -> some View
     {
-        IOSPortraitStageImage(url: url, emphasis: emphasis)
+        PortraitStageImageViewIOS(url: url, emphasis: emphasis)
             .frame(width: width, height: height)
     }
 
@@ -156,7 +156,7 @@ enum PortraitBandEmphasis {
     case tertiary
 }
 
-struct IOSGridStageImage: View {
+struct GridStageImageViewIOS: View {
     let url: URL
     let prominence: AlbumTileProminence
 
@@ -202,7 +202,7 @@ struct IOSGridStageImage: View {
     }
 }
 
-struct IOSPortraitStageImage: View {
+struct PortraitStageImageViewIOS: View {
     let url: URL
     let emphasis: PortraitBandEmphasis
 

@@ -45,7 +45,7 @@ struct SettingsViewTV: View {
     let serverStatusMessage: String
     let serverErrorAlertTitle: String
     let serverErrorMessage: String
-    @Binding var showServerErrorAlert: Bool
+    @Binding var isServerErrorAlertPresented: Bool
     let onTestConnection: () -> Void
     let onSaveServerConfig: () -> Void
 
@@ -59,11 +59,11 @@ struct SettingsViewTV: View {
     let onOpenFilterEditor: () -> Void
     let onToggleShowExif: () -> Void
     let onToggleShowDebugOverlay: () -> Void
-    @Binding var showFilterModeBlockedAlert: Bool
+    @Binding var isFilterModeBlockedAlertPresented: Bool
     let onCancelFilterModeBlockedAlert: () -> Void
 
-    let accessProtectionEnabled: Bool
-    let accessProtectionNeedsRecovery: Bool
+    let isAccessProtectionEnabled: Bool
+    let isAccessProtectionRecoveryNeeded: Bool
     let enablePin: String
     let enablePinConfirm: String
     let disablePin: String
@@ -81,7 +81,7 @@ struct SettingsViewTV: View {
     let cacheSummary: AssetsDownloadManager.CacheSummary
     let cacheStatusMessage: String
     let isClearingCache: Bool
-    @Binding var showClearDiskCacheAlert: Bool
+    @Binding var isClearDiskCacheAlertPresented: Bool
     let onClearDiskCache: () -> Void
     let onConfirmClearDiskCache: () -> Void
 

@@ -2,6 +2,23 @@ import SwiftUI
 
 // FocusedValue reports the system's actual focus, since it isn't always in sync with @FocusState.
 
+private enum VisualAuditPreparation {
+    static let coverLimitCount: Int = 40
+    static let maximumRetryCount: Int = 40
+    static let pollIntervalNanoseconds: UInt64 = 250_000_000
+}
+
+private enum StageAtmosphereMetrics {
+    static let primaryGlowSizePoints: CGFloat = 720
+    static let primaryGlowBlurPoints: CGFloat = 120
+    static let primaryGlowOffsetXPoints: CGFloat = -360
+    static let primaryGlowOffsetYPoints: CGFloat = -280
+    static let secondaryGlowSizePoints: CGFloat = 640
+    static let secondaryGlowBlurPoints: CGFloat = 140
+    static let secondaryGlowOffsetXPoints: CGFloat = 420
+    static let secondaryGlowOffsetYPoints: CGFloat = 260
+}
+
 private struct FilterEditorFocusedTargetKey: FocusedValueKey {
     typealias Value = String
 }
@@ -22,7 +39,7 @@ struct FilterViewTV: View {
 
     // true: start playback; false: finish and return to Settings.
 
-    var showsStartPlaybackButton: Bool = true
+    var shouldShowStartPlaybackButton: Bool = true
     var onStartPlaybackRequested: ((FilterSelection) -> Void)? = nil
     var onDismissRequested: (() -> Void)? = nil
 
@@ -30,8 +47,8 @@ struct FilterViewTV: View {
 
     @StateObject private var stageViewModel = FilterSummaryTVStageViewModel()
 
-    @State private var showAlbumFilter: Bool = false
-    @State private var showPeopleFilter: Bool = false
+    @State private var isAlbumFilterPresented: Bool = false
+    @State private var isPeopleFilterPresented: Bool = false
     @State private var activeStageMode: StageMode = .album
     @State private var lastStableFocusTarget: FocusTarget?
     @State private var requestedFocusTarget: FocusTarget?
@@ -51,13 +68,13 @@ struct FilterViewTV: View {
     }
 
     private var shouldShowDismissButton: Bool {
-        showsStartPlaybackButton == false && onDismissRequested != nil
+        shouldShowStartPlaybackButton == false && onDismissRequested != nil
     }
 
     // With no filter, Start Playback is still shown but disabled, and can't be the default focus.
 
     private var shouldRenderPrimaryActionButton: Bool {
-        showsStartPlaybackButton || shouldShowDismissButton
+        shouldShowStartPlaybackButton || shouldShowDismissButton
     }
 
     private var canStartPlayback: Bool {
@@ -68,7 +85,7 @@ struct FilterViewTV: View {
         if shouldShowDismissButton {
             return .primaryAction
         }
-        if showsStartPlaybackButton && canStartPlayback {
+        if shouldShowStartPlaybackButton && canStartPlayback {
             return .primaryAction
         }
         return nil
@@ -84,14 +101,14 @@ struct FilterViewTV: View {
         return "\(albumPart)|\(peoplePart)"
     }
 
-    private var albumVisualAuditReady: Bool {
+    private var isAlbumVisualAuditReady: Bool {
         let hasMatchedAlbumSelection = viewModel.selection.albumIds.contains { selectedID in
             viewModel.albums.contains { $0.id == selectedID }
         }
         return hasMatchedAlbumSelection && viewModel.albumCoverURLs.isEmpty == false && stageViewModel.isAlbumStageReady
     }
 
-    private var peopleVisualAuditReady: Bool {
+    private var isPeopleVisualAuditReady: Bool {
         let selectedIDs = viewModel.selection.personFilters.map(\.personId)
         let hasMatchedPeopleSelection = selectedIDs.contains { selectedID in
             viewModel.people.contains { $0.id == selectedID }
@@ -105,8 +122,8 @@ struct FilterViewTV: View {
             && stageViewModel.isPeopleStageReady
     }
 
-    private var filterEditorVisualAuditReady: Bool {
-        albumVisualAuditReady && peopleVisualAuditReady
+    private var isFilterEditorVisualAuditReady: Bool {
+        isAlbumVisualAuditReady && isPeopleVisualAuditReady
     }
 
     private var currentStageMode: StageMode {
@@ -313,10 +330,10 @@ struct FilterViewTV: View {
                 break
             }
         }
-        .navigationDestination(isPresented: $showAlbumFilter) {
+        .navigationDestination(isPresented: $isAlbumFilterPresented) {
             AlbumFilterView(viewModel: viewModel)
         }
-        .navigationDestination(isPresented: $showPeopleFilter) {
+        .navigationDestination(isPresented: $isPeopleFilterPresented) {
             PersonFilterView(viewModel: viewModel)
         }
     }
@@ -329,7 +346,7 @@ struct FilterViewTV: View {
 
     private func repairFocusIfNeeded() {
 
-        guard showAlbumFilter == false, showPeopleFilter == false else { return }
+        guard isAlbumFilterPresented == false, isPeopleFilterPresented == false else { return }
 
         let fallbackTarget: FocusTarget?
         if let requestedFocusTarget, isFocusTargetAvailable(requestedFocusTarget) {
@@ -371,26 +388,28 @@ struct FilterViewTV: View {
     }
 
     private func prepareVisualAuditSelectionsForUITestsIfNeeded() async {
-        await viewModel.getCoverURLs(filterType: .albums, coverLimit: 40, shouldReset: true)
-        await viewModel.getCoverURLs(filterType: .people, coverLimit: 40, shouldReset: true)
+        await viewModel.getCoverURLs(
+            filterType: .albums, coverLimit: VisualAuditPreparation.coverLimitCount, shouldReset: true)
+        await viewModel.getCoverURLs(
+            filterType: .people, coverLimit: VisualAuditPreparation.coverLimitCount, shouldReset: true)
         await stageViewModel.prepare(viewModel: viewModel)
 
-        for _ in 0..<40 {
-            if filterEditorVisualAuditReady {
+        for _ in 0..<VisualAuditPreparation.maximumRetryCount {
+            if isFilterEditorVisualAuditReady {
                 return
             }
 
-            if albumVisualAuditReady == false,
+            if isAlbumVisualAuditReady == false,
                 let firstAlbum = viewModel.albums.first
             {
                 await MainActor.run {
                     viewModel.removeAllAlbumSelection()
                     viewModel.toggleAlbum(id: firstAlbum.id)
                 }
-                await stageViewModel.refreshAlbumStageIfNeeded(viewModel: viewModel, force: true)
+                await stageViewModel.refreshAlbumStageIfNeeded(viewModel: viewModel, shouldForceRefresh: true)
             }
 
-            if peopleVisualAuditReady == false,
+            if isPeopleVisualAuditReady == false,
                 let firstPerson = viewModel.people.first
             {
                 let selectedIDs = viewModel.selection.personFilters.map(\.personId)
@@ -404,10 +423,10 @@ struct FilterViewTV: View {
                 for personID in viewModel.selection.personFilters.prefix(1).map(\.personId) {
                     await viewModel.loadPersonAssetsCountIfNeeded(id: personID)
                 }
-                await stageViewModel.refreshPeopleStageIfNeeded(viewModel: viewModel, force: true)
+                await stageViewModel.refreshPeopleStageIfNeeded(viewModel: viewModel, shouldForceRefresh: true)
             }
 
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: VisualAuditPreparation.pollIntervalNanoseconds)
         }
     }
 
@@ -421,15 +440,25 @@ struct FilterViewTV: View {
 
             Circle()
                 .fill(stageAccent.opacity(stageGlowPrimaryOpacity))
-                .frame(width: 720, height: 720)
-                .blur(radius: 120)
-                .offset(x: -360, y: -280)
+                .frame(
+                    width: StageAtmosphereMetrics.primaryGlowSizePoints,
+                    height: StageAtmosphereMetrics.primaryGlowSizePoints
+                )
+                .blur(radius: StageAtmosphereMetrics.primaryGlowBlurPoints)
+                .offset(
+                    x: StageAtmosphereMetrics.primaryGlowOffsetXPoints,
+                    y: StageAtmosphereMetrics.primaryGlowOffsetYPoints)
 
             Circle()
                 .fill(stageSecondaryAccent.opacity(stageGlowSecondaryOpacity))
-                .frame(width: 640, height: 640)
-                .blur(radius: 140)
-                .offset(x: 420, y: 260)
+                .frame(
+                    width: StageAtmosphereMetrics.secondaryGlowSizePoints,
+                    height: StageAtmosphereMetrics.secondaryGlowSizePoints
+                )
+                .blur(radius: StageAtmosphereMetrics.secondaryGlowBlurPoints)
+                .offset(
+                    x: StageAtmosphereMetrics.secondaryGlowOffsetXPoints,
+                    y: StageAtmosphereMetrics.secondaryGlowOffsetYPoints)
         }
         .ignoresSafeArea()
     }
@@ -438,14 +467,14 @@ struct FilterViewTV: View {
         ZStack(alignment: .bottomLeading) {
             Group {
                 if currentStageMode == .album {
-                    AlbumPanoramaStage(
+                    AlbumPanoramaStageViewTV(
                         panoramaURLs: stageViewModel.albumPanoramaURLs,
                         spotlightURLs: stageViewModel.albumSpotlightURLs,
                         accent: stageAccent,
                         selectedSummary: stageSelectionSummary
                     )
                 } else {
-                    PeopleConstellationStage(
+                    PeopleConstellationStageViewTV(
                         wallURLs: stageViewModel.peopleWallURLs,
                         spotlightURLs: stageViewModel.peopleSpotlightURLs,
                         accent: stageAccent,
@@ -538,9 +567,9 @@ struct FilterViewTV: View {
 
     private var albumCard: some View {
         Button {
-            showAlbumFilter = true
+            isAlbumFilterPresented = true
         } label: {
-            FloatingSelectionCard(
+            FloatingSelectionCardViewTV(
                 title: "Filter Albums",
                 subtitle: "Choose albums to add to the slideshow pool.",
                 summary: LocalizedText.format(
@@ -576,9 +605,9 @@ struct FilterViewTV: View {
 
     private var peopleCard: some View {
         Button {
-            showPeopleFilter = true
+            isPeopleFilterPresented = true
         } label: {
-            FloatingSelectionCard(
+            FloatingSelectionCardViewTV(
                 title: "Filter People",
                 subtitle: "Choose people to add to the slideshow pool.",
                 summary: LocalizedText.format(
@@ -709,20 +738,20 @@ struct FilterViewTV: View {
     private var uiTestReadinessMarkers: some View {
         VStack(alignment: .leading, spacing: 1) {
             // localization-audit: ui-test-probe
-            Text(verbatim: albumVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isAlbumVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterEditor.album.ready")
                 // localization-audit: ui-test-probe
-                .accessibilityValue(Text(verbatim: albumVisualAuditReady ? "ready" : "loading"))
+                .accessibilityValue(Text(verbatim: isAlbumVisualAuditReady ? "ready" : "loading"))
             // localization-audit: ui-test-probe
-            Text(verbatim: peopleVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isPeopleVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterEditor.people.ready")
                 // localization-audit: ui-test-probe
-                .accessibilityValue(Text(verbatim: peopleVisualAuditReady ? "ready" : "loading"))
+                .accessibilityValue(Text(verbatim: isPeopleVisualAuditReady ? "ready" : "loading"))
             // localization-audit: ui-test-probe
-            Text(verbatim: filterEditorVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isFilterEditorVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterEditor.visual.ready")
                 // localization-audit: ui-test-probe
-                .accessibilityValue(Text(verbatim: filterEditorVisualAuditReady ? "ready" : "loading"))
+                .accessibilityValue(Text(verbatim: isFilterEditorVisualAuditReady ? "ready" : "loading"))
         }
         .font(.system(size: 1))
         .foregroundStyle(Color.clear)

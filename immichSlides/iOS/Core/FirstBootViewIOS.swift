@@ -9,6 +9,10 @@ import SwiftUI
 
 // iOS first launch keeps its scrolling and orientation behavior and does not use the tvOS focus layout.
 
+private enum ConnectionStatusAnimation {
+    static let durationSeconds: Double = 0.2
+}
+
 struct FirstBootViewIOS: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -30,7 +34,7 @@ struct FirstBootViewIOS: View {
     }
 
     var body: some View {
-        IOSOnboardingPageScaffold(metrics: onboardingMetrics) { _ in
+        OnboardingPageScaffoldViewIOS(metrics: onboardingMetrics) { _ in
             contentStack
         }
     }
@@ -63,7 +67,7 @@ struct FirstBootViewIOS: View {
     // Single-column information hierarchy, kept on small screens and after rotation.
     private var contentStack: some View {
         VStack(alignment: .leading, spacing: onboardingMetrics.pageSectionSpacing) {
-            IOSOnboardingPageHeader(
+            OnboardingPageHeaderViewIOS(
                 step: .connectServer,
                 title: "Connect to Immich Server",
                 subtitle: "Enter the server URL and API Key to connect your photo library.",
@@ -115,7 +119,7 @@ struct FirstBootViewIOS: View {
         }
         .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
         .accessibilityIdentifier("firstboot.status.card")
-        .animation(.easeInOut(duration: 0.2), value: isTestingConnection)
-        .animation(.easeInOut(duration: 0.2), value: statusMessage)
+        .animation(.easeInOut(duration: ConnectionStatusAnimation.durationSeconds), value: isTestingConnection)
+        .animation(.easeInOut(duration: ConnectionStatusAnimation.durationSeconds), value: statusMessage)
     }
 }

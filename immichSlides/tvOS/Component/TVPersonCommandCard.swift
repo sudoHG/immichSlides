@@ -39,6 +39,8 @@ struct TVPersonCommandCard: View {
         static let infoPanelExpandedSpacing: CGFloat = 12
         static let titleSize: CGFloat = 22
         static let subtitleSize: CGFloat = 15
+        static let commandTraySpacingPoints: CGFloat = 12
+        static let commandTrayOutlineWidthPoints: CGFloat = 1.2
         static let commandTrayHorizontalInset: CGFloat = 14
         static let commandTrayVerticalInset: CGFloat = 12
         static let commandTrayCornerRadius: CGFloat = 18
@@ -353,7 +355,7 @@ struct TVPersonCommandCard: View {
     }
 
     private var focusCommandTray: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Layout.commandTraySpacingPoints) {
             ZStack {
                 Circle()
                     .fill(playPauseHintAccent.opacity(0.18))
@@ -392,7 +394,7 @@ struct TVPersonCommandCard: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: Layout.commandTrayCornerRadius, style: .continuous)
-                .stroke(playPauseHintAccent.opacity(0.34), lineWidth: 1.2)
+                .stroke(playPauseHintAccent.opacity(0.34), lineWidth: Layout.commandTrayOutlineWidthPoints)
         }
         .shadow(color: commandTrayShadowColor, radius: 10, x: 0, y: 6)
     }

@@ -1,11 +1,17 @@
 import SwiftUI
 
+private enum VisualAuditPreparation {
+    static let coverLimitCount: Int = 20
+    static let maximumRetryCount: Int = 40
+    static let pollIntervalNanoseconds: UInt64 = 250_000_000
+}
+
 struct FilterViewIOS: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @ObservedObject var viewModel: FilterViewModel
 
-    var showsStartPlaybackButton: Bool = true
+    var shouldShowStartPlaybackButton: Bool = true
     var onStartPlaybackRequested: ((FilterSelection) -> Void)? = nil
     var onDismissRequested: (() -> Void)? = nil
 
@@ -40,14 +46,14 @@ struct FilterViewIOS: View {
         ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS"] == "1"
     }
 
-    private var albumVisualAuditReady: Bool {
+    private var isAlbumVisualAuditReady: Bool {
         let hasMatchedAlbumSelection = viewModel.selection.albumIds.contains { selectedID in
             viewModel.albums.contains { $0.id == selectedID }
         }
         return hasMatchedAlbumSelection && viewModel.albumCoverURLs.isEmpty == false
     }
 
-    private var peopleVisualAuditReady: Bool {
+    private var isPeopleVisualAuditReady: Bool {
         let selectedIDs = viewModel.selection.personFilters.map(\.personId)
         let hasMatchedPeopleSelection = selectedIDs.contains { selectedID in
             viewModel.people.contains { $0.id == selectedID }
@@ -60,12 +66,12 @@ struct FilterViewIOS: View {
         return hasMatchedPeopleSelection && viewModel.peopleCoverURLs.isEmpty == false && hasLoadedStatsForSelection
     }
 
-    private var filterEditorVisualAuditReady: Bool {
-        albumVisualAuditReady && peopleVisualAuditReady
+    private var isFilterEditorVisualAuditReady: Bool {
+        isAlbumVisualAuditReady && isPeopleVisualAuditReady
     }
 
     var body: some View {
-        IOSOnboardingPageScaffold(metrics: onboardingMetrics) { _ in
+        OnboardingPageScaffoldViewIOS(metrics: onboardingMetrics) { _ in
             VStack(alignment: .leading, spacing: sectionSpacing) {
                 pageHeader
                 selectionStage
@@ -84,7 +90,7 @@ struct FilterViewIOS: View {
     }
 
     private var pageHeader: some View {
-        IOSOnboardingPageHeader(
+        OnboardingPageHeaderViewIOS(
             step: nil,
             title: "Edit Filters",
 
@@ -119,7 +125,7 @@ struct FilterViewIOS: View {
     }
 
     private var albumSelectionCard: some View {
-        FilterSummarySelectionCard(
+        FilterSummarySelectionCardViewIOS(
             viewModel: viewModel,
             kind: .album,
             isPhone: isPhone,
@@ -133,7 +139,7 @@ struct FilterViewIOS: View {
     }
 
     private var peopleSelectionCard: some View {
-        FilterSummarySelectionCard(
+        FilterSummarySelectionCardViewIOS(
             viewModel: viewModel,
             kind: .people,
             isPhone: isPhone,
@@ -148,9 +154,9 @@ struct FilterViewIOS: View {
 
     @ViewBuilder
     private var bottomSection: some View {
-        if showsStartPlaybackButton {
+        if shouldShowStartPlaybackButton {
 
-            FilterSummaryActionBar(
+            FilterSummaryActionBarViewIOS(
                 viewModel: viewModel,
                 canStartPlayback: canStartPlayback,
                 onStartPlayback: { startFilteredPlayback() },
@@ -160,7 +166,7 @@ struct FilterViewIOS: View {
             )
         } else {
 
-            FilterEditorSummaryPanelIOS(
+            FilterEditorSummaryPanelViewIOS(
                 selectedAlbumCount: viewModel.selectedAlbumCount,
                 selectedPersonCount: viewModel.selectedPersonCount,
                 totalSelectedAssetCount: viewModel.selectedAlbumAssetsCount + viewModel.selectedPersonAssetsCount,
@@ -177,13 +183,13 @@ struct FilterViewIOS: View {
     private var uiTestReadinessMarkers: some View {
         VStack(alignment: .leading, spacing: 1) {
             // localization-audit: ui-test-probe
-            Text(verbatim: albumVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isAlbumVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterEditor.album.ready")
             // localization-audit: ui-test-probe
-            Text(verbatim: peopleVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isPeopleVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterEditor.people.ready")
             // localization-audit: ui-test-probe
-            Text(verbatim: filterEditorVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isFilterEditorVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterEditor.visual.ready")
         }
         .font(.system(size: 1))
@@ -196,15 +202,17 @@ struct FilterViewIOS: View {
     private func prepareVisualAuditSelectionsForUITestsIfNeeded() async {
         // UI tests only: fill in album and person selections for screenshots without changing the real filter rules.
 
-        await viewModel.getCoverURLs(filterType: .albums, coverLimit: 20, shouldReset: true)
-        await viewModel.getCoverURLs(filterType: .people, coverLimit: 20, shouldReset: true)
+        await viewModel.getCoverURLs(
+            filterType: .albums, coverLimit: VisualAuditPreparation.coverLimitCount, shouldReset: true)
+        await viewModel.getCoverURLs(
+            filterType: .people, coverLimit: VisualAuditPreparation.coverLimitCount, shouldReset: true)
 
-        for _ in 0..<40 {
-            if filterEditorVisualAuditReady {
+        for _ in 0..<VisualAuditPreparation.maximumRetryCount {
+            if isFilterEditorVisualAuditReady {
                 return
             }
 
-            if albumVisualAuditReady == false,
+            if isAlbumVisualAuditReady == false,
                 let firstAlbum = viewModel.albums.first
             {
                 await MainActor.run {
@@ -213,7 +221,7 @@ struct FilterViewIOS: View {
                 }
             }
 
-            if peopleVisualAuditReady == false,
+            if isPeopleVisualAuditReady == false,
                 let firstPerson = viewModel.people.first
             {
                 await MainActor.run {
@@ -223,7 +231,7 @@ struct FilterViewIOS: View {
                 await viewModel.loadPersonAssetsCountIfNeeded(id: firstPerson.id)
             }
 
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: VisualAuditPreparation.pollIntervalNanoseconds)
         }
     }
 
@@ -237,7 +245,7 @@ struct FilterViewIOS: View {
     }
 }
 
-private struct FilterEditorSummaryPanelIOS: View {
+private struct FilterEditorSummaryPanelViewIOS: View {
     let selectedAlbumCount: Int
     let selectedPersonCount: Int
     let totalSelectedAssetCount: Int

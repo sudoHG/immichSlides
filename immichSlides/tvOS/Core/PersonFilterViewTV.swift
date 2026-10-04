@@ -8,6 +8,10 @@
 import SwiftUI
 import UIKit
 
+private enum FocusHandoffTiming {
+    static let delayNanoseconds: UInt64 = 180_000_000
+}
+
 private struct PersonFilterFocusedPersonIDKey: FocusedValueKey {
     typealias Value = String
 }
@@ -183,11 +187,11 @@ struct PersonFilterViewTV: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
-            seedInitialFocusIfNeeded(forceIfMissing: true)
+            seedInitialFocusIfNeeded(shouldForceInitialFocus: true)
         }
         .onChange(of: viewModel.people.map(\.id)) { _, _ in
 
-            seedInitialFocusIfNeeded(forceIfMissing: true)
+            seedInitialFocusIfNeeded(shouldForceInitialFocus: true)
         }
         .onChange(of: systemFocusedPersonID) { _, newValue in
             guard let newValue else { return }
@@ -375,7 +379,7 @@ struct PersonFilterViewTV: View {
         return Color.orange
     }
 
-    private func seedInitialFocusIfNeeded(forceIfMissing: Bool) {
+    private func seedInitialFocusIfNeeded(shouldForceInitialFocus: Bool) {
         guard let defaultFocusPersonID else { return }
 
         // On refresh, keep focus if the current person is still present, instead of jumping back to the first card.
@@ -388,7 +392,7 @@ struct PersonFilterViewTV: View {
 
         // Fall back to the first card only when there is no valid focus.
 
-        if forceIfMissing || focusedTarget == nil {
+        if shouldForceInitialFocus || focusedTarget == nil {
             let nextTarget = FocusTarget.person(defaultFocusPersonID)
 
             // The top bar gets focus first, so take focus back to the first card in two stages over 180ms.
@@ -397,7 +401,7 @@ struct PersonFilterViewTV: View {
                 focusedTarget = nil
                 resetFocus(in: peopleFocusScope)
 
-                try? await Task.sleep(nanoseconds: 180_000_000)
+                try? await Task.sleep(nanoseconds: FocusHandoffTiming.delayNanoseconds)
 
                 focusedTarget = nextTarget
                 resetFocus(in: peopleFocusScope)

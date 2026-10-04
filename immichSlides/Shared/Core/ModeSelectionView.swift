@@ -34,14 +34,14 @@ struct ModeSelectionView: View {
             ModeSelectionViewTV(
                 selectedMode: $selectedMode,
                 previewFocusedModeOverride: previewFocusedModeOverride,
-                showsOnboardingProgress: isOnboardingOnly,
+                shouldShowOnboardingProgress: isOnboardingOnly,
                 onSelectMode: selectMode,
                 onContinue: onContinueTapped
             )
             #else
             ModeSelectionViewIOS(
                 selectedMode: $selectedMode,
-                showsOnboardingProgress: isOnboardingOnly,
+                shouldShowOnboardingProgress: isOnboardingOnly,
                 onSelectMode: selectMode,
                 onContinue: onContinueTapped
             )

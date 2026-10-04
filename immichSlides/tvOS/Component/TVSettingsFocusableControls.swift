@@ -3,6 +3,34 @@ import SwiftUI
 // Custom focus is passed down through a custom environment value,
 // since isFocused doesn't always reach the innermost label.
 
+private enum SettingsControlMetrics {
+    static let navigationRowSpacingPoints: CGFloat = 18
+    static let iconCornerRadiusPoints: CGFloat = 18
+    static let navigationIconSizePoints: CGFloat = 56
+    static let subtitleSpacingPoints: CGFloat = 6
+    static let chevronSizePoints: CGFloat = 40
+    static let navigationHorizontalPaddingPoints: CGFloat = 20
+    static let navigationVerticalPaddingPoints: CGFloat = 16
+    static let navigationCornerRadiusPoints: CGFloat = 28
+    static let focusedBorderWidthPoints: CGFloat = 4
+    static let normalBorderWidthPoints: CGFloat = 1
+    static let focusInsetPoints: CGFloat = 4
+    static let innerBorderWidthPoints: CGFloat = 1.4
+    static let focusedScaleMultiplier: CGFloat = 1.025
+    static let restingScaleMultiplier: CGFloat = 1.0
+    static let focusAnimationDurationSeconds: Double = 0.16
+    static let stepperRowSpacingPoints: CGFloat = 14
+    static let actionSpacingPoints: CGFloat = 10
+    static let chipHorizontalPaddingPoints: CGFloat = 14
+    static let chipVerticalPaddingPoints: CGFloat = 8
+    static let stepperIconSizePoints: CGFloat = 34
+    static let stepperHorizontalPaddingPoints: CGFloat = 22
+    static let stepperVerticalPaddingPoints: CGFloat = 20
+    static let stepperCornerRadiusPoints: CGFloat = 26
+    static let optionMinimumHeightPoints: CGFloat = 78
+    static let optionCornerRadiusPoints: CGFloat = 24
+}
+
 private struct TVSettingsVisualFocusKey: EnvironmentKey {
     static let defaultValue: Bool? = nil
 }
@@ -30,18 +58,20 @@ struct TVSettingsNavigationRowLabel: View {
     }
 
     var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: SettingsControlMetrics.navigationRowSpacingPoints) {
             ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: SettingsControlMetrics.iconCornerRadiusPoints, style: .continuous)
                     .fill(iconBackgroundColor)
-                    .frame(width: 56, height: 56)
+                    .frame(
+                        width: SettingsControlMetrics.navigationIconSizePoints,
+                        height: SettingsControlMetrics.navigationIconSizePoints)
 
                 Image(systemName: icon)
                     .font(.system(size: 22, weight: .bold))
                     .foregroundStyle(iconColor)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: SettingsControlMetrics.subtitleSpacingPoints) {
                 Text(LocalizedStringKey(title))
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(titleColor)
@@ -66,33 +96,41 @@ struct TVSettingsNavigationRowLabel: View {
             Image(systemName: "chevron.right")
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(chevronColor)
-                .frame(width: 40, height: 40)
+                .frame(
+                    width: SettingsControlMetrics.chevronSizePoints, height: SettingsControlMetrics.chevronSizePoints
+                )
                 .background(
                     Circle()
                         .fill(chevronBackgroundColor)
                 )
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, SettingsControlMetrics.navigationHorizontalPaddingPoints)
+        .padding(.vertical, SettingsControlMetrics.navigationVerticalPaddingPoints)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsControlMetrics.navigationCornerRadiusPoints, style: .continuous)
                 .fill(backgroundColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: isFocused ? 4 : 1)
+            RoundedRectangle(cornerRadius: SettingsControlMetrics.navigationCornerRadiusPoints, style: .continuous)
+                .strokeBorder(
+                    borderColor,
+                    lineWidth: isFocused
+                        ? SettingsControlMetrics.focusedBorderWidthPoints
+                        : SettingsControlMetrics.normalBorderWidthPoints)
         )
         .overlay {
             if isFocused {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .inset(by: 4)
-                    .strokeBorder(innerFocusBorderColor, lineWidth: 1.4)
+                RoundedRectangle(cornerRadius: SettingsControlMetrics.navigationCornerRadiusPoints, style: .continuous)
+                    .inset(by: SettingsControlMetrics.focusInsetPoints)
+                    .strokeBorder(innerFocusBorderColor, lineWidth: SettingsControlMetrics.innerBorderWidthPoints)
             }
         }
         .shadow(color: focusShadowColor, radius: isFocused ? 16 : 0, x: 0, y: 0)
-        .scaleEffect(isFocused ? 1.025 : 1.0)
-        .animation(.easeInOut(duration: 0.16), value: isFocused)
+        .scaleEffect(
+            isFocused ? SettingsControlMetrics.focusedScaleMultiplier : SettingsControlMetrics.restingScaleMultiplier
+        )
+        .animation(.easeInOut(duration: SettingsControlMetrics.focusAnimationDurationSeconds), value: isFocused)
     }
 
     private var backgroundColor: Color {
@@ -210,7 +248,7 @@ struct TVSettingsActionRowLabel: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: SettingsControlMetrics.stepperRowSpacingPoints) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(LocalizedStringKey(title))
                     .font(.system(size: 22, weight: .bold))
@@ -219,12 +257,12 @@ struct TVSettingsActionRowLabel: View {
 
             Spacer(minLength: 18)
 
-            HStack(spacing: 10) {
+            HStack(spacing: SettingsControlMetrics.actionSpacingPoints) {
                 Text(LocalizedStringKey(value))
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(valueColor)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, SettingsControlMetrics.chipHorizontalPaddingPoints)
+                    .padding(.vertical, SettingsControlMetrics.chipVerticalPaddingPoints)
                     .background(
                         Capsule(style: .continuous)
                             .fill(valueBackgroundColor)
@@ -233,35 +271,44 @@ struct TVSettingsActionRowLabel: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(chevronColor)
-                    .frame(width: 34, height: 34)
+                    .frame(
+                        width: SettingsControlMetrics.stepperIconSizePoints,
+                        height: SettingsControlMetrics.stepperIconSizePoints
+                    )
                     .background(
                         Circle()
                             .fill(chevronBackgroundColor)
                     )
             }
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 20)
+        .padding(.horizontal, SettingsControlMetrics.stepperHorizontalPaddingPoints)
+        .padding(.vertical, SettingsControlMetrics.stepperVerticalPaddingPoints)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsControlMetrics.stepperCornerRadiusPoints, style: .continuous)
                 .fill(backgroundColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: isFocused ? 4 : 1)
+            RoundedRectangle(cornerRadius: SettingsControlMetrics.stepperCornerRadiusPoints, style: .continuous)
+                .strokeBorder(
+                    borderColor,
+                    lineWidth: isFocused
+                        ? SettingsControlMetrics.focusedBorderWidthPoints
+                        : SettingsControlMetrics.normalBorderWidthPoints)
         )
         .overlay {
             if isFocused {
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .inset(by: 4)
-                    .strokeBorder(innerFocusBorderColor, lineWidth: 1.4)
+                RoundedRectangle(cornerRadius: SettingsControlMetrics.stepperCornerRadiusPoints, style: .continuous)
+                    .inset(by: SettingsControlMetrics.focusInsetPoints)
+                    .strokeBorder(innerFocusBorderColor, lineWidth: SettingsControlMetrics.innerBorderWidthPoints)
             }
         }
         .shadow(color: focusShadowColor, radius: isFocused ? 16 : 0, x: 0, y: 0)
-        .scaleEffect(isFocused ? 1.025 : 1.0)
+        .scaleEffect(
+            isFocused ? SettingsControlMetrics.focusedScaleMultiplier : SettingsControlMetrics.restingScaleMultiplier
+        )
         .opacity(isEnabled ? 1.0 : 0.52)
-        .animation(.easeInOut(duration: 0.16), value: isFocused)
+        .animation(.easeInOut(duration: SettingsControlMetrics.focusAnimationDurationSeconds), value: isFocused)
     }
 
     private var backgroundColor: Color {
@@ -425,8 +472,13 @@ struct TVSettingsFocusableControl<Label: View>: View {
             .environment(\.tvSettingsVisualFocus, hasVisualFocus)
             .appTVDisableDefaultFocusEffect()
             .shadow(color: focusHaloColor, radius: hasVisualFocus ? 18 : 0, x: 0, y: 0)
-            .scaleEffect(hasVisualFocus ? 1.025 : 1.0)
-            .animation(.easeInOut(duration: 0.16), value: hasVisualFocus)
+            .scaleEffect(
+                hasVisualFocus
+                    ? SettingsControlMetrics.focusedScaleMultiplier : SettingsControlMetrics.restingScaleMultiplier
+            )
+            .animation(
+                .easeInOut(duration: SettingsControlMetrics.focusAnimationDurationSeconds), value: hasVisualFocus
+            )
             .allowsHitTesting(canFocus)
             .onTapGesture {
                 guard canFocus else { return }
@@ -472,6 +524,7 @@ struct TVSettingsFocusableControl<Label: View>: View {
 
     private var accessibilityValueText: Text {
         if shouldExposeUITestFocusMarker {
+            // localization-audit: Stable UI test focus marker contract.
             return Text(verbatim: resolvedAccessibilityValue)
         }
 
@@ -497,7 +550,7 @@ struct TVSettingsChoiceButtonLabel: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: SettingsControlMetrics.actionSpacingPoints) {
             Text(LocalizedStringKey(title))
                 .font(.system(size: 20, weight: .bold))
 
@@ -507,25 +560,31 @@ struct TVSettingsChoiceButtonLabel: View {
             }
         }
         .foregroundStyle(labelColor)
-        .frame(maxWidth: .infinity, minHeight: 78)
+        .frame(maxWidth: .infinity, minHeight: SettingsControlMetrics.optionMinimumHeightPoints)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsControlMetrics.optionCornerRadiusPoints, style: .continuous)
                 .fill(backgroundColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: isFocused ? 4 : 1)
+            RoundedRectangle(cornerRadius: SettingsControlMetrics.optionCornerRadiusPoints, style: .continuous)
+                .strokeBorder(
+                    borderColor,
+                    lineWidth: isFocused
+                        ? SettingsControlMetrics.focusedBorderWidthPoints
+                        : SettingsControlMetrics.normalBorderWidthPoints)
         )
         .overlay {
             if isFocused {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .inset(by: 4)
-                    .strokeBorder(innerFocusBorderColor, lineWidth: 1.4)
+                RoundedRectangle(cornerRadius: SettingsControlMetrics.optionCornerRadiusPoints, style: .continuous)
+                    .inset(by: SettingsControlMetrics.focusInsetPoints)
+                    .strokeBorder(innerFocusBorderColor, lineWidth: SettingsControlMetrics.innerBorderWidthPoints)
             }
         }
         .shadow(color: focusShadowColor, radius: isFocused ? 14 : 0, x: 0, y: 0)
-        .scaleEffect(isFocused ? 1.025 : 1.0)
-        .animation(.easeInOut(duration: 0.16), value: isFocused)
+        .scaleEffect(
+            isFocused ? SettingsControlMetrics.focusedScaleMultiplier : SettingsControlMetrics.restingScaleMultiplier
+        )
+        .animation(.easeInOut(duration: SettingsControlMetrics.focusAnimationDurationSeconds), value: isFocused)
     }
 
     private var backgroundColor: Color {

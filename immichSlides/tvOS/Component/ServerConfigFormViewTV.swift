@@ -17,6 +17,41 @@ enum TVOSServerConfigFormMetrics {
 }
 #endif
 
+private enum ServerFormLayout {
+    static let compactHorizontalPaddingPoints: CGFloat = 12
+    static let regularHorizontalPaddingPoints: CGFloat = 20
+    static let compactVerticalPaddingPoints: CGFloat = 8
+    static let regularVerticalPaddingPoints: CGFloat = 12
+    static let settingsSectionSpacingPoints: CGFloat = 16
+    static let compactSectionSpacingPoints: CGFloat = 12
+    static let regularSectionSpacingPoints: CGFloat = 18
+    static let compactActionSpacingPoints: CGFloat = 8
+    static let regularActionVerticalSpacingPoints: CGFloat = 10
+    static let regularActionHorizontalSpacingPoints: CGFloat = 12
+    static let compactActionFontSizePoints: CGFloat = 15
+    static let regularActionFontSizePoints: CGFloat = 17
+    static let compactActionHeightPoints: CGFloat = 40
+    static let regularActionHeightPoints: CGFloat = 44
+    static let compactDebugActionFontSizePoints: CGFloat = 14
+    static let regularDebugActionFontSizePoints: CGFloat = 16
+    static let compactDebugActionHeightPoints: CGFloat = 38
+    static let regularDebugActionHeightPoints: CGFloat = 42
+    static let dividerLeadingPaddingPoints: CGFloat = 18
+    static let focusAnimationDurationSeconds: Double = 0.2
+    static let inputRowSpacingPoints: CGFloat = 11
+    static let inputContentSpacingPoints: CGFloat = 10
+    static let compactInputTitleSizePoints: CGFloat = 14
+    static let regularInputTitleSizePoints: CGFloat = 17
+    static let compactVerificationIconSizePoints: CGFloat = 16
+    static let regularVerificationIconSizePoints: CGFloat = 20
+    static let inputTopPaddingPoints: CGFloat = 2
+    static let compactInputHorizontalPaddingPoints: CGFloat = 12
+    static let regularInputHorizontalPaddingPoints: CGFloat = 18
+    static let compactInputVerticalPaddingPoints: CGFloat = 12
+    static let regularInputVerticalPaddingPoints: CGFloat = 16
+    static let textFieldHorizontalPaddingPoints: CGFloat = 12
+}
+
 struct ServerConfigFormViewTV: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.colorScheme) private var colorScheme
@@ -46,9 +81,13 @@ struct ServerConfigFormViewTV: View {
 
     private var canSaveConfig: Bool { isConnectionVerified }
     private var isCompactHeight: Bool { verticalSizeClass == .compact }
-    private var usesSettingsPagePresentation: Bool { presentation == .settingsPage }
+    private var isSettingsPagePresentation: Bool { presentation == .settingsPage }
     private var resolvedMaxWidth: CGFloat { preferredMaxWidth ?? .infinity }
-    private var resolvedHorizontalPadding: CGFloat { horizontalPadding ?? (isCompactHeight ? 12 : 20) }
+    private var resolvedHorizontalPadding: CGFloat {
+        horizontalPadding
+            ?? (isCompactHeight
+                ? ServerFormLayout.compactHorizontalPaddingPoints : ServerFormLayout.regularHorizontalPaddingPoints)
+    }
 
     private var focusedRowBorderColor: Color { Color.cyan.opacity(0.9) }
     private var focusedRowBorderWidth: CGFloat { 2 }
@@ -77,7 +116,7 @@ struct ServerConfigFormViewTV: View {
         return (serverURL, apiKey)
     }
 
-    private var debugFillAPIKeyButtonEnabled: Bool {
+    private var isDebugFillAPIKeyButtonEnabled: Bool {
         PlatformCompat.debugInfoPlistString("ENABLE_DEBUG_FILL_APIKEY_BUTTON") == "1"
     }
 
@@ -88,7 +127,7 @@ struct ServerConfigFormViewTV: View {
     }
 
     private var canShowFillAPIKeyButton: Bool {
-        PlatformCompat.isDebugBuild && debugFillAPIKeyButtonEnabled && !isDebugFillAPIKeyButtonSuppressedByUITest
+        PlatformCompat.isDebugBuild && isDebugFillAPIKeyButtonEnabled && !isDebugFillAPIKeyButtonSuppressedByUITest
             && debugServerConfigFromInfoPlist != nil
     }
 
@@ -110,8 +149,14 @@ struct ServerConfigFormViewTV: View {
             .appTVFocusScope(formFocusScope, focused: $focusedField, default: .serverURL)
             .frame(maxWidth: resolvedMaxWidth)
             .padding(.horizontal, resolvedHorizontalPadding)
-            .padding(.vertical, usesSettingsPagePresentation ? 0 : (isCompactHeight ? 8 : 12))
-            .animation(.easeInOut(duration: 0.2), value: focusedField)
+            .padding(
+                .vertical,
+                isSettingsPagePresentation
+                    ? 0
+                    : (isCompactHeight
+                        ? ServerFormLayout.compactVerticalPaddingPoints : ServerFormLayout.regularVerticalPaddingPoints)
+            )
+            .animation(.easeInOut(duration: ServerFormLayout.focusAnimationDurationSeconds), value: focusedField)
             .onAppear {
                 DispatchQueue.main.async {
                     focusedField = .serverURL
@@ -146,7 +191,10 @@ struct ServerConfigFormViewTV: View {
     }
 
     private var formSectionSpacing: CGFloat {
-        usesSettingsPagePresentation ? 16 : (isCompactHeight ? 12 : 18)
+        isSettingsPagePresentation
+            ? ServerFormLayout.settingsSectionSpacingPoints
+            : (isCompactHeight
+                ? ServerFormLayout.compactSectionSpacingPoints : ServerFormLayout.regularSectionSpacingPoints)
     }
 
     private var actionButtonIdentifiers: [String] {
@@ -197,7 +245,7 @@ struct ServerConfigFormViewTV: View {
             )
 
             Divider()
-                .padding(.leading, 18)
+                .padding(.leading, ServerFormLayout.dividerLeadingPaddingPoints)
 
             inputRow(
                 title: "API Key",
@@ -227,8 +275,15 @@ struct ServerConfigFormViewTV: View {
     }
 
     private var actionSection: some View {
-        VStack(spacing: isCompactHeight ? 8 : 10) {
-            HStack(spacing: isCompactHeight ? 8 : 12) {
+        VStack(
+            spacing: isCompactHeight
+                ? ServerFormLayout.compactActionSpacingPoints : ServerFormLayout.regularActionVerticalSpacingPoints
+        ) {
+            HStack(
+                spacing: isCompactHeight
+                    ? ServerFormLayout.compactActionSpacingPoints
+                    : ServerFormLayout.regularActionHorizontalSpacingPoints
+            ) {
                 apiKeyHelpActionButton
                 testConnectionButton
                 saveConfigButton
@@ -250,10 +305,19 @@ struct ServerConfigFormViewTV: View {
         } label: {
             Text("Need Help?")
                 .accessibilityIdentifier("server.apiKey.help.button")
-                .font(.system(size: isCompactHeight ? 15 : 17, weight: .semibold))
+                .font(
+                    .system(
+                        size: isCompactHeight
+                            ? ServerFormLayout.compactActionFontSizePoints
+                            : ServerFormLayout.regularActionFontSizePoints, weight: .semibold)
+                )
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
-                .frame(maxWidth: .infinity, minHeight: isCompactHeight ? 40 : 44)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: isCompactHeight
+                        ? ServerFormLayout.compactActionHeightPoints : ServerFormLayout.regularActionHeightPoints
+                )
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("server.apiKey.help.button")
         }
@@ -299,10 +363,19 @@ struct ServerConfigFormViewTV: View {
             }
         } label: {
             Label("Autofill Settings", systemImage: "doc.on.clipboard")
-                .font(.system(size: isCompactHeight ? 14 : 16, weight: .semibold))
+                .font(
+                    .system(
+                        size: isCompactHeight
+                            ? ServerFormLayout.compactDebugActionFontSizePoints
+                            : ServerFormLayout.regularDebugActionFontSizePoints, weight: .semibold)
+                )
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
-                .frame(maxWidth: .infinity, minHeight: isCompactHeight ? 38 : 42)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: isCompactHeight
+                        ? ServerFormLayout.compactDebugActionHeightPoints
+                        : ServerFormLayout.regularDebugActionHeightPoints)
         }
         .buttonStyle(TVFocusButtonStyle())
         .focused($focusedField, equals: .fillAPIKeyButton)
@@ -335,8 +408,17 @@ struct ServerConfigFormViewTV: View {
         } label: {
             Text("Test Connection")
                 .accessibilityIdentifier("firstboot.testConnection.button")
-                .font(.system(size: isCompactHeight ? 15 : 17, weight: .semibold))
-                .frame(maxWidth: .infinity, minHeight: isCompactHeight ? 40 : 44)
+                .font(
+                    .system(
+                        size: isCompactHeight
+                            ? ServerFormLayout.compactActionFontSizePoints
+                            : ServerFormLayout.regularActionFontSizePoints, weight: .semibold)
+                )
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: isCompactHeight
+                        ? ServerFormLayout.compactActionHeightPoints : ServerFormLayout.regularActionHeightPoints
+                )
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("firstboot.testConnection.button")
         }
@@ -389,8 +471,17 @@ struct ServerConfigFormViewTV: View {
                         .imageScale(.small)
                 }
             }
-            .font(.system(size: isCompactHeight ? 15 : 17, weight: .semibold))
-            .frame(maxWidth: .infinity, minHeight: isCompactHeight ? 40 : 44)
+            .font(
+                .system(
+                    size: isCompactHeight
+                        ? ServerFormLayout.compactActionFontSizePoints : ServerFormLayout.regularActionFontSizePoints,
+                    weight: .semibold)
+            )
+            .frame(
+                maxWidth: .infinity,
+                minHeight: isCompactHeight
+                    ? ServerFormLayout.compactActionHeightPoints : ServerFormLayout.regularActionHeightPoints
+            )
             .foregroundStyle(saveButtonLabelColor)
             .accessibilityElement(children: .ignore)
             .accessibilityIdentifier("firstboot.saveConfig.button")
@@ -434,7 +525,7 @@ struct ServerConfigFormViewTV: View {
     }
 
     private var cardBackgroundColor: Color {
-        if usesSettingsPagePresentation {
+        if isSettingsPagePresentation {
             return colorScheme == .dark
                 ? Color.white.opacity(0.05)
                 : Color.black.opacity(0.035)
@@ -446,7 +537,7 @@ struct ServerConfigFormViewTV: View {
     }
 
     private var cardBorderColor: Color {
-        if usesSettingsPagePresentation {
+        if isSettingsPagePresentation {
             return colorScheme == .dark
                 ? Color.white.opacity(0.10)
                 : Color.black.opacity(0.07)
@@ -458,7 +549,7 @@ struct ServerConfigFormViewTV: View {
     }
 
     private var cardShadowColor: Color {
-        usesSettingsPagePresentation
+        isSettingsPagePresentation
             ? .clear
             : (colorScheme == .dark
                 ? Color.black.opacity(0.35)
@@ -466,7 +557,7 @@ struct ServerConfigFormViewTV: View {
     }
 
     private var inputSectionCornerRadius: CGFloat {
-        usesSettingsPagePresentation ? 24 : 20
+        isSettingsPagePresentation ? 24 : 20
     }
 
     private var buttonBaseBackgroundColor: Color {
@@ -491,29 +582,49 @@ struct ServerConfigFormViewTV: View {
         field: FormField,
         showVerifiedBadge: Bool
     ) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .center, spacing: 10) {
+        VStack(alignment: .leading, spacing: ServerFormLayout.inputRowSpacingPoints) {
+            HStack(alignment: .center, spacing: ServerFormLayout.inputContentSpacingPoints) {
                 Text(String(localized: title))
-                    .font(.system(size: isCompactHeight ? 14 : 17, weight: .semibold))
+                    .font(
+                        .system(
+                            size: isCompactHeight
+                                ? ServerFormLayout.compactInputTitleSizePoints
+                                : ServerFormLayout.regularInputTitleSizePoints, weight: .semibold)
+                    )
                     .foregroundStyle(.secondary)
 
                 Spacer(minLength: 8)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: ServerFormLayout.inputContentSpacingPoints) {
                 formInputField(placeholder: placeholder, text: text, field: field)
 
                 if showVerifiedBadge {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: isCompactHeight ? 16 : 20))
+                        .font(
+                            .system(
+                                size: isCompactHeight
+                                    ? ServerFormLayout.compactVerificationIconSizePoints
+                                    : ServerFormLayout.regularVerificationIconSizePoints)
+                        )
                         .foregroundStyle(.green)
                         .transition(.opacity)
                 }
             }
         }
-        .padding(.top, 2)
-        .padding(.horizontal, isCompactHeight ? 12 : 18)
-        .padding(.vertical, isCompactHeight ? 12 : 16)
+        .padding(.top, ServerFormLayout.inputTopPaddingPoints)
+        .padding(
+            .horizontal,
+            isCompactHeight
+                ? ServerFormLayout.compactInputHorizontalPaddingPoints
+                : ServerFormLayout.regularInputHorizontalPaddingPoints
+        )
+        .padding(
+            .vertical,
+            isCompactHeight
+                ? ServerFormLayout.compactInputVerticalPaddingPoints
+                : ServerFormLayout.regularInputVerticalPaddingPoints
+        )
         .overlay(
             RoundedRectangle(cornerRadius: inputRowCornerRadius, style: .continuous)
                 .stroke(
@@ -548,7 +659,7 @@ struct ServerConfigFormViewTV: View {
         .appFormTextInputBehavior()
         .multilineTextAlignment(.leading)
         .foregroundStyle(.primary)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, ServerFormLayout.textFieldHorizontalPaddingPoints)
         .frame(
             maxWidth: .infinity,
             minHeight: TVOSServerConfigFormMetrics.inputCapsuleHeight,

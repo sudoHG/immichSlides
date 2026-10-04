@@ -9,7 +9,7 @@ import SwiftUI
 
 // Filter summary bottom bar: buttons and stats; the main page decides where it goes.
 
-struct FilterSummaryActionBar: View {
+struct FilterSummaryActionBarViewIOS: View {
     @ObservedObject var viewModel: FilterViewModel
     let canStartPlayback: Bool
     let onStartPlayback: () -> Void

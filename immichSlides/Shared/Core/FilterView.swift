@@ -29,14 +29,14 @@ struct FilterView: View {
         #if os(tvOS)
         FilterViewTV(
             viewModel: viewModel,
-            showsStartPlaybackButton: shouldShowStartPlaybackButton,
+            shouldShowStartPlaybackButton: shouldShowStartPlaybackButton,
             onStartPlaybackRequested: onStartPlaybackRequested,
             onDismissRequested: onDismissRequested
         )
         #else
         FilterViewIOS(
             viewModel: viewModel,
-            showsStartPlaybackButton: shouldShowStartPlaybackButton,
+            shouldShowStartPlaybackButton: shouldShowStartPlaybackButton,
             onStartPlaybackRequested: onStartPlaybackRequested,
             onDismissRequested: onDismissRequested
         )

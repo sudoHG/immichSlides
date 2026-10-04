@@ -9,11 +9,23 @@ import SwiftUI
 
 // The iOS mode screen manages orientation and card layout itself; it does not share a view tree with tvOS focus.
 
+private enum ModeCardLayout {
+    static let phoneLandscapeMinimumHeightPoints: CGFloat = 200
+    static let phoneLandscapeMaximumHeightPoints: CGFloat = 228
+    static let phoneLandscapeHeightRatio: CGFloat = 0.46
+    static let compactMinimumHeightPoints: CGFloat = 420
+    static let compactMaximumHeightPoints: CGFloat = 560
+    static let compactHeightRatio: CGFloat = 0.60
+    static let regularMinimumHeightPoints: CGFloat = 340
+    static let regularMaximumHeightPoints: CGFloat = 480
+    static let regularHeightRatio: CGFloat = 0.46
+}
+
 struct ModeSelectionViewIOS: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Binding var selectedMode: SlideMode?
-    let showsOnboardingProgress: Bool
+    let shouldShowOnboardingProgress: Bool
     let onSelectMode: (SlideMode) -> Void
     let onContinue: () -> Void
 
@@ -37,7 +49,7 @@ struct ModeSelectionViewIOS: View {
     }
 
     var body: some View {
-        IOSOnboardingPageScaffold(metrics: onboardingMetrics) { size in
+        OnboardingPageScaffoldViewIOS(metrics: onboardingMetrics) { size in
             VStack(spacing: contentSpacing) {
                 headerView
                 cardsContainer(height: cardsContainerHeight(for: size.height))
@@ -135,8 +147,8 @@ struct ModeSelectionViewIOS: View {
 
     // Title is leading-aligned so iPad and large screens also start reading from the same side.
     private var headerView: some View {
-        IOSOnboardingPageHeader(
-            step: showsOnboardingProgress ? .choosePlaybackMode : nil,
+        OnboardingPageHeaderViewIOS(
+            step: shouldShowOnboardingProgress ? .choosePlaybackMode : nil,
             title: "Choose Playback Mode",
             subtitle: "Choose whether to shuffle all photos or pick albums and people first.",
             titleAccessibilityIdentifier: "mode.page.title",
@@ -145,9 +157,21 @@ struct ModeSelectionViewIOS: View {
     }
 
     private func cardsContainerHeight(for screenHeight: CGFloat) -> CGFloat {
-        if isPhoneLandscape { return max(200, min(screenHeight * 0.46, 228)) }
-        if isCompact { return max(420, min(screenHeight * 0.60, 560)) }
-        return max(340, min(screenHeight * 0.46, 480))
+        if isPhoneLandscape {
+            return max(
+                ModeCardLayout.phoneLandscapeMinimumHeightPoints,
+                min(
+                    screenHeight * ModeCardLayout.phoneLandscapeHeightRatio,
+                    ModeCardLayout.phoneLandscapeMaximumHeightPoints))
+        }
+        if isCompact {
+            return max(
+                ModeCardLayout.compactMinimumHeightPoints,
+                min(screenHeight * ModeCardLayout.compactHeightRatio, ModeCardLayout.compactMaximumHeightPoints))
+        }
+        return max(
+            ModeCardLayout.regularMinimumHeightPoints,
+            min(screenHeight * ModeCardLayout.regularHeightRatio, ModeCardLayout.regularMaximumHeightPoints))
     }
 
     private var contentSpacing: CGFloat {

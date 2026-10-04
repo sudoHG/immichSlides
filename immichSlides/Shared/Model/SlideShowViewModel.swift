@@ -4367,7 +4367,7 @@ class SlideShowViewModel: ObservableObject {
     #if DEBUG
     // UI tests only: inject a recovery message without advancing the state machine or hitting the network.
 
-    func forceNextPhotoRecoveryMessageForUITesting(retryCount: Int = 1) {
+    func forceNextPhotoRecoveryMessageForTesting(retryCount: Int = 1) {
         updateAutoPlayRecoveryMessage(
             nextPhotoRetryingWhileCurrentKeepsPlayingMessage(retryCount: retryCount)
         )
