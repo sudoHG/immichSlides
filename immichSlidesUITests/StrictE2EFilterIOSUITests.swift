@@ -132,7 +132,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 8), "Filter summary must show Start Playback")
         XCTAssertFalse(start.isEnabled, "An empty selection must not start")
         attachStrictE2EScreenshot(app: app, name: "filter-empty-\(currentDeviceTag())")
-        StrictE2EVisualEvidence.writeJSON(
+        try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "album_ids": [],
                 "person_filters": [],
@@ -161,7 +161,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 8), "Filter summary must show Start Playback")
         XCTAssertFalse(start.isEnabled, "Start must be disabled with 0 albums / 0 people")
         attachStrictE2EScreenshot(app: app, name: "album-empty-selection-\(currentDeviceTag())")
-        StrictE2EVisualEvidence.writeJSON(
+        try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "album_ids": [],
                 "person_filters": [],
@@ -199,7 +199,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             waitUntil(timeout: 20) { emptyLabel.exists && emptyLabel.label == emptyCopy },
             "An empty album must show the frozen, existing production empty-result copy and must not keep the old non-empty pool"
         )
-        StrictE2EVisualEvidence.writeJSON(
+        try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "album_id": emptyAlbumID,
                 "start_enabled": startEnabledAfterEmpty,
@@ -271,7 +271,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             "Only select the person and keep the default normal match; do not switch match rules in the navigation test",
             app: app, personID: personID)
 
-        returnFromPersonFilterToSummary(app: app)
+        try returnFromPersonFilterToSummary(app: app)
         let summaryStart = app.buttons["filterSummary.startPlayback.button"]
         assertPersonNavigation(
             summaryStart.exists && summaryStart.isHittable,
@@ -296,7 +296,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openPersonFilter(app: app)
         selectPerson(app: app, personID: personID, soloOnly: true)
         attachStrictE2EScreenshot(app: app, name: "person-solo-enabled-\(currentDeviceTag())")
-        returnFromPersonFilterToSummary(app: app)
+        try returnFromPersonFilterToSummary(app: app)
         openPersonFilter(app: app)
         let toggle = personSoloOnlySwitch(app: app, personID: personID)
         assertPersonNavigation(
@@ -305,7 +305,13 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             personID: personID)
         selectPerson(app: app, personID: personID, soloOnly: false)
         attachStrictE2EScreenshot(app: app, name: "person-solo-disabled-\(currentDeviceTag())")
-        returnFromPersonFilterToSummary(app: app)
+        try returnFromPersonFilterToSummary(app: app)
+        openPersonFilter(app: app)
+        let reopenedToggle = personSoloOnlySwitch(app: app, personID: personID)
+        assertPersonNavigation(
+            reopenedToggle.waitForExistence(timeout: 6) && (reopenedToggle.value as? String) == "0",
+            "After going back and reopening, the target person's solo-only mode must still be off", app: app,
+            personID: personID)
     }
 
     // Captures the scene only when a public-fixture person navigation assertion fails;
@@ -535,7 +541,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         _ = capturePlaybackPNG(app: app, name: "switch-b-play-1")
         tapNext(app: app)
         _ = capturePlaybackPNG(app: app, name: "switch-b-play-2")
-        StrictE2EVisualEvidence.writeJSON(["ids": observed + [albumB]], name: "observed-ids.json")
+        try StrictE2EVisualEvidence.writeRequiredJSON(["ids": observed], name: "observed-ids.json")
 
         let targetMarksB = try stringArrayValue(manifestB, keyPath: ["target_album", "labels"])
         let processBefore = try strictE2EProcessID(app)
@@ -635,7 +641,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         XCTAssertFalse(
             collected.raw.isEmpty,
             "After the server switch, UI identifiers must be recorded, not assembled from the expected manifest")
-        StrictE2EVisualEvidence.writeJSON(
+        try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "identity_source": "ui_accessibility_identifier",
                 "ids": collected.ids,
@@ -667,7 +673,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openPlaybackSettingsFromSlideshow(app: app)
         selectSinglePhotoDisplayMode(app: app)
         _ = captureNamedPNG(app: app, name: "display-settings")
-        StrictE2EVisualEvidence.writeJSON(
+        try StrictE2EVisualEvidence.writeRequiredJSON(
             ["identity_source": "public_fixture_photo_mark"],
             name: "display-policy.json"
         )
@@ -686,7 +692,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     func testFilterVisionSoloOnlyOnDevice() throws {
         if isRunningOnSimulator {
             try requireEvidenceDirectory()
-            StrictE2EVisualEvidence.writeJSON(
+            try StrictE2EVisualEvidence.writeRequiredJSON(
                 [
                     "environment": "simulator",
                     "vision_available": false
@@ -710,12 +716,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         pausePlaybackIfNeeded(app: app)
         _ = capturePlaybackPNG(app: app, name: "vision-solo-1")
         // The face count must be measured by Vision on a real device; never hard-code 1 to pass by luck.
-        StrictE2EVisualEvidence.writeJSON(
-            [
-                "environment": "device",
-                "vision_available": true
-            ],
-            name: "vision-environment.json"
+        XCTFail(
+            "Real-device Vision measurement (qualified_marks and face_counts) is not implemented, so this path cannot produce evidence; vision-environment.json was not written."
         )
     }
 
@@ -817,19 +819,19 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         enterFilterSummary(app: app)
         openPersonFilter(app: app)
         selectPerson(app: app, personID: personID, soloOnly: soloOnly)
-        returnFromPersonFilterToSummary(app: app)
+        try returnFromPersonFilterToSummary(app: app)
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
         _ = capturePlaybackPNG(app: app, name: screenshotName)
-        writePersonResultsJSON()
+        try writePersonResultsJSON()
     }
 
-    private func writePersonResultsJSON() {
+    private func writePersonResultsJSON() throws {
         let soloOnly: [String: Any] =
             isRunningOnSimulator
             ? ["environment": "simulator", "verdict": "UNVERIFIED"]
             : ["environment": "device", "verdict": "UNVERIFIED"]
-        StrictE2EVisualEvidence.writeJSON(
+        try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "cases": [
                     "solo_only": soloOnly
@@ -1190,20 +1192,20 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func returnFromPersonFilterToSummary(app: XCUIApplication) {
+    private func returnFromPersonFilterToSummary(app: XCUIApplication) throws {
         let backCountBeforeTap = app.buttons.matching(identifier: "personFilter.back.button").count
         NSLog("personFilter.back.button.count.before-tap \(backCountBeforeTap)")
         returnFromPersonFilter(app: app)
         let immediate = snapshotPersonReturnSurface(app, backCountBeforeTap: backCountBeforeTap)
         NSLog("person-return-immediate \(immediate)")
         attachStrictE2EScreenshot(app: app, name: "person-return-immediate-\(currentDeviceTag())")
-        StrictE2EVisualEvidence.writeJSON(immediate, name: "person-return-immediate.json")
+        try StrictE2EVisualEvidence.writeRequiredJSON(immediate, name: "person-return-immediate.json")
         let returned = waitUntil(timeout: 8, condition: { self.isFilterSummaryVisible(app) })
         if returned == false {
             let later = snapshotPersonReturnSurface(app, backCountBeforeTap: backCountBeforeTap)
             NSLog("person-return-after-wait \(later)")
             attachStrictE2EScreenshot(app: app, name: "person-return-after-wait-\(currentDeviceTag())")
-            StrictE2EVisualEvidence.writeJSON(later, name: "person-return-after-wait.json")
+            try StrictE2EVisualEvidence.writeRequiredJSON(later, name: "person-return-after-wait.json")
             XCTFail(
                 "Back from the person filter must land on the filter summary, not stay on the person page or fall back to mode selection. immediate=\(immediate) later=\(later)"
             )
@@ -1372,7 +1374,9 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let doneElement = app.descendants(matching: .any)["filter.editor.done.button"]
         if doneElement.exists {
             tapElement(doneElement)
+            return
         }
+        XCTFail("The filter editor must show its Done button.")
     }
 
     @MainActor

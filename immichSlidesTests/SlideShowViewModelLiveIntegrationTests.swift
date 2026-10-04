@@ -579,7 +579,6 @@ struct SlideShowViewModelLiveIntegrationTests {
             skipped=\(skipped ? "true" : "false")
             reason=\(reason ?? "none")
             selectionRule=\(selectionRule)
-            selectedDisplayName=\(selection?.displayName ?? "none")
             selectedAssetCount=\(selection.map { String($0.assetCount) } ?? "none")
             uniqueNamedCount=\(selection.map { String($0.uniqueNamedCount) } ?? "none")
             eligibleCount=\(selection.map { String($0.eligibleCount) } ?? "none")
@@ -596,6 +595,7 @@ struct SlideShowViewModelLiveIntegrationTests {
             rawAssetIdPresent=false
             serverURLPresent=false
             apiKeyPresent=false
+            selectedPersonNamePresent=false
 
             ## qa_playback_sequence lines
             \(capturedLines.joined(separator: "\n"))
@@ -618,6 +618,14 @@ struct SlideShowViewModelLiveIntegrationTests {
         } else {
             selectedPersonIdPresent = false
         }
+        let selectedPersonNamePresent: Bool
+        if let displayName = selection?.displayName, !displayName.isEmpty {
+            // Whole-token scan of free-form parts only, so a short name like "A" cannot match template text.
+            let writtenValues = ([reason ?? ""] + capturedLines + latestStableIds).joined(separator: "\n")
+            selectedPersonNamePresent = Self.containsStandaloneToken(displayName, in: writtenValues)
+        } else {
+            selectedPersonNamePresent = false
+        }
         let apiKeyPresent: Bool
         if let apiKey = configuration?.apiKey, apiKey.count >= 8 {
             apiKeyPresent = body.contains(apiKey)
@@ -625,7 +633,9 @@ struct SlideShowViewModelLiveIntegrationTests {
             apiKeyPresent = false
         }
 
-        if rawAssetIdPresent || serverURLPresent || apiKeyPresent || selectedPersonIdPresent {
+        if rawAssetIdPresent || serverURLPresent || apiKeyPresent || selectedPersonIdPresent
+            || selectedPersonNamePresent
+        {
             let privacyFailureBody = """
                 # person-filter window qa_playback_sequence live evidence
 
@@ -636,6 +646,7 @@ struct SlideShowViewModelLiveIntegrationTests {
                 serverURLPresent=\(serverURLPresent)
                 apiKeyPresent=\(apiKeyPresent)
                 selectedPersonIdPresent=\(selectedPersonIdPresent)
+                selectedPersonNamePresent=\(selectedPersonNamePresent)
 
                 """
             try privacyFailureBody.write(toFile: Self.personWindowEvidencePath, atomically: true, encoding: .utf8)
@@ -643,10 +654,28 @@ struct SlideShowViewModelLiveIntegrationTests {
             #expect(serverURLPresent == false)
             #expect(apiKeyPresent == false)
             #expect(selectedPersonIdPresent == false)
+            #expect(selectedPersonNamePresent == false)
             return
         }
 
         try body.write(toFile: Self.personWindowEvidencePath, atomically: true, encoding: .utf8)
+    }
+
+    private nonisolated static func containsStandaloneToken(_ token: String, in text: String) -> Bool {
+        func isWordCharacter(_ character: Character) -> Bool { character.isLetter || character.isNumber }
+        var searchRange = text.startIndex..<text.endIndex
+        while let match = text.range(of: token, range: searchRange) {
+            let precededByWordCharacter =
+                match.lowerBound > text.startIndex
+                && isWordCharacter(text[text.index(before: match.lowerBound)])
+            let followedByWordCharacter =
+                match.upperBound < text.endIndex && isWordCharacter(text[match.upperBound])
+            if !precededByWordCharacter && !followedByWordCharacter {
+                return true
+            }
+            searchRange = match.upperBound..<text.endIndex
+        }
+        return false
     }
 
     private nonisolated static func resolvePersonWindowEvidencePath(

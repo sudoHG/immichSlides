@@ -235,6 +235,12 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "One move down on the Display Mode subpage should focus 'Single Photo Mode'"
         )
         XCUIRemote.shared.press(.select)
+        waitForElementValueToContain(
+            singlePhotoButton,
+            expectedFragment: "已选中",
+            timeout: 8,
+            failureMessage: "Pressing Select on 'Single Photo Mode' should mark it as selected"
+        )
 
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "tvos-playback-settings-display-mode-page")

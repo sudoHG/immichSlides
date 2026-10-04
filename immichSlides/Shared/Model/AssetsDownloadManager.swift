@@ -222,16 +222,6 @@ class AssetsDownloadManager: ObservableObject {
             cacheStatus: nil,
             loadStatus: "displayed"
         )
-        #if DEBUG
-        let key = TaskKey(assetId: assetId, size: size)
-        if let requestId = latestLifecycleRequestIds[key] {
-            recordPlaybackImageRequestLifecycleDiagnostic(
-                .consumed(
-                    requestId: requestId,
-                    timestamp: Date().timeIntervalSince1970
-                ))
-        }
-        #endif
     }
 
     #if DEBUG

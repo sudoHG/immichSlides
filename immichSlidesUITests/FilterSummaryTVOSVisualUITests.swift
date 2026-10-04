@@ -2769,7 +2769,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         XCTAssertTrue(
             waitForSettingsControlExists(app: app, identifier: "settings.about.feedback.email", timeout: 8),
-            "About page should show the support email row"
+            "About page should show the support email row (existence only; the address text is not read)"
         )
         XCTAssertTrue(
             waitForSettingsControlExists(app: app, identifier: "settings.about.unofficialNotice.hint", timeout: 8),

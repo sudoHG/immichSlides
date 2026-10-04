@@ -182,12 +182,14 @@ final class immichSlidesUITests: XCTestCase {
         startFilteredFlowFromModeSelection(app: app)
 
         let albumButton = app.buttons["filterSummary.album.button"]
+        XCUIDevice.shared.orientation = .landscapeRight
         XCTAssertTrue(albumButton.waitForExistence(timeout: 8))
 
         tapElement(albumButton)
         assertInAlbumFilterPage(app: app)
         tapChevronBackIfNeeded(app: app)
         XCTAssertTrue(app.buttons["filterSummary.startPlayback.button"].waitForExistence(timeout: 8))
+        XCUIDevice.shared.orientation = .portrait
     }
 
     @MainActor

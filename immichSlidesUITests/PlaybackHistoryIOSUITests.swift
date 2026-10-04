@@ -151,7 +151,10 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
     @MainActor
     func testDiagnosticSmartFillPauseOnlyThreeSecondsFreezesRenderedFrames() throws {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: .smartFill)
-        defer { app.terminate() }
+        defer {
+            attachManualLifecycleRuntimeEvidence(mode: .smartFill)
+            app.terminate()
+        }
         startFilteredPlaybackFromModeSelection(app: app)
         _ = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: 45)
 
@@ -160,50 +163,16 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         tapElement(playPause)
         XCTAssertTrue(waitUntil(timeout: 3) { self.playPauseState(playPause) == "play" })
 
-        let initialProbe = try waitForPausedFrameSynchronizedPresentationProbe(app: app, timeout: 3)
-        let initialSlots = frozenStateOfSmartFillSlots(app: app)
-        XCTAssertFalse(
-            initialSlots.isEmpty,
-            "The pause diagnostic must read the rendered frame/transform probe of every SmartFill slot")
-        let initialPixels = app.windows.firstMatch.screenshot().pngRepresentation
-        appendManualLifecycleRuntimeEvidence(
-            app: app, mode: .smartFill, event: "ipad-pause-only-start", probe: initialProbe)
-        let initialPixelsAttachment = XCTAttachment(data: initialPixels, uniformTypeIdentifier: "public.png")
-        initialPixelsAttachment.name = "ipad-smartfill-pause-only-start"
-        initialPixelsAttachment.lifetime = .keepAlways
-        add(initialPixelsAttachment)
-
-        for sample in 1...4 {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.75))
-            let probe = try waitForPausedFrameSynchronizedPresentationProbe(app: app, timeout: 2)
-            let slots = frozenStateOfSmartFillSlots(app: app)
-            let pixels = app.windows.firstMatch.screenshot().pngRepresentation
-            let failureFrame = XCTAttachment(data: pixels, uniformTypeIdentifier: "public.png")
-            failureFrame.name = "Desktop-pause-before-assert-\(sample)"
-            failureFrame.lifetime = .keepAlways
-            add(failureFrame)
-            XCTAssertEqual(probe.phase, initialProbe.phase, "The scene phase must not change while paused")
-            XCTAssertEqual(probe.opacities, initialProbe.opacities, "Layer opacities must not change while paused")
-            XCTAssertEqual(
-                probe.rawProgress, initialProbe.rawProgress,
-                "After pausing, the frame-synchronized motionRawProgress must stay frozen")
-            XCTAssertEqual(
-                slots, initialSlots,
-                "After pausing, the rendered transform/frame of every SmartFill slot must stay frozen")
-            XCTAssertEqual(pixels, initialPixels, "After pausing, consecutive rendered pixels must stay frozen")
-            appendManualLifecycleRuntimeEvidence(
-                app: app, mode: .smartFill, event: "ipad-pause-only-sample-\(sample)", probe: probe)
-            let pixelsAttachment = XCTAttachment(data: pixels, uniformTypeIdentifier: "public.png")
-            pixelsAttachment.name = "ipad-smartfill-pause-only-sample-\(sample)"
-            pixelsAttachment.lifetime = .keepAlways
-            add(pixelsAttachment)
-        }
+        try assertSmartFillPauseOnlyFrameFreeze(app: app, evidenceEventPrefix: "ipad-pause-only")
     }
 
     @MainActor
     func testDiagnosticSmartFillSettingsPauseOnlyThreeSecondsFreezesRenderedFrames() throws {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: .smartFill)
-        defer { app.terminate() }
+        defer {
+            attachManualLifecycleRuntimeEvidence(mode: .smartFill)
+            app.terminate()
+        }
         startFilteredPlaybackFromModeSelection(app: app)
         _ = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: 45)
 

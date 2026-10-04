@@ -1324,6 +1324,9 @@ class SlideShowViewModel: ObservableObject {
         )
         guard playbackSessionEngine.scenePresentationState.history.count > historyCountBefore else { return }
         scenePresentationVisibleTickCommittedHistory = true
+        for slot in playbackSessionEngine.scene(for: identity)?.photoSlots ?? [] {
+            recordSmartFillFirstImageDisplayed(assetId: slot.asset.id)
+        }
         if let transition {
             applyPlaybackHistoryLedgerCommit(
                 pendingPlaybackHistoryLedgerCommits[transition.transaction.id],
@@ -1440,7 +1443,7 @@ class SlideShowViewModel: ObservableObject {
             "decodedCount=\(scenePresentationDecodedCount)",
             "presentationReadyCount=\(scenePresentationReadyCount)",
             "historyCount=\(playbackSessionEngine.scenePresentationState.history.count)",
-            "partialSlotVisible=false",
+            "partialSlotVisible=\(snapshot.layers.contains { $0.opacity > 0 && !$0.isPresentationReady })",
             "loadingVisible=\(snapshot.underlyingPhase == .loading)",
             "playbackPaused=\(snapshot.suspensionReasons.contains(.userPaused))",
             "lowCoverageFrameCount=\(lowCoverageFrameCount)",
@@ -2692,7 +2695,7 @@ class SlideShowViewModel: ObservableObject {
             "fallbackReasonTopList=\(metrics?.fallbackReasonTopList ?? "none")",
             "candidateRejectReasonTopList=\(metrics?.candidateRejectReasonTopList ?? "none")",
             "lookaheadExhausted=\((metrics?.lookaheadExhausted ?? false) ? "true" : "false")",
-            "resourceReadinessAffectedFallback=false",
+            "resourceReadinessAffectedFallback=\(metrics?.fallbackRootCauseBucket == "resource-readiness-misclassified")",
             "controlBarAffectedFallback=false",
             "legacyRendererUsedForSmartFillFallback=false",
             "fallbackRootCauseBucket=\(metrics?.fallbackRootCauseBucket ?? "none")"

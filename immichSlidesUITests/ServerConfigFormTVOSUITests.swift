@@ -264,9 +264,14 @@ private extension ServerConfigFormTVOSUITests {
     }
 
     func saveRuntimeScreenshot(_ screenshot: XCUIScreenshot, name: String) {
-        // Also write the PNG to a fixed directory so the pre-release English review can open it.
-
-        let directory = URL(fileURLWithPath: "/private/tmp/immichSlides_Screenshots")
+        // Optional PNG export for manual review; the XCTAttachment above is always kept.
+        let environment = ProcessInfo.processInfo.environment
+        guard
+            let exportPath = environment["IMMICHSLIDES_SCREENSHOT_EXPORT_DIR"]
+                ?? environment["TEST_RUNNER_IMMICHSLIDES_SCREENSHOT_EXPORT_DIR"],
+            !exportPath.isEmpty
+        else { return }
+        let directory = URL(fileURLWithPath: exportPath)
         let safeName = name.replacingOccurrences(
             of: "[^A-Za-z0-9._-]",
             with: "-",

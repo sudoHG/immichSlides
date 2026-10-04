@@ -534,7 +534,7 @@ enum PlaybackSmartFillVisibleQualityClass: String, Equatable, Sendable {
 }
 
 enum PlaybackSmartFillLayoutVariant: String, Equatable, Hashable, Sendable {
-    case single = "单图"
+    case single = "single"
     case verticalEqual = "vertical-equal"
     case horizontalEqual = "horizontal-equal"
     case topPrimaryBottomSecondary = "top-primary-bottom-secondary"
