@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import CryptoKit
+import CoreGraphics
 import OSLog
 
 enum PlaybackHistoryLedgerLimits {
