@@ -182,8 +182,10 @@ struct SlideShowViewModelLiveIntegrationTests {
             isSceneRoot: true
         )
         var reporter = SceneVisibleFrameReporter()
-        try #require(reporter.transactionCompleted(candidate: candidate))
-        let visibleIdentity = try #require(reporter.consumeDisplayTick(currentCandidate: candidate))
+        let didCompleteTransaction = reporter.transactionCompleted(candidate: candidate)
+        try #require(didCompleteTransaction)
+        let reportedIdentity = reporter.consumeDisplayTick(currentCandidate: candidate)
+        let visibleIdentity = try #require(reportedIdentity)
         vm.incomingBecameVisible(visibleIdentity)
     }
 
