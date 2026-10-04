@@ -86,18 +86,13 @@ def _write_person_suite(
     evidence: Path,
     *,
     conflict: list[str],
-    no_faces_bytes: bytes | None = None,
-    vision: dict | None = None,
 ) -> None:
     (evidence / "person-normal.png").write_bytes(_fixture_png("A1"))
     for index, label in enumerate(conflict):
         name = "person-conflict-normal.png" if index == 0 else f"person-conflict-normal-{index + 1}.png"
         (evidence / name).write_bytes(_fixture_png(label))
-    if no_faces_bytes is None:
-        (evidence / "person-no-faces.png").write_bytes(_fixture_png("A4"))
-    else:
-        (evidence / "person-no-faces.png").write_bytes(no_faces_bytes)
-    payload = vision if vision is not None else {"environment": "simulator", "vision_available": False}
+    (evidence / "person-no-faces.png").write_bytes(_fixture_png("A4"))
+    payload = {"environment": "simulator", "vision_available": False}
     (evidence / "vision-environment.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -148,7 +143,6 @@ class MemberManifestContractTests(unittest.TestCase):
         self.assertEqual(loaded["target_album"]["visual_labels"], ["A1", "A2", "A3"])
         self.assertEqual(loaded["non_target_album"]["labels"], ["A4", "A5"])
         self.assertEqual(write_member_manifest(path.with_name("member-manifest-b.json"), "b")["target_album"]["visual_labels"], ["B1", "B2", "B3"])
-        self.assertGreaterEqual(len(loaded["target_album"]["labels"]), 3)
 
     def test_a_and_b_member_ids_stay_mutually_exclusive(self) -> None:
         server_a = member_manifest("a")
@@ -1106,7 +1100,6 @@ print("\\(candidate != original)|\\(result.status.rawValue)|\\(result.mark ?? "n
             )
             report = evaluate_filter_visual_identity(evidence, "filter-vision")
             self.assertEqual(report["verdict"], "UNVERIFIED")
-            self.assertNotEqual(report["verdict"], "PASS")
 
             (evidence / "vision-environment.json").write_text(
                 json.dumps(

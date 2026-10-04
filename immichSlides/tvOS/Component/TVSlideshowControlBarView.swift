@@ -29,7 +29,7 @@ struct TVSlideshowControlBarView: View {
     @Namespace private var controlBarFocusScope
 
     /// Actions are an enum to avoid scattered strings.
-    private enum ControlAction: String, Hashable, CaseIterable {
+    private enum ControlAction: String, Hashable {
         case settings
         case previous
         case playPause

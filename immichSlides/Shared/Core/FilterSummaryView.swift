@@ -41,8 +41,6 @@ struct FilterSummaryView: View {
             FilterSummaryViewIOS(
                 viewModel: viewModel,
                 canShowBackToModeSelection: canShowBackToModeSelection,
-                onBackToModeSelection: onBackToModeSelection,
-
                 showsOnboardingProgress: onboardingOnly,
                 onStartPlayback: { startFilteredPlayback() }
             )

@@ -4,15 +4,9 @@ struct SettingsViewTV: View {
     // The access protection subpage still uses this enum to manage focus.
 
     enum DetailFocusTarget: Hashable {
-        case playbackAutoPlay
-        case playbackInterval
-        case playbackMode
-        case playbackFilterConfig
-        case playbackDisplay
         case accessProtectionReset
         case accessProtectionDisablePin
         case accessProtectionEnablePin
-        case cacheClearDisk
     }
 
     // Focus targets for two-choice subpages; on custom-drawn buttons, the system's geometric focus sometimes stays put.
@@ -55,9 +49,6 @@ struct SettingsViewTV: View {
     let onTestConnection: () -> Void
     let onSaveServerConfig: () -> Void
 
-    // Holds the shared FilterViewModel so the filter editor entry and the summary edit the same state.
-
-    let filterViewModel: FilterViewModel
     let playbackSettings: PlaybackSettings
     let filterSummaryText: String
     let isFilterSelectionEmpty: Bool
@@ -328,12 +319,5 @@ struct SettingsViewTV: View {
         colorScheme == .dark
             ? Color.blue.opacity(0.12)
             : Color.indigo.opacity(0.08)
-    }
-}
-
-extension String {
-
-    var nonEmpty: String? {
-        isEmpty ? nil : self
     }
 }

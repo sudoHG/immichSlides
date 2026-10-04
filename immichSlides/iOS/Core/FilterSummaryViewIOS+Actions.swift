@@ -11,14 +11,11 @@ import SwiftUI
 
 struct FilterSummaryActionBar: View {
     @ObservedObject var viewModel: FilterViewModel
-    let canShowBackToModeSelection: Bool
     let canStartPlayback: Bool
-    let onBackToModeSelection: (() -> Void)?
     let onStartPlayback: () -> Void
     let isPhone: Bool
     let isCompact: Bool
     let isPhoneLandscape: Bool
-    let isPhonePortrait: Bool
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -31,10 +28,6 @@ struct FilterSummaryActionBar: View {
                     actionSummaryPanel
 
                     VStack(alignment: .leading, spacing: 12) {
-                        if canShowBackToModeSelection {
-                            backToModeSelectionButton
-                        }
-
                         startPlaybackButton
                     }
                 }
@@ -111,31 +104,6 @@ struct FilterSummaryActionBar: View {
         .buttonStyle(.plain)
         .disabled(!canStartPlayback)
         .accessibilityIdentifier("filterSummary.startPlayback.button")
-    }
-
-    private var backToModeSelectionButton: some View {
-        Button {
-            onBackToModeSelection?()
-        } label: {
-            if isPhone {
-                phoneActionButtonLabel(
-                    systemName: "arrow.uturn.backward",
-                    title: "Back to Mode Selection",
-                    subtitle: isPhonePortrait ? "" : "Change playback mode",
-                    foreground: primaryTextColor,
-                    background: AnyShapeStyle(phoneSecondaryButtonFill)
-                )
-            } else {
-                actionButtonLabel(
-                    systemName: "arrow.uturn.backward",
-                    title: "Back to Mode Selection",
-                    foreground: primaryTextColor,
-                    background: AnyShapeStyle(secondaryButtonFill)
-                )
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("filterSummary.backToMode.button")
     }
 
     private func actionButtonLabel(
@@ -242,10 +210,6 @@ struct FilterSummaryActionBar: View {
 
     private var buttonCluster: some View {
         VStack(alignment: .trailing, spacing: 12) {
-            if canShowBackToModeSelection {
-                backToModeSelectionButton
-            }
-
             startPlaybackButton
         }
         .frame(minWidth: actionButtonWidth + 16, alignment: .trailing)
@@ -257,14 +221,6 @@ struct FilterSummaryActionBar: View {
 
     private var primaryTextColor: Color {
         colorScheme == .dark ? .white : Color.black.opacity(0.92)
-    }
-
-    private var secondaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.66) : Color(red: 0.34, green: 0.41, blue: 0.49)
-    }
-
-    private var secondaryButtonFill: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.05)
     }
 
     private var albumTint: Color {
@@ -279,10 +235,6 @@ struct FilterSummaryActionBar: View {
         Color(red: 1.00, green: 0.73, blue: 0.36)
     }
 
-    private var peopleTintSecondary: Color {
-        Color(red: 0.96, green: 0.63, blue: 0.28)
-    }
-
     private var summaryTint: Color {
         Color(red: 0.29, green: 0.75, blue: 0.96)
     }
@@ -295,10 +247,6 @@ struct FilterSummaryActionBar: View {
                 endPoint: .trailing
             )
         )
-    }
-
-    private var phoneSecondaryButtonFill: Color {
-        colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.90)
     }
 
     private var phoneDisabledButtonFill: Color {

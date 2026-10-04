@@ -105,9 +105,6 @@ extension SettingsViewTV {
                         }
 
                         if playbackSettings.defaultPlaybackMode == .filtered {
-                            // The filter editor opens full screen through the shared
-                            // layer and keeps observing the same filterViewModel.
-
                             playbackActionButton(
                                 title: "Edit Filters",
                                 value: filterSummaryText,

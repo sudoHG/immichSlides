@@ -645,17 +645,6 @@ extension SettingsViewTV {
         }
     }
 
-    func handlePrivacyPolicySummaryMove(_ direction: AppMoveDirection) {
-        guard direction == .down else { return }
-
-        // Pressing Down from the summary goes to the current language
-        // button first, instead of jumping to a larger body block.
-
-        DispatchQueue.main.async {
-            focusedPrivacyPolicySection = .language(selectedPrivacyPolicyLanguage)
-        }
-    }
-
     func handlePrivacyPolicyLanguageMove(
         _ direction: AppMoveDirection,
         from language: SettingsBundledPrivacyPolicy.Language

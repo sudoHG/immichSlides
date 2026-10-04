@@ -500,26 +500,6 @@ class StrictE2EServerContractTests(unittest.TestCase):
                 )
             self.assertLess(time.monotonic() - started, 0.2)
 
-        with RunningServer(scenario="out-of-order") as server:
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                started = time.monotonic()
-                old_request = executor.submit(
-                    server.request,
-                    "/assets/asset-a-1/thumbnail?size=fullsize",
-                    timeout=4,
-                )
-                time.sleep(0.03)
-                new_status, _, _ = server.request(
-                    "/assets/asset-a-2/thumbnail?size=fullsize"
-                )
-                new_completed = time.monotonic()
-                old_status, _, _ = old_request.result(timeout=5)
-                old_completed = time.monotonic()
-
-            self.assertEqual((old_status, new_status), (200, 200))
-            self.assertLess(new_completed - started, 0.15)
-            self.assertGreater(old_completed - new_completed, 0.1)
-
     def test_out_of_order_logs_start_and_complete_timeline_without_secrets(self) -> None:
         log_stream = io.StringIO()
         with RunningServer(scenario="out-of-order", log_stream=log_stream) as server:

@@ -112,35 +112,6 @@ struct AlbumFilterViewTV: View {
         ]
     }
 
-    private var cardSurfaceColor: Color {
-        if colorScheme == .light {
-            return Color.white.opacity(0.86)
-        }
-        return Color.white.opacity(0.05)
-    }
-
-    private var neutralBorderColor: Color {
-        if colorScheme == .light {
-            return Color.black.opacity(0.10)
-        }
-        return Color.white.opacity(0.12)
-    }
-
-    private var focusOutlineColor: Color {
-        if colorScheme == .light {
-            return Color.black.opacity(0.26)
-        }
-        return Color.cyan.opacity(0.95)
-    }
-
-    private var unselectedIndicatorColor: Color {
-        if colorScheme == .light {
-
-            return Color.white
-        }
-        return Color.white.opacity(0.95)
-    }
-
     var body: some View {
         rootScene
     }
