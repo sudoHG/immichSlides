@@ -656,7 +656,6 @@ struct IOSDriver: PlaybackDriver {
         _ = app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 3)
     }
 
-    // After each nudge, wait up to 1 second for the target label before trying the next position.
     private func adjustInterval(_ slider: XCUIElement, toNormalized target: Double, label: String) -> Bool {
         for offset in Self.sliderNudgeOffsets {
             slider.adjust(toNormalizedSliderPosition: min(max(target + offset, 0), 1))

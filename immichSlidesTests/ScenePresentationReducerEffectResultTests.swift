@@ -4,7 +4,7 @@ import Testing
 
 @MainActor
 @Suite
-struct ScenePresentationEffectRunnerTests {
+struct ScenePresentationReducerEffectResultTests {
     @Test
     func `replacing a pending target cancels the old effect and drops its stale result`() throws {
         var engine = PlaybackSessionEngine()

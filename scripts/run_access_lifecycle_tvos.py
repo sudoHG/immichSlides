@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run access-lifecycle checks on tvOS with an isolated simulator, port, and DerivedData; this is not part of the run_strict_e2e suite list."""
+"""Run access-lifecycle checks on tvOS on the simulator given by --destination, with a per-run local fixture-server port and DerivedData; this is not part of the run_strict_e2e suite list."""
 
 from __future__ import annotations
 

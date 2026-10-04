@@ -197,7 +197,7 @@ struct SettingsServerViewModelTests {
         let viewModel = SettingsServerViewModel(
             saveServerConfigAction: { _, _ in
                 await saveGate.waitForRelease()
-                return (false, "保存请求失败")
+                return (false, "Save request failed")
             }
         )
         viewModel.serverURL = "https://demo.example.com"

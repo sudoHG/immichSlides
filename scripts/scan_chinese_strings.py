@@ -81,11 +81,9 @@ class StringHit:
 def load_catalog_strings(root: Path) -> dict[str, dict]:
     """Load the whole string catalog.
 
-    Teaching note:
-    `xcstrings` records not only "which keys exist" but also "whether each language has a
-    translated value". The debug panel problem this time was: Xcode normalizes interpolated strings
-    in source into placeholder keys such as `%lld` / `%@`, but those keys had only Chinese and no
-    English. So the whole catalog is read here to check separately for missing translations.
+    Xcode normalizes interpolated source strings into placeholder keys such as `%lld` / `%@`, and these
+    keys can exist without an English value. Checking missing translations therefore needs the full catalog
+    entries, not only the keys found in source.
     """
 
     catalog_path = root / "immichSlides" / "Localizable.xcstrings"

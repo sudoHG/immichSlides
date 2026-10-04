@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -68,7 +69,7 @@ def print_case_command(case_id: str) -> int:
         server_url="http://127.0.0.1:<PORT_A>/api",
         server_url_b="http://127.0.0.1:<PORT_B>/api" if case["narrow"] == "server-switch" else None,
     )
-    print(" ".join(command))
+    print(shlex.join(command))
     return 0
 
 

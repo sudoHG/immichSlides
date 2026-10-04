@@ -517,7 +517,7 @@ class GitPrivacyGateTests(unittest.TestCase):
         payloads = (
             b"Document handling of the %PDF- and GIF89a headers.\n",
             b"%PDF-1.7\n",
-            "GIF89a 后面是逻辑屏幕描述符。\n".encode("utf-8"),
+            "GIF89a is followed by the logical screen descriptor (width × height).\n".encode("utf-8"),
             (
                 b"Discuss version "
                 b"https://git-lfs.github.com/spec/v1 without pointer fields.\n"

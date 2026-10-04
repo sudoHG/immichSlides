@@ -178,7 +178,7 @@ def _cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
 
 
 def _single_on_own_blur(label: str, screen: tuple[int, int], fixture_set: str = "a") -> bytes:
-    """One photo fitted to the screen over a blurred copy of itself."""
+    """A single photo whose blurred copy must not count as a second photo."""
     image = _fixture_image(label, fixture_set)
     canvas = _cover(image, screen).filter(ImageFilter.GaussianBlur(48))
     scale = min(screen[0] / image.width, screen[1] / image.height)
@@ -239,7 +239,7 @@ def _empty_result_screen(screen: tuple[int, int]) -> bytes:
     return _png(canvas)
 
 
-def _write_saved_album_empty_pack(directory: Path, play_1: bytes, play_2: bytes, empty_result: bytes) -> None:
+def _write_synthetic_album_empty_pack(directory: Path, play_1: bytes, play_2: bytes, empty_result: bytes) -> None:
     _write_album_empty_pass(directory)
     (directory / "album-play-1.png").write_bytes(play_1)
     (directory / "album-play-2.png").write_bytes(play_2)
@@ -247,7 +247,6 @@ def _write_saved_album_empty_pack(directory: Path, play_1: bytes, play_2: bytes,
 
 
 def _tvos_b_pair_screen(next_button_focused: bool) -> bytes:
-    """B3 left and B2 right on a 4K tvOS screen; B3 is the wider panel."""
     canvas = _side_by_side_screen("A3", "A2", TV_4K_SCREEN, 0.65, "b")
     if next_button_focused:
         width, height = TV_4K_SCREEN
@@ -470,7 +469,7 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
             directory = Path(raw)
             _write_album_empty_pass(directory)
             payload = json.loads((directory / "empty-album.json").read_text(encoding="utf-8"))
-            payload["empty_copy"] = "没有照片"
+            payload["empty_copy"] = "Invalid empty-album copy"
             (directory / "empty-album.json").write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(AlbumServerContractError):
                 evaluate_album_empty_evidence(directory)
@@ -513,15 +512,15 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
 
 
 class EmptyResultIdentityTests(unittest.TestCase):
-    def test_saved_tvos_empty_result_is_not_a_fixture_photo(self) -> None:
+    def test_synthetic_tvos_empty_result_is_not_a_fixture_photo(self) -> None:
         identity = classify_screenshot(_empty_result_screen(TV_SCREEN))
         self.assertNotEqual(identity.status, "MATCH")
         self.assertIsNone(identity.mark)
 
-    def test_saved_tvos_album_empty_pack_passes_offline(self) -> None:
+    def test_synthetic_tvos_album_empty_pack_passes_offline(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
-            _write_saved_album_empty_pack(
+            _write_synthetic_album_empty_pack(
                 directory,
                 _full_screen("A1", TV_SCREEN),
                 _single_on_own_blur("A2", TV_SCREEN),
@@ -531,10 +530,10 @@ class EmptyResultIdentityTests(unittest.TestCase):
         self.assertEqual(report["verdict"], "PASS")
         self.assertGreaterEqual(len(set(report["marks"])), 2)
 
-    def test_saved_iphone_album_empty_pack_passes_offline(self) -> None:
+    def test_synthetic_iphone_album_empty_pack_passes_offline(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
-            _write_saved_album_empty_pack(
+            _write_synthetic_album_empty_pack(
                 directory,
                 _single_on_own_blur("A2", IPHONE_SCREEN),
                 _single_on_own_blur("A3", IPHONE_SCREEN),
@@ -708,8 +707,8 @@ class DisplayPolicyNegativeTests(unittest.TestCase):
         self.assertGreaterEqual(len(report["before_marks"]), 2)
         self.assertEqual(report["after_status"], "MATCH")
 
-    def test_saved_iphone_server_switch_blurred_single_is_not_multi(self) -> None:
-        # B3 above B2 before the change; B1 alone over its own blur after it.
+    def test_synthetic_iphone_server_switch_blurred_single_is_not_multi(self) -> None:
+        # After the switch the blurred copy of one photo must not count as a second photo.
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             _write_display_pack(
@@ -786,7 +785,7 @@ class ABMixTests(unittest.TestCase):
         self.assertEqual(report["verdict"], "PASS")
         self.assertEqual(report["b_pattern"], "b")
 
-    def test_saved_tvos_server_switch_frames_are_pattern_b(self) -> None:
+    def test_synthetic_tvos_server_switch_frames_are_pattern_b(self) -> None:
         for next_button_focused in (False, True):
             frame = _tvos_b_pair_screen(next_button_focused)
             self.assertEqual(classify_public_pattern(frame), "b", next_button_focused)

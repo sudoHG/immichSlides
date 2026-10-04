@@ -916,8 +916,6 @@ private extension AppStoreScreenshotUITests {
         let header = """
             # immichSlides App Store Screenshot Manifest
 
-            Generated: 2026-05-09
-
             | file | slot | locale | actual_language | actual_locale | platform_group | simulator_name | runtime | pixel_size | theme | ui_language_matches | status | notes |
             | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
@@ -1959,8 +1957,6 @@ private extension AppStoreScreenshotTVOSUITests {
         let manifestURL = outputRoot.appendingPathComponent("manifest.md")
         let header = """
             # immichSlides App Store Screenshot Manifest
-
-            Generated: 2026-05-09
 
             | file | slot | locale | actual_language | actual_locale | platform_group | simulator_name | runtime | pixel_size | theme | ui_language_matches | status | notes |
             | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

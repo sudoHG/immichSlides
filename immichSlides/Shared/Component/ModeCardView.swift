@@ -9,10 +9,8 @@ import SwiftUI
 
 struct ModeCardView: View {
     var icon: String = "dot.scope"
-    // Preview/fallback default text is localized too.
-    var title: String = String(localized: "Default Title")
-    var description: String = String(
-        localized: "Default description, default description, default description, default description")
+    let title: String
+    let description: String
     var isCompact: Bool = false
     var isCompactHeight: Bool = false
     var isSelected: Bool = false
@@ -41,5 +39,9 @@ struct ModeCardView: View {
 }
 
 #Preview {
-    ModeCardView()
+    ModeCardView(
+        icon: "photo.stack",
+        title: "Shuffle All Photos",
+        description: "Play all photos in the library in random order and start right away."
+    )
 }

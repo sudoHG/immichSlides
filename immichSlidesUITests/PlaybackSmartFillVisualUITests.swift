@@ -1140,7 +1140,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
     }
 
     @MainActor
-    func testSmartFillMotionIPhone5SecondIntervalRealAutoplayFullProductEvidence() throws {
+    func testSmartFillMotionRealAutoplayFullProductEvidence() throws {
         let scenario = smartFillMotionScenarioName(
             defaultScenario: "iphone-5sec-interval-any-iphone-real-autoplay-full-product"
         )
@@ -1258,7 +1258,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
     }
 
     @MainActor
-    func testSmartFillMotionIPhone5SecondIntervalInteractionLivenessEvidence() throws {
+    func testSmartFillMotionInteractionLivenessEvidence() throws {
         let scenario = smartFillMotionScenarioName(
             defaultScenario: "iphone-5sec-interval-any-iphone-interaction-liveness"
         )
@@ -1566,19 +1566,19 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
     }
 
     @MainActor
-    func testSmartFillPerformanceBaselineRandomPlaybackTwentyScenes() throws {
+    func testRandomPlaybackSwitchWorkloadTwentyScenesWithSmartFillDisabled() throws {
         let app = try launchConfiguredAppAtModeSelection(disableSmartFill: true)
         startRandomPlaybackFromModeSelection(app: app)
 
-        try exerciseTwentySceneSwitchesForPerformance(app: app, scenario: "cpu-baseline")
+        try exerciseTwentySceneSwitches(app: app, scenario: "cpu-baseline")
     }
 
     @MainActor
-    func testSmartFillPerformanceEnabledRandomPlaybackTwentyScenes() throws {
+    func testRandomPlaybackSwitchWorkloadTwentyScenesWithSmartFillEnabled() throws {
         let app = try launchConfiguredAppAtModeSelection(disableSmartFill: false)
         startRandomPlaybackFromModeSelection(app: app)
 
-        try exerciseTwentySceneSwitchesForPerformance(app: app, scenario: "cpu-smartfill")
+        try exerciseTwentySceneSwitches(app: app, scenario: "cpu-smartfill")
     }
 
     func testSmartFillRuntimeEvidenceRecordBuilderIncludesRequiredJSONFields() throws {
@@ -2502,7 +2502,7 @@ private extension PlaybackSmartFillVisualUITests {
             .write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
-    func exerciseTwentySceneSwitchesForPerformance(app: XCUIApplication, scenario: String) throws {
+    func exerciseTwentySceneSwitches(app: XCUIApplication, scenario: String) throws {
         _ = try waitForCurrentAssetReference(app: app, timeout: 45)
         var switchedCount = 1
 
@@ -2870,7 +2870,7 @@ private extension PlaybackSmartFillVisualUITests {
             "surfaceKey=iPhone-landscape-regular-compact-safeA",
             "surfaceFingerprint=iPhone-landscape-393x852-safeA",
             "policy=iphone-landscape-v2",
-            "layoutVariant=horizontalEqual",
+            "layoutVariant=horizontal-equal",
             "ratioPreset=50/50",
             "photoCanvasId=canvas-iphone-landscape",
             "photoCanvasPointSize=852.000x393.000",
@@ -2905,9 +2905,9 @@ private extension PlaybackSmartFillVisualUITests {
             "fallbackCategory=none",
             "candidateWindowUsed=24",
             "evaluationCount=4",
-            "rotationStartLayoutVariant=horizontalEqual",
+            "rotationStartLayoutVariant=horizontal-equal",
             "rotationStartRatioPreset=50/50",
-            "acceptedLayoutVariant=horizontalEqual",
+            "acceptedLayoutVariant=horizontal-equal",
             "acceptedRatioPreset=50/50",
             "rotationKeyHashPrefix=abc12345",
             "fallback=none",

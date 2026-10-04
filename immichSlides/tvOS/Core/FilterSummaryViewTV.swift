@@ -282,8 +282,6 @@ struct FilterSummaryViewTV: View {
                     uiTestReadinessMarkers
                 }
             }
-            .padding(.horizontal, horizontalScreenPadding(for: geometry.size.width))
-            .padding(.vertical, verticalScreenPadding(for: geometry.size.height))
             .ignoresSafeArea()
         }
         .tvOnboardingProgressOverlay(
@@ -768,14 +766,6 @@ struct FilterSummaryViewTV: View {
 
     private var stageCornerRadius: CGFloat { 0 }
     private var dockHeight: CGFloat { 286 }
-
-    private func horizontalScreenPadding(for width: CGFloat) -> CGFloat {
-        0
-    }
-
-    private func verticalScreenPadding(for height: CGFloat) -> CGFloat {
-        0
-    }
 
     private func titleSize(for width: CGFloat) -> CGFloat {
         width > 1700 ? 54 : 46

@@ -33,7 +33,7 @@ INVALID_SCENE_MARKS = {
     "BLACK": "All-black output must not count as a pass",
     "BLANK": "Blank output must not count as a pass",
     "UNRECOGNIZABLE": "Unrecognizable input must not count as a pass",
-    "TRANSITION": "Unrecognizable input must not count as a pass",
+    "TRANSITION": "An unstable transition frame must not count as a pass",
 }
 MEASURED_PROGRESS_ZERO_EPSILON = 0.001
 DEVICE_REQUIRED_SCREENSHOTS = (

@@ -29,8 +29,8 @@ Prefer extending an existing test file. A new test file needs a reason in the pu
 
 | Location | What goes there | Runs by default |
 |---|---|---|
-| `immichSlidesTests/` | Unit tests: no network, no private config, no reading source files | Yes |
-| `immichSlidesTests/*LiveTests.swift` | Integration tests against a real Immich server | Skipped when no server is configured |
+| `immichSlidesTests/` | Unit tests: no external network (a hermetic fixture server on loopback is allowed), no private config, no reading source files | Yes |
+| `immichSlidesTests/*Live*Tests.swift` (`*LiveTests`, `*LiveIntegrationTests`, `*LiveProbeTests`) | Integration tests against a real Immich server | Skipped when no server is configured |
 | `immichSlidesUITests/` | Complete user flows, for example "pick an album, then start playback" | Yes, except Evidence and strict end-to-end tests; those needing a server skip without one |
 | `Evidence` test plan | Screenshot production, App Store screenshots, diagnostic captures, performance sampling | No, run on demand |
 | `StrictE2E` test plans | Strict end-to-end flows against the local fixture server | No, run with `scripts/run_strict_e2e.py` |
@@ -200,6 +200,29 @@ Use `python3 scripts/run_strict_e2e.py --help` for the current suite list. Setti
 Run serially within a checkout because the runner manages temporary test configuration. Use a new evidence directory outside the repository for each run. The runner prepares the fixture and app state, reads official test statistics, checks result contracts and cleans up. Zero selected tests, skipped strict tests, missing evidence or an unknown image are failures. A successful contract check does not replace human visual review; inspect the current run's original screenshots. The separate [iPad host tool](../scripts/ipad-pause-host-testing.md) remains diagnostic tooling and does not replace an XCTest result.
 
 Result bundles normally go in the directory passed to `--evidence-dir`. The `p2-*` suites instead write them under `Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"`, with a separate temporary subdirectory per run and a root created with permissions `0o700`. On macOS this is inside the per-user temporary directory. After a successful run and cleanup, the runner deletes the private bundle and records its disposal in `result-bundle-disposal.json` in the evidence directory. Retained bundles from failed runs or cleanup are recorded in `result-bundle-quarantine.json` there; keep them private.
+
+`ScenePresentationContractUITests` writes `<displayMode>-contract-evidence.json` and `<displayMode>-trace.txt` to the directory in `TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR`. Set it through the environment of `xcodebuild` to a directory outside the repository; on iOS the tests skip when it is unset, on tvOS it is optional. No runner script sets it.
+
+### Strict end-to-end case identifiers
+
+`case-manifest.json` lists the case IDs a suite covers. They name coverage that the mapped XCTest selector already implements; they are not a separate spec. `scripts/run_strict_e2e.py` (`CASE_E2E_IDS`) and `scripts/strict_e2e_p2_contract.py` (`P2_CASES`) are the sources of truth.
+
+| ID | Coverage |
+|---|---|
+| `E2E-P0-01` | First-boot server setup |
+| `E2E-P0-02` | First-boot setup survives a cold relaunch |
+| `E2E-P0-03` | Random or core playback is reached |
+| `E2E-P0-04` | Album filter members, empty album, or album edit-switch |
+| `E2E-P0-05` | Person filter rules, including vision solo-only |
+| `E2E-P0-06` | Server-switch isolation |
+| `E2E-P0-07` | A late image keeps the current scene |
+| `E2E-P0-08`, `E2E-P0-09` | Playback control state on the iOS and tvOS playback flows |
+| `N1` | tvOS first-boot save and configured cold launch |
+| `E2E-P2-01` | EXIF toggle ownership (`p2-exif`) |
+| `E2E-P2-02` | Clearing the disk cache from Settings and returning to playback (`p2-cache`) |
+| `E2E-P2-03` | System Reduce Motion on and off, single and SmartFill scenes (`p2-reduce-motion`) |
+| `E2E-P2-04` | SmartFill multi-photo layout in both iPad orientations (`p2-ipad-layout`) |
+| `E2E-P2-05` | Rotation during playback on iPhone and iPad (`p2-rotation`) |
 
 ## Generating a local privacy page
 

@@ -75,10 +75,10 @@ struct MotionEligibilityResult: Equatable, Sendable {
 }
 
 struct MotionEligibilityPolicy: Equatable, Sendable {
-    nonisolated static let phase3AArchitectureOnly = MotionEligibilityPolicy(
+    nonisolated static let architectureOnly = MotionEligibilityPolicy(
         runtimeIntegration: .architectureOnly
     )
-    nonisolated static let phase4AcceptedSceneRuntime = MotionEligibilityPolicy(
+    nonisolated static let acceptedSceneRuntime = MotionEligibilityPolicy(
         runtimeIntegration: .acceptedSceneRuntime
     )
 

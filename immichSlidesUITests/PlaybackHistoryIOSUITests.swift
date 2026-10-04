@@ -1032,8 +1032,8 @@ private extension PlaybackHistoryIOSUITests {
         ]
         let labels = identifiers.map { identifier in
             let probe = app.descendants(matching: .any)[identifier]
-            return "[\(identifier)] exists=\(probe.exists)\\n\(probe.label)"
-        }.joined(separator: "\\n\\n")
+            return "[\(identifier)] exists=\(probe.exists)\n\(probe.label)"
+        }.joined(separator: "\n\n")
         let attachment = XCTAttachment(data: Data(labels.utf8), uniformTypeIdentifier: "public.plain-text")
         attachment.name = name
         attachment.lifetime = .keepAlways
