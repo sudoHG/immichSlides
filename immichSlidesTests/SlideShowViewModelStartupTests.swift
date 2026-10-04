@@ -16,7 +16,7 @@ struct SlideShowViewModelStartupTests {
     private let initialSceneRequestPollIntervalNanoseconds: UInt64 = 30_000_000
     // 100 polls of 30 ms retain the existing nominal three-second wait budget.
     private let initialSceneRequestPollCount: Int = 100
-    private let persistedPlaybackIntervalSeconds: Int = 9
+    private let persistedPlaybackIntervalSeconds: TimeInterval = 9
 
     @Test
     func `cold launch uses the stored filtered source when the default mode is filtered and criteria are non-empty`() {

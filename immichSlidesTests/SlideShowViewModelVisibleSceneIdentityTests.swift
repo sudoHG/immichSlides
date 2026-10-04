@@ -742,7 +742,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         store.save(
             PlaybackSettings(
                 autoPlayEnabled: true,
-                intervalSeconds: Int(SceneLifecycleContract.minimumInterval),
+                intervalSeconds: SceneLifecycleContract.minimumInterval,
                 displayMode: .singlePhoto
             )
         )
@@ -908,7 +908,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         store.save(
             PlaybackSettings(
                 autoPlayEnabled: true,
-                intervalSeconds: Int(SceneLifecycleContract.minimumInterval),
+                intervalSeconds: SceneLifecycleContract.minimumInterval,
                 displayMode: .smartFill
             )
         )
@@ -1070,7 +1070,7 @@ struct SlideShowViewModelVisibleSceneIdentityTests {
         store.save(
             PlaybackSettings(
                 autoPlayEnabled: true,
-                intervalSeconds: Int(SceneLifecycleContract.minimumInterval),
+                intervalSeconds: SceneLifecycleContract.minimumInterval,
                 displayMode: .singlePhoto
             )
         )
