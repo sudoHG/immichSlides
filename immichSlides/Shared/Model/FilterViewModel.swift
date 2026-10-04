@@ -11,7 +11,7 @@ import SDWebImage
 import OSLog
 
 class FilterViewModel: ObservableObject {
-    private static let logger = Logger(subsystem: "immichSlides", category: "FilterViewModel")
+    private nonisolated static let logger = Logger(subsystem: "immichSlides", category: "FilterViewModel")
     @Published var albums: [Album] = []
     @Published var people: [People] = []
     // Cover URLs are computed live from the byID dictionaries, so they cannot be @Published.
