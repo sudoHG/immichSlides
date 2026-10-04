@@ -56,7 +56,7 @@ struct ServerConfigFormViewIOS: View {
     }
 
     private var debugServerConfigFromInfoPlist: ImmichServer? {
-        ImmichServer.debugTestServerFromInfoPlist()
+        ImmichServer.testServerFromInfoPlistForTesting()
     }
 
     // Debug autofill needs caller opt-in, a DEBUG build, the plist flag and a usable test config, all at once.

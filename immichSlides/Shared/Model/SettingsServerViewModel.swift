@@ -10,6 +10,9 @@ import Combine
 
 @MainActor
 final class SettingsServerViewModel: ObservableObject {
+    private static let defaultAutomaticRetryDelaysNanoseconds: [UInt64] = [
+        1_000_000_000, 2_000_000_000, 4_000_000_000
+    ]
 
     typealias ConnectionTestAction =
         @Sendable (
@@ -61,7 +64,7 @@ final class SettingsServerViewModel: ObservableObject {
     @Published var isConnectionVerified: Bool = false
     @Published var isTestingConnection: Bool = false
     @Published var testingStatusMessage: String = String(localized: "Testing connection...")
-    @Published var showErrorAlert: Bool = false
+    @Published var shouldShowErrorAlert: Bool = false
     @Published var errorAlertTitle: String = String(localized: "Save Failed")
     @Published var errorMessage: String = ""
     @Published var statusMessage: String = ""
@@ -69,7 +72,7 @@ final class SettingsServerViewModel: ObservableObject {
 
     @Published var didSaveConfig: Bool = false
 
-    private var suppressAutoInvalidate: Bool = false
+    private var shouldSuppressAutoInvalidate: Bool = false
     private var inputRevision: UInt64 = 0
     private var invalidatedInputRevision: UInt64 = 0
     private var hasLoadedInitialConfig: Bool = false
@@ -77,35 +80,31 @@ final class SettingsServerViewModel: ObservableObject {
     private var connectionTestTask: Task<Void, Never>?
     private var automaticRetryTask: Task<Void, Never>?
 
-    private let connectionTestAction: ConnectionTestAction
-    private let saveServerConfigAction: SaveServerConfigAction
-    private let delayAction: DelayAction
-    private let automaticRetryDelaySchedule: [UInt64]
+    private let connectionTestActionForTesting: ConnectionTestAction
+    private let saveServerConfigActionForTesting: SaveServerConfigAction
+    private let delayActionForTesting: DelayAction
+    private let automaticRetryDelayScheduleForTesting: [UInt64]
 
     init(
-        connectionTestAction: @escaping ConnectionTestAction = { serverURL, apiKey, progressHandler in
+        connectionTestActionForTesting: @escaping ConnectionTestAction = { serverURL, apiKey, progressHandler in
             await ImmichServer.testConnection(
                 serverURL: serverURL,
                 apiKey: apiKey,
                 progressHandler: progressHandler
             )
         },
-        saveServerConfigAction: @escaping SaveServerConfigAction = { serverURL, apiKey in
+        saveServerConfigActionForTesting: @escaping SaveServerConfigAction = { serverURL, apiKey in
             await ImmichServer.tryToSaveServerConfig(serverURL: serverURL, apiKey: apiKey)
         },
-        delayAction: @escaping DelayAction = { nanoseconds in
+        delayActionForTesting: @escaping DelayAction = { nanoseconds in
             try? await Task.sleep(nanoseconds: nanoseconds)
         },
-        automaticRetryDelaySchedule: [UInt64] = [
-            1_000_000_000,
-            2_000_000_000,
-            4_000_000_000
-        ]
+        automaticRetryDelayScheduleForTesting: [UInt64] = SettingsServerViewModel.defaultAutomaticRetryDelaysNanoseconds
     ) {
-        self.connectionTestAction = connectionTestAction
-        self.saveServerConfigAction = saveServerConfigAction
-        self.delayAction = delayAction
-        self.automaticRetryDelaySchedule = automaticRetryDelaySchedule
+        self.connectionTestActionForTesting = connectionTestActionForTesting
+        self.saveServerConfigActionForTesting = saveServerConfigActionForTesting
+        self.delayActionForTesting = delayActionForTesting
+        self.automaticRetryDelayScheduleForTesting = automaticRetryDelayScheduleForTesting
         applyUITestConnectionPrefillIfRequested()
     }
 
@@ -126,36 +125,33 @@ final class SettingsServerViewModel: ObservableObject {
             return
         }
 
-        suppressAutoInvalidate = true
+        shouldSuppressAutoInvalidate = true
         serverURL = server.immichURL ?? ""
         apiKey = server.immichApiKey ?? ""
         isConnectionVerified = true
         statusMessage = String(localized: "Current settings loaded")
-        suppressAutoInvalidate = false
+        shouldSuppressAutoInvalidate = false
     }
 
     @discardableResult
     private func applyUITestConnectionPrefillIfRequested() -> Bool {
         #if DEBUG
-        let env = ProcessInfo.processInfo.environment
         guard ImmichServer.isRunningXCTest,
-            env["UI_TEST_APP_STORE_SCREENSHOT_PREFILL_CONNECTION"] == "1",
-            let screenshotServerURL = env["UI_TEST_APP_STORE_SCREENSHOT_SERVER_URL"],
-            let screenshotAPIKey = env["UI_TEST_APP_STORE_SCREENSHOT_API_KEY"],
-            !screenshotServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            !screenshotAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let screenshotPrefill = PlatformCompat.screenshotConnectionPrefillForTesting,
+            !screenshotPrefill.serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !screenshotPrefill.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             return false
         }
 
         // UI tests can prefill the form to avoid bringing up the system keyboard.
 
-        serverURL = screenshotServerURL
-        apiKey = screenshotAPIKey
+        serverURL = screenshotPrefill.serverURL
+        apiKey = screenshotPrefill.apiKey
         isConnectionVerified = true
         isTestingConnection = false
         statusMessage = ""
-        showErrorAlert = false
+        shouldShowErrorAlert = false
         return true
         #else
         return false
@@ -163,13 +159,13 @@ final class SettingsServerViewModel: ObservableObject {
     }
 
     private func inputDidChange() {
-        guard !suppressAutoInvalidate else { return }
+        guard !shouldSuppressAutoInvalidate else { return }
         inputRevision &+= 1
         invalidateVerification()
     }
 
     func invalidateVerification() {
-        guard !suppressAutoInvalidate,
+        guard !shouldSuppressAutoInvalidate,
             invalidatedInputRevision != inputRevision
         else { return }
         invalidatedInputRevision = inputRevision
@@ -192,7 +188,7 @@ final class SettingsServerViewModel: ObservableObject {
             serverURL: pendingConnectionRetry.serverURL,
             apiKey: pendingConnectionRetry.apiKey,
             remainingAutomaticRetries: pendingConnectionRetry.remainingAutomaticRetries,
-            resetProgressMessage: false
+            shouldResetProgressMessage: false
         )
     }
 
@@ -218,7 +214,7 @@ final class SettingsServerViewModel: ObservableObject {
         }
 
         cancelPendingConnectionTestFlow()
-        showErrorAlert = false
+        shouldShowErrorAlert = false
         statusMessage = ""
         testingStatusMessage = String(localized: "Testing connection...")
         isTestingConnection = true
@@ -226,7 +222,7 @@ final class SettingsServerViewModel: ObservableObject {
         runConnectionTestAttempt(
             serverURL: serverURL,
             apiKey: apiKey,
-            remainingAutomaticRetries: automaticRetryDelaySchedule.count
+            remainingAutomaticRetries: automaticRetryDelayScheduleForTesting.count
         )
     }
 
@@ -238,12 +234,12 @@ final class SettingsServerViewModel: ObservableObject {
         let currentServerURL = serverURL
         let currentAPIKey = apiKey
         let saveInputRevision = inputRevision
-        let saveServerConfigAction = self.saveServerConfigAction
+        let saveServerConfigActionForTesting = self.saveServerConfigActionForTesting
 
         return Task { [weak self] in
             guard let self else { return }
 
-            let result = await saveServerConfigAction(currentServerURL, currentAPIKey)
+            let result = await saveServerConfigActionForTesting(currentServerURL, currentAPIKey)
             if result.isSuccess {
                 // Refresh the API singleton right after a successful save so this process stops calling the old server.
 
@@ -283,21 +279,21 @@ final class SettingsServerViewModel: ObservableObject {
         serverURL: String,
         apiKey: String,
         remainingAutomaticRetries: Int,
-        resetProgressMessage: Bool = true
+        shouldResetProgressMessage: Bool = true
     ) {
         connectionTestTask?.cancel()
 
-        if resetProgressMessage {
+        if shouldResetProgressMessage {
             testingStatusMessage = String(localized: "Testing connection...")
         }
 
         isTestingConnection = true
-        let connectionTestAction = self.connectionTestAction
+        let connectionTestActionForTesting = self.connectionTestActionForTesting
 
         connectionTestTask = Task { [weak self] in
             guard let self else { return }
 
-            let result = await connectionTestAction(serverURL, apiKey) { [weak self] event in
+            let result = await connectionTestActionForTesting(serverURL, apiKey) { [weak self] event in
                 guard let self else { return }
                 Task { @MainActor in
                     self.handleConnectionTestProgressEvent(event)
@@ -412,16 +408,16 @@ final class SettingsServerViewModel: ObservableObject {
     private func scheduleAutomaticRetry(remainingAutomaticRetries: Int) {
         automaticRetryTask?.cancel()
 
-        let retryIndex = automaticRetryDelaySchedule.count - remainingAutomaticRetries
-        guard automaticRetryDelaySchedule.indices.contains(retryIndex) else {
+        let retryIndex = automaticRetryDelayScheduleForTesting.count - remainingAutomaticRetries
+        guard automaticRetryDelayScheduleForTesting.indices.contains(retryIndex) else {
             return
         }
 
-        let delay = automaticRetryDelaySchedule[retryIndex]
-        let delayAction = self.delayAction
+        let delay = automaticRetryDelayScheduleForTesting[retryIndex]
+        let delayActionForTesting = self.delayActionForTesting
 
         automaticRetryTask = Task { [weak self] in
-            await delayAction(delay)
+            await delayActionForTesting(delay)
             guard !Task.isCancelled else { return }
             self?.resumePendingConnectionTestIfNeeded()
         }
@@ -444,6 +440,6 @@ final class SettingsServerViewModel: ObservableObject {
     ) {
         errorAlertTitle = titleOverride ?? context.title
         errorMessage = message
-        showErrorAlert = true
+        shouldShowErrorAlert = true
     }
 }

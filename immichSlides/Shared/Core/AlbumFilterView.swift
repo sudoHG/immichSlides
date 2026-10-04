@@ -39,7 +39,7 @@ struct AlbumFilterView: View {
         guard isLoading || didFinishInitialLoad == false else { return }
 
         isLoading = true
-        await viewModel.getCoverURLs(filterType: .albums, coverLimit: nil, reset: false)
+        await viewModel.getCoverURLs(filterType: .albums, coverLimit: nil, shouldReset: false)
         didFinishInitialLoad = true
         isLoading = false
     }

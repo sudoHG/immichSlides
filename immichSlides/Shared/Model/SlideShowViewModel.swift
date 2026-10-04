@@ -102,6 +102,16 @@ enum SmartFillMainActorPlannerCallSite: String, CaseIterable, Sendable {
 
 @MainActor
 class SlideShowViewModel: ObservableObject {
+    private static let maximumPlaybackPoolAssetCount: Int = 200
+    private static let standardPlaybackFetchAssetCount: Int = 100
+    private static let initialSoloOnlyPoolAssetCount: Int = 12
+    private static let soloOnlyRefillAssetCount: Int = 24
+    private static let autoplayRenderWindowRadius: Int = 1
+    private static let manualRenderWindowRadius: Int = 2
+    private static let identifierDigestPrefixBytes: Int = 8
+    private static let refillRemainingFractionDivisor: Int = 5
+    private static let surfaceActivationDelayNanoseconds: UInt64 = 250_000_000
+    private static let diagnosticHistoryLookbackCount: Int = 8
 
     private enum ResolvePhase {
         case initial
@@ -140,11 +150,11 @@ class SlideShowViewModel: ObservableObject {
 
     @Published private(set) var emptyPlaybackMessage: String? = nil
 
-    @Published var maxAssetCount: Int = 200
+    @Published var maxAssetCount: Int = SlideShowViewModel.maximumPlaybackPoolAssetCount
 
     @Published var isAutoPlay: Bool = true
 
-    @Published var autoPlayInterval: Double = 5
+    @Published var autoPlayInterval: Double = PlaybackIntervalPolicy.minimumInterval
 
     private var source: PlaybackSource
     private let playbackSettingsStore: PlaybackSettingsStore
@@ -251,7 +261,7 @@ class SlideShowViewModel: ObservableObject {
     #endif
 
     var renderCount: Int {  // Autoplay window: 1 on each side; manual: 2 on each side.
-        isAutoPlay ? 1 : 2
+        isAutoPlay ? Self.autoplayRenderWindowRadius : Self.manualRenderWindowRadius
     }
     var playbackScenes: [PlaybackScene] {
         playbackSessionEngine.scenes
@@ -381,7 +391,7 @@ class SlideShowViewModel: ObservableObject {
     func motionRuntimeContext(
         for layer: PlaybackSessionEngine.SceneRenderLayer,
         platform: MotionPlatform,
-        reduceMotionEnabled: Bool
+        isReduceMotionEnabled: Bool
     ) -> MotionRuntimeContext? {
         guard let scene = playbackSessionEngine.scene(for: layer.identity),
             let target = playbackSessionEngine.presentationTarget(for: layer.identity)
@@ -393,17 +403,17 @@ class SlideShowViewModel: ObservableObject {
             scene: scene,
             renderRole: renderRole,
             platform: platform,
-            reduceMotionEnabled: reduceMotionEnabled
+            isReduceMotionEnabled: isReduceMotionEnabled
         )
         let isSinglePhoto = playbackDisplayMode == .singlePhoto || PlatformCompat.forceSinglePhotoPlaybackForDebug
         let canRenderFrozenTransform =
-            reduceMotionEnabled && layer.isMotionEnabled
+            isReduceMotionEnabled && layer.isMotionEnabled
             && (isSinglePhoto
                 || motionEligibility(
                     scene: scene,
                     renderRole: renderRole,
                     platform: platform,
-                    reduceMotionEnabled: false
+                    isReduceMotionEnabled: false
                 ).isTransformEnabled)
         return MotionRuntimeContext(
             sceneId: scene.id,
@@ -412,7 +422,7 @@ class SlideShowViewModel: ObservableObject {
             motionActiveTime: Self.renderedMotionActiveTime(of: layer, lifecycle: target.lifecycle),
             isMotionEnabled: layer.isMotionEnabled
                 && (isSinglePhoto || eligibility.isTransformEnabled || canRenderFrozenTransform),
-            reduceMotionEnabled: reduceMotionEnabled
+            isReduceMotionEnabled: isReduceMotionEnabled
         )
     }
     #if DEBUG
@@ -517,7 +527,8 @@ class SlideShowViewModel: ObservableObject {
     }
 
     var playbackHistoryLedgerDiagnosticsSummaryJSON: String {
-        let suffixPrimaryAssetIds = playbackHistoryLedger.entries.suffix(8).map { entry in
+        let suffixPrimaryAssetIds = playbackHistoryLedger.entries.suffix(Self.diagnosticHistoryLookbackCount).map {
+            entry in
             entry.scene.primaryAssetId ?? "nil"
         }
         let currentPrimaryAssetId: String
@@ -1512,7 +1523,7 @@ class SlideShowViewModel: ObservableObject {
         scene: PlaybackScene,
         renderRole: MotionRenderRole,
         platform: MotionPlatform,
-        reduceMotionEnabled: Bool
+        isReduceMotionEnabled: Bool
     ) -> MotionEligibilityResult {
         MotionEligibilityPolicy.acceptedSceneRuntime.evaluate(
             MotionEligibilityInput(
@@ -1520,7 +1531,7 @@ class SlideShowViewModel: ObservableObject {
                 sceneCapability: motionSceneCapability(for: scene),
                 displayMode: playbackDisplayMode == .smartFill ? .smartFill : .singlePhoto,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: reduceMotionEnabled,
+                isReduceMotionEnabled: isReduceMotionEnabled,
                 renderRole: renderRole,
                 slotReadiness: motionSlotReadiness(for: scene)
             )
@@ -2209,7 +2220,7 @@ class SlideShowViewModel: ObservableObject {
                 sceneCapability: motionSceneCapability(for: scene),
                 displayMode: playbackDisplayMode == .smartFill ? .smartFill : .singlePhoto,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: sceneRenderSnapshot.isReduceMotionEnabled,
+                isReduceMotionEnabled: sceneRenderSnapshot.isReduceMotionEnabled,
                 renderRole: .incoming,
                 slotReadiness: .ready
             )
@@ -2392,7 +2403,7 @@ class SlideShowViewModel: ObservableObject {
     private func smartFillAssetPoolIdentity() -> String {
         let raw = assets.map(\.id).joined(separator: "|")
         let digest = SHA256.hash(data: Data(raw.utf8))
-        let hashText = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        let hashText = digest.prefix(Self.identifierDigestPrefixBytes).map { String(format: "%02x", $0) }.joined()
         return "count-\(assets.count)-\(hashText)"
     }
 
@@ -2520,7 +2531,7 @@ class SlideShowViewModel: ObservableObject {
 
     private func smartFillCandidateReference(for rawId: String) -> String {
         let digest = SHA256.hash(data: Data(rawId.utf8))
-        let hashText = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        let hashText = digest.prefix(Self.identifierDigestPrefixBytes).map { String(format: "%02x", $0) }.joined()
         return "asset_\(hashText)"
     }
 
@@ -2947,14 +2958,14 @@ class SlideShowViewModel: ObservableObject {
         }
 
         guard containsSoloOnly else {
-            return 100
+            return Self.standardPlaybackFetchAssetCount
         }
 
         switch phase {
         case .initial:
-            return 12
+            return Self.initialSoloOnlyPoolAssetCount
         case .loadMore:
-            return 24
+            return Self.soloOnlyRefillAssetCount
         }
     }
 
@@ -3069,7 +3080,7 @@ class SlideShowViewModel: ObservableObject {
     #if DEBUG
     private var isQAPlaybackSequenceEvidenceEnabled: Bool {
         qaPlaybackSequenceEvidenceEnabledForTesting
-            || ProcessInfo.processInfo.environment["IMMICHSLIDES_DEBUG_PLAYBACK_SEQUENCE"] == "1"
+            || PlatformCompat.shouldRecordPlaybackSequenceForTesting
     }
 
     private func logQAPlaybackSequenceIfNeeded(
@@ -3132,7 +3143,7 @@ class SlideShowViewModel: ObservableObject {
         if qaPlaybackSequenceRecorder == nil {
             qaPlaybackSequenceRecorder = PlaybackSequenceDebugRecorder(
                 isEnabled: true,
-                writesFile: ProcessInfo.processInfo.environment["IMMICHSLIDES_DEBUG_PLAYBACK_SEQUENCE"] == "1"
+                writesFile: PlatformCompat.shouldRecordPlaybackSequenceForTesting
             )
         }
     }
@@ -3294,7 +3305,7 @@ class SlideShowViewModel: ObservableObject {
         }
 
         // Normal mode still refills in the last 20%.
-        let defaultTriggerIndex = assetCount - (assetCount / 5)
+        let defaultTriggerIndex = assetCount - (assetCount / refillRemainingFractionDivisor)
         return newIndex >= defaultTriggerIndex
     }
 
@@ -3424,11 +3435,12 @@ class SlideShowViewModel: ObservableObject {
             logger.info("load assets begin source=random targetCount=100")
             do {
 
-                let result: [Asset]
+                let loadedAssets: [Asset]
                 if let loadAssetsHookForTesting {
-                    result = try await loadAssetsHookForTesting(loadSource)
+                    loadedAssets = try await loadAssetsHookForTesting(loadSource)
                 } else {
-                    result = try await ImmichAPIService.shared.getRandomAsset(size: 100)
+                    loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
+                        size: Self.standardPlaybackFetchAssetCount)
                 }
                 guard isCurrentPlaybackLoad(loadIdentity) else {
                     logger.notice(
@@ -3438,19 +3450,19 @@ class SlideShowViewModel: ObservableObject {
                 }
                 recordSmartFillStartupRuntimePhase("assetPoolReady")
 
-                applyPlaybackAssets(result, invalidationReason: .poolReloaded)
+                applyPlaybackAssets(loadedAssets, invalidationReason: .poolReloaded)
                 lastAppliedInitialLoadIdentity = makePlaybackLoadIdentity(
                     generation: loadGeneration,
                     source: loadSource
                 )
                 updateEmptyPlaybackMessage(
-                    for: result,
+                    for: loadedAssets,
                     source: loadSource,
-                    emptyReason: result.isEmpty ? .noMatchingAssets : nil
+                    emptyReason: loadedAssets.isEmpty ? .noMatchingAssets : nil
                 )
                 isLoading = false
                 logger.info(
-                    "load assets end source=random resultCount=\(result.count, privacy: .public)"
+                    "load assets end source=random resultCount=\(loadedAssets.count, privacy: .public)"
                 )
             } catch {
                 let message = error.localizedDescription
@@ -3474,17 +3486,17 @@ class SlideShowViewModel: ObservableObject {
                 "load assets begin source=filtered targetCount=\(targetCount, privacy: .public) selection=\(self.logSummary(for: selection), privacy: .public)"
             )
             do {
-                let result: [Asset]
+                let loadedAssets: [Asset]
                 let emptyReason: PlaybackPoolEmptyReason?
                 if let loadAssetsHookForTesting {
-                    result = try await loadAssetsHookForTesting(loadSource)
-                    emptyReason = result.isEmpty ? .noMatchingAssets : nil
+                    loadedAssets = try await loadAssetsHookForTesting(loadSource)
+                    emptyReason = loadedAssets.isEmpty ? .noMatchingAssets : nil
                 } else {
                     let resolution = try await resolver.resolveDetailed(
                         selection: selection,
                         targetCount: targetCount
                     )
-                    result = resolution.assets
+                    loadedAssets = resolution.assets
                     emptyReason = resolution.emptyReason
                 }
                 guard isCurrentPlaybackLoad(loadIdentity) else {
@@ -3494,19 +3506,19 @@ class SlideShowViewModel: ObservableObject {
                     return false
                 }
                 recordSmartFillStartupRuntimePhase("assetPoolReady")
-                applyPlaybackAssets(result, invalidationReason: .poolReloaded)
+                applyPlaybackAssets(loadedAssets, invalidationReason: .poolReloaded)
                 lastAppliedInitialLoadIdentity = makePlaybackLoadIdentity(
                     generation: loadGeneration,
                     source: loadSource
                 )
                 updateEmptyPlaybackMessage(
-                    for: result,
+                    for: loadedAssets,
                     source: loadSource,
                     emptyReason: emptyReason
                 )
                 isLoading = false
                 logger.info(
-                    "load assets end source=filtered targetCount=\(targetCount, privacy: .public) resultCount=\(result.count, privacy: .public)"
+                    "load assets end source=filtered targetCount=\(targetCount, privacy: .public) resultCount=\(loadedAssets.count, privacy: .public)"
                 )
             } catch {
                 let message = error.localizedDescription
@@ -3558,11 +3570,12 @@ class SlideShowViewModel: ObservableObject {
             #endif
             do {
 
-                let moreResult: [Asset]
+                let loadedAssets: [Asset]
                 if let loadMoreAssetsHookForTesting {
-                    moreResult = try await loadMoreAssetsHookForTesting(loadSource)
+                    loadedAssets = try await loadMoreAssetsHookForTesting(loadSource)
                 } else {
-                    moreResult = try await ImmichAPIService.shared.getRandomAsset(size: 100)
+                    loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
+                        size: Self.standardPlaybackFetchAssetCount)
                 }
                 guard isCurrentPlaybackPoolLoad(loadIdentity) else {
                     logger.notice(
@@ -3571,7 +3584,7 @@ class SlideShowViewModel: ObservableObject {
                     return
                 }
 
-                let unseenAssets = assetsUnseenInCurrentPool(moreResult)
+                let unseenAssets = assetsUnseenInCurrentPool(loadedAssets)
                 assets.append(contentsOf: unseenAssets)
                 if !assets.isEmpty {
                     clearEmptyPlaybackMessage()
@@ -3611,14 +3624,14 @@ class SlideShowViewModel: ObservableObject {
                         sourceSummary: logName(for: loadSource),
                         oldCount: oldCount,
                         targetCount: nil,
-                        returnedCount: moreResult.count,
+                        returnedCount: loadedAssets.count,
                         unseenCount: unseenAssets.count,
-                        dedupedCount: moreResult.count - unseenAssets.count,
+                        dedupedCount: loadedAssets.count - unseenAssets.count,
                         finalCount: assets.count
                     ))
                 #endif
                 logger.info(
-                    "load more end source=random addedCount=\(unseenAssets.count, privacy: .public) dedupedCount=\(moreResult.count - unseenAssets.count, privacy: .public) finalCount=\(self.assets.count, privacy: .public) currentIndex=\(self.currentIndex, privacy: .public) currentAssetId=\(self.assetIdLogValue(at: self.currentIndex), privacy: .private)"
+                    "load more end source=random addedCount=\(unseenAssets.count, privacy: .public) dedupedCount=\(loadedAssets.count - unseenAssets.count, privacy: .public) finalCount=\(self.assets.count, privacy: .public) currentIndex=\(self.currentIndex, privacy: .public) currentAssetId=\(self.assetIdLogValue(at: self.currentIndex), privacy: .private)"
                 )
 
             } catch {
@@ -3662,12 +3675,12 @@ class SlideShowViewModel: ObservableObject {
                 ))
             #endif
             do {
-                let moreResult: [Asset]
+                let loadedAssets: [Asset]
                 #if DEBUG
                 let strictSoloDebugEvents: [PlaybackSequenceDebugEventInput]
                 #endif
                 if let loadMoreAssetsHookForTesting {
-                    moreResult = try await loadMoreAssetsHookForTesting(loadSource)
+                    loadedAssets = try await loadMoreAssetsHookForTesting(loadSource)
                     #if DEBUG
                     strictSoloDebugEvents = []
                     #endif
@@ -3683,7 +3696,7 @@ class SlideShowViewModel: ObservableObject {
                         resolver.playbackSequenceDebugEventSink = previousDebugEventSink
                     }
                     #endif
-                    moreResult = try await resolver.resolve(
+                    loadedAssets = try await resolver.resolve(
                         selection: selection,
                         targetCount: targetCount,
                         excludingAssetIds: excludedAssetIds
@@ -3703,10 +3716,10 @@ class SlideShowViewModel: ObservableObject {
                     logQAPlaybackSequenceEventIfNeeded(event)
                 }
                 #endif
-                let unseenAssets = assetsUnseenInCurrentPool(moreResult)
+                let unseenAssets = assetsUnseenInCurrentPool(loadedAssets)
                 if unseenAssets.isEmpty {
                     logger.notice(
-                        "load more saturated source=filtered returnedCount=\(moreResult.count, privacy: .public) oldCount=\(oldCount, privacy: .public) targetCount=\(targetCount, privacy: .public) selection=\(self.logSummary(for: selection), privacy: .public)"
+                        "load more saturated source=filtered returnedCount=\(loadedAssets.count, privacy: .public) oldCount=\(oldCount, privacy: .public) targetCount=\(targetCount, privacy: .public) selection=\(self.logSummary(for: selection), privacy: .public)"
                     )
                     #if DEBUG
                     logQAPlaybackSequenceEventIfNeeded(
@@ -3714,7 +3727,7 @@ class SlideShowViewModel: ObservableObject {
                             sourceSummary: logSummary(for: selection),
                             oldCount: oldCount,
                             targetCount: targetCount,
-                            returnedCount: moreResult.count,
+                            returnedCount: loadedAssets.count,
                             unseenCount: unseenAssets.count
                         ))
                     #endif
@@ -3763,14 +3776,14 @@ class SlideShowViewModel: ObservableObject {
                         sourceSummary: logSummary(for: selection),
                         oldCount: oldCount,
                         targetCount: targetCount,
-                        returnedCount: moreResult.count,
+                        returnedCount: loadedAssets.count,
                         unseenCount: unseenAssets.count,
-                        dedupedCount: moreResult.count - unseenAssets.count,
+                        dedupedCount: loadedAssets.count - unseenAssets.count,
                         finalCount: assets.count
                     ))
                 #endif
                 logger.info(
-                    "load more end source=filtered addedCount=\(unseenAssets.count, privacy: .public) dedupedCount=\(moreResult.count - unseenAssets.count, privacy: .public) finalCount=\(self.assets.count, privacy: .public) currentIndex=\(self.currentIndex, privacy: .public) currentAssetId=\(self.assetIdLogValue(at: self.currentIndex), privacy: .private)"
+                    "load more end source=filtered addedCount=\(unseenAssets.count, privacy: .public) dedupedCount=\(loadedAssets.count - unseenAssets.count, privacy: .public) finalCount=\(self.assets.count, privacy: .public) currentIndex=\(self.currentIndex, privacy: .public) currentAssetId=\(self.assetIdLogValue(at: self.currentIndex), privacy: .private)"
                 )
             } catch {
                 let message = error.localizedDescription
@@ -4081,7 +4094,7 @@ class SlideShowViewModel: ObservableObject {
         smartFillSurfaceActivationTask = Task { @MainActor in
             // Surface changes often come with safe area / control bar animations; delay once to avoid repeated
             // recalculation in a short time.
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: Self.surfaceActivationDelayNanoseconds)
             guard !Task.isCancelled else { return }
             if self.rebuildInitialSmartFillSceneIfPossible(invalidationReason: .poolReloaded) {
                 let presentationState = self.playbackSessionEngine.scenePresentationState
@@ -4096,11 +4109,13 @@ class SlideShowViewModel: ObservableObject {
         }
     }
 
-    func handleTransitionChange(token: UUID, targetIndex: Int) async {
+    #if DEBUG
+    func synchronizePlaybackReadbackForTesting(token: UUID, targetIndex: Int) async {
         _ = token
         _ = targetIndex
         syncPlaybackReadbackFromEngine()
     }
+    #endif
 
     func firstPreload() async {
         guard !didFirstPreload else {

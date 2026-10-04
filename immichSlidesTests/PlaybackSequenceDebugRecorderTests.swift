@@ -26,8 +26,8 @@ struct PlaybackSequenceDebugRecorderTests {
             recentWindowLimit: 2,
             maxRecordCount: 10,
             maxFileBytes: 8_192,
-            timestampProvider: { timestamp },
-            uptimeProvider: { uptime }
+            timestampProviderForTesting: { timestamp },
+            uptimeProviderForTesting: { uptime }
         )
 
         let firstResult = recorder.record(makeInput(assetId: "raw-asset-a", sceneId: "raw-scene-a"))
@@ -79,8 +79,8 @@ struct PlaybackSequenceDebugRecorderTests {
             recentWindowLimit: 4,
             maxRecordCount: 2,
             maxFileBytes: 8_192,
-            timestampProvider: { 10 },
-            uptimeProvider: { 2 }
+            timestampProviderForTesting: { 10 },
+            uptimeProviderForTesting: { 2 }
         )
 
         let firstResult = recorder.record(makeInput(assetId: "raw-asset-a", sceneId: "raw-scene-a"))
@@ -113,11 +113,11 @@ struct PlaybackSequenceDebugRecorderTests {
             launchIdentifier: "events-launch",
             maxRecordCount: 10,
             maxFileBytes: 8_192,
-            timestampProvider: {
+            timestampProviderForTesting: {
                 defer { timestamp += 1 }
                 return timestamp
             },
-            uptimeProvider: { 99 }
+            uptimeProviderForTesting: { 99 }
         )
 
         let decisionResult = recorder.recordEvent(

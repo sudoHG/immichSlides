@@ -30,8 +30,8 @@ struct FilterSummaryTVPreviewHost: View {
     // without covers it falls back to the server's first two people.
 
     private func preparePreviewData() async {
-        async let albumCovers: Void = viewModel.getCoverURLs(filterType: .albums, coverLimit: 20, reset: true)
-        async let peopleCovers: Void = viewModel.getCoverURLs(filterType: .people, coverLimit: 20, reset: true)
+        async let albumCovers: Void = viewModel.getCoverURLs(filterType: .albums, coverLimit: 20, shouldReset: true)
+        async let peopleCovers: Void = viewModel.getCoverURLs(filterType: .people, coverLimit: 20, shouldReset: true)
         _ = await (albumCovers, peopleCovers)
 
         if previewInitialFocus == .album {

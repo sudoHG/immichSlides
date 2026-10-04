@@ -43,10 +43,10 @@ final class AccessProtectionStoreTests: XCTestCase {
         let store = AccessProtectionStore.shared
         store.isEnabled = true
         store.clearPIN()
-        XCTAssertTrue(store.needsRecovery)
+        XCTAssertTrue(store.isRecoveryNeeded)
 
         store.resetProtection()
-        XCTAssertFalse(store.needsRecovery)
+        XCTAssertFalse(store.isRecoveryNeeded)
     }
 }
 

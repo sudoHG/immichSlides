@@ -28,13 +28,13 @@ enum PlaybackSmartFillSourceGeometry {
             )
 
         guard let magnitude else { return nil }
-        guard let thumbhashIsLandscape = ThumbHashGeometry.isLandscape(asset.thumbhash) else {
+        guard let isThumbhashLandscape = ThumbHashGeometry.isLandscape(asset.thumbhash) else {
             return pixelSize(width: asset.width, height: asset.height) ?? magnitude
         }
 
         let longEdge = max(magnitude.width, magnitude.height)
         let shortEdge = min(magnitude.width, magnitude.height)
-        if thumbhashIsLandscape {
+        if isThumbhashLandscape {
             return PlaybackPlanningPixelSize(width: longEdge, height: shortEdge)
         }
         return PlaybackPlanningPixelSize(width: shortEdge, height: longEdge)
@@ -375,6 +375,7 @@ enum PlaybackSceneFallbackReason: String, Equatable {
 }
 
 struct PlaybackScene: Identifiable {
+    private static let unassignedPlaybackSessionID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
     let id: String
     let playbackSessionId: UUID
     let sequence: Int
@@ -385,7 +386,7 @@ struct PlaybackScene: Identifiable {
 
     init(
         id: String,
-        playbackSessionId: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
+        playbackSessionId: UUID = Self.unassignedPlaybackSessionID,
         sequence: Int = 0,
         photoSlots: [PhotoSlot],
         fallbackReason: PlaybackSceneFallbackReason = .none,
@@ -408,7 +409,7 @@ struct PlaybackScene: Identifiable {
     ) {
         self.init(
             id: Self.sceneId(for: asset),
-            playbackSessionId: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
+            playbackSessionId: Self.unassignedPlaybackSessionID,
             sequence: 0,
             photoSlots: [
                 PhotoSlot(

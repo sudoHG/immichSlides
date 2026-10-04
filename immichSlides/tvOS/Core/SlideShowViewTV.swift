@@ -73,7 +73,7 @@ struct SlideShowViewTV: View {
     private func exifOverlayAsset(in scene: PlaybackScene?) -> Asset? {
         guard showExif,
             let scene,
-            scene.smartFillReadback?.sceneType.preservesExistingExifOverlay != false,
+            scene.smartFillReadback?.sceneType.shouldPreserveExistingExifOverlay != false,
             let asset = scene.primaryAsset,
             asset.exifInfo != nil
         else {
@@ -1085,7 +1085,7 @@ struct SlideShowViewTV: View {
                                 motionContext: viewModel.motionRuntimeContext(
                                     for: layer,
                                     platform: .tvOS,
-                                    reduceMotionEnabled: accessibilityReduceMotion
+                                    isReduceMotionEnabled: accessibilityReduceMotion
                                 ),
                                 motionProbeControlBarVisible: showControlBar,
                                 onRendererDecoded: viewModel.rendererDecoded,
@@ -1154,7 +1154,7 @@ struct SlideShowViewTV: View {
         dismissPlaybackEntryHint()
 
         if AccessProtectionStore.shared.isEnabled {
-            if AccessProtectionStore.shared.needsRecovery {
+            if AccessProtectionStore.shared.isRecoveryNeeded {
                 showAccessProtectionRecoveryAlert = true
                 wakeControlBar()
                 return
@@ -1420,7 +1420,7 @@ private final class SmartFillMotionTraceBuffer {
 /// The tvOS control bar isn't shared with iOS; clear focus states come first.
 
 #Preview {
-    if let testServer = ImmichServer.debugTestServerFromInfoPlist() {
+    if let testServer = ImmichServer.testServerFromInfoPlistForTesting() {
         testServer.save()
         ImmichAPIService.shared.reloadServerConfiguration()
     }

@@ -52,6 +52,8 @@ struct PlaybackSceneDisplayedRecord: Equatable {
 }
 
 struct PlaybackPreparedSceneFingerprint: Equatable, Sendable {
+    private static let dimensionBucketWidthPoints: Double = 8
+    private static let aspectRatioBucketScale: Double = 100
     let deviceProfile: String
     let orientation: String
     let pointWidthBucket: Int
@@ -87,12 +89,12 @@ struct PlaybackPreparedSceneFingerprint: Equatable, Sendable {
     }
 
     private static func dimensionBucket(_ value: Double) -> Int {
-        Int((max(0, value) / 8).rounded())
+        Int((max(0, value) / dimensionBucketWidthPoints).rounded())
     }
 
     private static func aspectRatioBucket(width: Double, height: Double) -> Int {
         guard height > 0 else { return 0 }
-        return Int(((max(0, width) / height) * 100).rounded())
+        return Int(((max(0, width) / height) * aspectRatioBucketScale).rounded())
     }
 }
 
@@ -228,10 +230,6 @@ struct PlaybackSessionEngine {
 
     var canCancelUnseenManualPendingScenePresentation: Bool {
         scenePresentationState.hasUnseenManualPendingPresentation
-    }
-
-    var scenePublicationRecords: [PlaybackScenePublishedRecord] {
-        publishedSceneRecords
     }
 
     func sceneRenderSnapshot(at time: TimeInterval) -> SceneRenderSnapshot {

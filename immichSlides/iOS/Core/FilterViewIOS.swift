@@ -196,8 +196,8 @@ struct FilterViewIOS: View {
     private func prepareVisualAuditSelectionsForUITestsIfNeeded() async {
         // UI tests only: fill in album and person selections for screenshots without changing the real filter rules.
 
-        await viewModel.getCoverURLs(filterType: .albums, coverLimit: 20, reset: true)
-        await viewModel.getCoverURLs(filterType: .people, coverLimit: 20, reset: true)
+        await viewModel.getCoverURLs(filterType: .albums, coverLimit: 20, shouldReset: true)
+        await viewModel.getCoverURLs(filterType: .people, coverLimit: 20, shouldReset: true)
 
         for _ in 0..<40 {
             if filterEditorVisualAuditReady {

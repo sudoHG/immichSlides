@@ -41,7 +41,7 @@ struct ImmichServer {
             self.alertTitle = alertTitle
         }
 
-        var success: Bool {
+        var isSuccess: Bool {
             kind == .success
         }
 
@@ -61,6 +61,10 @@ struct ImmichServer {
     }
 
     // Image probes only need the status and headers; JSON probes need one small asset record.
+    private static let requestTimeoutSeconds: TimeInterval = 10
+    private static let resourceTimeoutSeconds: TimeInterval = 20
+    private static let imageProbeByteRange: String = "bytes=0-1023"
+    private static let inspectedResponsePrefixBytes: Int = 128
     private static let maxImageProbeBodyBytes = 1024
     private static let maxJSONProbeBodyBytes = 4 * 1024 * 1024
 
@@ -124,7 +128,7 @@ struct ImmichServer {
         }
 
         let result = await testConnection(serverURL: serverURL, apiKey: apiKey)
-        if result.success {
+        if result.isSuccess {
 
             let normalizedServerURL = normalizeServerURL(serverURL)
 
@@ -145,7 +149,7 @@ struct ImmichServer {
     // MARK: Utilities
 
     @discardableResult
-    func save(writeAPIKeyToKeychain: ((String) -> Bool)? = nil) -> Bool {
+    func save(writeAPIKeyToKeychainForTesting: ((String) -> Bool)? = nil) -> Bool {
         guard let immichURL,
             let apiKey = immichApiKey,
             !immichURL.isEmpty,
@@ -156,7 +160,7 @@ struct ImmichServer {
 
         // Write the Keychain before the URL; if the Key fails, do not save a half-finished configuration.
 
-        let keychainWriter = writeAPIKeyToKeychain ?? Self.writeAPIKeyToKeychain
+        let keychainWriter = writeAPIKeyToKeychainForTesting ?? Self.writeAPIKeyToKeychain
         let didWriteAPIKey = keychainWriter(apiKey)
         guard didWriteAPIKey else {
             return false
@@ -182,7 +186,7 @@ struct ImmichServer {
         {
             return ImmichServer(immichURL: immichURL, immichApiKey: immichApiKey)
         } else {
-            return uiTestInjectedServerFromEnvironment()
+            return injectedServerFromEnvironmentForTesting()
         }
     }
 
@@ -287,7 +291,7 @@ struct ImmichServer {
     static func testConnection(
         serverURL: String,
         apiKey: String,
-        session: URLSession? = nil,
+        sessionForTesting: URLSession? = nil,
         progressHandler: (@Sendable (ConnectionTestEvent) -> Void)? = nil
     ) async -> ConnectionTestResult {
         let url = normalizeServerURL(serverURL)
@@ -309,14 +313,14 @@ struct ImmichServer {
 
         let activeSession: URLSession
         let transientSession: URLSession?
-        if let session {
-            activeSession = session
+        if let sessionForTesting {
+            activeSession = sessionForTesting
             transientSession = nil
         } else {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.waitsForConnectivity = true
-            configuration.timeoutIntervalForRequest = 10
-            configuration.timeoutIntervalForResource = 20
+            configuration.timeoutIntervalForRequest = requestTimeoutSeconds
+            configuration.timeoutIntervalForResource = resourceTimeoutSeconds
             configuration.allowsCellularAccess = true
             configuration.allowsConstrainedNetworkAccess = true
             configuration.allowsExpensiveNetworkAccess = true
@@ -488,7 +492,7 @@ struct ImmichServer {
         ImmichHTTPHeaders.applyAPIKey(apiKey, to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 10
+        request.timeoutInterval = requestTimeoutSeconds
 
         let body: [String: Any] = [
             "size": 1,
@@ -524,8 +528,8 @@ struct ImmichServer {
         // Range only asks for the first 1 KB; a server may ignore it and return a full 200, so the probe also stops
         // reading after maxImageProbeBodyBytes.
 
-        request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
-        request.timeoutInterval = 10
+        request.setValue(imageProbeByteRange, forHTTPHeaderField: "Range")
+        request.timeoutInterval = requestTimeoutSeconds
         return request
     }
 
@@ -637,7 +641,7 @@ struct ImmichServer {
         }
 
         let bodyPrefix =
-            String(data: data.prefix(128), encoding: .utf8)?
+            String(data: data.prefix(inspectedResponsePrefixBytes), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return bodyPrefix.hasPrefix("{") || bodyPrefix.hasPrefix("[")
     }
@@ -818,7 +822,7 @@ struct ImmichServer {
         request.httpMethod = "GET"
         ImmichHTTPHeaders.applyAPIKey(apiKey, to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 10
+        request.timeoutInterval = requestTimeoutSeconds
         return request
     }
 
@@ -914,7 +918,7 @@ struct ImmichServer {
         )
     }
 
-    static func debugTestServerFromInfoPlist() -> ImmichServer? {
+    static func testServerFromInfoPlistForTesting() -> ImmichServer? {
         #if DEBUG
         guard
             let rawURL = Bundle.main.object(forInfoDictionaryKey: "IMMICH_SERVER_URL") as? String,
@@ -934,14 +938,7 @@ struct ImmichServer {
     // Use XCTestConfigurationFilePath to tell test processes apart from normal Debug/Preview.
 
     static var isRunningXCTest: Bool {
-        let env = ProcessInfo.processInfo.environment
-        if env["XCTestConfigurationFilePath"] != nil {
-            return true
-        }
-
-        // UI tests rely on UI_TEST_*, because XCTestConfigurationFilePath is not passed through reliably.
-
-        return env.keys.contains { $0.hasPrefix("UI_TEST_") }
+        PlatformCompat.isRunningXCTest
     }
 
     private static var isXCTestSupportEnabled: Bool {
@@ -994,14 +991,14 @@ struct ImmichServer {
     // UI tests can read a temporary server configuration from the launch environment, without depending on whether the
     // Keychain takes effect in time.
 
-    static func uiTestInjectedServerFromEnvironment() -> ImmichServer? {
-        uiTestInjectedServerFromEnvironment(
+    static func injectedServerFromEnvironmentForTesting() -> ImmichServer? {
+        injectedServerFromEnvironmentForTesting(
             ProcessInfo.processInfo.environment,
             xctestSupportEnabled: isXCTestSupportEnabled
         )
     }
 
-    static func uiTestInjectedServerFromEnvironment(
+    static func injectedServerFromEnvironmentForTesting(
         _ env: [String: String],
         xctestSupportEnabled: Bool
     ) -> ImmichServer? {

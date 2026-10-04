@@ -55,7 +55,7 @@ struct ScenePresentationPrerenderBarrier: Equatable, Sendable {
     private(set) var expectedRenderers: Set<SceneRendererIdentity>
     private(set) var decodedRenderers: Set<SceneRendererIdentity>
     private(set) var failedRenderers: Set<SceneRendererIdentity>
-    private var emittedPresentationReady = false
+    private var hasEmittedPresentationReady = false
 
     init() {
         activeScene = nil
@@ -94,7 +94,7 @@ struct ScenePresentationPrerenderBarrier: Equatable, Sendable {
         self.expectedRenderers = expectedRenderers
         decodedRenderers = []
         failedRenderers = []
-        emittedPresentationReady = false
+        hasEmittedPresentationReady = false
         return true
     }
 
@@ -107,12 +107,12 @@ struct ScenePresentationPrerenderBarrier: Equatable, Sendable {
         }
         decodedRenderers.insert(identity)
         guard isPresentationReady,
-            !emittedPresentationReady,
+            !hasEmittedPresentationReady,
             let activeScene
         else {
             return nil
         }
-        emittedPresentationReady = true
+        hasEmittedPresentationReady = true
         return .presentationReady(activeScene)
     }
 
@@ -133,7 +133,7 @@ struct ScenePresentationPrerenderBarrier: Equatable, Sendable {
         expectedRenderers = []
         decodedRenderers = []
         failedRenderers = []
-        emittedPresentationReady = false
+        hasEmittedPresentationReady = false
         return true
     }
 }

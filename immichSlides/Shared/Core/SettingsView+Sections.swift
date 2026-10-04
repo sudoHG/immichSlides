@@ -248,7 +248,7 @@ extension SettingsView {
         // The failure alert must be attached to the detail page, otherwise iPhone/tvOS only shows it after going
         // back to the list.
 
-        .alert(serverVM.errorAlertTitle, isPresented: $serverVM.showErrorAlert) {
+        .alert(serverVM.errorAlertTitle, isPresented: $serverVM.shouldShowErrorAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(LocalizedStringKey(serverVM.errorMessage))
@@ -570,7 +570,7 @@ extension SettingsView {
                     outerHorizontalInset: SettingsCardLayout.cardOuterHorizontalInset,
                     cornerRadius: SettingsCardLayout.cardCornerRadius
                 ) {
-                    if accessProtectionVM.isEnabled && accessProtectionVM.needsRecovery {
+                    if accessProtectionVM.isEnabled && accessProtectionVM.isRecoveryNeeded {
                         Text("Status: Error")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.orange)

@@ -153,6 +153,7 @@ enum PlaybackProtectionSource: String, Equatable, Sendable {
 }
 
 struct PlaybackProtectionRegion: Equatable, Sendable {
+    private nonisolated static let maximumActiveConditionSummaryCharacters: Int = 80
     let source: PlaybackProtectionSource
     let priority: PlaybackProtectionPriority
     let rect: PlaybackProtectionRect
@@ -254,7 +255,7 @@ struct PlaybackProtectionRegion: Equatable, Sendable {
                 || character == "-"
                 || character == "_"
         }
-        return allowed.isEmpty ? "active" : String(allowed.prefix(80))
+        return allowed.isEmpty ? "active" : String(allowed.prefix(maximumActiveConditionSummaryCharacters))
     }
 }
 

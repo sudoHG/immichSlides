@@ -48,10 +48,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(result.success)
+        #expect(result.isSuccess)
 
         let requests = await recorder.values
         #expect(
@@ -101,10 +101,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(
             result.errorMessage
                 == String(
@@ -128,10 +128,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(result.alertTitle == String(localized: "Invalid API Key"))
         #expect(
             result.errorMessage
@@ -159,10 +159,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(result.alertTitle == String(localized: "Server Access Blocked"))
         #expect(
             result.errorMessage
@@ -184,10 +184,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(result.alertTitle == String(localized: "API Key lacks required permissions"))
         #expect(
             result.errorMessage
@@ -213,10 +213,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(result.alertTitle == String(localized: "API Key lacks required permissions"))
         #expect(
             result.errorMessage
@@ -247,10 +247,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(result.alertTitle == String(localized: "API Key lacks required permissions"))
         #expect(
             result.errorMessage
@@ -288,10 +288,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(result.success)
+        #expect(result.isSuccess)
         let expectedWarnings = [
             String(localized: "Album filters are unavailable: missing album.read."),
             String(localized: "People filters are unavailable: missing person.read.")
@@ -331,10 +331,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(result.alertTitle == String(localized: "API Key lacks required permissions"))
         #expect(result.errorMessage == missingStatisticsPermissionMessage("person.statistics"))
     }
@@ -365,10 +365,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(result.alertTitle == String(localized: "API Key lacks required permissions"))
         #expect(result.errorMessage == missingStatisticsPermissionMessage("album.statistics"))
     }
@@ -384,10 +384,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(
             result.errorMessage
                 == String(
@@ -409,10 +409,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(
             result.errorMessage
                 == String(
@@ -430,10 +430,10 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "http://192.168.1.20:2283",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
-        #expect(!result.success)
+        #expect(!result.isSuccess)
         #expect(result.kind == .waitingForPermission)
         #expect(
             result.statusMessage
@@ -459,7 +459,7 @@ struct ImmichServerConnectionTests {
         let result = await ImmichServer.testConnection(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            session: session
+            sessionForTesting: session
         )
 
         #expect(result.kind == .failure)

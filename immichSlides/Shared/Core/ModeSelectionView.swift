@@ -63,7 +63,7 @@ struct ModeSelectionView: View {
             Task { await randomVM.firstPreload() }
         case .filtered:
             selectedMode = .filtered
-            filterVM.preloadCovers(coverLimit: 20, reset: true)
+            filterVM.preloadCovers(coverLimit: 20, shouldReset: true)
         }
     }
 

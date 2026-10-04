@@ -22,10 +22,12 @@ struct PlaybackPoolResolveResult {
     let emptyReason: PlaybackPoolEmptyReason?
 }
 
+#if DEBUG
 struct PlaybackAssetIDReplayConfiguration: Equatable {
     let orderedAssetIDs: [String]
     let source: String
 }
+#endif
 
 // Resolve statistics, not shown to users; used to work out the empty-pool reason.
 
@@ -72,6 +74,19 @@ struct PlaybackPoolResolveDiagnostics: Equatable {
 }
 
 final class PlaybackPoolResolver {
+    private static let minimumRefillAssetCount: Int = 4
+    private static let refillSizeDivisor: Int = 2
+    private static let maximumCoolingPoolAssetCount: Int = 500
+    private static let coolingPoolAssetFraction: Double = 0.05
+    private static let minimumCoolingPoolAssetCount: Int = 20
+    private static let minimumRequestBudgetAssetCount: Int = 24
+    private static let requestBudgetTargetMultiplier: Int = 2
+    private static let minimumStrictSoloBatchAssetCount: Int = 8
+    private static let maximumStrictSoloBatchAssetCount: Int = 12
+    private static let strictSoloCandidateFetchMultiplier: Int = 2
+    private static let minimumStrictSoloResolveRounds: Int = 3
+    private static let maximumStrictSoloResolveRounds: Int = 6
+    private static let strictSoloResolveRoundCountDivisor: Int = 4
     #if DEBUG
     typealias RandomAssetProviderForTesting = (
         _ size: Int,
@@ -151,7 +166,7 @@ final class PlaybackPoolResolver {
         }
 
         #if DEBUG
-        if let replayConfiguration = try Self.assetIDReplayConfiguration() {
+        if let replayConfiguration = try Self.assetIDReplayConfigurationForTesting() {
             let requestedIDs = Array(replayConfiguration.orderedAssetIDs.prefix(targetCount))
             logger.notice(
                 "resolve asset-id replay begin requestedCount=\(requestedIDs.count, privacy: .public) source=\(replayConfiguration.source, privacy: .private)"
@@ -217,7 +232,7 @@ final class PlaybackPoolResolver {
         let allPersonIds = Array(Set(soloPersonIDs + normalPersonIDs))
         let personSizeById = await fetchPersonSizeMap(for: allPersonIds)
 
-        let cdPoolSize = getCdPoolSize(
+        let coolingPoolSize = getCoolingPoolSize(
             albumIds: albumIds,
             soloIds: soloPersonIDs,
             normalIds: normalPersonIDs,
@@ -377,7 +392,7 @@ final class PlaybackPoolResolver {
 
                 func refillSize(_ base: Int?) -> Int {
                     let b = base ?? minPerRule
-                    return max(4, b / 2)
+                    return max(Self.minimumRefillAssetCount, b / Self.refillSizeDivisor)
                 }
 
                 if !albumIds.isEmpty {
@@ -431,13 +446,13 @@ final class PlaybackPoolResolver {
             finalAssets.append(contentsOf: fallbackAssets.prefix(need))
         }
 
-        updateCoolingPool(with: finalAssets, poolSize: cdPoolSize)
+        updateCoolingPool(with: finalAssets, poolSize: coolingPoolSize)
         let emptyReason = diagnostics.emptyReason(
             activeRuleCount: activeRuleCount,
             finalAssetCount: finalAssets.count
         )
         logger.info(
-            "resolve end targetCount=\(targetCount, privacy: .public) excludedCount=\(excludingAssetIds.count, privacy: .public) uniqueCandidateCount=\(assetsMap.count, privacy: .public) finalCount=\(finalAssets.count, privacy: .public) coolingPoolSize=\(cdPoolSize, privacy: .public) emptyReason=\(emptyReason?.rawValue ?? "none", privacy: .public)"
+            "resolve end targetCount=\(targetCount, privacy: .public) excludedCount=\(excludingAssetIds.count, privacy: .public) uniqueCandidateCount=\(assetsMap.count, privacy: .public) finalCount=\(finalAssets.count, privacy: .public) coolingPoolSize=\(coolingPoolSize, privacy: .public) emptyReason=\(emptyReason?.rawValue ?? "none", privacy: .public)"
         )
         return PlaybackPoolResolveResult(
             assets: finalAssets,
@@ -451,7 +466,7 @@ final class PlaybackPoolResolver {
         let diagnostics: PlaybackPoolResolveDiagnostics
     }
 
-    private func getCdPoolSize(
+    private func getCoolingPoolSize(
         albumIds: [String],
         soloIds: [String],
         normalIds: [String],
@@ -471,12 +486,13 @@ final class PlaybackPoolResolver {
             }
         }
 
-        let cdPoolSize = min(500, Int(ceil(Double(totalCount) * 0.05)))
+        let coolingPoolSize = min(
+            Self.maximumCoolingPoolAssetCount, Int(ceil(Double(totalCount) * Self.coolingPoolAssetFraction)))
 
-        if cdPoolSize > 20 {
-            return cdPoolSize
+        if coolingPoolSize > Self.minimumCoolingPoolAssetCount {
+            return coolingPoolSize
         } else {
-            return 20
+            return Self.minimumCoolingPoolAssetCount
         }
     }
 
@@ -567,8 +583,8 @@ final class PlaybackPoolResolver {
         activeRuleCount: Int,
         minPerRule: Int
     ) -> Int {
-        let minimumBudget = max(activeRuleCount * minPerRule, 24)
-        return max(targetCount * 2, minimumBudget)
+        let minimumBudget = max(activeRuleCount * minPerRule, minimumRequestBudgetAssetCount)
+        return max(targetCount * requestBudgetTargetMultiplier, minimumBudget)
     }
 
     static func soloVisionDesiredCountPerRule(
@@ -596,16 +612,17 @@ final class PlaybackPoolResolver {
         }
     }
 
-    static func assetIDReplayConfiguration(
-        environment: [String: String] = ProcessInfo.processInfo.environment
+    #if DEBUG
+    static func assetIDReplayConfigurationForTesting(
+        environmentForTesting: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> PlaybackAssetIDReplayConfiguration? {
         let pathValue = environmentValue(
             "IMMICHSLIDES_SMARTFILL_REPLAY_ASSET_IDS_PATH",
-            in: environment
+            in: environmentForTesting
         )?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pathValue, !pathValue.isEmpty {
             let text = try String(contentsOfFile: pathValue, encoding: .utf8)
-            let ids = parseAssetIDReplayList(text)
+            let ids = parseAssetIDReplayListForTesting(text)
             guard !ids.isEmpty else {
                 throw NSError(
                     domain: "PlaybackPoolResolver.assetIDReplay",
@@ -621,14 +638,14 @@ final class PlaybackPoolResolver {
 
         let inlineValue = environmentValue(
             "IMMICHSLIDES_SMARTFILL_REPLAY_ASSET_IDS",
-            in: environment
+            in: environmentForTesting
         )
         guard let inlineValue,
             !inlineValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             return nil
         }
-        let ids = parseAssetIDReplayList(inlineValue)
+        let ids = parseAssetIDReplayListForTesting(inlineValue)
         guard !ids.isEmpty else { return nil }
         return PlaybackAssetIDReplayConfiguration(
             orderedAssetIDs: ids,
@@ -636,7 +653,7 @@ final class PlaybackPoolResolver {
         )
     }
 
-    static func parseAssetIDReplayList(_ text: String) -> [String] {
+    static func parseAssetIDReplayListForTesting(_ text: String) -> [String] {
         var ids: [String] = []
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -681,6 +698,8 @@ final class PlaybackPoolResolver {
             .filter { !$0.isEmpty }
     }
 
+    #endif
+
     private static func stablePlaybackHash(_ text: String) -> UInt64 {
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in text.utf8 {
@@ -703,7 +722,9 @@ final class PlaybackPoolResolver {
         }
 
         func fetchBatchSize(for remainingNeeded: Int) -> Int {
-            min(12, max(8, remainingNeeded * 2))
+            min(
+                Self.maximumStrictSoloBatchAssetCount,
+                max(Self.minimumStrictSoloBatchAssetCount, remainingNeeded * Self.strictSoloCandidateFetchMultiplier))
         }
 
         var acceptedAssets: [Asset] = []
@@ -714,7 +735,11 @@ final class PlaybackPoolResolver {
         var currentDebugStage = "resolve"
         #endif
 
-        let maxRounds = max(3, min(6, desiredQualifiedCount / 4 + 1))
+        let maxRounds = max(
+            Self.minimumStrictSoloResolveRounds,
+            min(
+                Self.maximumStrictSoloResolveRounds, desiredQualifiedCount / Self.strictSoloResolveRoundCountDivisor + 1
+            ))
 
         #if DEBUG
         await emitPlaybackSequenceDebugEvent(

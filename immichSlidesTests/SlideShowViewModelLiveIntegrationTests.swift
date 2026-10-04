@@ -383,7 +383,8 @@ struct SlideShowViewModelLiveIntegrationTests {
             for _ in 0..<Self.requiredAdvanceCount {
                 let previousStableCount = stableAssetIds(from: capturedLines).count
                 vm.requestNextScene()
-                await vm.handleTransitionChange(token: vm.targetTransitionToken, targetIndex: vm.targetIndex)
+                await vm.synchronizePlaybackReadbackForTesting(
+                    token: vm.targetTransitionToken, targetIndex: vm.targetIndex)
                 try reportInitialSceneVisibleForQA(vm)
 
                 let nextStableCount = stableAssetIds(from: capturedLines).count

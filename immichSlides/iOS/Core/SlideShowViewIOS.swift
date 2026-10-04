@@ -64,7 +64,7 @@ struct SlideShowViewIOS: View {
     private func exifOverlayAsset(in scene: PlaybackScene?) -> Asset? {
         guard showExif,
             let scene,
-            scene.smartFillReadback?.sceneType.preservesExistingExifOverlay != false,
+            scene.smartFillReadback?.sceneType.shouldPreserveExistingExifOverlay != false,
             let asset = scene.primaryAsset,
             asset.exifInfo != nil
         else {
@@ -1230,7 +1230,7 @@ struct SlideShowViewIOS: View {
                                 motionContext: viewModel.motionRuntimeContext(
                                     for: layer,
                                     platform: smartFillMotionPlatform,
-                                    reduceMotionEnabled: accessibilityReduceMotion
+                                    isReduceMotionEnabled: accessibilityReduceMotion
                                 ),
                                 motionProbeControlBarVisible: showControlBar,
                                 onRendererDecoded: viewModel.rendererDecoded,
@@ -1299,7 +1299,7 @@ struct SlideShowViewIOS: View {
     }
     func onSettings() {
         if AccessProtectionStore.shared.isEnabled {
-            if AccessProtectionStore.shared.needsRecovery {
+            if AccessProtectionStore.shared.isRecoveryNeeded {
                 showAccessProtectionRecoveryAlert = true
                 resetAutoHideTimer()
                 return
@@ -1518,7 +1518,7 @@ private final class SmartFillMotionTraceBuffer {
 }
 
 #Preview {
-    if let testServer = ImmichServer.debugTestServerFromInfoPlist() {
+    if let testServer = ImmichServer.testServerFromInfoPlistForTesting() {
         testServer.save()
         ImmichAPIService.shared.reloadServerConfiguration()
     }

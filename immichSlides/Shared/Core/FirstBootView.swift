@@ -60,7 +60,7 @@ struct FirstBootView: View {
                 serverVM.resumePendingConnectionTestIfNeeded()
             }
         }
-        .alert(serverVM.errorAlertTitle, isPresented: $serverVM.showErrorAlert) {
+        .alert(serverVM.errorAlertTitle, isPresented: $serverVM.shouldShowErrorAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(LocalizedStringKey(serverVM.errorMessage))

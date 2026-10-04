@@ -8,6 +8,7 @@
 
 import Foundation
 
+#if DEBUG
 struct PlaybackRuntimeEvidenceManifestValidationIssue: Equatable {
     enum Code: String, Equatable {
         case invalidJSON
@@ -65,6 +66,7 @@ struct PlaybackRuntimeEvidenceManifestValidationReport: Equatable {
 
 enum PlaybackRuntimeEvidenceManifestValidator {
     private static let epsilon = 1e-9
+    private static let defaultCropRetentionThreshold: Double = 0.60
     private static let startupFirstImageDisplayProbeJitterToleranceMilliseconds = 10.0
     private static let requiredFields: [String] = [
         "schemaVersion",
@@ -789,7 +791,7 @@ enum PlaybackRuntimeEvidenceManifestValidator {
                 value <= 1
             else {
                 return (
-                    0.60,
+                    defaultCropRetentionThreshold,
                     [
                         issue(
                             .invalidRequiredField,
@@ -803,7 +805,7 @@ enum PlaybackRuntimeEvidenceManifestValidator {
         }
 
         // Earlier evidence omits this field, so the default preserves compatibility.
-        return (0.60, [])
+        return (defaultCropRetentionThreshold, [])
     }
 
     private static func validateStartupTiming(
@@ -1151,6 +1153,8 @@ enum PlaybackRuntimeEvidenceManifestValidator {
         PlaybackRuntimeEvidenceManifestValidationIssue(code: code, field: field, message: message)
     }
 }
+
+#endif
 
 extension PlaybackScene {
     @MainActor

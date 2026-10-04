@@ -332,7 +332,7 @@ struct MotionTransformResolverTests {
             cropRectInSource: cropRectInSource,
             focalSource: focalSource,
             isMotionEnabled: isMotionEnabled,
-            reduceMotionEnabled: false
+            isReduceMotionEnabled: false
         )
     }
 

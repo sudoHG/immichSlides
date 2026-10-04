@@ -249,8 +249,8 @@ struct PlaybackPoolResolverTests {
     @Test
     func `asset id replay configuration parses inline environment variable in order`() throws {
         let configuration = try #require(
-            try PlaybackPoolResolver.assetIDReplayConfiguration(
-                environment: [
+            try PlaybackPoolResolver.assetIDReplayConfigurationForTesting(
+                environmentForTesting: [
                     "IMMICHSLIDES_SMARTFILL_REPLAY_ASSET_IDS": " asset-a,asset-b\nasset-c "
                 ]
             ))
@@ -271,8 +271,8 @@ struct PlaybackPoolResolverTests {
         defer { try? FileManager.default.removeItem(at: url) }
 
         let configuration = try #require(
-            try PlaybackPoolResolver.assetIDReplayConfiguration(
-                environment: [
+            try PlaybackPoolResolver.assetIDReplayConfigurationForTesting(
+                environmentForTesting: [
                     "IMMICHSLIDES_SMARTFILL_REPLAY_ASSET_IDS_PATH": url.path
                 ]
             ))

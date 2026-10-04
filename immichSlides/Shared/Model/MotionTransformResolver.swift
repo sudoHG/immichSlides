@@ -3,6 +3,8 @@ import Foundation
 import CryptoKit
 
 enum MotionTransformResolver {
+    private nonisolated static let fnvOffsetBasis: UInt64 = 0xcbf2_9ce4_8422_2325
+    private nonisolated static let fnvPrime: UInt64 = 0x0000_0100_0000_01B3
     nonisolated static func resolve(
         _ input: MotionTransformInput,
         policy: MotionTransformPolicy = .v1Default
@@ -165,10 +167,10 @@ enum MotionTransformResolver {
             "\(input.cropRectInSource.x)|\(input.cropRectInSource.y)|\(input.cropRectInSource.width)|\(input.cropRectInSource.height)",
             focalKey
         ].joined(separator: "|")
-        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        var hash: UInt64 = fnvOffsetBasis
         for scalar in key.unicodeScalars {
             hash ^= UInt64(scalar.value)
-            hash = hash &* 0x0000_0100_0000_01B3
+            hash = hash &* fnvPrime
         }
         return MotionStableSeed(
             hash: hash,

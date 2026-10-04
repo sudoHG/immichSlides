@@ -339,7 +339,7 @@ struct ScenePresentationReducerTests {
         engine.reduceScenePresentation(.resume(.background), at: 9)
         let stillPaused = engine.sceneRenderSnapshot(at: 9)
         #expect(stillPaused.phase == .paused)
-        #expect(stillPaused.pendingTargetIsReady)
+        #expect(stillPaused.isPendingTargetReady)
 
         let reconcileEffects = engine.reduceScenePresentation(.resume(.userPaused), at: 10)
         let reconciled = engine.sceneRenderSnapshot(at: 10)

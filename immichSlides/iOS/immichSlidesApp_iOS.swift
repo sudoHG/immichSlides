@@ -35,7 +35,7 @@ struct ImmichSlidesApp: App {
             ImmichAPIService.shared.reloadServerConfiguration()
         }
 
-        FilterSelectionStore().seedUITestSelectionIfRequested()
+        FilterSelectionStore().seedUITestSelectionIfRequestedForTesting()
 
         let injectedServerURL =
             env["UI_TEST_SERVER_URL"] ?? env["IMMICH_TEST_SERVER_URL"] ?? env["IMMICH_TEST_URL"]

@@ -45,8 +45,8 @@ final class AccessProtectionViewModel: ObservableObject {
         try store.savePIN(newPin)
     }
 
-    var needsRecovery: Bool {
-        store.needsRecovery
+    var isRecoveryNeeded: Bool {
+        store.isRecoveryNeeded
     }
 
     func resetProtectionForRecovery() {

@@ -19,7 +19,7 @@ struct FilterView: View {
                 // Preload only when covers are empty, to avoid repeating requests on every visit.
 
                 if viewModel.albumCoverURLs.isEmpty || viewModel.peopleCoverURLs.isEmpty {
-                    viewModel.preloadCovers(coverLimit: 20, reset: true)
+                    viewModel.preloadCovers(coverLimit: 20, shouldReset: true)
                 }
             }
     }

@@ -513,8 +513,8 @@ struct PlaybackSequenceDebugRecorder {
     private let maxRecordCount: Int
     private let maxFileBytes: Int
     private let writesFile: Bool
-    private let timestampProvider: () -> TimeInterval
-    private let uptimeProvider: () -> TimeInterval
+    private let timestampProviderForTesting: () -> TimeInterval
+    private let uptimeProviderForTesting: () -> TimeInterval
     private var recentWindowStableIds: [String] = []
     private var sequenceNumber: Int = 0
     private(set) var displayedAssetRecordCount = 0
@@ -531,8 +531,8 @@ struct PlaybackSequenceDebugRecorder {
         maxRecordCount: Int = Self.defaultMaxRecordCount,
         maxFileBytes: Int = Self.defaultMaxFileBytes,
         writesFile: Bool = true,
-        timestampProvider: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
-        uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        timestampProviderForTesting: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
+        uptimeProviderForTesting: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.isEnabled = isEnabled
         let directory = evidenceDirectoryURL ?? Self.defaultEvidenceDirectoryURL()
@@ -544,8 +544,8 @@ struct PlaybackSequenceDebugRecorder {
         self.maxRecordCount = max(1, maxRecordCount)
         self.maxFileBytes = max(1, maxFileBytes)
         self.writesFile = writesFile
-        self.timestampProvider = timestampProvider
-        self.uptimeProvider = uptimeProvider
+        self.timestampProviderForTesting = timestampProviderForTesting
+        self.uptimeProviderForTesting = uptimeProviderForTesting
     }
 
     mutating func record(_ input: PlaybackSequenceDebugRecordInput) -> PlaybackSequenceDebugRecordResult? {
@@ -557,8 +557,8 @@ struct PlaybackSequenceDebugRecorder {
         let record = PlaybackSequenceDebugRecord(
             schemaVersion: Self.displaySchemaVersion,
             sequenceNumber: sequenceNumber,
-            timestamp: timestampProvider(),
-            uptime: uptimeProvider(),
+            timestamp: timestampProviderForTesting(),
+            uptime: uptimeProviderForTesting(),
             sceneStableId: Self.stableId(for: input.sceneId),
             displayedAssetStableId: displayedAssetStableId,
             primaryAssetStableId: input.primaryAssetId.map(Self.stableId(for:)),
@@ -593,8 +593,8 @@ struct PlaybackSequenceDebugRecorder {
         let record = input.record(
             schemaVersion: Self.eventSchemaVersion,
             sequenceNumber: sequenceNumber,
-            timestamp: timestampProvider(),
-            uptime: uptimeProvider()
+            timestamp: timestampProviderForTesting(),
+            uptime: uptimeProviderForTesting()
         )
         let osLogLine = Self.osLogLine(for: record)
         let writeResult = writeJSONLineIfPossible(record)

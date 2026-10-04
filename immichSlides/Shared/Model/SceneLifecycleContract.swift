@@ -35,9 +35,10 @@ struct SceneLifecycleContract: Equatable, Sendable {
     nonisolated static let incomingDelay = ScenePresentationPacingPolicy.automatic.incomingDelay
     nonisolated static let incomingFadeDuration = ScenePresentationPacingPolicy.automatic.incomingFadeDuration
     nonisolated static let transitionDuration = ScenePresentationPacingPolicy.automatic.completionDuration
-    nonisolated static let minimumInterval: TimeInterval = 5.0
+    nonisolated static let minimumInterval: TimeInterval = PlaybackIntervalPolicy.minimumInterval
     nonisolated static let minimumGrace: TimeInterval = 1.0
     nonisolated static let maximumGrace: TimeInterval = 4.0
+    private nonisolated static let graceIntervalFraction: Double = 0.2
     nonisolated static let retryLimit = 3
 
     let configuredInterval: TimeInterval
@@ -58,7 +59,7 @@ struct SceneLifecycleContract: Equatable, Sendable {
     nonisolated var graceDuration: TimeInterval {
         min(
             Self.maximumGrace,
-            max(Self.minimumGrace, frozenInterval * 0.2)
+            max(Self.minimumGrace, frozenInterval * Self.graceIntervalFraction)
         )
     }
 

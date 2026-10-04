@@ -260,7 +260,7 @@ struct SlideShowViewModelStartupTests {
         vm.requestNextScene()
         let transitionToken = vm.targetTransitionToken
         let transitionTargetIndex = vm.targetIndex
-        await vm.handleTransitionChange(token: transitionToken, targetIndex: transitionTargetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: transitionToken, targetIndex: transitionTargetIndex)
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-1")
 
         let appendedAssets = (12..<36).map { makeAsset(id: "asset-\($0)") }
@@ -365,7 +365,7 @@ struct SlideShowViewModelStartupTests {
         vm.downloadManager.assetStates["asset-b"] = .readyToPlay
         vm.downloadManager.assetPreviewStates["asset-b"] = .readyToPlay
 
-        await vm.handleTransitionChange(token: transitionToken, targetIndex: transitionTargetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: transitionToken, targetIndex: transitionTargetIndex)
 
         #expect(vm.currentIndex == 1)
         #expect(vm.targetIndex == 1)
@@ -530,7 +530,8 @@ struct SlideShowViewModelStartupTests {
             await withCheckedContinuation { pending in
                 delayedEntry = pending
             }
-            await vm.handleTransitionChange(token: firstPendingToken, targetIndex: firstPendingTargetIndex)
+            await vm.synchronizePlaybackReadbackForTesting(
+                token: firstPendingToken, targetIndex: firstPendingTargetIndex)
         }
         let didSuspend = await waitUntil { delayedEntry != nil }
         try #require(didSuspend, "Timed out waiting for delayedEntry to be captured")
@@ -571,7 +572,7 @@ struct SlideShowViewModelStartupTests {
             let targetIndex = vm.targetIndex
             let expectedAssetId = "asset-\(step)"
             #expect(vm.scene(at: targetIndex)?.primaryAssetId == expectedAssetId)
-            await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+            await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
             completeCurrentScenePresentation(vm)
             #expect(vm.safeCurrentScene?.primaryAssetId == expectedAssetId)
         }
@@ -764,7 +765,7 @@ struct SlideShowViewModelStartupTests {
             let token = vm.targetTransitionToken
             let targetIndex = vm.targetIndex
             #expect(vm.scene(at: targetIndex)?.primaryAssetId == expectedAssetId)
-            await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+            await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
             completeCurrentScenePresentation(vm)
             #expect(vm.safeCurrentScene?.primaryAssetId == expectedAssetId)
         }
@@ -773,7 +774,7 @@ struct SlideShowViewModelStartupTests {
         var token = vm.targetTransitionToken
         var targetIndex = vm.targetIndex
         #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-2")
-        await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         completeCurrentScenePresentation(vm)
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-2")
 
@@ -781,7 +782,7 @@ struct SlideShowViewModelStartupTests {
         token = vm.targetTransitionToken
         targetIndex = vm.targetIndex
         #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-1")
-        await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         completeCurrentScenePresentation(vm)
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-1")
 
@@ -789,7 +790,7 @@ struct SlideShowViewModelStartupTests {
         token = vm.targetTransitionToken
         targetIndex = vm.targetIndex
         #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-2")
-        await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         completeCurrentScenePresentation(vm)
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-2")
     }
@@ -807,7 +808,7 @@ struct SlideShowViewModelStartupTests {
             vm.requestNextScene()
             let token = vm.targetTransitionToken
             let targetIndex = vm.targetIndex
-            await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+            await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         }
 
         vm.assets = (26..<30).map { makeAsset(id: "asset-\($0)") }
@@ -886,7 +887,7 @@ struct SlideShowViewModelStartupTests {
             #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-\(expectedIndex)")
             #expect(vm.scene(at: targetIndex)?.photoSlots.map(\.asset.id).contains("asset-13") == false)
 
-            await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+            await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
             #expect(vm.safeCurrentScene?.primaryAssetId == "asset-\(expectedIndex)")
         }
 
@@ -897,7 +898,7 @@ struct SlideShowViewModelStartupTests {
         #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-14")
         #expect(vm.scene(at: targetIndex)?.photoSlots.map(\.asset.id).contains("asset-13") == false)
 
-        await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-14")
     }
 
@@ -933,7 +934,7 @@ struct SlideShowViewModelStartupTests {
             let token = vm.targetTransitionToken
             let targetIndex = vm.targetIndex
             #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-\(expectedIndex)")
-            await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+            await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
             #expect(vm.safeCurrentScene?.primaryAssetId == "asset-\(expectedIndex)")
         }
 
@@ -993,7 +994,7 @@ struct SlideShowViewModelStartupTests {
         let token = vm.targetTransitionToken
         let targetIndex = vm.targetIndex
         #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-36")
-        await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-36")
     }
 
@@ -1207,7 +1208,7 @@ struct SlideShowViewModelStartupTests {
         #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-1")
         #expect(vm.scene(at: targetIndex)?.photoSlots.map(\.asset.id).contains("asset-8") == false)
 
-        await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-1")
     }
 
@@ -1261,7 +1262,7 @@ struct SlideShowViewModelStartupTests {
         let token = vm.targetTransitionToken
         let targetIndex = vm.targetIndex
 
-        await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         for _ in 0..<1_000 where requestedLoads.isEmpty {
             await Task.yield()
         }
@@ -1404,7 +1405,7 @@ struct SlideShowViewModelStartupTests {
         vm.requestNextScene()
         let token = vm.targetTransitionToken
         let targetIndex = vm.targetIndex
-        await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         for _ in 0..<1_000 where candidateWindowRequests.isEmpty {
             await Task.yield()
         }
@@ -1450,7 +1451,7 @@ struct SlideShowViewModelStartupTests {
         #expect(transitionWindowPreloads.isEmpty)
 
         vm.requestNextScene()
-        await vm.handleTransitionChange(token: vm.targetTransitionToken, targetIndex: vm.targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: vm.targetTransitionToken, targetIndex: vm.targetIndex)
         for _ in 0..<1_000 where transitionWindowPreloads.isEmpty { await Task.yield() }
 
         #expect(transitionWindowPreloads.count == 1)
@@ -1573,7 +1574,7 @@ struct SlideShowViewModelStartupTests {
         let targetIndex = vm.targetIndex
         #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-2")
 
-        await vm.handleTransitionChange(token: token, targetIndex: targetIndex)
+        await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-2")
     }
 
