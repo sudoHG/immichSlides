@@ -72,6 +72,7 @@ from run_strict_e2e import (  # noqa: E402
     main as runner_main,
 )
 from run_offline_unit_tests import TestResultsSummary  # noqa: E402
+from sensitive_scan_test_support import compressed_byte_coincidence  # noqa: E402
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256, load_member_manifest, write_member_manifest  # noqa: E402
 from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT  # noqa: E402
 from strict_e2e_server import _fixture_data  # noqa: E402
@@ -878,7 +879,7 @@ class StrictE2ERunnerTests(unittest.TestCase):
             finally:
                 unreadable.chmod(0o700)
 
-    def test_sensitive_scan_ignores_key_pattern_in_compressed_bytes(self) -> None:
+    def test_sensitive_scan_rejects_key_in_skippable_payload(self) -> None:
         logical = b"<?xml version=\"1.0\"?><plist><string>ok</string></plist>"
         skippable = (0x184D2A50).to_bytes(4, "little") + len(WRONG_PUBLIC_API_KEY).to_bytes(
             4, "little"
@@ -894,11 +895,49 @@ class StrictE2ERunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
             (evidence / "xcresult-data.bin").write_bytes(blob)
-            write_sensitive_scan(evidence, [WRONG_PUBLIC_API_KEY])
+            with self.assertRaises(CommandError) as raised:
+                write_sensitive_scan(evidence, [WRONG_PUBLIC_API_KEY])
+            self.assertNotIn(WRONG_PUBLIC_API_KEY, str(raised.exception))
             scan = json.loads((evidence / "sensitive-scan.json").read_text(encoding="utf-8"))
+            self.assertEqual(scan["result"], "FAIL")
+            self.assertEqual(scan["matched_files"], ["xcresult-data.bin"])
+            self.assertNotIn(WRONG_PUBLIC_API_KEY, (evidence / "sensitive-scan.json").read_text(encoding="utf-8"))
+
+    def test_sensitive_scan_passes_genuinely_compressed_key_pattern_with_clean_content(self) -> None:
+        blob, logical, needle = compressed_byte_coincidence()
+        self.assertIn(needle.encode(), blob)
+        self.assertNotIn(needle.encode(), logical)
+        self.assertEqual(subprocess.run(
+            ["zstd", "-q", "-d", "-c"], input=blob, capture_output=True, check=True
+        ).stdout, logical)
+        with tempfile.TemporaryDirectory() as raw_directory:
+            evidence = Path(raw_directory)
+            (evidence / "xcresult-data.bin").write_bytes(blob)
+            write_sensitive_scan(evidence, [needle])
+            scan_text = (evidence / "sensitive-scan.json").read_text(encoding="utf-8")
+            scan = json.loads(scan_text)
             self.assertEqual(scan["result"], "PASS")
             self.assertEqual(scan["matched_files"], [])
-            self.assertNotIn(WRONG_PUBLIC_API_KEY, (evidence / "sensitive-scan.json").read_text(encoding="utf-8"))
+            self.assertNotIn(needle, scan_text)
+
+    def test_sensitive_scan_rejects_key_in_plaintext_tail_with_cli_only_decoder(self) -> None:
+        blob = subprocess.run(
+            ["zstd", "-q", "-c"], input=b"safe", check=True, capture_output=True
+        ).stdout + WRONG_PUBLIC_API_KEY.encode()
+        with tempfile.TemporaryDirectory() as raw_directory:
+            evidence = Path(raw_directory)
+            (evidence / "xcresult-data.bin").write_bytes(blob)
+            with mock.patch("access_lifecycle_contract._zstd_py314", return_value=None), mock.patch(
+                "access_lifecycle_contract._load_libzstd", return_value=None
+            ):
+                with self.assertRaises(CommandError) as raised:
+                    write_sensitive_scan(evidence, [WRONG_PUBLIC_API_KEY])
+            self.assertNotIn(WRONG_PUBLIC_API_KEY, str(raised.exception))
+            scan_text = (evidence / "sensitive-scan.json").read_text(encoding="utf-8")
+            scan = json.loads(scan_text)
+            self.assertEqual(scan["result"], "FAIL")
+            self.assertEqual(scan["matched_files"], ["xcresult-data.bin"])
+            self.assertNotIn(WRONG_PUBLIC_API_KEY, scan_text)
 
     def test_sensitive_scan_fails_when_decompressed_content_has_key(self) -> None:
         logical = f"key={WRONG_PUBLIC_API_KEY}\n".encode("utf-8")

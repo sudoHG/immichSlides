@@ -13,12 +13,14 @@ import time
 import unittest
 from pathlib import Path
 from typing import Callable
+from unittest import mock
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from run_offline_unit_tests import ACCESS_LIFECYCLE_HOST_SELECTORS  # noqa: E402
+from sensitive_scan_test_support import compressed_byte_coincidence  # noqa: E402
 from access_lifecycle_contract import (  # noqa: E402
     AccessLifecycleContractError,
     ALLOWED_SYSTEM_PAUSE_ACTIVATION,
@@ -50,9 +52,12 @@ from access_lifecycle_contract import (  # noqa: E402
     inspect_display_strategy,
     is_confirmed_new_stable_mark,
     is_slideshow_layer,
+    logical_content_bytes,
     poll_wait,
     scan_sensitive_evidence,
     wait_for_new_stable_mark,
+    _zstd_cli_frame,
+    _zstd_frame_size,
 )
 
 from PIL import Image, ImageDraw, ImageFilter  # noqa: E402
@@ -720,7 +725,7 @@ class SensitiveScanTests(unittest.TestCase):
             self.assertEqual(result["result"], "PASS")
             self.assertEqual(result["matched_files"], [])
 
-    def test_compressed_bytes_with_pin_pattern_but_no_logical_pin_pass(self) -> None:
+    def test_skippable_payload_with_pin_fails(self) -> None:
         pin = DEVICE_SYNTHETIC_PINS[0]
         logical = b"<?xml version=\"1.0\"?><plist><string>no-pin</string></plist>"
         blob = _zstd_skippable_frame(pin.encode("utf-8")) + _zstd_content_frame(logical)
@@ -729,19 +734,114 @@ class SensitiveScanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             (root / "xcresult-data.bin").write_bytes(blob)
-            result = scan_sensitive_evidence(root, DEVICE_SYNTHETIC_PINS)
-            self.assertEqual(result["result"], "PASS")
-            self.assertEqual(result["matched_files"], [])
+            with self.assertRaises(AccessLifecycleContractError):
+                scan_sensitive_evidence(root, DEVICE_SYNTHETIC_PINS)
 
-    def test_undecodable_zstd_magic_is_not_scanned_as_plaintext(self) -> None:
+    def test_undecodable_zstd_with_plaintext_pin_fails(self) -> None:
         pin = DEVICE_SYNTHETIC_PINS[0]
         blob = b"\x28\xb5\x2f\xfd" + pin.encode("utf-8") + b"not-a-frame"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             (root / "xcresult-data.bin").write_bytes(blob)
-            result = scan_sensitive_evidence(root, DEVICE_SYNTHETIC_PINS)
+            with self.assertRaises(AccessLifecycleContractError):
+                scan_sensitive_evidence(root, DEVICE_SYNTHETIC_PINS)
+
+    def test_genuinely_compressed_pattern_with_clean_logical_content_passes(self) -> None:
+        blob, logical, needle = compressed_byte_coincidence()
+        self.assertIn(needle.encode(), blob)
+        self.assertNotIn(needle.encode(), logical)
+        self.assertEqual(subprocess.run(
+            ["zstd", "-q", "-d", "-c"], input=blob, capture_output=True, check=True
+        ).stdout, logical)
+        self.assertEqual(_zstd_cli_frame(blob, 0), (logical, len(blob)))
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "xcresult-data.bin").write_bytes(blob)
+            result = scan_sensitive_evidence(root, [needle])
             self.assertEqual(result["result"], "PASS")
             self.assertEqual(result["matched_files"], [])
+
+    def test_cli_only_zstd_plaintext_tail_with_pin_fails(self) -> None:
+        blob = _zstd_content_frame(b"safe") + DEVICE_SYNTHETIC_PINS[0].encode()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "xcresult-data.bin").write_bytes(blob)
+            with mock.patch("access_lifecycle_contract._zstd_py314", return_value=None), mock.patch(
+                "access_lifecycle_contract._load_libzstd", return_value=None
+            ):
+                with self.assertRaises(AccessLifecycleContractError):
+                    scan_sensitive_evidence(root, DEVICE_SYNTHETIC_PINS)
+
+    def test_zstd_cli_accounts_for_header_fields_and_raw_rle_blocks(self) -> None:
+        for single_segment in (False, True):
+            for size_flag in range(4):
+                for dictionary_flag, dictionary_bytes in enumerate((0, 1, 2, 4)):
+                    with self.subTest(single=single_segment, size=size_flag, dictionary=dictionary_flag):
+                        size = 256 if size_flag == 1 else 6
+                        descriptor = (size_flag << 6) | (int(single_segment) << 5) | dictionary_flag
+                        content_bytes = (int(single_segment), 2, 4, 8)[size_flag]
+                        encoded_size = size - 256 if size_flag == 1 else size
+                        header = b"\x28\xb5\x2f\xfd" + bytes([descriptor])
+                        header += b"" if single_segment else b"\x00"
+                        header += bytes(dictionary_bytes)
+                        if content_bytes:
+                            header += encoded_size.to_bytes(content_bytes, "little")
+                        for block_type in (0, 1):
+                            logical = b"A" * size
+                            block = ((size << 3) | (block_type << 1) | 1).to_bytes(3, "little")
+                            block += b"A" if block_type == 1 else logical
+                            frame = header + block
+                            data = b"prefix" + frame + b"cleartext tail"
+                            self.assertEqual(_zstd_frame_size(data, 6), len(frame))
+                            self.assertEqual(_zstd_cli_frame(data, 6), (logical, len(frame)))
+
+    def test_zstd_cli_preserves_concatenated_frames_metadata_and_plaintext(self) -> None:
+        blob, logical, _ = compressed_byte_coincidence()
+        first = _zstd_content_frame(b"first")
+        second = _zstd_content_frame(b"second" * 100000)
+        data = b"prefix" + first + _zstd_skippable_frame(b"metadata") + second + blob + b"tail"
+        with mock.patch("access_lifecycle_contract._zstd_py314", return_value=None), mock.patch(
+            "access_lifecycle_contract._load_libzstd", return_value=None
+        ):
+            self.assertEqual(_zstd_cli_frame(data, 6), (b"first", len(first)))
+            self.assertEqual(logical_content_bytes(data), b"prefixfirstmetadata" + b"second" * 100000 + logical + b"tail")
+
+    def test_zstd_truncation_and_missing_decoder_preserve_raw_bytes(self) -> None:
+        frame = _zstd_content_frame(b"safe")
+        for truncated_size in range(1, len(frame)):
+            with self.subTest(truncated_size=truncated_size):
+                truncated = frame[:truncated_size]
+                self.assertIsNone(_zstd_frame_size(truncated, 0))
+                self.assertEqual(logical_content_bytes(truncated), truncated)
+        data = frame + DEVICE_SYNTHETIC_PINS[0].encode()
+        with mock.patch("access_lifecycle_contract._zstd_py314", return_value=None), mock.patch(
+            "access_lifecycle_contract._load_libzstd", return_value=None
+        ), mock.patch("shutil.which", return_value=None):
+            self.assertEqual(logical_content_bytes(data), data)
+
+    def test_all_skippable_magic_variants_preserve_payload_and_truncated_frames(self) -> None:
+        payload = DEVICE_SYNTHETIC_PINS[0].encode()
+        for magic in range(0x184D2A50, 0x184D2A60):
+            with self.subTest(magic=magic):
+                frame = magic.to_bytes(4, "little") + len(payload).to_bytes(4, "little") + payload
+                self.assertEqual(logical_content_bytes(frame + b"tail"), payload + b"tail")
+                truncated = magic.to_bytes(4, "little") + (len(payload) + 1).to_bytes(4, "little") + payload
+                self.assertEqual(logical_content_bytes(truncated), truncated)
+
+    def test_zstd_reserved_headers_and_failed_checksum_are_scanned_raw(self) -> None:
+        frame = _zstd_content_frame(b"safe")
+        malformed = [
+            frame[:4] + bytes([frame[4] | 8]) + frame[5:],
+            frame[:-1] + bytes([frame[-1] ^ 1]),
+            b"\x28\xb5\x2f\xfd\x20\x00\x07\x00\x00",
+        ]
+        with mock.patch("access_lifecycle_contract._zstd_py314", return_value=None), mock.patch(
+            "access_lifecycle_contract._load_libzstd", return_value=None
+        ):
+            for blob in malformed:
+                with self.subTest(blob=blob):
+                    data = blob + DEVICE_SYNTHETIC_PINS[0].encode()
+                    self.assertEqual(logical_content_bytes(data), data)
 
     def test_decompressed_logical_content_with_pin_fails_without_echoing_pin(self) -> None:
         pin = DEVICE_SYNTHETIC_PINS[0]
@@ -763,14 +863,14 @@ class SensitiveScanTests(unittest.TestCase):
         noise = _large_xcresult_noise()
         self.assertGreaterEqual(len(noise), LARGE_XCRESULT_NOISE_SIZE)
         self.assertNotIn(pin_bytes, noise)
-        logical_ok = b"<?xml version=\"1.0\"?><plist><string>no-pin</string></plist>"
-        pass_blob = noise + _zstd_skippable_frame(pin_bytes) + _zstd_content_frame(logical_ok)
-        self.assertIn(pin_bytes, pass_blob)
-        self.assertNotIn(pin_bytes, logical_ok)
+        compressed_ok, logical_ok, coincidence = compressed_byte_coincidence()
+        pass_blob = noise + _zstd_skippable_frame(b"safe metadata") + compressed_ok
+        self.assertIn(coincidence.encode(), pass_blob)
+        self.assertNotIn(coincidence.encode(), logical_ok)
         logical_bad = f"entered pin {pin}\n".encode("utf-8")
         fail_blob = noise + _gzip_content_frame(logical_bad)
 
-        def scan_blob(blob: bytes) -> tuple[float, object]:
+        def scan_blob(blob: bytes, values: list[str] = DEVICE_SYNTHETIC_PINS) -> tuple[float, object]:
             with tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 payload = root / "Test.xcresult" / "Data" / "payload.bin"
@@ -778,14 +878,14 @@ class SensitiveScanTests(unittest.TestCase):
                 payload.write_bytes(blob)
                 started = time.perf_counter()
                 try:
-                    result = scan_sensitive_evidence(root, DEVICE_SYNTHETIC_PINS)
+                    result = scan_sensitive_evidence(root, values)
                 except AccessLifecycleContractError as error:
                     elapsed = time.perf_counter() - started
                     return elapsed, error
                 elapsed = time.perf_counter() - started
                 return elapsed, result
 
-        elapsed, result = scan_blob(pass_blob)
+        elapsed, result = scan_blob(pass_blob, [coincidence])
         self.assertLess(elapsed, LARGE_XCRESULT_SCAN_DEADLINE_SECONDS)
         self.assertEqual(result["result"], "PASS")
         self.assertEqual(result["matched_files"], [])

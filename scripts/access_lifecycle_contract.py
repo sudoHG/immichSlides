@@ -1005,7 +1005,7 @@ def _contains_any_pin(text: str, pins: Sequence[str]) -> bool:
 
 
 def logical_bytes_contain(data: bytes, values: Sequence[str]) -> bool:
-    # Never scan compressed bytes as plaintext; scan only the decompressed logical content.
+    # Decode valid frames; scan cleartext metadata and any bytes that cannot be decoded.
     # Scan chunk by chunk without joining the whole blob.
     needles = [value.encode("utf-8") for value in values if value]
     if not needles:
@@ -1021,6 +1021,7 @@ def logical_bytes_contain(data: bytes, values: Sequence[str]) -> bool:
 
 
 def logical_content_bytes(data: bytes) -> bytes:
+    """Decode valid frames while retaining skippable metadata and undecodable raw bytes."""
     return b"".join(_iter_logical_parts(data))
 
 
@@ -1047,13 +1048,7 @@ def _iter_logical_parts(data: bytes) -> Iterator[bytes]:
                     yield payload
                 index += consumed
                 continue
-            if _looks_compressed_at(data, index):
-                # A recognized compressed stream that fails to decompress is dropped, not scanned as plaintext.
-                cursor += 1
-                if cursor >= len(starts):
-                    return
-                index = starts[cursor]
-                continue
+            # Failed decoding cannot prove these bytes are safe to discard.
             cursor += 1
         nxt = starts[cursor] if cursor < len(starts) else length
         if nxt <= index:
@@ -1087,20 +1082,11 @@ def _compression_magic_offsets(data: bytes) -> list[int]:
     return sorted(found)
 
 
-def _looks_compressed_at(data: bytes, offset: int) -> bool:
-    return (
-        _zstd_skippable_size(data, offset) is not None
-        or data.startswith(ZSTD_MAGIC, offset)
-        or data.startswith(GZIP_MAGIC, offset)
-        or data.startswith(XZ_MAGIC, offset)
-    )
-
-
 def _decompress_frame_at(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
     skippable = _zstd_skippable_size(data, offset)
     if skippable is not None:
-        # Skippable frames are compression containers; their user data is not decompressed into logical content.
-        return b"", skippable
+        # Zstd skips this metadata, but it is stored as cleartext in the evidence.
+        return data[offset + 8 : offset + skippable], skippable
     if data.startswith(ZSTD_MAGIC, offset):
         return _decompress_zstd_frame(data, offset)
     if data.startswith(GZIP_MAGIC, offset):
@@ -1136,7 +1122,7 @@ def _decompress_zstd_frame(data: bytes, offset: int) -> Optional[Tuple[bytes, in
         try:
             view = memoryview(data)[offset:]
             consumed = int(py314.get_frame_size(view))
-            if consumed > 0:
+            if 0 < consumed <= remaining:
                 payload = py314.decompress(data[offset : offset + consumed])
                 return payload, consumed
         except errors:
@@ -1243,13 +1229,13 @@ def _zstd_cli_frame(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
     import shutil
     import subprocess
 
-    remaining = len(data) - offset
-    if remaining <= 0:
+    consumed = _zstd_frame_size(data, offset)
+    if consumed is None:
         return None
     binary = shutil.which("zstd")
     if binary is None:
         return None
-    blob = data[offset:]
+    blob = data[offset : offset + consumed]
     completed = subprocess.run(
         [binary, "-d", "-c", "-q"],
         input=blob,
@@ -1258,7 +1244,38 @@ def _zstd_cli_frame(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
     )
     if completed.returncode != 0:
         return None
-    return completed.stdout, len(blob)
+    return completed.stdout, consumed
+
+
+def _zstd_frame_size(data: bytes, offset: int) -> Optional[int]:
+    # Walk framing only; the CLI still validates and decompresses the exact frame.
+    # Format: https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md
+    if not data.startswith(ZSTD_MAGIC, offset) or offset + 5 > len(data):
+        return None
+    descriptor = data[offset + 4]
+    if descriptor & 0x08:  # Reserved bit must be zero.
+        return None
+    single_segment = bool(descriptor & 0x20)
+    content_size_flag = descriptor >> 6
+    content_size_bytes = (int(single_segment), 2, 4, 8)[content_size_flag]
+    dictionary_id_bytes = (0, 1, 2, 4)[descriptor & 3]
+    cursor = offset + 5 + int(not single_segment) + dictionary_id_bytes + content_size_bytes
+    if cursor > len(data):
+        return None
+    while cursor + 3 <= len(data):
+        header = int.from_bytes(data[cursor : cursor + 3], "little")
+        cursor += 3
+        block_type = (header >> 1) & 3
+        if block_type == 3:
+            return None
+        block_size = header >> 3
+        cursor += 1 if block_type == 1 else block_size
+        if cursor > len(data):
+            return None
+        if header & 1:
+            cursor += 4 if descriptor & 4 else 0
+            return cursor - offset if cursor <= len(data) else None
+    return None
 
 
 def _decompress_gzip_frame(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
