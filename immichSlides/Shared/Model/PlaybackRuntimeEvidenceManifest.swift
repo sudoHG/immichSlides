@@ -104,8 +104,8 @@ enum PlaybackRuntimeEvidenceManifestValidator {
         "captureTimestamp",
         "screenshotPath"
     ]
-    private static let startupFallbackSchemaVersion = "pr46-startup-fallback-v1"
-    private static let decisionLayerSchemaVersion = "pr49-decision-layer-v1"
+    private static let startupFallbackSchemaVersion = "startup-fallback-v1"
+    private static let decisionLayerSchemaVersion = "decision-layer-v1"
     private static let startupFallbackRequiredFields: [String] = [
         "startupRunId",
         "startupSequence",

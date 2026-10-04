@@ -242,7 +242,7 @@ struct PlaybackSceneTests {
         #expect(planning.version == "smart-fill-planner-v2")
         #expect(planning.qaDebugSummary.contains("version=smart-fill-planner-v2"))
         #expect(planning.qaDebugSummary.contains("surfaceKey=iPhone-portrait-compact-regular-safeA"))
-        #expect(planning.qaDebugSummary.contains("layoutVariant=单图"))
+        #expect(planning.qaDebugSummary.contains("layoutVariant=single"))
         #expect(planning.qaDebugSummary.contains("ratioPreset=full"))
         #expect(planning.qaDebugSummary.contains("fallbackCategory=none"))
         #expect(planning.qaDebugSummary.contains("cropRetention=0.800"))
