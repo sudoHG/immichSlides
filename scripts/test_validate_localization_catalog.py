@@ -182,6 +182,46 @@ class ValidateLocalizationCatalogTests(unittest.TestCase):
 
         self.assertIn("source-not-english:可用", result.issues)
 
+    def test_kana_and_hangul_keys_fail_as_non_english_sources(self):
+        for key in ("ひらがな", "カタカナ", "한국어"):
+            with self.subTest(key=key):
+                result = self.validate(
+                    {
+                        "sourceLanguage": "en",
+                        "strings": {key: {"localizations": self.complete_localizations("Available")}},
+                        "version": "1.0",
+                    }
+                )
+
+                self.assertIn(f"source-not-english:{key}", result.issues)
+
+    def test_boolean_substitution_argument_number_fails(self):
+        localizations = {}
+        for locale in TARGET_LOCALES:
+            localizations[locale] = {
+                "stringUnit": {"state": "translated", "value": "%#@count@"},
+                "substitutions": {
+                    "count": {
+                        "argNum": True,
+                        "formatSpecifier": "lld",
+                        "variations": {
+                            "plural": {
+                                "other": {"stringUnit": {"state": "translated", "value": "%lld photos"}}
+                            }
+                        },
+                    }
+                },
+            }
+        result = self.validate(
+            {
+                "sourceLanguage": "en",
+                "strings": {"%lld photos": {"localizations": localizations}},
+                "version": "1.0",
+            }
+        )
+
+        self.assertIn("substitution-metadata:zh-Hans:%lld photos:count", result.issues)
+
     def test_explicit_english_value_is_checked_like_a_translation(self):
         localizations = self.complete_localizations("%lld 张照片")
         localizations["en"] = {"stringUnit": {"state": "needs_review", "value": "%@ photos"}}

@@ -193,10 +193,11 @@ def scope_is_fixture(scope_stack: list[str | None]) -> bool:
 
 
 def iter_swift_files(root: Path, include_tests: bool) -> Iterator[Path]:
-    for path in (root / "immichSlides").rglob("*.swift"):
-        if not include_tests and ("immichSlidesTests" in path.parts or "immichSlidesUITests" in path.parts):
-            continue
-        yield path
+    directories = ["immichSlides"]
+    if include_tests:
+        directories += ["immichSlidesTests", "immichSlidesUITests"]
+    for directory in directories:
+        yield from (root / directory).rglob("*.swift")
 
 
 def skip_line_comment(text: str, index: int) -> int:

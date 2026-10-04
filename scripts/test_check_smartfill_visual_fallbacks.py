@@ -52,6 +52,7 @@ class SmartFillVisualFallbackCheckTests(unittest.TestCase):
         self.assertIn("guardrail_check_status=FAIL", result.stdout)
         self.assertIn("forbidden_visual_diff_production_hits=1", result.stdout)
         self.assertIn("safeFullDisplay", result.stdout)
+        self.assertIn("diffProductionHit=immichSlides/Shared/Model/PlaybackSmartFillPlanner.swift:1:", result.stdout)
 
     def test_fails_when_diff_adds_fit_blurred_background_to_production(self):
         self._write("immichSlides/Shared/Model/PlaybackSmartFillPlanner.swift", "let mode = \"fit-blurred-background\"\\n")

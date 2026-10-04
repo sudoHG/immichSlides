@@ -116,6 +116,11 @@ def assert_out_of_order_timeline(
         raise OutOfOrderContractError(f"Missing key time point: {size} completion record")
     delayed_complete = delayed_completes[0]
     immediate_complete = immediate_completes[0]
+    for complete in (delayed_complete, immediate_complete):
+        if complete.status is None or not 200 <= complete.status < 300:
+            raise OutOfOrderContractError(
+                f"The {size} image response must succeed to count as a completion: status={complete.status}"
+            )
     if delayed_start.elapsed_ms >= immediate_complete.elapsed_ms:
         raise OutOfOrderContractError("The old request must start before the current request completes")
     if delayed_complete.elapsed_ms <= immediate_complete.elapsed_ms:
@@ -149,8 +154,11 @@ def audit_runner_inputs(
         raise OutOfOrderContractError("Request log has no verifiable lines")
     for line in service_log.splitlines():
         if line.startswith("request_started "):
-            if REQUEST_STARTED_LINE.match(line) is None:
+            started = REQUEST_STARTED_LINE.match(line)
+            if started is None:
                 raise OutOfOrderContractError(f"Request log format is not frozen: {line}")
+            if KNOWN_PATH.match(started.group("path")) is None:
+                raise OutOfOrderContractError(f"Unknown request; this batch fails: {started.group('path')}")
             continue
         if not line.startswith("request "):
             continue

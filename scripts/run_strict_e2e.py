@@ -196,6 +196,8 @@ DUAL_SERVER_SUITES = ("filter-switch", "tvos-switch", "server-switch-display", "
 ALBUM_EMPTY_SUITES = ("album-empty", "tvos-album-empty")
 SERVER_SWITCH_DISPLAY_SUITES = ("server-switch-display", "tvos-server-switch-display")
 DISPLAY_POLICY_SUITES = ("display-policy", "tvos-display-policy")
+# The test selects fixture A ids and the Python evaluator checks marks against fixture A.
+FIXTURE_A_ONLY_FILTER_SUITES = ("tvos-album",)
 SETTINGS_RESUME_SUITES = (
     *LIFECYCLE_SUITES,
     "display-policy",
@@ -347,7 +349,7 @@ def validate_suite_scenario(suite: str, scenario: str) -> None:
 
 
 def validate_suite_fixture(suite: str, fixture_set: str) -> None:
-    if suite in (*DISPLAY_POLICY_SUITES, *LIFECYCLE_SUITES) and fixture_set != "a":
+    if suite in (*DISPLAY_POLICY_SUITES, *LIFECYCLE_SUITES, *FIXTURE_A_ONLY_FILTER_SUITES) and fixture_set != "a":
         raise CommandError(f"{suite} must use public fixture A; data from different servers cannot be mixed.")
 
 

@@ -88,7 +88,7 @@ def scan_diff_added_line_hits(repo_root, base_ref, changed_paths):
         current_line = None
         for line in diff.splitlines():
             if line.startswith("@@"):
-                match = re.search(r"\\+(\\d+)", line)
+                match = re.search(r"\+(\d+)", line)
                 current_line = int(match.group(1)) if match else None
                 continue
             if line.startswith("+") and not line.startswith("+++"):
@@ -102,7 +102,7 @@ def scan_diff_added_line_hits(repo_root, base_ref, changed_paths):
                     })
                 if current_line is not None:
                     current_line += 1
-            elif current_line is not None and not line.startswith("-"):
+            elif current_line is not None and not line.startswith(("-", "\\")):
                 current_line += 1
     return hits
 
@@ -154,14 +154,12 @@ def format_report(report):
     renderer_empty = "PASS" if not report["renderer_diff_paths"] else "FAIL"
     lines = [
         f"guardrail_check_status={status}",
-        "allowed_files_check=PASS",
         f"smartfill_renderer_diff_empty={renderer_empty}",
         f"slide_item_diff_empty={renderer_empty if any(path.endswith('SlideItemView.swift') for path in report['renderer_diff_paths']) else 'PASS'}",
         f"forbidden_visual_diff_production_hits={len(report['diff_hits'])}",
         f"forbidden_visual_new_smartfill_renderer_hits={len(report['new_renderer_hits'])}",
         f"forbidden_visual_baseline_allowed_hits={len(report['baseline_hits'])}",
         f"forbidden_visual_allowed_hits={len(report['allowed_hits'])}",
-        "slot_presentation_mode_changed=PASS",
     ]
     lines.extend(format_hits("renderer_diff", [{"path": path, "line": 0, "text": "renderer file changed"} for path in report["renderer_diff_paths"]]))
     lines.extend(format_hits("diffProductionHit", report["diff_hits"]))

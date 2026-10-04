@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -20,6 +22,7 @@ from run_access_lifecycle_ios import (  # noqa: E402
     main,
 )
 from access_lifecycle_contract import FROZEN_FIXTURE_SHA256  # noqa: E402
+import run_access_lifecycle_ios  # noqa: E402
 import run_strict_e2e  # noqa: E402
 
 
@@ -93,6 +96,27 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn(SYNTHETIC_PIN, output)
         self.assertNotIn("run_strict_e2e.py", output)
 
+    def test_existing_local_xcconfig_is_rejected_before_anything_starts(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_directory:
+            root = Path(raw_directory)
+            (root / "Config").mkdir()
+            (root / "Config/env.xcconfig").write_text("PRIVATE_PLACEHOLDER = 1\n", encoding="utf-8")
+            (root / "Config/env.example.xcconfig").write_text(
+                "ENABLE_DEBUG_AUTO_SERVER = 0\nENABLE_DEBUG_FILL_APIKEY_BUTTON = 0\n", encoding="utf-8"
+            )
+            stderr = io.StringIO()
+            with mock.patch.object(run_access_lifecycle_ios, "REPO_ROOT", root):
+                code = main(
+                    ["--destination", "platform=iOS Simulator,id=DEST-IOS", "--evidence-dir", str(root / "evidence")],
+                    stdout=io.StringIO(),
+                    stderr=stderr,
+                    data_available_gib=lambda: 200,
+                )
+
+            self.assertNotEqual(code, 0)
+            self.assertIn("already exists", stderr.getvalue())
+            self.assertEqual((root / "Config/env.xcconfig").read_text(encoding="utf-8"), "PRIVATE_PLACEHOLDER = 1\n")
+
     def test_build_command_does_not_embed_pin_or_forced_display_mode(self) -> None:
         command = build_test_command(
             destination="platform=iOS Simulator,id=DEST-IOS",
@@ -137,7 +161,7 @@ class RoutingTests(unittest.TestCase):
 
         # A frame stacking two public fixtures must report both marks, not what a
         # full-screen classify_screenshot gives.
-        png = _stand_in_png("ipad-85c0537a", "after-next.png")
+        png = _stand_in_png("ipad-stacked-after-next", "after-next.png")
         self.assertEqual(scene_mark_from_bytes(png), "A4+A1")
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "after-next.png"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from scan_chinese_strings import bucket_for_hit, extract_string_hits  # noqa: E402
+from scan_chinese_strings import bucket_for_hit, extract_string_hits, iter_swift_files  # noqa: E402
 
 
 class ScanChineseStringsTests(unittest.TestCase):
@@ -116,6 +117,19 @@ enum Layout: String {
 
     def test_raw_english_literal_outside_ui_calls_is_not_reported(self):
         self.assertEqual(self.buckets('let identifier = "settings.item.server"'), [None])
+
+    def test_include_tests_scans_both_test_targets(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for relative in ("immichSlides/App.swift", "immichSlidesTests/A.swift", "immichSlidesUITests/B.swift"):
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_text("", encoding="utf-8")
+
+            without_tests = {path.name for path in iter_swift_files(root, include_tests=False)}
+            with_tests = {path.name for path in iter_swift_files(root, include_tests=True)}
+
+        self.assertEqual(without_tests, {"App.swift"})
+        self.assertEqual(with_tests, {"App.swift", "A.swift", "B.swift"})
 
 
 if __name__ == "__main__":

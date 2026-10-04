@@ -239,10 +239,7 @@ def main(
             raise CommandError("Evidence directory is not empty; refusing to start to avoid overwriting or mixing evidence.")
         config_path = REPO_ROOT / TASK_XCCONFIG
         example_path = REPO_ROOT / EXAMPLE_XCCONFIG
-        did_create_config = False
-        if not config_path.exists():
-            prepare_task_xcconfig(example_path, config_path)
-            did_create_config = True
+        prepare_task_xcconfig(example_path, config_path)
         write_fixture_artifacts(arguments.evidence_dir, arguments.fixture_set)
         ready_path = arguments.evidence_dir / "service-ready.json"
         service_log_path = arguments.evidence_dir / "service.log"
@@ -341,8 +338,7 @@ def main(
             return 0
         finally:
             stop_exact_process(service_process)
-            if did_create_config:
-                cleanup_task_xcconfig(example_path, config_path)
+            cleanup_task_xcconfig(example_path, config_path)
     except (CommandError, AccessLifecycleContractError) as error:
         print(str(error), file=stderr)
         if SYNTHETIC_PIN in str(error) or WRONG_PIN in str(error):

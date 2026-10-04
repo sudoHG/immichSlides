@@ -1283,6 +1283,7 @@ def _dissolve_screen() -> Image.Image:
     return canvas
 
 
+# Synthetic frames composed from public fixture photos; each key names the scenario its frames stand in for.
 _STAND_IN_FRAMES: dict[tuple[str, ...], Callable[[], Image.Image]] = {
     # tvOS display-strategy cases.
     ("single-photo-swap", "display-before.png"): lambda: _single_on_own_blur("A4", TV_SCREEN),
@@ -1306,17 +1307,17 @@ _STAND_IN_FRAMES: dict[tuple[str, ...], Callable[[], Image.Image]] = {
     ("iphone", "failure-late-frames", "late-184.png"): lambda: _stacked_screen("A4", "A5", IPHONE_SCREEN, 0.4),
     # Before wake A1 sits at its fitted height, so the 0-50% half also sees A5 and only the top
     # strip sees A1 alone. After wake the same pair is laid out 40/60.
-    ("iphone-5e012fe5", "before-wake.png"): lambda: _stacked_screen("A1", "A5", IPHONE_SCREEN, 0.25),
-    ("iphone-5e012fe5", "after-wake.png"): lambda: _stacked_screen("A1", "A5", IPHONE_SCREEN, 0.4),
-    ("ipad-5e012fe5", "display-before.png"): lambda: _stacked_screen("A4", "A1", IPAD_SCREEN, 0.45),
-    ("ipad-5e012fe5", "display-after.png"): lambda: _single_on_own_blur("A1", IPAD_SCREEN),
-    ("iphone-9d4e01fe", "pause.png"): lambda: _stacked_screen("A4", "A5", IPHONE_SCREEN, 0.4),
+    ("iphone-wake-pair", "before-wake.png"): lambda: _stacked_screen("A1", "A5", IPHONE_SCREEN, 0.25),
+    ("iphone-wake-pair", "after-wake.png"): lambda: _stacked_screen("A1", "A5", IPHONE_SCREEN, 0.4),
+    ("ipad-display-switch", "display-before.png"): lambda: _stacked_screen("A4", "A1", IPAD_SCREEN, 0.45),
+    ("ipad-display-switch", "display-after.png"): lambda: _single_on_own_blur("A1", IPAD_SCREEN),
+    ("iphone-pause-next-play", "pause.png"): lambda: _stacked_screen("A4", "A5", IPHONE_SCREEN, 0.4),
     # A dark band covers the top strip, so only the 0-40% upper region still sees A1.
-    ("iphone-9d4e01fe", "after-next.png"): lambda: _stacked_screen(
+    ("iphone-pause-next-play", "after-next.png"): lambda: _stacked_screen(
         "A1", "A5", IPHONE_SCREEN, 0.31, dark_top_band=0.18
     ),
-    ("iphone-9d4e01fe", "after-play.png"): lambda: _stacked_screen("A1", "A5", IPHONE_SCREEN, 0.4),
-    ("ipad-85c0537a", "after-next.png"): lambda: _stacked_screen("A4", "A1", IPAD_SCREEN, 0.55),
+    ("iphone-pause-next-play", "after-play.png"): lambda: _stacked_screen("A1", "A5", IPHONE_SCREEN, 0.4),
+    ("ipad-stacked-after-next", "after-next.png"): lambda: _stacked_screen("A4", "A1", IPAD_SCREEN, 0.55),
 }
 
 
@@ -1906,11 +1907,11 @@ class CaptureRegionIdentityTests(unittest.TestCase):
         self.assertEqual(identity.status, "MATCH")
         self.assertEqual(identity.mark, "A2")
 
-    def test_iphone_5e012fe5_wake_pair_keeps_stacked_identity(self) -> None:
+    def test_iphone_wake_pair_keeps_stacked_identity(self) -> None:
         from access_lifecycle_contract import scene_mark_from_bytes
 
-        before_png = _stand_in_png("iphone-5e012fe5", "before-wake.png")
-        after_png = _stand_in_png("iphone-5e012fe5", "after-wake.png")
+        before_png = _stand_in_png("iphone-wake-pair", "before-wake.png")
+        after_png = _stand_in_png("iphone-wake-pair", "after-wake.png")
         before_full = classify_screenshot(before_png)
         before_regions = classify_display_regions(before_png)
         self.assertEqual(before_full.status, "MATCH")
@@ -1929,26 +1930,26 @@ class CaptureRegionIdentityTests(unittest.TestCase):
         self.assertEqual(scene_mark_from_bytes(before_png), "A1+A5")
         self.assertEqual(scene_mark_from_bytes(after_png), "A1+A5")
 
-    def test_iphone_5e012fe5_wake_pair_does_not_report_switch(self) -> None:
+    def test_iphone_wake_pair_does_not_report_switch(self) -> None:
         from access_lifecycle_contract import scene_mark_from_bytes
 
         payload = _valid_payload()
         scenes = dict(payload["scenes"])  # type: ignore[arg-type]
         scenes["before_wake"] = scene_mark_from_bytes(
-            _stand_in_png("iphone-5e012fe5", "before-wake.png")
+            _stand_in_png("iphone-wake-pair", "before-wake.png")
         )
         scenes["after_wake"] = scene_mark_from_bytes(
-            _stand_in_png("iphone-5e012fe5", "after-wake.png")
+            _stand_in_png("iphone-wake-pair", "after-wake.png")
         )
         payload["scenes"] = scenes
         result = evaluate_access_lifecycle_evidence(payload)
         self.assertEqual(result["verdict"], "PASS")
 
-    def test_ipad_5e012fe5_display_before_is_stacked_not_unrecognizable(self) -> None:
+    def test_ipad_display_before_is_stacked_not_unrecognizable(self) -> None:
         from access_lifecycle_contract import scene_mark_from_bytes
 
-        before_png = _stand_in_png("ipad-5e012fe5", "display-before.png")
-        after_png = _stand_in_png("ipad-5e012fe5", "display-after.png")
+        before_png = _stand_in_png("ipad-display-switch", "display-before.png")
+        after_png = _stand_in_png("ipad-display-switch", "display-after.png")
         full = classify_screenshot(before_png)
         self.assertEqual(full.status, "TRANSITION")
         self.assertIsNone(full.mark)
@@ -1968,12 +1969,12 @@ class CaptureRegionIdentityTests(unittest.TestCase):
         result = evaluate_access_lifecycle_evidence(payload)
         self.assertEqual(result["verdict"], "PASS")
 
-    def test_iphone_9d4e01fe_pause_next_play_is_stacked_new_scene(self) -> None:
+    def test_iphone_pause_next_play_is_stacked_new_scene(self) -> None:
         from access_lifecycle_contract import scene_mark_from_bytes
 
-        pause_png = _stand_in_png("iphone-9d4e01fe", "pause.png")
-        after_next_png = _stand_in_png("iphone-9d4e01fe", "after-next.png")
-        after_play_png = _stand_in_png("iphone-9d4e01fe", "after-play.png")
+        pause_png = _stand_in_png("iphone-pause-next-play", "pause.png")
+        after_next_png = _stand_in_png("iphone-pause-next-play", "after-next.png")
+        after_play_png = _stand_in_png("iphone-pause-next-play", "after-play.png")
         full_next = classify_screenshot(after_next_png)
         self.assertEqual(full_next.status, "MATCH")
         self.assertEqual(full_next.mark, "A5")
@@ -2016,10 +2017,10 @@ class CaptureRegionIdentityTests(unittest.TestCase):
             evaluate_access_lifecycle_evidence(payload)
         self.assertIn("previous scene", str(raised.exception))
 
-    def test_ipad_85c0537a_after_next_scene_mark_is_stacked_match(self) -> None:
+    def test_ipad_after_next_scene_mark_is_stacked_match(self) -> None:
         from access_lifecycle_contract import scene_mark_from_bytes
 
-        png = _stand_in_png("ipad-85c0537a", "after-next.png")
+        png = _stand_in_png("ipad-stacked-after-next", "after-next.png")
         full = classify_screenshot(png)
         self.assertEqual(full.status, "TRANSITION")
         self.assertIsNone(full.mark)

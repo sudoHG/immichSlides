@@ -470,12 +470,12 @@ class Run:
                 lambda current: any(
                     node.get("AXLabel") == f"{PLAYBACK_INTERVAL_SECONDS} 秒" for node in current
                 ),
-                "The real UI slider did not read back 12 seconds",
+                f"The real UI slider did not read back {PLAYBACK_INTERVAL_SECONDS} seconds",
                 timeout=8,
             )
         require(
             any(node.get("AXLabel") == f"{PLAYBACK_INTERVAL_SECONDS} 秒" for node in tree),
-            "The real UI slider did not read back 12 seconds",
+            f"The real UI slider did not read back {PLAYBACK_INTERVAL_SECONDS} seconds",
         )
 
         is_single_photo = any(
@@ -687,7 +687,10 @@ class Run:
         self.open_playback_settings()
         current = self.ui()
         self.save("real-settings.json", current)
-        require(any(n.get("AXLabel") == "12 秒" for n in current), "Precondition: the real setting must be 12 seconds")
+        require(
+            any(n.get("AXLabel") == f"{PLAYBACK_INTERVAL_SECONDS} 秒" for n in current),
+            f"Precondition: the real setting must be {PLAYBACK_INTERVAL_SECONDS} seconds",
+        )
         require(any(n.get("AXUniqueId") == "settings.playback.autoPlay.toggle" and str(n.get("AXValue")) == "1" for n in current), "Precondition: auto-play must be on")
         require(any(n.get("AXLabel") == "单图模式" and str(n.get("AXValue")) == "1" for n in current), "Precondition: single-photo mode is required")
         self.shot("real-settings")
