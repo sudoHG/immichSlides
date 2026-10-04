@@ -165,7 +165,7 @@ Strict end-to-end tests run the real app against a local public fixture server s
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-App runs need macOS, a selected Xcode installation, the platform's installed Simulator runtime, Python 3 and Pillow. Before any build, check `df -h /System/Volumes/Data`; the runners require at least 80 GiB available by default. Use `--min-free-gib N` with a non-negative integer to change this local safety threshold, and install any required Simulator runtime through Xcode. Pick a local simulator UDID with `xcrun simctl list devices available`.
+App runs need macOS, a selected Xcode installation, the platform's installed Simulator runtime, Python 3 and Pillow. Python contract tests also require Swift (included with Xcode) and the zstd CLI (`brew install zstd`). Before any build, check `df -h /System/Volumes/Data`; the runners require at least 80 GiB available by default. Use `--min-free-gib N` with a non-negative integer to change this local safety threshold, and install any required Simulator runtime through Xcode. Pick a local simulator UDID with `xcrun simctl list devices available`.
 
 ```bash
 python3 scripts/run_strict_e2e.py --platform ios --destination 'platform=iOS Simulator,id=<UDID>' --suite journey-a --evidence-dir '<outside-repo>/first-connection'

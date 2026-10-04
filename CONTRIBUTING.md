@@ -10,7 +10,7 @@ Thanks for helping out. immichSlides is a SwiftUI photo slideshow client for [Im
 
 ## Setup
 
-- A Mac with the Xcode version the project was last upgraded with (Xcode 26.3, see `LastUpgradeCheck` in `immichSlides.xcodeproj`), the iOS and tvOS Simulator runtimes, and Python 3 with Pillow (`python3 -m pip install Pillow`).
+- A Mac with the Xcode version the project was last upgraded with (Xcode 26.3, see `LastUpgradeCheck` in `immichSlides.xcodeproj`), the iOS and tvOS Simulator runtimes, and Python 3 with Pillow (`python3 -m pip install Pillow`), plus Swift (included with Xcode) and the zstd CLI (`brew install zstd`) for Python contract tests.
 - Deployment target is iOS / tvOS 18.6.
 - `Config/env.xcconfig` is an optional, git-ignored local test configuration. `Config/Debug.xcconfig` includes it only when present, so a fresh clone builds in Xcode without setup.
 - The test runners refuse to start `xcodebuild` below 80 GiB free on `/System/Volumes/Data`; pass `--min-free-gib N` with a non-negative integer to change this local safety threshold.
