@@ -867,6 +867,7 @@ class SensitiveScanTests(unittest.TestCase):
         pass_blob = noise + _zstd_skippable_frame(b"safe metadata") + compressed_ok
         self.assertIn(coincidence.encode(), pass_blob)
         self.assertNotIn(coincidence.encode(), logical_ok)
+        self.assertNotIn(pin_bytes, logical_ok)
         logical_bad = f"entered pin {pin}\n".encode("utf-8")
         fail_blob = noise + _gzip_content_frame(logical_bad)
 
@@ -885,7 +886,7 @@ class SensitiveScanTests(unittest.TestCase):
                 elapsed = time.perf_counter() - started
                 return elapsed, result
 
-        elapsed, result = scan_blob(pass_blob, [coincidence])
+        elapsed, result = scan_blob(pass_blob, [*DEVICE_SYNTHETIC_PINS, coincidence])
         self.assertLess(elapsed, LARGE_XCRESULT_SCAN_DEADLINE_SECONDS)
         self.assertEqual(result["result"], "PASS")
         self.assertEqual(result["matched_files"], [])
