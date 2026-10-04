@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 """Clean stale entries in Localizable.xcstrings.
 
-Notes:
-This script only handles Xcode String Catalog entries with `extractionState = "stale"`.
+Only entries with `extractionState = "stale"` are touched. Xcode marks a key stale when its extractor
+no longer recognizes the key on a rescan, even if the key is still used (for example an old interpolation form).
+Per stale key, this script:
+- deletes it when it cannot be found anywhere in the source;
+- moves its missing translations to the new placeholder key, then deletes it, when it is an old interpolation form;
+- otherwise only drops the stale marker, keeping a manually maintained entry that the extractor misjudged.
 
-Why do stale entries appear?
-- Xcode extracts localizable strings automatically while scanning the source.
-- If a key was extracted before but the extractor no longer "recognizes" it on a rescan,
-  Xcode marks it stale and shows the warning
-  "References to this key could not be found in source code" in the editor.
-
-The script handles stale entries in three steps:
-1. If a stale key cannot be found anywhere in the source, delete it.
-   This usually means it really is a leftover entry.
-2. If a stale key is only an old interpolation form and the catalog already has the new placeholder key,
-   move the missing translations to the new key, then delete the old key.
-3. If a stale key can still be found in the source but there is no better new key,
-   only remove `extractionState = stale`.
-   This keeps it as a "manually maintained valid translation entry".
-
-The goal is not to "bluntly hide the warnings" but to clear out truly obsolete entries
-and turn entries that are still valid but misjudged by the extractor into a stable state.
+The goal is to remove truly obsolete entries, not to hide warnings for entries that are still valid.
 """
 
 from __future__ import annotations

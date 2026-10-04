@@ -19,7 +19,7 @@ exit 0
 
 
 class CheckAllTests(unittest.TestCase):
-    """Runs check_all.sh from a scratch repo copy with `xcrun` and `python3` replaced by logging stubs."""
+    """Runs check_all.sh in a scratch repo with stubbed tools, isolating command order and failure propagation."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

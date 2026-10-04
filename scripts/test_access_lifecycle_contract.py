@@ -1222,7 +1222,7 @@ def _cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
 
 
 def _single_on_own_blur(label: str, screen: tuple[int, int]) -> Image.Image:
-    """One photo fitted to the screen over a blurred copy of itself."""
+    """A single photo whose blurred copy must not count as a second photo."""
     image = _fixture_image(label)
     canvas = _cover(image, screen).filter(ImageFilter.GaussianBlur(48))
     scale = min(screen[0] / image.width, screen[1] / image.height)

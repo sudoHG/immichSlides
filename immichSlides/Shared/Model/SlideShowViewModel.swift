@@ -1511,7 +1511,7 @@ class SlideShowViewModel: ObservableObject {
         platform: MotionPlatform,
         reduceMotionEnabled: Bool
     ) -> MotionEligibilityResult {
-        MotionEligibilityPolicy.phase4AcceptedSceneRuntime.evaluate(
+        MotionEligibilityPolicy.acceptedSceneRuntime.evaluate(
             MotionEligibilityInput(
                 platform: platform,
                 sceneCapability: motionSceneCapability(for: scene),
@@ -2200,7 +2200,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     private func preloadSmartFillMotionPreparedSlotsIfNeeded(scene: PlaybackScene) {
-        let eligibility = MotionEligibilityPolicy.phase4AcceptedSceneRuntime.evaluate(
+        let eligibility = MotionEligibilityPolicy.acceptedSceneRuntime.evaluate(
             MotionEligibilityInput(
                 platform: motionPlatformForCurrentSurface(),
                 sceneCapability: motionSceneCapability(for: scene),

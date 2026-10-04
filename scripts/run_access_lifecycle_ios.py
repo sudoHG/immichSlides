@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Targeted iPhone/iPad access-lifecycle run using the public server and StrictE2E-iOS plan; not registered in the run_strict_e2e suite table."""
+"""Targeted iPhone/iPad access-lifecycle run using the local public-fixture server and the StrictE2E-iOS plan; not registered in the run_strict_e2e suite table."""
 
 from __future__ import annotations
 
@@ -117,13 +117,13 @@ def png_sha256(path: Path) -> str:
 def evaluate_device_evidence(evidence_dir: Path, *, device: str) -> dict[str, object]:
     payload_path = evidence_dir / "access-lifecycle.json"
     if not payload_path.is_file():
-        raise AccessLifecycleContractError("A missing image must not count as a pass")
+        raise AccessLifecycleContractError("Missing access-lifecycle.json evidence must not count as a pass")
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise AccessLifecycleContractError("A missing image must not count as a pass")
+        raise AccessLifecycleContractError("access-lifecycle.json payload is not an object")
     screenshots = payload.get("screenshots")
     if not isinstance(screenshots, dict):
-        raise AccessLifecycleContractError("A missing image must not count as a pass")
+        raise AccessLifecycleContractError("access-lifecycle.json has no screenshots mapping")
     scenes: dict[str, str] = {}
     for name in SCENE_SCREENSHOTS:
         relative = screenshots.get(name)

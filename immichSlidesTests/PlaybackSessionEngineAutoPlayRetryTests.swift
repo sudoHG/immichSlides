@@ -1,5 +1,5 @@
 //
-//  SlideShowViewModelAutoPlayRetryTests.swift
+//  PlaybackSessionEngineAutoPlayRetryTests.swift
 //  immichSlidesTests
 //
 //  Tests auto advance and retry in ScenePresentationState; does not go through SlideShowViewModel.
@@ -11,7 +11,7 @@ import Testing
 
 @MainActor
 @Suite(.sharedRuntimeIsolation)
-struct SlideShowViewModelAutoPlayRetryTests {
+struct PlaybackSessionEngineAutoPlayRetryTests {
     @Test
     func `automatic request first failure is recorded and issues a second attempt`() {
         var engine = PlaybackSessionEngine()

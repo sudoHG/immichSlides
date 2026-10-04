@@ -220,7 +220,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         }
     }
 
-    // Checks only the normal password-protection UI; no background/wake/display policy.
     // The password comes from private runner input.
     @MainActor
     func testPasswordProtectionNormalUI() throws {

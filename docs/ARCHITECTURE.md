@@ -135,7 +135,7 @@ Use these words, and the code names in backticks, instead of inventing new ones.
 - **prepared plan / prepared scene ring**: a SmartFill scene planned ahead of time off the main actor (`SmartFillPreparedPlanRequest` → `SmartFillPreparedPlanResult`), stored as previous/current/next in `PlaybackPreparedSceneRing` and invalidated by `PlaybackPreparedSceneFingerprint` changes.
 - **lookahead**: planning one more scene beyond the prepared next scene so its images can load early.
 - **prewarm**: in test names, loading the full-size images of prepared or lookahead slots before they are shown (`preloadSmartFillMotionPreparedSlotsIfNeeded`, `preloadSmartFillCandidateWindowIfNeeded`). This is a download, not a decode; the old decode prewarm path was removed and `check_release_guards.py` blocks its symbols.
-- **preload window**: the assets around the current index kept loaded (`preloadCount`, `AssetsDownloadManager.preloadPhotos`, `makeKeepIds`).
+- **preload window**: the assets around the current index kept loaded (`preloadCount`, `AssetsDownloadManager.preloadPhotos`).
 - **playback session**: one run of `PlaybackSessionEngine` (`playbackSessionId`). It is invalidated when the source, filter, solo-only rule or server changes, or the pool is reloaded (`PlaybackSessionInvalidationReason`).
 - **transition / navigation token**: a requested scene change (`PlaybackSessionTransition`) and the UUID that identifies it, used to discard late image results.
 - **presentation**: the reducer's view of what is on screen (`ScenePresentationState`). Its phases (`ScenePresentationPhase`) are `empty`, `stablePhoto`, `grace`, `transition`, `loading`, `incomingFromLoading`, `paused` and `sourceError`. Layers have roles `stable`, `outgoing` and `incoming`.

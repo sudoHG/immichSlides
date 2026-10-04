@@ -241,8 +241,8 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
     }
 
     @MainActor
-    func testTVOSPlaybackSettingsFilterEditorPathPresentsCleanFullScreen() throws {
-        try assertFilterEditorPresentsCleanFullScreen(
+    func testTVOSPlaybackSettingsFilterEditorPathPresentsEditorWithDoneFocused() throws {
+        try assertFilterEditorPresentsEditorWithDoneFocused(
             colorScheme: "dark",
             rootScreenshotName: "tvos-playback-settings-filter-editor-root",
             doneFocusedScreenshotName: "tvos-playback-settings-filter-editor-done-focused",
@@ -251,9 +251,9 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
     }
 
     @MainActor
-    func testTVOSPlaybackSettingsFilterEditorPathPresentsCleanFullScreenLight() throws {
+    func testTVOSPlaybackSettingsFilterEditorPathPresentsEditorWithDoneFocusedLight() throws {
 
-        try assertFilterEditorPresentsCleanFullScreen(
+        try assertFilterEditorPresentsEditorWithDoneFocused(
             colorScheme: "light",
             rootScreenshotName: "tvos-playback-settings-filter-editor-root-light",
             doneFocusedScreenshotName: "tvos-playback-settings-filter-editor-done-focused-light",
@@ -709,7 +709,7 @@ private extension PlaybackSettingsTVOSUITests {
     }
 
     @MainActor
-    func assertFilterEditorPresentsCleanFullScreen(
+    func assertFilterEditorPresentsEditorWithDoneFocused(
         colorScheme: String,
         rootScreenshotName: String,
         doneFocusedScreenshotName: String,

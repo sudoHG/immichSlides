@@ -7,7 +7,7 @@ struct MotionEligibilityPolicyTests {
 
     @Test
     func `accepted scene runtime policy enables runtime animation for accepted SmartFill on iOS`() {
-        let result = MotionEligibilityPolicy.phase4AcceptedSceneRuntime.evaluate(
+        let result = MotionEligibilityPolicy.acceptedSceneRuntime.evaluate(
             MotionEligibilityInput(
                 platform: .iOS,
                 sceneCapability: .smartFillAccepted,
@@ -28,7 +28,7 @@ struct MotionEligibilityPolicyTests {
 
     @Test
     func `accepted scene runtime policy enables iPadOS runtime motion in the same iOS family scope`() {
-        let result = MotionEligibilityPolicy.phase4AcceptedSceneRuntime.evaluate(
+        let result = MotionEligibilityPolicy.acceptedSceneRuntime.evaluate(
             MotionEligibilityInput(
                 platform: .iPadOS,
                 sceneCapability: .smartFillAccepted,
@@ -49,7 +49,7 @@ struct MotionEligibilityPolicyTests {
 
     @Test
     func `accepted scene runtime policy uses shared runtime animation for a SmartFill single scene on iOS`() {
-        let result = MotionEligibilityPolicy.phase4AcceptedSceneRuntime.evaluate(
+        let result = MotionEligibilityPolicy.acceptedSceneRuntime.evaluate(
             MotionEligibilityInput(
                 platform: .iOS,
                 sceneCapability: .smartFillSingle,
@@ -70,7 +70,7 @@ struct MotionEligibilityPolicyTests {
 
     @Test
     func `accepted scene runtime policy keeps a SmartFill fallback scene outside runtime animation on iOS`() {
-        let result = MotionEligibilityPolicy.phase4AcceptedSceneRuntime.evaluate(
+        let result = MotionEligibilityPolicy.acceptedSceneRuntime.evaluate(
             MotionEligibilityInput(
                 platform: .iOS,
                 sceneCapability: .smartFillFallback,
@@ -91,7 +91,7 @@ struct MotionEligibilityPolicyTests {
 
     @Test
     func `architecture-only policy keeps SmartFill ambient motion disabled on tvOS`() {
-        let result = MotionEligibilityPolicy.phase3AArchitectureOnly.evaluate(
+        let result = MotionEligibilityPolicy.architectureOnly.evaluate(
             MotionEligibilityInput(
                 platform: .tvOS,
                 sceneCapability: .smartFillAccepted,
@@ -112,7 +112,7 @@ struct MotionEligibilityPolicyTests {
     @Test
     func `accepted and SmartFill single scenes use shared runtime animation on tvOS`() {
         for sceneCapability in [MotionSceneCapability.smartFillAccepted, .smartFillSingle] {
-            let result = MotionEligibilityPolicy.phase4AcceptedSceneRuntime.evaluate(
+            let result = MotionEligibilityPolicy.acceptedSceneRuntime.evaluate(
                 MotionEligibilityInput(
                     platform: .tvOS,
                     sceneCapability: sceneCapability,
@@ -165,7 +165,7 @@ struct MotionEligibilityPolicyTests {
             ]
 
         for disabledCase in disabledCases {
-            let result = MotionEligibilityPolicy.phase4AcceptedSceneRuntime.evaluate(
+            let result = MotionEligibilityPolicy.acceptedSceneRuntime.evaluate(
                 MotionEligibilityInput(
                     platform: .tvOS,
                     sceneCapability: disabledCase.sceneCapability,
@@ -187,7 +187,7 @@ struct MotionEligibilityPolicyTests {
 
     @Test
     func `fallback and legacy scenes remain unchanged`() {
-        let fallback = MotionEligibilityPolicy.phase3AArchitectureOnly.evaluate(
+        let fallback = MotionEligibilityPolicy.architectureOnly.evaluate(
             MotionEligibilityInput(
                 platform: .iOS,
                 sceneCapability: .smartFillFallback,
@@ -202,7 +202,7 @@ struct MotionEligibilityPolicyTests {
         #expect(!fallback.isScheduleEnabled)
         #expect(fallback.identityReason == .fallbackDisabled)
 
-        let legacy = MotionEligibilityPolicy.phase3AArchitectureOnly.evaluate(
+        let legacy = MotionEligibilityPolicy.architectureOnly.evaluate(
             MotionEligibilityInput(
                 platform: .iOS,
                 sceneCapability: .legacySinglePhoto,
@@ -221,7 +221,7 @@ struct MotionEligibilityPolicyTests {
     @Test
     func `person and soloOnly adapters are future-capable but do not add visual behavior`() {
         for adapter in [MotionFocalAdapter.person, .soloOnly] {
-            let result = MotionEligibilityPolicy.phase3AArchitectureOnly.evaluate(
+            let result = MotionEligibilityPolicy.architectureOnly.evaluate(
                 MotionEligibilityInput(
                     platform: .iOS,
                     sceneCapability: .smartFillAccepted,
@@ -242,7 +242,7 @@ struct MotionEligibilityPolicyTests {
 
     @Test
     func `with Reduce Motion, unready slots and prerender all return identity`() {
-        let reduceMotion = MotionEligibilityPolicy.phase3AArchitectureOnly.evaluate(
+        let reduceMotion = MotionEligibilityPolicy.architectureOnly.evaluate(
             MotionEligibilityInput(
                 platform: .iOS,
                 sceneCapability: .smartFillAccepted,
@@ -255,7 +255,7 @@ struct MotionEligibilityPolicyTests {
         )
         #expect(reduceMotion.identityReason == .reduceMotion)
 
-        let pendingSlot = MotionEligibilityPolicy.phase3AArchitectureOnly.evaluate(
+        let pendingSlot = MotionEligibilityPolicy.architectureOnly.evaluate(
             MotionEligibilityInput(
                 platform: .iOS,
                 sceneCapability: .smartFillAccepted,
@@ -268,7 +268,7 @@ struct MotionEligibilityPolicyTests {
         )
         #expect(pendingSlot.identityReason == .slotNotReady)
 
-        let prerender = MotionEligibilityPolicy.phase3AArchitectureOnly.evaluate(
+        let prerender = MotionEligibilityPolicy.architectureOnly.evaluate(
             MotionEligibilityInput(
                 platform: .iOS,
                 sceneCapability: .smartFillAccepted,

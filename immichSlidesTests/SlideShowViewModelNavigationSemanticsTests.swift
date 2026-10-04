@@ -1428,7 +1428,7 @@ struct SlideShowViewModelNavigationSemanticsTests {
             rejectedLayoutReasonTopList: [.cropRetentionTooLow, .verticalDoubleDisallowedOnSurface],
             reasonCodes: ["accepted", "crop-retention-too-low", "vertical-double-disallowed-on-surface"],
             qaDebugSummary:
-                "version=smart-fill-planner-v2;sceneType=\(slotCount == 1 ? "single" : "double");surfaceKey=appleTV-landscape-tv-regular-safeTV;layoutVariant=\(slotCount == 1 ? "单图" : "horizontal-equal");ratioPreset=\(slotCount == 1 ? "full" : "50/50");slotRefs=asset_\(index)_0\(slotCount == 2 ? ",asset_\(index)_1" : "");ledgerSceneAssets=asset-\(index)-0\(slotCount == 2 ? ",asset-\(index)-1" : "");candidateWindowUsed=24;evaluationCount=2;fallback=none;rejects=vertical-double-disallowed-on-surface,crop-retention-too-low"
+                "version=smart-fill-planner-v2;sceneType=\(slotCount == 1 ? "single" : "double");surfaceKey=appleTV-landscape-tv-regular-safeTV;layoutVariant=\(slotCount == 1 ? PlaybackSmartFillLayoutVariant.single.rawValue : PlaybackSmartFillLayoutVariant.horizontalEqual.rawValue);ratioPreset=\(slotCount == 1 ? "full" : "50/50");slotRefs=asset_\(index)_0\(slotCount == 2 ? ",asset_\(index)_1" : "");ledgerSceneAssets=asset-\(index)-0\(slotCount == 2 ? ",asset-\(index)-1" : "");candidateWindowUsed=24;evaluationCount=2;fallback=none;rejects=vertical-double-disallowed-on-surface,crop-retention-too-low"
         )
     }
 
