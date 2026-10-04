@@ -28,7 +28,7 @@ Never do these without explicit approval from the maintainer, whatever the task 
 - Read the relevant code, its callers and its tests before changing anything. Do not guess at behavior.
 - For any non-trivial change, state up front what you will change, what you will not touch, and how you will verify it.
 - Fix correctness first, then consistency, then visual polish.
-- Write or update tests before changing logic or state flow. If a test cannot come first, say why and what you will verify instead.
+- Before changing logic or state flow, decide with [docs/TESTING.md](docs/TESTING.md) section 0 whether a test is needed. When it is, write it first; if it cannot come first, say why and what you will verify instead. Do not add tests the standard rules out.
 - Behavior-preserving refactors must keep features, UI, interaction and statistics unchanged. Verify against the same baseline before and after, and keep pre-existing failures separate from new regressions. Performance claims need before/after measurements.
 - Every change must build and pass tests on both iOS and tvOS, even if it only targets one of them.
 
@@ -120,7 +120,7 @@ Formatting is not a matter of taste here: `.swift-format` decides it and `check_
 
 ## Tests
 
-Follow [docs/TESTING.md](docs/TESTING.md). In short: unit tests are named with raw-identifier English sentences, every test has an assertion that can fail, every wait has a deadline, tests skip only when the environment cannot run them, and screenshot or capture tooling lives in the Evidence test plans. Tests must not depend on the simulator language: the test plans run the app in Simplified Chinese, system dialogs are handled in English and Chinese; unit tests compare user-visible text with `String(localized:)`, and UI tests find elements by `accessibilityIdentifier`. `scripts/check_test_conventions.py` enforces what a machine can judge.
+Follow [docs/TESTING.md](docs/TESTING.md). In short: write a test only when it guards a failure that can realistically happen again (section 0), unit tests are named with raw-identifier English sentences, every test has an assertion that can fail, every wait has a deadline, tests skip only when the environment cannot run them, and screenshot or capture tooling lives in the Evidence test plans. Tests must not depend on the simulator language: the test plans run the app in Simplified Chinese, system dialogs are handled in English and Chinese; unit tests compare user-visible text with `String(localized:)`, and UI tests find elements by `accessibilityIdentifier`. `scripts/check_test_conventions.py` enforces what a machine can judge.
 
 ## UI work
 
@@ -164,7 +164,7 @@ Work is done only when all of these hold on the final commit. Earlier runs on ot
 
 - [ ] `scripts/check_all.sh` passes.
 - [ ] Offline unit tests pass on iOS and tvOS, or failures that already existed before your change are listed separately with evidence.
-- [ ] New or changed logic has tests that fail without the change.
+- [ ] Where [docs/TESTING.md](docs/TESTING.md) section 0 calls for a test, it fails without the change; no test the standard rules out was added.
 - [ ] New user-visible strings are localized for every shipped locale.
 - [ ] UI changes have before/after screenshots.
 - [ ] Docs that describe changed behavior, commands, directory boundaries, target membership or privacy are updated.

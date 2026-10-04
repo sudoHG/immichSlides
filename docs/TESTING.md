@@ -4,6 +4,27 @@ Rules for adding or changing tests. Each rule can be checked on its own. When in
 
 Existing tests are being migrated to these rules. Do not rewrite unrelated tests while working on something else.
 
+## 0. When to write a test
+
+Every test must guard a failure that can realistically happen again. If you cannot name that failure in one sentence, do not write the test.
+
+Write a test when you:
+
+- fix a logic bug: one regression test that fails before the fix and passes after it;
+- add or change logic that applies rules: decisions, calculations, parsing, state transitions, persistence and migration, privacy or security guards. Cover each rule's cases once, at the smallest seam, in one parameterized test where possible;
+- change a contract other code or tools rely on: file formats, decoding of server responses, persisted keys, verdicts of the privacy scanners and checks.
+
+Do not write a test that:
+
+- proves something is gone: a removed button, deleted code, a renamed key. When you remove a feature, delete its tests;
+- tests test helpers or other test tooling, unless that tooling judges results for others, like the privacy scanners and the check scripts;
+- covers a purely visual or styling change, a copy change, a refactor that keeps behavior, comments or docs. Visual changes are verified with screenshots (see `AGENTS.md`, "UI work"); refactors rely on the existing tests;
+- checks what the compiler, the type system or the framework already guarantees, or pins a design value (see section 3);
+- checks configuration plumbing that one real run already verifies;
+- repeats a case another test already covers.
+
+Prefer extending an existing test file. A new test file needs a reason in the pull request. The pull request states, for every new test, the failure it guards against.
+
 ## 1. Where tests live
 
 | Location | What goes there | Runs by default |
@@ -106,6 +127,7 @@ These are exactly the problems tests exist to catch.
 
 ## 6. Checklist before submitting
 
+- [ ] Every new test guards a failure that can realistically happen again (section 0), and the pull request names it
 - [ ] Names are English and describe behavior: raw-identifier sentences for unit tests, `test…` for UI tests, nothing from the forbidden list
 - [ ] No `@Test("…")` display names
 - [ ] Every test has an assertion that can fail
