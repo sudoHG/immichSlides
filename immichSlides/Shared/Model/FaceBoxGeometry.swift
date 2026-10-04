@@ -126,16 +126,16 @@ enum FaceBoxGeometry {
     static func orientationCategory(_ orientation: String?) -> OrientationCategory {
         guard let orientation else { return .unknown }
         let normalized = orientation.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized.isEmpty { return .unknown }
-        if normalized == "6" || normalized == "8" || normalized.contains("90") || normalized.contains("270") {
-            return .rotated90Or270
-        }
-        if normalized == "1" || normalized.contains("horizontal") || normalized.contains("normal")
-            || normalized.contains("0")
-        {
+        switch normalized {
+        case "1", "2", "3", "4", "horizontal", "horizontal (normal)", "normal",
+            "mirror horizontal", "rotate 180", "mirror vertical":
             return .uprightOr180
+        case "5", "6", "7", "8", "mirror horizontal and rotate 270 cw", "rotate 90 cw",
+            "mirror horizontal and rotate 90 cw", "rotate 270 cw":
+            return .rotated90Or270
+        default:
+            return .unknown
         }
-        return .unknown
     }
 
     enum OrientationCategory: String, Equatable {
