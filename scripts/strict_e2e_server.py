@@ -448,17 +448,18 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json")
             return None
         lengths = self.headers.get_all("Content-Length", [])
+        length_text = lengths[0].strip(" \t") if len(lengths) == 1 else ""
         if (
             self.headers.get("Transfer-Encoding") is not None
             or len(lengths) != 1
-            or not lengths[0].isascii()
-            or not lengths[0].isdecimal()
+            or not length_text.isascii()
+            or not length_text.isdecimal()
         ):
             self.close_connection = True
             self._error(HTTPStatus.BAD_REQUEST, "Invalid request body framing")
             return None
         try:
-            length = int(lengths[0])
+            length = int(length_text)
         except ValueError:
             length = MAX_REQUEST_BODY_BYTES + 1
         if length > MAX_REQUEST_BODY_BYTES:

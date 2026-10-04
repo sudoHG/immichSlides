@@ -236,6 +236,13 @@ class StrictE2EServerContractTests(unittest.TestCase):
             self.assertIn(b" 200 ", response)
             self.assertEqual(len(json.loads(response.split(b"\r\n\r\n", 1)[1])), 5)
 
+    def test_content_length_accepts_surrounding_http_whitespace(self) -> None:
+        body = json.dumps({"size": 5, **strict_e2e_server.REQUIRED_SEARCH_VALUES}).encode()
+        with RunningServer() as server:
+            response = self.raw_post(server, f"Content-Length: \t{len(body)} \t\r\n".encode(), body)
+            self.assertIn(b" 200 ", response)
+            self.assertEqual(len(json.loads(response.split(b"\r\n\r\n", 1)[1])), 5)
+
     def test_server_reports_output_io_failure_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             blocking_file = Path(raw_directory) / "not-a-directory"
