@@ -51,11 +51,11 @@ TVOS_SCHEME = "immichSlides-tvOS"
 IOS_PLAN = "StrictE2E-iOS"
 TVOS_PLAN = "StrictE2E-tvOS"
 
-IOS_N1 = "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testFirstBootSetupSurvivesColdRelaunch"
+IOS_FIRST_BOOT_COLD_RELAUNCH = "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testFirstBootSetupSurvivesColdRelaunch"
 IOS_ALBUM_EMPTY = "immichSlidesUITests/StrictE2EFilterIOSUITests/testTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult"
 IOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterIOSUITests/testServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately"
 IOS_FAILURE = "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testFirstBootFailureStaysOnFirstBoot"
-TVOS_N1 = "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSFirstBootSaveAndConfiguredColdLaunch"
+TVOS_FIRST_BOOT_COLD_RELAUNCH = "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSFirstBootSaveAndConfiguredColdLaunch"
 TVOS_ALBUM_EMPTY = "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult"
 TVOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately"
 TVOS_FAILURE = "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSAlbumServerFirstBootFailureHTML200"
@@ -78,8 +78,8 @@ OFFICIAL_CASES: tuple[dict[str, str], ...] = (
     {
         "id": "1",
         "platform": "iphone",
-        "narrow": "N1",
-        "selector": IOS_N1,
+        "narrow": "first-boot-cold-relaunch",
+        "selector": IOS_FIRST_BOOT_COLD_RELAUNCH,
         "scenario": "normal",
         "scheme": IOS_SCHEME,
         "plan": IOS_PLAN,
@@ -141,8 +141,8 @@ OFFICIAL_CASES: tuple[dict[str, str], ...] = (
     {
         "id": "8",
         "platform": "tvos",
-        "narrow": "N1",
-        "selector": TVOS_N1,
+        "narrow": "first-boot-cold-relaunch",
+        "selector": TVOS_FIRST_BOOT_COLD_RELAUNCH,
         "scenario": "normal",
         "scheme": TVOS_SCHEME,
         "plan": TVOS_PLAN,
@@ -177,8 +177,8 @@ OFFICIAL_CASES: tuple[dict[str, str], ...] = (
     {
         "id": "12",
         "platform": "ipad",
-        "narrow": "N1",
-        "selector": IOS_N1,
+        "narrow": "first-boot-cold-relaunch",
+        "selector": IOS_FIRST_BOOT_COLD_RELAUNCH,
         "scenario": "normal",
         "scheme": IOS_SCHEME,
         "plan": IOS_PLAN,

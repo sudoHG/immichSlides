@@ -16,7 +16,13 @@ SOURCE_LANGUAGE = "en"
 # An explicit English entry is still allowed (for example a plural or a key disambiguated from another
 # key with the same English text) and is checked like a translation.
 TARGET_LOCALES = ("zh-Hans", "es", "ja", "zh-Hant-HK", "zh-Hant-TW")
-HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+# Catches Han, kana and Hangul in a key. It is a heuristic: keys in other non-Latin scripts
+# (Cyrillic, Arabic, Thai, ...) or in Latin-script languages such as Spanish are not detected.
+NON_ENGLISH_SCRIPT_RE = re.compile(
+    r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+    r"\u3041-\u309f\u30a1-\u30fa\u30fd-\u30ff\u31f0-\u31ff\uff66-\uff9f"
+    r"\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]"
+)
 FORMAT_SPECIFIER_RE = re.compile(
     r"%(?:(\d+)\$)?(@|lld|llu|ld|lu|d|u|f|g|s|c)"
 )
@@ -47,6 +53,12 @@ def iter_string_units(node: object, path: str = "") -> Iterator[tuple[str, dict]
     elif isinstance(node, list):
         for index, value in enumerate(node):
             yield from iter_string_units(value, f"{path}[{index}]")
+
+
+def is_integer(value: object) -> bool:
+    """True for an int that is not a bool (bool is an int subclass in Python)."""
+
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def placeholder_signature(value: str) -> tuple[tuple[int, str], ...]:
@@ -104,7 +116,7 @@ def placeholder_issues_for_localization(
 
         argument_number = substitution.get("argNum")
         format_specifier = substitution.get("formatSpecifier")
-        if not isinstance(argument_number, int) or not isinstance(format_specifier, str):
+        if not is_integer(argument_number) or not isinstance(format_specifier, str):
             issues.append(f"substitution-metadata:{locale}:{key}:{name}")
             continue
         composed_signature.append((argument_number, format_specifier))
@@ -126,7 +138,7 @@ def placeholder_issues_for_localization(
             continue
         argument_number = substitution.get("argNum")
         format_specifier = substitution.get("formatSpecifier")
-        if not isinstance(argument_number, int) or not isinstance(format_specifier, str):
+        if not is_integer(argument_number) or not isinstance(format_specifier, str):
             continue
 
         expected_specifier = source_by_argument.get(argument_number)
@@ -178,7 +190,7 @@ def validate_catalog(
         if extraction_state == "stale":
             issues.append(f"stale:{key}")
             continue
-        if HAN_RE.search(key):
+        if NON_ENGLISH_SCRIPT_RE.search(key):
             issues.append(f"source-not-english:{key}")
 
         is_required = require_all_live_keys or extraction_state == "manual"

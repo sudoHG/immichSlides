@@ -525,15 +525,6 @@ def assert_final_pool_equals_union(
         raise FilterContractError("Missing selection-union members cannot count as passing: " + ", ".join(missing))
 
 
-def assert_observed_covers_object_uniques(
-    marks: Sequence[str],
-    fixture_set: str,
-    album_ids: Sequence[str],
-    person_filters: Sequence[object],
-) -> None:
-    assert_final_pool_equals_union(marks, fixture_set, album_ids, person_filters)
-
-
 def _person_conflict_normal_paths(evidence_dir: Path) -> list[Path]:
     first = evidence_dir / "person-conflict-normal.png"
     if not first.is_file():
@@ -921,10 +912,13 @@ def _evaluate_tvos_album(evidence_dir: Path) -> dict[str, Any]:
     selection = _read_json_object(evidence_dir / "empty-selection.json", "empty-selection.json")
     if selection.get("identity_source") not in (None, "public_fixture_photo_mark"):
         raise FilterContractError("Request logs, indexes, and probes cannot be used as identity truth")
+    start_enabled = selection.get("start_enabled")
+    if not isinstance(start_enabled, bool):
+        raise FilterContractError("empty-selection.json start_enabled must be a Boolean")
     assert_empty_selection_cannot_start(
         album_ids=list(selection.get("album_ids") or []),
         person_filters=list(selection.get("person_filters") or []),
-        start_enabled=bool(selection.get("start_enabled")),
+        start_enabled=start_enabled,
     )
     return {
         "verdict": "PASS",
@@ -1092,8 +1086,10 @@ def _evaluate_filter_empty(evidence_dir: Path) -> dict[str, Any]:
     start_enabled = payload.get("start_enabled")
     if not isinstance(album_ids, list) or not isinstance(person_filters, list) or not isinstance(start_enabled, bool):
         raise FilterContractError("empty-selection.json fields are incomplete")
+    if not all(isinstance(item, str) for item in album_ids):
+        raise FilterContractError("empty-selection.json album_ids must contain only strings")
     assert_empty_selection_cannot_start(
-        album_ids=[item for item in album_ids if isinstance(item, str)],
+        album_ids=album_ids,
         person_filters=person_filters,
         start_enabled=start_enabled,
     )
@@ -1231,11 +1227,9 @@ def _evaluate_filter_vision(evidence_dir: Path) -> dict[str, Any]:
     if not isinstance(qualified, list) or not isinstance(face_counts, dict):
         raise FilterContractError("device Vision is missing qualified_marks / face_counts")
     marks = [item for item in qualified if isinstance(item, str)]
-    counts = {
-        str(key): value
-        for key, value in face_counts.items()
-        if isinstance(value, int)
-    }
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in face_counts.values()):
+        raise FilterContractError("device Vision face_counts must contain only integers")
+    counts = {str(key): value for key, value in face_counts.items()}
     mark = _classified_mark_from_png(evidence_dir, "vision-solo-1")
     if mark not in marks:
         raise FilterContractError(f"device Vision screenshot mark is not in qualified_marks: {mark}")

@@ -32,7 +32,6 @@ from strict_e2e_filter_contract import (  # noqa: E402
     assert_final_pool_equals_union,
     assert_foreign_id_tokens_absent,
     assert_foreign_server_ids_absent,
-    assert_observed_covers_object_uniques,
     assert_playback_marks_in_target,
     assert_playback_marks_in_union,
     assert_request_log_contract,
@@ -582,7 +581,7 @@ class AlbumPersonUnionContractTests(unittest.TestCase):
         self.assertEqual(album - person, {"A1"})
         self.assertEqual(person - album, {"A5"})
         expected = union_selection_labels("a", album_ids, person_filters)
-        assert_observed_covers_object_uniques(
+        assert_final_pool_equals_union(
             expected,
             "a",
             album_ids,
@@ -591,7 +590,7 @@ class AlbumPersonUnionContractTests(unittest.TestCase):
         for missing_index in range(len(expected)):
             incomplete = expected[:missing_index] + expected[missing_index + 1 :]
             with self.assertRaises(FilterContractError) as raised:
-                assert_observed_covers_object_uniques(
+                assert_final_pool_equals_union(
                     incomplete,
                     "a",
                     album_ids,
@@ -599,7 +598,7 @@ class AlbumPersonUnionContractTests(unittest.TestCase):
                 )
             self.assertIn("Missing selection-union members", str(raised.exception))
         with self.assertRaises(FilterContractError) as raised:
-            assert_observed_covers_object_uniques(
+            assert_final_pool_equals_union(
                 ["A1", "A4", "A5"],
                 "a",
                 album_ids,
@@ -759,6 +758,25 @@ class DeviceFilterVisualIdentityTests(unittest.TestCase):
             with self.assertRaises(FilterContractError) as raised:
                 evaluate_filter_visual_identity(evidence, "filter-empty")
             self.assertIn("empty selection", str(raised.exception))
+
+    def test_filter_empty_rejects_non_string_album_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_directory:
+            evidence = Path(raw_directory)
+            write_member_manifest(evidence / "member-manifest.json", "a")
+            (evidence / "empty-selection.json").write_text(
+                json.dumps(
+                    {
+                        "album_ids": [1],
+                        "person_filters": [],
+                        "start_enabled": False,
+                        "start_button_id": START_PLAYBACK_BUTTON_ID,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(FilterContractError) as raised:
+                evaluate_filter_visual_identity(evidence, "filter-empty")
+            self.assertIn("album_ids", str(raised.exception))
 
     def test_filter_person_rejects_wins_and_trusts_png_marks(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
@@ -1132,6 +1150,23 @@ print("\\(candidate != original)|\\(result.status.rawValue)|\\(result.mark ?? "n
                 evaluate_filter_visual_identity(evidence, "filter-vision")
             self.assertIn("faces", str(raised.exception))
 
+            for count in (True, None, "1"):
+                with self.subTest(count=count):
+                    (evidence / "vision-environment.json").write_text(
+                        json.dumps(
+                            {
+                                "environment": "device",
+                                "vision_available": True,
+                                "qualified_marks": ["A2"],
+                                "face_counts": {"A2": count},
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaises(FilterContractError) as raised:
+                        evaluate_filter_visual_identity(evidence, "filter-vision")
+                    self.assertIn("face_counts must contain only integers", str(raised.exception))
+
 
 class AlbumEditSwitchVisualContractTests(unittest.TestCase):
     def _write_valid_evidence(self, evidence: Path) -> None:
@@ -1327,6 +1362,24 @@ class FilterVisualIdentityFromScreenshotsTests(unittest.TestCase):
             with self.assertRaises(FilterContractError) as raised:
                 evaluate_filter_visual_identity(evidence, "tvos-album")
             self.assertIn("empty selection", str(raised.exception))
+
+    def test_album_suite_requires_a_boolean_start_enabled(self) -> None:
+        for selection in (
+            {"album_ids": [], "person_filters": []},
+            {"album_ids": [], "person_filters": [], "start_enabled": None},
+            {"album_ids": [], "person_filters": [], "start_enabled": 0},
+        ):
+            with self.subTest(selection=selection), tempfile.TemporaryDirectory() as raw_directory:
+                evidence = Path(raw_directory)
+                for name, label in zip(
+                    ("album-playback-1", "album-playback-2", "album-playback-3"),
+                    ("A1", "A2", "A3"),
+                ):
+                    (evidence / f"{name}.png").write_bytes(_fixture_png(label))
+                (evidence / "empty-selection.json").write_text(json.dumps(selection), encoding="utf-8")
+                with self.assertRaises(FilterContractError) as raised:
+                    evaluate_filter_visual_identity(evidence, "tvos-album")
+                self.assertIn("start_enabled must be a Boolean", str(raised.exception))
 
     def test_person_suite_classifies_pngs_and_keeps_simulator_vision_unverified(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:

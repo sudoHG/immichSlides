@@ -459,6 +459,41 @@ class OutOfOrderNegativeTests(unittest.TestCase):
             )
         self.assertIn("Unknown request", str(raised.exception))
 
+    def test_error_status_cannot_count_as_a_completion(self) -> None:
+        for delayed_status, immediate_status in ((200, 404), (500, 200)):
+            with self.subTest(delayed=delayed_status, immediate=immediate_status):
+                thumbnail = "/api/assets/<fixture-id>/thumbnail"
+                log_text = "\n".join(
+                    [
+                        _request_line(100, thumbnail, size="preview", asset="asset-a-1", started=True),
+                        _request_line(150, thumbnail, size="preview", asset="asset-a-2", started=True),
+                        _request_line(200, thumbnail, status=immediate_status, size="preview", asset="asset-a-2"),
+                        _request_line(500, thumbnail, status=delayed_status, size="preview", asset="asset-a-1"),
+                    ]
+                ) + "\n"
+                with self.assertRaises(OutOfOrderContractError) as raised:
+                    assert_out_of_order_timeline(
+                        log_text,
+                        delayed_asset_id="asset-a-1",
+                        immediate_asset_id="asset-a-2",
+                        size="preview",
+                    )
+                self.assertIn("must succeed", str(raised.exception))
+
+    def test_unknown_started_request_path_fails_the_batch(self) -> None:
+        with self.assertRaises(OutOfOrderContractError) as raised:
+            audit_runner_inputs(
+                fixture_set="a",
+                observed_hash=FROZEN_FIXTURE_SHA256["a"],
+                service_log=(
+                    "request_started elapsed_ms=1 method=GET path=/not-a-real-route "
+                    "size=preview range=absent fixture_asset_id=none\n"
+                    "request elapsed_ms=2 method=GET path=/healthz status=200 range=absent fixture_asset_id=none\n"
+                ),
+                server_url="http://127.0.0.1:9/api",
+            )
+        self.assertIn("Unknown request", str(raised.exception))
+
     def test_playback_window_without_late_overlap_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)

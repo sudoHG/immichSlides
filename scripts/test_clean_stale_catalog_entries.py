@@ -7,7 +7,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from clean_stale_catalog_entries import source_hits_for_key  # noqa: E402
+from clean_stale_catalog_entries import merge_missing_localizations, source_hits_for_key  # noqa: E402
 
 
 class CleanStaleCatalogEntriesTests(unittest.TestCase):
@@ -30,6 +30,14 @@ class CleanStaleCatalogEntriesTests(unittest.TestCase):
         sources = {path: 'Text("Need Help?")\n'}
 
         self.assertEqual(source_hits_for_key("Need Help?", sources), [path])
+
+    def test_merge_counts_only_locale_entries_actually_copied(self):
+        old = {"localizations": {"es": {"a": 1}, "ja": {"a": 2}, "zh-Hans": {"a": 3}}}
+        live = {"localizations": {"es": {"a": 9}}}
+
+        self.assertEqual(merge_missing_localizations(old, live), 2)
+        self.assertEqual(live["localizations"]["es"], {"a": 9})
+        self.assertEqual(merge_missing_localizations(old, live), 0)
 
 
 if __name__ == "__main__":

@@ -113,19 +113,22 @@ def source_hits_by_key(
     return hits_by_key
 
 
-def merge_missing_localizations(from_entry: dict, into_entry: dict) -> None:
+def merge_missing_localizations(from_entry: dict, into_entry: dict) -> int:
     """Move translations that are still useful from the old key to the new key.
 
     Only fills in "languages the new key does not have yet", so translations you already fixed by hand
-    are not overwritten.
+    are not overwritten. Returns how many locale entries were copied.
     """
 
     from_localizations = from_entry.get("localizations", {})
     into_localizations = into_entry.setdefault("localizations", {})
 
+    copied = 0
     for language, payload in from_localizations.items():
         if language not in into_localizations:
             into_localizations[language] = payload
+            copied += 1
+    return copied
 
 
 def clean_catalog() -> tuple[int, int, int]:
@@ -134,7 +137,7 @@ def clean_catalog() -> tuple[int, int, int]:
     The return values are, in order:
     - how many stale entries were deleted
     - how many stale flags were removed
-    - how many translations were migrated
+    - how many locale entries were copied from stale keys to their live equivalents
     """
 
     catalog = load_catalog()
@@ -167,9 +170,8 @@ def clean_catalog() -> tuple[int, int, int]:
 
         if normalized_matches:
             target_key = normalized_matches[0]
-            merge_missing_localizations(entry, strings[target_key])
+            migrated_translation += merge_missing_localizations(entry, strings[target_key])
             keys_to_delete.append(key)
-            migrated_translation += 1
             continue
 
         if not hits:

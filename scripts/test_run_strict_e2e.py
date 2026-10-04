@@ -259,6 +259,12 @@ class StrictE2ERunnerTests(unittest.TestCase):
                 self.assertIn("must use public fixture A", str(raised.exception))
                 self.assertEqual(CASE_E2E_IDS[suite], ["display-policy"])
 
+    def test_tvos_album_suite_is_fixture_a_only(self) -> None:
+        validate_suite_fixture("tvos-album", "a")
+        with self.assertRaises(CommandError) as raised:
+            validate_suite_fixture("tvos-album", "b")
+        self.assertIn("must use public fixture A", str(raised.exception))
+
     def test_album_edit_switch_is_routed_as_a_normal_visual_ui_suite(self) -> None:
         expected = {
             "ios": (
