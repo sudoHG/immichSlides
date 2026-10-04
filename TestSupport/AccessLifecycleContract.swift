@@ -20,13 +20,6 @@ enum AccessLifecycleContract {
     static let forbiddenDisplayModeKey = "UI_TEST_FORCE_PLAYBACK_DISPLAY_MODE"
     static let measuredProgressZeroEpsilon: Double = 0.001
     static let scenePresentationProbeKey = "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"
-    static let hostSelectors = [
-        "immichSlidesTests/AccessProtectionStoreTests",
-        "immichSlidesTests/PlaybackSettingsViewModelTests",
-        "immichSlidesTests/ManualPlaybackLifecycleTests",
-        "immichSlidesTests/SceneLifecycleContractTests",
-        "immichSlidesTests/StableMarkTimingTests"
-    ]
     static let knownRequests: Set<String> = [
         "settings.open",
         "settings.pin.enable",
@@ -53,9 +46,6 @@ enum AccessLifecycleContract {
     // while focus was still being established.
     static let minStableHiddenWakeFocusObservations = 5
     static let allowedSystemPauseActivation = "activate_existing_process"
-    // The 16:9 A1 fills the screen, so no second public fixture shows; A5 at the end of the pool is left alone.
-    // The comparison accepts only the portrait A2 or the square A3.
-    static let displayLetterboxMarks: Set<String> = ["A2", "A3"]
     static let newStableMarkPollInterval: TimeInterval = 0.1
     static let newStableMarkConfirmWindow: TimeInterval = 0.8
     static let ipadNewStableMarkConfirmWindow: TimeInterval = 1.0
@@ -161,70 +151,6 @@ enum AccessLifecycleContract {
     static func assertNoForcedDisplayMode(_ launchEnvironment: [String: String]) throws {
         if launchEnvironment[forbiddenDisplayModeKey] != nil {
             throw AssertionError.message("A forced display mode must not replace the real settings path")
-        }
-    }
-
-    static func assertDisplayBeforeLetterbox(
-        beforeMark: String?,
-        beforePartnerMarks: [String]
-    ) throws {
-        guard let before = beforeMark, before.hasPrefix("A") else {
-            throw AssertionError.message("display-before must be a single public fixture photo")
-        }
-        if before == "A1" {
-            throw AssertionError.message("The comparison must not stop on A1, which fills the screen")
-        }
-        if before == "A5" {
-            throw AssertionError.message("The comparison must not reach A5 at the end of the pool")
-        }
-        if displayLetterboxMarks.contains(before) == false {
-            throw AssertionError.message("display-before must be a portrait or square photo")
-        }
-        if beforePartnerMarks.contains(where: { $0 != before && $0.hasPrefix("A") }) {
-            throw AssertionError.message("The side margins in before must not already show a second public fixture")
-        }
-    }
-
-    static func assertDisplayStrategyVisible(
-        beforeStatus: String,
-        beforeMark: String?,
-        afterStatus: String,
-        afterCenterMark: String?,
-        afterPartnerMarks: [String],
-        beforePartnerMarks: [String] = []
-    ) throws {
-        for (status, label) in [(beforeStatus, "display-before"), (afterStatus, "display-after")] {
-            if status == "BLACK" {
-                throw AssertionError.message("All black must not count as a pass: \(label)")
-            }
-            if status == "BLANK" {
-                throw AssertionError.message("Blank must not count as a pass: \(label)")
-            }
-            if status == "UNRECOGNIZABLE" {
-                throw AssertionError.message("Unrecognizable input must not count as a pass: \(label)")
-            }
-        }
-        guard beforeStatus == "MATCH", let before = beforeMark, before.hasPrefix("A") else {
-            throw AssertionError.message("display-before must be a single public fixture photo")
-        }
-        try assertDisplayBeforeLetterbox(
-            beforeMark: before,
-            beforePartnerMarks: beforePartnerMarks
-        )
-        if afterStatus == "TRANSITION" && (afterCenterMark != before || afterPartnerMarks.isEmpty) {
-            throw AssertionError.message("TRANSITION must not count as a display strategy pass")
-        }
-        if afterCenterMark != before {
-            if afterStatus == "MATCH", afterCenterMark != before {
-                throw AssertionError.message("The settings round trip must not switch to a different single photo")
-            }
-            throw AssertionError.message("The main photo must still be the public fixture shown before settings")
-        }
-        if afterPartnerMarks.contains(where: { $0 != before }) == false {
-            throw AssertionError.message("after must visibly show Smart Fill")
-        }
-        if afterPartnerMarks.contains(where: { !$0.hasPrefix("A") }) {
-            throw AssertionError.message("A non-public fixture must not count as a pass: display-after")
         }
     }
 

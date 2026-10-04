@@ -17,14 +17,5 @@ struct FilterSummaryNavigationIdentityTests {
     func `people entry case carries no associated selection count`() {
         #expect(Mirror(reflecting: FilterSummarySelectionCardKind.people).children.isEmpty)
     }
-
-    @Test(
-        .disabled(
-            "Old path/Binding types removed; verify page identity and back target after selection with runtime UI; unit tests cannot prove NavigationLink behavior"
-        )
-    )
-    func `selecting a person stays on the people page and back only exits that page`() {
-        Issue.record("Pending runtime UI verification.")
-    }
 }
 #endif

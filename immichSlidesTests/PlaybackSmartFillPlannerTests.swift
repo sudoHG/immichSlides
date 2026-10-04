@@ -466,9 +466,9 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: appleTVSurface,
             candidates: [
-                candidate("asset-raw-primary", reference: "primary", width: 1800, height: 2000),
-                candidate("asset-raw-secondary", reference: "secondary", width: 2400, height: 2000),
-                candidate("asset-raw-tertiary", reference: "tertiary", width: 2400, height: 2000)
+                candidate(reference: "primary", width: 1800, height: 2000),
+                candidate(reference: "secondary", width: 2400, height: 2000),
+                candidate(reference: "tertiary", width: 2400, height: 2000)
             ]
         )
 
@@ -482,16 +482,16 @@ struct PlaybackSmartFillPlannerTests {
             (
                 phonePortraitSurface,
                 [
-                    candidate("asset-raw-phone-primary", reference: "phone-primary", width: 1800, height: 2000),
-                    candidate("asset-raw-phone-secondary", reference: "phone-secondary", width: 1800, height: 2000)
+                    candidate(reference: "phone-primary", width: 1800, height: 2000),
+                    candidate(reference: "phone-secondary", width: 1800, height: 2000)
                 ]
             ),
             (
                 iPadLandscapeSurface,
                 [
-                    candidate("asset-raw-ipad-primary", reference: "ipad-primary", width: 1800, height: 2000),
-                    candidate("asset-raw-ipad-secondary", reference: "ipad-secondary", width: 2400, height: 2000),
-                    candidate("asset-raw-ipad-tertiary", reference: "ipad-tertiary", width: 2400, height: 2000)
+                    candidate(reference: "ipad-primary", width: 1800, height: 2000),
+                    candidate(reference: "ipad-secondary", width: 2400, height: 2000),
+                    candidate(reference: "ipad-tertiary", width: 2400, height: 2000)
                 ]
             )
         ]
@@ -511,7 +511,6 @@ struct PlaybackSmartFillPlannerTests {
     @Test
     func `planner never falls back because fullsize or preview downloads are not ready`() {
         let primary = candidate(
-            "asset-raw-primary",
             reference: "primary",
             width: 1800,
             height: 2000
@@ -521,7 +520,7 @@ struct PlaybackSmartFillPlannerTests {
             surface: phonePortraitSurface,
             candidates: [
                 primary,
-                candidate("asset-raw-secondary", reference: "secondary", width: 1800, height: 2000)
+                candidate(reference: "secondary", width: 1800, height: 2000)
             ]
         )
 
@@ -546,8 +545,8 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: [
-                candidate("asset-raw-primary", reference: "primary", width: 1800, height: 2000),
-                candidate("asset-raw-secondary", reference: "secondary", width: 1800, height: 2000)
+                candidate(reference: "primary", width: 1800, height: 2000),
+                candidate(reference: "secondary", width: 1800, height: 2000)
             ],
             protectionSnapshot: protection
         )
@@ -566,11 +565,11 @@ struct PlaybackSmartFillPlannerTests {
         let entries: [(surface: PlaybackSmartFillSurface, primary: PlaybackSmartFillCandidateSummary)] = [
             (
                 iPadLandscapeSurface,
-                candidate("asset-raw-ipad-primary", reference: "ipad-primary", width: 1800, height: 2000)
+                candidate(reference: "ipad-primary", width: 1800, height: 2000)
             ),
             (
                 appleTVSurface,
-                candidate("asset-raw-tv-primary", reference: "tv-primary", width: 2000, height: 2000)
+                candidate(reference: "tv-primary", width: 2000, height: 2000)
             )
         ]
 
@@ -579,8 +578,8 @@ struct PlaybackSmartFillPlannerTests {
                 surface: entry.surface,
                 candidates: [
                     entry.primary,
-                    candidate("asset-raw-secondary-a", reference: "secondary-a", width: 1800, height: 2000),
-                    candidate("asset-raw-secondary-b", reference: "secondary-b", width: 2000, height: 2000)
+                    candidate(reference: "secondary-a", width: 1800, height: 2000),
+                    candidate(reference: "secondary-b", width: 2000, height: 2000)
                 ]
             )
 
@@ -598,13 +597,11 @@ struct PlaybackSmartFillPlannerTests {
         let entries: [(surface: PlaybackSmartFillSurface, primary: PlaybackSmartFillCandidateSummary)] = [
             (
                 iPadLandscapeSurface,
-                candidate(
-                    "asset-raw-ipad-landscape-primary", reference: "ipad-landscape-primary", width: 2400, height: 2000)
+                candidate(reference: "ipad-landscape-primary", width: 2400, height: 2000)
             ),
             (
                 appleTVSurface,
-                candidate(
-                    "asset-raw-tv-landscape-primary", reference: "tv-landscape-primary", width: 3708, height: 2400)
+                candidate(reference: "tv-landscape-primary", width: 3708, height: 2400)
             )
         ]
 
@@ -613,8 +610,8 @@ struct PlaybackSmartFillPlannerTests {
                 surface: entry.surface,
                 candidates: [
                     entry.primary,
-                    candidate("asset-raw-secondary-a", reference: "secondary-a", width: 1800, height: 2000),
-                    candidate("asset-raw-secondary-b", reference: "secondary-b", width: 2000, height: 2000)
+                    candidate(reference: "secondary-a", width: 1800, height: 2000),
+                    candidate(reference: "secondary-b", width: 2000, height: 2000)
                 ]
             )
 
@@ -633,7 +630,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: appleTVSurface,
             candidates: [
                 candidate(
-                    "asset-raw-tv-near-landscape-upper-face",
                     reference: "tv-near-landscape-upper-face",
                     width: 3708,
                     height: 2400,
@@ -657,8 +653,8 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: [
-                candidate("asset-raw-current", reference: "current", width: 1800, height: 2000),
-                candidate("asset-raw-secondary", reference: "secondary", width: 1800, height: 2000)
+                candidate(reference: "current", width: 1800, height: 2000),
+                candidate(reference: "secondary", width: 1800, height: 2000)
             ]
         )
 
@@ -674,8 +670,8 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: [
-                candidate("asset-raw-current-landscape", reference: "current-landscape", width: 2400, height: 1600),
-                candidate("asset-raw-secondary-landscape", reference: "secondary-landscape", width: 2400, height: 1600)
+                candidate(reference: "current-landscape", width: 2400, height: 1600),
+                candidate(reference: "secondary-landscape", width: 2400, height: 1600)
             ]
         )
 
@@ -697,13 +693,12 @@ struct PlaybackSmartFillPlannerTests {
             surface: phonePortraitSurface,
             candidates: [
                 candidate(
-                    "asset-raw-current-left-face",
                     reference: "current-left-face",
                     width: 2400,
                     height: 2000,
                     faceRects: [leftProtectedFace]
                 ),
-                candidate("asset-raw-secondary-fit", reference: "secondary-fit", width: 1800, height: 2000)
+                candidate(reference: "secondary-fit", width: 1800, height: 2000)
             ]
         )
 
@@ -722,8 +717,8 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phoneLandscapeSurface,
             candidates: [
-                candidate("asset-raw-current-portrait", reference: "current-portrait", width: 1500, height: 2000),
-                candidate("asset-raw-secondary-landscape", reference: "secondary-landscape", width: 2400, height: 2000)
+                candidate(reference: "current-portrait", width: 1500, height: 2000),
+                candidate(reference: "secondary-landscape", width: 2400, height: 2000)
             ]
         )
 
@@ -744,8 +739,8 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: surface,
             candidates: [
-                candidate("asset-raw-current-wide", reference: "current-wide", width: 2800, height: 2000),
-                candidate("asset-raw-ideal-partner", reference: "ideal-partner", width: 1376, height: 2000)
+                candidate(reference: "current-wide", width: 2800, height: 2000),
+                candidate(reference: "ideal-partner", width: 1376, height: 2000)
             ]
         )
         let currentSlot = try #require(result.slots.first { $0.candidateReference == "current-wide" })
@@ -772,8 +767,8 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: surface,
             candidates: [
-                candidate("asset-raw-current-portrait", reference: "current-portrait", width: 1480, height: 2000),
-                candidate("asset-raw-ideal-landscape", reference: "ideal-landscape", width: 2856, height: 2000)
+                candidate(reference: "current-portrait", width: 1480, height: 2000),
+                candidate(reference: "ideal-landscape", width: 2856, height: 2000)
             ]
         )
         let currentSlot = try #require(result.slots.first { $0.candidateReference == "current-portrait" })
@@ -796,9 +791,9 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: [
-                candidate("asset-raw-current-wide", reference: "current-wide", width: 2800, height: 2000),
-                candidate("asset-raw-earlier-square", reference: "earlier-square", width: 2000, height: 2000),
-                candidate("asset-raw-near-ideal", reference: "near-ideal", width: 1376, height: 2000)
+                candidate(reference: "current-wide", width: 2800, height: 2000),
+                candidate(reference: "earlier-square", width: 2000, height: 2000),
+                candidate(reference: "near-ideal", width: 1376, height: 2000)
             ]
         )
 
@@ -814,14 +809,13 @@ struct PlaybackSmartFillPlannerTests {
             surface: phonePortraitSurface,
             candidates: [
                 candidate(
-                    "asset-raw-current-face",
                     reference: "current-face",
                     width: 6000,
                     height: 2200,
                     faceRects: [faceAtLeftEdge]
                 ),
-                candidate("asset-raw-readable-1", reference: "readable-1", width: 1800, height: 2000),
-                candidate("asset-raw-readable-2", reference: "readable-2", width: 1800, height: 2000)
+                candidate(reference: "readable-1", width: 1800, height: 2000),
+                candidate(reference: "readable-2", width: 1800, height: 2000)
             ]
         )
 
@@ -837,7 +831,7 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: [
-                candidate("asset-raw-too-wide", reference: "too-wide", width: 6000, height: 1800)
+                candidate(reference: "too-wide", width: 6000, height: 1800)
             ]
         )
 
@@ -870,7 +864,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: appleTVSurface,
             candidates: [
                 candidate(
-                    "asset-raw-hard-face",
                     reference: "hard-face",
                     width: 4032,
                     height: 3024,
@@ -909,7 +902,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: iPadPortraitSurface,
             candidates: [
                 candidate(
-                    "asset-raw-ipad-portrait-safe-area-face",
                     reference: "ipad-portrait-safe-area-face",
                     width: 3200,
                     height: 4000,
@@ -946,7 +938,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: iPadLandscapeSurface,
             candidates: [
                 candidate(
-                    "asset-raw-ipad-landscape-safe-area-face",
                     reference: "ipad-landscape-safe-area-face",
                     width: 2732,
                     height: 2048,
@@ -983,7 +974,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: phonePortraitSurface,
             candidates: [
                 candidate(
-                    "asset-raw-iphone-portrait-safe-area-face",
                     reference: "iphone-portrait-safe-area-face",
                     width: 1200,
                     height: 2400,
@@ -1019,7 +1009,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: phoneLandscapeSurface,
             candidates: [
                 candidate(
-                    "asset-raw-iphone-landscape-safe-area-face",
                     reference: "iphone-landscape-safe-area-face",
                     width: 2556,
                     height: 1179,
@@ -1055,7 +1044,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: appleTVSurface,
             candidates: [
                 candidate(
-                    "asset-raw-b54-like",
                     reference: "b54-like",
                     width: 4032,
                     height: 3024,
@@ -1084,7 +1072,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: phonePortraitSurface,
             candidates: [
                 candidate(
-                    "asset-raw-upper-body-risk",
                     reference: "upper-body-risk",
                     width: 1300,
                     height: 2000,
@@ -1102,7 +1089,6 @@ struct PlaybackSmartFillPlannerTests {
     func `double selects a partner within the 24-candidate window without loosening thresholds`() {
         let badSecondaries = (1...12).map { index in
             candidate(
-                "asset-raw-bad-\(index)",
                 reference: "bad-\(index)",
                 width: 200,
                 height: 6000
@@ -1111,9 +1097,9 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: iPadLandscapeSurface,
             candidates: [
-                candidate("asset-raw-primary", reference: "primary", width: 1800, height: 2000)
+                candidate(reference: "primary", width: 1800, height: 2000)
             ] + badSecondaries + [
-                candidate("asset-raw-readable-13", reference: "readable-13", width: 1800, height: 2000)
+                candidate(reference: "readable-13", width: 1800, height: 2000)
             ]
         )
 
@@ -1128,7 +1114,6 @@ struct PlaybackSmartFillPlannerTests {
     func `iPhone portrait does not skip an unrenderable current photo to reach a later legal single fill`() {
         let badPrimaryRun = (0..<8).map { index in
             candidate(
-                "asset-raw-wide-\(index)",
                 reference: "wide-\(index)",
                 width: 6000,
                 height: 1800
@@ -1137,7 +1122,7 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: badPrimaryRun + [
-                candidate("asset-raw-portrait-fit", reference: "portrait-fit", width: 1200, height: 2400)
+                candidate(reference: "portrait-fit", width: 1200, height: 2400)
             ]
         )
 
@@ -1155,8 +1140,8 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: [
-                candidate("asset-raw-current-landscape", reference: "current-landscape", width: 5400, height: 3000),
-                candidate("asset-raw-later-primary", reference: "later-primary", width: 1800, height: 2000)
+                candidate(reference: "current-landscape", width: 5400, height: 3000),
+                candidate(reference: "later-primary", width: 1800, height: 2000)
             ]
         )
 
@@ -1180,8 +1165,8 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: [
-                candidate("asset-raw-current-wide", reference: "current-wide", width: 1920, height: 1080),
-                candidate("asset-raw-secondary-portrait", reference: "secondary-portrait", width: 1200, height: 1800)
+                candidate(reference: "current-wide", width: 1920, height: 1080),
+                candidate(reference: "secondary-portrait", width: 1200, height: 1800)
             ]
         )
 
@@ -1208,14 +1193,13 @@ struct PlaybackSmartFillPlannerTests {
             surface: iPadLandscapeSurface,
             candidates: [
                 candidate(
-                    "asset-raw-current-secondary-blocked",
                     reference: "current-secondary-blocked",
                     width: 1800,
                     height: 2000,
                     faceRects: [currentTopSubject]
                 ),
-                candidate("asset-raw-promoted-primary", reference: "promoted-primary", width: 1600, height: 2400),
-                candidate("asset-raw-extra-auxiliary", reference: "extra-auxiliary", width: 2000, height: 1800)
+                candidate(reference: "promoted-primary", width: 1600, height: 2400),
+                candidate(reference: "extra-auxiliary", width: 2000, height: 1800)
             ],
             protectionSnapshot: topHardObstruction
         )
@@ -1241,7 +1225,6 @@ struct PlaybackSmartFillPlannerTests {
         ])
         let blockers = (1...70).map { index in
             candidate(
-                "asset-raw-budget-blocker-\(index)",
                 reference: "budget-blocker-\(index)",
                 width: 90,
                 height: 100
@@ -1252,17 +1235,15 @@ struct PlaybackSmartFillPlannerTests {
             surface: iPadLandscapeSurface,
             candidates: [
                 candidate(
-                    "asset-raw-current-secondary-blocked-budget",
                     reference: "current-secondary-blocked-budget",
                     width: 1800,
                     height: 2000,
                     faceRects: [PlaybackPlanningRect(x: 0.44, y: 0.20, width: 0.12, height: 0.08)]
                 ),
                 candidate(
-                    "asset-raw-promoted-primary-budget", reference: "promoted-primary-budget", width: 1600, height: 2400
+                    reference: "promoted-primary-budget", width: 1600, height: 2400
                 ),
-                candidate(
-                    "asset-raw-extra-auxiliary-budget", reference: "extra-auxiliary-budget", width: 2000, height: 1800)
+                candidate(reference: "extra-auxiliary-budget", width: 2000, height: 1800)
             ] + blockers,
             protectionSnapshot: topHardObstruction
         )
@@ -1281,9 +1262,9 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: [
-                candidate("asset-raw-current-too-wide", reference: "current-too-wide", width: 9000, height: 1200),
-                candidate("asset-raw-later-a", reference: "later-a", width: 1800, height: 2000),
-                candidate("asset-raw-later-b", reference: "later-b", width: 1800, height: 2000)
+                candidate(reference: "current-too-wide", width: 9000, height: 1200),
+                candidate(reference: "later-a", width: 1800, height: 2000),
+                candidate(reference: "later-b", width: 1800, height: 2000)
             ]
         )
 
@@ -1299,9 +1280,9 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: iPadLandscapeSurface,
             candidates: [
-                candidate("asset-raw-primary", reference: "primary", width: 1800, height: 2000),
-                candidate("asset-raw-wide-secondary", reference: "wide-secondary", width: 2600, height: 2000),
-                candidate("asset-raw-wide-tertiary", reference: "wide-tertiary", width: 2600, height: 2000)
+                candidate(reference: "primary", width: 1800, height: 2000),
+                candidate(reference: "wide-secondary", width: 2600, height: 2000),
+                candidate(reference: "wide-tertiary", width: 2600, height: 2000)
             ]
         )
 
@@ -1317,9 +1298,9 @@ struct PlaybackSmartFillPlannerTests {
         `stable rotation is deterministic for the same input and sensitive to scene ordinal, not render count or randomness`()
     {
         let candidates = [
-            candidate("asset-raw-primary", reference: "primary", width: 1800, height: 2000),
-            candidate("asset-raw-secondary-a", reference: "secondary-a", width: 1800, height: 2000),
-            candidate("asset-raw-secondary-b", reference: "secondary-b", width: 1800, height: 2000)
+            candidate(reference: "primary", width: 1800, height: 2000),
+            candidate(reference: "secondary-a", width: 1800, height: 2000),
+            candidate(reference: "secondary-b", width: 1800, height: 2000)
         ]
         let first = plan(surface: phonePortraitSurface, candidates: candidates, seed: "session-a", sceneOrdinal: 7)
         let repeated = plan(surface: phonePortraitSurface, candidates: candidates, seed: "session-a", sceneOrdinal: 7)
@@ -1339,8 +1320,8 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phonePortraitSurface,
             candidates: [
-                candidate("asset-raw-secret-primary", reference: "asset_abcd1234", width: 1800, height: 2000),
-                candidate("asset-raw-secret-secondary", reference: "asset_efgh5678", width: 1800, height: 2000)
+                candidate(reference: "asset_abcd1234", width: 1800, height: 2000),
+                candidate(reference: "asset_efgh5678", width: 1800, height: 2000)
             ]
         )
         let summary = result.qaDebugSummary
@@ -1448,7 +1429,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: phoneLandscapeSurface,
             candidates: [
                 candidate(
-                    "asset-raw-bottom-face",
                     reference: "bottom-face",
                     width: 4336,
                     height: 2000,
@@ -1485,7 +1465,6 @@ struct PlaybackSmartFillPlannerTests {
             surface: phoneLandscapeSurface,
             candidates: [
                 candidate(
-                    "asset-raw-exif-face",
                     reference: "exif-face",
                     width: 4336,
                     height: 2000,
@@ -1517,7 +1496,7 @@ struct PlaybackSmartFillPlannerTests {
         let lowResolution = plan(
             surface: phoneLandscapeSurface,
             candidates: [
-                candidate("asset-raw-lowres", reference: "lowres", width: 800, height: 400)
+                candidate(reference: "lowres", width: 800, height: 400)
             ]
         )
         #expect(lowResolution.sceneType == .fallback)
@@ -1537,7 +1516,7 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: phoneLandscapeSurface,
             candidates: [
-                candidate("asset-raw-lowres", reference: "lowres", width: 800, height: 400)
+                candidate(reference: "lowres", width: 800, height: 400)
             ]
         )
 
@@ -1553,14 +1532,12 @@ struct PlaybackSmartFillPlannerTests {
     {
         let nearButLowResolutionPartners = (1...12).map { index in
             candidate(
-                "asset-raw-near-lowres-\(index)",
                 reference: "near-lowres-\(index)",
                 width: 90,
                 height: 100
             )
         }
         let lateValidPartner = candidate(
-            "asset-raw-late-valid",
             reference: "late-valid",
             width: 1800,
             height: 2000
@@ -1569,7 +1546,7 @@ struct PlaybackSmartFillPlannerTests {
         let result = plan(
             surface: iPadLandscapeSurface,
             candidates: [
-                candidate("asset-raw-current-tall", reference: "current-tall", width: 1800, height: 4286)
+                candidate(reference: "current-tall", width: 1800, height: 4286)
             ] + nearButLowResolutionPartners + [lateValidPartner]
         )
 
@@ -1601,10 +1578,10 @@ struct PlaybackSmartFillPlannerTests {
     func `planner's pure computation stays bounded for a 21-candidate workload`() {
         let candidates =
             [
-                candidate("asset-raw-primary", reference: "primary", width: 1800, height: 2000)
+                candidate(reference: "primary", width: 1800, height: 2000)
             ]
             + (1...20).map {
-                candidate("asset-raw-\($0)", reference: "candidate-\($0)", width: 1800, height: 2000)
+                candidate(reference: "candidate-\($0)", width: 1800, height: 2000)
             }
         let start = ContinuousClock.now
 
@@ -1691,7 +1668,6 @@ struct PlaybackSmartFillPlannerTests {
     }
 
     private func candidate(
-        _ rawAssetId: String,
         reference: String,
         width: Int,
         height: Int,
@@ -1727,7 +1703,6 @@ struct PlaybackSmartFillPlannerTests {
     ) -> [PlaybackSmartFillCandidateSummary] {
         let currentAspect = benchmarkAspects[sceneIndex % benchmarkAspects.count]
         let current = candidate(
-            "asset-raw-bench-\(surface.surfaceKey)-\(sceneIndex)-current",
             reference: "bench-\(surface.surfaceKey)-\(sceneIndex)-current",
             width: benchmarkPixelSize(for: currentAspect).width,
             height: benchmarkPixelSize(for: currentAspect).height
@@ -1736,7 +1711,6 @@ struct PlaybackSmartFillPlannerTests {
             let aspect = benchmarkAspects[(sceneIndex + candidateIndex + 1) % benchmarkAspects.count]
             let pixelSize = benchmarkPixelSize(for: aspect)
             return candidate(
-                "asset-raw-bench-\(surface.surfaceKey)-\(sceneIndex)-\(candidateIndex)",
                 reference: "bench-\(surface.surfaceKey)-\(sceneIndex)-\(candidateIndex)",
                 width: pixelSize.width,
                 height: pixelSize.height,

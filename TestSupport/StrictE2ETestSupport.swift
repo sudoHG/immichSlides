@@ -15,7 +15,6 @@ private enum StrictE2ETestSupportError: LocalizedError {
     case missingInput(String)
     case invalidServerURL
     case nonPublicKey
-    case forbiddenLaunchKeys([String])
     case invalidPINFormat(String)
     case pinsNotDistinct
 
@@ -27,8 +26,6 @@ private enum StrictE2ETestSupportError: LocalizedError {
             return "strict E2E only allows a 127.0.0.1/localhost /api server address."
         case .nonPublicKey:
             return "strict E2E only allows the public synthetic server key."
-        case .forbiddenLaunchKeys(let keys):
-            return "App launchEnvironment contains forbidden keys: \(keys.joined(separator: ", "))"
         case .invalidPINFormat(let key):
             return "strict E2E private PIN input has an invalid format: \(key)"
         case .pinsNotDistinct:
@@ -142,23 +139,9 @@ extension XCTestCase {
     @MainActor
     private func prepareStrictE2ELaunch(_ app: XCUIApplication) throws {
         app.launchEnvironment = [:]
-        let forbiddenKeys = app.launchEnvironment.keys.filter { key in
-            key.hasPrefix("UI_TEST_")
-                || [
-                    "IMMICH_TEST_SERVER_URL",
-                    "IMMICH_TEST_URL",
-                    "IMMICH_TEST_API_KEY"
-                ].contains(key)
-        }.sorted()
-        guard forbiddenKeys.isEmpty else {
-            throw StrictE2ETestSupportError.forbiddenLaunchKeys(forbiddenKeys)
-        }
 
         let audit = try JSONSerialization.data(
-            withJSONObject: [
-                "launch_environment_keys": app.launchEnvironment.keys.sorted(),
-                "forbidden_keys_present": forbiddenKeys
-            ],
+            withJSONObject: ["launch_environment_keys": app.launchEnvironment.keys.sorted()],
             options: [.prettyPrinted, .sortedKeys]
         )
         let attachment = XCTAttachment(data: audit, uniformTypeIdentifier: "public.json")

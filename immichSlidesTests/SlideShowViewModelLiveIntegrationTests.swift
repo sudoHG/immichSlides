@@ -646,17 +646,4 @@ struct SlideShowViewModelLiveIntegrationTests {
             .compactMap { $0 }
             .first { $0.isEmpty == false }
     }
-
-    private func sanitizedErrorDescription(_ error: Error) -> String {
-        let description = String(describing: error)
-        guard let configuration = Self.liveConfiguration else { return description }
-
-        return
-            description
-            .replacingOccurrences(of: configuration.serverURL, with: "<server-url-redacted>")
-            .replacingOccurrences(
-                of: ImmichServer.normalizeServerURL(configuration.serverURL), with: "<server-url-redacted>"
-            )
-            .replacingOccurrences(of: configuration.apiKey, with: "<api-key-redacted>")
-    }
 }

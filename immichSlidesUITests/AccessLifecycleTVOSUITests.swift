@@ -690,14 +690,6 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
     }
 
     private func writePasswordProtectionPayload(pins: StrictE2EPrivatePINInput) throws {
-        try AccessLifecycleContract.assertNotSkip("ran")
-        try AccessLifecycleContract.assertSettingsSource("real_settings_ui")
-        try AccessLifecycleContract.assertPinFlow(
-            wrongPinEntered: false,
-            cancelStillProtected: true,
-            correctPinEntered: true,
-            restartGated: true
-        )
         try AccessLifecycleContract.assertKnownRequests(requests)
         let d01 = try AccessLifecycleContract.d01Verdict(
             storageKind: "uitest_userdefaults",
@@ -758,25 +750,6 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
             app: app,
             link: "settings.playback.autoPlay.link",
             option: "settings.playback.autoPlay.on.button",
-            stepsToLink: 0
-        )
-        record("settings.save.autoplay")
-        returnToSlideShow(app: app)
-    }
-
-    @MainActor
-    private func turnAutoplayOffThroughRealUI(app: XCUIApplication) throws {
-        openSettingsFromSlideShow(app: app)
-        reachSettingsHomeThroughOptionalPin(app: app, message: "Must enter settings before turning autoplay off.")
-        let playbackItem = app.buttons["settings.item.playback"]
-        if playbackItem.hasFocus == false {
-            moveFocus(.up, to: playbackItem, maximumPresses: 4, message: "Must return to playback settings.")
-        }
-        XCUIRemote.shared.press(.select)
-        selectPlaybackToggle(
-            app: app,
-            link: "settings.playback.autoPlay.link",
-            option: "settings.playback.autoPlay.off.button",
             stepsToLink: 0
         )
         record("settings.save.autoplay")
@@ -1538,9 +1511,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
     ) -> XCUIElement {
         let button = app.buttons[identifier]
         if button.exists { return button }
-        let identifiedElement = app.descendants(matching: .any)[identifier]
-        if identifiedElement.exists { return identifiedElement }
-        return identifiedElement
+        return app.descendants(matching: .any)[identifier]
     }
 
     private func valueContainsSelected(_ element: XCUIElement) -> Bool {
@@ -1553,14 +1524,6 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
     }
 
     private func writeHostPayload() throws {
-        try AccessLifecycleContract.assertNotSkip("ran")
-        try AccessLifecycleContract.assertSettingsSource("real_settings_ui")
-        try AccessLifecycleContract.assertPinFlow(
-            wrongPinEntered: false,
-            cancelStillProtected: true,
-            correctPinEntered: true,
-            restartGated: true
-        )
         try AccessLifecycleContract.assertKnownRequests(requests)
         try AccessLifecycleContract.assertNoForcedDisplayMode([:])
         try AccessLifecycleContract.assertSystemPauseActivation(

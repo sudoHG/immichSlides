@@ -791,23 +791,6 @@ private extension AppStoreScreenshotUITests {
         return app
     }
 
-    @MainActor
-    func launchIntoFilterEditor() throws -> XCUIApplication {
-        let app = try launchIntoSlideShow(disablePlaybackEntryHint: true)
-        try openSettingsFromSlideShow(app)
-        try openSettingsSection(app: app, sectionID: "settings.item.playback")
-
-        let filterConfigButton = app.buttons["settings.playback.filterConfig.button"]
-        try waitOrThrow(filterConfigButton, timeout: 12, "Playback settings should show the edit-filter entry")
-        tapElement(filterConfigButton)
-
-        try waitOrThrow(
-            app.buttons["filter.editor.album.entry"], timeout: 12, "Filter editor should show the album entry")
-        try waitOrThrow(
-            app.buttons["filter.editor.person.entry"], timeout: 12, "Filter editor should show the people entry")
-        return app
-    }
-
     func makeBaseLaunchApp(
         disablePlaybackEntryHint: Bool = true,
         seedFilterSelection: Bool = false,
@@ -821,7 +804,6 @@ private extension AppStoreScreenshotUITests {
         app.launchEnvironment["UI_TEST_COLOR_SCHEME"] = "light"
         app.launchEnvironment["UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
-        app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_MODE"] = "1"
         if seedFilterSelection || filterSelectionJSON != nil {
             app.launchEnvironment["UI_TEST_SEED_FILTER_SELECTION"] = "1"
         }
@@ -1130,22 +1112,6 @@ private extension AppStoreScreenshotUITests {
         guard condition() else {
             throw ScreenshotError.message(message)
         }
-    }
-}
-
-private extension XCUIElement {
-    func clearAndType(text: String) {
-        // Send one delete per existing character, then type; there is no generic clear API.
-
-        let currentValue = (value as? String) ?? ""
-        tap()
-
-        if !currentValue.isEmpty {
-            let deletes = String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentValue.count)
-            typeText(deletes)
-        }
-
-        typeText(text)
     }
 }
 
@@ -1704,7 +1670,6 @@ private extension AppStoreScreenshotTVOSUITests {
         app.launchEnvironment["UI_TEST_COLOR_SCHEME"] = "light"
         app.launchEnvironment["UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
-        app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_MODE"] = "1"
         if disablePlaybackEntryHint {
             app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         }

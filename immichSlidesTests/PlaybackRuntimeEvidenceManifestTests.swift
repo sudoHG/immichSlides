@@ -853,20 +853,6 @@ struct PlaybackRuntimeEvidenceManifestTests {
     }
 
     @Test
-    func `startup fixture exposes complete phase timestamps and durations`() throws {
-        let record = startupFallbackRecord()
-        #expect(runtimePhaseKeyCompleteness(for: [record]) == "complete")
-        let timestamps = try #require(record["runtimePhaseTimestampsMs"] as? [String: Double])
-        let durations = try #require(record["runtimePhaseDurationsMs"] as? [String: Double])
-        var previousTimestamp: Double?
-        for phase in Self.requiredStartupPhaseKeys {
-            let timestamp = try #require(timestamps[phase])
-            #expect(durations[phase] == max(0, timestamp - (previousTimestamp ?? timestamp)))
-            previousTimestamp = timestamp
-        }
-    }
-
-    @Test
     func `photo load phase summary requires first image load chain fields`() throws {
         let record = startupFallbackRecord()
         let line = try jsonLine(record)

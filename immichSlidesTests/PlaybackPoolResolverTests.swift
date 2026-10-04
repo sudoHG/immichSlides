@@ -776,26 +776,6 @@ struct AppFlowStateMachineTests {
         #expect(flow.slideshowBackRoute == .filterSummary)
         #expect(flow.slideshowBackTarget() == .filterSummary)
     }
-
-    @Test(
-        .disabled("handleSlideshowExit removed; state machine has no playback exit event, verify Menu/Back at runtime")
-    )
-    func `filtered playback menu or back returns to the FilterSummary target page`() {
-        Issue.record("Pending runtime UI verification.")
-    }
-
-    @Test(
-        .disabled("handleSlideshowExit removed; state machine has no playback exit event, verify Menu/Back at runtime")
-    )
-    func `onboarding random playback menu or back returns to the ModeSelection target page`() {
-        Issue.record("Pending runtime UI verification.")
-    }
-
-    @Test(
-        .disabled(
-            "handleSlideshowExit removed; state machine only proves PIN revokes back target; verify Menu/Back at runtime"
-        )
-    )
     func `slideshow menu or back is a no op with no back target or PIN enabled`() {
         Issue.record("Pending runtime UI verification.")
     }

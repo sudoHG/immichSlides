@@ -80,7 +80,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         XCTAssertTrue(
             waitForPlaybackControls(app: app, timeout: 20),
             "Must return to the playback page after coming back from the background.")
-        dismissPlaybackEntryHintIfPresent(app: app)
         let backgroundAfter = try captureRequiredMark(app: app, name: "after-background")
         var deferredFailures: [String] = []
         do {
@@ -140,7 +139,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         )
         XCTAssertTrue(
             waitForPlaybackControls(app: app, timeout: 25), "Should return to the playback page after relaunch.")
-        dismissPlaybackEntryHintIfPresent(app: app)
         openSettingsFromSlideshow(app: app)
         XCTAssertTrue(
             app.buttons["pinEntry.close.button"].waitForExistence(timeout: 8),
@@ -255,7 +253,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         XCTAssertTrue(
             waitForPlaybackControls(app: app, timeout: 15),
             "Must return to the playback page after changing the display policy.")
-        dismissPlaybackEntryHintIfPresent(app: app)
         _ = try captureRequiredPNG(app: app, name: "display-policy-after-settings")
 
         openSettingsFromSlideshow(app: app)
@@ -271,7 +268,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         )
         XCTAssertTrue(
             waitForPlaybackControls(app: app, timeout: 25), "Should return to the playback page after relaunch.")
-        dismissPlaybackEntryHintIfPresent(app: app)
         openSettingsFromSlideshow(app: app)
         try assertNarrowEntryHasNoPin(app: app)
         let afterRestart = try readPlaybackSettings(app: app, allowPinUnlock: false)
@@ -452,7 +448,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             tapElement(continueButton)
         }
         XCTAssertTrue(waitForPlaybackControls(app: app, timeout: 30), "Random mode must reach the playback page.")
-        dismissPlaybackEntryHintIfPresent(app: app)
     }
 
     @MainActor
@@ -643,7 +638,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         )
         XCTAssertTrue(
             waitForPlaybackControls(app: app, timeout: 25), "Should return to the playback page after relaunch.")
-        dismissPlaybackEntryHintIfPresent(app: app)
 
         openSettingsFromSlideshow(app: app)
         XCTAssertTrue(
@@ -929,7 +923,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         XCTAssertTrue(
             waitForPlaybackControls(app: app, timeout: 15),
             "Must return to the playback page after changing the display policy.")
-        dismissPlaybackEntryHintIfPresent(app: app)
         let afterPNG = try captureRequiredPNG(app: app, name: "display-after")
         let afterMark = contractMark(StrictE2EPhotoIdentity.captureIdentity(png: afterPNG))
         try AccessLifecycleContract.assertDisplayPolicyTookEffect(
@@ -1021,7 +1014,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         XCTAssertTrue(
             waitForPlaybackControls(app: app, timeout: 15),
             "Must return to the playback page before going to the background.")
-        dismissPlaybackEntryHintIfPresent(app: app)
         return settings
     }
 
@@ -1591,13 +1583,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         }
     }
 
-    // If the hint exists, we are already on the playback page. Tapping the hint waits for animation idle,
-    // after which the control bar can hide after 8 s.
-    @MainActor
-    private func dismissPlaybackEntryHintIfPresent(app: XCUIApplication) {
-        _ = app.descendants(matching: .any)["slideshow.entryHint.banner"].exists
-    }
-
     @MainActor
     private func fillFirstBootForm(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
@@ -1659,9 +1644,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     private func firstBootControl(in app: XCUIApplication, identifier: String) -> XCUIElement {
         let button = app.buttons[identifier]
         if button.exists { return button }
-        let identifiedElement = app.descendants(matching: .any)[identifier]
-        if identifiedElement.exists { return identifiedElement }
-        return identifiedElement
+        return app.descendants(matching: .any)[identifier]
     }
 
     @MainActor
@@ -1944,7 +1927,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         returnToSlideshowFromSettings(app: app)
         XCTAssertTrue(
             waitForPlaybackControls(app: app, timeout: 15), "Must return to the playback page after settings.")
-        dismissPlaybackEntryHintIfPresent(app: app)
         return interval
     }
 
