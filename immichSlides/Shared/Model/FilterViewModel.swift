@@ -288,10 +288,10 @@ class FilterViewModel: ObservableObject {
         }
 
         let longNames: [String] = [
-            "小王在京都岚山的秋天旅行纪念相册主角",
-            "和外婆一起在青岛海边看日落的那个夏天",
-            "毕业旅行里总是背着胶片相机的同学",
-            "跨年夜在外滩等烟花的时候认识的新朋友"
+            "Avery Lindqvist on the Autumn Trip Album",
+            "Summer Sunset at the Seaside with Grandma",
+            "Classmate Always Carrying a Film Camera",
+            "New Friend From the Fireworks Countdown"
         ]
 
         return people.enumerated().map { index, person in

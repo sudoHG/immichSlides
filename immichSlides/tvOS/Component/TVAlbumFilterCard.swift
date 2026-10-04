@@ -78,16 +78,16 @@ struct TVAlbumFilterCard: View {
                 coverURL: url,
                 assetsCount: assetCount
             )
-            .cornerRadius(30)
+            .clipShape(RoundedRectangle(cornerRadius: Layout.cardCornerRadius, style: .continuous))
             .shadow(radius: 10)
         } else {
             ZStack(alignment: .bottomLeading) {
 
                 if isLightAppearance {
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    RoundedRectangle(cornerRadius: Layout.cardCornerRadius, style: .continuous)
                         .fill(Color.white.opacity(0.80))
                 } else {
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    RoundedRectangle(cornerRadius: Layout.cardCornerRadius, style: .continuous)
                         .fill(.ultraThinMaterial)
                 }
 
@@ -96,7 +96,7 @@ struct TVAlbumFilterCard: View {
                     startPoint: .bottom,
                     endPoint: .top
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Layout.cardCornerRadius, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(albumDisplayName)
@@ -114,7 +114,7 @@ struct TVAlbumFilterCard: View {
                 .padding(.vertical, 16)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                RoundedRectangle(cornerRadius: Layout.cardCornerRadius, style: .continuous)
                     .stroke(isLightAppearance ? Color.black.opacity(0.10) : Color.white.opacity(0.18), lineWidth: 1)
             }
             .shadow(radius: 10)
@@ -124,7 +124,7 @@ struct TVAlbumFilterCard: View {
     @ViewBuilder
     private func albumSelectionOverlay(isSelected: Bool, cornerRadius: CGFloat) -> some View {
         if isSelected {
-            RoundedRectangle(cornerRadius: cornerRadius)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(Color.green, lineWidth: Layout.selectedOutlineWidth)
                 .shadow(radius: 5)
                 .overlay(alignment: .topTrailing) {

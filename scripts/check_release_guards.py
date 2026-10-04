@@ -58,8 +58,12 @@ RETIRED_SYMBOLS_EXEMPT_FILE = "immichSlides/Shared/Model/PlaybackImageRequestLif
 ZERO_IO_GETTER = ("immichSlides/Shared/Model/SlideShowViewModel.swift", "playbackImageRequestLifecycleSummaryJSON")
 IO_TOKENS = ("flush", "FileHandle", ".write(", "synchronize", "fsync")
 
-# Debug switches that may only be read through PlatformCompat.debugFeatureEnabled.
-PLATFORM_COMPAT_ONLY_KEYS = ("ENABLE_DEBUG_FORCE_SINGLE_PHOTO_PLAYBACK", "IMMICHSLIDES_DISABLE_SMART_FILL")
+# Debug switches that may only be read inside PlatformCompat, behind its DEBUG gate.
+PLATFORM_COMPAT_ONLY_KEYS = (
+    "ENABLE_DEBUG_FORCE_SINGLE_PHOTO_PLAYBACK",
+    "IMMICHSLIDES_DISABLE_SMART_FILL",
+    "UI_TEST_FORCE_MODE_SELECTION",
+)
 PLATFORM_COMPAT_FILE = "immichSlides/Shared/Component/PlatformCompat.swift"
 
 ENV_XCCONFIG = "Config/env.xcconfig"
@@ -211,7 +215,7 @@ def check_platform_compat_only_keys(path: str, source: str) -> list[Violation]:
         return []
     code = mask_comments(source)
     return [Violation(path, line_of(source, m.start()), "debug-switch",
-                      f"{key} must be read only through PlatformCompat.debugFeatureEnabled")
+                      f"{key} must be read only inside PlatformCompat")
             for key in PLATFORM_COMPAT_ONLY_KEYS for m in re.finditer(re.escape(key), code)]
 
 

@@ -149,9 +149,16 @@ struct SlideShowViewTV: View {
             orientation: surfaceSize.width >= surfaceSize.height ? .landscape : .portrait,
             safeAreaClass: "safeTV"
         )
+        let safeAreaSignature = [
+            roundedSamplingValue(safeAreaInsets.top),
+            roundedSamplingValue(safeAreaInsets.leading),
+            roundedSamplingValue(safeAreaInsets.bottom),
+            roundedSamplingValue(safeAreaInsets.trailing)
+        ].map(String.init).joined(separator: ",")
         return [
             surface.internalSurfaceFingerprint,
             showControlBar ? "bar-visible" : "bar-hidden",
+            safeAreaSignature,
             "appletv"
         ].joined(separator: "|")
     }
