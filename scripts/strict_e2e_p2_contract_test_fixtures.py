@@ -42,9 +42,6 @@ from unittest import mock
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-sys.path.insert(0, str(SCRIPT_DIR))
-
-
 import strict_e2e_p2_contract  # noqa: E402
 
 

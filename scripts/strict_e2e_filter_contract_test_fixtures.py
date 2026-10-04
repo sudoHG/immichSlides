@@ -30,9 +30,6 @@ from PIL import Image, ImageFilter, ImageOps
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-sys.path.insert(0, str(SCRIPT_DIR))
-
-
 from strict_e2e_filter_contract import (  # noqa: E402
     DISPLAY_POLICY_CANDIDATE_PREFIX,
     FILTER_VISUAL_SUITES,

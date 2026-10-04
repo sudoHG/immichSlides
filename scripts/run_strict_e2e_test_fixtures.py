@@ -60,9 +60,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 
 
-sys.path.insert(0, str(SCRIPT_DIR))
-
-
 from run_strict_e2e import (  # noqa: E402
     CASE_E2E_IDS,
     CommandError,

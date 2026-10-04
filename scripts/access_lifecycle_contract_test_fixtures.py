@@ -39,9 +39,6 @@ from unittest import mock
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-sys.path.insert(0, str(SCRIPT_DIR))
-
-
 from sensitive_scan_test_support import compressed_byte_coincidence  # noqa: E402
 
 

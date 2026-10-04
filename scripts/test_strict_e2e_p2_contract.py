@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
 from strict_e2e_p2_contract_test_fixtures import (
     Any,
     CACHE_CLEAR_REVIEW_CHECKS,

@@ -54,9 +54,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 
 
-sys.path.insert(0, str(SCRIPT_DIR))
-
-
 from run_offline_unit_tests import (  # noqa: E402
     CommandError,
     DEFAULT_TIMEOUT_MINUTES,
