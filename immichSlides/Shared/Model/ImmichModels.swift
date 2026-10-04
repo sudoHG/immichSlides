@@ -32,14 +32,16 @@ struct Asset: Codable {
 }
 
 enum ThumbHashGeometry {
-    static func isLandscape(_ thumbhash: String?) -> Bool? {
-        guard let bytes = decodedBytes(from: thumbhash), bytes.count > 4 else {
+    private nonisolated static let orientationByteIndex: Int = 4
+    private nonisolated static let landscapeFlagMask: UInt8 = 0x80
+    nonisolated static func isLandscape(_ thumbhash: String?) -> Bool? {
+        guard let bytes = decodedBytes(from: thumbhash), bytes.count > orientationByteIndex else {
             return nil
         }
-        return (bytes[4] & 0x80) != 0
+        return (bytes[orientationByteIndex] & landscapeFlagMask) != 0
     }
 
-    private static func decodedBytes(from thumbhash: String?) -> [UInt8]? {
+    private nonisolated static func decodedBytes(from thumbhash: String?) -> [UInt8]? {
         guard let thumbhash else { return nil }
         var normalized =
             thumbhash

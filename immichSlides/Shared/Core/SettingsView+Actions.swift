@@ -131,7 +131,7 @@ extension SettingsView {
 
     func enforcePlaybackModeInvariant() {
         playbackVM.enforcePlaybackModeInvariant(
-            filterSelectionIsEmpty: filterVM.selection.isEmpty,
+            isFilterSelectionEmpty: filterVM.selection.isEmpty,
             isFilterEditorPresented: showFullScreenFilterEditor
         )
     }

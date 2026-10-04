@@ -27,7 +27,7 @@ struct MotionTransitionPacingPolicy: Equatable, Sendable {
 }
 
 struct MotionPacingPolicy: Equatable, Sendable {
-    nonisolated static let minimumStableVisibleSeconds: TimeInterval = 5
+    nonisolated static let minimumStableVisibleSeconds: TimeInterval = PlaybackIntervalPolicy.minimumInterval
 
     let configuredPlaybackIntervalSeconds: TimeInterval
     let transitionPolicy: MotionTransitionPacingPolicy

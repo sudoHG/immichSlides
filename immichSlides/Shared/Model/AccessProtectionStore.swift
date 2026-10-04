@@ -31,6 +31,7 @@ enum AccessProtectionError: LocalizedError {
 
 final class AccessProtectionStore {
     static let shared = AccessProtectionStore()
+    private static let saltLengthBytes: Int = 16
 
     private let defaults = UserDefaults.standard
     private let enabledKey = "accessProtection.isEnabled"
@@ -53,7 +54,7 @@ final class AccessProtectionStore {
     }
 
     var hasStoredPIN: Bool {
-        if usesUITestPINStorage {
+        if shouldUseUITestPINStorage {
             return uiTestPINData(forKey: uiTestPinHashKey) != nil && uiTestPINData(forKey: uiTestPinSaltKey) != nil
         }
 
@@ -62,7 +63,7 @@ final class AccessProtectionStore {
 
     // Fallback recovery check: the logical switch says "enabled" but the key material is missing (for example,
     // the Keychain was wiped).
-    var needsRecovery: Bool {
+    var isRecoveryNeeded: Bool {
         isEnabled && !hasStoredPIN
     }
 
@@ -75,10 +76,10 @@ final class AccessProtectionStore {
             throw AccessProtectionError.invalidPinFormat
         }
 
-        let salt = try makeRandomSalt(length: 16)
+        let salt = try makeRandomSalt(length: Self.saltLengthBytes)
         let hash = makeHash(pin: pin, salt: salt)
 
-        if usesUITestPINStorage {
+        if shouldUseUITestPINStorage {
             // UI tests without full signing store salt+hash in UserDefaults; release builds only use the Keychain.
             defaults.set(true, forKey: uiTestPINStorageEnabledKey)
             defaults.set(hash, forKey: uiTestPinHashKey)
@@ -94,7 +95,7 @@ final class AccessProtectionStore {
     }
 
     func verifyPIN(_ pin: String) -> Bool {
-        if usesUITestPINStorage {
+        if shouldUseUITestPINStorage {
             guard Self.isValidPinFormat(pin),
                 let savedHash = uiTestPINData(forKey: uiTestPinHashKey),
                 let savedSalt = uiTestPINData(forKey: uiTestPinSaltKey)
@@ -116,7 +117,7 @@ final class AccessProtectionStore {
     }
 
     func clearPIN() {
-        if usesUITestPINStorage {
+        if shouldUseUITestPINStorage {
             defaults.removeObject(forKey: uiTestPINStorageEnabledKey)
             defaults.removeObject(forKey: uiTestPinHashKey)
             defaults.removeObject(forKey: uiTestPinSaltKey)
@@ -138,7 +139,7 @@ final class AccessProtectionStore {
         return Data(SHA256.hash(data: input))
     }
 
-    private var usesUITestPINStorage: Bool {
+    private var shouldUseUITestPINStorage: Bool {
         #if DEBUG
         let env = ProcessInfo.processInfo.environment
         // launchEnvironment may be gone after a relaunch, so detect test storage via the XCTest path and the Debug

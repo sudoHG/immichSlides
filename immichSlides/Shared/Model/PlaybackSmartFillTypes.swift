@@ -9,6 +9,9 @@ import CryptoKit
 import Foundation
 
 struct PlaybackSmartFillSurface: Equatable, Sendable {
+    private nonisolated static let dimensionBucketSizePixels: Double = 32.0
+    private nonisolated static let aspectQuantizationScale: Double = 20.0
+    private nonisolated static let defaultAspectBucket: Int = 20
     let pixelSize: PlaybackPlanningPixelSize
     let profile: PlaybackSmartFillSurfaceProfile
     let orientation: PlaybackSmartFillOrientation
@@ -72,12 +75,12 @@ struct PlaybackSmartFillSurface: Equatable, Sendable {
     }
 
     private nonisolated static func bucketedDimension(_ value: Int) -> Int {
-        max(1, Int((Double(max(1, value)) / 32.0).rounded()))
+        max(1, Int((Double(max(1, value)) / dimensionBucketSizePixels).rounded()))
     }
 
     private nonisolated static func bucketedAspect(_ value: Double) -> Int {
-        guard value.isFinite, value > 0 else { return 20 }
-        return max(1, Int((value * 20.0).rounded()))
+        guard value.isFinite, value > 0 else { return defaultAspectBucket }
+        return max(1, Int((value * aspectQuantizationScale).rounded()))
     }
 }
 
@@ -303,9 +306,11 @@ enum SmartFillPreparedPlanBuilder {
         )
     }
 
+    private nonisolated static let candidateReferenceDigestPrefixBytes: Int = 8
+
     private nonisolated static func reference(for rawId: String) -> String {
         let digest = SHA256.hash(data: Data(rawId.utf8))
-        let hashText = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        let hashText = digest.prefix(candidateReferenceDigestPrefixBytes).map { String(format: "%02x", $0) }.joined()
         return "asset_\(hashText)"
     }
 
@@ -326,7 +331,7 @@ enum SmartFillPreparedPlanBuilder {
             pixelSize(width: raw.width, height: raw.height)
             ?? pixelSize(width: raw.exifImageWidth, height: raw.exifImageHeight)
         guard let magnitude else { return nil }
-        guard let thumbhashIsLandscape = thumbhashIsLandscape(raw.thumbhash) else {
+        guard let thumbhashIsLandscape = ThumbHashGeometry.isLandscape(raw.thumbhash) else {
             return pixelSize(width: raw.width, height: raw.height) ?? magnitude
         }
 
@@ -366,33 +371,6 @@ enum SmartFillPreparedPlanBuilder {
                 height: (y2 - y1) / Double(imageHeight)
             )
         }
-    }
-
-    private nonisolated static func thumbhashIsLandscape(_ thumbhash: String?) -> Bool? {
-        guard let bytes = decodedThumbhashBytes(from: thumbhash), bytes.count > 4 else {
-            return nil
-        }
-        return (bytes[4] & 0x80) != 0
-    }
-
-    private nonisolated static func decodedThumbhashBytes(from thumbhash: String?) -> [UInt8]? {
-        guard let thumbhash else { return nil }
-        var normalized =
-            thumbhash
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        guard !normalized.isEmpty else { return nil }
-
-        let remainder = normalized.count % 4
-        if remainder > 0 {
-            normalized += String(repeating: "=", count: 4 - remainder)
-        }
-
-        guard let data = Data(base64Encoded: normalized) else {
-            return nil
-        }
-        return Array(data)
     }
 
     private nonisolated static func nextCandidateCursorOffset(
@@ -473,7 +451,7 @@ enum PlaybackSmartFillSceneType: String, Equatable, Sendable {
     case triple
     case fallback
 
-    nonisolated var preservesExistingExifOverlay: Bool {
+    nonisolated var shouldPreserveExistingExifOverlay: Bool {
         switch self {
         case .single, .fallback:
             true

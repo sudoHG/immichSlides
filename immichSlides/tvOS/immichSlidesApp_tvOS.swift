@@ -38,7 +38,7 @@ struct ImmichSlidesApp: App {
             ImmichAPIService.shared.reloadServerConfiguration()
         }
 
-        FilterSelectionStore().seedUITestSelectionIfRequested()
+        FilterSelectionStore().seedUITestSelectionIfRequestedForTesting()
 
         if let exifDiagnosticAlbumID = env["UI_TEST_EXIF_DIAGNOSTIC_ALBUM_ID"],
             !exifDiagnosticAlbumID.isEmpty

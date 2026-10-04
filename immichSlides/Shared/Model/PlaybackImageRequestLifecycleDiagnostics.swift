@@ -551,13 +551,13 @@ struct PlaybackImageRequestLifecycleDiagnostics {
         let orderedRecords = requestOrder.compactMap { records[$0] }
         var summary = PlaybackImageRequestLifecycleSummary()
         summary.evidenceFlushCount = evidenceFlushCount
-        summary.total = makeCounter(for: orderedRecords, includeRecordCacheResults: true)
+        summary.total = makeCounter(for: orderedRecords, shouldIncludeRecordCacheResults: true)
         summary.total.addCacheCounts(from: orphanCacheCounter)
 
         for source in PlaybackImageRequestLifecycleSource.allCases {
             summary.countersBySource[source.rawValue] = makeCounter(
                 for: orderedRecords.filter { $0.source == source },
-                includeRecordCacheResults: true
+                shouldIncludeRecordCacheResults: true
             )
         }
         summary.latency = makeLatencySummary(for: orderedRecords)
@@ -584,7 +584,7 @@ struct PlaybackImageRequestLifecycleDiagnostics {
 
     private func makeCounter(
         for records: [RequestRecord],
-        includeRecordCacheResults: Bool
+        shouldIncludeRecordCacheResults: Bool
     ) -> PlaybackImageRequestLifecycleCounter {
         let keyCounts = Dictionary(grouping: records, by: \.key).mapValues(\.count)
         var counter = PlaybackImageRequestLifecycleCounter()
@@ -594,7 +594,7 @@ struct PlaybackImageRequestLifecycleDiagnostics {
             total + max(0, count - 1)
         }
         counter.inFlightReusedCount = records.filter(\.didReuseInFlight).count
-        if includeRecordCacheResults {
+        if shouldIncludeRecordCacheResults {
             let cacheResolvedRecords = records.filter { record in
                 record.didCheckCache || record.didFinish
             }

@@ -273,10 +273,10 @@ struct PlaybackSceneTests {
 
     @Test
     func `SmartFill EXIF overlay policy keeps only single and fallback`() {
-        #expect(PlaybackSmartFillSceneType.single.preservesExistingExifOverlay)
-        #expect(!PlaybackSmartFillSceneType.double.preservesExistingExifOverlay)
-        #expect(!PlaybackSmartFillSceneType.triple.preservesExistingExifOverlay)
-        #expect(PlaybackSmartFillSceneType.fallback.preservesExistingExifOverlay)
+        #expect(PlaybackSmartFillSceneType.single.shouldPreserveExistingExifOverlay)
+        #expect(!PlaybackSmartFillSceneType.double.shouldPreserveExistingExifOverlay)
+        #expect(!PlaybackSmartFillSceneType.triple.shouldPreserveExistingExifOverlay)
+        #expect(PlaybackSmartFillSceneType.fallback.shouldPreserveExistingExifOverlay)
     }
 
     @Test

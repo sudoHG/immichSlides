@@ -6,6 +6,36 @@ import UIKit
 /// Collects platform color/style branches, so shared views do not touch iOS-only APIs directly.
 
 enum PlatformCompat {
+    /// XCTest and UI-test launch flags never change Release behavior.
+    static var isRunningXCTest: Bool {
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            || environment.keys.contains { $0.hasPrefix("UI_TEST_") }
+        #else
+        return false
+        #endif
+    }
+
+    #if DEBUG
+    static var shouldForceLongPersonNamesForTesting: Bool {
+        ProcessInfo.processInfo.environment["UI_TEST_FORCE_LONG_PERSON_NAMES"] == "1"
+    }
+
+    static var shouldRecordPlaybackSequenceForTesting: Bool {
+        ProcessInfo.processInfo.environment["IMMICHSLIDES_DEBUG_PLAYBACK_SEQUENCE"] == "1"
+    }
+
+    static var screenshotConnectionPrefillForTesting: (serverURL: String, apiKey: String)? {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["UI_TEST_APP_STORE_SCREENSHOT_PREFILL_CONNECTION"] == "1",
+            let serverURL = environment["UI_TEST_APP_STORE_SCREENSHOT_SERVER_URL"],
+            let apiKey = environment["UI_TEST_APP_STORE_SCREENSHOT_API_KEY"]
+        else { return nil }
+        return (serverURL, apiKey)
+    }
+    #endif
+
     static var isDebugBuild: Bool {
         #if DEBUG
         return true

@@ -61,7 +61,7 @@ struct MotionEligibilityInput: Equatable, Sendable {
     let sceneCapability: MotionSceneCapability
     let displayMode: MotionDisplayMode
     let focalAdapter: MotionFocalAdapter
-    let reduceMotionEnabled: Bool
+    let isReduceMotionEnabled: Bool
     let renderRole: MotionRenderRole
     let slotReadiness: MotionSlotReadiness
 }
@@ -111,7 +111,7 @@ struct MotionEligibilityPolicy: Equatable, Sendable {
             break
         }
 
-        guard !input.reduceMotionEnabled else {
+        guard !input.isReduceMotionEnabled else {
             return disabled(input, platformScope: platformScope, reason: .reduceMotion)
         }
         guard input.slotReadiness == .ready else {

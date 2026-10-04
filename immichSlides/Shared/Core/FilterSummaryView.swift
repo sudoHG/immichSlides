@@ -50,7 +50,7 @@ struct FilterSummaryView: View {
             syncAccessProtectionState()
             allowBackToModeSelection = true
             if viewModel.albumCoverURLs.isEmpty || viewModel.peopleCoverURLs.isEmpty {
-                viewModel.preloadCovers(coverLimit: 20, reset: true)
+                viewModel.preloadCovers(coverLimit: 20, shouldReset: true)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .accessProtectionStateDidChange)) { _ in

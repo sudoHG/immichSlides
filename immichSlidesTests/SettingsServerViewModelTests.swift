@@ -16,7 +16,7 @@ struct SettingsServerViewModelTests {
 
         viewModel.testConnection()
 
-        #expect(viewModel.showErrorAlert)
+        #expect(viewModel.shouldShowErrorAlert)
         #expect(viewModel.errorAlertTitle == String(localized: "Connection test failed"))
         #expect(viewModel.errorMessage == String(localized: "Server URL must start with http or https"))
     }
@@ -36,7 +36,7 @@ struct SettingsServerViewModelTests {
         let successfulResult = ImmichServer.ConnectionTestResult(kind: .success, message: nil)
 
         let viewModel = SettingsServerViewModel(
-            connectionTestAction: { _, _, _ in
+            connectionTestActionForTesting: { _, _, _ in
                 let attempt = await attemptCounter.nextValue()
                 if attempt == 1 {
                     return waitingForPermissionResult
@@ -44,10 +44,10 @@ struct SettingsServerViewModelTests {
 
                 return successfulResult
             },
-            delayAction: { _ in
+            delayActionForTesting: { _ in
                 await delayGate.wait()
             },
-            automaticRetryDelaySchedule: [retryDelayNanoseconds]
+            automaticRetryDelayScheduleForTesting: [retryDelayNanoseconds]
         )
 
         viewModel.serverURL = "http://192.168.1.20:2283"
@@ -58,7 +58,7 @@ struct SettingsServerViewModelTests {
 
         #expect(viewModel.isTestingConnection)
         #expect(viewModel.testingStatusMessage == waitingMessage)
-        #expect(!viewModel.showErrorAlert)
+        #expect(!viewModel.shouldShowErrorAlert)
         #expect(await attemptCounter.currentValue() == 1)
 
         viewModel.resumePendingConnectionTestIfNeeded()
@@ -70,7 +70,7 @@ struct SettingsServerViewModelTests {
         #expect(viewModel.isConnectionVerified)
         #expect(!viewModel.isTestingConnection)
         #expect(viewModel.statusMessage == String(localized: "Connection test passed"))
-        #expect(!viewModel.showErrorAlert)
+        #expect(!viewModel.shouldShowErrorAlert)
     }
 
     @Test
@@ -78,7 +78,7 @@ struct SettingsServerViewModelTests {
     func `a late input notification from the parent page keeps the saved success state of the current revision`() async
     {
         let viewModel = SettingsServerViewModel(
-            saveServerConfigAction: { _, _ in (true, nil) }
+            saveServerConfigActionForTesting: { _, _ in (true, nil) }
         )
         viewModel.serverURL = "https://demo.example.com"
         viewModel.apiKey = "fixture-a"
@@ -99,7 +99,7 @@ struct SettingsServerViewModelTests {
             alertTitle: "API Key 权限不足"
         )
         let viewModel = SettingsServerViewModel(
-            connectionTestAction: { _, _, _ in failureResult }
+            connectionTestActionForTesting: { _, _, _ in failureResult }
         )
 
         viewModel.serverURL = "https://demo.example.com"
@@ -108,7 +108,7 @@ struct SettingsServerViewModelTests {
         viewModel.testConnection()
         await settleAsyncWork()
 
-        #expect(viewModel.showErrorAlert)
+        #expect(viewModel.shouldShowErrorAlert)
         #expect(viewModel.errorAlertTitle == "API Key 权限不足")
         #expect(
             viewModel.errorMessage == "缺少 asset.read，immichSlides 无法读取照片列表。请在 Immich 的 API Key 权限中启用 asset.read 后重试。")
@@ -122,7 +122,7 @@ struct SettingsServerViewModelTests {
             message: "连接测试通过，但部分筛选功能需要额外权限：\n相册筛选不可用：缺少 album.read。"
         )
         let viewModel = SettingsServerViewModel(
-            connectionTestAction: { _, _, progress in
+            connectionTestActionForTesting: { _, _, progress in
                 progress?(.checkingAssetRead)
                 progress?(.checkingImagePreview)
                 progress?(.checkingFullsizeImage)
@@ -146,7 +146,7 @@ struct SettingsServerViewModelTests {
     @MainActor
     func `save failure shows the save failed alert title and does not mark the save successful`() async {
         let viewModel = SettingsServerViewModel(
-            saveServerConfigAction: { _, _ in
+            saveServerConfigActionForTesting: { _, _ in
                 (false, "x")
             }
         )
@@ -156,7 +156,7 @@ struct SettingsServerViewModelTests {
         let saveTask = viewModel.saveServerConfig()
         await saveTask.value
 
-        #expect(viewModel.showErrorAlert)
+        #expect(viewModel.shouldShowErrorAlert)
         #expect(viewModel.errorAlertTitle == String(localized: "Save Failed"))
         #expect(viewModel.errorMessage == "x")
         #expect(viewModel.didSaveConfig == false)
@@ -169,7 +169,7 @@ struct SettingsServerViewModelTests {
     ) async {
         let saveGate = SaveCompletionGate()
         let viewModel = SettingsServerViewModel(
-            saveServerConfigAction: { _, _ in
+            saveServerConfigActionForTesting: { _, _ in
                 await saveGate.waitForRelease()
                 return (true, nil)
             }
@@ -187,7 +187,7 @@ struct SettingsServerViewModelTests {
         #expect(!viewModel.isConnectionVerified)
         #expect(viewModel.statusMessage.isEmpty)
         #expect(!viewModel.didSaveConfig)
-        #expect(!viewModel.showErrorAlert)
+        #expect(!viewModel.shouldShowErrorAlert)
     }
 
     @Test(arguments: SaveInputEdit.allCases)
@@ -197,7 +197,7 @@ struct SettingsServerViewModelTests {
     ) async {
         let saveGate = SaveCompletionGate()
         let viewModel = SettingsServerViewModel(
-            saveServerConfigAction: { _, _ in
+            saveServerConfigActionForTesting: { _, _ in
                 await saveGate.waitForRelease()
                 return (false, "Save request failed")
             }
@@ -215,14 +215,14 @@ struct SettingsServerViewModelTests {
         #expect(!viewModel.isConnectionVerified)
         #expect(viewModel.statusMessage.isEmpty)
         #expect(!viewModel.didSaveConfig)
-        #expect(!viewModel.showErrorAlert)
+        #expect(!viewModel.shouldShowErrorAlert)
     }
 
     @Test
     @MainActor
     func `save success updates the current form when input was not edited`() async {
         let viewModel = SettingsServerViewModel(
-            saveServerConfigAction: { _, _ in (true, nil) }
+            saveServerConfigActionForTesting: { _, _ in (true, nil) }
         )
         viewModel.serverURL = "https://demo.example.com"
         viewModel.apiKey = "fixture-a"
@@ -233,7 +233,7 @@ struct SettingsServerViewModelTests {
         #expect(viewModel.isConnectionVerified)
         #expect(viewModel.statusMessage == String(localized: "Configuration saved"))
         #expect(viewModel.didSaveConfig)
-        #expect(!viewModel.showErrorAlert)
+        #expect(!viewModel.shouldShowErrorAlert)
     }
 
     // Yield repeatedly so already-created async tasks get a chance to run.

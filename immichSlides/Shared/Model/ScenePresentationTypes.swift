@@ -80,6 +80,9 @@ extension PlaybackSessionEngine {
 
     /// Composite identity so async callbacks stay bound to one generation, scene, slot and asset for their lifetime.
     struct ScenePresentationIdentity: Hashable, Sendable {
+        // Preserve the historical seed; it is not the standard FNV-1a offset basis.
+        private static let diagnosticHashSeed: UInt64 = 1_469_598_103_934_665_603
+        private static let diagnosticHashMultiplier: UInt64 = 1_099_511_628_211
         let generation: UUID
         let sceneID: String
         let slotID: String?
@@ -100,10 +103,10 @@ extension PlaybackSessionEngine {
         /// Diagnostics output only a stable hash, never the raw scene or resource ids.
         var privateIdentifier: String {
             let source = "\(generation.uuidString)|\(sceneID)|\(slotID ?? "-")|\(assetID ?? "-")"
-            var hash: UInt64 = 1_469_598_103_934_665_603
+            var hash: UInt64 = Self.diagnosticHashSeed
             for byte in source.utf8 {
                 hash ^= UInt64(byte)
-                hash &*= 1_099_511_628_211
+                hash &*= Self.diagnosticHashMultiplier
             }
             return String(hash, radix: 16)
         }
@@ -160,7 +163,7 @@ extension PlaybackSessionEngine {
         let activeTime: TimeInterval
         let suspensionReasons: Set<ScenePresentationSuspensionReason>
         let isReduceMotionEnabled: Bool
-        let pendingTargetIsReady: Bool
+        let isPendingTargetReady: Bool
     }
 
     enum TargetAttemptOutcome: String, Equatable, Sendable {
@@ -278,7 +281,7 @@ extension PlaybackSessionEngine {
         private var layers: [ScenePresentationLayerState]
         private var stableVisibleClock: SceneActiveTimeClock?
         private(set) var graceDeadline: TimeInterval?
-        private var transitionCompletionIsPending = false
+        private var isTransitionCompletionPending = false
         private var transitionKind: ScenePresentationTransitionKind?
         private var scheduledWakeUp: ScenePresentationScheduledWakeUp?
         private var suspendedWakeUp: ScenePresentationSuspendedWakeUp?
@@ -297,13 +300,13 @@ extension PlaybackSessionEngine {
             var layers: [ScenePresentationLayerState]
             let stableVisibleClock: SceneActiveTimeClock?
             let graceDeadline: TimeInterval?
-            let transitionCompletionIsPending: Bool
+            let isTransitionCompletionPending: Bool
             let transitionKind: ScenePresentationTransitionKind?
             let wakeUp: ScenePresentationSuspendedWakeUp?
             let isManualNavigationWhilePaused: Bool
             let isCurrentSceneManualStatic: Bool
             /// A settled photo stays live on screen while the manual target loads, so cancelling continues from it.
-            let keepsHeldPhotoLive: Bool
+            let shouldKeepHeldPhotoLive: Bool
 
             /// The state Previous returns to after an interrupted transition was raised: it continues from the live picture.
             func resolved(
@@ -321,12 +324,12 @@ extension PlaybackSessionEngine {
                     layers: [],
                     stableVisibleClock: nil,
                     graceDeadline: nil,
-                    transitionCompletionIsPending: false,
+                    isTransitionCompletionPending: false,
                     transitionKind: transitionKind,
                     wakeUp: wakeUp,
                     isManualNavigationWhilePaused: isManualNavigationWhilePaused,
                     isCurrentSceneManualStatic: false,
-                    keepsHeldPhotoLive: true
+                    shouldKeepHeldPhotoLive: true
                 )
             }
         }
@@ -467,7 +470,7 @@ extension PlaybackSessionEngine {
             case .transitionCompleted:
                 guard suspensionReasons.isEmpty || (isManualNavigationWhilePaused && suspensionReasons == [.userPaused])
                 else {
-                    transitionCompletionIsPending = true
+                    isTransitionCompletionPending = true
                     return []
                 }
                 return completeTransition(at: time)
@@ -517,8 +520,8 @@ extension PlaybackSessionEngine {
             case let .resume(reason):
                 return resume(reason: reason, at: time)
 
-            case let .reduceMotionChanged(enabled):
-                updateReduceMotion(enabled, at: time)
+            case let .reduceMotionChanged(isEnabled):
+                updateReduceMotion(isEnabled, at: time)
                 return []
 
             case let .intervalTemplateChanged(interval):
@@ -577,7 +580,7 @@ extension PlaybackSessionEngine {
                 activeTime: stableVisibleClock?.activeTime(at: time) ?? 0,
                 suspensionReasons: suspensionReasons,
                 isReduceMotionEnabled: isReduceMotionEnabled,
-                pendingTargetIsReady: pendingTarget.flatMap { targetReadiness[$0.identity] } == .ready
+                isPendingTargetReady: pendingTarget.flatMap { targetReadiness[$0.identity] } == .ready
             )
         }
 
@@ -681,12 +684,12 @@ extension PlaybackSessionEngine {
                 layers: restoredLayers,
                 stableVisibleClock: restoredStableVisibleClock,
                 graceDeadline: graceDeadline,
-                transitionCompletionIsPending: transitionCompletionIsPending,
+                isTransitionCompletionPending: isTransitionCompletionPending,
                 transitionKind: transitionKind,
                 wakeUp: wakeUp,
                 isManualNavigationWhilePaused: isManualNavigationWhilePaused,
                 isCurrentSceneManualStatic: isCurrentSceneManualStatic,
-                keepsHeldPhotoLive: !visibleLayers.isEmpty && visibleLayers.allSatisfy { $0.role == .stable }
+                shouldKeepHeldPhotoLive: !visibleLayers.isEmpty && visibleLayers.allSatisfy { $0.role == .stable }
             )
         }
 
@@ -706,7 +709,7 @@ extension PlaybackSessionEngine {
             currentTarget = restore.currentTarget
             pendingTarget = restore.pendingTarget
             targetReadiness = restore.targetReadiness
-            if restore.keepsHeldPhotoLive {
+            if restore.shouldKeepHeldPhotoLive {
                 return continueLiveHeldPhoto(
                     restore,
                     cancelling: cancelledTarget,
@@ -719,11 +722,11 @@ extension PlaybackSessionEngine {
                 isReduceMotionEnabled,
                 in: &layers,
                 at: time,
-                allowsUnseenMotionResume: false
+                canResumeUnseenMotion: false
             )
             stableVisibleClock = restore.stableVisibleClock
             graceDeadline = restore.graceDeadline
-            transitionCompletionIsPending = restore.transitionCompletionIsPending
+            isTransitionCompletionPending = restore.isTransitionCompletionPending
             transitionKind = restore.transitionKind
             scheduledWakeUp = nil
             suspendedWakeUp = nil
@@ -752,7 +755,7 @@ extension PlaybackSessionEngine {
             // rewrite the fade start; a manual short crossfade that was just triggered continues from the same sample.
 
             if resumesRestoredPresentation || resumesRestoredManualFadeWhilePaused {
-                resumeLayerFades(at: time, resumeMotion: resumesRestoredPresentation)
+                resumeLayerFades(at: time, shouldResumeMotion: resumesRestoredPresentation)
             }
 
             var effects: [ScenePresentationEffect] = [
@@ -806,7 +809,7 @@ extension PlaybackSessionEngine {
             let liveIdentities = Set(layers.map(\.identity))
             layers += restore.layers.filter { $0.opacity(at: time) <= 0 && !liveIdentities.contains($0.identity) }
             graceDeadline = restore.graceDeadline
-            transitionCompletionIsPending = restore.transitionCompletionIsPending
+            isTransitionCompletionPending = restore.isTransitionCompletionPending
             transitionKind = restore.transitionKind
             scheduledWakeUp = nil
             suspendedWakeUp = nil
@@ -896,7 +899,7 @@ extension PlaybackSessionEngine {
             // full deadline.
             scheduledWakeUp = nil
             suspendedWakeUp = nil
-            transitionCompletionIsPending = false
+            isTransitionCompletionPending = false
             isManualNavigationWhilePaused = true
             isCurrentSceneManualStatic = false
         }
@@ -1013,7 +1016,7 @@ extension PlaybackSessionEngine {
                 } ?? []
             scheduledWakeUp = nil
             suspendedWakeUp = nil
-            if let manualPendingRestore, !manualPendingRestore.keepsHeldPhotoLive,
+            if let manualPendingRestore, !manualPendingRestore.shouldKeepHeldPhotoLive,
                 let raised = raiseInterruptedTransition(manualPendingRestore, at: time)
             {
                 // A frame caught mid-transition may be dim: bring a photo the user has seen back up instead.
@@ -1578,25 +1581,28 @@ extension PlaybackSessionEngine {
                 diagnostics.append("resume-missing-reason")
                 return []
             }
-            let resumesAutomaticPlayback = suspensionReasons.isEmpty
-            let resumesManualTransitionWhilePaused = isManualNavigationWhilePaused && suspensionReasons == [.userPaused]
-            let reconcilesPausedReadyLoadingTarget: Bool
+            let shouldResumeAutomaticPlayback = suspensionReasons.isEmpty
+            let shouldResumeManualTransitionWhilePaused =
+                isManualNavigationWhilePaused && suspensionReasons == [.userPaused]
+            let shouldReconcilePausedReadyLoadingTarget: Bool
             if let pendingTarget {
-                reconcilesPausedReadyLoadingTarget =
+                shouldReconcilePausedReadyLoadingTarget =
                     suspensionReasons == [.userPaused] && targetReadiness[pendingTarget.identity] == .ready
                     && (underlyingPhase == .loading
                         || (underlyingPhase == .grace && hasUnseenManualPendingPresentation))
             } else {
-                reconcilesPausedReadyLoadingTarget = false
+                shouldReconcilePausedReadyLoadingTarget = false
             }
-            guard resumesAutomaticPlayback || resumesManualTransitionWhilePaused || reconcilesPausedReadyLoadingTarget
+            guard
+                shouldResumeAutomaticPlayback || shouldResumeManualTransitionWhilePaused
+                    || shouldReconcilePausedReadyLoadingTarget
             else {
                 return []
             }
             if isCurrentSceneManualStatic,
                 let currentTarget
             {
-                guard resumesAutomaticPlayback else { return [] }
+                guard shouldResumeAutomaticPlayback else { return [] }
                 isCurrentSceneManualStatic = false
                 stableVisibleClock?.resume(at: time)
                 for index in layers.indices where layers[index].identity == currentTarget.identity {
@@ -1613,7 +1619,7 @@ extension PlaybackSessionEngine {
                     at: time
                 )
             }
-            if resumesAutomaticPlayback {
+            if shouldResumeAutomaticPlayback {
                 stableVisibleClock?.resume(at: time)
                 for index in layers.indices where !layers[index].isMotionFrozenByReduceMotion {
                     // With a visible transition in progress, an incoming that has not started must wait for its
@@ -1628,16 +1634,16 @@ extension PlaybackSessionEngine {
                     layers[index].motionClock.resume(at: time)
                 }
             }
-            if resumesAutomaticPlayback, isManualNavigationWhilePaused {
+            if shouldResumeAutomaticPlayback, isManualNavigationWhilePaused {
                 // After Play is pressed during a pending target or short crossfade, later Ready/completion must follow
                 // autoplay semantics again.
 
                 updateCurrentTargetForResumedManualIncoming(at: time)
                 isManualNavigationWhilePaused = false
             }
-            resumeLayerFades(at: time, resumeMotion: resumesAutomaticPlayback)
-            if transitionCompletionIsPending {
-                transitionCompletionIsPending = false
+            resumeLayerFades(at: time, shouldResumeMotion: shouldResumeAutomaticPlayback)
+            if isTransitionCompletionPending {
+                isTransitionCompletionPending = false
                 suspendedWakeUp = nil
                 return completeTransition(at: time)
             }
@@ -1731,15 +1737,15 @@ extension PlaybackSessionEngine {
             }
         }
 
-        private mutating func updateReduceMotion(_ enabled: Bool, at time: TimeInterval) {
-            guard enabled != isReduceMotionEnabled else { return }
-            isReduceMotionEnabled = enabled
-            if enabled || !isManualNavigationWhilePaused {
+        private mutating func updateReduceMotion(_ isEnabled: Bool, at time: TimeInterval) {
+            guard isEnabled != isReduceMotionEnabled else { return }
+            isReduceMotionEnabled = isEnabled
+            if isEnabled || !isManualNavigationWhilePaused {
                 Self.reconcileReduceMotion(
-                    enabled,
+                    isEnabled,
                     in: &layers,
                     at: time,
-                    allowsUnseenMotionResume: !enabled && suspensionReasons.isEmpty
+                    canResumeUnseenMotion: !isEnabled && suspensionReasons.isEmpty
                 )
             }
 
@@ -1747,10 +1753,10 @@ extension PlaybackSessionEngine {
 
             if var restore = manualPendingPresentationRestore {
                 Self.reconcileReduceMotion(
-                    enabled,
+                    isEnabled,
                     in: &restore.layers,
                     at: time,
-                    allowsUnseenMotionResume: false
+                    canResumeUnseenMotion: false
                 )
                 manualPendingPresentationRestore = restore
             }
@@ -1760,21 +1766,21 @@ extension PlaybackSessionEngine {
         /// and turning the setting off does not restart it.
 
         private static func reconcileReduceMotion(
-            _ enabled: Bool,
+            _ isEnabled: Bool,
             in layerStates: inout [ScenePresentationLayerState],
             at time: TimeInterval,
-            allowsUnseenMotionResume: Bool
+            canResumeUnseenMotion: Bool
         ) {
             for index in layerStates.indices {
                 if isUnseenDelayedIncoming(layerStates[index], at: time) {
-                    if enabled {
+                    if isEnabled {
                         layerStates[index].motionClock.suspend(at: time)
                         layerStates[index].isMotionEnabled = false
                         layerStates[index].isMotionFrozenByReduceMotion = true
                     } else {
                         layerStates[index].isMotionFrozenByReduceMotion = false
                         layerStates[index].isMotionEnabled = true
-                        if allowsUnseenMotionResume,
+                        if canResumeUnseenMotion,
                             let fadeStart = layerStates[index].fadeStartTime
                         {
                             layerStates[index].motionClock.resume(at: fadeStart)
@@ -1783,7 +1789,7 @@ extension PlaybackSessionEngine {
                     continue
                 }
 
-                guard enabled, layerStates[index].isMotionEnabled else { continue }
+                guard isEnabled, layerStates[index].isMotionEnabled else { continue }
                 // A seen photo keeps its current sample and only freezes active time; new layers are still created per
                 // isReduceMotionEnabled.
 
@@ -1851,14 +1857,14 @@ extension PlaybackSessionEngine {
         /// Resume only rebuilds frozen fades; it does not make up for the paused time.
         private mutating func resumeLayerFades(
             at time: TimeInterval,
-            resumeMotion: Bool
+            shouldResumeMotion: Bool
         ) {
             for index in layers.indices {
                 let delay = layers[index].suspendedFadeDelay
                 if let delay {
                     layers[index].fadeStartTime = time + delay
                     layers[index].suspendedFadeDelay = nil
-                    if resumeMotion,
+                    if shouldResumeMotion,
                         layers[index].isMotionEnabled,
                         !isReduceMotionEnabled,
                         !layers[index].isMotionFrozenByReduceMotion
@@ -1873,7 +1879,7 @@ extension PlaybackSessionEngine {
 
                 let hasActiveFade = layers[index].fadeStartTime != nil
 
-                if resumeMotion,
+                if shouldResumeMotion,
                     layers[index].isMotionEnabled,
                     !isReduceMotionEnabled,
                     !layers[index].isMotionFrozenByReduceMotion

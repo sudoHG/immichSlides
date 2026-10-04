@@ -8,6 +8,15 @@
 import Foundation
 
 enum PlaybackSmartFillPlanner {
+    private nonisolated static let comparisonTolerance: Double = 0.000001
+    private nonisolated static let constructiveSearchIterationLimit: Int = 24
+    private nonisolated static let ratioPresetMatchingTolerance: Double = 0.0005
+    private nonisolated static let rotationHashPrefixCharacterCount: Int = 12
+    private nonisolated static let fnvOffsetBasis: UInt64 = 14695981039346656037
+    private nonisolated static let fnvPrime: UInt64 = 1099511628211
+    private nonisolated static let defaultTopRejectedReasonCount: Int = 5
+    private nonisolated static let maximumRejectedLayoutSummaryCount: Int = 36
+    private nonisolated static let maximumRejectedLayoutSummariesPerBucket: Int = 3
 
     nonisolated static func plan(_ input: PlaybackSmartFillPlannerInput) -> PlaybackSmartFillPlannerResult {
         var state = PlannerState()
@@ -84,7 +93,7 @@ enum PlaybackSmartFillPlanner {
             frames: [.fullUnitRect]
         )
 
-        if !input.policy.allowsSingleCandidateLookahead {
+        if !input.policy.canUseSingleCandidateLookahead {
             let primary = input.candidates[0]
             let rotation = rotationInfo(input: input, primary: primary, sceneType: .single)
             guard
@@ -189,9 +198,9 @@ enum PlaybackSmartFillPlanner {
         // Using current as an auxiliary slot is the fallback path for restoring big-screen triple quality, so the
         // normal primary search must not use up the whole budget.
         let auxiliaryEvaluationReserve =
-            input.policy.allowsCurrentCandidateAsAuxiliaryLookahead ? input.policy.currentAuxiliaryEvaluationReserve : 0
+            input.policy.canUseCurrentCandidateAsAuxiliaryLookahead ? input.policy.currentAuxiliaryEvaluationReserve : 0
         let primaryPhaseEvaluationLimit = max(0, input.policy.evaluationBudget - auxiliaryEvaluationReserve)
-        var primaryPhaseStoppedForAuxiliaryBudget = false
+        var didStopPrimaryPhaseForAuxiliaryBudget = false
 
         primarySearch: for window in input.policy.candidateWindowPresets {
             guard !state.isEvaluationBudgetExhausted else { return nil }
@@ -200,7 +209,7 @@ enum PlaybackSmartFillPlanner {
             if auxiliaryEvaluationReserve > 0,
                 state.evaluationCount >= primaryPhaseEvaluationLimit
             {
-                primaryPhaseStoppedForAuxiliaryBudget = true
+                didStopPrimaryPhaseForAuxiliaryBudget = true
                 state.record(.candidateWindowExhausted)
                 break primarySearch
             }
@@ -228,7 +237,7 @@ enum PlaybackSmartFillPlanner {
                 if auxiliaryEvaluationReserve > 0,
                     state.evaluationCount >= primaryPhaseEvaluationLimit
                 {
-                    primaryPhaseStoppedForAuxiliaryBudget = true
+                    didStopPrimaryPhaseForAuxiliaryBudget = true
                     state.record(.candidateWindowExhausted)
                     break primarySearch
                 }
@@ -242,7 +251,7 @@ enum PlaybackSmartFillPlanner {
                     if auxiliaryEvaluationReserve > 0,
                         state.evaluationCount >= primaryPhaseEvaluationLimit
                     {
-                        primaryPhaseStoppedForAuxiliaryBudget = true
+                        didStopPrimaryPhaseForAuxiliaryBudget = true
                         state.record(.candidateWindowExhausted)
                         break primarySearch
                     }
@@ -258,7 +267,7 @@ enum PlaybackSmartFillPlanner {
                         if auxiliaryEvaluationReserve > 0,
                             state.evaluationCount >= primaryPhaseEvaluationLimit
                         {
-                            primaryPhaseStoppedForAuxiliaryBudget = true
+                            didStopPrimaryPhaseForAuxiliaryBudget = true
                             state.record(.candidateWindowExhausted)
                             break primarySearch
                         }
@@ -282,7 +291,7 @@ enum PlaybackSmartFillPlanner {
             previousSecondaryPoolCount = max(previousSecondaryPoolCount, secondaryPool.count)
         }
 
-        if (input.policy.allowsCurrentCandidateAsAuxiliaryLookahead || primaryPhaseStoppedForAuxiliaryBudget),
+        if (input.policy.canUseCurrentCandidateAsAuxiliaryLookahead || didStopPrimaryPhaseForAuxiliaryBudget),
             let auxiliaryResult = makeCurrentAuxiliaryMultiSlotResult(
                 input: input,
                 current: primary,
@@ -462,14 +471,14 @@ enum PlaybackSmartFillPlanner {
                 // Top-K relies on ideal-ratio ordering: partners closer to the geometric solution are more likely to
                 // pass first, and the slow path usually keeps failing.
                 for partner in orderedPartners.prefix(input.policy.constructiveDoublePartnerSearchLimit) {
-                    let alreadyTried: Bool
+                    let hasAlreadyTried: Bool
                     switch direction {
                     case .vertical:
-                        alreadyTried = triedVerticalPartnerReferences.contains(partner.reference)
+                        hasAlreadyTried = triedVerticalPartnerReferences.contains(partner.reference)
                     case .horizontal:
-                        alreadyTried = triedHorizontalPartnerReferences.contains(partner.reference)
+                        hasAlreadyTried = triedHorizontalPartnerReferences.contains(partner.reference)
                     }
-                    guard !alreadyTried else { continue }
+                    guard !hasAlreadyTried else { continue }
                     guard !state.isEvaluationBudgetExhausted else { return nil }
                     // Do not retry the same partner during window expansion; directions are recorded separately so the
                     // other valid arrangement direction is not skipped.
@@ -935,7 +944,7 @@ enum PlaybackSmartFillPlanner {
                     candidates: candidates,
                     surface: surface
                 )
-                if abs(lhsScore - rhsScore) > 0.000001 {
+                if abs(lhsScore - rhsScore) > comparisonTolerance {
                     return lhsScore > rhsScore
                 }
                 return lhs.offset < rhs.offset
@@ -954,9 +963,9 @@ enum PlaybackSmartFillPlanner {
         return preferred.filter { direction in
             switch direction {
             case .vertical:
-                return policy.allowsVerticalDouble
+                return policy.canUseVerticalDouble
             case .horizontal:
-                return policy.allowsHorizontalDouble
+                return policy.canUseHorizontalDouble
             }
         }
     }
@@ -982,7 +991,7 @@ enum PlaybackSmartFillPlanner {
             .sorted { lhs, rhs in
                 let lhsDistance = logarithmicAspectDistance(lhs.element.aspectRatio, ideal: ideal)
                 let rhsDistance = logarithmicAspectDistance(rhs.element.aspectRatio, ideal: ideal)
-                if abs(lhsDistance - rhsDistance) > 0.000001 {
+                if abs(lhsDistance - rhsDistance) > comparisonTolerance {
                     return lhsDistance < rhsDistance
                 }
                 return lhs.offset < rhs.offset
@@ -1041,14 +1050,14 @@ enum PlaybackSmartFillPlanner {
         [
             constructiveDoubleAttempts(
                 candidates: [current, partner],
-                currentIsPrimary: true,
+                isCurrentPrimary: true,
                 surface: surface,
                 policy: policy,
                 direction: direction
             ),
             constructiveDoubleAttempts(
                 candidates: [partner, current],
-                currentIsPrimary: false,
+                isCurrentPrimary: false,
                 surface: surface,
                 policy: policy,
                 direction: direction
@@ -1058,10 +1067,10 @@ enum PlaybackSmartFillPlanner {
         .sorted { lhs, rhs in
             // current as the primary photo is the stable priority for playback semantics; on failure, current as the
             // secondary photo is still tried.
-            if lhs.currentIsPrimary != rhs.currentIsPrimary {
-                return lhs.currentIsPrimary
+            if lhs.isCurrentPrimary != rhs.isCurrentPrimary {
+                return lhs.isCurrentPrimary
             }
-            if abs(lhs.score - rhs.score) > 0.000001 {
+            if abs(lhs.score - rhs.score) > comparisonTolerance {
                 return lhs.score > rhs.score
             }
             return lhs.order < rhs.order
@@ -1070,7 +1079,7 @@ enum PlaybackSmartFillPlanner {
 
     private nonisolated static func constructiveDoubleAttempts(
         candidates: [PlaybackSmartFillCandidateSummary],
-        currentIsPrimary: Bool,
+        isCurrentPrimary: Bool,
         surface: PlaybackSmartFillSurface,
         policy: PlaybackSmartFillLayoutPolicy,
         direction: ConstructiveDoubleDirection
@@ -1113,7 +1122,7 @@ enum PlaybackSmartFillPlanner {
                     candidates: candidates,
                     surface: surface
                 ),
-                currentIsPrimary: currentIsPrimary,
+                isCurrentPrimary: isCurrentPrimary,
                 order: offset
             )
         }
@@ -1163,7 +1172,7 @@ enum PlaybackSmartFillPlanner {
         var upper = interval.upper
         // Ternary search looks for the best point only inside the valid share interval; the goal is to maximize the
         // retention of the worse of the two slots.
-        for _ in 0..<24 {
+        for _ in 0..<constructiveSearchIterationLimit {
             let first = lower + (upper - lower) / 3
             let second = upper - (upper - lower) / 3
             if constructiveDoubleRetentionScore(
@@ -1333,7 +1342,7 @@ enum PlaybackSmartFillPlanner {
         policy: PlaybackSmartFillLayoutPolicy
     ) -> String {
         if let preset = policy.ratioPresets(for: variant).first(where: {
-            abs($0.primaryShare - primaryShare) <= 0.0005
+            abs($0.primaryShare - primaryShare) <= ratioPresetMatchingTolerance
         }) {
             return preset.id
         }
@@ -1359,7 +1368,7 @@ enum PlaybackSmartFillPlanner {
                     current: current,
                     surface: surface
                 )
-                if abs(lhsScore - rhsScore) > 0.000001 {
+                if abs(lhsScore - rhsScore) > comparisonTolerance {
                     return lhsScore > rhsScore
                 }
                 return lhs.offset < rhs.offset
@@ -1384,7 +1393,7 @@ enum PlaybackSmartFillPlanner {
                     frame: layout.frames[safe: rhs],
                     surface: surface
                 )
-                if abs(lhsScore - rhsScore) > 0.000001 {
+                if abs(lhsScore - rhsScore) > comparisonTolerance {
                     return lhsScore > rhsScore
                 }
                 return lhs < rhs
@@ -1742,13 +1751,13 @@ enum PlaybackSmartFillPlanner {
         _ policy: PlaybackSmartFillLayoutPolicy,
         into state: inout PlannerState
     ) {
-        if !policy.allowsHorizontalDouble {
+        if !policy.canUseHorizontalDouble {
             state.record(.horizontalDoubleDisallowedOnSurface)
         }
-        if !policy.allowsVerticalDouble {
+        if !policy.canUseVerticalDouble {
             state.record(.verticalDoubleDisallowedOnSurface)
         }
-        if !policy.allowsTriple {
+        if !policy.canUseTriple {
             state.record(.tripleDisallowedOnSurface)
         }
     }
@@ -1761,7 +1770,7 @@ enum PlaybackSmartFillPlanner {
         let key = [
             input.playbackSessionSeed,
             primary.reference,
-            input.policy.surfacePolicyId,
+            input.policy.layoutPolicyId,
             String(input.sceneOrdinal),
             sceneType.rawValue
         ].joined(separator: "|")
@@ -1773,15 +1782,15 @@ enum PlaybackSmartFillPlanner {
             startIndex: startIndex,
             startVariant: startLayout?.variant ?? .single,
             startRatioPreset: startLayout?.ratioPreset.id ?? (sceneType == .fallback ? "fallback" : "full"),
-            hashPrefix: String(format: "%016llx", hash).prefix(12).description
+            hashPrefix: String(format: "%016llx", hash).prefix(rotationHashPrefixCharacterCount).description
         )
     }
 
     private nonisolated static func stableHash64(_ text: String) -> UInt64 {
-        var hash: UInt64 = 14695981039346656037
+        var hash: UInt64 = fnvOffsetBasis
         for byte in text.utf8 {
             hash ^= UInt64(byte)
-            hash = hash &* 1099511628211
+            hash = hash &* fnvPrime
         }
         return hash
     }
@@ -2174,20 +2183,20 @@ enum PlaybackSmartFillPlanner {
         let candidates: [PlaybackSmartFillCandidateSummary]
         let layout: LayoutCandidate
         let score: Double
-        let currentIsPrimary: Bool
+        let isCurrentPrimary: Bool
         let order: Int
 
         nonisolated init(
             candidates: [PlaybackSmartFillCandidateSummary],
             layout: LayoutCandidate,
             score: Double,
-            currentIsPrimary: Bool,
+            isCurrentPrimary: Bool,
             order: Int
         ) {
             self.candidates = candidates
             self.layout = layout
             self.score = score
-            self.currentIsPrimary = currentIsPrimary
+            self.isCurrentPrimary = isCurrentPrimary
             self.order = order
         }
     }
@@ -2219,7 +2228,9 @@ enum PlaybackSmartFillPlanner {
             return true
         }
 
-        nonisolated func topRejectedReasons(limit: Int = 5) -> [PlaybackSmartFillPlannerRejectReason] {
+        nonisolated func topRejectedReasons(limit: Int = PlaybackSmartFillPlanner.defaultTopRejectedReasonCount)
+            -> [PlaybackSmartFillPlannerRejectReason]
+        {
             rejectCounts
                 .sorted { left, right in
                     if left.value == right.value {
@@ -2241,7 +2252,9 @@ enum PlaybackSmartFillPlanner {
             policy: PlaybackSmartFillLayoutPolicy,
             cropRetention: Double? = nil
         ) {
-            guard rejectedLayoutDiagnostics.count < 36 else { return }
+            guard rejectedLayoutDiagnostics.count < PlaybackSmartFillPlanner.maximumRejectedLayoutSummaryCount else {
+                return
+            }
 
             let role = PlaybackSmartFillPlanner.role(for: slotIndex)
             let bucket = [
@@ -2250,7 +2263,10 @@ enum PlaybackSmartFillPlanner {
                 role.rawValue,
                 String(slotIndex)
             ].joined(separator: "|")
-            guard rejectedLayoutDiagnosticBucketCounts[bucket, default: 0] < 3 else { return }
+            guard
+                rejectedLayoutDiagnosticBucketCounts[bucket, default: 0]
+                    < PlaybackSmartFillPlanner.maximumRejectedLayoutSummariesPerBucket
+            else { return }
             rejectedLayoutDiagnosticBucketCounts[bucket, default: 0] += 1
 
             let slotAspect = PlaybackSmartFillPlanner.slotAspectRatio(frame: frame, surface: surface)

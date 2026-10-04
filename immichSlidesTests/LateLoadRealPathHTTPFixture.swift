@@ -413,7 +413,7 @@ enum LateLoadRealPathTestSupport {
             immichURL: ImmichServer.normalizeServerURL("http://\(LateLoadRealPathFixture.loopbackHost):\(port)"),
             immichApiKey: credential
         )
-        let didSave = server.save(writeAPIKeyToKeychain: { _ in true })
+        let didSave = server.save(writeAPIKeyToKeychainForTesting: { _ in true })
         ImmichAPIService.shared.reloadServerConfiguration()
         return didSave
     }

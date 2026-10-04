@@ -323,13 +323,15 @@ class ImmichAPIService {
         // DEBUG previews may read the test server from Info.plist; XCTest must be excluded so they do not mix.
 
         if !ImmichServer.isRunningXCTest,
-            let debugServer = ImmichServer.debugTestServerFromInfoPlist()
+            let debugServer = ImmichServer.testServerFromInfoPlistForTesting()
         {
             return debugServer
         }
 
         return ImmichServer(immichURL: "", immichApiKey: "")
     }
+
+    private static let requestTimeoutSeconds: TimeInterval = 10
 
     private func makeRequest(endpoint: String, method: String) throws -> URLRequest {
 
@@ -343,7 +345,7 @@ class ImmichAPIService {
         var request = URLRequest(url: url)
         request.httpMethod = method
         ImmichHTTPHeaders.applyAPIKey(apiKey, to: &request)
-        request.timeoutInterval = 10
+        request.timeoutInterval = Self.requestTimeoutSeconds
         return request
     }
 

@@ -259,10 +259,12 @@ struct MotionTransformInput: Equatable, Sendable {
     let cropRectInSource: MotionUnitRect
     let focalSource: MotionFocalSource
     let isMotionEnabled: Bool
-    let reduceMotionEnabled: Bool
+    let isReduceMotionEnabled: Bool
 }
 
 struct MotionTransform: Equatable, Sendable {
+    private nonisolated static let identityScaleTolerance: Double = 0.000_1
+    private nonisolated static let identityGeometryTolerance: CGFloat = 0.000_1
     nonisolated static let identity = MotionTransform(
         scale: 1,
         translationInSlot: .zero,
@@ -280,8 +282,10 @@ struct MotionTransform: Equatable, Sendable {
     let focalSource: MotionFocalSourceKind
 
     nonisolated var isIdentity: Bool {
-        abs(scale - 1) < 0.000_1 && abs(translationInSlot.width) < 0.000_1 && abs(translationInSlot.height) < 0.000_1
-            && abs(anchorUnitPointInSlot.x - 0.5) < 0.000_1 && abs(anchorUnitPointInSlot.y - 0.5) < 0.000_1
+        abs(scale - 1) < Self.identityScaleTolerance && abs(translationInSlot.width) < Self.identityGeometryTolerance
+            && abs(translationInSlot.height) < Self.identityGeometryTolerance
+            && abs(anchorUnitPointInSlot.x - 0.5) < Self.identityGeometryTolerance
+            && abs(anchorUnitPointInSlot.y - 0.5) < Self.identityGeometryTolerance
             && Self.isSlotSizedClippedContainer(applicationSpace) && Self.isIdentityPhaseAction(phaseAction)
             && Self.isSlotCenter(focalSource)
     }

@@ -64,15 +64,15 @@ struct PlaybackSettingsViewModelTests {
         )
         defer { store.clear() }
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: true, isFilterEditorPresented: true)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: true, isFilterEditorPresented: true)
         #expect(viewModel.settings.defaultPlaybackMode == .filtered)
         #expect(store.load()?.defaultPlaybackMode == .filtered)
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: false, isFilterEditorPresented: true)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: false, isFilterEditorPresented: true)
         #expect(viewModel.settings.defaultPlaybackMode == .filtered)
         #expect(store.load()?.defaultPlaybackMode == .filtered)
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: false, isFilterEditorPresented: false)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: false, isFilterEditorPresented: false)
         #expect(viewModel.settings.defaultPlaybackMode == .filtered)
         #expect(store.load()?.defaultPlaybackMode == .filtered)
     }
@@ -85,15 +85,15 @@ struct PlaybackSettingsViewModelTests {
         )
         defer { store.clear() }
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: false, isFilterEditorPresented: true)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: false, isFilterEditorPresented: true)
         #expect(viewModel.settings.defaultPlaybackMode == .filtered)
         #expect(store.load()?.defaultPlaybackMode == .filtered)
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: false, isFilterEditorPresented: true)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: false, isFilterEditorPresented: true)
         #expect(viewModel.settings.defaultPlaybackMode == .filtered)
         #expect(store.load()?.defaultPlaybackMode == .filtered)
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: false, isFilterEditorPresented: false)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: false, isFilterEditorPresented: false)
         #expect(viewModel.settings.defaultPlaybackMode == .filtered)
         #expect(store.load()?.defaultPlaybackMode == .filtered)
     }
@@ -106,11 +106,11 @@ struct PlaybackSettingsViewModelTests {
         )
         defer { store.clear() }
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: true, isFilterEditorPresented: true)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: true, isFilterEditorPresented: true)
         #expect(viewModel.settings.defaultPlaybackMode == .filtered)
         #expect(store.load()?.defaultPlaybackMode == .filtered)
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: true, isFilterEditorPresented: false)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: true, isFilterEditorPresented: false)
         #expect(viewModel.settings.defaultPlaybackMode == .random)
         #expect(store.load()?.defaultPlaybackMode == .random)
     }
@@ -123,19 +123,19 @@ struct PlaybackSettingsViewModelTests {
         )
         defer { store.clear() }
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: true, isFilterEditorPresented: true)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: true, isFilterEditorPresented: true)
         #expect(viewModel.settings.defaultPlaybackMode == .random)
         #expect(store.load()?.defaultPlaybackMode == .random)
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: false, isFilterEditorPresented: true)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: false, isFilterEditorPresented: true)
         #expect(viewModel.settings.defaultPlaybackMode == .random)
         #expect(store.load()?.defaultPlaybackMode == .random)
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: false, isFilterEditorPresented: false)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: false, isFilterEditorPresented: false)
         #expect(viewModel.settings.defaultPlaybackMode == .random)
         #expect(store.load()?.defaultPlaybackMode == .random)
 
-        viewModel.enforcePlaybackModeInvariant(filterSelectionIsEmpty: true, isFilterEditorPresented: false)
+        viewModel.enforcePlaybackModeInvariant(isFilterSelectionEmpty: true, isFilterEditorPresented: false)
         #expect(viewModel.settings.defaultPlaybackMode == .random)
         #expect(store.load()?.defaultPlaybackMode == .random)
     }

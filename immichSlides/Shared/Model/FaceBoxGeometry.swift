@@ -107,14 +107,27 @@ enum FaceBoxGeometry {
         return .mismatch
     }
 
+    private enum ExifOrientationCode {
+        static let topLeft: String = "1"
+        static let topRight: String = "2"
+        static let bottomRight: String = "3"
+        static let bottomLeft: String = "4"
+        static let leftTop: String = "5"
+        static let rightTop: String = "6"
+        static let rightBottom: String = "7"
+        static let leftBottom: String = "8"
+    }
+
     static func orientationCategory(_ orientation: String?) -> OrientationCategory {
         guard let orientation else { return .unknown }
         let normalized = orientation.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch normalized {
-        case "1", "2", "3", "4", "horizontal", "horizontal (normal)", "normal",
+        case ExifOrientationCode.topLeft, ExifOrientationCode.topRight, ExifOrientationCode.bottomRight,
+            ExifOrientationCode.bottomLeft, "horizontal", "horizontal (normal)", "normal",
             "mirror horizontal", "rotate 180", "mirror vertical":
             return .uprightOr180
-        case "5", "6", "7", "8", "mirror horizontal and rotate 270 cw", "rotate 90 cw",
+        case ExifOrientationCode.leftTop, ExifOrientationCode.rightTop, ExifOrientationCode.rightBottom,
+            ExifOrientationCode.leftBottom, "mirror horizontal and rotate 270 cw", "rotate 90 cw",
             "mirror horizontal and rotate 90 cw", "rotate 270 cw":
             return .rotated90Or270
         default:

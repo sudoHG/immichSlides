@@ -584,7 +584,7 @@ struct PlaybackSessionEngineTests {
         #expect(snapshot.phase == .grace)
         #expect(snapshot.layers.map(\.role) == [.stable, .incoming])
         #expect(snapshot.layers.map(\.identity) == [initial.identity, started.identity])
-        #expect(snapshot.pendingTargetIsReady == false)
+        #expect(snapshot.isPendingTargetReady == false)
     }
 
     @Test
@@ -767,9 +767,9 @@ struct PlaybackSessionEngineTests {
 
         let transition = engine.requestNext(scene: smartFillScene, source: .manualNext)
 
-        #expect(engine.scenePublicationRecords.map(\.transactionId) == [transition.transaction.id])
-        #expect(engine.scenePublicationRecords.last?.assetIds == ["asset-1", "asset-2", "asset-3"])
-        #expect(engine.scenePublicationRecords.last?.sceneId == transition.scene.id)
+        #expect(engine.publishedSceneRecords.map(\.transactionId) == [transition.transaction.id])
+        #expect(engine.publishedSceneRecords.last?.assetIds == ["asset-1", "asset-2", "asset-3"])
+        #expect(engine.publishedSceneRecords.last?.sceneId == transition.scene.id)
         #expect(engine.displayedSceneRecords.isEmpty)
         #expect(engine.scenes.compactMap(\.primaryAssetId) == ["asset-0"])
     }

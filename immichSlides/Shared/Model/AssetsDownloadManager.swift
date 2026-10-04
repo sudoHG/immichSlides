@@ -103,6 +103,8 @@ class AssetsDownloadManager: ObservableObject {
     }
 
     static let shared = AssetsDownloadManager()
+    private static let maximumPreloadConcurrentDownloads: Int = 2
+    private static let preloadLookBehindAssetCount: Int = 2
 
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "immichSlides",
@@ -159,7 +161,7 @@ class AssetsDownloadManager: ObservableObject {
     private lazy var lowPriorityManager: SDWebImageManager = {
         let config =
             (SDWebImageDownloaderConfig.default.copy() as? SDWebImageDownloaderConfig) ?? SDWebImageDownloaderConfig()
-        config.maxConcurrentDownloads = 2
+        config.maxConcurrentDownloads = Self.maximumPreloadConcurrentDownloads
         config.executionOrder = .lifoExecutionOrder
         let downloader = SDWebImageDownloader(config: config)
         return SDWebImageManager(cache: SDImageCache.shared, loader: downloader)
@@ -483,6 +485,8 @@ class AssetsDownloadManager: ObservableObject {
             ))
     }
 
+    private static let seededPhotoLoadDelayNanoseconds: UInt64 = 5_000_000_000
+
     @discardableResult
     func seedRunningPhotoLoadForTesting(
         assetId: String,
@@ -491,10 +495,10 @@ class AssetsDownloadManager: ObservableObject {
     ) -> Task<Void, Never> {
         let key = TaskKey(assetId: assetId, size: size)
         let token = UUID()
-        let task = Task {
-            _ = try? await Task.sleep(nanoseconds: 5_000_000_000)
+        let seededPhotoLoadTask = Task {
+            _ = try? await Task.sleep(nanoseconds: Self.seededPhotoLoadDelayNanoseconds)
         }
-        runningTasks[key] = task
+        runningTasks[key] = seededPhotoLoadTask
         runningTaskTokens[key] = token
         runningTaskPriorities[key] = priority
         let seededRequestId = "seeded-\(assetId)-\(size.rawValue)"
@@ -515,7 +519,7 @@ class AssetsDownloadManager: ObservableObject {
                 timestamp: Date().timeIntervalSince1970
             ))
         activeTaskCount = runningTasks.count
-        return task
+        return seededPhotoLoadTask
     }
 
     func runningPhotoLoadPriorityForTesting(assetId: String, size: ThumbnailSize) -> DownloadPriority? {
@@ -541,6 +545,7 @@ class AssetsDownloadManager: ObservableObject {
     }
     #endif
 
+    #if DEBUG
     func recordPhotoLoadRuntimePhaseForTesting(
         assetId: String,
         size: ThumbnailSize,
@@ -557,6 +562,8 @@ class AssetsDownloadManager: ObservableObject {
             loadStatus: phase == "decodeCompleted" ? "decoded" : nil
         )
     }
+
+    #endif
 
     func loadPhoto(assetId: String, size: ThumbnailSize, priority: DownloadPriority) async {
         let key = TaskKey(assetId: assetId, size: size)
@@ -586,7 +593,7 @@ class AssetsDownloadManager: ObservableObject {
         }
         #endif
 
-        if let task = runningTasks[key],
+        if let existingPhotoLoadTask = runningTasks[key],
             let existingPriority = runningTaskPriorities[key]
         {
             #if DEBUG
@@ -601,7 +608,7 @@ class AssetsDownloadManager: ObservableObject {
                 // Only the DEBUG legacy baseline interrupts low priority; the default path does not, to avoid bringing
                 // back a request storm.
 
-                task.cancel()
+                existingPhotoLoadTask.cancel()
                 runningOperations[key]?.cancel()
                 if let runningRequestId = runningLifecycleRequestIds[key] {
                     recordPlaybackImageRequestLifecycleDiagnostic(
@@ -641,7 +648,7 @@ class AssetsDownloadManager: ObservableObject {
                 }
                 #endif
 
-                await task.value
+                await existingPhotoLoadTask.value
                 return
             }
         }
@@ -655,7 +662,7 @@ class AssetsDownloadManager: ObservableObject {
         }
         #endif
 
-        let task = Task { @MainActor in
+        let photoLoadTask = Task { @MainActor in
 
             defer {
 
@@ -704,10 +711,10 @@ class AssetsDownloadManager: ObservableObject {
                 return
             }
         }
-        runningTasks[key] = task
+        runningTasks[key] = photoLoadTask
 
         activeTaskCount = runningTasks.count
-        await task.value
+        await photoLoadTask.value
     }
 
     func preloadPhotos(assets: [Asset], currentIndex: Int, preloadCount: Int, size: ThumbnailSize) async {
@@ -733,7 +740,7 @@ class AssetsDownloadManager: ObservableObject {
             return
         }
 
-        let startIndex = max(0, currentIndex - 2)
+        let startIndex = max(0, currentIndex - Self.preloadLookBehindAssetCount)
         let endIndex = min(currentIndex + preloadCount, assets.count - 1)
         // Clamp the slice bounds to avoid an out-of-range array index.
 

@@ -35,7 +35,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
             vm.motionRuntimeContext(
                 for: progressedLayer,
                 platform: .iOS,
-                reduceMotionEnabled: false
+                isReduceMotionEnabled: false
             ))
         let slot = try #require(scene.photoSlots.first)
         let progressFrame = context.progressFrame(
@@ -75,12 +75,12 @@ struct SmartFillMotionRuntimeIntegrationTests {
         #expect(vm.sceneRenderSnapshot.underlyingPhase == .grace)
         let withinWindow = try #require(vm.sceneRenderSnapshot.layers.first { $0.identity == firstLayer.identity })
         let withinContext = try #require(
-            vm.motionRuntimeContext(for: withinWindow, platform: .iOS, reduceMotionEnabled: false))
+            vm.motionRuntimeContext(for: withinWindow, platform: .iOS, isReduceMotionEnabled: false))
         assertApproximatelyEqual(withinContext.motionActiveTime, withinWindow.motionActiveTime)
 
         now = 1_000
         let held = try #require(vm.sceneRenderSnapshot.layers.first { $0.identity == firstLayer.identity })
-        let context = try #require(vm.motionRuntimeContext(for: held, platform: .iOS, reduceMotionEnabled: false))
+        let context = try #require(vm.motionRuntimeContext(for: held, platform: .iOS, isReduceMotionEnabled: false))
         #expect(held.motionActiveTime > context.lifecycle.longestVisibleMotionDuration)
         assertApproximatelyEqual(context.rawProgress, context.maximumCoverageProgress)
     }
@@ -130,7 +130,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
             return PlaybackSessionEngine.SceneRenderSnapshot(
                 phase: .transition, underlyingPhase: .transition, layers: layers, currentTarget: base.currentTarget,
                 frozenInterval: base.frozenInterval, activeTime: base.activeTime, suspensionReasons: [],
-                isReduceMotionEnabled: false, pendingTargetIsReady: true)
+                isReduceMotionEnabled: false, isPendingTargetReady: true)
         }
 
         for _ in 0...2 {
@@ -241,7 +241,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
             lifecycle: incomingTarget.lifecycle,
             motionActiveTime: firstVisibleIncoming.motionActiveTime,
             isMotionEnabled: firstVisibleIncoming.isMotionEnabled,
-            reduceMotionEnabled: true
+            isReduceMotionEnabled: true
         )
         let geometry = MotionSlotRenderGeometry(
             slotSize: probeSlotSizePoints,
@@ -323,7 +323,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
             lifecycle: automaticIncoming.lifecycle,
             motionActiveTime: firstVisibleIncoming.motionActiveTime,
             isMotionEnabled: firstVisibleIncoming.isMotionEnabled,
-            reduceMotionEnabled: true
+            isReduceMotionEnabled: true
         )
         let geometry = MotionSlotRenderGeometry(
             slotSize: probeSlotSizePoints,
@@ -351,7 +351,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
             lifecycle: lifecycle,
             motionActiveTime: lifecycle.longestVisibleMotionDuration,
             isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isReduceMotionEnabled: false
         )
         let geometry = MotionSlotRenderGeometry(
             slotSize: portraitProbeSlotSizePoints,
@@ -389,7 +389,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
             lifecycle: lifecycle,
             motionActiveTime: lifecycle.longestVisibleMotionDuration,
             isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isReduceMotionEnabled: false
         )
         // Fractional crop coordinates reproduce the coverage endpoint regression across the full visible window.
         let boundaryGeometry = MotionSlotRenderGeometry(
@@ -436,7 +436,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
                     lifecycle: SceneLifecycleContract(configuredInterval: 5),
                     motionActiveTime: 2,
                     isMotionEnabled: false,
-                    reduceMotionEnabled: true
+                    isReduceMotionEnabled: true
                 ),
                 geometry: geometry
             )
@@ -463,7 +463,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
                     lifecycle: lifecycle,
                     motionActiveTime: 2,
                     isMotionEnabled: true,
-                    reduceMotionEnabled: false
+                    isReduceMotionEnabled: false
                 ),
                 geometry: geometry
             )
@@ -476,7 +476,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
                     lifecycle: lifecycle,
                     motionActiveTime: 2,
                     isMotionEnabled: true,
-                    reduceMotionEnabled: true
+                    isReduceMotionEnabled: true
                 ),
                 geometry: geometry
             )
@@ -500,13 +500,13 @@ struct SmartFillMotionRuntimeIntegrationTests {
             vm.motionRuntimeContext(
                 for: progressedLayer,
                 platform: .iOS,
-                reduceMotionEnabled: false
+                isReduceMotionEnabled: false
             ))
         let tvOS = try #require(
             vm.motionRuntimeContext(
                 for: progressedLayer,
                 platform: .tvOS,
-                reduceMotionEnabled: false
+                isReduceMotionEnabled: false
             ))
 
         assertApproximatelyEqual(iOS.motionActiveTime, tvOS.motionActiveTime)
@@ -526,7 +526,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
                 vm.motionRuntimeContext(
                     for: readyLayer,
                     platform: .iOS,
-                    reduceMotionEnabled: false
+                    isReduceMotionEnabled: false
                 ))
 
             #expect(context.isMotionEnabled, "\(sourceCase.name) should keep SmartFill motion")

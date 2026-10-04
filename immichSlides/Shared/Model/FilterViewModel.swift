@@ -78,9 +78,9 @@ class FilterViewModel: ObservableObject {
     // IDs of people currently being queried, to avoid duplicate requests for the same person.
     private var loadingPersonStatsIDs: Set<String> = []
 
-    // reset clears covers; false reuses them when growing from the warm-up set to the full list.
+    // shouldReset clears covers; false reuses them when growing from the warm-up set to the full list.
     // UI tests can force empty data or override with long person names.
-    func getCoverURLs(filterType: FilterType, coverLimit: Int?, reset: Bool) async {
+    func getCoverURLs(filterType: FilterType, coverLimit: Int?, shouldReset: Bool) async {
         let batchSize: Int = 10
         switch filterType {
         case .albums:
@@ -98,7 +98,7 @@ class FilterViewModel: ObservableObject {
             await MainActor.run {
                 self.albumLoadErrorMessage = nil
             }
-            if reset {
+            if shouldReset {
                 await MainActor.run {
                     albums.removeAll()
                     albumCoverURLByID.removeAll()
@@ -121,7 +121,7 @@ class FilterViewModel: ObservableObject {
             }
 
             let existingIDs: Set<String> =
-                reset
+                shouldReset
                 ? []
                 : await MainActor.run { Set(self.albumCoverURLByID.keys) }
 
@@ -166,7 +166,7 @@ class FilterViewModel: ObservableObject {
                 }
             }
             await MainActor.run {
-                if reset {
+                if shouldReset {
 
                     albumCoverURLByID = newAlbumURLs
                 } else {
@@ -191,7 +191,7 @@ class FilterViewModel: ObservableObject {
             await MainActor.run {
                 self.peopleLoadErrorMessage = nil
             }
-            if reset {
+            if shouldReset {
                 await MainActor.run {
                     people.removeAll()
                     peopleCoverURLByID.removeAll()
@@ -209,14 +209,18 @@ class FilterViewModel: ObservableObject {
                 return
             }
 
-            let preparedPeople = peopleAdjustedForUITesting(fetchedPeople)
+            #if DEBUG
+            let preparedPeople = peopleAdjustedForTesting(fetchedPeople)
+            #else
+            let preparedPeople = fetchedPeople
+            #endif
 
             await MainActor.run {
                 people = preparedPeople
             }
 
             let existingPeopleIDs: Set<String> =
-                reset
+                shouldReset
                 ? []
                 : await MainActor.run { Set(self.peopleCoverURLByID.keys) }
 
@@ -251,7 +255,7 @@ class FilterViewModel: ObservableObject {
                 }
             }
             await MainActor.run {
-                if reset {
+                if shouldReset {
                     peopleCoverURLByID = newPeopleURLs
                 } else {
                     peopleCoverURLByID.merge(newPeopleURLs) { _, new in new }
@@ -281,9 +285,10 @@ class FilterViewModel: ObservableObject {
     }
     #endif
 
-    private func peopleAdjustedForUITesting(_ people: [People]) -> [People] {
+    #if DEBUG
+    private func peopleAdjustedForTesting(_ people: [People]) -> [People] {
 
-        guard ProcessInfo.processInfo.environment["UI_TEST_FORCE_LONG_PERSON_NAMES"] == "1" else {
+        guard PlatformCompat.shouldForceLongPersonNamesForTesting else {
             return people
         }
 
@@ -303,12 +308,14 @@ class FilterViewModel: ObservableObject {
         }
     }
 
-    func preloadCovers(coverLimit: Int?, reset: Bool) {
+    #endif
+
+    func preloadCovers(coverLimit: Int?, shouldReset: Bool) {
         guard preloadTask == nil else { return }
         preloadTask = Task {
             defer { self.preloadTask = nil }
-            async let a: Void = self.getCoverURLs(filterType: .albums, coverLimit: coverLimit, reset: reset)
-            async let p: Void = self.getCoverURLs(filterType: .people, coverLimit: coverLimit, reset: reset)
+            async let a: Void = self.getCoverURLs(filterType: .albums, coverLimit: coverLimit, shouldReset: shouldReset)
+            async let p: Void = self.getCoverURLs(filterType: .people, coverLimit: coverLimit, shouldReset: shouldReset)
             _ = await (a, p)
             if let coverLimit {
                 let urls: [URL] = Array(albumCoverURLs.prefix(coverLimit)) + Array(peopleCoverURLs.prefix(coverLimit))
@@ -454,7 +461,7 @@ class FilterViewModel: ObservableObject {
         // Switching servers must clear filters; the UI test seed is restored after clearing so the start button
         // is not disabled by mistake.
 
-        if let seededSelection = store.seedUITestSelectionIfRequested() {
+        if let seededSelection = store.seedUITestSelectionIfRequestedForTesting() {
             selectedAlbumIDs = Set(seededSelection.albumIds)
             selection = seededSelection
         } else {

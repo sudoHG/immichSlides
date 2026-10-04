@@ -10,6 +10,7 @@ import Combine
 
 @MainActor
 final class PlaybackSettingsViewModel: ObservableObject {
+    private static let maximumIntervalSeconds: TimeInterval = 60
     // Source of UI bindings; didSet persists, and external write-backs must skip it to avoid recursion.
     @Published var settings: PlaybackSettings {
         didSet {
@@ -64,7 +65,7 @@ final class PlaybackSettingsViewModel: ObservableObject {
         var normalized = settings
         normalized.intervalSeconds = min(
             PlaybackIntervalPolicy.migratedLegacyInterval(normalized.intervalSeconds),
-            60
+            Self.maximumIntervalSeconds
         )
 
         if normalized != settings {
@@ -84,14 +85,14 @@ final class PlaybackSettingsViewModel: ObservableObject {
     }
 
     func enforcePlaybackModeInvariant(
-        filterSelectionIsEmpty: Bool,
+        isFilterSelectionEmpty: Bool,
         isFilterEditorPresented: Bool
     ) {
         // An empty selection inside the editor may be an in-between state while changing albums; fall back only
         // after it closes.
         guard !isFilterEditorPresented,
             settings.defaultPlaybackMode == .filtered,
-            filterSelectionIsEmpty
+            isFilterSelectionEmpty
         else { return }
 
         settings.defaultPlaybackMode = .random

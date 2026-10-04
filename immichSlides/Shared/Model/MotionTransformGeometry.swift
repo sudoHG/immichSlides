@@ -2,6 +2,11 @@ import CoreGraphics
 import Foundation
 
 enum MotionTransformGeometry {
+    private nonisolated static let geometryTolerancePoints: CGFloat = 0.000_1
+    private nonisolated static let sideDriftFraction: Double = 0.3
+    private nonisolated static let sideDriftSeedOffset: UInt64 = 0x9E37_79B9_7F4A_7C15
+    private nonisolated static let fractionSamplingModulus: UInt64 = 10_000
+    private nonisolated static let fractionSamplingScale: Double = 10_000
     nonisolated static func focalPoint(
         _ input: MotionTransformInput
     ) -> (pointInSlot: CGPoint, anchorUnitPointInSlot: CGPoint, source: MotionFocalSourceKind) {
@@ -41,8 +46,8 @@ enum MotionTransformGeometry {
         let center = CGPoint(x: slotSize.width * 0.5, y: slotSize.height * 0.5)
         var dx = clamped(center.x - focalPointInSlot.x, minimum: -maxX, maximum: maxX)
         var dy = clamped(center.y - focalPointInSlot.y, minimum: -maxY, maximum: maxY)
-        if abs(dx) < 0.000_1 && abs(dy) < 0.000_1 {
-            let sideDrift = CGFloat((fraction(seed &+ 0x9E37_79B9_7F4A_7C15) - 0.5) * 0.3)
+        if abs(dx) < geometryTolerancePoints && abs(dy) < geometryTolerancePoints {
+            let sideDrift = CGFloat((fraction(seed &+ sideDriftSeedOffset) - 0.5) * sideDriftFraction)
             dx = maxX * sideDrift
             dy = maxY * -sideDrift
         }
@@ -85,8 +90,9 @@ enum MotionTransformGeometry {
             return transform.isIdentity
         }
         let frame = transformedImageFrameInSlot(transform, renderGeometry: renderGeometry)
-        return frame.minX <= 0.000_1 && frame.minY <= 0.000_1 && frame.maxX >= renderGeometry.slotSize.width - 0.000_1
-            && frame.maxY >= renderGeometry.slotSize.height - 0.000_1
+        return frame.minX <= geometryTolerancePoints && frame.minY <= geometryTolerancePoints
+            && frame.maxX >= renderGeometry.slotSize.width - geometryTolerancePoints
+            && frame.maxY >= renderGeometry.slotSize.height - geometryTolerancePoints
     }
 
     nonisolated static func transformedImageFrameInSlot(
@@ -151,7 +157,7 @@ enum MotionTransformGeometry {
     }
 
     private nonisolated static func fraction(_ seed: UInt64) -> Double {
-        Double(seed % 10_000) / 10_000
+        Double(seed % fractionSamplingModulus) / fractionSamplingScale
     }
 
     private nonisolated static func clamped(

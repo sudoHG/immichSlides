@@ -7,7 +7,7 @@ struct MotionRuntimeContext: Equatable, Sendable {
     let lifecycle: SceneLifecycleContract
     let motionActiveTime: TimeInterval
     let isMotionEnabled: Bool
-    let reduceMotionEnabled: Bool
+    let isReduceMotionEnabled: Bool
 
     nonisolated var rawProgress: Double {
         SceneAnimationProfile(lifecycle: lifecycle).rawProgress(for: motionActiveTime)
@@ -100,7 +100,7 @@ enum SmartFillMotionSlotFrameResolver {
             cropRectInSource: input.cropRectInSource,
             focalSource: input.focalSource,
             isMotionEnabled: motionContext.isMotionEnabled,
-            reduceMotionEnabled: motionContext.reduceMotionEnabled
+            isReduceMotionEnabled: motionContext.isReduceMotionEnabled
         )
         let transform = MotionTransformResolver.resolve(transformInput)
 

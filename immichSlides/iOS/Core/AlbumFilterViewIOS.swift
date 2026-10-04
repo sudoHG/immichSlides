@@ -172,7 +172,7 @@ struct AlbumFilterViewIOS: View {
             Button("Retry") {
                 Task {
                     await MainActor.run { isLoading = true }
-                    await viewModel.getCoverURLs(filterType: .albums, coverLimit: nil, reset: false)
+                    await viewModel.getCoverURLs(filterType: .albums, coverLimit: nil, shouldReset: false)
                     await MainActor.run {
                         didFinishInitialLoad = true
                         isLoading = false

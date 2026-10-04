@@ -47,7 +47,7 @@ final class FilterSelectionStore {
     }
 
     @discardableResult
-    func seedUITestSelectionIfRequested() -> FilterSelection? {
+    func seedUITestSelectionIfRequestedForTesting() -> FilterSelection? {
         guard Self.shouldSeedUITestSelection else { return nil }
 
         let selection = Self.uiTestSeedSelectionFromEnvironment() ?? Self.defaultUITestSeedSelection

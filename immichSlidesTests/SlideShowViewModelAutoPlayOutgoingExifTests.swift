@@ -159,7 +159,7 @@ struct SlideShowViewModelAutoPlayOutgoingExifTests {
                 activeTime: source.activeTime,
                 suspensionReasons: source.suspensionReasons,
                 isReduceMotionEnabled: source.isReduceMotionEnabled,
-                pendingTargetIsReady: source.pendingTargetIsReady
+                isPendingTargetReady: source.isPendingTargetReady
             )
             #expect(harness.viewModel.visibleOverlayScene(in: snapshot)?.primaryAssetId == expected)
         }

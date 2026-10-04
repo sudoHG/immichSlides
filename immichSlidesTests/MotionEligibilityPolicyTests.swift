@@ -13,7 +13,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .smartFillAccepted,
                 displayMode: .smartFill,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: false,
+                isReduceMotionEnabled: false,
                 renderRole: .settled,
                 slotReadiness: .ready
             )
@@ -34,7 +34,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .smartFillAccepted,
                 displayMode: .smartFill,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: false,
+                isReduceMotionEnabled: false,
                 renderRole: .settled,
                 slotReadiness: .ready
             )
@@ -55,7 +55,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .smartFillSingle,
                 displayMode: .smartFill,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: false,
+                isReduceMotionEnabled: false,
                 renderRole: .settled,
                 slotReadiness: .ready
             )
@@ -76,7 +76,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .smartFillFallback,
                 displayMode: .smartFill,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: false,
+                isReduceMotionEnabled: false,
                 renderRole: .settled,
                 slotReadiness: .ready
             )
@@ -97,7 +97,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .smartFillAccepted,
                 displayMode: .smartFill,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: false,
+                isReduceMotionEnabled: false,
                 renderRole: .settled,
                 slotReadiness: .ready
             )
@@ -118,7 +118,7 @@ struct MotionEligibilityPolicyTests {
                     sceneCapability: sceneCapability,
                     displayMode: .smartFill,
                     focalAdapter: .smartFill,
-                    reduceMotionEnabled: false,
+                    isReduceMotionEnabled: false,
                     renderRole: .settled,
                     slotReadiness: .ready
                 )
@@ -140,7 +140,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: MotionSceneCapability,
                 displayMode: MotionDisplayMode,
                 focalAdapter: MotionFocalAdapter,
-                reduceMotionEnabled: Bool,
+                isReduceMotionEnabled: Bool,
                 renderRole: MotionRenderRole,
                 slotReadiness: MotionSlotReadiness,
                 reason: MotionIdentityReason
@@ -171,7 +171,7 @@ struct MotionEligibilityPolicyTests {
                     sceneCapability: disabledCase.sceneCapability,
                     displayMode: disabledCase.displayMode,
                     focalAdapter: disabledCase.focalAdapter,
-                    reduceMotionEnabled: disabledCase.reduceMotionEnabled,
+                    isReduceMotionEnabled: disabledCase.isReduceMotionEnabled,
                     renderRole: disabledCase.renderRole,
                     slotReadiness: disabledCase.slotReadiness
                 )
@@ -193,7 +193,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .smartFillFallback,
                 displayMode: .smartFill,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: false,
+                isReduceMotionEnabled: false,
                 renderRole: .settled,
                 slotReadiness: .ready
             )
@@ -208,7 +208,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .legacySinglePhoto,
                 displayMode: .singlePhoto,
                 focalAdapter: .slotCenter,
-                reduceMotionEnabled: false,
+                isReduceMotionEnabled: false,
                 renderRole: .settled,
                 slotReadiness: .ready
             )
@@ -227,7 +227,7 @@ struct MotionEligibilityPolicyTests {
                     sceneCapability: .smartFillAccepted,
                     displayMode: .smartFill,
                     focalAdapter: adapter,
-                    reduceMotionEnabled: false,
+                    isReduceMotionEnabled: false,
                     renderRole: .settled,
                     slotReadiness: .ready
                 )
@@ -248,7 +248,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .smartFillAccepted,
                 displayMode: .smartFill,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: true,
+                isReduceMotionEnabled: true,
                 renderRole: .settled,
                 slotReadiness: .ready
             )
@@ -261,7 +261,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .smartFillAccepted,
                 displayMode: .smartFill,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: false,
+                isReduceMotionEnabled: false,
                 renderRole: .settled,
                 slotReadiness: .pending
             )
@@ -274,7 +274,7 @@ struct MotionEligibilityPolicyTests {
                 sceneCapability: .smartFillAccepted,
                 displayMode: .smartFill,
                 focalAdapter: .smartFill,
-                reduceMotionEnabled: false,
+                isReduceMotionEnabled: false,
                 renderRole: .prerender,
                 slotReadiness: .ready
             )

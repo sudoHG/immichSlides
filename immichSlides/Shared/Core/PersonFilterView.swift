@@ -39,7 +39,7 @@ struct PersonFilterView: View {
         guard isLoading || didFinishInitialLoad == false else { return }
 
         isLoading = true
-        await viewModel.getCoverURLs(filterType: .people, coverLimit: nil, reset: false)
+        await viewModel.getCoverURLs(filterType: .people, coverLimit: nil, shouldReset: false)
         didFinishInitialLoad = true
         isLoading = false
     }

@@ -11,8 +11,8 @@ struct PlaybackSmartFillLayoutPolicy: Equatable, Sendable {
     let layoutAllowlist: [PlaybackSmartFillLayoutVariant]
     let ratioPresetsByVariant: [PlaybackSmartFillLayoutVariant: [PlaybackSmartFillRatioPreset]]
     let candidateWindowPresets: [Int]
-    let allowsSingleCandidateLookahead: Bool
-    let allowsCurrentCandidateAsAuxiliaryLookahead: Bool
+    let canUseSingleCandidateLookahead: Bool
+    let canUseCurrentCandidateAsAuxiliaryLookahead: Bool
     let slotAspectRatioRange: PlaybackSmartFillAspectRatioRange
     let cropRetentionThreshold: Double
     let upperBodyProxyParams: PlaybackSmartFillUpperBodyProxyParams
@@ -33,19 +33,17 @@ struct PlaybackSmartFillLayoutPolicy: Equatable, Sendable {
     let horizontalDoubleFrames: PlaybackSmartFillDoubleFrames?
     let tripleFrames: PlaybackSmartFillTripleFrames?
 
-    nonisolated var surfacePolicyId: String { layoutPolicyId }
-
-    nonisolated var allowsVerticalDouble: Bool {
+    nonisolated var canUseVerticalDouble: Bool {
         layoutAllowlist.contains(.verticalEqual) || layoutAllowlist.contains(.topPrimaryBottomSecondary)
             || layoutAllowlist.contains(.bottomPrimaryTopSecondary)
     }
 
-    nonisolated var allowsHorizontalDouble: Bool {
+    nonisolated var canUseHorizontalDouble: Bool {
         layoutAllowlist.contains(.horizontalEqual) || layoutAllowlist.contains(.leftPrimaryRightSecondary)
             || layoutAllowlist.contains(.rightPrimaryLeftSecondary)
     }
 
-    nonisolated var allowsTriple: Bool {
+    nonisolated var canUseTriple: Bool {
         layoutAllowlist.contains(where: { $0.isTriple })
     }
 
@@ -75,7 +73,7 @@ struct PlaybackSmartFillLayoutPolicy: Equatable, Sendable {
                         ratio("70/30", 0.70), ratio("72/28", 0.72)
                     ]
                 ],
-                allowsCurrentCandidateAsAuxiliaryLookahead: true,
+                canUseCurrentCandidateAsAuxiliaryLookahead: true,
                 cropRetentionThreshold: 0.60,
                 minimumSecondaryArea: 0.28,
                 minimumEffectivePixelScale: 0.85
@@ -100,7 +98,7 @@ struct PlaybackSmartFillLayoutPolicy: Equatable, Sendable {
                         ratio("60/40", 0.60), ratio("65/35", 0.65), ratio("72/28", 0.72)
                     ]
                 ],
-                allowsCurrentCandidateAsAuxiliaryLookahead: true,
+                canUseCurrentCandidateAsAuxiliaryLookahead: true,
                 cropRetentionThreshold: 0.60,
                 minimumSecondaryArea: 0.28,
                 minimumEffectivePixelScale: 0.85
@@ -123,7 +121,7 @@ struct PlaybackSmartFillLayoutPolicy: Equatable, Sendable {
                     .topPrimaryBottomPair: [ratio("56/44", 0.56), ratio("60/40", 0.60), ratio("64/36", 0.64)],
                     .bottomPrimaryTopPair: [ratio("56/44", 0.56), ratio("60/40", 0.60), ratio("64/36", 0.64)]
                 ],
-                allowsCurrentCandidateAsAuxiliaryLookahead: true,
+                canUseCurrentCandidateAsAuxiliaryLookahead: true,
                 minimumSecondaryArea: 0.18,
                 minimumEffectivePixelScale: 0.85
             )
@@ -155,7 +153,7 @@ struct PlaybackSmartFillLayoutPolicy: Equatable, Sendable {
                     .bottomPrimaryTopPair: [ratio("56/44", 0.56), ratio("60/40", 0.60), ratio("64/36", 0.64)],
                     .balancedGrid: [ratio("equal-thirds", 1.0 / 3.0)]
                 ],
-                allowsCurrentCandidateAsAuxiliaryLookahead: true,
+                canUseCurrentCandidateAsAuxiliaryLookahead: true,
                 minimumSecondaryArea: 0.18,
                 minimumEffectivePixelScale: 0.85
             )
@@ -187,7 +185,7 @@ struct PlaybackSmartFillLayoutPolicy: Equatable, Sendable {
                     .bottomPrimaryTopPair: [ratio("56/44", 0.56), ratio("60/40", 0.60), ratio("64/36", 0.64)],
                     .balancedGrid: [ratio("equal-thirds", 1.0 / 3.0)]
                 ],
-                allowsCurrentCandidateAsAuxiliaryLookahead: true,
+                canUseCurrentCandidateAsAuxiliaryLookahead: true,
                 minimumSecondaryArea: 0.20,
                 minimumEffectivePixelScale: 0.85
             )
@@ -199,8 +197,8 @@ struct PlaybackSmartFillLayoutPolicy: Equatable, Sendable {
         sceneSearchOrder: [PlaybackSmartFillSceneType],
         layoutAllowlist: [PlaybackSmartFillLayoutVariant],
         ratioPresetsByVariant: [PlaybackSmartFillLayoutVariant: [PlaybackSmartFillRatioPreset]],
-        allowsSingleCandidateLookahead: Bool = false,
-        allowsCurrentCandidateAsAuxiliaryLookahead: Bool = false,
+        canUseSingleCandidateLookahead: Bool = false,
+        canUseCurrentCandidateAsAuxiliaryLookahead: Bool = false,
         cropRetentionThreshold: Double = 0.60,
         minimumSecondaryArea: Double,
         minimumEffectivePixelScale: Double,
@@ -214,8 +212,8 @@ struct PlaybackSmartFillLayoutPolicy: Equatable, Sendable {
         self.layoutAllowlist = layoutAllowlist
         self.ratioPresetsByVariant = ratioPresetsByVariant
         self.candidateWindowPresets = [24, 48, 72]
-        self.allowsSingleCandidateLookahead = allowsSingleCandidateLookahead
-        self.allowsCurrentCandidateAsAuxiliaryLookahead = allowsCurrentCandidateAsAuxiliaryLookahead
+        self.canUseSingleCandidateLookahead = canUseSingleCandidateLookahead
+        self.canUseCurrentCandidateAsAuxiliaryLookahead = canUseCurrentCandidateAsAuxiliaryLookahead
         self.slotAspectRatioRange = .commonPhotoExtreme
         self.cropRetentionThreshold = cropRetentionThreshold
         self.upperBodyProxyParams = .defaultSpec
@@ -463,6 +461,7 @@ struct PlaybackSmartFillLayoutGeometrySummary: Equatable, Sendable {
 
 enum PlaybackSmartFillLayoutGeometryInvariant {
     private nonisolated static let epsilon = 1e-9
+    private nonisolated static let geometryPrecisionScale: Double = 1_000_000_000
 
     nonisolated static func evaluate(
         frames: [PlaybackPlanningRect],
@@ -567,7 +566,7 @@ enum PlaybackSmartFillLayoutGeometryInvariant {
     }
 
     private nonisolated static func rounded(_ value: Double) -> Double {
-        (value * 1_000_000_000).rounded() / 1_000_000_000
+        (value * geometryPrecisionScale).rounded() / geometryPrecisionScale
     }
 
     private nonisolated static func adjacentIntervals(_ edges: [Double]) -> [(lower: Double, upper: Double)] {

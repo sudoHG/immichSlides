@@ -446,7 +446,7 @@ struct PersonFilterViewTV: View {
             Button {
                 Task {
                     await MainActor.run { isLoading = true }
-                    await viewModel.getCoverURLs(filterType: .people, coverLimit: nil, reset: false)
+                    await viewModel.getCoverURLs(filterType: .people, coverLimit: nil, shouldReset: false)
                     await MainActor.run {
                         didFinishInitialLoad = true
                         isLoading = false

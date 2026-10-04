@@ -325,7 +325,7 @@ struct ContentView: View {
         let enableDebugAutoServer =
             (Bundle.main.object(forInfoDictionaryKey: "ENABLE_DEBUG_AUTO_SERVER") as? String) == "1"
         guard enableDebugAutoServer else { return }
-        guard let testServer = ImmichServer.debugTestServerFromInfoPlist() else { return }
+        guard let testServer = ImmichServer.testServerFromInfoPlistForTesting() else { return }
         testServer.save()
     }
 

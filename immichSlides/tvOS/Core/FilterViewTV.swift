@@ -371,8 +371,8 @@ struct FilterViewTV: View {
     }
 
     private func prepareVisualAuditSelectionsForUITestsIfNeeded() async {
-        await viewModel.getCoverURLs(filterType: .albums, coverLimit: 40, reset: true)
-        await viewModel.getCoverURLs(filterType: .people, coverLimit: 40, reset: true)
+        await viewModel.getCoverURLs(filterType: .albums, coverLimit: 40, shouldReset: true)
+        await viewModel.getCoverURLs(filterType: .people, coverLimit: 40, shouldReset: true)
         await stageViewModel.prepare(viewModel: viewModel)
 
         for _ in 0..<40 {

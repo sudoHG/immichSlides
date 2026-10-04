@@ -77,14 +77,14 @@ struct CodeAuditRegressionTests {
             "UI_TEST_API_KEY": " test-key "
         ]
 
-        let releaseLikeResult = ImmichServer.uiTestInjectedServerFromEnvironment(
+        let releaseLikeResult = ImmichServer.injectedServerFromEnvironmentForTesting(
             env,
             xctestSupportEnabled: false
         )
         #expect(releaseLikeResult == nil)
 
         let testResult = try #require(
-            ImmichServer.uiTestInjectedServerFromEnvironment(
+            ImmichServer.injectedServerFromEnvironmentForTesting(
                 env,
                 xctestSupportEnabled: true
             )

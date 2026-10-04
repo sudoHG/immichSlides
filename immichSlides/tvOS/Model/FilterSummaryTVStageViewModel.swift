@@ -16,8 +16,8 @@ final class FilterSummaryTVStageViewModel: ObservableObject {
     private var lastPeopleSelectionKey: String = ""
 
     func prepare(viewModel: FilterViewModel) async {
-        async let albumCovers: Void = viewModel.getCoverURLs(filterType: .albums, coverLimit: 40, reset: false)
-        async let peopleCovers: Void = viewModel.getCoverURLs(filterType: .people, coverLimit: 40, reset: false)
+        async let albumCovers: Void = viewModel.getCoverURLs(filterType: .albums, coverLimit: 40, shouldReset: false)
+        async let peopleCovers: Void = viewModel.getCoverURLs(filterType: .people, coverLimit: 40, shouldReset: false)
         _ = await (albumCovers, peopleCovers)
 
         await refreshAlbumStageIfNeeded(viewModel: viewModel, force: albumPanoramaURLs.isEmpty)
@@ -94,7 +94,7 @@ final class FilterSummaryTVStageViewModel: ObservableObject {
     /// Only under XCTest does a fixed replay lock the stage assets; normal builds still use the random data source.
     private func fixedReplayAssetsForUITest(limit: Int) async -> [Asset]? {
         guard ImmichServer.isRunningXCTest,
-            let replayConfiguration = try? PlaybackPoolResolver.assetIDReplayConfiguration()
+            let replayConfiguration = try? PlaybackPoolResolver.assetIDReplayConfigurationForTesting()
         else {
             return nil
         }
