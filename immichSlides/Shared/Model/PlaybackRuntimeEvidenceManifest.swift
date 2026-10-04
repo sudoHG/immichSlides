@@ -673,71 +673,26 @@ enum PlaybackRuntimeEvidenceManifestValidator {
                 issue(.invalidRequiredField, field: "slotRoles", message: "slotRoles count must match slotRefs count"))
         }
 
-        if duplicateVisibleSlotCount > 0,
-            duplicateReuseReason == "none"
-        {
-            issues.append(
-                issue(
-                    .invalidRequiredField, field: "duplicateReuseReason",
-                    message: "duplicate visible slots require a reuse reason"))
-        }
-
-        if duplicateVisibleSlotCount > 0,
-            duplicateRefs.isEmpty
-        {
-            issues.append(
-                issue(
-                    .invalidRequiredField, field: "duplicateVisibleSlotRefs",
-                    message: "duplicate visible slots require duplicate refs"))
-        }
-
-        if recentVisibleLimit > 0,
-            recentVisibleCandidateCount > recentVisibleLimit
-        {
-            issues.append(
-                issue(
-                    .invalidRequiredField, field: "recentVisibleCandidateCount",
-                    message: "recent visible candidate count exceeds limit"))
-        }
-
-        let expectedNonMulti =
-            hardFallbackCount + singleRiskCount + currentAssetAbsentSceneCount + visualUnverifiedCount
-        if nonMultiSlotOutcomeCount != expectedNonMulti {
-            issues.append(
-                issue(
-                    .invalidRequiredField, field: "nonMultiSlotOutcomeCount",
-                    message:
-                        "nonMultiSlotOutcomeCount must equal hardFallback + single-risk + absent + visual-unverified"))
-        }
-
-        let expectedUserFailure =
-            hardFallbackCount + singleRiskCount + visualUnverifiedCount + currentAssetAbsentSceneCount
-        if userPerceivedFailureCount != expectedUserFailure {
-            issues.append(
-                issue(
-                    .invalidRequiredField, field: "userPerceivedFailureCount",
-                    message:
-                        "userPerceivedFailureCount must equal hardFallback + single-risk + visual-unverified + absent"))
-        }
-
-        if visualReviewStatus == "VISUAL_UNVERIFIED",
-            (multiSlotSuccessCount > 0 || userPerceivedFailureCount <= 0 || visualUnverifiedCount <= 0)
-        {
-            issues.append(
-                issue(
-                    .invalidRequiredField, field: "visualReviewStatus",
-                    message:
-                        "visual-unverified samples cannot count as multi-slot success and must count as user perceived failure"
-                ))
-        }
-
-        if unknownOutcomeBucketCount > 0 {
-            issues.append(
-                issue(
-                    .invalidRequiredField, field: "unknownOutcomeBucketCount",
-                    message: "unknown outcome bucket final count must be zero"))
-        }
-
+        validateDuplicateSlots(
+            duplicateVisibleSlotCount: duplicateVisibleSlotCount,
+            duplicateReuseReason: duplicateReuseReason,
+            duplicateRefs: duplicateRefs,
+            recentVisibleLimit: recentVisibleLimit,
+            recentVisibleCandidateCount: recentVisibleCandidateCount,
+            issues: &issues
+        )
+        validateOutcomeCounts(
+            hardFallbackCount: hardFallbackCount,
+            singleRiskCount: singleRiskCount,
+            currentAssetAbsentSceneCount: currentAssetAbsentSceneCount,
+            visualUnverifiedCount: visualUnverifiedCount,
+            nonMultiSlotOutcomeCount: nonMultiSlotOutcomeCount,
+            userPerceivedFailureCount: userPerceivedFailureCount,
+            visualReviewStatus: visualReviewStatus,
+            multiSlotSuccessCount: multiSlotSuccessCount,
+            unknownOutcomeBucketCount: unknownOutcomeBucketCount,
+            issues: &issues
+        )
         return issues
     }
 
@@ -1152,92 +1107,93 @@ enum PlaybackRuntimeEvidenceManifestValidator {
     ) -> PlaybackRuntimeEvidenceManifestValidationIssue {
         PlaybackRuntimeEvidenceManifestValidationIssue(code: code, field: field, message: message)
     }
+    private static func validateDuplicateSlots(
+        duplicateVisibleSlotCount: Int,
+        duplicateReuseReason: String,
+        duplicateRefs: [String],
+        recentVisibleLimit: Int,
+        recentVisibleCandidateCount: Int,
+        issues: inout [PlaybackRuntimeEvidenceManifestValidationIssue]
+    ) {
+        if duplicateVisibleSlotCount > 0,
+            duplicateReuseReason == "none"
+        {
+            issues.append(
+                issue(
+                    .invalidRequiredField, field: "duplicateReuseReason",
+                    message: "duplicate visible slots require a reuse reason"))
+        }
+
+        if duplicateVisibleSlotCount > 0,
+            duplicateRefs.isEmpty
+        {
+            issues.append(
+                issue(
+                    .invalidRequiredField, field: "duplicateVisibleSlotRefs",
+                    message: "duplicate visible slots require duplicate refs"))
+        }
+
+        if recentVisibleLimit > 0,
+            recentVisibleCandidateCount > recentVisibleLimit
+        {
+            issues.append(
+                issue(
+                    .invalidRequiredField, field: "recentVisibleCandidateCount",
+                    message: "recent visible candidate count exceeds limit"))
+        }
+    }
+
+    private static func validateOutcomeCounts(
+        hardFallbackCount: Int,
+        singleRiskCount: Int,
+        currentAssetAbsentSceneCount: Int,
+        visualUnverifiedCount: Int,
+        nonMultiSlotOutcomeCount: Int,
+        userPerceivedFailureCount: Int,
+        visualReviewStatus: String,
+        multiSlotSuccessCount: Int,
+        unknownOutcomeBucketCount: Int,
+        issues: inout [PlaybackRuntimeEvidenceManifestValidationIssue]
+    ) {
+        let expectedNonMulti =
+            hardFallbackCount + singleRiskCount + currentAssetAbsentSceneCount + visualUnverifiedCount
+        if nonMultiSlotOutcomeCount != expectedNonMulti {
+            issues.append(
+                issue(
+                    .invalidRequiredField, field: "nonMultiSlotOutcomeCount",
+                    message:
+                        "nonMultiSlotOutcomeCount must equal hardFallback + single-risk + absent + visual-unverified"))
+        }
+
+        let expectedUserFailure =
+            hardFallbackCount + singleRiskCount + visualUnverifiedCount + currentAssetAbsentSceneCount
+        if userPerceivedFailureCount != expectedUserFailure {
+            issues.append(
+                issue(
+                    .invalidRequiredField, field: "userPerceivedFailureCount",
+                    message:
+                        "userPerceivedFailureCount must equal hardFallback + single-risk + visual-unverified + absent"))
+        }
+
+        if visualReviewStatus == "VISUAL_UNVERIFIED",
+            (multiSlotSuccessCount > 0 || userPerceivedFailureCount <= 0 || visualUnverifiedCount <= 0)
+        {
+            issues.append(
+                issue(
+                    .invalidRequiredField, field: "visualReviewStatus",
+                    message:
+                        "visual-unverified samples cannot count as multi-slot success and must count as user perceived failure"
+                ))
+        }
+
+        if unknownOutcomeBucketCount > 0 {
+            issues.append(
+                issue(
+                    .invalidRequiredField, field: "unknownOutcomeBucketCount",
+                    message: "unknown outcome bucket final count must be zero"))
+        }
+    }
+
 }
 
 #endif
-
-extension PlaybackScene {
-    @MainActor
-    func smartFillRuntimeQADebugSummary(
-        downloadManager: AssetsDownloadManager,
-        controlBarVisible: Bool,
-        exifOverlayVisible: Bool,
-        publishReason: String,
-        preparedHit: Bool
-    ) -> String? {
-        guard let readback = smartFillReadback else { return nil }
-
-        let slotReadiness =
-            photoSlots
-            .map { slot in
-                Self.runtimeReadinessLabel(
-                    assetId: slot.asset.id,
-                    downloadManager: downloadManager
-                )
-            }
-            .joined(separator: ",")
-        let ledgerSceneAssets = diagnosticSlotReferences(separator: ",")
-        let retainedSummaryParts = readback.qaDebugSummary
-            .split(separator: ";")
-            .map(String.init)
-            .filter { part in
-                !Self.runtimeQADebugSummaryPrefixes.contains { part.hasPrefix($0) }
-            }
-        let runtimeSummaryParts = [
-            "slotReadiness=\(slotReadiness)",
-            "ledgerSceneAssets=\(ledgerSceneAssets)",
-            "slotRefs=\(ledgerSceneAssets)",
-            "controlBarVisible=\(controlBarVisible)",
-            "exifOverlayVisible=\(exifOverlayVisible)",
-            "publishReason=\(publishReason)",
-            "preparedHit=\(preparedHit)"
-        ]
-
-        return (retainedSummaryParts + runtimeSummaryParts).joined(separator: ";")
-    }
-
-    func diagnosticSlotReferences(separator: String) -> String {
-        photoSlots.map { "asset-\(Self.runtimeAssetLedgerHash($0.asset.id))" }
-            .joined(separator: separator)
-    }
-
-    private static let runtimeQADebugSummaryPrefixes = [
-        "slotReadiness=",
-        "ledgerSceneAssets=",
-        "slotRefs=",
-        "controlBarVisible=",
-        "exifOverlayVisible=",
-        "publishReason=",
-        "preparedHit="
-    ]
-
-    @MainActor
-    private static func runtimeReadinessLabel(
-        assetId: String,
-        downloadManager: AssetsDownloadManager
-    ) -> String {
-        let readiness = PlaybackSmartFillSlotReadiness.resolve(
-            assetId: assetId,
-            fullsizeState: downloadManager.assetStates[assetId] ?? .notStarted,
-            fullsizeURL: downloadManager.findURL(assetId: assetId, size: .fullsize)
-        )
-
-        switch readiness {
-        case .ready:
-            return "ready"
-        case .pending:
-            return "pending"
-        case .failed:
-            return "failed"
-        }
-    }
-
-    private static func runtimeAssetLedgerHash(_ value: String) -> String {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in value.utf8 {
-            hash ^= UInt64(byte)
-            hash = hash &* 1_099_511_628_211
-        }
-        return String(format: "%016llx", hash)
-    }
-}

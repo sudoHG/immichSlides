@@ -61,6 +61,9 @@
 				iOS/Core/ModeSelectionViewIOS.swift = (ios, );
 				iOS/Core/SettingsViewIOS.swift = (ios, );
 				iOS/Core/SlideShowViewIOS.swift = (ios, );
+				"iOS/Core/SlideShowViewIOS+Diagnostics.swift" = (ios, );
+				"iOS/Core/SlideShowViewIOS+Rendering.swift" = (ios, );
+				"iOS/Core/SlideShowViewIOS+Exif.swift" = (ios, );
 				iOS/immichSlidesApp_iOS.swift = (ios, );
 				tvOS/Component/FilterSummaryStageViewsTV.swift = (tvos, );
 				tvOS/Component/FilterSummaryVisualModifiersTV.swift = (tvos, );
@@ -82,8 +85,13 @@
 				"tvOS/Core/SettingsViewTV+AccessProtectionPage.swift" = (tvos, );
 				"tvOS/Core/SettingsViewTV+PlaybackPages.swift" = (tvos, );
 				"tvOS/Core/SettingsViewTV+ServerCacheAboutPages.swift" = (tvos, );
+				"tvOS/Core/SettingsViewTV+AboutPages.swift" = (tvos, );
+				"tvOS/Core/SettingsViewTV+PrivacyPage.swift" = (tvos, );
 				tvOS/Core/SettingsViewTV.swift = (tvos, );
 				tvOS/Core/SlideShowViewTV.swift = (tvos, );
+				"tvOS/Core/SlideShowViewTV+Diagnostics.swift" = (tvos, );
+				"tvOS/Core/SlideShowViewTV+Rendering.swift" = (tvos, );
+				"tvOS/Core/SlideShowViewTV+Exif.swift" = (tvos, );
 				tvOS/Model/FilterSummaryTVStageViewModel.swift = (tvos, );
 				tvOS/immichSlidesApp_tvOS.swift = (tvos, );
 			};

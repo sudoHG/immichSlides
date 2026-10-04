@@ -8,7 +8,7 @@
 import SwiftUI
 import UIKit
 
-private enum PlaybackViewMetrics {
+enum PlaybackViewMetrics {
     static let controlBarProtectionHeightPoints: Double = 220
     static let controlBarAutoHideDelaySeconds: Int = 8
     static let controlBarAnimationDurationSeconds: Double = 0.3
@@ -16,7 +16,7 @@ private enum PlaybackViewMetrics {
 }
 
 struct SlideShowViewTV: View {
-    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var viewModel: SlideShowViewModel
     // Settings navigation is handled by the parent router.
@@ -24,22 +24,22 @@ struct SlideShowViewTV: View {
 
     var shouldShowOnboardingPlaybackHint: Bool = false
 
-    @State private var isDebugOverlayVisible: Bool = false
+    @State var isDebugOverlayVisible: Bool = false
 
-    @State private var isExifVisible: Bool = true
+    @State var isExifVisible: Bool = true
 
-    @State private var exifForegroundTone: ExifForegroundTone = .lightText
+    @State var exifForegroundTone: ExifForegroundTone = .lightText
     // Record the EXIF panel's actual frame; text color sampling can't rely on a rough top-right position.
 
-    @State private var exifFrameInSurfaceSpace: CGRect = .zero
+    @State var exifFrameInSurfaceSpace: CGRect = .zero
     // UI tests wait until text color sampling finishes before taking
     // screenshots, to avoid capturing the default white text.
 
-    @State private var isExifForegroundToneReady: Bool = false
+    @State var isExifForegroundToneReady: Bool = false
     // Remember the last asset that can show EXIF, so SmartFill can
     // reuse the single-photo panel morph with or without EXIF.
-    @State private var retainedExifOverlayAsset: Asset? = nil
-    @State private var isRenderedExifOverlayVisible: Bool = false
+    @State var retainedExifOverlayAsset: Asset? = nil
+    @State var isRenderedExifOverlayVisible: Bool = false
 
     @State private var isPinEntrySheetPresented: Bool = false
 
@@ -48,17 +48,17 @@ struct SlideShowViewTV: View {
     @State private var isAccessProtectionRecoveryAlertPresented: Bool = false
     #if DEBUG
     // Read-only probe for UI tests: caches shared renderer output and does not drive motion.
-    @State private var smartFillMotionFrameProbeRows: [String] = []
+    @State var smartFillMotionFrameProbeRows: [String] = []
     // Read-only trace for UI tests: probe lines already emitted; it only writes evidence.
-    @State private var smartFillMotionTraceLines: [String] = []
-    @State private var smartFillMotionTraceBuffer = SmartFillMotionTraceBuffer()
-    @State private var smartFillMotionTraceStatus: String = "idle"
-    @State private var hasSmartFillMotionTraceStarted: Bool = false
-    @State private var smartFillMotionTraceFilePath: String = ""
-    @State private var smartFillMotionTraceLineCount: Int = 0
-    @State private var smartFillMotionTraceWaitStartedAt: TimeInterval = 0
-    @State private var smartFillMotionTraceCollectionStartedAt: TimeInterval = 0
-    @State private var smartFillMotionTraceNextSampleIndex: Int = 0
+    @State var smartFillMotionTraceLines: [String] = []
+    @State var smartFillMotionTraceBuffer = SmartFillMotionTraceBuffer()
+    @State var smartFillMotionTraceStatus: String = "idle"
+    @State var hasSmartFillMotionTraceStarted: Bool = false
+    @State var smartFillMotionTraceFilePath: String = ""
+    @State var smartFillMotionTraceLineCount: Int = 0
+    @State var smartFillMotionTraceWaitStartedAt: TimeInterval = 0
+    @State var smartFillMotionTraceCollectionStartedAt: TimeInterval = 0
+    @State var smartFillMotionTraceNextSampleIndex: Int = 0
     #endif
     // Increment an Int to request focus back to playPause; setting a Bool twice in a row would not trigger onChange.
 
@@ -67,17 +67,17 @@ struct SlideShowViewTV: View {
     @State private var isPlaybackEntryHintVisible: Bool = false
     private let playbackEntryHintStore = PlaybackEntryHintStore()
 
-    @State private var isControlBarVisible: Bool = true
+    @State var isControlBarVisible: Bool = true
 
     @State private var autoHideBarTask: Task<Void, Never>? = nil
     // When the control bar is hidden, a hidden focus receiver handles arrow keys and Play/Pause.
 
     @FocusState private var hiddenWakeReceiverFocused: Bool
     // For SmartFill multi-photo layouts, keep the subject readable first so EXIF doesn't cover faces.
-    private var visibleExifOverlayAsset: Asset? {
+    var visibleExifOverlayAsset: Asset? {
         exifOverlayAsset(in: viewModel.visibleOverlayScene)
     }
-    private func exifOverlayAsset(in scene: PlaybackScene?) -> Asset? {
+    func exifOverlayAsset(in scene: PlaybackScene?) -> Asset? {
         guard isExifVisible,
             let scene,
             scene.smartFillReadback?.sceneType.shouldPreserveExistingExifOverlay != false,
@@ -247,7 +247,7 @@ struct SlideShowViewTV: View {
         #endif
     }
 
-    private var shouldExposeSmartFillMotionFrameProbeForTesting: Bool {
+    var shouldExposeSmartFillMotionFrameProbeForTesting: Bool {
         #if DEBUG
         let env = ProcessInfo.processInfo.environment
         return env["XCTestConfigurationFilePath"] != nil || env["UI_TEST_RESET_STATE"] == "1"
@@ -638,7 +638,7 @@ struct SlideShowViewTV: View {
         }
     }
 
-    private func playbackLayerZIndex(
+    func playbackLayerZIndex(
         for role: PlaybackSessionEngine.ScenePresentationLayerRole
     ) -> Double {
         switch role {
@@ -649,500 +649,19 @@ struct SlideShowViewTV: View {
         }
     }
 
-    private func isScenePresentationTransitionActive(
+    func isScenePresentationTransitionActive(
         _ snapshot: PlaybackSessionEngine.SceneRenderSnapshot
     ) -> Bool {
         snapshot.underlyingPhase == .transition || snapshot.underlyingPhase == .incomingFromLoading
     }
 
-    private func smartFillProductTransitionBlackBacking(
+    func smartFillProductTransitionBlackBacking(
         in layers: [PlaybackSessionEngine.SceneRenderLayer],
         snapshot: PlaybackSessionEngine.SceneRenderSnapshot
     ) -> Bool {
         isAcceptedSmartFillMotionTransitionActive(in: layers, snapshot: snapshot)
     }
 
-    #if DEBUG
-    @ViewBuilder
-    private func smartFillMotionFrameProbeOverlay() -> some View {
-        if shouldExposeSmartFillMotionFrameProbeForTesting {
-            ZStack {
-                Color.clear
-                    .frame(width: 1, height: 1)
-                    .accessibilityElement()
-                    .accessibilityIdentifier("slideshow.smartfill.motionFrame.summary")
-                    .accessibilityLabel(smartFillMotionFrameProbeRows.joined(separator: "\n"))
-                    .focusable(false)
-                Color.clear
-                    .frame(width: 1, height: 1)
-                    .accessibilityElement()
-                    .accessibilityIdentifier("slideshow.smartfill.productTransition.summary")
-                    .accessibilityLabel(smartFillProductTransitionProbeLabel())
-                    .focusable(false)
-                smartFillMotionTraceProbeOverlay()
-            }
-            .task {
-                await collectSmartFillMotionTraceIfNeeded()
-            }
-            .allowsHitTesting(false)
-        }
-    }
-
-    private func smartFillProductTransitionProbeLabel() -> String {
-        let snapshot = viewModel.sceneRenderSnapshot
-        let layers = snapshot.layers
-        let transitionLayers = smartFillTransitionLayers(in: layers)
-        let transitionScenes = transitionLayers.compactMap { viewModel.scene(for: $0) }
-        let roles =
-            transitionLayers
-            .map { smartFillProductTransitionRoleProbeValue(for: $0.role) }
-            .joined(separator: "|")
-        let sceneTypes =
-            transitionScenes
-            .map { smartFillProductSceneTypeProbeValue(for: $0) }
-            .joined(separator: "|")
-        let scopes =
-            transitionScenes
-            .map { smartFillProductSceneScopeProbeValue(for: $0) }
-            .joined(separator: "|")
-        let acceptedTransitionActive = isAcceptedSmartFillMotionTransitionActive(
-            in: layers,
-            snapshot: snapshot
-        )
-        return [
-            "eventType=productTransition",
-            "activeTransition=\(isScenePresentationTransitionActive(snapshot))",
-            "productTransitionActive=\(acceptedTransitionActive)",
-            "acceptedMotionTransitionActive=\(acceptedTransitionActive)",
-            "productBlackBackingActive=\(smartFillProductTransitionBlackBacking(in: layers, snapshot: snapshot))",
-            "blackBackingActive=\(smartFillProductTransitionBlackBacking(in: layers, snapshot: snapshot))",
-            "transitionLayerCount=\(transitionLayers.count)",
-            "transitionLayerRoles=\(roles.isEmpty ? "none" : roles)",
-            "transitionLayerSceneTypes=\(sceneTypes.isEmpty ? "none" : sceneTypes)",
-            "transitionLayerScopes=\(scopes.isEmpty ? "none" : scopes)"
-        ].joined(separator: ";")
-    }
-
-    private func smartFillProductTransitionRoleProbeValue(
-        for role: PlaybackSessionEngine.ScenePresentationLayerRole
-    ) -> String {
-        switch role {
-        case .outgoing:
-            return "outgoing"
-        case .incoming:
-            return "incoming"
-        case .stable:
-            return "settled"
-        }
-    }
-
-    private func smartFillProductSceneTypeProbeValue(for scene: PlaybackScene) -> String {
-        switch scene.smartFillReadback?.sceneType {
-        case .double:
-            return "double"
-        case .triple:
-            return "triple"
-        case .single:
-            return "single"
-        case .fallback:
-            return "fallback"
-        case nil:
-            return "legacy"
-        }
-    }
-
-    private func smartFillProductSceneScopeProbeValue(for scene: PlaybackScene) -> String {
-        switch scene.smartFillReadback?.sceneType {
-        case .double, .triple, .single:
-            return "acceptedMotion"
-        case .fallback:
-            return "smartFillNoMotion"
-        case nil:
-            return viewModel.isSmartFillPresentationModeActive ? "smartFillLegacyNoMotion" : "legacy"
-        }
-    }
-
-    @ViewBuilder
-    private func smartFillMotionTraceProbeOverlay() -> some View {
-        Color.clear
-            .frame(width: 1, height: 1)
-            .accessibilityElement()
-            .accessibilityIdentifier("slideshow.smartfill.motionFrame.trace.status")
-            .accessibilityLabel(smartFillMotionTraceStatusLabel)
-            .focusable(false)
-
-        ForEach(Array(smartFillMotionTraceChunks().enumerated()), id: \.offset) { index, chunk in
-            Color.clear
-                .frame(width: 1, height: 1)
-                .accessibilityElement()
-                .accessibilityIdentifier("slideshow.smartfill.motionFrame.trace.chunk.\(index)")
-                .accessibilityLabel(chunk)
-                .focusable(false)
-        }
-    }
-
-    private var shouldCollectSmartFillMotionTraceForTesting: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_COLLECT_SMARTFILL_MOTION_TRACE"] == "1"
-    }
-
-    private var smartFillMotionTraceStatusLabel: String {
-        [
-            "eventType=motionTraceStatus",
-            "status=\(smartFillMotionTraceStatus)",
-            "lineCount=\(smartFillMotionTraceLineCount)",
-            "chunkCount=\(smartFillMotionTraceChunks().count)",
-            "tracePath=\(smartFillMotionTraceFilePath.isEmpty ? "missing" : smartFillMotionTraceFilePath)",
-            "sampleIntervalSeconds=\(String(format: "%.6f", smartFillMotionTraceSampleIntervalSeconds()))",
-            "startTimeoutSeconds=\(String(format: "%.6f", smartFillMotionTraceStartTimeoutSeconds()))",
-            "durationSeconds=\(String(format: "%.6f", smartFillMotionTraceDurationSeconds()))",
-            "collectionStartedUptimeSeconds=\(String(format: "%.6f", smartFillMotionTraceCollectionStartedAt))"
-        ].joined(separator: ";")
-    }
-
-    private func smartFillMotionTraceChunks() -> [String] {
-        let maxChunkLength = 12_000
-        var chunks: [String] = []
-        var current = ""
-        for line in smartFillMotionTraceLines {
-            let candidate = current.isEmpty ? line : current + "\n" + line
-            if candidate.count > maxChunkLength, !current.isEmpty {
-                chunks.append(current)
-                current = line
-            } else {
-                current = candidate
-            }
-        }
-        if !current.isEmpty {
-            chunks.append(current)
-        }
-        return chunks
-    }
-
-    @MainActor
-    private func collectSmartFillMotionTraceIfNeeded() async {
-        guard shouldCollectSmartFillMotionTraceForTesting, !hasSmartFillMotionTraceStarted else { return }
-        hasSmartFillMotionTraceStarted = true
-        smartFillMotionTraceStatus = "waiting-for-accepted-motion-frame"
-        smartFillMotionTraceLines = []
-        smartFillMotionTraceBuffer.reset()
-        smartFillMotionTraceFilePath = ""
-        smartFillMotionTraceLineCount = 0
-        smartFillMotionTraceWaitStartedAt = ProcessInfo.processInfo.systemUptime
-        smartFillMotionTraceCollectionStartedAt = 0
-        smartFillMotionTraceNextSampleIndex = 0
-
-        let waitTimeout = smartFillMotionTraceStartTimeoutSeconds()
-        let duration = smartFillMotionTraceDurationSeconds()
-        while true {
-            let now = ProcessInfo.processInfo.systemUptime
-            appendSmartFillMotionTraceSampleIfNeeded(rows: smartFillMotionFrameProbeRows, now: now)
-            switch smartFillMotionTraceStatus {
-            case "waiting-for-accepted-motion-frame":
-                if now - smartFillMotionTraceWaitStartedAt >= waitTimeout {
-                    smartFillMotionTraceStatus = "missing-accepted-motion-frame"
-                    return
-                }
-            case "collecting":
-                if now - smartFillMotionTraceCollectionStartedAt >= duration {
-                    finishSmartFillMotionTraceCollection()
-                    return
-                }
-            default:
-                return
-            }
-            try? await Task.sleep(nanoseconds: smartFillMotionTraceMonitorSleepNanoseconds())
-            guard !Task.isCancelled else {
-                smartFillMotionTraceStatus = "cancelled"
-                return
-            }
-        }
-    }
-
-    @MainActor
-    private func appendSmartFillMotionTraceSampleIfNeeded(
-        rows: [String],
-        now: TimeInterval = ProcessInfo.processInfo.systemUptime
-    ) {
-        guard shouldCollectSmartFillMotionTraceForTesting,
-            hasSmartFillMotionTraceStarted,
-            smartFillMotionTraceStatus == "waiting-for-accepted-motion-frame"
-                || smartFillMotionTraceStatus == "collecting"
-        else {
-            return
-        }
-        let traceRows = smartFillMotionTraceRowsForCurrentOverlay(rows)
-        let hasAcceptedAvailableMotionRow = traceRows.contains { row in
-            row.contains("acceptedMotionScope=true") && row.contains("progressFrameStatus=available")
-        }
-        let hasCleanSettledMotionRow = traceRows.contains { row in
-            row.contains("acceptedMotionScope=true") && row.contains("progressFrameStatus=available")
-                && row.contains("appOverlayPollution=none") && row.contains("renderRole=settled")
-        }
-        let canSample =
-            smartFillMotionTraceStatus == "collecting"
-            ? hasAcceptedAvailableMotionRow
-            : hasCleanSettledMotionRow
-        guard canSample else {
-            return
-        }
-
-        if smartFillMotionTraceStatus == "waiting-for-accepted-motion-frame" {
-            smartFillMotionTraceStatus = "collecting"
-            smartFillMotionTraceCollectionStartedAt = now
-            smartFillMotionTraceLines = []
-            smartFillMotionTraceBuffer.reset()
-            smartFillMotionTraceNextSampleIndex = 0
-        }
-
-        let elapsed = now - smartFillMotionTraceCollectionStartedAt
-        guard elapsed <= smartFillMotionTraceDurationSeconds() else {
-            finishSmartFillMotionTraceCollection()
-            return
-        }
-        let sampleInterval = smartFillMotionTraceSampleIntervalSeconds()
-        while true {
-            let nextSampleElapsed = TimeInterval(smartFillMotionTraceNextSampleIndex) * sampleInterval
-            guard elapsed + 0.0005 >= nextSampleElapsed else { return }
-
-            let prefix = [
-                "sampleIndex=\(smartFillMotionTraceNextSampleIndex)",
-                "elapsedSeconds=\(String(format: "%.6f", nextSampleElapsed))",
-                "captureElapsedSeconds=\(String(format: "%.6f", elapsed))"
-            ].joined(separator: ";")
-            if let productSceneLabel = smartFillProductSceneSequenceTraceLabel() {
-                smartFillMotionTraceBuffer.append("\(prefix);\(productSceneLabel)")
-            }
-            smartFillMotionTraceBuffer.append(contentsOf: traceRows.map { "\(prefix);\($0)" })
-            smartFillMotionTraceNextSampleIndex += 1
-        }
-    }
-
-    private func smartFillProductSceneSequenceTraceLabel() -> String? {
-        let snapshot = viewModel.sceneRenderSnapshot
-        guard
-            let visibleLayer = snapshot.layers.last(where: {
-                $0.opacity > 0 && ($0.role == .stable || $0.role == .incoming)
-            }),
-            let scene = viewModel.scene(for: visibleLayer)
-        else {
-            return nil
-        }
-        let sceneFields = [
-            "sceneId=\(MotionTransformResolver.diagnosticIdentityToken(scene.id))",
-            "sceneType=\(smartFillProductSceneTypeProbeValue(for: scene))",
-            "slotCount=\(scene.photoSlots.count)",
-            "slotRefs=\(scene.diagnosticSlotReferences(separator: "|"))"
-        ]
-        let transitionFields = smartFillTraceFields(from: smartFillProductTransitionProbeLabel())
-            .filter { $0 != "eventType=productTransition" }
-        return (["eventType=productSceneSequence"] + sceneFields + transitionFields)
-            .joined(separator: ";")
-    }
-
-    private func smartFillTraceFields(from raw: String) -> [String] {
-        raw.split(separator: ";", omittingEmptySubsequences: true)
-            .map(String.init)
-    }
-
-    private func smartFillMotionTraceRowsForCurrentOverlay(_ rows: [String]) -> [String] {
-        rows.map { row in
-            let retainedFields = smartFillTraceFields(from: row).filter { field in
-                !field.hasPrefix("controlBarVisible=") && !field.hasPrefix("appOverlayPollution=")
-            }
-            let hostOverlayFields = [
-                "controlBarVisible=\(isControlBarVisible ? "true" : "false")",
-                "appOverlayPollution=\(isControlBarVisible ? "controlBar" : "none")"
-            ]
-            return (retainedFields + hostOverlayFields).joined(separator: ";")
-        }
-    }
-
-    @MainActor
-    private func finishSmartFillMotionTraceCollection() {
-        guard smartFillMotionTraceStatus == "collecting" else { return }
-        let collected = smartFillMotionTraceBuffer.lines
-        smartFillMotionTraceLineCount = collected.count
-        let traceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("smartfill-motion-trace-\(UUID().uuidString).txt")
-        do {
-            try collected.joined(separator: "\n").write(to: traceURL, atomically: true, encoding: .utf8)
-            smartFillMotionTraceFilePath = traceURL.path
-            smartFillMotionTraceLines = []
-            smartFillMotionTraceBuffer.reset()
-        } catch {
-            smartFillMotionTraceFilePath = "write-failed"
-            smartFillMotionTraceLines = collected
-        }
-        smartFillMotionTraceStatus = "complete"
-    }
-
-    private func smartFillMotionTraceMonitorSleepNanoseconds() -> UInt64 {
-        UInt64((min(smartFillMotionTraceSampleIntervalSeconds(), 0.025) * 1_000_000_000).rounded())
-    }
-
-    private func smartFillMotionTraceSampleIntervalSeconds() -> TimeInterval {
-        let env = ProcessInfo.processInfo.environment
-        let rawValue = env["UI_TEST_SMARTFILL_MOTION_TRACE_SAMPLE_INTERVAL_SECONDS"]
-        guard let rawValue,
-            let value = TimeInterval(rawValue),
-            value > 0
-        else {
-            return 0.025
-        }
-        return min(value, 0.05)
-    }
-
-    private func smartFillMotionTraceDurationSeconds() -> TimeInterval {
-        let env = ProcessInfo.processInfo.environment
-        let rawValue = env["UI_TEST_SMARTFILL_MOTION_TRACE_DURATION_SECONDS"]
-        guard let rawValue,
-            let value = TimeInterval(rawValue),
-            value > 0
-        else {
-            return 18
-        }
-        return value
-    }
-
-    private func smartFillMotionTraceStartTimeoutSeconds() -> TimeInterval {
-        let env = ProcessInfo.processInfo.environment
-        let rawValue = env["UI_TEST_SMARTFILL_MOTION_TRACE_START_TIMEOUT_SECONDS"]
-        guard let rawValue,
-            let value = TimeInterval(rawValue),
-            value > 0
-        else {
-            return 60
-        }
-        return value
-    }
-    #else
-    @ViewBuilder
-    private func smartFillMotionFrameProbeOverlay() -> some View {
-        EmptyView()
-    }
-    #endif
-
-    private func isAcceptedSmartFillMotionTransitionActive(
-        in layers: [PlaybackSessionEngine.SceneRenderLayer],
-        snapshot: PlaybackSessionEngine.SceneRenderSnapshot
-    ) -> Bool {
-        guard isScenePresentationTransitionActive(snapshot) else { return false }
-        let transitionLayers = smartFillTransitionLayers(in: layers)
-        guard transitionLayers.contains(where: { $0.role == .outgoing }),
-            transitionLayers.contains(where: { $0.role == .incoming })
-        else {
-            return false
-        }
-        let scenes = transitionLayers.compactMap { viewModel.scene(for: $0) }
-        return scenes.count == transitionLayers.count
-            && scenes.allSatisfy { scene in
-                switch scene.smartFillReadback?.sceneType {
-                case .double, .triple, .single:
-                    return true
-                case .fallback, nil:
-                    return false
-                }
-            }
-    }
-
-    private func smartFillTransitionLayers(
-        in layers: [PlaybackSessionEngine.SceneRenderLayer]
-    ) -> [PlaybackSessionEngine.SceneRenderLayer] {
-        layers.filter { layer in
-            layer.role == .outgoing || layer.role == .incoming
-        }
-    }
-
-    @ViewBuilder
-    private func renderPhoto(in size: CGSize, safeAreaInsets: EdgeInsets) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / PlaybackViewMetrics.renderSamplingRateHertz, paused: false)) {
-            _ in
-            let snapshot = viewModel.sceneRenderSnapshot
-            let overlayAsset = exifOverlayAsset(in: viewModel.visibleOverlayScene(in: snapshot))
-            ZStack {
-                if smartFillProductTransitionBlackBacking(
-                    in: snapshot.layers,
-                    snapshot: snapshot
-                ) {
-                    Color.black
-                        .ignoresSafeArea(.container, edges: .all)
-                        .accessibilityHidden(true)
-                        .zIndex(-10)
-                }
-                if !snapshot.layers.isEmpty {
-                    ForEach(snapshot.layers) { layer in
-                        if let scene = viewModel.scene(for: layer) {
-                            let layerIdentity = viewModel.scenePresentationLayerIdentity(for: layer)
-                            let visibleFrameCandidate = SceneVisibleFrameCandidate(
-                                layerIdentity: layerIdentity,
-                                role: layer.role,
-                                opacity: layer.opacity,
-                                isBarrierComplete: viewModel.isScenePresentationBarrierComplete(for: layer),
-                                isSceneRoot: true
-                            )
-                            SmartFillSceneView(
-                                downloadManager: viewModel.downloadManager,
-                                scene: scene,
-                                isCurrent: PlaybackSessionEngine.ScenePresentationLayerRole.isCurrentForRenderer(
-                                    role: layer.role,
-                                    opacity: layer.opacity,
-                                    hasOutgoingLayer: snapshot.layers.contains { $0.role == .outgoing }
-                                ),
-                                size: size,
-                                safeAreaInsets: safeAreaInsets,
-                                renderLayerRole: layer.role,
-                                navigationToken: layer.identity.generation,
-                                rendererAttemptID: viewModel.scenePresentationRendererAttemptID(for: layer),
-                                motionContext: viewModel.motionRuntimeContext(
-                                    for: layer,
-                                    platform: .tvOS,
-                                    isReduceMotionEnabled: accessibilityReduceMotion
-                                ),
-                                isMotionProbeControlBarVisible: isControlBarVisible,
-                                onRendererDecoded: viewModel.rendererDecoded,
-                                onRendererFailed: viewModel.rendererFailed
-                            )
-                            .opacity(layer.opacity)
-                            .allowsHitTesting(layer.role == .stable && layer.opacity > 0)
-                            .focusable(false)
-                            .accessibilityHidden(layer.opacity <= 0 || layer.role == .outgoing)
-                            .zIndex(playbackLayerZIndex(for: layer.role))
-                            .modifier(
-                                SceneVisibleFrameReporterModifier(
-                                    candidate: visibleFrameCandidate,
-                                    onSceneBecameVisible: viewModel.incomingBecameVisible
-                                )
-                            )
-                        }
-                    }
-                } else {
-                    Text("The slideshow failed to load. Go back, then reopen the slideshow.")
-                }
-                #if DEBUG
-                if ProcessInfo.processInfo.environment["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"] == "1" {
-                    // The contract probe reuses the product's displayed-frame
-                    // snapshot instead of creating its own clock.
-                    Color.clear
-                        .frame(width: 1, height: 1)
-                        .accessibilityElement()
-                        .accessibilityIdentifier("slideshow.scenePresentation.contract.summary")
-                        .accessibilityLabel(viewModel.scenePresentationContractProbeLabel(for: snapshot))
-                        .focusable(false)
-                        .allowsHitTesting(false)
-                }
-                #endif
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onChange(of: overlayAsset?.id, initial: true) { _, _ in
-                syncExifOverlayPresentation(overlayAsset)
-            }
-            #if DEBUG
-            .onPreferenceChange(SmartFillMotionFrameProbePreferenceKey.self) { rows in
-                smartFillMotionFrameProbeRows = rows
-            }
-            #endif
-        }
-    }
     private func onPrevious() {
         guard viewModel.assets.count > 0 else { return }
 
@@ -1201,113 +720,6 @@ struct SlideShowViewTV: View {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 isControlBarVisible = false
-            }
-        }
-    }
-
-    private func refreshExifForegroundTone(
-        surfaceSize: CGSize,
-        safeAreaInsets: EdgeInsets
-    ) async {
-        guard let asset = visibleExifOverlayAsset else {
-            exifForegroundTone = .lightText
-            isExifForegroundToneReady = false
-            return
-        }
-        isExifForegroundToneReady = false
-
-        let backdropContext = ExifDisplayedBackdropContext(
-            surfaceSize: surfaceSize,
-            safeAreaInsets: UIEdgeInsets(
-                top: safeAreaInsets.top,
-                left: safeAreaInsets.leading,
-                bottom: safeAreaInsets.bottom,
-                right: safeAreaInsets.trailing
-            ),
-            exifFrameInSurfaceSpace: exifFrameInSurfaceSpace
-        )
-
-        guard backdropContext.isValid else {
-            // While the EXIF frame is still zero, use white text and sample after the geometry is written back.
-
-            exifForegroundTone = .lightText
-            isExifForegroundToneReady = false
-            return
-        }
-
-        guard
-            ExifForegroundAnalyzer.hasCachedImage(
-                assetId: asset.id,
-                downloadManager: viewModel.downloadManager
-            )
-        else {
-            // If the image isn't cached yet, don't guess the text color from empty data.
-
-            exifForegroundTone = .lightText
-            isExifForegroundToneReady = false
-            return
-        }
-
-        exifForegroundTone = await ExifForegroundAnalyzer.resolveTone(
-            assetId: asset.id,
-            downloadManager: viewModel.downloadManager,
-            backdropContext: backdropContext,
-            profile: .tvOS
-        )
-        isExifForegroundToneReady = true
-    }
-
-    private func syncExifOverlayPresentation() {
-        syncExifOverlayPresentation(visibleExifOverlayAsset)
-    }
-    private func syncExifOverlayPresentation(_ asset: Asset?) {
-        if let asset {
-            if isRenderedExifOverlayVisible {
-                withAnimation(.easeInOut(duration: PlaybackTransitionContract.imageCrossfadeDuration)) {
-                    retainedExifOverlayAsset = asset
-                }
-            } else {
-                retainedExifOverlayAsset = asset
-                DispatchQueue.main.async {
-                    withAnimation(.easeInOut(duration: PlaybackTransitionContract.imageCrossfadeDuration)) {
-                        isRenderedExifOverlayVisible = true
-                    }
-                }
-            }
-        } else if isRenderedExifOverlayVisible {
-            withAnimation(.easeInOut(duration: PlaybackTransitionContract.imageCrossfadeDuration)) {
-                isRenderedExifOverlayVisible = false
-            }
-        }
-    }
-
-    private func refreshPlaybackRelatedSettings() {
-        // Sync autoplay settings each time playback opens, so the long-lived ViewModel doesn't use stale values.
-        viewModel.refreshAutoPlaySettingsFromStore()
-        let settings = PlaybackSettingsStore().load() ?? PlaybackSettings()
-        isExifVisible = settings.showExif
-
-        isDebugOverlayVisible = PlatformCompat.isPlaybackDebugPanelEnabled && settings.showDebugOverlay
-
-        switch settings.defaultPlaybackMode {
-        case .random:
-            guard settings.defaultPlaybackMode != viewModel.currentPlaybackMode else { return }
-            Task {
-                await viewModel.switchPlaybackSource(to: .random)
-            }
-        case .filtered:
-            let selection = FilterSelectionStore().load() ?? FilterSelection()
-            // Don't switch to filtered playback without a usable filter, to avoid empty playback.
-            guard !selection.isEmpty else { return }
-
-            // If the selection changes during filtered playback, reload right away instead of waiting for a restart.
-
-            let modeChanged = settings.defaultPlaybackMode != viewModel.currentPlaybackMode
-            let filteredSelectionChanged = viewModel.shouldReloadFilteredSource(for: selection)
-            guard modeChanged || filteredSelectionChanged else { return }
-
-            Task {
-                await viewModel.switchPlaybackSource(to: .filtered(selection))
             }
         }
     }
@@ -1413,7 +825,7 @@ struct SlideShowViewTV: View {
 }
 
 #if DEBUG
-private final class SmartFillMotionTraceBuffer {
+final class SmartFillMotionTraceBuffer {
     private(set) var lines: [String] = []
 
     func reset() {

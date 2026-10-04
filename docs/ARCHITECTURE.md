@@ -42,7 +42,7 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 - **New playback behavior.** Decide which layer owns it:
   - which photos are eligible: `PlaybackPoolResolver`
   - how photos are grouped and cropped on one screen: `PlaybackSmartFillPlanner` / `PlaybackSmartFillLayoutPolicy`
-  - when scenes change, fade, pause or retry: the reducer in `ScenePresentationTypes.swift`
+  - when scenes change, fade, pause or retry: the reducer in `PlaybackSessionEngine+ScenePresentationState.swift`; its presentation values remain in `ScenePresentationTypes.swift`
   - motion inside a scene: `SceneAnimationProfile`, `MotionTransformResolver` and related `Motion*` types
   - wiring it together: `SlideShowViewModel`
 
@@ -63,7 +63,7 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 | `SmartFillPreparedPlanBuilder` | `Shared/Model/PlaybackSmartFillTypes.swift` | Runs the planner on a captured `SmartFillPreparedPlanRequest` off the main actor and returns a `SmartFillPreparedPlanResult`. |
 | `PlaybackScene`, `PhotoSlot` | `Shared/Model/PlaybackScene.swift` | What one screen shows: slots (asset + planning snapshot), fallback reason, protection snapshot, SmartFill readback. |
 | `PlaybackSessionEngine` | `Shared/Model/PlaybackSessionEngine.swift` | Pure state for one playback session: scene list, current index, pending transition, prepared scene ring, and the `ScenePresentationState`. |
-| `ScenePresentationState` (reducer) | `Shared/Model/ScenePresentationTypes.swift` | The only owner of what is on screen: phases, targets, readiness, fades, pause and background suspension, Reduce Motion, visible history. Takes `ScenePresentationEvent`s and returns `ScenePresentationEffect`s. |
+| `ScenePresentationState` (reducer) | `Shared/Model/PlaybackSessionEngine+ScenePresentationState.swift` | The only owner of what is on screen: phases, targets, readiness, fades, pause and background suspension, Reduce Motion, visible history. Takes `ScenePresentationEvent`s and returns `ScenePresentationEffect`s. |
 | `ScenePresentationEffect` | `Shared/Model/ScenePresentationEffect.swift` | Commands the reducer emits (`plan`, `download`, `retry`, `loadMore`, `scheduleWakeUp`, `cancelWakeUp`, `cancel`, …). Plain values, no tasks. |
 | `ScenePresentationPrerenderBarrier` | `Shared/Model/ScenePresentationPrerenderBarrier.swift` | Tracks when every renderer of a hidden incoming scene has decoded. Decoded does not mean seen. |
 | `SceneVisibleFrameReporter` | `Shared/Component/SceneVisibleFrameReporter.swift` | Reports a scene as visible only on the display tick after its render transaction completes. That report is what commits history. |
@@ -74,6 +74,10 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 | `PlaybackSettingsStore`, `AccessProtectionStore` | `Shared/Model/` | Persistence for playback settings (UserDefaults JSON) and PIN protection (flag in UserDefaults, PIN hash in Keychain). |
 | `SettingsPromptStore` | `Shared/Core/SettingsView.swift` | Observable prompt state shared by settings detail pages, including blocked-mode and cache-clear alerts. |
 | `PlatformCompat`, `ViewLayoutTraits` | `Shared/Component/` | Platform branches for colors, view modifiers, tvOS focus helpers and debug switches; device and size-class checks. |
+
+Large implementations use adjacent `TypeName+Topic.swift` extensions. `SlideShowViewModel` keeps its stored state and initializer in its primary file; scene presentation, navigation, planning, runtime evidence, pool loading and initial preload methods live in those topic extensions. `PlaybackSmartFillPlanner` similarly separates search, evaluation, geometry and readback. `AssetsDownloadManager+Diagnostics.swift` holds its Debug diagnostics, while `SDWebImageAsyncBridge.swift` owns the callback bridge. `ImmichServer` separates connection probes and test configuration; its persistence and Keychain operations remain in `immichServer.swift`. Runtime manifest validation remains in `PlaybackRuntimeEvidenceManifest.swift`, and scene QA lives in `PlaybackScene+RuntimeQA.swift` with the original Debug guards.
+
+The iOS and tvOS slideshow views keep their property wrappers in the primary declarations and place diagnostics, rendering and EXIF methods in platform-filtered extensions. tvOS settings server/cache, About/licenses and bundled privacy pages have separate extension files; their focus state remains owned by `SettingsViewTV`.
 
 ### Data flow: "play the next scene"
 
