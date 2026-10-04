@@ -4,7 +4,14 @@ import SDWebImage
 // The preview host renders the tvOS page directly, so the shared
 // entry point doesn't also have to manage the preview lifecycle.
 
-struct FilterSummaryTVPreviewHost: View {
+private enum PreviewPreparation {
+    static let coverLimitCount: Int = 20
+    static let imageLimitCount: Int = 60
+    static let personLimitCount: Int = 2
+    static let imageSettleDelayNanoseconds: UInt64 = 500_000_000
+}
+
+struct FilterSummaryPreviewHostViewTV: View {
     @StateObject private var viewModel = FilterViewModel()
     @StateObject private var stageViewModel = FilterSummaryTVStageViewModel()
     @State private var hasStartedPreparingPreview: Bool = false
@@ -30,8 +37,10 @@ struct FilterSummaryTVPreviewHost: View {
     // without covers it falls back to the server's first two people.
 
     private func preparePreviewData() async {
-        async let albumCovers: Void = viewModel.getCoverURLs(filterType: .albums, coverLimit: 20, shouldReset: true)
-        async let peopleCovers: Void = viewModel.getCoverURLs(filterType: .people, coverLimit: 20, shouldReset: true)
+        async let albumCovers: Void = viewModel.getCoverURLs(
+            filterType: .albums, coverLimit: PreviewPreparation.coverLimitCount, shouldReset: true)
+        async let peopleCovers: Void = viewModel.getCoverURLs(
+            filterType: .people, coverLimit: PreviewPreparation.coverLimitCount, shouldReset: true)
         _ = await (albumCovers, peopleCovers)
 
         if previewInitialFocus == .album {
@@ -46,13 +55,13 @@ struct FilterSummaryTVPreviewHost: View {
             urls: Array(
                 (viewModel.albumCoverURLs + viewModel.peopleCoverURLs + stageViewModel.albumPanoramaURLs
                     + stageViewModel.albumSpotlightURLs + stageViewModel.peopleWallURLs
-                    + stageViewModel.peopleSpotlightURLs).prefix(60)
+                    + stageViewModel.peopleSpotlightURLs).prefix(PreviewPreparation.imageLimitCount)
             )
         )
 
         // After prefetch completes, wait a fixed 500 ms so remote images can replace placeholders.
 
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        try? await Task.sleep(nanoseconds: PreviewPreparation.imageSettleDelayNanoseconds)
     }
 
     private func ensureAlbumSelectionForPreview() async {
@@ -68,7 +77,7 @@ struct FilterSummaryTVPreviewHost: View {
         let hasSelectedCovers = selectedIDs.contains { viewModel.peopleCoverURLByID[$0] != nil }
 
         if hasSelectedCovers == false {
-            let fallbackPeople = Array(viewModel.people.prefix(2))
+            let fallbackPeople = Array(viewModel.people.prefix(PreviewPreparation.personLimitCount))
             if fallbackPeople.isEmpty == false {
                 await MainActor.run {
                     viewModel.selection.personFilters = fallbackPeople.map {
@@ -78,7 +87,7 @@ struct FilterSummaryTVPreviewHost: View {
             }
         }
 
-        for personID in viewModel.selection.personFilters.prefix(2).map(\.personId) {
+        for personID in viewModel.selection.personFilters.prefix(PreviewPreparation.personLimitCount).map(\.personId) {
             await viewModel.loadPersonAssetsCountIfNeeded(id: personID)
         }
     }
@@ -108,9 +117,9 @@ struct FilterSummaryTVPreviewHost: View {
 }
 
 #Preview {
-    FilterSummaryTVPreviewHost(previewInitialFocus: .album)
+    FilterSummaryPreviewHostViewTV(previewInitialFocus: .album)
 }
 
 #Preview {
-    FilterSummaryTVPreviewHost(previewInitialFocus: .people)
+    FilterSummaryPreviewHostViewTV(previewInitialFocus: .people)
 }

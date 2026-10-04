@@ -7,6 +7,11 @@
 
 import SwiftUI
 
+private enum ModeSymbolAnimation {
+    static let repeatDelaySeconds: Double = 3.0
+    static let speedMultiplier: Double = 0.6
+}
+
 struct ModeCardViewTV: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -168,7 +173,7 @@ struct ModeCardViewTV: View {
 
     private var symbolAnimationOptions: SymbolEffectOptions {
         // The symbol animation loops at a low frequency to avoid constant jitter on TV.
-        .repeat(.periodic(delay: 3.0)).speed(0.6)
+        .repeat(.periodic(delay: ModeSymbolAnimation.repeatDelaySeconds)).speed(ModeSymbolAnimation.speedMultiplier)
     }
 
     var body: some View {

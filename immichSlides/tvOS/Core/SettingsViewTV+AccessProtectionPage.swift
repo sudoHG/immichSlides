@@ -1,5 +1,9 @@
 import SwiftUI
 
+private enum AccessProtectionPIN {
+    static let digitCount: Int = 6
+}
+
 extension SettingsViewTV {
     var accessProtectionSettingsView: some View {
         TVSettingsPageScaffold(
@@ -46,7 +50,7 @@ extension SettingsViewTV {
                     Divider()
                 }
 
-                if accessProtectionEnabled && accessProtectionNeedsRecovery {
+                if isAccessProtectionEnabled && isAccessProtectionRecoveryNeeded {
                     TVSettingsSectionBlock(
                         title: "Recovery",
                         subtitle: "An access protection state issue was detected."
@@ -66,7 +70,7 @@ extension SettingsViewTV {
                         )
                         .focused($focusedDetailItem, equals: .accessProtectionReset)
                     }
-                } else if accessProtectionEnabled {
+                } else if isAccessProtectionEnabled {
                     TVSettingsSectionBlock(
                         title: "Turn Off Access Protection",
                         subtitle: "Enter the current PIN before turning it off."
@@ -82,7 +86,7 @@ extension SettingsViewTV {
                             title: "Turn Off Access Protection",
                             value: "Current PIN Required",
                             valueTint: .secondary,
-                            isEnabled: disablePin.count == 6,
+                            isEnabled: disablePin.count == AccessProtectionPIN.digitCount,
                             accessibilityIdentifier: "settings.pin.disable.button",
                             action: onDisableProtection
                         )
@@ -163,7 +167,7 @@ extension SettingsViewTV {
                 focusedDetailItem = accessProtectionPageDefaultFocusTarget
             }
         }
-        .onChange(of: accessProtectionEnabled) { _, _ in
+        .onChange(of: isAccessProtectionEnabled) { _, _ in
             // After the branch switches, give focus to the new branch's first item on the next frame.
 
             DispatchQueue.main.async {
@@ -179,6 +183,7 @@ extension SettingsViewTV {
                 .frame(width: 1, height: 1)
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("settings.pin.stateProbe")
+                // localization-audit: Stable UI test probe contract.
                 .accessibilityLabel(Text(verbatim: "Access protection test state"))
                 .accessibilityValue(Text(verbatim: accessProtectionUITestStateProbeValue))
         }
@@ -201,8 +206,8 @@ extension SettingsViewTV {
 
     var accessProtectionUITestStateProbeValue: String {
         [
-            "enabled=\(accessProtectionEnabled)",
-            "needsRecovery=\(accessProtectionNeedsRecovery)",
+            "enabled=\(isAccessProtectionEnabled)",
+            "needsRecovery=\(isAccessProtectionRecoveryNeeded)",
             "enablePinCount=\(enablePin.count)",
             "enableConfirmCount=\(enablePinConfirm.count)",
             "disablePinCount=\(disablePin.count)",
@@ -244,19 +249,20 @@ extension SettingsViewTV {
         }
     }
     var canEnablePIN: Bool {
-        enablePin.count == 6 && enablePinConfirm.count == 6
+        enablePin.count == AccessProtectionPIN.digitCount && enablePinConfirm.count == AccessProtectionPIN.digitCount
     }
 
     var canChangePIN: Bool {
-        currentPinForChange.count == 6 && newPin.count == 6 && newPinConfirm.count == 6
+        currentPinForChange.count == AccessProtectionPIN.digitCount && newPin.count == AccessProtectionPIN.digitCount
+            && newPinConfirm.count == AccessProtectionPIN.digitCount
     }
 
     var accessProtectionPageDefaultFocusTarget: DetailFocusTarget {
-        if accessProtectionEnabled && accessProtectionNeedsRecovery {
+        if isAccessProtectionEnabled && isAccessProtectionRecoveryNeeded {
             return .accessProtectionReset
         }
 
-        if accessProtectionEnabled {
+        if isAccessProtectionEnabled {
             return .accessProtectionDisablePin
         }
 
@@ -264,18 +270,18 @@ extension SettingsViewTV {
     }
 
     var accessProtectionCurrentStatusText: String {
-        if accessProtectionEnabled && accessProtectionNeedsRecovery {
+        if isAccessProtectionEnabled && isAccessProtectionRecoveryNeeded {
             return String(localized: "Error (Recovery Needed)")
         }
 
-        return accessProtectionEnabled ? String(localized: "Turned on") : String(localized: "Not enabled")
+        return isAccessProtectionEnabled ? String(localized: "Turned on") : String(localized: "Not enabled")
     }
     var accessProtectionHeroSummary: String {
-        if accessProtectionEnabled && accessProtectionNeedsRecovery {
+        if isAccessProtectionEnabled && isAccessProtectionRecoveryNeeded {
             return String(localized: "Access protection error. Recovery required.")
         }
 
-        return accessProtectionEnabled
+        return isAccessProtectionEnabled
             ? String(localized: "Access protection is on") : String(localized: "Access protection is disabled")
     }
 

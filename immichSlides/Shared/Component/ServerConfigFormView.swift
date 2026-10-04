@@ -79,7 +79,7 @@ struct ServerConfigFormView: View {
             isConnectionVerified: isConnectionVerified,
             onTestConnection: onTestConnection,
             onSave: onSave,
-            showsDebugFillConfigButton: shouldShowDebugFillConfigButton,
+            shouldShowDebugFillConfigButton: shouldShowDebugFillConfigButton,
             presentation: iosPresentation
         )
         #endif

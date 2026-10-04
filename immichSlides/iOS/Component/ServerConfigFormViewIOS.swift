@@ -23,14 +23,14 @@ struct ServerConfigFormViewIOS: View {
     let onTestConnection: () -> Void
     let onSave: () -> Void
 
-    let showsDebugFillConfigButton: Bool
+    let shouldShowDebugFillConfigButton: Bool
 
     let presentation: IOSServerConfigFormPresentation
 
     private var canSaveConfig: Bool { isConnectionVerified }
     private var isCompact: Bool { horizontalSizeClass == .compact }
     private var isCompactHeight: Bool { verticalSizeClass == .compact }
-    private var usesSettingsSectionPresentation: Bool { presentation == .settingsSection }
+    private var isSettingsSectionPresentation: Bool { presentation == .settingsSection }
     private var onboardingMetrics: IOSOnboardingVisualMetrics {
         IOSOnboardingVisualMetrics(
             horizontalSizeClass: horizontalSizeClass,
@@ -45,7 +45,7 @@ struct ServerConfigFormViewIOS: View {
         case apiKey
     }
 
-    private var debugFillConfigButtonEnabled: Bool {
+    private var isDebugFillConfigButtonEnabled: Bool {
         PlatformCompat.debugInfoPlistString("ENABLE_DEBUG_FILL_APIKEY_BUTTON") == "1"
     }
 
@@ -62,7 +62,7 @@ struct ServerConfigFormViewIOS: View {
     // Debug autofill needs caller opt-in, a DEBUG build, the plist flag and a usable test config, all at once.
 
     private var canShowDebugFillConfigButton: Bool {
-        showsDebugFillConfigButton && PlatformCompat.isDebugBuild && debugFillConfigButtonEnabled
+        shouldShowDebugFillConfigButton && PlatformCompat.isDebugBuild && isDebugFillConfigButtonEnabled
             && !isDebugFillConfigButtonSuppressedByUITest && debugServerConfigFromInfoPlist != nil
     }
 
@@ -98,7 +98,7 @@ struct ServerConfigFormViewIOS: View {
                 text: $serverURL,
                 isSecure: false,
                 field: .serverURL,
-                showVerifiedBadge: isConnectionVerified
+                shouldShowVerifiedBadge: isConnectionVerified
             )
 
             Divider()
@@ -110,8 +110,8 @@ struct ServerConfigFormViewIOS: View {
                 text: $apiKey,
                 isSecure: true,
                 field: .apiKey,
-                showVerifiedBadge: isConnectionVerified,
-                showsHelpButton: true
+                shouldShowVerifiedBadge: isConnectionVerified,
+                shouldShowHelpButton: true
             )
         }
         .frame(maxWidth: .infinity)
@@ -123,15 +123,15 @@ struct ServerConfigFormViewIOS: View {
     }
 
     private var formMaxWidth: CGFloat {
-        usesSettingsSectionPresentation ? .infinity : (onboardingMetrics.isPad ? 760 : 680)
+        isSettingsSectionPresentation ? .infinity : (onboardingMetrics.isPad ? 760 : 680)
     }
 
     private var verticalPadding: CGFloat {
-        usesSettingsSectionPresentation ? 0 : (isCompactHeight ? 8 : 12)
+        isSettingsSectionPresentation ? 0 : (isCompactHeight ? 8 : 12)
     }
 
     private var sectionSpacing: CGFloat {
-        usesSettingsSectionPresentation ? 14 : (isCompactHeight ? 12 : 18)
+        isSettingsSectionPresentation ? 14 : (isCompactHeight ? 12 : 18)
     }
 
     // The help button only opens the explanation sheet; it never edits input or triggers a connection test or save.
@@ -243,8 +243,8 @@ struct ServerConfigFormViewIOS: View {
         text: Binding<String>,
         isSecure: Bool,
         field: ServerConfigInputField,
-        showVerifiedBadge: Bool,
-        showsHelpButton: Bool = false
+        shouldShowVerifiedBadge: Bool,
+        shouldShowHelpButton: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             // Titles stay LocalizedStringResource so they are collected into the String Catalog.
@@ -256,7 +256,7 @@ struct ServerConfigFormViewIOS: View {
 
                 Spacer(minLength: 8)
 
-                if showsHelpButton {
+                if shouldShowHelpButton {
                     apiKeyHelpButton
                 }
             }
@@ -264,7 +264,7 @@ struct ServerConfigFormViewIOS: View {
             HStack(spacing: 10) {
                 formInputField(placeholder: placeholder, text: text, isSecure: isSecure, field: field)
 
-                if showVerifiedBadge {
+                if shouldShowVerifiedBadge {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: isCompactHeight ? 16 : 20))
                         .foregroundStyle(.green)
@@ -282,7 +282,7 @@ struct ServerConfigFormViewIOS: View {
         isSecure: Bool,
         field: ServerConfigInputField
     ) -> some View {
-        IOSServerConfigTextInput(
+        ServerConfigTextInputViewIOS(
             placeholder: placeholder,
             text: text,
             isSecure: isSecure,

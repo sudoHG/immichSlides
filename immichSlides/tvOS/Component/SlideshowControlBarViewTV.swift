@@ -2,7 +2,17 @@
 
 import SwiftUI
 
-struct TVSlideshowControlBarView: View {
+private enum PlaybackHintMetrics {
+    static let verticalOffsetPoints: CGFloat = -152
+    static let animationCycleCount: Int = 2
+    static let emphasisDurationSeconds: Double = 0.18
+    static let returnDurationSeconds: Double = 0.16
+    static let emphasisHoldNanoseconds: UInt64 = 180_000_000
+    static let betweenCyclesDelayNanoseconds: UInt64 = 140_000_000
+    static let finalSettleDelayNanoseconds: UInt64 = 90_000_000
+}
+
+struct SlideshowControlBarViewTV: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @Binding var currentIndex: Int
@@ -18,8 +28,8 @@ struct TVSlideshowControlBarView: View {
     let onPlayPause: () -> Void
     let onSettings: () -> Void
 
-    let prefersSettingsFocusForEntryHint: Bool
-    let showsEntryHintBubble: Bool
+    let shouldPreferSettingsFocusForEntryHint: Bool
+    let shouldShowEntryHintBubble: Bool
     let entryHintContent: TVSlideshowEntryHintContent
     let onMoveDownWhileEntryHintVisible: (() -> Void)?
 
@@ -84,7 +94,7 @@ struct TVSlideshowControlBarView: View {
                 .appTVFocusScope(
                     controlBarFocusScope,
                     focused: $focusedButton,
-                    default: prefersSettingsFocusForEntryHint ? .settings : .playPause,
+                    default: shouldPreferSettingsFocusForEntryHint ? .settings : .playPause,
                     // Wake uses .userInitiated so the system adopts the specified default focus more readily.
 
                     priority: .userInitiated
@@ -123,7 +133,7 @@ struct TVSlideshowControlBarView: View {
                 .appTVFocusScope(
                     controlBarFocusScope,
                     focused: $focusedButton,
-                    default: prefersSettingsFocusForEntryHint ? .settings : .playPause,
+                    default: shouldPreferSettingsFocusForEntryHint ? .settings : .playPause,
                     priority: .userInitiated
                 )
                 .onAppear {
@@ -143,12 +153,12 @@ struct TVSlideshowControlBarView: View {
                 .shadow(color: .black.opacity(0.22), radius: 20, x: 0, y: 8)
             }
         }
-        .onChange(of: prefersSettingsFocusForEntryHint) { _, isTeaching in
+        .onChange(of: shouldPreferSettingsFocusForEntryHint) { _, isTeaching in
             guard isTeaching else { return }
             requestPreferredFocus()
         }
         .onMoveCommand { direction in
-            guard showsEntryHintBubble, direction == .down else { return }
+            guard shouldShowEntryHintBubble, direction == .down else { return }
             onMoveDownWhileEntryHintVisible?()
         }
     }
@@ -280,7 +290,7 @@ struct TVSlideshowControlBarView: View {
         .appTVDisableDefaultFocusEffect(true)
         .hoverEffectDisabled(true)
         .opacity(isEnabled ? 1 : 0.42)
-        .animation(.easeInOut(duration: 0.18), value: isFocused)
+        .animation(.easeInOut(duration: PlaybackHintMetrics.emphasisDurationSeconds), value: isFocused)
         .accessibilityIdentifier("slideshow.control.\(action.rawValue).button")
         .accessibilityLabel(Text(LocalizedStringKey(accessibilityLabel(for: action))))
         .accessibilityValue(
@@ -291,10 +301,10 @@ struct TVSlideshowControlBarView: View {
                 : Text(verbatim: "")
         )
         .overlay(alignment: .topLeading) {
-            if action == .settings, showsEntryHintBubble {
+            if action == .settings, shouldShowEntryHintBubble {
                 TVSlideshowEntryHintBubble(content: entryHintContent)
                     // The tutorial bubble sits 152pt above the Settings button.
-                    .offset(x: 0, y: -152)
+                    .offset(x: 0, y: PlaybackHintMetrics.verticalOffsetPoints)
                     .transition(
                         .asymmetric(
                             insertion: .scale(scale: 0.96, anchor: .bottomLeading)
@@ -335,7 +345,7 @@ struct TVSlideshowControlBarView: View {
         // goes back to playPause, the tutorial state goes to settings first.
 
         DispatchQueue.main.async {
-            focusedButton = prefersSettingsFocusForEntryHint ? .settings : .playPause
+            focusedButton = shouldPreferSettingsFocusForEntryHint ? .settings : .playPause
         }
     }
 }
@@ -507,18 +517,21 @@ private struct TVSlideshowEntryHintKeycap: View {
         guard hasPlayedHintAnimation == false else { return }
         hasPlayedHintAnimation = true
 
-        for cycle in 0..<2 {
-            withAnimation(.easeInOut(duration: 0.18)) {
+        for cycle in 0..<PlaybackHintMetrics.animationCycleCount {
+            withAnimation(.easeInOut(duration: PlaybackHintMetrics.emphasisDurationSeconds)) {
                 arrowVerticalOffset = 4
                 isKeycapEmphasized = true
             }
-            try? await Task.sleep(nanoseconds: 180_000_000)
+            try? await Task.sleep(nanoseconds: PlaybackHintMetrics.emphasisHoldNanoseconds)
 
-            withAnimation(.easeOut(duration: 0.16)) {
+            withAnimation(.easeOut(duration: PlaybackHintMetrics.returnDurationSeconds)) {
                 arrowVerticalOffset = 0
                 isKeycapEmphasized = false
             }
-            try? await Task.sleep(nanoseconds: cycle == 0 ? 140_000_000 : 90_000_000)
+            try? await Task.sleep(
+                nanoseconds: cycle == 0
+                    ? PlaybackHintMetrics.betweenCyclesDelayNanoseconds
+                    : PlaybackHintMetrics.finalSettleDelayNanoseconds)
         }
     }
 }

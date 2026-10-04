@@ -1,5 +1,10 @@
 import SwiftUI
 
+private enum PinEntryMetrics {
+    static let pinDigitCount: Int = 6
+    static let submissionLockDurationSeconds: TimeInterval = 0.2
+}
+
 struct PinEntrySheetViewIOS: View {
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -71,7 +76,7 @@ struct PinEntrySheetViewIOS: View {
 
     private var pinIndicator: some View {
         HStack(spacing: isCompactHeight ? 10 : 12) {
-            ForEach(0..<6, id: \.self) { index in
+            ForEach(0..<PinEntryMetrics.pinDigitCount, id: \.self) { index in
                 Circle()
                     .fill(index < pin.count ? Color.primary : Color.clear)
                     .overlay(
@@ -147,16 +152,16 @@ struct PinEntrySheetViewIOS: View {
     }
 
     private func addDigit(_ digit: String) {
-        guard !isSubmitting, pin.count < 6 else { return }
+        guard !isSubmitting, pin.count < PinEntryMetrics.pinDigitCount else { return }
 
         pin.append(digit)
 
-        if pin.count == 6 {
+        if pin.count == PinEntryMetrics.pinDigitCount {
             isSubmitting = true
             let value = pin.joined()
             onSubmit(value)
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + PinEntryMetrics.submissionLockDurationSeconds) {
                 isSubmitting = false
             }
         }

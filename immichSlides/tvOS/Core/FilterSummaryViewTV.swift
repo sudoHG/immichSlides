@@ -9,6 +9,31 @@ import SwiftUI
 
 // FocusedValue reports the system's actual focus, since it isn't always in sync with @FocusState.
 
+private enum VisualAuditPreparation {
+    static let maximumRetryCount: Int = 40
+    static let pollIntervalNanoseconds: UInt64 = 250_000_000
+}
+
+private enum StageAtmosphereMetrics {
+    static let primaryGlowSizePoints: CGFloat = 720
+    static let primaryGlowBlurPoints: CGFloat = 120
+    static let primaryGlowOffsetXPoints: CGFloat = -360
+    static let primaryGlowOffsetYPoints: CGFloat = -280
+    static let secondaryGlowSizePoints: CGFloat = 640
+    static let secondaryGlowBlurPoints: CGFloat = 140
+    static let secondaryGlowOffsetXPoints: CGFloat = 420
+    static let secondaryGlowOffsetYPoints: CGFloat = 260
+    static let wideScreenThresholdPoints: CGFloat = 1700
+    static let wideTitleSizePoints: CGFloat = 54
+    static let regularTitleSizePoints: CGFloat = 46
+    static let maximumCopyColumnWidthPoints: CGFloat = 680
+    static let copyColumnWidthRatio: CGFloat = 0.4
+    static let maximumActionBarWidthPoints: CGFloat = 392
+    static let actionBarWidthRatio: CGFloat = 0.27
+    static let stageShadowRadiusPoints: CGFloat = 42
+    static let stageShadowOffsetYPoints: CGFloat = 30
+}
+
 private struct FilterSummaryFocusedTargetKey: FocusedValueKey {
     typealias Value = String
 }
@@ -44,7 +69,7 @@ struct FilterSummaryViewTV: View {
     @ObservedObject var viewModel: FilterViewModel
     let canShowBackToModeSelection: Bool
     let onBackToModeSelection: (() -> Void)?
-    var showsOnboardingProgress: Bool = false
+    var shouldShowOnboardingProgress: Bool = false
     let onStartPlayback: () -> Void
     var previewInitialFocus: FilterSummaryPreviewFocusTarget? = nil
     var stageViewModel: FilterSummaryTVStageViewModel? = nil
@@ -103,7 +128,7 @@ struct FilterSummaryViewTV: View {
         return "\(albumPart)|\(peoplePart)"
     }
 
-    private var albumVisualAuditReady: Bool {
+    private var isAlbumVisualAuditReady: Bool {
         let hasMatchedAlbumSelection = viewModel.selection.albumIds.contains { selectedID in
             viewModel.albums.contains { $0.id == selectedID }
         }
@@ -111,7 +136,7 @@ struct FilterSummaryViewTV: View {
             && resolvedStageViewModel.isAlbumStageReady
     }
 
-    private var peopleVisualAuditReady: Bool {
+    private var isPeopleVisualAuditReady: Bool {
         let selectedIDs = viewModel.selection.personFilters.map(\.personId)
         let hasMatchedPeopleSelection = selectedIDs.contains { selectedID in
             viewModel.people.contains { $0.id == selectedID }
@@ -287,7 +312,7 @@ struct FilterSummaryViewTV: View {
         .tvOnboardingProgressOverlay(
             currentStep: currentOnboardingStep,
             accessibilityIdentifier: "filterSummary.onboarding.title",
-            isVisible: showsOnboardingProgress
+            isVisible: shouldShowOnboardingProgress
         )
         .toolbar(.hidden, for: .navigationBar)
         .focusScope(focusNamespace)
@@ -405,22 +430,22 @@ struct FilterSummaryViewTV: View {
     // For visual audits, the page exposes a ready marker, so the test side doesn't have to wait blindly.
 
     private func prepareVisualAuditSelectionsForUITestsIfNeeded() async {
-        for _ in 0..<40 {
-            if albumVisualAuditReady && peopleVisualAuditReady {
+        for _ in 0..<VisualAuditPreparation.maximumRetryCount {
+            if isAlbumVisualAuditReady && isPeopleVisualAuditReady {
                 return
             }
 
-            if albumVisualAuditReady == false,
+            if isAlbumVisualAuditReady == false,
                 let firstAlbum = viewModel.albums.first
             {
                 await MainActor.run {
                     viewModel.removeAllAlbumSelection()
                     viewModel.toggleAlbum(id: firstAlbum.id)
                 }
-                await resolvedStageViewModel.refreshAlbumStageIfNeeded(viewModel: viewModel, force: true)
+                await resolvedStageViewModel.refreshAlbumStageIfNeeded(viewModel: viewModel, shouldForceRefresh: true)
             }
 
-            if peopleVisualAuditReady == false,
+            if isPeopleVisualAuditReady == false,
                 let firstPerson = viewModel.people.first
             {
                 let selectedIDs = viewModel.selection.personFilters.map(\.personId)
@@ -435,10 +460,10 @@ struct FilterSummaryViewTV: View {
                 for personID in viewModel.selection.personFilters.prefix(1).map(\.personId) {
                     await viewModel.loadPersonAssetsCountIfNeeded(id: personID)
                 }
-                await resolvedStageViewModel.refreshPeopleStageIfNeeded(viewModel: viewModel, force: true)
+                await resolvedStageViewModel.refreshPeopleStageIfNeeded(viewModel: viewModel, shouldForceRefresh: true)
             }
 
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: VisualAuditPreparation.pollIntervalNanoseconds)
         }
     }
 
@@ -452,15 +477,25 @@ struct FilterSummaryViewTV: View {
 
             Circle()
                 .fill(stageAccent.opacity(stageGlowPrimaryOpacity))
-                .frame(width: 720, height: 720)
-                .blur(radius: 120)
-                .offset(x: -360, y: -280)
+                .frame(
+                    width: StageAtmosphereMetrics.primaryGlowSizePoints,
+                    height: StageAtmosphereMetrics.primaryGlowSizePoints
+                )
+                .blur(radius: StageAtmosphereMetrics.primaryGlowBlurPoints)
+                .offset(
+                    x: StageAtmosphereMetrics.primaryGlowOffsetXPoints,
+                    y: StageAtmosphereMetrics.primaryGlowOffsetYPoints)
 
             Circle()
                 .fill(stageSecondaryAccent.opacity(stageGlowSecondaryOpacity))
-                .frame(width: 640, height: 640)
-                .blur(radius: 140)
-                .offset(x: 420, y: 260)
+                .frame(
+                    width: StageAtmosphereMetrics.secondaryGlowSizePoints,
+                    height: StageAtmosphereMetrics.secondaryGlowSizePoints
+                )
+                .blur(radius: StageAtmosphereMetrics.secondaryGlowBlurPoints)
+                .offset(
+                    x: StageAtmosphereMetrics.secondaryGlowOffsetXPoints,
+                    y: StageAtmosphereMetrics.secondaryGlowOffsetYPoints)
         }
         .ignoresSafeArea()
     }
@@ -469,14 +504,14 @@ struct FilterSummaryViewTV: View {
         ZStack(alignment: .bottomLeading) {
             Group {
                 if currentStageMode == .album {
-                    AlbumPanoramaStage(
+                    AlbumPanoramaStageViewTV(
                         panoramaURLs: resolvedStageViewModel.albumPanoramaURLs,
                         spotlightURLs: resolvedStageViewModel.albumSpotlightURLs,
                         accent: stageAccent,
                         selectedSummary: stageSelectionSummary
                     )
                 } else {
-                    PeopleConstellationStage(
+                    PeopleConstellationStageViewTV(
                         wallURLs: resolvedStageViewModel.peopleWallURLs,
                         spotlightURLs: resolvedStageViewModel.peopleSpotlightURLs,
                         accent: stageAccent,
@@ -494,7 +529,9 @@ struct FilterSummaryViewTV: View {
             RoundedRectangle(cornerRadius: stageCornerRadius, style: .continuous)
                 .stroke(stageBorderColor, lineWidth: 1)
         }
-        .shadow(color: stageShadowColor, radius: 42, x: 0, y: 30)
+        .shadow(
+            color: stageShadowColor, radius: StageAtmosphereMetrics.stageShadowRadiusPoints, x: 0,
+            y: StageAtmosphereMetrics.stageShadowOffsetYPoints)
     }
 
     private var stageBottomScrim: some View {
@@ -573,7 +610,7 @@ struct FilterSummaryViewTV: View {
         Button {
             showAlbumFilter = true
         } label: {
-            FloatingSelectionCard(
+            FloatingSelectionCardViewTV(
                 title: "Filter Albums",
                 subtitle: "Choose albums to add to the slideshow pool.",
                 summary: LocalizedText.format(
@@ -611,7 +648,7 @@ struct FilterSummaryViewTV: View {
         Button {
             showPeopleFilter = true
         } label: {
-            FloatingSelectionCard(
+            FloatingSelectionCardViewTV(
                 title: "Filter People",
                 subtitle: "Choose people to add to the slideshow pool.",
                 summary: LocalizedText.format(
@@ -726,7 +763,7 @@ struct FilterSummaryViewTV: View {
                     isFocused: visualFocusedTarget == .backButton,
                     accent: secondaryActionAccent,
                     fillColor: secondaryActionFill,
-                    usesFillFocusEmphasis: false
+                    shouldUseFillFocusEmphasis: false
                 )
             )
         }
@@ -751,10 +788,10 @@ struct FilterSummaryViewTV: View {
     private var uiTestReadinessMarkers: some View {
         VStack(alignment: .leading, spacing: 1) {
             // localization-audit: ui-test-probe
-            Text(verbatim: albumVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isAlbumVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterSummary.album.ready")
             // localization-audit: ui-test-probe
-            Text(verbatim: peopleVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isPeopleVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterSummary.people.ready")
         }
         .font(.system(size: 1))
@@ -768,14 +805,15 @@ struct FilterSummaryViewTV: View {
     private var dockHeight: CGFloat { 286 }
 
     private func titleSize(for width: CGFloat) -> CGFloat {
-        width > 1700 ? 54 : 46
+        width > StageAtmosphereMetrics.wideScreenThresholdPoints
+            ? StageAtmosphereMetrics.wideTitleSizePoints : StageAtmosphereMetrics.regularTitleSizePoints
     }
 
     private func copyColumnWidth(for width: CGFloat) -> CGFloat {
-        min(680, width * 0.4)
+        min(StageAtmosphereMetrics.maximumCopyColumnWidthPoints, width * StageAtmosphereMetrics.copyColumnWidthRatio)
     }
 
     private func actionBarWidth(for width: CGFloat) -> CGFloat {
-        min(392, width * 0.27)
+        min(StageAtmosphereMetrics.maximumActionBarWidthPoints, width * StageAtmosphereMetrics.actionBarWidthRatio)
     }
 }

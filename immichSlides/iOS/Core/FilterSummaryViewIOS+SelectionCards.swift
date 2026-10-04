@@ -74,7 +74,7 @@ enum FilterSummarySelectionCardKind {
         }
     }
 
-    var mediaStyle: IOSSelectionStageMosaic.Style {
+    var mediaStyle: SelectionStageMosaicViewIOS.Style {
         switch self {
         case .album:
             return .album
@@ -86,7 +86,7 @@ enum FilterSummarySelectionCardKind {
 
 // The entry card owns both its navigation destination and its inner layout.
 
-struct FilterSummarySelectionCard: View {
+struct FilterSummarySelectionCardViewIOS: View {
     @ObservedObject var viewModel: FilterViewModel
     let kind: FilterSummarySelectionCardKind
     let isPhone: Bool
@@ -495,7 +495,7 @@ struct FilterSummarySelectionCard: View {
                     .rotationEffect(.degrees(6))
                     .offset(x: 64, y: -8)
             } else {
-                IOSSelectionStageMosaic(urls: coverURLs, style: kind.mediaStyle)
+                SelectionStageMosaicViewIOS(urls: coverURLs, style: kind.mediaStyle)
             }
 
             LinearGradient(

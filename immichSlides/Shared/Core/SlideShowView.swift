@@ -29,14 +29,14 @@ struct SlideShowView: View {
             SlideShowViewTV(
                 viewModel: viewModel,
                 onOpenSettings: onOpenSettings,
-                showsOnboardingPlaybackHint: shouldShowOnboardingPlaybackHint
+                shouldShowOnboardingPlaybackHint: shouldShowOnboardingPlaybackHint
             )
             #else
 
             SlideShowViewIOS(
                 viewModel: viewModel,
                 onOpenSettings: onOpenSettings,
-                showsOnboardingPlaybackHint: shouldShowOnboardingPlaybackHint
+                shouldShowOnboardingPlaybackHint: shouldShowOnboardingPlaybackHint
             )
             #endif
         }

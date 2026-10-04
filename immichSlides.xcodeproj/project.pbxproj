@@ -47,8 +47,8 @@
 				PrivacyInfo.xcprivacy,
 			);
 			platformFiltersByRelativePath = {
-				iOS/Component/IOSOnboardingScaffold.swift = (ios, );
-				iOS/Component/IOSServerConfigTextInput.swift = (ios, );
+				iOS/Component/OnboardingScaffoldIOS.swift = (ios, );
+				iOS/Component/ServerConfigTextInputViewIOS.swift = (ios, );
 				iOS/Component/ModeCardViewIOS.swift = (ios, );
 				iOS/Component/PinEntrySheetViewIOS.swift = (ios, );
 				iOS/Component/ServerConfigFormViewIOS.swift = (ios, );
@@ -62,8 +62,8 @@
 				iOS/Core/SettingsViewIOS.swift = (ios, );
 				iOS/Core/SlideShowViewIOS.swift = (ios, );
 				iOS/immichSlidesApp_iOS.swift = (ios, );
-				tvOS/Component/FilterSummaryStageViews.swift = (tvos, );
-				tvOS/Component/FilterSummaryVisualModifiers.swift = (tvos, );
+				tvOS/Component/FilterSummaryStageViewsTV.swift = (tvos, );
+				tvOS/Component/FilterSummaryVisualModifiersTV.swift = (tvos, );
 				tvOS/Component/ModeCardViewTV.swift = (tvos, );
 				tvOS/Component/PinEntrySheetViewTV.swift = (tvos, );
 				tvOS/Component/ServerConfigFormViewTV.swift = (tvos, );
@@ -71,9 +71,9 @@
 				tvOS/Component/TVPersonCommandCard.swift = (tvos, );
 				tvOS/Component/TVSettingsFocusableControls.swift = (tvos, );
 				tvOS/Component/TVSettingsPrimitives.swift = (tvos, );
-				tvOS/Component/TVSlideshowControlBarView.swift = (tvos, );
+				tvOS/Component/SlideshowControlBarViewTV.swift = (tvos, );
 				tvOS/Core/AlbumFilterViewTV.swift = (tvos, );
-				tvOS/Core/FilterSummaryTVPreviewHost.swift = (tvos, );
+				tvOS/Core/FilterSummaryPreviewHostViewTV.swift = (tvos, );
 				tvOS/Core/FilterSummaryViewTV.swift = (tvos, );
 				tvOS/Core/FilterViewTV.swift = (tvos, );
 				tvOS/Core/FirstBootViewTV.swift = (tvos, );

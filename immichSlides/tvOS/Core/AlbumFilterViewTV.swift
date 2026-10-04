@@ -10,6 +10,10 @@ import UIKit
 
 // FocusedValue reports the system's actual focus, since it isn't always in sync with @FocusState.
 
+private enum FocusHandoffTiming {
+    static let delayNanoseconds: UInt64 = 180_000_000
+}
+
 private struct AlbumFilterFocusedAlbumIDKey: FocusedValueKey {
     typealias Value = String
 }
@@ -341,7 +345,7 @@ struct AlbumFilterViewTV: View {
                 focusedTarget = nil
                 resetFocus(in: albumsFocusScope)
 
-                try? await Task.sleep(nanoseconds: 180_000_000)
+                try? await Task.sleep(nanoseconds: FocusHandoffTiming.delayNanoseconds)
 
                 focusedTarget = nextTarget
                 resetFocus(in: albumsFocusScope)

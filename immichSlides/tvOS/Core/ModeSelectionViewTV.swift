@@ -33,7 +33,7 @@ struct ModeSelectionViewTV: View {
 
     @Binding var selectedMode: SlideMode?
     let previewFocusedModeOverride: SlideMode?
-    let showsOnboardingProgress: Bool
+    let shouldShowOnboardingProgress: Bool
     let onSelectMode: (SlideMode) -> Void
     let onContinue: () -> Void
 
@@ -93,7 +93,7 @@ struct ModeSelectionViewTV: View {
         .tvOnboardingProgressOverlay(
             currentStep: currentOnboardingStep,
             accessibilityIdentifier: "mode.onboarding.title",
-            isVisible: showsOnboardingProgress
+            isVisible: shouldShowOnboardingProgress
         )
         .appTVFocusScope(modeFocusScope, focused: $focusedTarget, default: .randomCard)
         .onAppear {

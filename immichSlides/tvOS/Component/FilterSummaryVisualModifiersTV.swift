@@ -2,6 +2,16 @@ import SwiftUI
 
 /// Compatibility layer for the glass look.
 
+private enum ActionButtonMetrics {
+    static let cornerRadiusPoints: CGFloat = 22
+    static let focusedGlassBorderWidthPoints: CGFloat = 1.3
+    static let normalBorderWidthPoints: CGFloat = 0.8
+    static let focusedOutlineWidthPoints: CGFloat = 2.1
+    static let focusedLegacyBorderWidthPoints: CGFloat = 1.6
+    static let focusSpringResponseSeconds: Double = 0.24
+    static let focusSpringDampingFraction: Double = 0.82
+}
+
 struct TVGlassPanelModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -59,7 +69,7 @@ struct TVActionButtonBackgroundModifier: ViewModifier {
     let isFocused: Bool
     let accent: Color
     var fillColor: Color? = nil
-    var usesFillFocusEmphasis: Bool = true
+    var shouldUseFillFocusEmphasis: Bool = true
 
     private var defaultBaseFill: Color {
         if colorScheme == .light {
@@ -84,16 +94,16 @@ struct TVActionButtonBackgroundModifier: ViewModifier {
 
     private var secondaryFocusedBaseFill: Color {
 
-        if usesFillFocusEmphasis == false && colorScheme == .light {
+        if shouldUseFillFocusEmphasis == false && colorScheme == .light {
             return accent.opacity(0.92)
         }
         return fillColor ?? defaultBaseFill
     }
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: ActionButtonMetrics.cornerRadiusPoints, style: .continuous)
         if #available(tvOS 26.0, *) {
-            if usesFillFocusEmphasis {
+            if shouldUseFillFocusEmphasis {
                 content
                     .foregroundStyle(isFocused ? focusedPrimaryForegroundColor : restingForegroundColor)
                     .background {
@@ -106,9 +116,16 @@ struct TVActionButtonBackgroundModifier: ViewModifier {
                     }
                     .overlay {
                         shape
-                            .stroke(borderColor, lineWidth: isFocused ? 1.3 : 0.8)
+                            .stroke(
+                                borderColor,
+                                lineWidth: isFocused
+                                    ? ActionButtonMetrics.focusedGlassBorderWidthPoints
+                                    : ActionButtonMetrics.normalBorderWidthPoints)
                     }
-                    .animation(.spring(response: 0.24, dampingFraction: 0.82), value: isFocused)
+                    .animation(
+                        .spring(
+                            response: ActionButtonMetrics.focusSpringResponseSeconds,
+                            dampingFraction: ActionButtonMetrics.focusSpringDampingFraction), value: isFocused)
             } else {
                 content
                     .foregroundStyle(isFocused ? focusedPrimaryForegroundColor : restingForegroundColor)
@@ -137,10 +154,15 @@ struct TVActionButtonBackgroundModifier: ViewModifier {
                         shape
                             .strokeBorder(
                                 accent.opacity(isFocused ? 0.9 : 0.16),
-                                lineWidth: isFocused ? 2.1 : 0.8
+                                lineWidth: isFocused
+                                    ? ActionButtonMetrics.focusedOutlineWidthPoints
+                                    : ActionButtonMetrics.normalBorderWidthPoints
                             )
                     }
-                    .animation(.spring(response: 0.24, dampingFraction: 0.82), value: isFocused)
+                    .animation(
+                        .spring(
+                            response: ActionButtonMetrics.focusSpringResponseSeconds,
+                            dampingFraction: ActionButtonMetrics.focusSpringDampingFraction), value: isFocused)
             }
         } else {
             content
@@ -151,7 +173,7 @@ struct TVActionButtonBackgroundModifier: ViewModifier {
                             LinearGradient(
                                 colors: [
                                     accent.opacity(
-                                        usesFillFocusEmphasis
+                                        shouldUseFillFocusEmphasis
                                             ? (isFocused ? 0.96 : 0.38)
                                             : 0.0
                                     ),
@@ -165,13 +187,20 @@ struct TVActionButtonBackgroundModifier: ViewModifier {
                 .overlay {
                     shape
                         .strokeBorder(
-                            usesFillFocusEmphasis
+                            shouldUseFillFocusEmphasis
                                 ? borderColor
                                 : accent.opacity(isFocused ? 0.9 : 0.16),
-                            lineWidth: isFocused ? (usesFillFocusEmphasis ? 1.6 : 2.1) : 0.8
+                            lineWidth: isFocused
+                                ? (shouldUseFillFocusEmphasis
+                                    ? ActionButtonMetrics.focusedLegacyBorderWidthPoints
+                                    : ActionButtonMetrics.focusedOutlineWidthPoints)
+                                : ActionButtonMetrics.normalBorderWidthPoints
                         )
                 }
-                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: isFocused)
+                .animation(
+                    .spring(
+                        response: ActionButtonMetrics.focusSpringResponseSeconds,
+                        dampingFraction: ActionButtonMetrics.focusSpringDampingFraction), value: isFocused)
         }
     }
 }

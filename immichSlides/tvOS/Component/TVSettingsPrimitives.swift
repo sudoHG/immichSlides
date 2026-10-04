@@ -1,5 +1,31 @@
 import SwiftUI
 
+private enum SettingsPageMetrics {
+    static let pageSpacingPoints: CGFloat = 28
+    static let heroSpacingPoints: CGFloat = 24
+    static let heroIconSizePoints: CGFloat = 92
+    static let heroTextSpacingPoints: CGFloat = 12
+    static let heroHorizontalPaddingPoints: CGFloat = 30
+    static let heroVerticalPaddingPoints: CGFloat = 28
+    static let heroCornerRadiusPoints: CGFloat = 34
+    static let heroShadowRadiusPoints: CGFloat = 28
+    static let heroShadowOffsetYPoints: CGFloat = 14
+    static let cardSpacingPoints: CGFloat = 22
+    static let cardHorizontalPaddingPoints: CGFloat = 28
+    static let cardVerticalPaddingPoints: CGFloat = 26
+    static let cardCornerRadiusPoints: CGFloat = 32
+    static let cardShadowRadiusPoints: CGFloat = 24
+    static let cardShadowOffsetYPoints: CGFloat = 12
+    static let bannerSpacingPoints: CGFloat = 12
+    static let bannerHorizontalPaddingPoints: CGFloat = 16
+    static let bannerVerticalPaddingPoints: CGFloat = 13
+    static let bannerCornerRadiusPoints: CGFloat = 20
+    static let statusSpacingPoints: CGFloat = 14
+    static let statusHorizontalPaddingPoints: CGFloat = 18
+    static let statusVerticalPaddingPoints: CGFloat = 14
+    static let statusOutlineWidthPoints: CGFloat = 1.2
+}
+
 struct TVSettingsPageScaffold<Content: View>: View {
     let eyebrow: String
     let title: String
@@ -34,7 +60,7 @@ struct TVSettingsPageScaffold<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        VStack(alignment: .leading, spacing: SettingsPageMetrics.pageSpacingPoints) {
             TVSettingsHeroPanel(
                 eyebrow: eyebrow,
                 title: title,
@@ -64,7 +90,7 @@ private struct TVSettingsHeroPanel: View {
     let summaryAccessibilityIdentifier: String?
 
     var body: some View {
-        HStack(alignment: .center, spacing: 24) {
+        HStack(alignment: .center, spacing: SettingsPageMetrics.heroSpacingPoints) {
             ZStack {
                 Circle()
                     .fill(
@@ -77,18 +103,20 @@ private struct TVSettingsHeroPanel: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 92, height: 92)
+                    .frame(
+                        width: SettingsPageMetrics.heroIconSizePoints, height: SettingsPageMetrics.heroIconSizePoints)
 
                 Circle()
                     .stroke(Color.white.opacity(colorScheme == .dark ? 0.18 : 0.42), lineWidth: 1)
-                    .frame(width: 92, height: 92)
+                    .frame(
+                        width: SettingsPageMetrics.heroIconSizePoints, height: SettingsPageMetrics.heroIconSizePoints)
 
                 Image(systemName: symbolName)
                     .font(.system(size: 38, weight: .bold))
                     .foregroundStyle(colorScheme == .dark ? .white : .black)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: SettingsPageMetrics.heroTextSpacingPoints) {
                 if !eyebrow.isEmpty {
                     Text(LocalizedStringKey(eyebrow))
                         .font(.system(size: 17, weight: .semibold, design: .rounded))
@@ -120,18 +148,20 @@ private struct TVSettingsHeroPanel: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 30)
-        .padding(.vertical, 28)
+        .padding(.horizontal, SettingsPageMetrics.heroHorizontalPaddingPoints)
+        .padding(.vertical, SettingsPageMetrics.heroVerticalPaddingPoints)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsPageMetrics.heroCornerRadiusPoints, style: .continuous)
                 .fill(heroBackground)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsPageMetrics.heroCornerRadiusPoints, style: .continuous)
                 .stroke(heroBorderColor, lineWidth: 1)
         )
-        .shadow(color: heroShadowColor, radius: 28, x: 0, y: 14)
+        .shadow(
+            color: heroShadowColor, radius: SettingsPageMetrics.heroShadowRadiusPoints, x: 0,
+            y: SettingsPageMetrics.heroShadowOffsetYPoints)
     }
 
     private var heroBackground: Color {
@@ -201,21 +231,23 @@ struct TVSettingsCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: SettingsPageMetrics.cardSpacingPoints) {
             content
         }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 26)
+        .padding(.horizontal, SettingsPageMetrics.cardHorizontalPaddingPoints)
+        .padding(.vertical, SettingsPageMetrics.cardVerticalPaddingPoints)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsPageMetrics.cardCornerRadiusPoints, style: .continuous)
                 .fill(cardBackgroundColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsPageMetrics.cardCornerRadiusPoints, style: .continuous)
                 .stroke(cardBorderColor, lineWidth: 1)
         )
-        .shadow(color: cardShadowColor, radius: 24, x: 0, y: 12)
+        .shadow(
+            color: cardShadowColor, radius: SettingsPageMetrics.cardShadowRadiusPoints, x: 0,
+            y: SettingsPageMetrics.cardShadowOffsetYPoints)
     }
 
     private var cardBackgroundColor: Color {
@@ -306,7 +338,7 @@ struct TVSettingsReadOnlyRow: View {
     var accessibilityIdentifier: String? = nil
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: SettingsPageMetrics.statusSpacingPoints) {
             Text(LocalizedStringKey(title))
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -350,7 +382,7 @@ struct TVSettingsStatusBanner: View {
     var accessibilityIdentifier: String? = nil
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: SettingsPageMetrics.bannerSpacingPoints) {
             Image(systemName: "circle.fill")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(tint)
@@ -359,11 +391,11 @@ struct TVSettingsStatusBanner: View {
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.primary)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        .padding(.horizontal, SettingsPageMetrics.bannerHorizontalPaddingPoints)
+        .padding(.vertical, SettingsPageMetrics.bannerVerticalPaddingPoints)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsPageMetrics.bannerCornerRadiusPoints, style: .continuous)
                 .fill(
                     colorScheme == .dark
                         ? tint.opacity(0.16)
@@ -371,7 +403,7 @@ struct TVSettingsStatusBanner: View {
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsPageMetrics.bannerCornerRadiusPoints, style: .continuous)
                 .stroke(tint.opacity(colorScheme == .dark ? 0.26 : 0.18), lineWidth: 1)
         )
         .accessibilityIdentifier(accessibilityIdentifier ?? "")
@@ -389,7 +421,7 @@ struct TVSettingsProminentResultBanner: View {
     var accessibilityIdentifier: String? = nil
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: SettingsPageMetrics.statusSpacingPoints) {
             Image(systemName: systemImage)
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(tint)
@@ -399,11 +431,11 @@ struct TVSettingsProminentResultBanner: View {
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.horizontal, SettingsPageMetrics.statusHorizontalPaddingPoints)
+        .padding(.vertical, SettingsPageMetrics.statusVerticalPaddingPoints)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: SettingsPageMetrics.bannerCornerRadiusPoints, style: .continuous)
                 .fill(
                     colorScheme == .dark
                         ? tint.opacity(0.24)
@@ -411,8 +443,10 @@ struct TVSettingsProminentResultBanner: View {
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(tint.opacity(colorScheme == .dark ? 0.42 : 0.30), lineWidth: 1.2)
+            RoundedRectangle(cornerRadius: SettingsPageMetrics.bannerCornerRadiusPoints, style: .continuous)
+                .stroke(
+                    tint.opacity(colorScheme == .dark ? 0.42 : 0.30),
+                    lineWidth: SettingsPageMetrics.statusOutlineWidthPoints)
         )
         .shadow(
             color: tint.opacity(colorScheme == .dark ? 0.20 : 0.12),

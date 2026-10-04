@@ -7,13 +7,19 @@
 
 import SwiftUI
 
+private enum VisualAuditPreparation {
+    static let coverLimitCount: Int = 20
+    static let maximumRetryCount: Int = 40
+    static let pollIntervalNanoseconds: UInt64 = 250_000_000
+}
+
 struct FilterSummaryViewIOS: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @ObservedObject var viewModel: FilterViewModel
     let canShowBackToModeSelection: Bool
-    let showsOnboardingProgress: Bool
+    let shouldShowOnboardingProgress: Bool
     let onStartPlayback: () -> Void
 
     private var layout: ViewLayoutTraits {
@@ -46,14 +52,14 @@ struct FilterSummaryViewIOS: View {
         ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] == "1"
     }
 
-    private var albumVisualAuditReady: Bool {
+    private var isAlbumVisualAuditReady: Bool {
         let hasMatchedAlbumSelection = viewModel.selection.albumIds.contains { selectedID in
             viewModel.albums.contains { $0.id == selectedID }
         }
         return hasMatchedAlbumSelection && viewModel.albumCoverURLs.isEmpty == false
     }
 
-    private var peopleVisualAuditReady: Bool {
+    private var isPeopleVisualAuditReady: Bool {
         let selectedIDs = viewModel.selection.personFilters.map(\.personId)
         let hasMatchedPeopleSelection = selectedIDs.contains { selectedID in
             viewModel.people.contains { $0.id == selectedID }
@@ -66,12 +72,12 @@ struct FilterSummaryViewIOS: View {
         return hasMatchedPeopleSelection && viewModel.peopleCoverURLs.isEmpty == false && hasLoadedStatsForSelection
     }
 
-    private var filterSummaryVisualAuditReady: Bool {
-        albumVisualAuditReady && peopleVisualAuditReady
+    private var isFilterSummaryVisualAuditReady: Bool {
+        isAlbumVisualAuditReady && isPeopleVisualAuditReady
     }
 
     var body: some View {
-        IOSOnboardingPageScaffold(
+        OnboardingPageScaffoldViewIOS(
             metrics: onboardingMetrics,
             topPaddingAdjustment: onboardingNavigationTopCompensation
         ) { _ in
@@ -98,7 +104,7 @@ struct FilterSummaryViewIOS: View {
             VStack(alignment: .leading, spacing: sectionSpacing) {
                 pageHeader
                 selectionStage
-                FilterSummaryActionBar(
+                FilterSummaryActionBarViewIOS(
                     viewModel: viewModel,
                     canStartPlayback: canStartPlayback,
                     onStartPlayback: onStartPlayback,
@@ -115,7 +121,7 @@ struct FilterSummaryViewIOS: View {
             pageHeader
 
             HStack(spacing: phoneLandscapeColumnSpacing) {
-                FilterSummarySelectionCard(
+                FilterSummarySelectionCardViewIOS(
                     viewModel: viewModel,
                     kind: .album,
                     isPhone: isPhone,
@@ -126,7 +132,7 @@ struct FilterSummaryViewIOS: View {
                     isPad: isPad
                 )
                 .frame(maxWidth: phoneLandscapeCardWidth)
-                FilterSummarySelectionCard(
+                FilterSummarySelectionCardViewIOS(
                     viewModel: viewModel,
                     kind: .people,
                     isPhone: isPhone,
@@ -140,7 +146,7 @@ struct FilterSummaryViewIOS: View {
             }
             .frame(maxWidth: .infinity, alignment: .center)
 
-            FilterSummaryActionBar(
+            FilterSummaryActionBarViewIOS(
                 viewModel: viewModel,
                 canStartPlayback: canStartPlayback,
                 onStartPlayback: onStartPlayback,
@@ -153,8 +159,8 @@ struct FilterSummaryViewIOS: View {
     }
 
     private var pageHeader: some View {
-        IOSOnboardingPageHeader(
-            step: showsOnboardingProgress ? .refineSelection : nil,
+        OnboardingPageHeaderViewIOS(
+            step: shouldShowOnboardingProgress ? .refineSelection : nil,
             title: "Set Photo Range",
             subtitle: "Choose albums or people, then start playback.",
             titleAccessibilityIdentifier: "filterSummary.page.title",
@@ -166,7 +172,7 @@ struct FilterSummaryViewIOS: View {
         Group {
             if isCompact == false {
                 HStack(alignment: .top, spacing: cardSpacing) {
-                    FilterSummarySelectionCard(
+                    FilterSummarySelectionCardViewIOS(
                         viewModel: viewModel,
                         kind: .album,
                         isPhone: isPhone,
@@ -177,7 +183,7 @@ struct FilterSummaryViewIOS: View {
                         isPad: isPad
                     )
 
-                    FilterSummarySelectionCard(
+                    FilterSummarySelectionCardViewIOS(
                         viewModel: viewModel,
                         kind: .people,
                         isPhone: isPhone,
@@ -190,7 +196,7 @@ struct FilterSummaryViewIOS: View {
                 }
             } else {
                 VStack(spacing: cardSpacing) {
-                    FilterSummarySelectionCard(
+                    FilterSummarySelectionCardViewIOS(
                         viewModel: viewModel,
                         kind: .album,
                         isPhone: isPhone,
@@ -201,7 +207,7 @@ struct FilterSummaryViewIOS: View {
                         isPad: isPad
                     )
 
-                    FilterSummarySelectionCard(
+                    FilterSummarySelectionCardViewIOS(
                         viewModel: viewModel,
                         kind: .people,
                         isPhone: isPhone,
@@ -219,13 +225,13 @@ struct FilterSummaryViewIOS: View {
     private var uiTestReadinessMarkers: some View {
         VStack(alignment: .leading, spacing: 1) {
             // localization-audit: ui-test-probe
-            Text(verbatim: albumVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isAlbumVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterSummary.album.ready")
             // localization-audit: ui-test-probe
-            Text(verbatim: peopleVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isPeopleVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterSummary.people.ready")
             // localization-audit: ui-test-probe
-            Text(verbatim: filterSummaryVisualAuditReady ? "ready" : "loading")
+            Text(verbatim: isFilterSummaryVisualAuditReady ? "ready" : "loading")
                 .accessibilityIdentifier("filterSummary.visual.ready")
         }
         .font(.system(size: 1))
@@ -236,15 +242,17 @@ struct FilterSummaryViewIOS: View {
     }
 
     private func prepareVisualAuditSelectionsForUITestsIfNeeded() async {
-        await viewModel.getCoverURLs(filterType: .albums, coverLimit: 20, shouldReset: true)
-        await viewModel.getCoverURLs(filterType: .people, coverLimit: 20, shouldReset: true)
+        await viewModel.getCoverURLs(
+            filterType: .albums, coverLimit: VisualAuditPreparation.coverLimitCount, shouldReset: true)
+        await viewModel.getCoverURLs(
+            filterType: .people, coverLimit: VisualAuditPreparation.coverLimitCount, shouldReset: true)
 
-        for _ in 0..<40 {
-            if filterSummaryVisualAuditReady {
+        for _ in 0..<VisualAuditPreparation.maximumRetryCount {
+            if isFilterSummaryVisualAuditReady {
                 return
             }
 
-            if albumVisualAuditReady == false,
+            if isAlbumVisualAuditReady == false,
                 let firstAlbum = viewModel.albums.first
             {
                 await MainActor.run {
@@ -253,7 +261,7 @@ struct FilterSummaryViewIOS: View {
                 }
             }
 
-            if peopleVisualAuditReady == false,
+            if isPeopleVisualAuditReady == false,
                 let firstPerson = viewModel.people.first
             {
                 await MainActor.run {
@@ -263,7 +271,7 @@ struct FilterSummaryViewIOS: View {
                 await viewModel.loadPersonAssetsCountIfNeeded(id: firstPerson.id)
             }
 
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: VisualAuditPreparation.pollIntervalNanoseconds)
         }
     }
 
@@ -278,7 +286,7 @@ struct FilterSummaryViewIOS: View {
 
     private var onboardingNavigationTopCompensation: CGFloat {
 
-        guard showsOnboardingProgress, canShowBackToModeSelection else {
+        guard shouldShowOnboardingProgress, canShowBackToModeSelection else {
             return 0
         }
 

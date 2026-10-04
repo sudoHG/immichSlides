@@ -1,5 +1,5 @@
 //
-//  IOSServerConfigTextInput.swift
+//  ServerConfigTextInputViewIOS.swift
 //  immichSlides
 //
 
@@ -7,7 +7,7 @@ import SwiftUI
 import UIKit
 
 // Wraps only the system TextField/SecureField; a saved API Key shows system dots, with no custom-drawn mask.
-struct IOSServerConfigTextInput<Field: Hashable>: View {
+struct ServerConfigTextInputViewIOS<Field: Hashable>: View {
     let placeholder: LocalizedStringResource
     @Binding var text: String
     let isSecure: Bool

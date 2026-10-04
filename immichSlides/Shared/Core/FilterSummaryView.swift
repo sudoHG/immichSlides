@@ -38,14 +38,14 @@ struct FilterSummaryView: View {
                 viewModel: viewModel,
                 canShowBackToModeSelection: canShowBackToModeSelection,
                 onBackToModeSelection: onBackToModeSelection,
-                showsOnboardingProgress: isOnboardingOnly,
+                shouldShowOnboardingProgress: isOnboardingOnly,
                 onStartPlayback: { startFilteredPlayback() }
             )
             #else
             FilterSummaryViewIOS(
                 viewModel: viewModel,
                 canShowBackToModeSelection: canShowBackToModeSelection,
-                showsOnboardingProgress: isOnboardingOnly,
+                shouldShowOnboardingProgress: isOnboardingOnly,
                 onStartPlayback: { startFilteredPlayback() }
             )
             #endif
@@ -74,7 +74,7 @@ struct FilterSummaryView: View {
 
 #Preview {
     #if os(tvOS)
-    FilterSummaryTVPreviewHost(previewInitialFocus: .album)
+    FilterSummaryPreviewHostViewTV(previewInitialFocus: .album)
     #else
     FilterSummaryView(
         viewModel: FilterViewModel(),
@@ -84,7 +84,7 @@ struct FilterSummaryView: View {
 }
 #Preview {
     #if os(tvOS)
-    FilterSummaryTVPreviewHost(previewInitialFocus: .people)
+    FilterSummaryPreviewHostViewTV(previewInitialFocus: .people)
     #else
     FilterSummaryView(
         viewModel: FilterViewModel(),

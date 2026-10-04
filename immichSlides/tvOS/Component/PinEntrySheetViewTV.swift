@@ -2,6 +2,12 @@ import SwiftUI
 
 // tvOS PIN entry uses a fixed 4x3 focus grid so the remote doesn't jump around.
 
+private enum PinEntryMetrics {
+    static let pinDigitCount: Int = 6
+    static let submissionLockDurationSeconds: TimeInterval = 0.2
+    static let initialFocusRepairDelaySeconds: TimeInterval = 0.12
+}
+
 struct PinEntrySheetViewTV: View {
 
     @Environment(\.colorScheme) private var colorScheme
@@ -92,7 +98,7 @@ struct PinEntrySheetViewTV: View {
 
     private var pinIndicator: some View {
         HStack(spacing: 16) {
-            ForEach(0..<6, id: \.self) { index in
+            ForEach(0..<PinEntryMetrics.pinDigitCount, id: \.self) { index in
                 Circle()
                     .fill(index < pin.count ? Color.primary : Color.clear)
                     .overlay(
@@ -210,16 +216,16 @@ struct PinEntrySheetViewTV: View {
     }
 
     private func addDigit(_ digit: String) {
-        guard !isSubmitting, pin.count < 6 else { return }
+        guard !isSubmitting, pin.count < PinEntryMetrics.pinDigitCount else { return }
 
         pin.append(digit)
 
-        if pin.count == 6 {
+        if pin.count == PinEntryMetrics.pinDigitCount {
             isSubmitting = true
             let value = pin.joined()
             onSubmit(value)
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + PinEntryMetrics.submissionLockDurationSeconds) {
                 isSubmitting = false
             }
         }
@@ -238,7 +244,7 @@ struct PinEntrySheetViewTV: View {
             focusedTarget = .digit(1)
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + PinEntryMetrics.initialFocusRepairDelaySeconds) {
             // Fall back only when nothing has been entered and focus
             // is lost; don't take back focus the user has moved away.
 

@@ -2,7 +2,12 @@ import SwiftUI
 import SDWebImageSwiftUI
 import SDWebImage
 
-struct FloatingSelectionCard: View {
+private enum SelectionCardLayout {
+    static let widthPoints: CGFloat = 424
+    static let heightPoints: CGFloat = 262
+}
+
+struct FloatingSelectionCardViewTV: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let title: String
@@ -57,7 +62,7 @@ struct FloatingSelectionCard: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 20)
-        .frame(width: 424, height: 262, alignment: .topLeading)
+        .frame(width: SelectionCardLayout.widthPoints, height: SelectionCardLayout.heightPoints, alignment: .topLeading)
         .modifier(TVGlassPanelModifier(cornerRadius: 30, tint: accent.opacity(0.18)))
         .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .overlay {
@@ -86,7 +91,7 @@ struct FloatingSelectionCard: View {
     }
 }
 
-struct AlbumPanoramaStage: View {
+struct AlbumPanoramaStageViewTV: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let panoramaURLs: [URL]
@@ -154,7 +159,7 @@ struct AlbumPanoramaStage: View {
     }
 }
 
-struct PeopleConstellationStage: View {
+struct PeopleConstellationStageViewTV: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let wallURLs: [URL]

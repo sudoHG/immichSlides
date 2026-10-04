@@ -289,7 +289,7 @@ extension SettingsViewTV {
                 }
             }
         }
-        .alert("Can't Switch to Filtered Playback", isPresented: $showFilterModeBlockedAlert) {
+        .alert("Can't Switch to Filtered Playback", isPresented: $isFilterModeBlockedAlertPresented) {
             Button("Set Up Filters", role: .destructive) {
                 onOpenFilterEditor()
             }

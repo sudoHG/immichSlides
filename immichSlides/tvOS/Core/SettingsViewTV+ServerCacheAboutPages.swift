@@ -1,5 +1,10 @@
 import SwiftUI
 
+private enum PrivacyLanguageFocusTiming {
+    static let appearanceDelaySeconds: TimeInterval = 0.16
+    static let selectionChangeDelaySeconds: TimeInterval = 0.05
+}
+
 extension SettingsViewTV {
     var serverSettingsView: some View {
         TVSettingsPageScaffold(
@@ -39,7 +44,7 @@ extension SettingsViewTV {
                 )
             }
         }
-        .alert(serverErrorAlertTitle, isPresented: $showServerErrorAlert) {
+        .alert(serverErrorAlertTitle, isPresented: $isServerErrorAlertPresented) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(LocalizedStringKey(serverErrorMessage))
@@ -105,7 +110,7 @@ extension SettingsViewTV {
                 }
             }
         }
-        .alert("Confirm Disk Cache Clear", isPresented: $showClearDiskCacheAlert) {
+        .alert("Confirm Disk Cache Clear", isPresented: $isClearDiskCacheAlertPresented) {
             Button("Cancel", role: .cancel) {}
             Button("Clear", role: .destructive) {
                 onConfirmClearDiskCache()
@@ -955,7 +960,7 @@ private struct TVPrivacyPolicyTableDetailItem: Identifiable {
 private struct TVSettingsStaticFocusSection<FocusTarget: Hashable, Content: View>: View {
     @Environment(\.isFocused) private var isFocused
     @Environment(\.colorScheme) private var colorScheme
-    @FocusState private var focusBindingIsFocused: Bool
+    @FocusState private var isFocusBindingFocused: Bool
 
     let accessibilityLabel: String
     let accessibilityIdentifier: String
@@ -991,7 +996,7 @@ private struct TVSettingsStaticFocusSection<FocusTarget: Hashable, Content: View
                 .fill(Color.clear)
                 .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 .focusable(true, interactions: .activate)
-                .focused($focusBindingIsFocused)
+                .focused($isFocusBindingFocused)
                 .focused(focusedTarget, equals: target)
                 .appTVDisableDefaultFocusEffect()
                 .onTapGesture {
@@ -1023,7 +1028,7 @@ private struct TVSettingsStaticFocusSection<FocusTarget: Hashable, Content: View
     }
 
     private var hasVisualFocus: Bool {
-        isFocused || focusBindingIsFocused
+        isFocused || isFocusBindingFocused
     }
 
     private var backgroundColor: Color {
@@ -1072,7 +1077,7 @@ private struct TVSettingsStaticFocusSection<FocusTarget: Hashable, Content: View
 private struct TVSettingsFocusedChoiceButton<FocusTarget: Hashable>: View {
     @Environment(\.isFocused) private var isFocused
     @Environment(\.colorScheme) private var colorScheme
-    @FocusState private var focusBindingIsFocused: Bool
+    @FocusState private var isFocusBindingFocused: Bool
 
     let title: String
     let isSelected: Bool
@@ -1089,7 +1094,7 @@ private struct TVSettingsFocusedChoiceButton<FocusTarget: Hashable>: View {
         )
         .contentShape(Rectangle())
         .focusable(true, interactions: .activate)
-        .focused($focusBindingIsFocused)
+        .focused($isFocusBindingFocused)
         .focused(focusedTarget, equals: target)
         .appTVDisableDefaultFocusEffect()
         .shadow(color: focusHaloColor, radius: hasVisualFocus ? 18 : 0, x: 0, y: 0)
@@ -1099,11 +1104,11 @@ private struct TVSettingsFocusedChoiceButton<FocusTarget: Hashable>: View {
             action()
         }
         .onAppear {
-            requestFocusIfSelected(after: 0.16)
+            requestFocusIfSelected(after: PrivacyLanguageFocusTiming.appearanceDelaySeconds)
         }
         .onChange(of: isSelected) { _, newValue in
             guard newValue else { return }
-            requestFocusIfSelected(after: 0.05)
+            requestFocusIfSelected(after: PrivacyLanguageFocusTiming.selectionChangeDelaySeconds)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(LocalizedStringKey(title)))
@@ -1114,7 +1119,7 @@ private struct TVSettingsFocusedChoiceButton<FocusTarget: Hashable>: View {
     }
 
     private var hasVisualFocus: Bool {
-        isFocused || focusBindingIsFocused
+        isFocused || isFocusBindingFocused
     }
 
     private func requestFocusIfSelected(after delay: TimeInterval) {

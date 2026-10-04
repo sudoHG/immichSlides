@@ -90,7 +90,7 @@ struct IOSOnboardingVisualMetrics {
 
 // Light background shared by the three pages, so it does not pull attention from titles and forms.
 
-struct IOSOnboardingBackgroundLayer: View {
+struct OnboardingBackgroundLayerViewIOS: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let metrics: IOSOnboardingVisualMetrics
@@ -163,7 +163,7 @@ struct IOSOnboardingBackgroundLayer: View {
 
 // Wizard progress is deliberately light so the page title stays the main visual focus.
 
-struct IOSOnboardingProgressHeader: View {
+struct OnboardingProgressHeaderViewIOS: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let currentStep: IOSOnboardingWizardStep
@@ -232,7 +232,7 @@ struct IOSOnboardingProgressHeader: View {
     }
 }
 
-struct IOSOnboardingPageHeader: View {
+struct OnboardingPageHeaderViewIOS: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let step: IOSOnboardingWizardStep?
@@ -244,7 +244,7 @@ struct IOSOnboardingPageHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.headerSpacing) {
             if let step {
-                IOSOnboardingProgressHeader(
+                OnboardingProgressHeaderViewIOS(
                     currentStep: step,
                     accessibilityIdentifier: "onboardingWizard.title"
                 )
@@ -280,7 +280,7 @@ struct IOSOnboardingPageHeader: View {
 // Shell shared by the three pages: same background, max width, padding and top start,
 // so the title does not shift with content height.
 
-struct IOSOnboardingPageScaffold<Content: View>: View {
+struct OnboardingPageScaffoldViewIOS<Content: View>: View {
     let metrics: IOSOnboardingVisualMetrics
     let topPaddingAdjustment: CGFloat
     private let content: (CGSize) -> Content
@@ -298,7 +298,7 @@ struct IOSOnboardingPageScaffold<Content: View>: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                IOSOnboardingBackgroundLayer(metrics: metrics)
+                OnboardingBackgroundLayerViewIOS(metrics: metrics)
 
                 ScrollView(showsIndicators: false) {
                     content(geometry.size)

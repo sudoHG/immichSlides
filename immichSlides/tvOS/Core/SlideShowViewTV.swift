@@ -8,6 +8,13 @@
 import SwiftUI
 import UIKit
 
+private enum PlaybackViewMetrics {
+    static let controlBarProtectionHeightPoints: Double = 220
+    static let controlBarAutoHideDelaySeconds: Int = 8
+    static let controlBarAnimationDurationSeconds: Double = 0.3
+    static let renderSamplingRateHertz: Double = 60.0
+}
+
 struct SlideShowViewTV: View {
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -15,11 +22,11 @@ struct SlideShowViewTV: View {
     // Settings navigation is handled by the parent router.
     var onOpenSettings: (() -> Void)? = nil
 
-    var showsOnboardingPlaybackHint: Bool = false
+    var shouldShowOnboardingPlaybackHint: Bool = false
 
-    @State private var showDebugOverlay: Bool = false
+    @State private var isDebugOverlayVisible: Bool = false
 
-    @State private var showExif: Bool = true
+    @State private var isExifVisible: Bool = true
 
     @State private var exifForegroundTone: ExifForegroundTone = .lightText
     // Record the EXIF panel's actual frame; text color sampling can't rely on a rough top-right position.
@@ -32,13 +39,13 @@ struct SlideShowViewTV: View {
     // Remember the last asset that can show EXIF, so SmartFill can
     // reuse the single-photo panel morph with or without EXIF.
     @State private var retainedExifOverlayAsset: Asset? = nil
-    @State private var renderedExifOverlayVisible: Bool = false
+    @State private var isRenderedExifOverlayVisible: Bool = false
 
-    @State private var showPinEntrySheet: Bool = false
+    @State private var isPinEntrySheetPresented: Bool = false
 
     @State private var pinEntryErrorMessage: String = ""
 
-    @State private var showAccessProtectionRecoveryAlert: Bool = false
+    @State private var isAccessProtectionRecoveryAlertPresented: Bool = false
     #if DEBUG
     // Read-only probe for UI tests: caches shared renderer output and does not drive motion.
     @State private var smartFillMotionFrameProbeRows: [String] = []
@@ -46,7 +53,7 @@ struct SlideShowViewTV: View {
     @State private var smartFillMotionTraceLines: [String] = []
     @State private var smartFillMotionTraceBuffer = SmartFillMotionTraceBuffer()
     @State private var smartFillMotionTraceStatus: String = "idle"
-    @State private var smartFillMotionTraceStarted: Bool = false
+    @State private var hasSmartFillMotionTraceStarted: Bool = false
     @State private var smartFillMotionTraceFilePath: String = ""
     @State private var smartFillMotionTraceLineCount: Int = 0
     @State private var smartFillMotionTraceWaitStartedAt: TimeInterval = 0
@@ -57,10 +64,10 @@ struct SlideShowViewTV: View {
 
     @State private var controlBarFocusRequestToken: Int = 0
 
-    @State private var showPlaybackEntryHint: Bool = false
+    @State private var isPlaybackEntryHintVisible: Bool = false
     private let playbackEntryHintStore = PlaybackEntryHintStore()
 
-    @State var showControlBar: Bool = true
+    @State private var isControlBarVisible: Bool = true
 
     @State private var autoHideBarTask: Task<Void, Never>? = nil
     // When the control bar is hidden, a hidden focus receiver handles arrow keys and Play/Pause.
@@ -71,7 +78,7 @@ struct SlideShowViewTV: View {
         exifOverlayAsset(in: viewModel.visibleOverlayScene)
     }
     private func exifOverlayAsset(in scene: PlaybackScene?) -> Asset? {
-        guard showExif,
+        guard isExifVisible,
             let scene,
             scene.smartFillReadback?.sceneType.shouldPreserveExistingExifOverlay != false,
             let asset = scene.primaryAsset,
@@ -81,7 +88,7 @@ struct SlideShowViewTV: View {
         }
         return asset
     }
-    private var exifOverlayVisible: Bool {
+    private var isExifOverlayVisible: Bool {
         visibleExifOverlayAsset != nil
     }
     private var exifOverlayPresentationKey: String {
@@ -99,7 +106,7 @@ struct SlideShowViewTV: View {
             viewModel.safeCurrentAsset.map { asset in
                 String(describing: viewModel.downloadManager.assetStates[asset.id] ?? .notStarted)
             } ?? "no-fullsize"
-        return "\(showDebugOverlay)-\(auditMode)-\(assetId)-\(previewState)-\(fullsizeState)"
+        return "\(isDebugOverlayVisible)-\(auditMode)-\(assetId)-\(previewState)-\(fullsizeState)"
     }
 
     private func exifForegroundTriggerKey(
@@ -130,7 +137,7 @@ struct SlideShowViewTV: View {
         ].map(String.init).joined(separator: ",")
 
         return
-            "\(showExif)-\(assetId)-\(previewState)-\(fullsizeState)-\(sizeSignature)-\(safeAreaSignature)-\(frameSignature)"
+            "\(isExifVisible)-\(assetId)-\(previewState)-\(fullsizeState)-\(sizeSignature)-\(safeAreaSignature)-\(frameSignature)"
     }
 
     private func smartFillSurfaceTriggerKey(
@@ -157,7 +164,7 @@ struct SlideShowViewTV: View {
         ].map(String.init).joined(separator: ",")
         return [
             surface.internalSurfaceFingerprint,
-            showControlBar ? "bar-visible" : "bar-hidden",
+            isControlBarVisible ? "bar-visible" : "bar-hidden",
             safeAreaSignature,
             "appletv"
         ].joined(separator: "|")
@@ -202,12 +209,12 @@ struct SlideShowViewTV: View {
             surfaceHeight: Double(surfaceSize.height)
         ).regions
 
-        if showControlBar,
+        if isControlBarVisible,
             let rect = PlaybackProtectionRect.fromPointRect(
                 x: 0,
-                y: max(0, Double(surfaceSize.height) - 220),
+                y: max(0, Double(surfaceSize.height) - PlaybackViewMetrics.controlBarProtectionHeightPoints),
                 width: Double(surfaceSize.width),
-                height: 220,
+                height: PlaybackViewMetrics.controlBarProtectionHeightPoints,
                 surfaceWidth: Double(surfaceSize.width),
                 surfaceHeight: Double(surfaceSize.height)
             ),
@@ -227,11 +234,11 @@ struct SlideShowViewTV: View {
         ProcessInfo.processInfo.environment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] == "1"
     }
 
-    private var exposesExifForegroundToneProbeForUITests: Bool {
+    private var shouldExposeExifForegroundToneProbeForTesting: Bool {
         PlatformCompat.shouldExposeUITestProbes
     }
 
-    private var exposesSmartFillManifestProbeForUITests: Bool {
+    private var shouldExposeSmartFillManifestProbeForTesting: Bool {
         #if DEBUG
         let env = ProcessInfo.processInfo.environment
         return env["XCTestConfigurationFilePath"] != nil || env["UI_TEST_RESET_STATE"] == "1"
@@ -240,7 +247,7 @@ struct SlideShowViewTV: View {
         #endif
     }
 
-    private var exposesSmartFillMotionFrameProbeForUITests: Bool {
+    private var shouldExposeSmartFillMotionFrameProbeForTesting: Bool {
         #if DEBUG
         let env = ProcessInfo.processInfo.environment
         return env["XCTestConfigurationFilePath"] != nil || env["UI_TEST_RESET_STATE"] == "1"
@@ -249,7 +256,7 @@ struct SlideShowViewTV: View {
         #endif
     }
 
-    private var exposesPlaybackRequestLifecycleProbeForUITests: Bool {
+    private var shouldExposePlaybackRequestLifecycleProbeForTesting: Bool {
         #if DEBUG
         ProcessInfo.processInfo.environment[PlaybackImageRequestLifecycleDiagnostics.environmentFlag] == "1"
         #else
@@ -300,7 +307,7 @@ struct SlideShowViewTV: View {
                                     .padding(.trailing, exifHorizontalPadding)
                                     .overlay(alignment: .topTrailing) {
                                         // UI tests only: release builds keep the tone anchors out of VoiceOver.
-                                        if exposesExifForegroundToneProbeForUITests {
+                                        if shouldExposeExifForegroundToneProbeForTesting {
                                             Color.clear
                                                 .frame(width: 1, height: 1)
                                                 .accessibilityElement()
@@ -319,10 +326,10 @@ struct SlideShowViewTV: View {
                                     }
                                     Spacer()
                                 }
-                                .opacity(renderedExifOverlayVisible ? 1 : 0)
+                                .opacity(isRenderedExifOverlayVisible ? 1 : 0)
                                 .focusable(false)
                                 .allowsHitTesting(false)
-                                .accessibilityHidden(!renderedExifOverlayVisible)
+                                .accessibilityHidden(!isRenderedExifOverlayVisible)
                             }
                         }
                     }
@@ -344,12 +351,12 @@ struct SlideShowViewTV: View {
                         safeAreaInsets: geometry.safeAreaInsets
                     )
                 }
-                if PlatformCompat.isPlaybackDebugPanelEnabled && showDebugOverlay {
+                if PlatformCompat.isPlaybackDebugPanelEnabled && isDebugOverlayVisible {
                     DebugOverlayView(
                         viewModel: viewModel,
                         downloadManager: viewModel.downloadManager,
                         renderCount: viewModel.renderCount,
-                        bottomPadding: showControlBar ? 140 : 12
+                        bottomPadding: isControlBarVisible ? 140 : 12
                     )
                     // UI test anchor for asserting the debug panel toggle.
                     Text("debug-overlay-on")
@@ -357,10 +364,10 @@ struct SlideShowViewTV: View {
                         .foregroundStyle(.clear)
                         .accessibilityIdentifier("slideshow.debugOverlay.flag")
                 }
-                if exposesSmartFillManifestProbeForUITests,
+                if shouldExposeSmartFillManifestProbeForTesting,
                     let manifest = viewModel.currentSmartFillRuntimeQADebugSummary(
-                        controlBarVisible: showControlBar,
-                        exifOverlayVisible: exifOverlayVisible
+                        controlBarVisible: isControlBarVisible,
+                        exifOverlayVisible: isExifOverlayVisible
                     )
                 {
                     Color.clear
@@ -371,7 +378,7 @@ struct SlideShowViewTV: View {
                 }
                 #if DEBUG
                 smartFillMotionFrameProbeOverlay()
-                if exposesPlaybackRequestLifecycleProbeForUITests {
+                if shouldExposePlaybackRequestLifecycleProbeForTesting {
                     Color.clear
                         .frame(width: 1, height: 1)
                         .accessibilityElement()
@@ -437,7 +444,7 @@ struct SlideShowViewTV: View {
                     // Raise the banner while the control bar is shown, so it doesn't cover the bottom controls.
                     .padding(
                         .bottom,
-                        showControlBar
+                        isControlBarVisible
                             ? max(geometry.safeAreaInsets.bottom, 178) : max(geometry.safeAreaInsets.bottom, 56)
                     )
                     .padding(.horizontal, 80)
@@ -447,8 +454,8 @@ struct SlideShowViewTV: View {
 
                 VStack {
                     Spacer()
-                    if showControlBar {
-                        TVSlideshowControlBarView(
+                    if isControlBarVisible {
+                        SlideshowControlBarViewTV(
                             currentIndex: .constant(viewModel.currentIndex),
                             isAutoPlay: $viewModel.isAutoPlay,
                             totalCount: viewModel.assets.count,
@@ -458,8 +465,8 @@ struct SlideShowViewTV: View {
                             onNext: onNext,
                             onPlayPause: onPlayPause,
                             onSettings: onSettings,
-                            prefersSettingsFocusForEntryHint: showPlaybackEntryHint,
-                            showsEntryHintBubble: showPlaybackEntryHint,
+                            shouldPreferSettingsFocusForEntryHint: isPlaybackEntryHintVisible,
+                            shouldShowEntryHintBubble: isPlaybackEntryHintVisible,
                             entryHintContent: playbackEntryHintContent,
                             onMoveDownWhileEntryHintVisible: dismissPlaybackEntryHintAndHideControlBar
                         )
@@ -470,9 +477,11 @@ struct SlideShowViewTV: View {
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
                 .allowsHitTesting(true)
-                .animation(.easeInOut(duration: 0.3), value: showControlBar)
+                .animation(
+                    .easeInOut(duration: PlaybackViewMetrics.controlBarAnimationDurationSeconds),
+                    value: isControlBarVisible)
 
-                if showControlBar == false {
+                if isControlBarVisible == false {
                     Color.clear
                         .contentShape(Rectangle())
                         // The hidden receiver layer must be focusable for onMoveCommand to fire reliably.
@@ -543,7 +552,7 @@ struct SlideShowViewTV: View {
             PlatformCompat.setIdleTimerDisabled(false)
             autoHideBarTask?.cancel()
             autoHideBarTask = nil
-            showPlaybackEntryHint = false
+            isPlaybackEntryHintVisible = false
             viewModel.clearVisionFaceAuditState()
         }
 
@@ -559,7 +568,8 @@ struct SlideShowViewTV: View {
             resetAutoHideTimer()
         }
         .task(id: visionAuditTriggerKey) {
-            guard PlatformCompat.isPlaybackDebugPanelEnabled, showDebugOverlay, viewModel.shouldRunDebugVisionFaceAudit
+            guard PlatformCompat.isPlaybackDebugPanelEnabled, isDebugOverlayVisible,
+                viewModel.shouldRunDebugVisionFaceAudit
             else {
                 // Random playback can open the debug panel; the Vision probe only runs in soloOnly.
 
@@ -582,7 +592,7 @@ struct SlideShowViewTV: View {
         .onPlayPauseCommand {
             onPlayPause()
         }
-        .onChange(of: showControlBar) { _, isVisible in
+        .onChange(of: isControlBarVisible) { _, isVisible in
             if isVisible {
                 hiddenWakeReceiverFocused = false
             } else {
@@ -597,19 +607,19 @@ struct SlideShowViewTV: View {
             // Refresh playback settings whenever UserDefaults posts a change notification.
             refreshPlaybackRelatedSettings()
         }
-        .sheet(isPresented: $showPinEntrySheet) {
+        .sheet(isPresented: $isPinEntrySheetPresented) {
             PinEntrySheetView(
                 title: String(localized: "Enter PIN"),
                 message: String(localized: "Enter the 6-digit PIN before opening Settings."),
                 errorMessage: pinEntryErrorMessage.isEmpty ? nil : pinEntryErrorMessage,
                 onCancel: {
                     pinEntryErrorMessage = ""
-                    showPinEntrySheet = false
+                    isPinEntrySheetPresented = false
                 },
                 onSubmit: { pin in
                     if AccessProtectionStore.shared.verifyPIN(pin) {
                         pinEntryErrorMessage = ""
-                        showPinEntrySheet = false
+                        isPinEntrySheetPresented = false
                         onOpenSettings?()
                     } else {
                         pinEntryErrorMessage = String(localized: "PIN is incorrect. Please try again.")
@@ -617,7 +627,7 @@ struct SlideShowViewTV: View {
                 }
             )
         }
-        .alert("Access Protection Error", isPresented: $showAccessProtectionRecoveryAlert) {
+        .alert("Access Protection Error", isPresented: $isAccessProtectionRecoveryAlertPresented) {
             Button("Reset Access Protection", role: .destructive) {
                 AccessProtectionStore.shared.resetProtection()
                 onOpenSettings?()
@@ -655,7 +665,7 @@ struct SlideShowViewTV: View {
     #if DEBUG
     @ViewBuilder
     private func smartFillMotionFrameProbeOverlay() -> some View {
-        if exposesSmartFillMotionFrameProbeForUITests {
+        if shouldExposeSmartFillMotionFrameProbeForTesting {
             ZStack {
                 Color.clear
                     .frame(width: 1, height: 1)
@@ -771,7 +781,7 @@ struct SlideShowViewTV: View {
         }
     }
 
-    private var collectsSmartFillMotionTraceForUITests: Bool {
+    private var shouldCollectSmartFillMotionTraceForTesting: Bool {
         ProcessInfo.processInfo.environment["UI_TEST_COLLECT_SMARTFILL_MOTION_TRACE"] == "1"
     }
 
@@ -810,8 +820,8 @@ struct SlideShowViewTV: View {
 
     @MainActor
     private func collectSmartFillMotionTraceIfNeeded() async {
-        guard collectsSmartFillMotionTraceForUITests, !smartFillMotionTraceStarted else { return }
-        smartFillMotionTraceStarted = true
+        guard shouldCollectSmartFillMotionTraceForTesting, !hasSmartFillMotionTraceStarted else { return }
+        hasSmartFillMotionTraceStarted = true
         smartFillMotionTraceStatus = "waiting-for-accepted-motion-frame"
         smartFillMotionTraceLines = []
         smartFillMotionTraceBuffer.reset()
@@ -853,8 +863,8 @@ struct SlideShowViewTV: View {
         rows: [String],
         now: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) {
-        guard collectsSmartFillMotionTraceForUITests,
-            smartFillMotionTraceStarted,
+        guard shouldCollectSmartFillMotionTraceForTesting,
+            hasSmartFillMotionTraceStarted,
             smartFillMotionTraceStatus == "waiting-for-accepted-motion-frame"
                 || smartFillMotionTraceStatus == "collecting"
         else {
@@ -940,8 +950,8 @@ struct SlideShowViewTV: View {
                 !field.hasPrefix("controlBarVisible=") && !field.hasPrefix("appOverlayPollution=")
             }
             let hostOverlayFields = [
-                "controlBarVisible=\(showControlBar ? "true" : "false")",
-                "appOverlayPollution=\(showControlBar ? "controlBar" : "none")"
+                "controlBarVisible=\(isControlBarVisible ? "true" : "false")",
+                "appOverlayPollution=\(isControlBarVisible ? "controlBar" : "none")"
             ]
             return (retainedFields + hostOverlayFields).joined(separator: ";")
         }
@@ -1044,8 +1054,9 @@ struct SlideShowViewTV: View {
     }
 
     @ViewBuilder
-    func renderPhoto(in size: CGSize, safeAreaInsets: EdgeInsets) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { _ in
+    private func renderPhoto(in size: CGSize, safeAreaInsets: EdgeInsets) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / PlaybackViewMetrics.renderSamplingRateHertz, paused: false)) {
+            _ in
             let snapshot = viewModel.sceneRenderSnapshot
             let overlayAsset = exifOverlayAsset(in: viewModel.visibleOverlayScene(in: snapshot))
             ZStack {
@@ -1087,7 +1098,7 @@ struct SlideShowViewTV: View {
                                     platform: .tvOS,
                                     isReduceMotionEnabled: accessibilityReduceMotion
                                 ),
-                                isMotionProbeControlBarVisible: showControlBar,
+                                isMotionProbeControlBarVisible: isControlBarVisible,
                                 onRendererDecoded: viewModel.rendererDecoded,
                                 onRendererFailed: viewModel.rendererFailed
                             )
@@ -1132,35 +1143,35 @@ struct SlideShowViewTV: View {
             #endif
         }
     }
-    func onPrevious() {
+    private func onPrevious() {
         guard viewModel.assets.count > 0 else { return }
 
         wakeControlBar()
         viewModel.requestPreviousScene()
     }
-    func onNext() {
+    private func onNext() {
         guard viewModel.assets.count > 0 else { return }
 
         wakeControlBar()
         viewModel.requestNextScene()
     }
-    func onPlayPause() {
+    private func onPlayPause() {
         viewModel.toggleAutoPlayFromUserInteraction()
         wakeControlBar()
     }
-    func onSettings() {
+    private func onSettings() {
         // Dismiss the one-time tip after Select opens Settings, so it isn't still showing on return.
 
         dismissPlaybackEntryHint()
 
         if AccessProtectionStore.shared.isEnabled {
             if AccessProtectionStore.shared.isRecoveryNeeded {
-                showAccessProtectionRecoveryAlert = true
+                isAccessProtectionRecoveryAlertPresented = true
                 wakeControlBar()
                 return
             }
             pinEntryErrorMessage = ""
-            showPinEntrySheet = true
+            isPinEntrySheetPresented = true
         } else {
             onOpenSettings?()
         }
@@ -1168,28 +1179,28 @@ struct SlideShowViewTV: View {
     }
     // Single wake entry point, so multiple interactions don't duplicate the logic.
     private func wakeControlBar() {
-        if !showControlBar {
+        if !isControlBarVisible {
             // Waking the bar while it fades out can leave focus on Settings, so ask for Play/Pause explicitly.
             controlBarFocusRequestToken += 1
         }
-        showControlBar = true
+        isControlBarVisible = true
         resetAutoHideTimer()
     }
 
     private func resetAutoHideTimer() {
         autoHideBarTask?.cancel()  // Don't auto-hide the bar after 8 seconds while the tutorial bubble is shown.
 
-        guard !showPlaybackEntryHint else {
+        guard !isPlaybackEntryHintVisible else {
             autoHideBarTask = nil
             return
         }
         autoHideBarTask = Task {
 
-            try? await Task.sleep(for: .seconds(8))
+            try? await Task.sleep(for: .seconds(PlaybackViewMetrics.controlBarAutoHideDelaySeconds))
 
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                showControlBar = false
+                isControlBarVisible = false
             }
         }
     }
@@ -1251,7 +1262,7 @@ struct SlideShowViewTV: View {
     }
     private func syncExifOverlayPresentation(_ asset: Asset?) {
         if let asset {
-            if renderedExifOverlayVisible {
+            if isRenderedExifOverlayVisible {
                 withAnimation(.easeInOut(duration: PlaybackTransitionContract.imageCrossfadeDuration)) {
                     retainedExifOverlayAsset = asset
                 }
@@ -1259,13 +1270,13 @@ struct SlideShowViewTV: View {
                 retainedExifOverlayAsset = asset
                 DispatchQueue.main.async {
                     withAnimation(.easeInOut(duration: PlaybackTransitionContract.imageCrossfadeDuration)) {
-                        renderedExifOverlayVisible = true
+                        isRenderedExifOverlayVisible = true
                     }
                 }
             }
-        } else if renderedExifOverlayVisible {
+        } else if isRenderedExifOverlayVisible {
             withAnimation(.easeInOut(duration: PlaybackTransitionContract.imageCrossfadeDuration)) {
-                renderedExifOverlayVisible = false
+                isRenderedExifOverlayVisible = false
             }
         }
     }
@@ -1274,9 +1285,9 @@ struct SlideShowViewTV: View {
         // Sync autoplay settings each time playback opens, so the long-lived ViewModel doesn't use stale values.
         viewModel.refreshAutoPlaySettingsFromStore()
         let settings = PlaybackSettingsStore().load() ?? PlaybackSettings()
-        showExif = settings.showExif
+        isExifVisible = settings.showExif
 
-        showDebugOverlay = PlatformCompat.isPlaybackDebugPanelEnabled && settings.showDebugOverlay
+        isDebugOverlayVisible = PlatformCompat.isPlaybackDebugPanelEnabled && settings.showDebugOverlay
 
         switch settings.defaultPlaybackMode {
         case .random:
@@ -1313,9 +1324,9 @@ struct SlideShowViewTV: View {
     }
 
     private func maybePresentPlaybackEntryHintIfNeeded() {
-        guard showsOnboardingPlaybackHint else { return }
+        guard shouldShowOnboardingPlaybackHint else { return }
         guard !isPlaybackEntryHintDisabledForUITests else { return }
-        guard !showPlaybackEntryHint else { return }
+        guard !isPlaybackEntryHintVisible else { return }
         guard !playbackEntryHintStore.hasShownPlaybackEntryHint else { return }
         guard !viewModel.isLoading else { return }
         guard !viewModel.assets.isEmpty else { return }
@@ -1324,17 +1335,17 @@ struct SlideShowViewTV: View {
 
         playbackEntryHintStore.markPlaybackEntryHintShown()
         withAnimation(.easeInOut(duration: 0.24)) {
-            showPlaybackEntryHint = true
-            showControlBar = true
+            isPlaybackEntryHintVisible = true
+            isControlBarVisible = true
         }
         autoHideBarTask?.cancel()
         autoHideBarTask = nil
     }
 
     private func dismissPlaybackEntryHint() {
-        guard showPlaybackEntryHint else { return }
+        guard isPlaybackEntryHintVisible else { return }
         withAnimation(.easeInOut(duration: 0.2)) {
-            showPlaybackEntryHint = false
+            isPlaybackEntryHintVisible = false
         }
     }
 
@@ -1342,8 +1353,8 @@ struct SlideShowViewTV: View {
         autoHideBarTask?.cancel()
         autoHideBarTask = nil
         withAnimation(.easeInOut(duration: 0.22)) {
-            showPlaybackEntryHint = false
-            showControlBar = false
+            isPlaybackEntryHintVisible = false
+            isControlBarVisible = false
         }
     }
 
@@ -1383,7 +1394,7 @@ struct SlideShowViewTV: View {
         // Tests only show the recovery message; they don't advance the real playback state machine.
 
         viewModel.isAutoPlay = false
-        viewModel.forceNextPhotoRecoveryMessageForUITesting(retryCount: 1)
+        viewModel.forceNextPhotoRecoveryMessageForTesting(retryCount: 1)
     }
     #endif
 
@@ -1401,6 +1412,7 @@ struct SlideShowViewTV: View {
 
 }
 
+#if DEBUG
 private final class SmartFillMotionTraceBuffer {
     private(set) var lines: [String] = []
 
@@ -1416,6 +1428,8 @@ private final class SmartFillMotionTraceBuffer {
         lines.append(contentsOf: newLines)
     }
 }
+
+#endif
 
 /// The tvOS control bar isn't shared with iOS; clear focus states come first.
 
