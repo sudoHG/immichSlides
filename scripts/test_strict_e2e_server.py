@@ -17,6 +17,7 @@ import zlib
 from contextlib import redirect_stderr
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -130,9 +131,110 @@ class RunningServer:
 
 
 class StrictE2EServerContractTests(unittest.TestCase):
+    def raw_post(self, server: RunningServer, headers: bytes, body: bytes = b"", *, truncate: bool = False) -> bytes:
+        with socket.create_connection(server.server.server_address, timeout=2) as connection:
+            connection.sendall(
+                b"POST /api/search/random HTTP/1.0\r\n"
+                + f"x-api-key: {PUBLIC_API_KEY}\r\n".encode()
+                + b"Content-Type: application/json\r\n" + headers + b"\r\n" + body
+            )
+            if truncate:
+                connection.shutdown(socket.SHUT_WR)
+            response = bytearray()
+            while chunk := connection.recv(65536):
+                response.extend(chunk)
+            return bytes(response)
+
+    def test_request_body_rejects_invalid_framing_and_oversized_lengths(self) -> None:
+        with RunningServer() as server:
+            for headers, status in [
+                (b"Content-Length: -1\r\n", 400),
+                (b"Content-Length: invalid\r\n", 400),
+                (b"Content-Length: 2\r\nContent-Length: 2\r\n", 400),
+                (b"Transfer-Encoding: chunked\r\n", 400),
+                (b"Content-Length: 65537\r\n", 413),
+            ]:
+                with self.subTest(headers=headers):
+                    self.assertIn(f" {status} ".encode(), self.raw_post(server, headers))
+            self.assertEqual(server.health()[0], 200)
+
+    def test_request_body_rejects_truncation_and_invalid_json_without_crashing(self) -> None:
+        with RunningServer() as server:
+            for length, body in [(20, b"{}"), (2, b"\xff\xff"), (2, b"[]"), (0, b"")]:
+                with self.subTest(body=body):
+                    response = self.raw_post(server, f"Content-Length: {length}\r\n".encode(), body, truncate=True)
+                    self.assertIn(b" 400 ", response)
+            self.assertEqual(server.health()[0], 200)
+
+    def test_request_body_times_out_without_blocking_other_requests(self) -> None:
+        with mock.patch.object(strict_e2e_server, "REQUEST_BODY_TIMEOUT_SECONDS", 0.2, create=True):
+            with RunningServer() as server:
+                started = time.monotonic()
+                response = self.raw_post(server, b"Content-Length: 20\r\n", b"{")
+                self.assertIn(b" 408 ", response)
+                self.assertLess(time.monotonic() - started, 1.5)
+                self.assertEqual(server.health()[0], 200)
+
+    def test_valid_json_body_can_arrive_in_separate_network_writes(self) -> None:
+        body = json.dumps({"size": 5, **strict_e2e_server.REQUIRED_SEARCH_VALUES}).encode()
+        with RunningServer() as server:
+            with socket.create_connection(server.server.server_address, timeout=2) as connection:
+                connection.sendall(
+                    b"POST /api/search/random HTTP/1.0\r\n"
+                    + f"x-api-key: {PUBLIC_API_KEY}\r\n".encode()
+                    + b"Content-Type: application/json\r\n"
+                    + f"Content-Length: {len(body)}\r\n\r\n".encode() + body[:1]
+                )
+                connection.sendall(body[1:])
+                response = bytearray()
+                while chunk := connection.recv(65536):
+                    response.extend(chunk)
+                self.assertIn(b" 200 ", response)
+                self.assertEqual(len(json.loads(response.split(b"\r\n\r\n", 1)[1])), 5)
+
+    def test_body_deadline_is_not_reset_by_trickling_bytes(self) -> None:
+        with mock.patch.object(strict_e2e_server, "REQUEST_BODY_TIMEOUT_SECONDS", 0.2):
+            with RunningServer() as server:
+                with socket.create_connection(server.server.server_address, timeout=2) as connection:
+                    connection.sendall(
+                        b"POST /api/search/random HTTP/1.0\r\n"
+                        + f"x-api-key: {PUBLIC_API_KEY}\r\n".encode()
+                        + b"Content-Type: application/json\r\nContent-Length: 20\r\n\r\n"
+                    )
+                    finished = threading.Event()
+
+                    def trickle() -> None:
+                        for _ in range(20):
+                            if finished.wait(0.03):
+                                return
+                            try:
+                                connection.sendall(b" ")
+                            except OSError:
+                                return
+
+                    sender = threading.Thread(target=trickle)
+                    sender.start()
+                    started = time.monotonic()
+                    try:
+                        response = bytearray()
+                        while chunk := connection.recv(65536):
+                            response.extend(chunk)
+                        self.assertIn(b" 408 ", response)
+                        self.assertLess(time.monotonic() - started, 0.5)
+                    finally:
+                        finished.set()
+                        sender.join(timeout=2)
+                    self.assertFalse(sender.is_alive())
+
+    def test_request_body_accepts_the_size_boundary(self) -> None:
+        body = json.dumps({"size": 5, **strict_e2e_server.REQUIRED_SEARCH_VALUES}).encode()
+        body = body.ljust(strict_e2e_server.MAX_REQUEST_BODY_BYTES, b" ")
+        with RunningServer() as server:
+            response = self.raw_post(server, f"Content-Length: {len(body)}\r\n".encode(), body)
+            self.assertIn(b" 200 ", response)
+            self.assertEqual(len(json.loads(response.split(b"\r\n\r\n", 1)[1])), 5)
+
     def test_server_reports_output_io_failure_without_traceback(self) -> None:
-        self.assertIn("finite", strict_e2e_server.server_argument_error(0, float("nan")) or "")
-        self.assertIn("finite", strict_e2e_server.server_argument_error(0, float("inf")) or "")
         with tempfile.TemporaryDirectory() as raw_directory:
             blocking_file = Path(raw_directory) / "not-a-directory"
             blocking_file.write_text("keep", encoding="utf-8")
@@ -151,6 +253,9 @@ class StrictE2EServerContractTests(unittest.TestCase):
             self.assertIn("Server file I/O failed", stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
 
+    def test_server_rejects_invalid_ports_and_timeouts_without_traceback(self) -> None:
+        self.assertIn("finite", strict_e2e_server.server_argument_error(0, float("nan")) or "")
+        self.assertIn("finite", strict_e2e_server.server_argument_error(0, float("inf")) or "")
         stderr = io.StringIO()
         with redirect_stderr(stderr):
             exit_code = server_main(["--port", "70000"])

@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import os
+import socket
 import struct
 import sys
 import time
@@ -25,6 +26,8 @@ from urllib.parse import parse_qs, urlparse
 PUBLIC_API_KEY = "immichslides-public-e2e-key"
 FIXTURE_SETS = ("a", "b")
 SCENARIOS = ("normal", "html-200", "timeout", "out-of-order")
+MAX_REQUEST_BODY_BYTES = 64 * 1024
+REQUEST_BODY_TIMEOUT_SECONDS = 5
 # An earlier timing run measured Continue→second Select at 1100ms; 1600ms leaves tvOS a 500ms margin for two nexts.
 TVOS_CONTINUE_TO_SECOND_SELECT_MS = 1100
 OUT_OF_ORDER_DELAY_MARGIN_MS = 500
@@ -64,7 +67,7 @@ def public_visual_label(fixture_set: str, index: int) -> str:
 
 
 def _png(width: int, height: int, seed: int, label: str, *, striped: bool = False) -> bytes:
-    """Generate a geometric PNG with a large public label in the center, using only the standard library."""
+    """Keep on-screen fixture identity deterministic without fonts or third-party image generators."""
     scale = max(8, min(width // 18, height // 10))
     label_width = (len(label) * 5 + len(label) - 1) * scale
     label_height = 7 * scale
@@ -444,9 +447,52 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
         if "application/json" not in self.headers.get("Content-Type", "").lower():
             self._error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json")
             return None
+        lengths = self.headers.get_all("Content-Length", [])
+        if (
+            self.headers.get("Transfer-Encoding") is not None
+            or len(lengths) != 1
+            or not lengths[0].isascii()
+            or not lengths[0].isdecimal()
+        ):
+            self.close_connection = True
+            self._error(HTTPStatus.BAD_REQUEST, "Invalid request body framing")
+            return None
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            body = json.loads(self.rfile.read(length))
+            length = int(lengths[0])
+        except ValueError:
+            length = MAX_REQUEST_BODY_BYTES + 1
+        if length > MAX_REQUEST_BODY_BYTES:
+            self.close_connection = True
+            self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request body exceeds the fixture limit")
+            return None
+
+        previous_timeout = self.connection.gettimeout()
+        deadline = time.monotonic() + REQUEST_BODY_TIMEOUT_SECONDS
+        payload = bytearray()
+        read_status = None
+        try:
+            while len(payload) < length:
+                remaining_seconds = deadline - time.monotonic()
+                if remaining_seconds <= 0:
+                    raise TimeoutError
+                self.connection.settimeout(remaining_seconds)
+                chunk = self.rfile.read1(length - len(payload))
+                if not chunk:
+                    read_status = HTTPStatus.BAD_REQUEST
+                    break
+                payload.extend(chunk)
+        except (TimeoutError, socket.timeout):
+            read_status = HTTPStatus.REQUEST_TIMEOUT
+        except OSError:
+            read_status = HTTPStatus.BAD_REQUEST
+        finally:
+            self.connection.settimeout(previous_timeout)
+        if read_status is not None:
+            self.close_connection = True
+            self._error(read_status, "Incomplete JSON request body")
+            return None
+        try:
+            body = json.loads(payload)
         except (ValueError, json.JSONDecodeError):
             self._error(HTTPStatus.BAD_REQUEST, "Invalid JSON request body")
             return None

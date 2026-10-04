@@ -14,8 +14,9 @@ Runs, in order:
   3. python3 scripts/check_release_guards.py
   4. python3 scripts/validate_localization_catalog.py
   5. python3 scripts/scan_chinese_strings.py (user-facing literals missing from the string catalog)
-  6. Python tests: python3 -B -m unittest discover -s scripts -p 'test_*.py'
-  7. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
+  6. Python test prerequisites: Swift, zstd CLI and Pillow (missing tools fail)
+  7. Python tests: python3 -B -m unittest discover -s scripts -p 'test_*.py'
+  8. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
 
 Options:
   --with-unit-tests        Also run scripts/run_offline_unit_tests.py for iOS and tvOS.
@@ -113,6 +114,7 @@ run_step "test conventions" python3 scripts/check_test_conventions.py
 run_step "release guards" python3 scripts/check_release_guards.py
 run_step "localization catalog" python3 scripts/validate_localization_catalog.py
 run_step "localization usage" python3 scripts/scan_chinese_strings.py --limit 20
+run_step "Python test prerequisites" python3 scripts/check_required_test_tools.py
 run_step "python tests" python3 -B -m unittest discover -s scripts -p 'test_*.py'
 
 if [[ $with_unit_tests -eq 1 ]]; then
