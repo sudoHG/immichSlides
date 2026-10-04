@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import http.client
 import io
 import socket
 import sys
@@ -216,10 +217,11 @@ class StrictE2EServerContractTests(unittest.TestCase):
                     sender.start()
                     started = time.monotonic()
                     try:
-                        response = bytearray()
-                        while chunk := connection.recv(65536):
-                            response.extend(chunk)
-                        self.assertIn(b" 408 ", response)
+                        response = http.client.HTTPResponse(connection)
+                        response.begin()
+                        finished.set()
+                        self.assertEqual(response.status, 408)
+                        self.assertEqual(json.loads(response.read())["statusCode"], 408)
                         self.assertLess(time.monotonic() - started, 0.5)
                     finally:
                         finished.set()
