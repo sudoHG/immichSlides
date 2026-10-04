@@ -140,7 +140,7 @@ struct SlideShowViewModelLiveIntegrationTests {
     private func reportInitialSceneVisibleForQA(_ vm: SlideShowViewModel) throws {
         let loadingSnapshot = vm.sceneRenderSnapshot
         let targetLayer = try #require(
-            loadingSnapshot.layers.last(where: { $0.role == .incoming })
+            loadingSnapshot.layers.last(where: { $0.role == .incoming || $0.role == .stable })
         )
         let scene = try #require(vm.scene(for: targetLayer))
         for slot in scene.photoSlots {
@@ -156,20 +156,35 @@ struct SlideShowViewModelLiveIntegrationTests {
         }
 
         let readySnapshot = vm.sceneRenderSnapshot
-        let incoming = try #require(
+        let visibleLayer = try #require(
             readySnapshot.layers.last(where: {
-                $0.role == .incoming && $0.isPresentationReady
+                $0.identity == targetLayer.identity
+                    && ($0.role == .incoming || $0.role == .stable) && $0.isPresentationReady
             })
         )
-        let visibleTime = (incoming.fadeStartTime ?? ProcessInfo.processInfo.systemUptime) + 0.5
-        vm.scenePresentationTimestampProviderForTesting = { visibleTime }
-        vm.incomingBecameVisible(
-            ScenePresentationLayerIdentity(
-                generation: incoming.identity.generation,
-                sceneID: incoming.identity.sceneID,
-                layerID: "scene-root"
-            )
+        if visibleLayer.role == .incoming {
+            let visibleTime = (visibleLayer.fadeStartTime ?? ProcessInfo.processInfo.systemUptime) + 0.5
+            vm.scenePresentationTimestampProviderForTesting = { visibleTime }
+        }
+        let displayedLayer = try #require(
+            vm.sceneRenderSnapshot.layers.last(where: { $0.identity == visibleLayer.identity })
         )
+        // Paused startup settles directly to stable; both roles still need the scene-root visibility boundary.
+        let candidate = SceneVisibleFrameCandidate(
+            layerIdentity: ScenePresentationLayerIdentity(
+                generation: displayedLayer.identity.generation,
+                sceneID: displayedLayer.identity.sceneID,
+                layerID: "scene-root"
+            ),
+            role: displayedLayer.role,
+            opacity: displayedLayer.opacity,
+            isBarrierComplete: vm.isScenePresentationBarrierComplete(for: displayedLayer),
+            isSceneRoot: true
+        )
+        var reporter = SceneVisibleFrameReporter()
+        try #require(reporter.transactionCompleted(candidate: candidate))
+        let visibleIdentity = try #require(reporter.consumeDisplayTick(currentCandidate: candidate))
+        vm.incomingBecameVisible(visibleIdentity)
     }
 
     @Test
