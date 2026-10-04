@@ -28,7 +28,7 @@ struct ServerConfigFormView: View {
     let onTestConnection: () -> Void
     let onSave: () -> Void
     // iOS only; defaults to false so the debug fill button never shows in Settings.
-    let showsDebugFillConfigButton: Bool
+    let shouldShowDebugFillConfigButton: Bool
     // tvOS: first boot keeps a 620 reading width; Settings passes nil+0 to follow the parent container.
     let tvPreferredMaxWidth: CGFloat?
     let tvHorizontalPadding: CGFloat?
@@ -42,7 +42,7 @@ struct ServerConfigFormView: View {
         isConnectionVerified: Bool,
         onTestConnection: @escaping () -> Void,
         onSave: @escaping () -> Void,
-        showsDebugFillConfigButton: Bool = false,
+        shouldShowDebugFillConfigButton: Bool = false,
         iosPresentation: IOSServerConfigFormPresentation = .onboarding,
         tvPresentation: TVOSServerConfigFormPresentation = .onboarding,
         tvPreferredMaxWidth: CGFloat? = 620,
@@ -53,7 +53,7 @@ struct ServerConfigFormView: View {
         self.isConnectionVerified = isConnectionVerified
         self.onTestConnection = onTestConnection
         self.onSave = onSave
-        self.showsDebugFillConfigButton = showsDebugFillConfigButton
+        self.shouldShowDebugFillConfigButton = shouldShowDebugFillConfigButton
         self.tvPreferredMaxWidth = tvPreferredMaxWidth
         self.tvHorizontalPadding = tvHorizontalPadding
         self.tvPresentation = tvPresentation
@@ -79,7 +79,7 @@ struct ServerConfigFormView: View {
             isConnectionVerified: isConnectionVerified,
             onTestConnection: onTestConnection,
             onSave: onSave,
-            showsDebugFillConfigButton: showsDebugFillConfigButton,
+            showsDebugFillConfigButton: shouldShowDebugFillConfigButton,
             presentation: iosPresentation
         )
         #endif
@@ -280,6 +280,7 @@ private struct APIKeyHelpBulletRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: APIKeyHelpSheetMetrics.rowSpacing) {
+            // localization-audit: Decorative bullet; it has no spoken or translated content.
             Text(verbatim: "•")
                 .font(APIKeyHelpSheetMetrics.rowMarkerFont)
                 .foregroundStyle(.secondary)

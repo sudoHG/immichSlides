@@ -7,6 +7,10 @@
 
 import SwiftUI
 
+private enum PersonFilterCardAnimation {
+    static let interaction: Animation = .spring(response: 0.28, dampingFraction: 0.84)
+}
+
 struct PersonFilterCardView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -57,7 +61,7 @@ struct PersonFilterCardView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture {
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                withAnimation(PersonFilterCardAnimation.interaction) {
                     isSelected.toggle()
                 }
             }
@@ -67,7 +71,7 @@ struct PersonFilterCardView: View {
                     isOn: Binding(
                         get: { matchMode == .soloOnly },
                         set: { isSoloOnly in
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                            withAnimation(PersonFilterCardAnimation.interaction) {
                                 matchMode = isSoloOnly ? .soloOnly : .normal
                             }
                         }

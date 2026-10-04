@@ -96,7 +96,7 @@ struct SceneVisibleFrameReporter: Equatable, Sendable {
 
 struct SceneVisibleFrameReporterModifier: ViewModifier {
     let candidate: SceneVisibleFrameCandidate
-    let onIncomingBecameVisible: (ScenePresentationLayerIdentity) -> Void
+    let onSceneBecameVisible: (ScenePresentationLayerIdentity) -> Void
 
     @State private var reporter = SceneVisibleFrameReporter()
     @State private var currentCandidate: SceneVisibleFrameCandidate?
@@ -140,7 +140,7 @@ struct SceneVisibleFrameReporterModifier: ViewModifier {
                 else {
                     return
                 }
-                onIncomingBecameVisible(visibleLayer)
+                onSceneBecameVisible(visibleLayer)
             }
     }
 }

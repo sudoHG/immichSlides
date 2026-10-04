@@ -5,7 +5,7 @@ struct FilterView: View {
 
     // true shows Start Playback for mode selection; false is edit-only for Settings.
 
-    var showsStartPlaybackButton: Bool = true
+    var shouldShowStartPlaybackButton: Bool = true
     var onStartPlaybackRequested: ((FilterSelection) -> Void)? = nil
     // Used by Settings to close the full-screen filter editor.
 
@@ -19,7 +19,7 @@ struct FilterView: View {
                 // Preload only when covers are empty, to avoid repeating requests on every visit.
 
                 if viewModel.albumCoverURLs.isEmpty || viewModel.peopleCoverURLs.isEmpty {
-                    viewModel.preloadCovers(coverLimit: 20, shouldReset: true)
+                    viewModel.preloadCovers(coverLimit: FilterCoverPreloadLimits.coverCount, shouldReset: true)
                 }
             }
     }
@@ -29,14 +29,14 @@ struct FilterView: View {
         #if os(tvOS)
         FilterViewTV(
             viewModel: viewModel,
-            showsStartPlaybackButton: showsStartPlaybackButton,
+            showsStartPlaybackButton: shouldShowStartPlaybackButton,
             onStartPlaybackRequested: onStartPlaybackRequested,
             onDismissRequested: onDismissRequested
         )
         #else
         FilterViewIOS(
             viewModel: viewModel,
-            showsStartPlaybackButton: showsStartPlaybackButton,
+            showsStartPlaybackButton: shouldShowStartPlaybackButton,
             onStartPlaybackRequested: onStartPlaybackRequested,
             onDismissRequested: onDismissRequested
         )
@@ -46,6 +46,6 @@ struct FilterView: View {
 
 #Preview {
     NavigationStack {
-        FilterView(viewModel: FilterViewModel(), showsStartPlaybackButton: false)
+        FilterView(viewModel: FilterViewModel(), shouldShowStartPlaybackButton: false)
     }
 }

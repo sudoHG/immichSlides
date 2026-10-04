@@ -14,6 +14,11 @@ enum SlidePlaybackLoadingViewStyle {
     case inline
 }
 
+private enum SlidePlaybackLoadingMetrics {
+    static let contentSpacingPoints: CGFloat = 12
+    static let maximumWidthPoints: CGFloat = 280
+}
+
 struct SlidePlaybackLoadingView: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -50,7 +55,7 @@ struct SlidePlaybackLoadingView: View {
     }
 
     private var fullscreenLoading: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: SlidePlaybackLoadingMetrics.contentSpacingPoints) {
             ProgressView()
                 .progressViewStyle(.circular)
                 .controlSize(.regular)
@@ -65,11 +70,11 @@ struct SlidePlaybackLoadingView: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
-        .frame(maxWidth: 280)
+        .frame(maxWidth: SlidePlaybackLoadingMetrics.maximumWidthPoints)
     }
 
     private var overMediaLoading: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: SlidePlaybackLoadingMetrics.contentSpacingPoints) {
             ProgressView()
                 .progressViewStyle(.circular)
                 .controlSize(.regular)
@@ -83,7 +88,7 @@ struct SlidePlaybackLoadingView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 15)
-        .frame(maxWidth: 280)
+        .frame(maxWidth: SlidePlaybackLoadingMetrics.maximumWidthPoints)
         .background(loadingSurfaceColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)

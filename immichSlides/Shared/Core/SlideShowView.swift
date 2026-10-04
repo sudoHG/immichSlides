@@ -19,7 +19,7 @@ struct SlideShowView: View {
 
     // Only marks whether we came from onboarding; the tvOS screen decides whether to actually show the hint.
 
-    var showsOnboardingPlaybackHint: Bool = false
+    var shouldShowOnboardingPlaybackHint: Bool = false
 
     var body: some View {
         Group {
@@ -29,14 +29,14 @@ struct SlideShowView: View {
             SlideShowViewTV(
                 viewModel: viewModel,
                 onOpenSettings: onOpenSettings,
-                showsOnboardingPlaybackHint: showsOnboardingPlaybackHint
+                showsOnboardingPlaybackHint: shouldShowOnboardingPlaybackHint
             )
             #else
 
             SlideShowViewIOS(
                 viewModel: viewModel,
                 onOpenSettings: onOpenSettings,
-                showsOnboardingPlaybackHint: showsOnboardingPlaybackHint
+                showsOnboardingPlaybackHint: shouldShowOnboardingPlaybackHint
             )
             #endif
         }

@@ -8,6 +8,10 @@
 import Foundation
 import SwiftUI
 
+private enum SlideshowMeasurementLimits {
+    static let changeTolerancePoints: CGFloat = 0.5
+}
+
 // A full-sentence template decides where the keycap goes in each language, instead of forcing phrases together in
 // Chinese word order.
 struct LocalizedKeycapInstruction {
@@ -180,7 +184,9 @@ private struct IOSSlideshowEntryHintBubble: View {
             onTap?()
         }
         .onPreferenceChange(IOSSlideshowEntryHintIdealContentWidthPreferenceKey.self) { newWidth in
-            guard abs(newWidth - measuredIdealContentWidth) > 0.5 else { return }
+            guard abs(newWidth - measuredIdealContentWidth) > SlideshowMeasurementLimits.changeTolerancePoints else {
+                return
+            }
             measuredIdealContentWidth = newWidth
         }
         .accessibilityElement(children: .contain)
@@ -427,7 +433,7 @@ struct SlideshowControlBarView: View {
     var onPlayPause: () -> Void
     var onSettings: () -> Void  // Tutorial-hint params have defaults, so old call sites need not all change at once.
 
-    let showsEntryHintBubble: Bool
+    let shouldShowEntryHintBubble: Bool
     let entryHintContent: IOSSlideshowEntryHintContent
 
     let onEntryHintTap: (() -> Void)?
@@ -521,7 +527,7 @@ struct SlideshowControlBarView: View {
         onNext: @escaping () -> Void,
         onPlayPause: @escaping () -> Void,
         onSettings: @escaping () -> Void,
-        showsEntryHintBubble: Bool = false,
+        shouldShowEntryHintBubble: Bool = false,
         entryHintContent: IOSSlideshowEntryHintContent = .empty,
         onEntryHintTap: (() -> Void)? = nil
     ) {
@@ -531,7 +537,7 @@ struct SlideshowControlBarView: View {
         self.onNext = onNext
         self.onPlayPause = onPlayPause
         self.onSettings = onSettings
-        self.showsEntryHintBubble = showsEntryHintBubble
+        self.shouldShowEntryHintBubble = shouldShowEntryHintBubble
         self.entryHintContent = entryHintContent
         self.onEntryHintTap = onEntryHintTap
     }
@@ -586,7 +592,7 @@ struct SlideshowControlBarView: View {
                 }
             }
             .overlay(alignment: .topLeading) {
-                if showsEntryHintBubble {
+                if shouldShowEntryHintBubble {
                     IOSSlideshowEntryHintBubble(
                         content: entryHintContent,
                         tailCenterX: entryHintTailCenterX(for: buttonSize),
@@ -601,7 +607,8 @@ struct SlideshowControlBarView: View {
                 }
             }
             .onPreferenceChange(IOSSlideshowEntryHintBubbleHeightPreferenceKey.self) { newHeight in
-                guard abs(newHeight - measuredEntryHintBubbleHeight) > 0.5 else { return }
+                guard abs(newHeight - measuredEntryHintBubbleHeight) > SlideshowMeasurementLimits.changeTolerancePoints
+                else { return }
                 measuredEntryHintBubbleHeight = newHeight
             }
         } else {
@@ -639,7 +646,7 @@ struct SlideshowControlBarView: View {
             .cornerRadius(cornerRadius)
             .shadow(color: .black.opacity(0.2), radius: shadowRadius)
             .overlay(alignment: .topLeading) {
-                if showsEntryHintBubble {
+                if shouldShowEntryHintBubble {
                     IOSSlideshowEntryHintBubble(
                         content: entryHintContent,
                         tailCenterX: entryHintTailCenterX(for: buttonSize),
@@ -654,7 +661,8 @@ struct SlideshowControlBarView: View {
                 }
             }
             .onPreferenceChange(IOSSlideshowEntryHintBubbleHeightPreferenceKey.self) { newHeight in
-                guard abs(newHeight - measuredEntryHintBubbleHeight) > 0.5 else { return }
+                guard abs(newHeight - measuredEntryHintBubbleHeight) > SlideshowMeasurementLimits.changeTolerancePoints
+                else { return }
                 measuredEntryHintBubbleHeight = newHeight
             }
         }
@@ -689,7 +697,7 @@ private extension View {
         onNext: {},
         onPlayPause: {},
         onSettings: {},
-        showsEntryHintBubble: true,
+        shouldShowEntryHintBubble: true,
         entryHintContent: IOSSlideshowEntryHintContent(
             title: "Adjust photo range and speed here",
             actionTemplate: "Tap %@ to hide this tip",

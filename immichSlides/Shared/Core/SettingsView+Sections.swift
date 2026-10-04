@@ -1,15 +1,21 @@
 import SwiftUI
 
+private enum PlaybackIntervalControlMetrics {
+    static let minimumSeconds: Double = 5
+    static let maximumSeconds: Double = 30
+    static let stepSeconds: Double = 1
+}
+
 #if os(iOS)
 private struct PlaybackFilterBlockedAlertHost<Content: View>: View {
-    @ObservedObject var promptState: SettingsPromptState
+    @ObservedObject var promptState: SettingsPromptStore
     let content: Content
     let onOpenFilterEditor: () -> Void
     let onCancel: () -> Void
 
     var body: some View {
         content
-            .alert("Can't Switch to Filtered Playback", isPresented: $promptState.showFilterModeBlockedAlert) {
+            .alert("Can't Switch to Filtered Playback", isPresented: $promptState.shouldShowFilterModeBlockedAlert) {
                 Button("Set Up Filters", role: .destructive) {
                     onOpenFilterEditor()
                 }
@@ -23,13 +29,13 @@ private struct PlaybackFilterBlockedAlertHost<Content: View>: View {
 }
 
 private struct ClearDiskCacheAlertHost<Content: View>: View {
-    @ObservedObject var promptState: SettingsPromptState
+    @ObservedObject var promptState: SettingsPromptStore
     let content: Content
     let onConfirm: () -> Void
 
     var body: some View {
         content
-            .alert("Confirm Disk Cache Clear", isPresented: $promptState.showClearDiskCacheAlert) {
+            .alert("Confirm Disk Cache Clear", isPresented: $promptState.shouldShowClearDiskCacheAlert) {
                 Button("Cancel", role: .cancel) {}
                 Button("Clear", role: .destructive) {
                     onConfirm()
@@ -94,8 +100,9 @@ extension SettingsView {
                             #if os(iOS)
                             Slider(
                                 value: settingsBinding(\.intervalSeconds),
-                                in: 5...30,
-                                step: 1
+                                in: PlaybackIntervalControlMetrics
+                                    .minimumSeconds...PlaybackIntervalControlMetrics.maximumSeconds,
+                                step: PlaybackIntervalControlMetrics.stepSeconds
                             )
                             .accessibilityIdentifier("settings.playback.interval.slider")
                             .disabled(!playbackVM.settings.autoPlayEnabled)
@@ -172,7 +179,7 @@ extension SettingsView {
                     Toggle("Show EXIF Info", isOn: settingsBinding(\.showExif))
                         .accessibilityIdentifier("settings.playback.showExif.toggle")
 
-                    if PlatformCompat.playbackDebugPanelEnabled {
+                    if PlatformCompat.isPlaybackDebugPanelEnabled {
                         Toggle("Show Debug Panel", isOn: settingsBinding(\.showDebugOverlay))
                             .accessibilityIdentifier("settings.playback.showDebug.toggle")
                     }
@@ -533,7 +540,7 @@ extension SettingsView {
                             aboutTextBlock(
                                 title: "License Text",
                                 value: notice.licenseText,
-                                usesMonospacedFont: true,
+                                shouldUseMonospacedFont: true,
                                 accessibilityIdentifier: "settings.about.opensource.\(notice.accessibilitySlug).license"
                             )
                         }
@@ -828,7 +835,7 @@ extension SettingsView {
     func aboutTextBlock(
         title: String,
         value: String,
-        usesMonospacedFont: Bool = false,
+        shouldUseMonospacedFont: Bool = false,
         accessibilityIdentifier: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -838,7 +845,7 @@ extension SettingsView {
 
             Text(value)
                 .font(
-                    usesMonospacedFont
+                    shouldUseMonospacedFont
                         ? .footnote.monospaced()
                         : .footnote
                 )

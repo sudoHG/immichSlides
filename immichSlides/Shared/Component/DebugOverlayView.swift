@@ -1,6 +1,28 @@
 import SwiftUI
 import SDWebImage
 
+private enum DebugOverlayMetrics {
+    static let defaultBottomPaddingPoints: CGFloat = 12
+    static let defaultFontSizePoints: CGFloat = 15
+    static let compactPhoneFontSizePoints: CGFloat = 11
+    static let phoneFontSizePoints: CGFloat = 12
+    static let compactPhonePaddingPoints: CGFloat = 7
+    static let phonePaddingPoints: CGFloat = 8
+    static let regularPaddingPoints: CGFloat = 10
+    static let phoneCornerRadiusPoints: CGFloat = 6
+    static let regularCornerRadiusPoints: CGFloat = 8
+    static let compactPhoneMaximumWidthPoints: CGFloat = 360
+    static let phoneMaximumWidthPoints: CGFloat = 420
+    static let regularMaximumWidthPoints: CGFloat = 1180
+    static let compactPhoneLineLimit: Int = 11
+    static let phoneLineLimit: Int = 13
+    static let regularLineLimit: Int = 18
+    static let minimumScaleFactor: CGFloat = 0.65
+    static let backgroundOpacity: Double = 0.65
+    static let phoneLeadingPaddingPoints: CGFloat = 10
+    static let regularLeadingPaddingPoints: CGFloat = 16
+}
+
 struct PlaybackDebugOverlaySceneSummary {
     let lines: [String]
 
@@ -60,9 +82,9 @@ struct DebugOverlayView: View {
 
     let renderCount: Int
 
-    var bottomPadding: CGFloat = 12
+    var bottomPadding: CGFloat = DebugOverlayMetrics.defaultBottomPaddingPoints
 
-    var fontSize: CGFloat = 15
+    var fontSize: CGFloat = DebugOverlayMetrics.defaultFontSizePoints
     private var layout: ViewLayoutTraits {
         ViewLayoutTraits(
             horizontalSizeClass: nil,
@@ -72,11 +94,31 @@ struct DebugOverlayView: View {
     }
     private var isPhone: Bool { layout.isPhone }
     private var isCompactHeight: Bool { layout.isCompactHeight }
-    private var panelFontSize: CGFloat { isPhone ? (isCompactHeight ? 11 : 12) : fontSize }
-    private var panelPadding: CGFloat { isPhone ? (isCompactHeight ? 7 : 8) : 10 }
-    private var panelCornerRadius: CGFloat { isPhone ? 6 : 8 }
-    private var panelMaxWidth: CGFloat { isPhone ? (isCompactHeight ? 360 : 420) : 1180 }
-    private var panelLineLimit: Int { isPhone ? (isCompactHeight ? 11 : 13) : 18 }
+    private var panelFontSize: CGFloat {
+        isPhone
+            ? (isCompactHeight
+                ? DebugOverlayMetrics.compactPhoneFontSizePoints : DebugOverlayMetrics.phoneFontSizePoints)
+            : fontSize
+    }
+    private var panelPadding: CGFloat {
+        isPhone
+            ? (isCompactHeight ? DebugOverlayMetrics.compactPhonePaddingPoints : DebugOverlayMetrics.phonePaddingPoints)
+            : DebugOverlayMetrics.regularPaddingPoints
+    }
+    private var panelCornerRadius: CGFloat {
+        isPhone ? DebugOverlayMetrics.phoneCornerRadiusPoints : DebugOverlayMetrics.regularCornerRadiusPoints
+    }
+    private var panelMaxWidth: CGFloat {
+        isPhone
+            ? (isCompactHeight
+                ? DebugOverlayMetrics.compactPhoneMaximumWidthPoints : DebugOverlayMetrics.phoneMaximumWidthPoints)
+            : DebugOverlayMetrics.regularMaximumWidthPoints
+    }
+    private var panelLineLimit: Int {
+        isPhone
+            ? (isCompactHeight ? DebugOverlayMetrics.compactPhoneLineLimit : DebugOverlayMetrics.phoneLineLimit)
+            : DebugOverlayMetrics.regularLineLimit
+    }
 
     var body: some View {
 
@@ -87,14 +129,18 @@ struct DebugOverlayView: View {
                     .font(.system(size: panelFontSize, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.white)
                     .lineLimit(panelLineLimit)
-                    .minimumScaleFactor(0.65)
+                    .minimumScaleFactor(DebugOverlayMetrics.minimumScaleFactor)
                     .padding(panelPadding)
-                    .background(.black.opacity(0.65))
+                    .background(.black.opacity(DebugOverlayMetrics.backgroundOpacity))
                     .clipShape(RoundedRectangle(cornerRadius: panelCornerRadius))
                     .frame(maxWidth: panelMaxWidth, alignment: .leading)
                 Spacer()
             }
-            .padding(.leading, isPhone ? 10 : 16)
+            .padding(
+                .leading,
+                isPhone
+                    ? DebugOverlayMetrics.phoneLeadingPaddingPoints : DebugOverlayMetrics.regularLeadingPaddingPoints
+            )
             .padding(.bottom, bottomPadding)
         }
         .accessibilityIdentifier("slideshow.debugOverlay")

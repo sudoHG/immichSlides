@@ -2,17 +2,17 @@ import SwiftUI
 
 extension SettingsView {
     func openFilterEditor() {
-        showFullScreenFilterEditor = true
+        shouldShowFullScreenFilterEditor = true
     }
 
     func dismissPinInputSheet() {
-        showAccessPinInputSheet = false
+        shouldShowAccessPinInputSheet = false
         activePinInputTarget = nil
     }
 
     func openPinInput(_ target: AccessPinInputTarget) {
         activePinInputTarget = target
-        showAccessPinInputSheet = true
+        shouldShowAccessPinInputSheet = true
     }
 
     func toggleAutoPlay() {
@@ -33,8 +33,8 @@ extension SettingsView {
 
     func selectDefaultPlaybackMode(_ mode: DefaultPlaybackMode) {
         if mode == .filtered && filterVM.selection.isEmpty {
-            promptState.pendingSwitchToFilteredAfterConfig = true
-            promptState.showFilterModeBlockedAlert = true
+            promptState.shouldSwitchToFilteredAfterConfig = true
+            promptState.shouldShowFilterModeBlockedAlert = true
             return
         }
 
@@ -46,7 +46,7 @@ extension SettingsView {
     }
 
     func cancelFilterModeBlockedAlert() {
-        promptState.pendingSwitchToFilteredAfterConfig = false
+        promptState.shouldSwitchToFilteredAfterConfig = false
     }
 
     func testServerConnection() {
@@ -63,7 +63,7 @@ extension SettingsView {
     }
 
     func requestClearDiskCache() {
-        promptState.showClearDiskCacheAlert = true
+        promptState.shouldShowClearDiskCacheAlert = true
     }
 
     func confirmClearDiskCache() {
@@ -132,7 +132,7 @@ extension SettingsView {
     func enforcePlaybackModeInvariant() {
         playbackVM.enforcePlaybackModeInvariant(
             isFilterSelectionEmpty: filterVM.selection.isEmpty,
-            isFilterEditorPresented: showFullScreenFilterEditor
+            isFilterEditorPresented: shouldShowFullScreenFilterEditor
         )
     }
 }

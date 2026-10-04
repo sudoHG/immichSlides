@@ -726,8 +726,8 @@ struct AppFlowStateMachineTests {
 
     @Test
     func `first boot stays on FirstBoot when config is incomplete`() {
-        var flow = AppFlowStateMachine(initialAccessProtectionEnabled: false)
-        flow.handleFirstBootConfigured(serverIsConfigured: false)
+        var flow = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
+        flow.handleFirstBootConfigured(isServerConfigured: false)
 
         #expect(flow.route == .firstBoot)
         #expect(flow.isOnboardingSession == false)
@@ -736,8 +736,8 @@ struct AppFlowStateMachineTests {
 
     @Test
     func `first boot completion enters ModeSelection and starts onboarding session`() {
-        var flow = AppFlowStateMachine(initialAccessProtectionEnabled: false)
-        flow.handleFirstBootConfigured(serverIsConfigured: true)
+        var flow = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
+        flow.handleFirstBootConfigured(isServerConfigured: true)
 
         #expect(flow.route == .modeSelection)
         #expect(flow.isOnboardingSession)
@@ -746,7 +746,7 @@ struct AppFlowStateMachineTests {
 
     @Test
     func `onboarding random mode allows back navigation to ModeSelection without PIN`() {
-        var flow = AppFlowStateMachine(initialAccessProtectionEnabled: false)
+        var flow = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
         flow.startOnboardingSession()
         flow.handleOnboardingModeDone(.random)
 
@@ -757,7 +757,7 @@ struct AppFlowStateMachineTests {
 
     @Test
     func `onboarding filtered mode goes to FilterSummary first`() {
-        var flow = AppFlowStateMachine(initialAccessProtectionEnabled: false)
+        var flow = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
         flow.startOnboardingSession()
         flow.handleOnboardingModeDone(.filtered)
 
@@ -767,7 +767,7 @@ struct AppFlowStateMachineTests {
 
     @Test
     func `filtered playback start enters Slideshow with FilterSummary as the back target`() {
-        var flow = AppFlowStateMachine(initialAccessProtectionEnabled: false)
+        var flow = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
         flow.startOnboardingSession()
         flow.handleOnboardingModeDone(.filtered)
         flow.handleFilteredPlaybackStarted()
@@ -782,11 +782,11 @@ struct AppFlowStateMachineTests {
 
     @Test
     func `enabling PIN immediately clears the back navigation chain`() {
-        var flow = AppFlowStateMachine(initialAccessProtectionEnabled: false)
+        var flow = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
         flow.startOnboardingSession()
         flow.handleOnboardingModeDone(.random)
 
-        flow.syncAccessProtection(enabled: true)
+        flow.syncAccessProtection(isEnabled: true)
 
         #expect(flow.isAccessProtectionEnabled)
         #expect(flow.isOnboardingSession == false)
@@ -796,7 +796,7 @@ struct AppFlowStateMachineTests {
 
     @Test
     func `return to ModeSelection is allowed only during an onboarding session`() {
-        var flow = AppFlowStateMachine(initialAccessProtectionEnabled: false)
+        var flow = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
         flow.route = .slideshow
         flow.isOnboardingSession = false
         flow.returnToOnboardingModeSelection()
@@ -810,13 +810,13 @@ struct AppFlowStateMachineTests {
 
     @Test
     func `app initial route goes straight to playback when configured, else to first boot`() {
-        var flowA = AppFlowStateMachine(initialAccessProtectionEnabled: false)
-        flowA.initializeRoute(serverIsConfigured: true)
+        var flowA = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
+        flowA.initializeRoute(isServerConfigured: true)
         #expect(flowA.route == .slideshow)
         #expect(flowA.isOnboardingSession == false)
 
-        var flowB = AppFlowStateMachine(initialAccessProtectionEnabled: false)
-        flowB.initializeRoute(serverIsConfigured: false)
+        var flowB = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
+        flowB.initializeRoute(isServerConfigured: false)
         #expect(flowB.route == .firstBoot)
         #expect(flowB.isOnboardingSession == false)
     }

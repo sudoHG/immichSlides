@@ -241,9 +241,9 @@ struct PersonFilterViewTV: View {
                 backButtonAccessibilityID: "personFilter.back.button",
                 selectAllButtonAccessibilityID: "personFilter.selectAll.button",
                 clearButtonAccessibilityID: "personFilter.clear.button",
-                helperSummary: bodyShortcutContext.summaryText,
-                helperItems: topBarCommandHints,
-                helperAccessibilityID: "personFilter.shortcuts.bar"
+                commandHintSummary: bodyShortcutContext.summaryText,
+                commandHints: topBarCommandHints,
+                commandHintAccessibilityID: "personFilter.shortcuts.bar"
             )
             .padding(.horizontal, topBarAdditionalHorizontalPadding)
             .padding(.top, 14)

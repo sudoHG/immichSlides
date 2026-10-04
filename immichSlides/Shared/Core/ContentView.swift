@@ -49,12 +49,12 @@ struct AppFlowStateMachine {
     var isAccessProtectionEnabled: Bool
     var slideshowBackRoute: AppRoute? = nil
 
-    init(initialAccessProtectionEnabled: Bool = AccessProtectionStore.shared.isEnabled) {
-        self.isAccessProtectionEnabled = initialAccessProtectionEnabled
+    init(isAccessProtectionInitiallyEnabled: Bool = AccessProtectionStore.shared.isEnabled) {
+        self.isAccessProtectionEnabled = isAccessProtectionInitiallyEnabled
     }
 
-    mutating func handleFirstBootConfigured(serverIsConfigured: Bool) {
-        guard serverIsConfigured else {
+    mutating func handleFirstBootConfigured(isServerConfigured: Bool) {
+        guard isServerConfigured else {
             finishOnboardingSession()
             route = .firstBoot
             return
@@ -78,9 +78,9 @@ struct AppFlowStateMachine {
         route = .slideshow
     }
 
-    mutating func initializeRoute(serverIsConfigured: Bool) {
+    mutating func initializeRoute(isServerConfigured: Bool) {
         finishOnboardingSession()
-        route = serverIsConfigured ? .slideshow : .firstBoot
+        route = isServerConfigured ? .slideshow : .firstBoot
     }
 
     mutating func returnToOnboardingModeSelection() {
@@ -88,9 +88,9 @@ struct AppFlowStateMachine {
         route = .modeSelection
     }
 
-    mutating func syncAccessProtection(enabled: Bool) {
-        isAccessProtectionEnabled = enabled
-        if enabled {
+    mutating func syncAccessProtection(isEnabled: Bool) {
+        isAccessProtectionEnabled = isEnabled
+        if isEnabled {
             finishOnboardingSession()
         }
     }
@@ -125,7 +125,7 @@ struct ContentView: View {
 
     @State private var hasInitializedFlow: Bool = false
 
-    @State private var showSettingsPage: Bool = false
+    @State private var shouldShowSettingsPage: Bool = false
 
     @StateObject private var slideShowVM: SlideShowViewModel
     @StateObject private var onboardingFilterVM = FilterViewModel()
@@ -168,7 +168,7 @@ struct ContentView: View {
         // The tvOS mode screen overlays its own top-left capsule and does not use the large shell.
 
         ModeSelectionView(
-            onboardingOnly: true,
+            isOnboardingOnly: true,
             onOnboardingDone: { mode in
                 handleOnboardingModeDone(mode)
             }
@@ -180,7 +180,7 @@ struct ContentView: View {
         FilterSummaryView(
             viewModel: onboardingFilterVM,
             onBackToModeSelection: onboardingBackHandler,
-            onboardingOnly: flow.isOnboardingSession,
+            isOnboardingOnly: flow.isOnboardingSession,
             onStartPlaybackRequested: { selection in
                 // Do not await pool building on the summary screen; switch the playback source, then open playback.
 
@@ -196,7 +196,7 @@ struct ContentView: View {
 
     private var modeSelectionRouteView: some View {
         ModeSelectionView(
-            onboardingOnly: true,
+            isOnboardingOnly: true,
             onOnboardingDone: { mode in
                 handleOnboardingModeDone(mode)
             }
@@ -207,9 +207,9 @@ struct ContentView: View {
         FilterSummaryView(
             viewModel: onboardingFilterVM,
             onBackToModeSelection: onboardingBackHandler,
-            // iOS step 3 must pass onboardingOnly down so the filter summary can show the wizard header.
+            // iOS step 3 must pass isOnboardingOnly down so the filter summary can show the wizard header.
 
-            onboardingOnly: flow.isOnboardingSession,
+            isOnboardingOnly: flow.isOnboardingSession,
             onStartPlaybackRequested: { selection in
                 slideShowVM.preparePlaybackSourceForPresentation(to: .filtered(selection))
                 flow.handleFilteredPlaybackStarted()
@@ -236,15 +236,15 @@ struct ContentView: View {
                     case .slideshow:
                         SlideShowView(
                             viewModel: slideShowVM,
-                            onOpenSettings: { showSettingsPage = true },
-                            showsOnboardingPlaybackHint: flow.isOnboardingSession
+                            onOpenSettings: { shouldShowSettingsPage = true },
+                            shouldShowOnboardingPlaybackHint: flow.isOnboardingSession
                         )
                     }
                 } else {
                     firstBootRouteView
                 }
             }
-            .navigationDestination(isPresented: $showSettingsPage) {
+            .navigationDestination(isPresented: $shouldShowSettingsPage) {
                 SettingsView()
                     .onDisappear {
                         Task {
@@ -281,7 +281,7 @@ struct ContentView: View {
 
     private func handleFirstBootConfigured() {
         reloadServer()
-        flow.handleFirstBootConfigured(serverIsConfigured: (server?.isConfigured ?? false))
+        flow.handleFirstBootConfigured(isServerConfigured: (server?.isConfigured ?? false))
     }
 
     private func handleOnboardingModeDone(_ mode: SlideMode) {
@@ -307,7 +307,7 @@ struct ContentView: View {
             flow.startOnboardingSession()
             return
         }
-        flow.initializeRoute(serverIsConfigured: (server?.isConfigured ?? false))
+        flow.initializeRoute(isServerConfigured: (server?.isConfigured ?? false))
     }
 
     private func reloadServer() {
@@ -320,11 +320,8 @@ struct ContentView: View {
     private func bootstrapDebugServerIfNeeded() {
         // With UI_TEST_RESET_STATE, skip the Info.plist bootstrap, otherwise it would bypass the first-boot screen.
 
-        guard ProcessInfo.processInfo.environment["UI_TEST_RESET_STATE"] != "1" else { return }
+        guard PlatformCompat.shouldBootstrapDebugServerForTesting else { return }
         guard (server?.isConfigured ?? false) == false else { return }
-        let enableDebugAutoServer =
-            (Bundle.main.object(forInfoDictionaryKey: "ENABLE_DEBUG_AUTO_SERVER") as? String) == "1"
-        guard enableDebugAutoServer else { return }
         guard let testServer = ImmichServer.testServerFromInfoPlistForTesting() else { return }
         testServer.save()
     }
@@ -364,7 +361,7 @@ struct ContentView: View {
     #endif
 
     private func syncAccessProtectionState() {
-        flow.syncAccessProtection(enabled: AccessProtectionStore.shared.isEnabled)
+        flow.syncAccessProtection(isEnabled: AccessProtectionStore.shared.isEnabled)
     }
 }
 
