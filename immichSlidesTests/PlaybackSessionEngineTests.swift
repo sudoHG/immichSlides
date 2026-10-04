@@ -295,9 +295,9 @@ struct PlaybackSessionEngineTests {
         #expect(engine.scenes.compactMap(\.primaryAssetId) == ["asset-3", "asset-4", "asset-5"])
         #expect(
             summaries == [
-                "version=legacy-scaledToFit-v1;display=full;crop=full;quality=legacy-not-evaluated;face=not-applied;metadata=asset-dimensions;fallback=planner-not-implemented,legacy-scaled-to-fit",
-                "version=legacy-scaledToFit-v1;display=full;crop=full;quality=legacy-not-evaluated;face=not-applied;metadata=asset-dimensions;fallback=planner-not-implemented,legacy-scaled-to-fit",
-                "version=legacy-scaledToFit-v1;display=full;crop=full;quality=legacy-not-evaluated;face=not-applied;metadata=asset-dimensions;fallback=planner-not-implemented,legacy-scaled-to-fit"
+                "version=legacy-scaledToFit-v1;display=full;crop=full;quality=legacy-not-evaluated;face=not-applied;metadata=asset-dimensions;fallback=legacy-scaled-to-fit",
+                "version=legacy-scaledToFit-v1;display=full;crop=full;quality=legacy-not-evaluated;face=not-applied;metadata=asset-dimensions;fallback=legacy-scaled-to-fit",
+                "version=legacy-scaledToFit-v1;display=full;crop=full;quality=legacy-not-evaluated;face=not-applied;metadata=asset-dimensions;fallback=legacy-scaled-to-fit"
             ])
     }
 

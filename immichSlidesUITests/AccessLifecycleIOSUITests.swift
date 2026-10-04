@@ -115,15 +115,16 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             deferredFailures.append(String(describing: error))
             display = [
                 "source": "real_settings_ui",
-                "mode_before": "smartFill",
-                "mode_after": "singlePhoto",
+                "failure": String(describing: error),
+                "mode_before": "",
+                "mode_after": "",
                 "png_sha256_before": "",
                 "png_sha256_after": "",
                 "mark_before": "",
                 "mark_after": ""
             ]
         }
-        try proveIPadLicenseReturnIfNeeded(app: app)
+        let ipadLicenseReturn = try proveIPadLicenseReturnIfNeeded(app: app)
 
         openSettingsFromSlideshow(app: app)
         if app.buttons["pinEntry.close.button"].waitForExistence(timeout: 3) {
@@ -169,7 +170,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             "device": deviceKind(),
             "device_tests_run": true,
             "retries_used_to_pass": false,
-            "xctest_config_present": true,
+            "xctest_config_present": ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil,
             "fixture_set": "a",
             "progress_after_next": progressEvidence["progress_after_next"] as Any,
             "progress_after_play": progressEvidence["progress_after_play"] as Any,
@@ -196,9 +197,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                 "storage_kind": "uitest_userdefaults"
             ],
             "display_policy": display,
-            "ipad_license_return": [
-                "stack_preserved": UIDevice.current.userInterfaceIdiom != .pad ? true : true
-            ],
+            "ipad_license_return": ipadLicenseReturn,
             "screenshots": [
                 "pause": "pause.png",
                 "after_next": "after-next.png",
@@ -759,7 +758,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             (StrictE2EVisualEvidence.directory()?.path ?? "")
             + requests.joined()
             + screenshotNames.joined()
-            + String(describing: payload.keys.sorted())
+            + AccessLifecycleContract.serializedText(of: payload)
         try AccessLifecycleContract.assertPinAbsent(
             in: evidenceText,
             pinValues: [pins.correct, pins.wrong]
@@ -945,8 +944,10 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func proveIPadLicenseReturnIfNeeded(app: XCUIApplication) throws {
-        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+    private func proveIPadLicenseReturnIfNeeded(app: XCUIApplication) throws -> [String: Any] {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            return ["applicable": false]
+        }
         openSettingsFromSlideshow(app: app)
         if app.buttons["pinEntry.close.button"].waitForExistence(timeout: 5) {
             enterPin(app: app, pin: syntheticPIN())
@@ -974,11 +975,11 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                 tapElement(back)
             }
         }
-        XCTAssertTrue(
-            openSourceLink.waitForExistence(timeout: 8),
-            "After going back, must still be on About; the back stack must not be lost.")
-        try AccessLifecycleContract.assertIPadLicenseReturn(device: "ipad", stackPreserved: true)
+        let stackPreserved = openSourceLink.waitForExistence(timeout: 8)
+        XCTAssertTrue(stackPreserved, "After going back, must still be on About; the back stack must not be lost.")
+        try AccessLifecycleContract.assertIPadLicenseReturn(device: "ipad", stackPreserved: stackPreserved)
         returnToSlideshowFromSettings(app: app)
+        return ["applicable": true, "stack_preserved": stackPreserved]
     }
 
     private struct ObservedPlaybackSettings {

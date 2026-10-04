@@ -2029,6 +2029,19 @@ enum PlaybackSmartFillPlanner {
             }
         }
 
+        let currentCandidate = input.candidates[0]
+        let faceRegions =
+            currentCandidate.faceRects
+            + currentCandidate.faceRects.map {
+                upperBodyProxy(from: $0, params: input.policy.upperBodyProxyParams)
+            }
+        let faceProtectionPassed = faceRegions.allSatisfy {
+            slot.cropRectInSource.contains($0, margin: 0)
+        }
+        let subjectProtectionPassed = currentCandidate.subjectRects.allSatisfy {
+            slot.cropRectInSource.contains($0, margin: 0)
+        }
+
         let visibleQuality: PlaybackSmartFillVisibleQualityClass
         if sceneType == .fallback {
             visibleQuality = .fail
@@ -2048,8 +2061,8 @@ enum PlaybackSmartFillPlanner {
             slotAreaRatio: area(of: slot.frameInScene),
             cropRetention: slot.cropRetention,
             protectedRegionCoverage: slot.protectionContained ? 1 : 0,
-            faceProtectionPassed: slot.protectionContained,
-            subjectProtectionPassed: slot.protectionContained,
+            faceProtectionPassed: faceProtectionPassed,
+            subjectProtectionPassed: subjectProtectionPassed,
             visibleQuality: visibleQuality,
             ledgerSceneAssets: ledgerSceneAssets,
             slotRoles: slotRoles,

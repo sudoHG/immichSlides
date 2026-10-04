@@ -156,7 +156,11 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         fillButton.tap()
 
-        XCTAssertEqual(serverField.value as? String, expectedServerURL)
+        // Boolean compare: a failure must not print the expected URL, which can come from private configuration.
+        XCTAssertTrue(
+            (serverField.value as? String) == expectedServerURL,
+            "The debug fill button should fill the expected server URL."
+        )
 
         let apiField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(apiField.waitForExistence(timeout: 4))

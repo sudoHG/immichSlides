@@ -81,7 +81,6 @@ enum PlaybackPlanningFaceProtectionSummary: String, Equatable, Sendable {
 }
 
 enum PlaybackPlanningFallbackReason: String, Equatable, Sendable {
-    case plannerNotImplemented
     case legacyScaledToFit
     case missingMetadata
     case smartFillFallback
@@ -178,10 +177,7 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
             sourceImage.assetPixelSize != nil
             || sourceImage.exifPixelSize != nil
             || sourceImage.orientation == "available"
-        var fallbackReasons: [PlaybackPlanningFallbackReason] = [
-            .plannerNotImplemented,
-            .legacyScaledToFit
-        ]
+        var fallbackReasons: [PlaybackPlanningFallbackReason] = [.legacyScaledToFit]
         if !hasAnyMetadata {
             fallbackReasons.append(.missingMetadata)
         }
@@ -331,8 +327,6 @@ private extension String {
 private extension PlaybackPlanningFallbackReason {
     var summaryLabel: String {
         switch self {
-        case .plannerNotImplemented:
-            "planner-not-implemented"
         case .legacyScaledToFit:
             "legacy-scaled-to-fit"
         case .missingMetadata:

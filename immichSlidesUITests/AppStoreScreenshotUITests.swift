@@ -123,16 +123,20 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let directory: String
         let collectionDirectory: String
         let idiom: UIUserInterfaceIdiom
+        // Portrait pixel sizes App Store Connect accepts for the slot; nil means the slot is not validated.
+        var acceptedPortraitPixelSizes: [String]? = nil
 
         static let iphone69 = IOSPlatformSpec(
             directory: "iPhone_6_9",
             collectionDirectory: "submission_primary",
-            idiom: .phone
+            idiom: .phone,
+            acceptedPortraitPixelSizes: ["1320x2868", "1290x2796", "1260x2736"]
         )
         static let iPad13 = IOSPlatformSpec(
             directory: "iPad_13",
             collectionDirectory: "submission_primary",
-            idiom: .pad
+            idiom: .pad,
+            acceptedPortraitPixelSizes: ["2064x2752", "2048x2732"]
         )
         static let iphone63 = IOSPlatformSpec(
             directory: "iPhone_6_3",
@@ -149,6 +153,13 @@ final class AppStoreScreenshotUITests: XCTestCase {
             collectionDirectory: "device_variants",
             idiom: .pad
         )
+
+        func acceptsPixelSize(_ pixelSize: String) -> Bool {
+            guard let accepted = acceptedPortraitPixelSizes else { return true }
+            let parts = pixelSize.split(separator: "x")
+            let swapped = parts.count == 2 ? "\(parts[1])x\(parts[0])" : pixelSize
+            return accepted.contains(pixelSize) || accepted.contains(swapped)
+        }
 
         static func spec(for directory: String) -> IOSPlatformSpec? {
             switch directory {
@@ -916,7 +927,7 @@ private extension AppStoreScreenshotUITests {
         let header = """
             # immichSlides App Store Screenshot Manifest
 
-            | file | slot | locale | actual_language | actual_locale | platform_group | simulator_name | runtime | pixel_size | theme | ui_language_matches | status | notes |
+            | file | slot | locale | actual_language | actual_locale | platform_group | device_name | runtime | pixel_size | theme | ui_language_verified | status | notes |
             | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
             """
@@ -970,6 +981,19 @@ private extension AppStoreScreenshotUITests {
         add(attachment)
 
         let pixelSize = imagePixelSize(from: data) ?? "unknown"
+        guard iOSPlatformSpec.acceptsPixelSize(pixelSize) else {
+            let message = "\(slot.rawValue): captured \(pixelSize) is not an accepted \(platformGroup) size"
+            appendManifestRow(
+                outputRoot: outputRoot,
+                slot: slot,
+                relativeFilePath: relativeFilePath(for: slot),
+                pixelSize: pixelSize,
+                status: "blocker",
+                notes: message
+            )
+            XCTFail(message)
+            return
+        }
         appendManifestRow(
             outputRoot: outputRoot,
             slot: slot,
@@ -1001,7 +1025,7 @@ private extension AppStoreScreenshotUITests {
             .replacingOccurrences(of: "|", with: "\\|")
             .replacingOccurrences(of: "\n", with: " ")
         let row = """
-            | \(relativeFilePath) | \(slot.rawValue) - \(slot.title) | \(localeDirectory) | \(actualLanguage) | \(actualLocale) | \(platformGroup) | \(UIDevice.current.name) | \(ProcessInfo.processInfo.operatingSystemVersionString) | \(pixelSize) | \(appearance) | yes | \(status) | \(escapedNotes) |
+            | \(relativeFilePath) | \(slot.rawValue) - \(slot.title) | \(localeDirectory) | \(actualLanguage) | \(actualLocale) | \(platformGroup) | \(UIDevice.current.name) | \(ProcessInfo.processInfo.operatingSystemVersionString) | \(pixelSize) | \(appearance) | no | \(status) | \(escapedNotes) |
 
             """
 
@@ -1958,7 +1982,7 @@ private extension AppStoreScreenshotTVOSUITests {
         let header = """
             # immichSlides App Store Screenshot Manifest
 
-            | file | slot | locale | actual_language | actual_locale | platform_group | simulator_name | runtime | pixel_size | theme | ui_language_matches | status | notes |
+            | file | slot | locale | actual_language | actual_locale | platform_group | device_name | runtime | pixel_size | theme | ui_language_verified | status | notes |
             | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
             """
@@ -2021,7 +2045,7 @@ private extension AppStoreScreenshotTVOSUITests {
             .replacingOccurrences(of: "|", with: "\\|")
             .replacingOccurrences(of: "\n", with: " ")
         let row = """
-            | \(relativeFilePath) | \(slot.rawValue) - \(slot.title) | \(localeDirectory) | \(actualLanguage) | \(actualLocale) | \(platformGroup) | \(UIDevice.current.name) | \(ProcessInfo.processInfo.operatingSystemVersionString) | \(pixelSize) | \(appearance) | yes | \(status) | \(escapedNotes) |
+            | \(relativeFilePath) | \(slot.rawValue) - \(slot.title) | \(localeDirectory) | \(actualLanguage) | \(actualLocale) | \(platformGroup) | \(UIDevice.current.name) | \(ProcessInfo.processInfo.operatingSystemVersionString) | \(pixelSize) | \(appearance) | no | \(status) | \(escapedNotes) |
 
             """
 

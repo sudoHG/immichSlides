@@ -376,6 +376,15 @@ enum AccessLifecycleContract {
         }
     }
 
+    // Serializes keys and nested values so a PIN hidden in any value is found by `assertPinAbsent`.
+    static func serializedText(of payload: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(payload),
+            let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+            let text = String(data: data, encoding: .utf8)
+        else { return String(describing: payload) }
+        return text
+    }
+
     static func assertPinAbsent(in text: String, pinValues: [String]) throws {
         if pinValues.contains(where: { !$0.isEmpty && text.contains($0) }) {
             throw AssertionError.message("PIN appears in a file name, command, log or attachment")

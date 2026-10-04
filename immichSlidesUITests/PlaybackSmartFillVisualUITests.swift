@@ -1101,6 +1101,14 @@ private enum SmartFillFallbackEvidencePolicy {
     }
 }
 
+private func requireEvidenceWrite(_ write: () throws -> Void) {
+    do {
+        try write()
+    } catch {
+        XCTFail("Failed to write SmartFill evidence: \(error.localizedDescription)")
+    }
+}
+
 #if os(iOS)
 final class PlaybackSmartFillVisualUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -1453,12 +1461,13 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         }
 
         guard coverage.isComplete else {
-            throw XCTSkip(
+            XCTFail(
                 """
                 SmartFill EXIF overlay presence runtime evidence is incomplete: \(coverage.missingEdgeDescription).
-                Sampled \(maximumAttempts) random switches on the real server; the samples missed the target edge, which does not mean the product animation failed.
+                Sampled \(maximumAttempts) random switches on the real server without observing the target edge; the server needs photos both with and without an EXIF overlay.
                 """
             )
+            return
         }
         XCTAssertTrue(
             app.buttons["slideshow.control.next.button"].waitForExistence(timeout: 4),
@@ -1682,7 +1691,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
     func testSmartFillRuntimeEvidenceRecordBuilderDerivesFallbackRootCauseWhenManifestReportsNone() throws {
         let raw = makeStartupRuntimeManifestForTesting(overrides: [
             "sceneType": "fallback",
-            "layoutVariant": "单图",
+            "layoutVariant": "single",
             "ratioPreset": "fallback",
             "fallback": "all-layouts-rejected",
             "fallbackCategory": "layout-reject",
@@ -1751,7 +1760,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         let raw = makeStartupRuntimeManifestForTesting(
             overrides: [
                 "sceneType": "single",
-                "layoutVariant": "单图",
+                "layoutVariant": "single",
                 "ratioPreset": "full",
                 "slotCount": "1",
                 "slotFrames": "x0.000y0.000w1.000h1.000",
@@ -2120,6 +2129,7 @@ private extension PlaybackSmartFillVisualUITests {
     enum SmartFillIOSFailure: Error {
         case missingManifest
         case missingCurrentAssetProbe
+        case motionTraceFinishedBeforeInteraction
     }
 
     struct MotionFrameEvidenceRow {
@@ -2246,7 +2256,7 @@ private extension PlaybackSmartFillVisualUITests {
         if abs(configuredInterval - 5.0) > 0.000_1 {
             XCTAssertTrue(
                 smartFillMotionIntervalIsPreseeded(),
-                "\(scenario) non-5-second motion evidence must preseed PlaybackSettings.intervalSeconds so slider coordinate drift does not pollute cadence evidence"
+                "\(scenario) non-5-second motion evidence must preseed PlaybackSettings.intervalSeconds (\(configuredInterval) s) in the app's saved settings and set SMARTFILL_MOTION_INTERVAL_PRESEEDED=1; the flag is trusted, not verified, so confirm the value in Settings before using the cadence evidence"
             )
             return try launchConfiguredAppAtModeSelection(
                 forceAutoplayOff: forceAutoplayOff,
@@ -2606,7 +2616,10 @@ private extension PlaybackSmartFillVisualUITests {
             completed,
             "in-app motion trace must start collecting, status=\(statusProbe.exists ? statusProbe.label : "missing")")
         if statusProbe.exists, statusProbe.label.contains("status=complete") {
-            throw XCTSkip("motion trace finished before the interaction; cannot produce interaction/liveness evidence")
+            XCTFail(
+                "motion trace finished before the interaction; increase the motion trace capture budget or start the interaction sooner"
+            )
+            throw SmartFillIOSFailure.motionTraceFinishedBeforeInteraction
         }
         let statusFields = statusProbe.exists ? parseSemicolonFields(statusProbe.label) : [:]
         let startedAt = Double(statusFields["collectionStartedUptimeSeconds"] ?? "0") ?? 0
@@ -3271,18 +3284,24 @@ private extension PlaybackSmartFillVisualUITests {
         let fileURL = directory.appendingPathComponent(
             sanitizedEvidenceFileName("smartfill-\(scenario)-\(deviceTag())-manifest") + ".txt"
         )
-        try? summary.write(to: fileURL, atomically: true, encoding: .utf8)
+        requireEvidenceWrite {
+            try summary.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
 
         guard !runtimeRecords.isEmpty else { return }
         let jsonlURL = directory.appendingPathComponent(
             sanitizedEvidenceFileName("smartfill-\(scenario)-\(deviceTag())-runtime") + ".jsonl"
         )
-        try? SmartFillRuntimeEvidenceSupport.writeJSONLines(runtimeRecords, to: jsonlURL)
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONLines(runtimeRecords, to: jsonlURL)
+        }
         let summaryURL = directory.appendingPathComponent(
             sanitizedEvidenceFileName("smartfill-\(scenario)-\(deviceTag())-runtime-summary") + ".txt"
         )
-        try? SmartFillRuntimeEvidenceSupport.summaryLines(for: runtimeRecords)
-            .write(to: summaryURL, atomically: true, encoding: .utf8)
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.summaryLines(for: runtimeRecords)
+                .write(to: summaryURL, atomically: true, encoding: .utf8)
+        }
         if let observedLockText = SmartFillRuntimeEvidenceSupport.scenarioManifestObservationLockText(
             records: runtimeRecords,
             scenario: scenario,
@@ -3291,13 +3310,17 @@ private extension PlaybackSmartFillVisualUITests {
             let lockURL = directory.appendingPathComponent(
                 sanitizedEvidenceFileName("smartfill-\(scenario)-\(deviceTag())-scenario-manifest-observed") + ".lock"
             )
-            try? observedLockText.write(to: lockURL, atomically: true, encoding: .utf8)
+            requireEvidenceWrite {
+                try observedLockText.write(to: lockURL, atomically: true, encoding: .utf8)
+            }
         }
         if let harnessSummary {
             let harnessURL = directory.appendingPathComponent(
                 sanitizedEvidenceFileName("smartfill-\(scenario)-\(deviceTag())-harness-summary") + ".json"
             )
-            try? SmartFillRuntimeEvidenceSupport.writeJSONObject(harnessSummary, to: harnessURL)
+            requireEvidenceWrite {
+                try SmartFillRuntimeEvidenceSupport.writeJSONObject(harnessSummary, to: harnessURL)
+            }
         }
     }
 
@@ -3433,12 +3456,16 @@ private extension PlaybackSmartFillVisualUITests {
         guard let directory = motionEvidenceDirectory() else { return }
         let baseName = sanitizedEvidenceFileName("smartfill-\(scenario)-\(deviceTag())-motion-frames")
         let dictionaries = rows.map(motionFrameDictionary)
-        try? SmartFillRuntimeEvidenceSupport.writeJSONLines(
-            dictionaries,
-            to: directory.appendingPathComponent(baseName + ".jsonl")
-        )
-        try? motionFrameCSV(rows)
-            .write(to: directory.appendingPathComponent(baseName + ".csv"), atomically: true, encoding: .utf8)
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONLines(
+                dictionaries,
+                to: directory.appendingPathComponent(baseName + ".jsonl")
+            )
+        }
+        requireEvidenceWrite {
+            try motionFrameCSV(rows)
+                .write(to: directory.appendingPathComponent(baseName + ".csv"), atomically: true, encoding: .utf8)
+        }
     }
 
     func writeProductSceneSequenceEvidence(
@@ -3538,24 +3565,36 @@ private extension PlaybackSmartFillVisualUITests {
             "transitionActiveRowCount": transitionDictionaries.count,
             "rows": transitionDictionaries
         ]
-        try? SmartFillRuntimeEvidenceSupport.writeJSONObject(
-            manifest,
-            to: directory.appendingPathComponent("manifest.json")
-        )
-        try? SmartFillRuntimeEvidenceSupport.writeJSONObject(
-            sceneSequence,
-            to: directory.appendingPathComponent("scene-sequence.json")
-        )
-        try? productSceneSequenceCSV(rows)
-            .write(to: directory.appendingPathComponent("scene-sequence.csv"), atomically: true, encoding: .utf8)
-        try? SmartFillRuntimeEvidenceSupport.writeJSONObject(
-            productTransitionProbes,
-            to: directory.appendingPathComponent("product-transition-probes.json")
-        )
-        try? productSceneSequenceCSV(rows.filter { $0.productTransitionFields["productTransitionActive"] == "true" })
-            .write(
-                to: directory.appendingPathComponent("product-transition-probes.csv"), atomically: true, encoding: .utf8
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONObject(
+                manifest,
+                to: directory.appendingPathComponent("manifest.json")
             )
+        }
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONObject(
+                sceneSequence,
+                to: directory.appendingPathComponent("scene-sequence.json")
+            )
+        }
+        requireEvidenceWrite {
+            try productSceneSequenceCSV(rows)
+                .write(to: directory.appendingPathComponent("scene-sequence.csv"), atomically: true, encoding: .utf8)
+        }
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONObject(
+                productTransitionProbes,
+                to: directory.appendingPathComponent("product-transition-probes.json")
+            )
+        }
+        requireEvidenceWrite {
+            let transitionRows = rows.filter { $0.productTransitionFields["productTransitionActive"] == "true" }
+            try productSceneSequenceCSV(transitionRows)
+                .write(
+                    to: directory.appendingPathComponent("product-transition-probes.csv"), atomically: true,
+                    encoding: .utf8
+                )
+        }
     }
 
     func writeInteractionActionEvidence(_ actions: [[String: Any]], scenario: String) {
@@ -3566,12 +3605,16 @@ private extension PlaybackSmartFillVisualUITests {
             "deviceTag": deviceTag(),
             "actions": actions
         ]
-        try? SmartFillRuntimeEvidenceSupport.writeJSONObject(
-            payload,
-            to: directory.appendingPathComponent("user-actions.json")
-        )
-        try? interactionActionCSV(actions)
-            .write(to: directory.appendingPathComponent("user-actions.csv"), atomically: true, encoding: .utf8)
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONObject(
+                payload,
+                to: directory.appendingPathComponent("user-actions.json")
+            )
+        }
+        requireEvidenceWrite {
+            try interactionActionCSV(actions)
+                .write(to: directory.appendingPathComponent("user-actions.csv"), atomically: true, encoding: .utf8)
+        }
     }
 
     func interactionActionCSV(_ actions: [[String: Any]]) -> String {
@@ -4495,7 +4538,10 @@ private extension PlaybackSmartFillTVOSVisualUITests {
             completed,
             "in-app motion trace must start collecting, status=\(statusProbe.exists ? statusProbe.label : "missing")")
         if statusProbe.exists, statusProbe.label.contains("status=complete") {
-            throw XCTSkip("motion trace finished before the interaction; cannot produce interaction/liveness evidence")
+            XCTFail(
+                "motion trace finished before the interaction; increase the motion trace capture budget or start the interaction sooner"
+            )
+            throw SmartFillTVOSFailure.motionTraceFinishedBeforeInteraction
         }
         let statusFields = statusProbe.exists ? parseSemicolonFields(statusProbe.label) : [:]
         let startedAt = Double(statusFields["collectionStartedUptimeSeconds"] ?? "0") ?? 0
@@ -5254,18 +5300,24 @@ private extension PlaybackSmartFillTVOSVisualUITests {
         let fileURL = directory.appendingPathComponent(
             sanitizedEvidenceFileName("smartfill-\(scenario)-appletv-manifest") + ".txt"
         )
-        try? summary.write(to: fileURL, atomically: true, encoding: .utf8)
+        requireEvidenceWrite {
+            try summary.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
 
         guard !runtimeRecords.isEmpty else { return }
         let jsonlURL = directory.appendingPathComponent(
             sanitizedEvidenceFileName("smartfill-\(scenario)-appletv-runtime") + ".jsonl"
         )
-        try? SmartFillRuntimeEvidenceSupport.writeJSONLines(runtimeRecords, to: jsonlURL)
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONLines(runtimeRecords, to: jsonlURL)
+        }
         let summaryURL = directory.appendingPathComponent(
             sanitizedEvidenceFileName("smartfill-\(scenario)-appletv-runtime-summary") + ".txt"
         )
-        try? SmartFillRuntimeEvidenceSupport.summaryLines(for: runtimeRecords)
-            .write(to: summaryURL, atomically: true, encoding: .utf8)
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.summaryLines(for: runtimeRecords)
+                .write(to: summaryURL, atomically: true, encoding: .utf8)
+        }
         if let observedLockText = SmartFillRuntimeEvidenceSupport.scenarioManifestObservationLockText(
             records: runtimeRecords,
             scenario: scenario,
@@ -5274,13 +5326,17 @@ private extension PlaybackSmartFillTVOSVisualUITests {
             let lockURL = directory.appendingPathComponent(
                 sanitizedEvidenceFileName("smartfill-\(scenario)-appletv-scenario-manifest-observed") + ".lock"
             )
-            try? observedLockText.write(to: lockURL, atomically: true, encoding: .utf8)
+            requireEvidenceWrite {
+                try observedLockText.write(to: lockURL, atomically: true, encoding: .utf8)
+            }
         }
         if let harnessSummary {
             let harnessURL = directory.appendingPathComponent(
                 sanitizedEvidenceFileName("smartfill-\(scenario)-appletv-harness-summary") + ".json"
             )
-            try? SmartFillRuntimeEvidenceSupport.writeJSONObject(harnessSummary, to: harnessURL)
+            requireEvidenceWrite {
+                try SmartFillRuntimeEvidenceSupport.writeJSONObject(harnessSummary, to: harnessURL)
+            }
         }
     }
 
@@ -5289,12 +5345,16 @@ private extension PlaybackSmartFillTVOSVisualUITests {
         guard let directory = motionEvidenceDirectory() else { return }
         let baseName = sanitizedEvidenceFileName("smartfill-\(scenario)-appletv-motion-frames")
         let dictionaries = rows.map(motionFrameDictionary)
-        try? SmartFillRuntimeEvidenceSupport.writeJSONLines(
-            dictionaries,
-            to: directory.appendingPathComponent(baseName + ".jsonl")
-        )
-        try? motionFrameCSV(rows)
-            .write(to: directory.appendingPathComponent(baseName + ".csv"), atomically: true, encoding: .utf8)
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONLines(
+                dictionaries,
+                to: directory.appendingPathComponent(baseName + ".jsonl")
+            )
+        }
+        requireEvidenceWrite {
+            try motionFrameCSV(rows)
+                .write(to: directory.appendingPathComponent(baseName + ".csv"), atomically: true, encoding: .utf8)
+        }
     }
 
     func writeProductSceneSequenceEvidence(
@@ -5389,24 +5449,36 @@ private extension PlaybackSmartFillTVOSVisualUITests {
             "transitionActiveRowCount": transitionDictionaries.count,
             "rows": transitionDictionaries
         ]
-        try? SmartFillRuntimeEvidenceSupport.writeJSONObject(
-            manifest,
-            to: directory.appendingPathComponent("manifest.json")
-        )
-        try? SmartFillRuntimeEvidenceSupport.writeJSONObject(
-            sceneSequence,
-            to: directory.appendingPathComponent("scene-sequence.json")
-        )
-        try? productSceneSequenceCSV(rows)
-            .write(to: directory.appendingPathComponent("scene-sequence.csv"), atomically: true, encoding: .utf8)
-        try? SmartFillRuntimeEvidenceSupport.writeJSONObject(
-            productTransitionProbes,
-            to: directory.appendingPathComponent("product-transition-probes.json")
-        )
-        try? productSceneSequenceCSV(rows.filter { $0.productTransitionFields["productTransitionActive"] == "true" })
-            .write(
-                to: directory.appendingPathComponent("product-transition-probes.csv"), atomically: true, encoding: .utf8
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONObject(
+                manifest,
+                to: directory.appendingPathComponent("manifest.json")
             )
+        }
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONObject(
+                sceneSequence,
+                to: directory.appendingPathComponent("scene-sequence.json")
+            )
+        }
+        requireEvidenceWrite {
+            try productSceneSequenceCSV(rows)
+                .write(to: directory.appendingPathComponent("scene-sequence.csv"), atomically: true, encoding: .utf8)
+        }
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONObject(
+                productTransitionProbes,
+                to: directory.appendingPathComponent("product-transition-probes.json")
+            )
+        }
+        requireEvidenceWrite {
+            let transitionRows = rows.filter { $0.productTransitionFields["productTransitionActive"] == "true" }
+            try productSceneSequenceCSV(transitionRows)
+                .write(
+                    to: directory.appendingPathComponent("product-transition-probes.csv"), atomically: true,
+                    encoding: .utf8
+                )
+        }
     }
 
     func writeInteractionActionEvidence(_ actions: [[String: Any]], scenario: String) {
@@ -5417,12 +5489,16 @@ private extension PlaybackSmartFillTVOSVisualUITests {
             "deviceTag": "appletv",
             "actions": actions
         ]
-        try? SmartFillRuntimeEvidenceSupport.writeJSONObject(
-            payload,
-            to: directory.appendingPathComponent("user-actions.json")
-        )
-        try? interactionActionCSV(actions)
-            .write(to: directory.appendingPathComponent("user-actions.csv"), atomically: true, encoding: .utf8)
+        requireEvidenceWrite {
+            try SmartFillRuntimeEvidenceSupport.writeJSONObject(
+                payload,
+                to: directory.appendingPathComponent("user-actions.json")
+            )
+        }
+        requireEvidenceWrite {
+            try interactionActionCSV(actions)
+                .write(to: directory.appendingPathComponent("user-actions.csv"), atomically: true, encoding: .utf8)
+        }
     }
 
     func productSceneSequenceDictionary(_ row: ProductSceneSequenceRow) -> [String: Any] {
@@ -5648,6 +5724,7 @@ private extension PlaybackSmartFillTVOSVisualUITests {
 
     enum SmartFillTVOSFailure: Error {
         case missingManifest
+        case motionTraceFinishedBeforeInteraction
     }
 }
 

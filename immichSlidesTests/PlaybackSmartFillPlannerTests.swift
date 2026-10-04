@@ -82,6 +82,18 @@ struct PlaybackSmartFillPlannerTests {
         #expect(iPadPortrait.layoutAllowlist.contains(.topPrimaryBottomPair))
 
         let iPadLandscape = PlaybackSmartFillLayoutPolicy.policy(for: iPadLandscapeSurface)
+        #expect(iPadLandscape.sceneSearchOrder == [.single, .double, .triple, .fallback])
+        #expect(
+            iPadLandscape.layoutAllowlist == [
+                .horizontalEqual,
+                .leftPrimaryRightSecondary,
+                .rightPrimaryLeftSecondary,
+                .leftPrimaryRightStack,
+                .rightPrimaryLeftStack,
+                .topPrimaryBottomPair,
+                .bottomPrimaryTopPair,
+                .balancedGrid
+            ])
         #expect(iPadLandscape.cropRetentionThreshold == 0.60)
         #expect(iPadLandscape.ratioPresets(for: .leftPrimaryRightSecondary).map(\.id).contains("80/20"))
         #expect(iPadLandscape.ratioPresets(for: .rightPrimaryLeftSecondary).map(\.id).contains("80/20"))
@@ -1584,18 +1596,23 @@ struct PlaybackSmartFillPlannerTests {
                 candidate(reference: "candidate-\($0)", width: 1800, height: 2000)
             }
         let start = ContinuousClock.now
+        var maxEvaluationCount = 0
 
         for ordinal in 0..<250 {
-            _ = plan(
+            let result = plan(
                 surface: iPadLandscapeSurface,
                 candidates: candidates,
                 seed: "perf",
                 sceneOrdinal: ordinal
             )
+            maxEvaluationCount = max(maxEvaluationCount, result.evaluationCount)
         }
 
-        let elapsed = start.duration(to: .now)
-        #expect(elapsed < .milliseconds(900))
+        #expect(maxEvaluationCount <= 4000)
+        // Wall-clock budgets depend on the machine, so only Evidence runs judge them.
+        if isEvidenceRun {
+            #expect(start.duration(to: .now) < .milliseconds(900))
+        }
     }
 
     private func plan(

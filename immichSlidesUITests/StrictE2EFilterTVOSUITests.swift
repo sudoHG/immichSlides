@@ -575,7 +575,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try writeScreenshotPNG(app: app, name: "display-before", attachmentName: "display-before")
 
         try openPlaybackSettingsFromSlideshow(app: app)
-        try selectTVOSSinglePhotoDisplayMode(app: app)
+        try selectVerifiedDisplayMode(app: app, mode: "singlePhoto")
         try writeScreenshotPNG(app: app, name: "display-settings", attachmentName: "display-settings")
         try StrictE2EVisualEvidence.writeRequiredJSON(
             ["identity_source": "public_fixture_photo_mark"],
@@ -1424,20 +1424,6 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         if !value.contains("已选中") {
             XCUIRemote.shared.press(.select)
         }
-        XCUIRemote.shared.press(.menu)
-    }
-
-    // On tvOS, Display Mode is a separate subpage, not the iOS segmented control.
-    @MainActor
-    private func selectTVOSSinglePhotoDisplayMode(app: XCUIApplication) throws {
-        let link = app.buttons["settings.playback.displayMode.link"]
-        XCTAssertTrue(link.waitForExistence(timeout: 8), "Playback settings must offer Display Mode.")
-        moveFocusTo(link, directions: [.down, .up], message: "Focus must be able to move to Display Mode.")
-        XCUIRemote.shared.press(.select)
-        let single = app.buttons["settings.playback.displayMode.singlePhoto.button"]
-        XCTAssertTrue(single.waitForExistence(timeout: 8), "Display Mode must offer Single Photo Mode.")
-        moveFocus(.down, to: single, maximumPresses: 6, message: "Single Photo Mode must be focusable.")
-        XCUIRemote.shared.press(.select)
         XCUIRemote.shared.press(.menu)
     }
 

@@ -728,7 +728,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
             + requests.joined()
             + screenshotNames.joined()
             + screenshotOrder.joined()
-            + String(describing: payload.keys.sorted())
+            + AccessLifecycleContract.serializedText(of: payload)
         try AccessLifecycleContract.assertPinAbsent(
             in: evidenceText,
             pinValues: [pins.correct, pins.wrong]
@@ -1564,7 +1564,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
                 "restart_gated": true,
                 "storage_kind": "uitest_userdefaults"
             ],
-            "xctest_config_present": true,
+            "xctest_config_present": ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil,
             "system_pause_analog": "tvos_home_scene_phase",
             "system_pause_activation": systemPauseActivation,
             "process_rebuilt": didRebuildProcess,
