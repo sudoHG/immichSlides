@@ -26,6 +26,7 @@ struct PlaybackRuntimeEvidenceManifestValidationIssue: Equatable {
         case forbiddenFallbackRootCauseBucket
         case forbiddenSensitiveValue
         case sampleManifestMismatch
+        case unsupportedSchemaVersion
     }
 
     let code: Code
@@ -104,6 +105,7 @@ enum PlaybackRuntimeEvidenceManifestValidator {
         "captureTimestamp",
         "screenshotPath"
     ]
+    private static let baseSchemaVersion = "runtime-evidence-v1"
     private static let startupFallbackSchemaVersion = "startup-fallback-v1"
     private static let decisionLayerSchemaVersion = "decision-layer-v1"
     private static let startupFallbackRequiredFields: [String] = [
@@ -293,6 +295,15 @@ enum PlaybackRuntimeEvidenceManifestValidator {
             requiredFieldsForSchema = requiredFields + startupFallbackRequiredFields
         } else {
             requiredFieldsForSchema = requiredFields
+        }
+
+        if let schemaVersion,
+            ![baseSchemaVersion, startupFallbackSchemaVersion, decisionLayerSchemaVersion].contains(schemaVersion)
+        {
+            issues.append(
+                issue(
+                    .unsupportedSchemaVersion, field: "schemaVersion",
+                    message: "schema version \(schemaVersion) is not supported, so its strict checks cannot run"))
         }
 
         for field in requiredFieldsForSchema {
