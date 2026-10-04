@@ -16,6 +16,40 @@ import Testing
 struct FaceBoxGeometryTests {
 
     @Test
+    func `every EXIF orientation code uses its axis category`() {
+        for code in 1...8 {
+            let expected: FaceBoxGeometry.OrientationCategory = code <= 4 ? .uprightOr180 : .rotated90Or270
+            #expect(FaceBoxGeometry.orientationCategory(String(code)) == expected)
+        }
+    }
+
+    @Test
+    func `supported EXIF descriptions use their axis category`() {
+        for description in [
+            "Horizontal", "Horizontal (normal)", "Normal", "Mirror horizontal", "Rotate 180", "Mirror vertical"
+        ] {
+            #expect(FaceBoxGeometry.orientationCategory(description) == .uprightOr180)
+        }
+        for description in [
+            "Mirror horizontal and rotate 270 CW", "Rotate 90 CW", "Mirror horizontal and rotate 90 CW", "Rotate 270 CW"
+        ] {
+            #expect(FaceBoxGeometry.orientationCategory(description) == .rotated90Or270)
+        }
+        #expect(FaceBoxGeometry.orientationCategory(" \nRoTaTe 90 cW\t") == .rotated90Or270)
+        #expect(FaceBoxGeometry.orientationCategory(" 3\n") == .uprightOr180)
+    }
+
+    @Test
+    func `malformed and unsupported orientations remain unknown`() {
+        for orientation: String? in [
+            nil, "", " \n", "0", "9", "10", "90", "270", "180", "unknown0", "abnormal", "not horizontal",
+            "Rotate 900 CW", "Rotate 90 CW extra", "1.0", "01", "-1"
+        ] {
+            #expect(FaceBoxGeometry.orientationCategory(orientation) == .unknown)
+        }
+    }
+
+    @Test
     func `ordinary pixel box maps to a normalized rect using the face image size`() throws {
         let asset = makeAsset(width: 4000, height: 3000, exifWidth: 4000, exifHeight: 3000, orientation: "1")
         let face = makeFace(x1: 100, x2: 500, y1: 300, y2: 900, imageWidth: 4000, imageHeight: 3000)

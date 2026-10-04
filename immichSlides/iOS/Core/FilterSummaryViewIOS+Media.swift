@@ -21,16 +21,14 @@ struct IOSSelectionStageMosaic: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let displayURLs = repeated(urls: urls, minimumCount: 7)
-
             ZStack {
                 RoundedRectangle(cornerRadius: 0, style: .continuous)
                     .fill(Color.black.opacity(style == .people ? 0.12 : 0.08))
 
                 if style == .album {
-                    albumLayout(size: geometry.size, urls: displayURLs)
+                    albumLayout(size: geometry.size, urls: urls)
                 } else {
-                    peopleLayout(size: geometry.size, urls: displayURLs)
+                    peopleLayout(size: geometry.size, urls: urls)
                 }
             }
             .clipped()

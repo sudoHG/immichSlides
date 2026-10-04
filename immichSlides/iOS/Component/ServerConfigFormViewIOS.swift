@@ -210,12 +210,10 @@ struct ServerConfigFormViewIOS: View {
         Button {
             onSave()
         } label: {
-            HStack(spacing: 8) {
-                Text("Save Settings")
-            }
-            .font(.system(size: isCompactHeight ? 15 : 17, weight: .semibold))
-            .frame(maxWidth: .infinity, minHeight: onboardingMetrics.primaryButtonMinHeight)
-            .foregroundStyle(saveButtonLabelColor)
+            Text("Save Settings")
+                .font(.system(size: isCompactHeight ? 15 : 17, weight: .semibold))
+                .frame(maxWidth: .infinity, minHeight: onboardingMetrics.primaryButtonMinHeight)
+                .foregroundStyle(saveButtonLabelColor)
         }
         .disabled(!canSaveConfig)
         .opacity(!canSaveConfig ? 0.72 : 1.0)
