@@ -68,11 +68,15 @@ struct PlaybackRuntimeEvidenceManifestTests {
         var unknownValue = validRecord()
         unknownValue["photoCanvasId"] = "unknown"
 
+        var retiredSchemaVersion = validRecord()
+        retiredSchemaVersion["schemaVersion"] = "pr46-startup-fallback-v1"
+
         let report = PlaybackRuntimeEvidenceManifestValidator.validateJSONLines(
             [
                 try jsonLine(missing),
                 try jsonLine(nullValue),
-                try jsonLine(unknownValue)
+                try jsonLine(unknownValue),
+                try jsonLine(retiredSchemaVersion)
             ],
             screenshotExists: { _ in true }
         )
@@ -80,6 +84,7 @@ struct PlaybackRuntimeEvidenceManifestTests {
         #expect(hasIssue(report.issues, code: .missingRequiredField, field: "sceneIdHash"))
         #expect(hasIssue(report.issues, code: .nullRequiredField, field: "surfaceKey"))
         #expect(hasIssue(report.issues, code: .unknownRequiredField, field: "photoCanvasId"))
+        #expect(hasIssue(report.issues, code: .unsupportedSchemaVersion, field: "schemaVersion"))
     }
 
     @Test
@@ -905,7 +910,7 @@ struct PlaybackRuntimeEvidenceManifestTests {
         #expect(report.issues.isEmpty)
         #expect(report.startupTimingSummary?.count == lines.count)
         #expect(phaseCompleteness == "complete")
-        let acceptedSchemas = Set(["pr46-startup-fallback-v1", "pr49-decision-layer-v1"])
+        let acceptedSchemas = Set(["startup-fallback-v1", "decision-layer-v1"])
         #expect(
             records.allSatisfy { record in
                 guard let schemaVersion = record["schemaVersion"] as? String else { return false }
@@ -1026,7 +1031,7 @@ struct PlaybackRuntimeEvidenceManifestTests {
             screenshotPath: screenshotPath,
             actionToSceneMs: firstSceneRuntimeMs
         )
-        record["schemaVersion"] = "pr46-startup-fallback-v1"
+        record["schemaVersion"] = "startup-fallback-v1"
         record["startupRunId"] = "startup-run-hash"
         record["startupSequence"] = sequence
         record["startupClockSource"] = "app-runtime"
@@ -1108,7 +1113,7 @@ struct PlaybackRuntimeEvidenceManifestTests {
             firstSlotReadyRuntimeMs: firstSlotReadyRuntimeMs,
             allVisibleSlotsReadyRuntimeMs: allVisibleSlotsReadyRuntimeMs
         )
-        record["schemaVersion"] = "pr49-decision-layer-v1"
+        record["schemaVersion"] = "decision-layer-v1"
         record["currentAssetRef"] = "asset-hash-a"
         record["currentAssetDisposition"] = "primary-slot"
         record["currentAssetAbsentReason"] = "none"

@@ -254,7 +254,7 @@ struct DebugOverlayView: View {
         previewState: String
     ) -> String {
         LocalizedText.format(
-            "RawNext %lld %@  前景：%@  预览：%@",
+            "RawNext %lld %@  Full: %@  Preview: %@",
             Int64(nextIndex),
             id,
             fullState,
@@ -325,22 +325,22 @@ struct DebugOverlayView: View {
 
     private func formatBytes(_ bytes: UInt) -> String {
         if bytes < 1024 { return "\(bytes)B" }
-        let kb = Double(bytes) / 1024.0
-        if kb < 1024 { return String(format: "%.1fKB", kb) }
-        let mb = kb / 1024.0
-        if mb < 1024 { return String(format: "%.1fMB", mb) }
-        let gb = mb / 1024.0
-        return String(format: "%.2fGB", gb)
+        let kib = Double(bytes) / 1024.0
+        if kib < 1024 { return String(format: "%.1fKiB", kib) }
+        let mib = kib / 1024.0
+        if mib < 1024 { return String(format: "%.1fMiB", mib) }
+        let gib = mib / 1024.0
+        return String(format: "%.2fGiB", gib)
     }
 
     // Estimate the rate from disk bytes / duration; a cache hit is not reported as a download speed.
     private func downloadSpeedText(bytes: UInt, duration: TimeInterval?, cacheHit: Bool) -> String {
         if cacheHit { return String(localized: "Cache hit") }
         guard let duration, duration > 0 else { return "-" }
-        let mb = Double(bytes) / 1024.0 / 1024.0
-        let speed = mb / duration
-        if mb == 0 { return String(format: "%.2fs", duration) }
-        return String(format: "%.2fMB/s", speed)
+        let mib = Double(bytes) / 1024.0 / 1024.0
+        let speed = mib / duration
+        if mib == 0 { return String(format: "%.2fs", duration) }
+        return String(format: "%.2fMiB/s", speed)
     }
 }
 

@@ -46,7 +46,7 @@ struct FirstBootViewIOS: View {
 
         return String(
             localized:
-                "If this is a home or office Immich server, your iPhone may ask for Local Network access the first time you connect. Tap Allow."
+                "If this is a home or office Immich server, your device may ask for Local Network access the first time you connect. Tap Allow."
         )
     }
 
@@ -81,7 +81,7 @@ struct FirstBootViewIOS: View {
             )
 
             if let localNetworkPermissionHint {
-                Text(LocalizedStringKey(localNetworkPermissionHint))
+                Text(verbatim: localNetworkPermissionHint)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)

@@ -60,6 +60,10 @@ struct ImmichServer {
         let id: String
     }
 
+    // Image probes only need the status and headers; JSON probes need one small asset record.
+    private static let maxImageProbeBodyBytes = 1024
+    private static let maxJSONProbeBodyBytes = 4 * 1024 * 1024
+
     private enum ConnectionProbeResponse {
         case success(data: Data, response: HTTPURLResponse)
         case failure(ConnectionTestResult)
@@ -344,7 +348,8 @@ struct ImmichServer {
                 randomAssetRequest,
                 session: activeSession,
                 serverURL: serverURL,
-                forbiddenMessage: missingAssetReadPermissionMessage()
+                forbiddenMessage: missingAssetReadPermissionMessage(),
+                maxBodyBytes: maxJSONProbeBodyBytes
             )
 
             let randomAssetData: Data
@@ -388,7 +393,8 @@ struct ImmichServer {
                 previewRequest,
                 session: activeSession,
                 serverURL: serverURL,
-                forbiddenMessage: missingAssetViewPermissionMessage()
+                forbiddenMessage: missingAssetViewPermissionMessage(),
+                maxBodyBytes: maxImageProbeBodyBytes
             )
             switch previewProbe {
             case .success(_, let response):
@@ -421,7 +427,8 @@ struct ImmichServer {
                 fullsizeRequest,
                 session: activeSession,
                 serverURL: serverURL,
-                forbiddenMessage: missingAssetDownloadPermissionMessage()
+                forbiddenMessage: missingAssetDownloadPermissionMessage(),
+                maxBodyBytes: maxImageProbeBodyBytes
             )
             switch fullsizeProbe {
             case .success(_, let response):
@@ -514,21 +521,42 @@ struct ImmichServer {
         request.httpMethod = "GET"
         ImmichHTTPHeaders.applyAPIKey(apiKey, to: &request)
         request.setValue("image/*,*/*", forHTTPHeaderField: "Accept")
-        // Range asks for the first 1 KB; a server may ignore it and return a full 200, which the probe still consumes.
+        // Range only asks for the first 1 KB; a server may ignore it and return a full 200, so the probe also stops
+        // reading after maxImageProbeBodyBytes.
 
         request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
         request.timeoutInterval = 10
         return request
     }
 
+    // Reads at most maxBodyBytes of the response and then cancels the transfer, so a server that ignores Range cannot
+    // make the probe download a full image.
+    private static func readProbeResponse(
+        _ request: URLRequest,
+        session: URLSession,
+        maxBodyBytes: Int
+    ) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await session.bytes(for: request)
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count >= maxBodyBytes {
+                bytes.task.cancel()
+                break
+            }
+        }
+        return (data, response)
+    }
+
     private static func sendConnectionProbeRequest(
         _ request: URLRequest,
         session: URLSession,
         serverURL: String,
-        forbiddenMessage: String
+        forbiddenMessage: String,
+        maxBodyBytes: Int
     ) async -> ConnectionProbeResponse {
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await readProbeResponse(request, session: session, maxBodyBytes: maxBodyBytes)
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .failure(
                     ConnectionTestResult(

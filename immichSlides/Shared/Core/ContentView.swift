@@ -298,10 +298,10 @@ struct ContentView: View {
         hasInitializedFlow = true
         bootstrapDebugServerIfNeeded()
         reloadServer()
-        if ProcessInfo.processInfo.environment["UI_TEST_FORCE_MODE_SELECTION"] == "1",
+        if PlatformCompat.shouldForceModeSelectionForUITesting,
             server?.isConfigured == true
         {
-            // A configured cold launch goes straight to playback; only UI_TEST_FORCE_MODE_SELECTION turns it into an
+            // A configured cold launch goes straight to playback; only the UI-test override turns it into an
             // onboarding session.
 
             flow.startOnboardingSession()

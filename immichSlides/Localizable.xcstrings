@@ -5528,40 +5528,6 @@
         }
       }
     },
-    "Failed to fetch person thumbnail, id:" : {
-      "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se pudo obtener la miniatura de la persona, ID:"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物のサムネイルを取得できませんでした。ID:"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物缩略图获取失败，id:"
-          }
-        },
-        "zh-Hant-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物縮圖獲取失敗，id:"
-          }
-        },
-        "zh-Hant-TW" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物縮圖獲取失敗，id:"
-          }
-        }
-      }
-    },
     "Failed to Load" : {
       "localizations" : {
         "es" : {
@@ -6482,36 +6448,36 @@
         }
       }
     },
-    "If this is a home or office Immich server, your iPhone may ask for Local Network access the first time you connect. Tap Allow." : {
+    "If this is a home or office Immich server, your device may ask for Local Network access the first time you connect. Tap Allow." : {
       "localizations" : {
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Si es un servidor Immich de casa u oficina, tu iPhone puede pedir acceso a la red local la primera vez que se conecte. Toca Permitir."
+            "value" : "Si es un servidor Immich de casa u oficina, tu dispositivo puede pedir acceso a la red local la primera vez que se conecte. Toca Permitir."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自宅やオフィスの Immich サーバーに接続する場合、初回接続時に iPhone がローカルネットワークへのアクセスを求めることがあります。「許可」をタップしてください。"
+            "value" : "自宅やオフィスの Immich サーバーに接続する場合、初回接続時にお使いのデバイスがローカルネットワークへのアクセスを求めることがあります。「許可」をタップしてください。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "如果这是家里或办公室里的 Immich 服务器，iPhone 首次连接时可能会请求“本地网络”权限，请点允许。"
+            "value" : "如果这是家里或办公室里的 Immich 服务器，设备首次连接时可能会请求“本地网络”权限，请点允许。"
           }
         },
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "如果這是家裡或辦公室裡的 Immich 伺服器，iPhone 首次連接時可能會要求「本地網絡」權限，請點選「允許」。"
+            "value" : "如果這是家裡或辦公室裡的 Immich 伺服器，裝置首次連接時可能會要求「本地網絡」權限，請點選「允許」。"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "如果這是家裡或辦公室裡的 Immich 伺服器，iPhone 首次連接時可能會要求「本地網路」權限，請點選「允許」。"
+            "value" : "如果這是家裡或辦公室裡的 Immich 伺服器，裝置首次連接時可能會要求「本地網路」權限，請點選「允許」。"
           }
         }
       }
@@ -9334,6 +9300,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "隨機播放"
+          }
+        }
+      }
+    },
+    "RawNext %lld %@  Full: %@  Preview: %@" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "RawNext %lld %@  Completo: %@  Vista previa: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "RawNext %lld %@  フル: %@  プレビュー: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "RawNext %lld %@  全尺寸：%@  预览：%@"
+          }
+        },
+        "zh-Hant-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "RawNext %lld %@  全尺寸：%@  預覽：%@"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "RawNext %lld %@  全尺寸：%@  預覽：%@"
           }
         }
       }

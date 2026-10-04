@@ -31,7 +31,7 @@ private enum SmartFillRuntimeEvidenceSupport {
         let failureMessage: String?
     }
 
-    static let schemaVersion = "pr49-decision-layer-v1"
+    static let schemaVersion = "decision-layer-v1"
     static let requiredRuntimePhaseKeys = [
         "playbackEntryRequested",
         "assetPoolRequestStarted",
@@ -524,7 +524,7 @@ private enum SmartFillRuntimeEvidenceSupport {
         let baseHead = stringValue("baseHead", in: orderedRecords.first ?? [:]) ?? "missing"
 
         return [
-            "manifestVersion=pr49-scenario-manifest-v2",
+            "manifestVersion=scenario-manifest-v2",
             "lockStatus=RUNTIME_OBSERVED_CURRENT_ASSET_REFS_LOCK",
             "schemaVersion=\(schemaVersion)",
             "scenario=\(scenario)",
@@ -1613,7 +1613,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         for field in SmartFillRuntimeEvidenceSupport.requiredJSONFields {
             XCTAssertNotNil(record[field], "runtime JSONL should include \(field)")
         }
-        XCTAssertEqual(record["schemaVersion"] as? String, "pr49-decision-layer-v1")
+        XCTAssertEqual(record["schemaVersion"] as? String, "decision-layer-v1")
         XCTAssertEqual(record["sceneIdHash"] as? String, sceneIdHash)
         XCTAssertEqual(record["screenshotPath"] as? String, screenshotPath)
         XCTAssertEqual(record["slotReadiness"] as? [String], ["ready", "pending"])

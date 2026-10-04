@@ -43,6 +43,15 @@ enum PlatformCompat {
         #endif
     }
 
+    /// UI tests set UI_TEST_FORCE_MODE_SELECTION to turn a configured cold launch into an onboarding session; always false in Release.
+    static var shouldForceModeSelectionForUITesting: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["UI_TEST_FORCE_MODE_SELECTION"] == "1"
+        #else
+        return false
+        #endif
+    }
+
     /// An empty Info.plist string counts as not configured.
     static func infoPlistString(_ key: String) -> String? {
         guard let raw = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
