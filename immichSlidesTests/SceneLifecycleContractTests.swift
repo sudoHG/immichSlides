@@ -36,14 +36,12 @@ struct SceneLifecycleContractTests {
         let stableEnd = profile.singlePhotoTransform(
             direction: .zoomOut,
             activeTime: frozenStableEndTime,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let longestEnd = profile.singlePhotoTransform(
             direction: .zoomOut,
             activeTime: lifecycle.longestVisibleMotionDuration,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
 
         #expect(stableEnd.scale >= 1.02)
@@ -59,8 +57,7 @@ struct SceneLifecycleContractTests {
         let fullTimelineEnd = profile.singlePhotoTransform(
             direction: .zoomOut,
             activeTime: 8,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
 
         #expect(fullTimelineEnd.scale == 1.00)
@@ -74,14 +71,12 @@ struct SceneLifecycleContractTests {
         let frozenStableEnd = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: SceneLifecycleContract.incomingFadeDuration + lifecycle.frozenInterval,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let fullTimelineEnd = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: lifecycle.longestVisibleMotionDuration,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
 
         #expect(abs(frozenStableEnd.scale - 1.075) < 0.0001)
@@ -94,14 +89,12 @@ struct SceneLifecycleContractTests {
         let active = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: 2,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let frozenForReduceMotion = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: 2,
-            isMotionEnabled: true,
-            reduceMotionEnabled: true
+            isMotionEnabled: true
         )
 
         #expect(!active.isIdentity)

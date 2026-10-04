@@ -377,9 +377,6 @@ struct PhotoSlot: Identifiable {
 
 enum PlaybackSceneFallbackReason: String, Equatable {
     case none
-    case currentPhotoRetrying
-    case nextPhotoRetrying
-    case switchedAfterMaxRetry
     case emptyPool
 }
 

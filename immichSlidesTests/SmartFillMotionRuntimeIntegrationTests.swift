@@ -249,8 +249,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
         let singlePhotoZoomOut = SceneAnimationProfile(lifecycle: incomingTarget.lifecycle).singlePhotoTransform(
             direction: .zoomOut,
             activeTime: firstVisibleIncoming.motionActiveTime,
-            isMotionEnabled: firstVisibleIncoming.isMotionEnabled,
-            reduceMotionEnabled: true
+            isMotionEnabled: firstVisibleIncoming.isMotionEnabled
         )
 
         #expect(smartFillFrame.transform.isIdentity)
@@ -329,8 +328,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
         let singlePhotoZoomOut = SceneAnimationProfile(lifecycle: automaticIncoming.lifecycle).singlePhotoTransform(
             direction: .zoomOut,
             activeTime: firstVisibleIncoming.motionActiveTime,
-            isMotionEnabled: firstVisibleIncoming.isMotionEnabled,
-            reduceMotionEnabled: true
+            isMotionEnabled: firstVisibleIncoming.isMotionEnabled
         )
 
         #expect(smartFillFrame.transform.isIdentity)

@@ -226,19 +226,6 @@ struct MotionRenderProgressFrame: Equatable, Sendable {
         self.source = source
     }
 
-    #if DEBUG
-    // Only for coverage-proof tests to inject raw progress.
-    nonisolated init(
-        coverageProofIdentity identity: MotionFrameIdentity,
-        rawProgressForCoverageProof progress: Double,
-        source: MotionProgressSource
-    ) {
-        self.identity = identity
-        self.rawProgress = progress
-        self.source = source
-    }
-    #endif
-
     nonisolated static func fromSceneActiveTime(
         identity: MotionFrameIdentity,
         rawProgress: Double

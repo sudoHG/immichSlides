@@ -45,8 +45,7 @@ struct SlideItemView: View {
                 SceneAnimationProfile(lifecycle: context.lifecycle).singlePhotoTransform(
                     direction: Self.animationDirection(sceneId: sceneId, assetId: asset.id),
                     activeTime: context.motionActiveTime,
-                    isMotionEnabled: context.isMotionEnabled,
-                    reduceMotionEnabled: accessibilityReduceMotion || context.reduceMotionEnabled
+                    isMotionEnabled: context.isMotionEnabled
                 )
             } ?? .identity
 

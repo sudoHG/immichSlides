@@ -40,14 +40,12 @@ struct SceneAnimationProfile: Equatable, Sendable {
     nonisolated func singlePhotoTransform(
         direction: SceneAnimationDirection,
         activeTime: TimeInterval,
-        isMotionEnabled: Bool,
-        reduceMotionEnabled: Bool
+        isMotionEnabled: Bool
     ) -> MotionTransform {
         SinglePhotoGeometryPolicy(tunables: singlePhotoTunables).transform(
             direction: direction,
             rawProgress: rawProgress(for: activeTime, direction: direction),
-            isMotionEnabled: isMotionEnabled,
-            reduceMotionEnabled: reduceMotionEnabled
+            isMotionEnabled: isMotionEnabled
         )
     }
 
@@ -65,8 +63,7 @@ struct SinglePhotoGeometryPolicy: Equatable, Sendable {
     nonisolated func transform(
         direction: SceneAnimationDirection,
         rawProgress: Double,
-        isMotionEnabled: Bool,
-        reduceMotionEnabled: Bool
+        isMotionEnabled: Bool
     ) -> MotionTransform {
         // A layer that has started freezes active-time and keeps its last sample; only motion disabled from the
         // start returns identity.

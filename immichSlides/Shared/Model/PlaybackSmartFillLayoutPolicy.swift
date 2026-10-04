@@ -326,19 +326,6 @@ struct PlaybackSmartFillPhotoCanvasDescriptor: Equatable, Sendable {
             )
     }
 
-    nonisolated init(pixelSize: PlaybackPlanningPixelSize) {
-        self.profile = .iPad
-        self.orientation = pixelSize.width >= pixelSize.height ? .landscape : .portrait
-        self.surfaceFingerprint = "pixel-only:\(pixelSize.width)x\(pixelSize.height)"
-        self.pointSize = PlaybackSmartFillPointSize(width: Double(pixelSize.width), height: Double(pixelSize.height))
-        self.pixelSize = pixelSize
-        self.safeAreaClass = "unknown"
-        self.hardSystemObstructionClass = "none"
-        self.renderScale = 1
-        self.unitCanvas = .fullUnitRect
-        self.canvasId = "pixel-only:\(pixelSize.width)x\(pixelSize.height)"
-    }
-
     private nonisolated static func normalizedRenderScale(_ value: Double) -> Double {
         guard value.isFinite, value > 0 else { return 1 }
         return value
@@ -459,24 +446,6 @@ struct PlaybackSmartFillLayoutGeometrySummary: Equatable, Sendable {
     let outOfBoundsUnitArea: Double
     let outOfBoundsPixelCount: Int
     let maxContinuousEmptyAxisRatio: Double
-
-    var debugSummary: String {
-        [
-            "fullCanvas=\(isFullCanvas)",
-            "coverage=\(format(coverageRatio))",
-            "empty=\(format(emptyCanvasRatio))",
-            "gapPixels=\(gapPixelCount)",
-            "overlapUnit=\(format(overlapUnitArea))",
-            "overlapPixels=\(overlapPixelCount)",
-            "outOfBoundsUnit=\(format(outOfBoundsUnitArea))",
-            "outOfBoundsPixels=\(outOfBoundsPixelCount)",
-            "maxEmptyAxis=\(format(maxContinuousEmptyAxisRatio))"
-        ].joined(separator: ",")
-    }
-
-    private func format(_ value: Double) -> String {
-        String(format: "%.10f", value)
-    }
 }
 
 enum PlaybackSmartFillLayoutGeometryInvariant {

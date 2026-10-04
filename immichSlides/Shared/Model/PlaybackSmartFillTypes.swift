@@ -188,18 +188,6 @@ struct SmartFillPlanningRawAssetSnapshot: Equatable, Sendable {
             subjectRects: subjectRects
         )
     }
-
-    nonisolated var candidateSummary: PlaybackSmartFillCandidateSummary? {
-        guard let reference, let sourceImageSummary, let faceRects, let subjectRects else {
-            return nil
-        }
-        return PlaybackSmartFillCandidateSummary(
-            reference: reference,
-            sourceImage: sourceImageSummary,
-            faceRects: faceRects,
-            subjectRects: subjectRects
-        )
-    }
 }
 
 struct SmartFillPreparedPlanRequest: Equatable, Sendable {
@@ -615,7 +603,6 @@ struct PlaybackSmartFillAspectRatioRange: Equatable, Sendable {
 }
 
 enum PlaybackSmartFillProtectionStatus: String, Equatable, Sendable {
-    case notApplied = "not-applied"
     case accepted
     case rejected
 }

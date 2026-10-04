@@ -126,14 +126,12 @@ struct CodeAuditRegressionTests {
         let active = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: 2.5,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let reduced = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: 2.5,
-            isMotionEnabled: false,
-            reduceMotionEnabled: true
+            isMotionEnabled: false
         )
 
         #expect(!active.isIdentity)
@@ -151,20 +149,17 @@ struct CodeAuditRegressionTests {
         let zoomIn = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: 1.25,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let repeated = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: 1.25,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let zoomOut = profile.singlePhotoTransform(
             direction: .zoomOut,
             activeTime: 1.25,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
 
         #expect(zoomIn == repeated)

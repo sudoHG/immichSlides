@@ -273,20 +273,17 @@ struct MotionTransformResolverTests {
         let before = policy.transform(
             direction: .zoomIn,
             rawProgress: 0.99,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let waypoint = policy.transform(
             direction: .zoomIn,
             rawProgress: 1,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let after = policy.transform(
             direction: .zoomIn,
             rawProgress: 1.01,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
 
         #expect(before.translationInSlot == .zero)
