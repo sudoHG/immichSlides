@@ -1459,7 +1459,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         // The EXIF panel belongs to single-photo scenes; SmartFill, the default, shows several photos at once.
         let app = try launchIntoSlideShow(
             forceAutoPlayOff: true,
-            exifDiagnosticAlbumID: exifDiagnosticAlbumID,
+            exifDiagnosticAlbumID: try requireExifDiagnosticAlbumID(),
             prepareFilterSummaryVisuals: false,
             extraLaunchEnvironment: ["UI_TEST_FORCE_PLAYBACK_DISPLAY_MODE": "singlePhoto"]
         )

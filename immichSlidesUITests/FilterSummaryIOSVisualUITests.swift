@@ -2786,7 +2786,7 @@ private extension FilterSummaryIOSVisualUITests {
 
         let diagnosticAlbumButton = waitForAlbumFilterButton(
             app: app,
-            albumID: exifDiagnosticAlbumID,
+            albumID: try requireExifDiagnosticAlbumID(),
             timeout: 12
         )
         guard diagnosticAlbumButton.exists else {

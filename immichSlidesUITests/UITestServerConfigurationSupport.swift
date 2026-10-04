@@ -7,10 +7,6 @@
 
 import XCTest
 
-// The EXIF diagnostic screenshots page through this album. Only the maintainer's test server has it,
-// so those tests skip on other servers.
-let exifDiagnosticAlbumID = "a2349b39-f16c-45b9-8591-c988b891a8bc"
-
 private struct ServerAlbum: Decodable {
     let id: String
     let assetCount: Int
@@ -53,9 +49,20 @@ extension XCTestCase {
         return albumIDs
     }
 
+    func requireExifDiagnosticAlbumID() throws -> String {
+        _ = try requireTestServerConfig()
+        guard let albumID = TestServerConfiguration.current?.exifDiagnosticAlbumID, !albumID.isEmpty else {
+            throw XCTSkip(
+                "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID is not set in the environment or in Config/env.xcconfig."
+            )
+        }
+        return albumID
+    }
+
     // Returns the photo count so the screenshots cover each photo of the album once.
     func requireExifDiagnosticAlbumAssetCount() throws -> Int {
-        guard let album = try serverAlbums().first(where: { $0.id == exifDiagnosticAlbumID }), album.assetCount > 0
+        let albumID = try requireExifDiagnosticAlbumID()
+        guard let album = try serverAlbums().first(where: { $0.id == albumID }), album.assetCount > 0
         else {
             throw XCTSkip("The configured server does not have the EXIF diagnostic album with photos.")
         }
