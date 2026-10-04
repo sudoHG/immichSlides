@@ -933,6 +933,11 @@ struct PlaybackRuntimeEvidenceManifestTests {
 
         #expect(summary.contains("slotReadiness=ready,pending"))
         #expect(summary.contains("ledgerSceneAssets=asset-"))
+        let traceRefs = scene.diagnosticSlotReferences(separator: "|")
+        #expect(summary.contains("slotRefs=\(traceRefs.replacingOccurrences(of: "|", with: ","))"))
+        #expect(traceRefs.split(separator: "|").count == 2)
+        #expect(!traceRefs.contains(readyAsset.id))
+        #expect(!traceRefs.contains(pendingAsset.id))
         #expect(summary.contains("controlBarVisible=true"))
         #expect(summary.contains("exifOverlayVisible=false"))
         #expect(summary.contains("publishReason=manual-next"))

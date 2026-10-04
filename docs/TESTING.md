@@ -181,6 +181,13 @@ Result bundles normally go in the directory passed to `--evidence-dir`. The `p2-
 
 ## Generating a local privacy page
 
+Diagnostic identity fields are opaque correlation values. Playback request lifecycle JSONL hashes
+`assetId` and `sceneId` at serialization with `PlaybackImageRequestLifecycleDiagnostics.redactedHash`;
+request IDs remain unchanged so request events can still be joined. Motion seed summaries hash scene,
+slot and asset identities without changing the seed used for animation. Apple TV product trace
+`slotRefs` uses `PlaybackScene.diagnosticSlotReferences`, the same ordered ledger tokens as the
+runtime manifest. Consumers must compare these tokens rather than raw server IDs.
+
 `PRIVACY_POLICY.md` stays in this repository because the app bundles it for tvOS. The official website is maintained separately in [sudoHG/immichSlides-web](https://github.com/sudoHG/immichSlides-web).
 
 `python3 scripts/build_privacy_policy_page.py` generates the privacy page and root redirect in the git-ignored `build/privacy-site/` directory. Use `--output-dir <directory>` to choose another output directory; relative paths resolve from the current working directory. This only generates local files and does not publish the website.

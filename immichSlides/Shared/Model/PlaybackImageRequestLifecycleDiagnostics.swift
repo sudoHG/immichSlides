@@ -770,14 +770,14 @@ struct PlaybackImageRequestLifecycleDiagnostics {
                 "event": "requestStarted",
                 "requestId": requestId,
                 "source": source.rawValue,
-                "assetId": assetId,
+                "assetId": Self.redactedHash(assetId),
                 "size": size.rawValue,
                 "mode": mode.rawValue,
                 "role": role.rawValue,
                 "cacheKeyHash": cacheKeyHash,
                 "contextHash": contextHash,
                 "navigationToken": navigationToken.uuidString,
-                "sceneId": sceneId,
+                "sceneId": Self.redactedHash(sceneId),
                 "timestamp": timestamp
             ]
         case let .cacheKeyResolved(requestId, sdDiskCacheFileNameHash, timestamp):

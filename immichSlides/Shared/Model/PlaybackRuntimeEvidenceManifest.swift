@@ -1161,10 +1161,7 @@ extension PlaybackScene {
                 )
             }
             .joined(separator: ",")
-        let ledgerSceneAssets =
-            photoSlots
-            .map { "asset-\(Self.runtimeAssetLedgerHash($0.asset.id))" }
-            .joined(separator: ",")
+        let ledgerSceneAssets = diagnosticSlotReferences(separator: ",")
         let retainedSummaryParts = readback.qaDebugSummary
             .split(separator: ";")
             .map(String.init)
@@ -1182,6 +1179,11 @@ extension PlaybackScene {
         ]
 
         return (retainedSummaryParts + runtimeSummaryParts).joined(separator: ";")
+    }
+
+    func diagnosticSlotReferences(separator: String) -> String {
+        photoSlots.map { "asset-\(Self.runtimeAssetLedgerHash($0.asset.id))" }
+            .joined(separator: separator)
     }
 
     private static let runtimeQADebugSummaryPrefixes = [

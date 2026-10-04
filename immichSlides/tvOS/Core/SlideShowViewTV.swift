@@ -917,7 +917,7 @@ struct SlideShowViewTV: View {
             "sceneId=\(scene.id)",
             "sceneType=\(smartFillProductSceneTypeProbeValue(for: scene))",
             "slotCount=\(scene.photoSlots.count)",
-            "slotRefs=\(scene.photoSlots.map(\.asset.id).joined(separator: "|"))"
+            "slotRefs=\(scene.diagnosticSlotReferences(separator: "|"))"
         ]
         let transitionFields = smartFillTraceFields(from: smartFillProductTransitionProbeLabel())
             .filter { $0 != "eventType=productTransition" }

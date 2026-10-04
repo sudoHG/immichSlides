@@ -122,6 +122,15 @@ struct MotionTransformResolverTests {
                 "seedContractVersion=ambient-v1-scene-slot-asset-crop-raw-focal-rect"))
         #expect(firstDiagnostics.seedInputSummary.contains("seedHashIncludesSceneId=true"))
         #expect(firstDiagnostics.seedInputSummary.contains("seedFocalKeySource=face"))
+        #expect(!firstDiagnostics.seedInputSummary.contains("scene-a"))
+        #expect(!firstDiagnostics.seedInputSummary.contains("slot-a"))
+        #expect(!firstDiagnostics.seedInputSummary.contains("asset-a"))
+        #expect(firstDiagnostics.seedInputSummary == secondDiagnostics.seedInputSummary)
+        #expect(
+            firstDiagnostics.seedInputSummary
+                != MotionTransformResolver.diagnostics(
+                    makeInput(assetId: "asset-b")
+                ).seedInputSummary)
         #expect(!firstDiagnostics.seedInputSummary.contains("0.25|0.5"))
 
         let fallbackDiagnostics = MotionTransformResolver.diagnostics(
