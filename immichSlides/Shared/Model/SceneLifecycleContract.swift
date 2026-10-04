@@ -15,12 +15,6 @@ struct ScenePresentationPacingPolicy: Equatable, Sendable {
         incomingFadeDuration: 0.3,
         completionDuration: 0.3
     )
-    nonisolated static let manualPending = ScenePresentationPacingPolicy(
-        outgoingFadeDuration: 0,
-        incomingDelay: 0,
-        incomingFadeDuration: 0,
-        completionDuration: 0
-    )
     nonisolated static let automaticIncoming = ScenePresentationPacingPolicy(
         outgoingFadeDuration: 0,
         incomingDelay: 0,

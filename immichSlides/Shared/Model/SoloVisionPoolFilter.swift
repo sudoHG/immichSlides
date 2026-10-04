@@ -67,19 +67,6 @@ actor SoloVisionPoolFilter {
 
     // Audit only up to acceptedLimit; do not run every candidate just for the first open.
 
-    func approvedAssets(
-        from candidates: [Asset],
-        apiService: ImmichAPIService,
-        acceptedLimit: Int
-    ) async -> [Asset] {
-        let result = await approvalResult(
-            from: candidates,
-            apiService: apiService,
-            acceptedLimit: acceptedLimit
-        )
-        return result.approvedAssets
-    }
-
     func approvalResult(
         from candidates: [Asset],
         apiService: ImmichAPIService,

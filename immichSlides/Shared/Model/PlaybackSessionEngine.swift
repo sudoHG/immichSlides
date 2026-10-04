@@ -10,7 +10,6 @@ import Foundation
 enum PlaybackSessionInvalidationReason: String, Equatable {
     case sourceChanged
     case filterChanged
-    case soloOnlyChanged
     case serverChanged
     case poolReloaded
 }

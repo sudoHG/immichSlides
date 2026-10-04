@@ -24,10 +24,6 @@ struct MotionTransitionPacingPolicy: Equatable, Sendable {
     nonisolated var scheduledIncomingDelayForSwiftUISeconds: TimeInterval {
         max(0, incomingDelaySeconds - swiftUIIncomingDelayCompensationSeconds)
     }
-
-    nonisolated var completionDelayNanoseconds: UInt64 {
-        UInt64((completionDelaySeconds * 1_000_000_000).rounded())
-    }
 }
 
 struct MotionPacingPolicy: Equatable, Sendable {

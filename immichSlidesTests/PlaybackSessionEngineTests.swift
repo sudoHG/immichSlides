@@ -397,14 +397,12 @@ struct PlaybackSessionEngineTests {
         let zoomOut = profile.singlePhotoTransform(
             direction: .zoomOut,
             activeTime: target.lifecycle.longestVisibleMotionDuration,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let zoomIn = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: target.lifecycle.longestVisibleMotionDuration,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         #expect(abs(zoomOut.scale - 1) < 0.0001)
         #expect(abs(zoomIn.scale - 1.10) < 0.0001)
@@ -427,8 +425,7 @@ struct PlaybackSessionEngineTests {
         let initialZoomOut = SceneAnimationProfile(lifecycle: settledInitialTarget.lifecycle).singlePhotoTransform(
             direction: .zoomOut,
             activeTime: settledInitialTarget.lifecycle.longestVisibleMotionDuration,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         #expect(abs(initialZoomOut.scale - 1) < 0.0001)
 
@@ -456,8 +453,7 @@ struct PlaybackSessionEngineTests {
         let manualZoomIn = SceneAnimationProfile(lifecycle: resumedManualTarget.lifecycle).singlePhotoTransform(
             direction: .zoomIn,
             activeTime: resumedManualTarget.lifecycle.longestVisibleMotionDuration,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         #expect(abs(manualZoomIn.scale - 1.10) < 0.0001)
     }
@@ -504,14 +500,12 @@ struct PlaybackSessionEngineTests {
         let zoomOut = profile.singlePhotoTransform(
             direction: .zoomOut,
             activeTime: resumedTarget.lifecycle.longestVisibleMotionDuration,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         let zoomIn = profile.singlePhotoTransform(
             direction: .zoomIn,
             activeTime: resumedTarget.lifecycle.longestVisibleMotionDuration,
-            isMotionEnabled: true,
-            reduceMotionEnabled: false
+            isMotionEnabled: true
         )
         #expect(abs(zoomOut.scale - 1) < 0.0001)
         #expect(abs(zoomIn.scale - 1.10) < 0.0001)

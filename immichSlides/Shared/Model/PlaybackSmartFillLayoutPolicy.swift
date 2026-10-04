@@ -459,24 +459,6 @@ struct PlaybackSmartFillLayoutGeometrySummary: Equatable, Sendable {
     let outOfBoundsUnitArea: Double
     let outOfBoundsPixelCount: Int
     let maxContinuousEmptyAxisRatio: Double
-
-    var debugSummary: String {
-        [
-            "fullCanvas=\(isFullCanvas)",
-            "coverage=\(format(coverageRatio))",
-            "empty=\(format(emptyCanvasRatio))",
-            "gapPixels=\(gapPixelCount)",
-            "overlapUnit=\(format(overlapUnitArea))",
-            "overlapPixels=\(overlapPixelCount)",
-            "outOfBoundsUnit=\(format(outOfBoundsUnitArea))",
-            "outOfBoundsPixels=\(outOfBoundsPixelCount)",
-            "maxEmptyAxis=\(format(maxContinuousEmptyAxisRatio))"
-        ].joined(separator: ",")
-    }
-
-    private func format(_ value: Double) -> String {
-        String(format: "%.10f", value)
-    }
 }
 
 enum PlaybackSmartFillLayoutGeometryInvariant {

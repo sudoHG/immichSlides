@@ -96,7 +96,6 @@ enum SmartFillMainActorPlannerCallSite: String, CaseIterable, Sendable {
     case manualNext
     case autoplayNext
     case requestScene
-    case preparedRefresh
     case displayModeProtectionRebuild
     case initialSmartFillRebuild
 }
@@ -256,9 +255,6 @@ class SlideShowViewModel: ObservableObject {
     }
     var playbackScenes: [PlaybackScene] {
         playbackSessionEngine.scenes
-    }
-    var currentSmartFillQADebugSummary: String? {
-        playbackSessionEngine.currentScene?.smartFillReadback?.qaDebugSummary
     }
     #if DEBUG
     var smartFillCandidateCursorIndexForTesting: Int {
@@ -420,10 +416,6 @@ class SlideShowViewModel: ObservableObject {
         )
     }
     #if DEBUG
-    var smartFillMotionActiveRuntimeSceneIdsForTesting: Set<String> {
-        Set(sceneRenderSnapshot.layers.map { $0.identity.sceneID })
-    }
-
     var smartFillMotionProbeDebugFieldsForTesting: [String: String] {
         var fields: [String: String] = [:]
         if let targetIndex = playbackSessionEngine.preparedSceneRing?.next?.targetIndex {
@@ -454,15 +446,6 @@ class SlideShowViewModel: ObservableObject {
         return fields
     }
 
-    func smartFillMotionRuntimeContextForTesting(
-        sceneId: String,
-        renderRole: MotionRenderRole
-    ) -> MotionRuntimeContext? {
-        guard let layer = sceneRenderSnapshot.layers.first(where: { $0.identity.sceneID == sceneId }) else {
-            return nil
-        }
-        return motionRuntimeContext(for: layer, platform: .iOS, reduceMotionEnabled: false)
-    }
     #endif
     var visibleImageAssetId: String? {
         sceneRenderSnapshot.layers
@@ -601,8 +584,6 @@ class SlideShowViewModel: ObservableObject {
         safeCurrentScene?.primaryAsset
     }
 
-    var isManualChange: Bool = false
-
     var preloadCount: Int {
         isAutoPlay ? 3 : 5  // Manual navigation may move faster, so preload more.
     }
@@ -645,9 +626,6 @@ class SlideShowViewModel: ObservableObject {
     // Tests can stub out the background preload so state-flow checks see no extra downloads.
 
     var backgroundPreloadHookForTesting: (([Asset], Int, Int) async -> Void)? = nil
-    // Tests can suspend a late download from an old transition; production slide changes no longer download via
-    // handleIndexChange.
-
     var indexChangePhotoLoadHookForTesting: ((String, ThumbnailSize) async -> Void)? = nil
     // Tests can use a fixed clock to verify the scene publish latency manifest.
 
@@ -898,18 +876,6 @@ class SlideShowViewModel: ObservableObject {
         return incomingAssets.filter { asset in
             seenAssetIds.insert(asset.id).inserted
         }
-    }
-
-    private func invalidatePlaybackSession(reason: PlaybackSessionInvalidationReason) {
-        cancelSmartFillPreparedRingRefreshTask()
-        resetScenePresentationRuntime()
-        pendingCandidateCursorIndexAfterCommit = nil
-        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
-        pendingPlaybackHistoryLedgerCommits = [:]
-        pendingSceneActionTimestamps = [:]
-        smartFillDisplayedAssetIds = []
-        playbackSessionEngine.invalidate(reason: reason)
-        syncPlaybackReadbackFromEngine()
     }
 
     private func syncPlaybackReadbackFromEngine() {
@@ -1601,7 +1567,6 @@ class SlideShowViewModel: ObservableObject {
     func requestPreviousScene() {
         guard !playbackSessionEngine.scenes.isEmpty else { return }
         let actionTimestamp = playbackManifestTimestamp()
-        isManualChange = true
         pendingCandidateCursorIndexAfterCommit = nil
         pendingSmartFillDisplayedAssetIdsAfterCommit = nil
         if canCancelUnseenPendingScenePresentation,
@@ -1619,13 +1584,11 @@ class SlideShowViewModel: ObservableObject {
                 pendingPlaybackHistoryLedgerCommits[cancelledTransition.transaction.id] = nil
                 pendingSceneActionTimestamps[cancelledTransition.transaction.id] = nil
             }
-            isManualChange = false
             executeScenePresentationEffects(effects)
             syncPlaybackReadbackFromEngine()
             return
         }
         guard let previousTarget = playbackHistoryLedger.previousTarget else {
-            isManualChange = false
             syncPlaybackReadbackFromEngine()
             return
         }
@@ -1681,7 +1644,6 @@ class SlideShowViewModel: ObservableObject {
     private func requestNextScene(isManual: Bool) {
         guard !assets.isEmpty else { return }
         let actionTimestamp = playbackManifestTimestamp()
-        isManualChange = isManual
         let transactionSource: PlaybackSceneTransactionSource = isManual ? .manualNext : .autoplay
         if let redoTarget = playbackHistoryLedger.redoTarget {
             let transition = playbackSessionEngine.requestTransition(
@@ -1715,7 +1677,6 @@ class SlideShowViewModel: ObservableObject {
             isSmartFillPlanningEnabled
         {
             refreshPreparedSmartFillSceneRingIfPossible()
-            isManualChange = false
             return
         } else if shouldAdvanceCandidateCursorOnCommit,
             let smartFillPlan = makeSmartFillScenePlan(
@@ -2048,23 +2009,6 @@ class SlideShowViewModel: ObservableObject {
         guard smartFillPreparedRingRefreshGeneration == generation else { return }
         smartFillPreparedRingRefreshTask = nil
         smartFillPreparedRingRefreshGeneration = nil
-    }
-
-    private func scheduleSmartFillPreparedSceneRingRefresh() {
-        cancelSmartFillPreparedRingRefreshTask()
-        let generation = UUID()
-        smartFillPreparedRingRefreshGeneration = generation
-        smartFillPreparedRingRefreshTask = Task { @MainActor in
-            // Yield the main thread once after publishing, so synchronous replanning does not block the next screen's
-            // first frame.
-            await Task.yield()
-            guard !Task.isCancelled else {
-                self.clearSmartFillPreparedRingRefreshTaskIfCurrent(generation)
-                return
-            }
-            self.clearSmartFillPreparedRingRefreshTaskIfCurrent(generation)
-            self.refreshPreparedSmartFillSceneRingIfPossible()
-        }
     }
 
     private func refreshPreparedSmartFillSceneRingIfPossible() {
@@ -4153,11 +4097,6 @@ class SlideShowViewModel: ObservableObject {
         _ = token
         _ = targetIndex
         syncPlaybackReadbackFromEngine()
-    }
-
-    // Legacy test entry point; SwiftUI must use the token-based transition identity. Not removed in this phase.
-    func handleIndexChange(newIndex: Int) async {
-        await handleTransitionChange(token: targetTransitionToken, targetIndex: newIndex)
     }
 
     func firstPreload() async {
