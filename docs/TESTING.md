@@ -184,7 +184,9 @@ Result bundles normally go in the directory passed to `--evidence-dir`. The `p2-
 Diagnostic identity fields are opaque correlation values. Playback request lifecycle JSONL hashes
 `assetId` and `sceneId` at serialization with `PlaybackImageRequestLifecycleDiagnostics.redactedHash`;
 request IDs remain unchanged so request events can still be joined. Motion seed summaries hash scene,
-slot and asset identities without changing the seed used for animation. Apple TV product trace
+slot and asset identities without changing the seed used for animation. Motion probes use the same
+identity tokens as the seed summary, including their diagnostic accessibility identifier suffix.
+iOS and Apple TV product trace
 `slotRefs` uses `PlaybackScene.diagnosticSlotReferences`, the same ordered ledger tokens as the
 runtime manifest. Consumers must compare these tokens rather than raw server IDs.
 

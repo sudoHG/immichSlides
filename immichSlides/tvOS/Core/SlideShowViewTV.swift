@@ -914,7 +914,7 @@ struct SlideShowViewTV: View {
             return nil
         }
         let sceneFields = [
-            "sceneId=\(scene.id)",
+            "sceneId=\(MotionTransformResolver.diagnosticIdentityToken(scene.id))",
             "sceneType=\(smartFillProductSceneTypeProbeValue(for: scene))",
             "slotCount=\(scene.photoSlots.count)",
             "slotRefs=\(scene.diagnosticSlotReferences(separator: "|"))"

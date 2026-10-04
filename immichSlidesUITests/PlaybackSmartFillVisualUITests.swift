@@ -603,7 +603,9 @@ private enum SmartFillRuntimeEvidenceSupport {
         for key in ["sceneId", "slotId", "assetId"] {
             let value = fields[key] ?? ""
             XCTAssertFalse(value.isEmpty)
-            XCTAssertFalse(summary.contains("\(key)=\(value)|"), "Seed diagnostics must redact identity fields")
+            XCTAssertNotNil(value.range(of: "^[0-9a-f]{16}$", options: .regularExpression))
+            XCTAssertTrue(
+                summary.contains("\(key)=\(value)|"), "Seed diagnostics must correlate with the frame identity")
         }
     }
 

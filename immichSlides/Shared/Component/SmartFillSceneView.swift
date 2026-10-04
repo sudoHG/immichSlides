@@ -76,7 +76,7 @@ struct SmartFillSceneView: View {
                     navigationToken: navigationToken,
                     motionContext: motionContext,
                     sceneType: scene.smartFillReadback?.sceneType,
-                    manifestSlotRefs: scene.photoSlots.map(\.asset.id).joined(separator: "|"),
+                    manifestSlotRefs: scene.diagnosticSlotReferences(separator: "|"),
                     motionProbeControlBarVisible: motionProbeControlBarVisible,
                     rendererIdentity: SceneRendererIdentity(
                         generation: navigationToken,
@@ -334,7 +334,7 @@ private struct SmartFillSlotImageView: View {
             .preference(key: SmartFillMotionFrameProbePreferenceKey.self, value: [label])
             .accessibilityElement()
             .accessibilityIdentifier(
-                "slideshow.smartfill.motionFrame.\(renderLayerRole.smartFillMotionProbeValue).\(slot.id)"
+                "slideshow.smartfill.motionFrame.\(renderLayerRole.smartFillMotionProbeValue).\(MotionTransformResolver.diagnosticIdentityToken(slot.id))"
             )
             .accessibilityLabel(label)
         #else
@@ -351,9 +351,9 @@ private struct SmartFillSlotImageView: View {
         let focalSource = slot.planning.focalSummary?.motionFocalSource ?? MotionFocalSource.cropCenterFallback
         var fields = [
             "eventType=motionFrame",
-            "sceneId=\(sceneId)",
-            "slotId=\(slot.id)",
-            "assetId=\(slot.asset.id)",
+            "sceneId=\(MotionTransformResolver.diagnosticIdentityToken(sceneId))",
+            "slotId=\(MotionTransformResolver.diagnosticIdentityToken(slot.id))",
+            "assetId=\(MotionTransformResolver.diagnosticIdentityToken(slot.asset.id))",
             "renderRole=\(renderLayerRole.smartFillMotionProbeValue)",
             "manifestSceneType=\(sceneType?.rawValue ?? "legacy")",
             "manifestSlotRefs=\(manifestSlotRefs)",

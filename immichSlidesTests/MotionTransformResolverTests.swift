@@ -125,6 +125,12 @@ struct MotionTransformResolverTests {
         #expect(!firstDiagnostics.seedInputSummary.contains("sceneId=scene-a|"))
         #expect(!firstDiagnostics.seedInputSummary.contains("slotId=slot-a|"))
         #expect(!firstDiagnostics.seedInputSummary.contains("assetId=asset-a|"))
+        #expect(
+            firstDiagnostics.seedInputSummary.contains(
+                "assetId=\(MotionTransformResolver.diagnosticIdentityToken("asset-a"))|"))
+        #expect(
+            MotionTransformResolver.diagnosticIdentityToken("asset-a")
+                != MotionTransformResolver.diagnosticIdentityToken("asset-b"))
         #expect(firstDiagnostics.seedInputSummary == secondDiagnostics.seedInputSummary)
         #expect(
             firstDiagnostics.seedInputSummary
