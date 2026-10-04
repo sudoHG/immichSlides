@@ -6,14 +6,6 @@ import UIKit
 /// Collects platform color/style branches, so shared views do not touch iOS-only APIs directly.
 
 enum PlatformCompat {
-    static var isTVOS: Bool {
-        #if os(tvOS)
-        return true
-        #else
-        return false
-        #endif
-    }
-
     static var isDebugBuild: Bool {
         #if DEBUG
         return true
@@ -214,16 +206,6 @@ extension View {
         #endif
     }
 
-    /// tvOS has no large title mode, so this falls back to a no-op.
-    @ViewBuilder
-    func appNavigationBarTitleDisplayModeLarge() -> some View {
-        #if os(tvOS)
-        self
-        #else
-        self.navigationBarTitleDisplayMode(.large)
-        #endif
-    }
-
     /// tvOS has no statusBar(hidden:); this keeps shared views compiling.
     @ViewBuilder
     func appStatusBarHidden(_ hidden: Bool) -> some View {
@@ -260,24 +242,6 @@ extension View {
         self
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
-        #else
-        self
-        #endif
-    }
-
-    /// Cards with a custom focus border must not use borderless, or tvOS adds another large white plate.
-
-    @ViewBuilder
-    func appTVButtonInteraction(canFocus: Bool = true, applyBorderlessStyle: Bool = true) -> some View {
-        #if os(tvOS)
-        if applyBorderlessStyle {
-            self
-                .focusable(canFocus, interactions: .activate)
-                .buttonStyle(.borderless)
-        } else {
-            self
-                .focusable(canFocus, interactions: .activate)
-        }
         #else
         self
         #endif

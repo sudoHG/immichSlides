@@ -130,18 +130,6 @@ extension SettingsView {
         SettingsOpenSourceLicenseNotice.packageSummaryText
     }
 
-    // When the dependencies share the same licenseText, return a single copy of it.
-
-    var openSourceSharedLicenseText: String? {
-        let uniqueLicenseTexts = Set(openSourceLicenseNotices.map(\.licenseText))
-
-        guard uniqueLicenseTexts.count == 1 else {
-            return nil
-        }
-
-        return openSourceLicenseNotices.first?.licenseText
-    }
-
     var pinInputTitle: String {
         switch activePinInputTarget {
         case .enablePin: return String(localized: "Set PIN")

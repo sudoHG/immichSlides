@@ -817,7 +817,6 @@ struct ImmichServer {
             }
             return (data, httpResponse)
         } catch {
-            let _ = classifyConnectionTestError(error, serverURL: serverURL)
             return nil
         }
     }

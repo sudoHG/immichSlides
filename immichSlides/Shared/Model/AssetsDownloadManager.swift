@@ -124,7 +124,6 @@ class AssetsDownloadManager: ObservableObject {
     @Published private(set) var activeTaskCount: Int = 0
     @Published private(set) var lastDownloadDuration: TimeInterval? = nil
     @Published private(set) var lastDownloadBytes: UInt = 0
-    @Published private(set) var lastDownloadAssetId: String? = nil
     @Published private(set) var lastDownloadWasCacheHit: Bool = false
 
     // Separates the current/next photo (high) from preloading (low).
@@ -196,18 +195,6 @@ class AssetsDownloadManager: ObservableObject {
         if let state = state(assetId: assetId, size: size) {
             switch state {
             case .readyToPlay:
-                return true
-            default:
-                return false
-            }
-        }
-        return false
-    }
-
-    func isFailed(assetId: String, size: ThumbnailSize) -> Bool {
-        if let state = state(assetId: assetId, size: size) {
-            switch state {
-            case .failed, .failedToDownload:
                 return true
             default:
                 return false
@@ -812,23 +799,6 @@ class AssetsDownloadManager: ObservableObject {
         }
     }
 
-    func clearCacheFromMemory(keepAssetIds: Set<String>) {
-
-        for (id, url) in assetURLs {
-
-            if !keepAssetIds.contains(id) {
-
-                SDImageCache.shared.removeImage(forKey: url.absoluteString, fromDisk: false)
-            }
-        }
-        for (id, url) in assetPreviewURLs {
-            if !keepAssetIds.contains(id) {
-                SDImageCache.shared.removeImage(forKey: url.absoluteString, fromDisk: false)
-            }
-        }
-
-    }
-
     /// Each new running task count, delivered once it is stored: `$activeTaskCount` fires before the value changes.
     /// One shared instance, so an `onReceive` keeps its subscription across view updates.
     private(set) lazy var activeTaskCountChanges: AnyPublisher<Int, Never> =
@@ -979,7 +949,6 @@ class AssetsDownloadManager: ObservableObject {
             lastDownloadWasCacheHit = true
             lastDownloadDuration = 0
             lastDownloadBytes = 0
-            lastDownloadAssetId = assetId
 
             setState(.readyToPlay, assetId: assetId, size: size)
             recordPhotoLoadRuntimePhase(
@@ -1125,7 +1094,6 @@ class AssetsDownloadManager: ObservableObject {
             lastDownloadWasCacheHit = false
             lastDownloadDuration = duration
             lastDownloadBytes = downloadedBytes
-            lastDownloadAssetId = assetId
 
             #if DEBUG
             let downloadSuccess = await checkImageCacheResultForDiagnostics(url: url) != .miss
