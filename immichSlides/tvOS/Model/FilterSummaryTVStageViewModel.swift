@@ -85,7 +85,7 @@ final class FilterSummaryTVStageViewModel: ObservableObject {
         let spotlightURLs = await thumbnailURLs(for: peopleAssets, size: .preview)
         let baseWallURLs = deduplicated(viewModel.peopleCoverURLs, limit: 40)
 
-        peopleWallURLs = repeatedIfNeeded(baseWallURLs, targetCount: 36)
+        peopleWallURLs = baseWallURLs
         peopleSpotlightURLs = deduplicated(spotlightURLs, limit: 12)
         isPeopleStageReady = peopleWallURLs.isEmpty == false
     }
@@ -137,17 +137,5 @@ final class FilterSummaryTVStageViewModel: ObservableObject {
             }
         }
         return result
-    }
-
-    private func repeatedIfNeeded(_ urls: [URL], targetCount: Int) -> [URL] {
-        guard urls.isEmpty == false else { return [] }
-        guard urls.count < targetCount else { return Array(urls.prefix(targetCount)) }
-
-        var expanded: [URL] = []
-        while expanded.count < targetCount {
-            expanded.append(contentsOf: urls)
-        }
-        return Array(expanded.prefix(targetCount))
-
     }
 }

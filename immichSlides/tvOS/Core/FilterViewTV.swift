@@ -550,8 +550,8 @@ struct FilterViewTV: View {
                 ),
                 accent: Color(red: 0.37, green: 0.84, blue: 0.93),
                 previewURLs: stageViewModel.albumSpotlightURLs.isEmpty
-                    ? Array(viewModel.albumCoverURLs.prefix(3))
-                    : Array(stageViewModel.albumSpotlightURLs.prefix(3)),
+                    ? viewModel.albumCoverURLs
+                    : stageViewModel.albumSpotlightURLs,
                 isFocused: visualFocusedTarget == .albumCard
             )
         }
@@ -588,8 +588,8 @@ struct FilterViewTV: View {
                 ),
                 accent: Color(red: 0.98, green: 0.72, blue: 0.31),
                 previewURLs: stageViewModel.peopleSpotlightURLs.isEmpty
-                    ? Array(viewModel.peopleCoverURLs.prefix(3))
-                    : Array(stageViewModel.peopleSpotlightURLs.prefix(3)),
+                    ? viewModel.peopleCoverURLs
+                    : stageViewModel.peopleSpotlightURLs,
                 isFocused: visualFocusedTarget == .peopleCard
             )
         }

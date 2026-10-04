@@ -81,17 +81,8 @@ struct FloatingSelectionCard: View {
     }
 
     private var displayPreviewURLs: [URL] {
-        if previewURLs.isEmpty {
-            return []
-        }
-        if previewURLs.count >= 3 {
-            return Array(previewURLs.prefix(3))
-        }
-        var expanded = previewURLs
-        while expanded.count < 3 {
-            expanded.append(contentsOf: previewURLs)
-        }
-        return Array(expanded.prefix(3))
+        let photos = CoverMosaicLayout.distinct(previewURLs)
+        return Array(photos.prefix(CoverMosaicLayout.stripPhotoCount(photoCount: photos.count)))
     }
 }
 
@@ -129,13 +120,13 @@ struct AlbumPanoramaStage: View {
                     endPoint: .bottomTrailing
                 )
 
-                if panoramaURLs.isEmpty {
+                if stagePhotos.wall.isEmpty {
                     AlbumStageFallback(accent: accent, selectedSummary: selectedSummary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     AlbumPanoramaMosaic(
-                        urls: panoramaDisplayURLs,
-                        spotlightURLs: spotlightDisplayURLs,
+                        urls: stagePhotos.wall,
+                        spotlightURLs: stagePhotos.spotlights,
                         size: geometry.size
                     )
                 }
@@ -153,13 +144,13 @@ struct AlbumPanoramaStage: View {
         }
     }
 
-    private var panoramaDisplayURLs: [URL] {
-        repeated(urls: panoramaURLs, minimumCount: 10)
-    }
-
-    private var spotlightDisplayURLs: [URL] {
-        let source = spotlightURLs.isEmpty ? Array(panoramaURLs.prefix(4)) : spotlightURLs
-        return repeated(urls: source, minimumCount: 3)
+    private var stagePhotos: CoverMosaicLayout.StagePhotos {
+        CoverMosaicLayout.stagePhotos(
+            wall: panoramaURLs,
+            spotlights: spotlightURLs.isEmpty ? Array(panoramaURLs.prefix(4)) : spotlightURLs,
+            wallCapacity: CoverMosaicLayout.albumWallCapacity,
+            spotlightCapacity: CoverMosaicLayout.albumSpotlightCapacity
+        )
     }
 }
 
@@ -199,12 +190,12 @@ struct PeopleConstellationStage: View {
                     endPoint: .bottomTrailing
                 )
 
-                if displayWallURLs.isEmpty {
+                if stagePhotos.wall.isEmpty {
                     PeopleStageFallback(accent: accent, selectedSummary: selectedSummary)
                 } else {
                     PeopleConstellationMosaic(
-                        wallURLs: displayWallURLs,
-                        spotlightURLs: displaySpotlights,
+                        wallURLs: stagePhotos.wall,
+                        spotlightURLs: stagePhotos.spotlights,
                         size: geometry.size
                     )
                 }
@@ -223,8 +214,13 @@ struct PeopleConstellationStage: View {
         }
     }
 
-    private var displayWallURLs: [URL] {
-        wallURLs.isEmpty ? displaySpotlights : wallURLs
+    private var stagePhotos: CoverMosaicLayout.StagePhotos {
+        CoverMosaicLayout.stagePhotos(
+            wall: wallURLs.isEmpty ? displaySpotlights : wallURLs,
+            spotlights: displaySpotlights,
+            wallCapacity: CoverMosaicLayout.peopleWallCapacity,
+            spotlightCapacity: CoverMosaicLayout.peopleSpotlightCapacity
+        )
     }
 
     private var displaySpotlights: [URL] {
@@ -242,11 +238,17 @@ private struct AlbumPanoramaMosaic: View {
     let size: CGSize
 
     var body: some View {
+        let plan = CoverMosaicLayout.albumWallPlan(photoCount: urls.count)
+        let spotlightScale = CoverMosaicLayout.spotlightScale(
+            photoCount: spotlightURLs.count, capacity: CoverMosaicLayout.albumSpotlightCapacity)
+
         ZStack {
             HStack(spacing: 22) {
-                ForEach(0..<4, id: \.self) { index in
+                ForEach(0..<plan.topCount, id: \.self) { index in
                     TVStageImage(url: urls[index])
-                        .frame(width: size.width * 0.16, height: size.height * 0.2)
+                        .frame(
+                            width: size.width * 0.16 * plan.tileScale, height: size.height * 0.2 * plan.tileScale
+                        )
                         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
                         .rotationEffect(.degrees(-4))
                         .opacity(0.78)
@@ -255,9 +257,11 @@ private struct AlbumPanoramaMosaic: View {
             .offset(x: size.width * 0.0, y: -size.height * 0.25)
 
             HStack(spacing: 26) {
-                ForEach(4..<9, id: \.self) { index in
+                ForEach(plan.topCount..<(plan.topCount + plan.bottomCount), id: \.self) { index in
                     TVStageImage(url: urls[index])
-                        .frame(width: size.width * 0.18, height: size.height * 0.28)
+                        .frame(
+                            width: size.width * 0.18 * plan.tileScale, height: size.height * 0.28 * plan.tileScale
+                        )
                         .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
                         .rotationEffect(.degrees(7))
                         .opacity(0.64)
@@ -266,11 +270,11 @@ private struct AlbumPanoramaMosaic: View {
             .offset(x: size.width * 0.02, y: size.height * 0.14)
 
             VStack(spacing: 18) {
-                ForEach(0..<3, id: \.self) { index in
+                ForEach(0..<spotlightURLs.count, id: \.self) { index in
                     TVStageImage(url: spotlightURLs[index])
                         .frame(
-                            width: size.width * (index == 0 ? 0.24 : 0.18),
-                            height: size.height * (index == 0 ? 0.28 : 0.19)
+                            width: size.width * (index == 0 ? 0.24 : 0.18) * spotlightScale,
+                            height: size.height * (index == 0 ? 0.28 : 0.19) * spotlightScale
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                         .rotationEffect(.degrees(index == 1 ? 6 : -6))
@@ -288,18 +292,25 @@ private struct PeopleConstellationMosaic: View {
     let size: CGSize
 
     var body: some View {
-        ZStack {
-            let gridURLs = repeated(urls: wallURLs, minimumCount: 12)
+        let plan = CoverMosaicLayout.peopleWallPlan(photoCount: wallURLs.count)
+        let spotlightScale = CoverMosaicLayout.spotlightScale(
+            photoCount: spotlightURLs.count, capacity: CoverMosaicLayout.peopleSpotlightCapacity)
+        let tileSide = size.width * 0.11 * plan.tileScale
+        let emphasizedRow = plan.rowCounts.count / 2
 
+        ZStack {
             VStack(spacing: 16) {
-                ForEach(0..<3, id: \.self) { row in
+                ForEach(0..<plan.rowCounts.count, id: \.self) { row in
+                    let firstIndex = plan.rowCounts[..<row].reduce(0, +)
                     HStack(spacing: 16) {
-                        ForEach(0..<4, id: \.self) { column in
-                            let index = row * 4 + column
-                            TVStageImage(url: gridURLs[index])
-                                .frame(width: size.width * 0.11, height: size.width * 0.11)
-                                .clipShape(RoundedRectangle(cornerRadius: size.width * 0.04, style: .continuous))
-                                .opacity(row == 1 ? 0.92 : 0.74)
+                        ForEach(0..<plan.rowCounts[row], id: \.self) { column in
+                            TVStageImage(url: wallURLs[firstIndex + column])
+                                .frame(width: tileSide, height: tileSide)
+                                .clipShape(
+                                    RoundedRectangle(
+                                        cornerRadius: size.width * 0.04 * plan.tileScale, style: .continuous)
+                                )
+                                .opacity(row == emphasizedRow ? 0.92 : 0.74)
                         }
                     }
                 }
@@ -307,9 +318,9 @@ private struct PeopleConstellationMosaic: View {
             .offset(x: size.width * 0.04, y: -size.height * 0.06)
 
             HStack(spacing: 18) {
-                ForEach(Array(spotlightURLs.prefix(3).enumerated()), id: \.offset) { index, url in
+                ForEach(Array(spotlightURLs.enumerated()), id: \.offset) { index, url in
                     TVStageImage(url: url)
-                        .frame(width: size.width * 0.16, height: size.height * 0.2)
+                        .frame(width: size.width * 0.16 * spotlightScale, height: size.height * 0.2 * spotlightScale)
                         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                         .rotationEffect(.degrees(index == 1 ? 5 : -7))
                         .shadow(color: Color.black.opacity(0.24), radius: 18, x: 0, y: 12)
@@ -484,13 +495,4 @@ private struct TVStageImage: View {
             )
             .clipped()
     }
-}
-
-private func repeated(urls: [URL], minimumCount: Int) -> [URL] {
-    guard urls.isEmpty == false else { return [] }
-    var expanded = urls
-    while expanded.count < minimumCount {
-        expanded.append(contentsOf: urls)
-    }
-    return expanded
 }
