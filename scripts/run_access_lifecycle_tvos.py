@@ -339,6 +339,66 @@ def _write_visual_identity(evidence_dir: Path, payload: Mapping[str, Any]) -> No
     )
 
 
+def _classify_device_scenes(evidence_dir: Path) -> tuple[dict[str, str], dict[str, dict[str, object]]]:
+    scenes: dict[str, str] = {}
+    classified: dict[str, dict[str, object]] = {}
+    for name, filename in SCENE_FILES.items():
+        identity = _classify_file(evidence_dir / filename)
+        mark = _scene_mark(identity)
+        scenes[name] = mark
+        classified[name] = {
+            "file": filename,
+            "status": identity.status,
+            "mark": identity.mark,
+            "notes": list(identity.notes),
+        }
+    return scenes, classified
+
+
+def _display_inspection_payload(inspection: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "before_mark": inspection.get("before_mark"),
+        "before_partner_marks": list(inspection.get("before_partner_marks") or []),
+        "partner_marks": list(inspection.get("partner_marks") or []),
+        "before_status": (
+            inspection["before"].get("status")
+            if isinstance(inspection.get("before"), Mapping)
+            else None
+        ),
+        "after_status": (
+            inspection["after"].get("status")
+            if isinstance(inspection.get("after"), Mapping)
+            else None
+        ),
+        "error": inspection.get("error"),
+    }
+
+
+def _device_contract_payload(
+    raw: dict[str, Any], scenes: dict[str, str], progress: int,
+    screenshots: dict[str, str], fixture_set: str, frozen: str | None,
+) -> dict[str, Any]:
+    return {
+        "status": raw.get("status") or "ran",
+        "identity_source": raw.get("identity_source") or "public_fixture_photo_mark",
+        "settings": raw.get("settings"),
+        "launch_environment": raw.get("launch_environment") or {},
+        "scenes": scenes,
+        "progress_after_play": progress,
+        "requests": raw.get("requests"),
+        "screenshots": screenshots,
+        "pin_flow": raw.get("pin_flow"),
+        "xctest_config_present": bool(raw.get("xctest_config_present")),
+        "fixture_set": fixture_set,
+        "fixture_sha256": frozen,
+        "system_pause_analog": raw.get("system_pause_analog"),
+        "system_pause_activation": raw.get("system_pause_activation"),
+        "process_rebuilt": raw.get("process_rebuilt"),
+        "home_left_app_running": raw.get("home_left_app_running"),
+        "screenshot_order": raw.get("screenshot_order"),
+    }
+
+
 def evaluate_device_evidence(evidence_dir: Path, *, fixture_set: str) -> dict[str, Any]:
     visual: dict[str, Any] = {
         "verdict": "FAIL",
@@ -360,18 +420,7 @@ def evaluate_device_evidence(evidence_dir: Path, *, fixture_set: str) -> dict[st
         if not isinstance(raw, dict):
             raise CommandError("host-payload.json must be a JSON object.")
 
-        scenes: dict[str, str] = {}
-        classified: dict[str, dict[str, object]] = {}
-        for name, filename in SCENE_FILES.items():
-            identity = _classify_file(evidence_dir / filename)
-            mark = _scene_mark(identity)
-            scenes[name] = mark
-            classified[name] = {
-                "file": filename,
-                "status": identity.status,
-                "mark": identity.mark,
-                "notes": list(identity.notes),
-            }
+        scenes, classified = _classify_device_scenes(evidence_dir)
         visual["classified"] = classified
         visual["scenes"] = scenes
 
@@ -385,22 +434,7 @@ def evaluate_device_evidence(evidence_dir: Path, *, fixture_set: str) -> dict[st
         if isinstance(inspection.get("after"), Mapping):
             classified["display_after"] = inspection["after"]
         visual["classified"] = classified
-        visual["display"] = {
-            "before_mark": inspection.get("before_mark"),
-            "before_partner_marks": list(inspection.get("before_partner_marks") or []),
-            "partner_marks": list(inspection.get("partner_marks") or []),
-            "before_status": (
-                inspection["before"].get("status")
-                if isinstance(inspection.get("before"), Mapping)
-                else None
-            ),
-            "after_status": (
-                inspection["after"].get("status")
-                if isinstance(inspection.get("after"), Mapping)
-                else None
-            ),
-            "error": inspection.get("error"),
-        }
+        visual["display"] = _display_inspection_payload(inspection)
         if inspection.get("error"):
             raise AccessLifecycleContractError(str(inspection["error"]))
 
@@ -429,25 +463,7 @@ def evaluate_device_evidence(evidence_dir: Path, *, fixture_set: str) -> dict[st
         _assert_background_identity_not_after_hidden_wake(evidence_dir)
 
         frozen = FROZEN_FIXTURE_SHA256.get(fixture_set)
-        contract_payload = {
-            "status": raw.get("status") or "ran",
-            "identity_source": raw.get("identity_source") or "public_fixture_photo_mark",
-            "settings": raw.get("settings"),
-            "launch_environment": raw.get("launch_environment") or {},
-            "scenes": scenes,
-            "progress_after_play": progress,
-            "requests": raw.get("requests"),
-            "screenshots": screenshots,
-            "pin_flow": raw.get("pin_flow"),
-            "xctest_config_present": bool(raw.get("xctest_config_present")),
-            "fixture_set": fixture_set,
-            "fixture_sha256": frozen,
-            "system_pause_analog": raw.get("system_pause_analog"),
-            "system_pause_activation": raw.get("system_pause_activation"),
-            "process_rebuilt": raw.get("process_rebuilt"),
-            "home_left_app_running": raw.get("home_left_app_running"),
-            "screenshot_order": raw.get("screenshot_order"),
-        }
+        contract_payload = _device_contract_payload(raw, scenes, progress, screenshots, fixture_set, frozen)
         result = evaluate_access_lifecycle_evidence(contract_payload)
         scan_sensitive_evidence(evidence_dir, synthetic_pin_values())
         result["scenes"] = scenes

@@ -634,9 +634,11 @@ def _run_swift(source: str) -> str:
 
 class IOSVisualIdentityJSONEncodingTests(unittest.TestCase):
     def test_nil_mark_is_valid_json_object(self) -> None:
-        source = (
-            REPO_ROOT / "immichSlidesUITests" / "StrictE2EFirstBatchIOSUITests.swift"
-        ).read_text(encoding="utf-8")
+        path = REPO_ROOT / "immichSlidesUITests" / "StrictE2EFirstBatchIOSUITests.swift"
+        source = "\n".join(
+            candidate.read_text(encoding="utf-8")
+            for candidate in [path, *sorted(path.parent.glob(f"{path.stem}+*.swift"))]
+        )
         helper = _extract_swift_func(source, "jsonSafeMarks")
         output = _run_swift(
             "\n".join(
