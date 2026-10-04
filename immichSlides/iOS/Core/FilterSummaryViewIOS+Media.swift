@@ -36,40 +36,11 @@ struct IOSSelectionStageMosaic: View {
     }
 
     private func albumLayout(size: CGSize, urls: [URL]) -> some View {
-        let displayURLs = repeated(urls: urls, minimumCount: 4)
-        let gap: CGFloat = 6
-        let inset: CGFloat = 8
-        let availableWidth = size.width - inset * 2
-        let availableHeight = size.height - inset * 2
-        let largeWidth = availableWidth * 0.60
-        let trailingWidth = availableWidth - largeWidth - gap
-        let topHeight = availableHeight * 0.63
-        let bottomHeight = availableHeight - topHeight - gap
-
-        return HStack(alignment: .top, spacing: gap) {
-            albumTile(url: displayURLs[0], width: largeWidth, height: availableHeight, prominence: .primary)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            VStack(spacing: gap) {
-                albumTile(url: displayURLs[1], width: trailingWidth, height: topHeight, prominence: .secondary)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                HStack(spacing: gap) {
-                    albumTile(
-                        url: displayURLs[2], width: (trailingWidth - gap) / 2, height: bottomHeight,
-                        prominence: .tertiary
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    albumTile(
-                        url: displayURLs[3], width: (trailingWidth - gap) / 2, height: bottomHeight,
-                        prominence: .tertiary
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
-            }
-            .frame(width: trailingWidth, height: availableHeight, alignment: .topLeading)
+        arrangedTiles(photos: CoverMosaicLayout.distinct(urls), size: size) { url, width, height, role in
+            albumTile(url: url, width: width, height: height, prominence: role.albumProminence)
+                .clipShape(RoundedRectangle(cornerRadius: role.cornerRadius, style: .continuous))
         }
-        .padding(inset)
+        .padding(Self.inset)
         .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
@@ -79,56 +50,12 @@ struct IOSSelectionStageMosaic: View {
     }
 
     private func peopleLayout(size: CGSize, urls: [URL]) -> some View {
-        let displayURLs = repeated(urls: urls, minimumCount: 4)
-        let gap: CGFloat = 6
-        let inset: CGFloat = 8
-        let availableWidth = size.width - inset * 2
-        let availableHeight = size.height - inset * 2
-        let primaryWidth = availableWidth * 0.60
-        let trailingWidth = availableWidth - primaryWidth - gap
-        let topHeight = availableHeight * 0.63
-        let bottomHeight = availableHeight - topHeight - gap
-
-        return ZStack {
-            HStack(alignment: .top, spacing: gap) {
-                peoplePortrait(
-                    url: displayURLs[0],
-                    width: primaryWidth,
-                    height: availableHeight,
-                    emphasis: .primary
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-                VStack(spacing: gap) {
-                    peoplePortrait(
-                        url: displayURLs[1],
-                        width: trailingWidth,
-                        height: topHeight,
-                        emphasis: .secondary
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                    HStack(spacing: gap) {
-                        peoplePortrait(
-                            url: displayURLs[2],
-                            width: (trailingWidth - gap) / 2,
-                            height: bottomHeight,
-                            emphasis: .tertiary
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                        peoplePortrait(
-                            url: displayURLs[3],
-                            width: (trailingWidth - gap) / 2,
-                            height: bottomHeight,
-                            emphasis: .tertiary
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    }
-                }
-                .frame(width: trailingWidth, height: availableHeight, alignment: .topLeading)
+        ZStack {
+            arrangedTiles(photos: CoverMosaicLayout.distinct(urls), size: size) { url, width, height, role in
+                peoplePortrait(url: url, width: width, height: height, emphasis: role.portraitEmphasis)
+                    .clipShape(RoundedRectangle(cornerRadius: role.cornerRadius, style: .continuous))
             }
-            .padding(inset)
+            .padding(Self.inset)
         }
     }
 
@@ -136,6 +63,85 @@ struct IOSSelectionStageMosaic: View {
     {
         IOSPortraitStageImage(url: url, emphasis: emphasis)
             .frame(width: width, height: height)
+    }
+
+    // Four or more photos keep the original large-plus-three arrangement; fewer photos get fewer, larger tiles.
+    @ViewBuilder
+    private func arrangedTiles<Tile: View>(
+        photos: [URL],
+        size: CGSize,
+        tile: @escaping (URL, CGFloat, CGFloat, TileRole) -> Tile
+    ) -> some View {
+        let gap = Self.gap
+        let availableWidth = size.width - Self.inset * 2
+        let availableHeight = size.height - Self.inset * 2
+        let largeWidth = availableWidth * 0.60
+        let trailingWidth = availableWidth - largeWidth - gap
+        let topHeight = availableHeight * 0.63
+        let bottomHeight = availableHeight - topHeight - gap
+
+        switch CoverMosaicLayout.tabletArrangement(photoCount: photos.count) {
+        case .empty:
+            EmptyView()
+        case .single:
+            tile(photos[0], availableWidth, availableHeight, .primary)
+        case .pair:
+            HStack(spacing: gap) {
+                tile(photos[0], (availableWidth - gap) / 2, availableHeight, .primary)
+                tile(photos[1], (availableWidth - gap) / 2, availableHeight, .secondary)
+            }
+        case .trio:
+            HStack(alignment: .top, spacing: gap) {
+                tile(photos[0], largeWidth, availableHeight, .primary)
+
+                VStack(spacing: gap) {
+                    tile(photos[1], trailingWidth, topHeight, .secondary)
+                    tile(photos[2], trailingWidth, bottomHeight, .tertiary)
+                }
+                .frame(width: trailingWidth, height: availableHeight, alignment: .topLeading)
+            }
+        case .quad:
+            HStack(alignment: .top, spacing: gap) {
+                tile(photos[0], largeWidth, availableHeight, .primary)
+
+                VStack(spacing: gap) {
+                    tile(photos[1], trailingWidth, topHeight, .secondary)
+
+                    HStack(spacing: gap) {
+                        tile(photos[2], (trailingWidth - gap) / 2, bottomHeight, .tertiary)
+                        tile(photos[3], (trailingWidth - gap) / 2, bottomHeight, .tertiary)
+                    }
+                }
+                .frame(width: trailingWidth, height: availableHeight, alignment: .topLeading)
+            }
+        }
+    }
+
+    private static let gap: CGFloat = 6
+    private static let inset: CGFloat = 8
+
+    enum TileRole {
+        case primary
+        case secondary
+        case tertiary
+
+        var cornerRadius: CGFloat { self == .primary ? 18 : 16 }
+
+        var albumProminence: AlbumTileProminence {
+            switch self {
+            case .primary: return .primary
+            case .secondary: return .secondary
+            case .tertiary: return .tertiary
+            }
+        }
+
+        var portraitEmphasis: PortraitBandEmphasis {
+            switch self {
+            case .primary: return .primary
+            case .secondary: return .secondary
+            case .tertiary: return .tertiary
+            }
+        }
     }
 }
 
@@ -311,13 +317,4 @@ struct IOSPortraitStageImage: View {
             return 10
         }
     }
-}
-
-private func repeated(urls: [URL], minimumCount: Int) -> [URL] {
-    guard urls.isEmpty == false else { return [] }
-    var expanded = urls
-    while expanded.count < minimumCount {
-        expanded.append(contentsOf: urls)
-    }
-    return Array(expanded.prefix(max(minimumCount, urls.count)))
 }
