@@ -1,5 +1,11 @@
 import XCTest
 
+private enum ProbeTiming {
+    static let pauseWindowTimeoutSeconds: TimeInterval = 7.0
+    static let frameCaptureIntervalSeconds: TimeInterval = 0.08
+    static let probePollIntervalSeconds: TimeInterval = 0.06
+}
+
 #if os(iOS)
 final class StrictE2EFirstBatchIOSUITests: XCTestCase {
     private let autoplayObservationSeconds: TimeInterval = 6.5
@@ -254,11 +260,11 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         var lastProbeRaw = ""
         var lastContractProbeRaw = ""
         var lastProbeUptime = playUptime
-        var windowDetected = false
-        let probeDeadline = playUptime + 7.0
+        var didDetectWindow = false
+        let probeDeadline = playUptime + ProbeTiming.pauseWindowTimeoutSeconds
         while ProcessInfo.processInfo.systemUptime <= probeDeadline {
             let now = ProcessInfo.processInfo.systemUptime
-            if now - lastFrameUptime >= 0.08 {
+            if now - lastFrameUptime >= ProbeTiming.frameCaptureIntervalSeconds {
                 if attachKeepAlwaysFrame(app: app, index: frameIndex) {
                     keepAlwaysFrameCount += 1
                 }
@@ -275,13 +281,13 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
                 hitProbeRaw = lastProbeRaw
                 hitContractProbeRaw = lastContractProbeRaw
                 hitProbeUptime = now
-                windowDetected = true
+                didDetectWindow = true
                 break
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.06))
+            RunLoop.current.run(until: Date().addingTimeInterval(ProbeTiming.probePollIntervalSeconds))
         }
 
-        if windowDetected {
+        if didDetectWindow {
             if attachKeepAlwaysFrame(app: app, index: frameIndex) {
                 keepAlwaysFrameCount += 1
             }
@@ -327,7 +333,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         let seesCompleteA3 = visibleMark == "A3"
         let afterPauseIdentity = StrictE2EPhotoIdentity.classify(png: afterPausePNG)
         let afterPause03Identity = StrictE2EPhotoIdentity.classify(png: afterPause03PNG)
-        let probeHit = windowDetected ? "HIT" : "MISS"
+        let probeHit = didDetectWindow ? "HIT" : "MISS"
         let requiredFramesPresent =
             keepAlwaysFrameCount > 0
             && attachedNamedScreenshots.contains("after-pause")
@@ -356,7 +362,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         attachVerdict([
             "probe_hit": probeHit,
             "visual_verdict": visualVerdict,
-            "window_detected": windowDetected,
+            "window_detected": didDetectWindow,
             "hit_probe_identifier": "slideshow.scenePresentation.frameSynchronized.summary",
             "probe_raw_at_hit": hitProbeRaw,
             "probe_raw_last": lastProbeRaw,
@@ -614,7 +620,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "The first-boot page must show the API Key field.")
         replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
-            waitUntil(timeout: 3) { self.secureFieldHasEnteredValue(apiKeyField) },
+            waitUntil(timeout: 3) { self.hasSecureFieldEnteredValue(apiKeyField) },
             "API Key must reach the secure field; tapping blank space to hide the keyboard clears uncommitted input."
         )
         commitFocusedInputIfNeeded(app: app)
@@ -679,7 +685,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
                 continueButton.tap()
             }
             let settled = waitUntil(timeout: 4) {
-                !continueButton.exists || self.savePasswordPromptShown(app: app)
+                !continueButton.exists || self.isSavePasswordPromptShown(app: app)
             }
             if settled && !continueButton.exists {
                 return
@@ -688,7 +694,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func savePasswordPromptShown(app: XCUIApplication) -> Bool {
+    private func isSavePasswordPromptShown(app: XCUIApplication) -> Bool {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         return [app, springboard].contains { host in
             // ui-label-lookup: Detect the simulator-owned Save Password prompt.
@@ -704,7 +710,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             for label in ["以后", "Not Now"] where host.buttons[label].exists {
                 // ui-label-lookup: Dismiss the system Save Password sheet without saving credentials.
                 host.buttons[label].tap()
-                _ = waitUntil(timeout: 2) { !self.savePasswordPromptShown(app: app) }
+                _ = waitUntil(timeout: 2) { !self.isSavePasswordPromptShown(app: app) }
                 return
             }
         }
@@ -859,10 +865,10 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         let settings = app.buttons["slideshow.control.settings.button"]
         let previous = app.buttons["slideshow.control.previous.button"]
         let next = app.buttons["slideshow.control.next.button"]
-        let playPauseExists = playPause.exists
-        let settingsExists = settings.exists
-        let previousExists = previous.exists
-        let nextExists = next.exists
+        let hasPlayPauseControl = playPause.exists
+        let hasSettingsControl = settings.exists
+        let hasPreviousControl = previous.exists
+        let hasNextControl = next.exists
         let visibleImageProbe = app.descendants(matching: .any)["slideshow.currentAssetId.flag"]
         let visibleImageAssetId = visibleImageProbe.exists ? visibleImageProbe.label : ""
         let originalConditionNote: String
@@ -878,15 +884,15 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             "stage": stage,
             "system_uptime": uptime,
             "device": currentDeviceTag(),
-            "play_pause_exists": playPauseExists,
-            "play_pause_hittable": playPauseExists && playPause.isHittable,
-            "play_pause": playPauseExists ? playPauseState(playPause) : "",
-            "settings_exists": settingsExists,
-            "settings_hittable": settingsExists && settings.isHittable,
-            "previous_exists": previousExists,
-            "previous_hittable": previousExists && previous.isHittable,
-            "next_exists": nextExists,
-            "next_hittable": nextExists && next.isHittable,
+            "play_pause_exists": hasPlayPauseControl,
+            "play_pause_hittable": hasPlayPauseControl && playPause.isHittable,
+            "play_pause": hasPlayPauseControl ? playPauseState(playPause) : "",
+            "settings_exists": hasSettingsControl,
+            "settings_hittable": hasSettingsControl && settings.isHittable,
+            "previous_exists": hasPreviousControl,
+            "previous_hittable": hasPreviousControl && previous.isHittable,
+            "next_exists": hasNextControl,
+            "next_hittable": hasNextControl && next.isHittable,
             "visible_image_asset_id": visibleImageAssetId,
             "original_a2_condition_note": originalConditionNote
         ]
@@ -937,7 +943,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         field.typeText(value)
     }
 
-    private func secureFieldHasEnteredValue(_ field: XCUIElement) -> Bool {
+    private func hasSecureFieldEnteredValue(_ field: XCUIElement) -> Bool {
         let value = field.value as? String ?? ""
         return !value.isEmpty && !value.contains("请输入") && !value.localizedCaseInsensitiveContains("api key")
     }
@@ -1331,17 +1337,17 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
     private func isOutgoingOnlyPauseWindow(_ state: PauseWindowProbeState) -> Bool {
         guard state.phase == "transition" else { return false }
         guard state.layerRoles.count == state.layerOpacities.count else { return false }
-        var outgoingFading = false
-        var incomingHidden = false
+        var isOutgoingFading = false
+        var isIncomingHidden = false
         for (role, opacity) in zip(state.layerRoles, state.layerOpacities) {
             if role == "outgoing", opacity > 0, opacity < 1 {
-                outgoingFading = true
+                isOutgoingFading = true
             }
             if role == "incoming", opacity == 0 {
-                incomingHidden = true
+                isIncomingHidden = true
             }
         }
-        return outgoingFading && incomingHidden
+        return isOutgoingFading && isIncomingHidden
     }
 
     private func layerOpacity(in state: PauseWindowProbeState, role: String) -> Double? {

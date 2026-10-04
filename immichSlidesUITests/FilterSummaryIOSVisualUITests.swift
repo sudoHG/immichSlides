@@ -8,6 +8,34 @@
 import Foundation
 import XCTest
 
+private enum Calibration {
+    static let maximumTipGapPoints: CGFloat = 12
+    static let titlePositionTolerancePoints: CGFloat = 12
+    static let singleLineBannerHeightFraction: CGFloat = 0.46
+}
+
+private enum WaitTiming {
+    static let briefElementTimeoutSeconds: TimeInterval = 1
+    static let connectionTimeoutSeconds: TimeInterval = 15
+    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
+    static let controlSettleSeconds: TimeInterval = 0.35
+    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
+    static let navigationTimeoutSeconds: TimeInterval = 10
+    static let playbackControlTimeoutSeconds: TimeInterval = 20
+    static let playbackEntrySettleSeconds: TimeInterval = 0.6
+    static let pollIntervalSeconds: TimeInterval = 0.1
+    static let readbackPollSeconds: TimeInterval = 0.2
+    static let readbackTimeoutSeconds: TimeInterval = 2
+    static let screenSettleSeconds: TimeInterval = 0.8
+    static let screenTransitionTimeoutSeconds: TimeInterval = 12
+    static let selectionPollSeconds: TimeInterval = 0.25
+    static let settingsChangeTimeoutSeconds: TimeInterval = 6
+    static let shortInteractionTimeoutSeconds: TimeInterval = 3
+    static let snapshotPollSeconds: TimeInterval = 0.5
+    static let stateChangeTimeoutSeconds: TimeInterval = 4
+    static let transitionPollSeconds: TimeInterval = 0.4
+}
+
 #if os(iOS)
 final class FilterSummaryIOSVisualUITests: XCTestCase {
     private let exifSamplingOverlayDiagnosticRunFlag = "IMMICHSLIDES_RUN_EXIF_SAMPLING_DIAGNOSTIC"
@@ -109,7 +137,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
     }
 
-    func environmentFlagEnabled(_ name: String) -> Bool {
+    func isEnvironmentFlagEnabled(_ name: String) -> Bool {
         let env = ProcessInfo.processInfo.environment
         guard let rawValue = env[name] ?? env["TEST_RUNNER_\(name)"] else {
             return false
@@ -137,14 +165,15 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let app = launchIntoOnboardingFirstBoot(
             colorScheme: "dark",
-            disableDebugFillConfigButton: false
+            shouldDisableDebugFillConfigButton: false
         )
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: 8),
+            serverField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After resetting state, the app should return to the first-launch server setup page.")
 
-        guard let fillButton = waitForDebugFillConfigElement(in: app, timeout: 4) else {
+        guard let fillButton = waitForDebugFillConfigElement(in: app, timeout: WaitTiming.stateChangeTimeoutSeconds)
+        else {
             attachScreenshot(app: app, name: "ios-firstboot-debug-fill-missing-\(currentDeviceTag())")
             throw XCTSkip("This build does not show the debug fill button; skipping the tap check.")
         }
@@ -163,7 +192,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
 
         let apiField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiField.waitForExistence(timeout: 4))
+        XCTAssertTrue(apiField.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds))
         let apiFieldValue = apiField.value as? String ?? ""
         XCTAssertFalse(
             apiFieldValue.isEmpty, "After tapping the debug button, the API Key field should no longer be empty.")
@@ -236,8 +265,10 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             pageTitleIdentifier: "mode.page.title"
         )
 
-        XCTAssertTrue(app.buttons["mode.random.button"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["mode.filtered.button"].waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            app.buttons["mode.random.button"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            app.buttons["mode.filtered.button"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
 
         attachScreenshot(app: app, name: "ios-mode-selection-onboarding-\(currentDeviceTag())")
     }
@@ -253,8 +284,10 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             pageTitleIdentifier: "mode.page.title"
         )
 
-        XCTAssertTrue(app.buttons["mode.random.button"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["mode.filtered.button"].waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            app.buttons["mode.random.button"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            app.buttons["mode.filtered.button"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
 
         attachScreenshot(app: app, name: "ios-mode-selection-onboarding-light-\(currentDeviceTag())")
     }
@@ -273,8 +306,10 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             pageTitleIdentifier: "mode.page.title"
         )
 
-        XCTAssertTrue(app.buttons["mode.random.button"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["mode.filtered.button"].waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            app.buttons["mode.random.button"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            app.buttons["mode.filtered.button"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
 
         attachScreenshot(
             app: app,
@@ -296,8 +331,10 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             pageTitleIdentifier: "mode.page.title"
         )
 
-        XCTAssertTrue(app.buttons["mode.random.button"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["mode.filtered.button"].waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            app.buttons["mode.random.button"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            app.buttons["mode.filtered.button"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
 
         attachScreenshot(app: app, name: "ios-mode-selection-onboarding-landscape-\(currentDeviceTag())")
     }
@@ -600,14 +637,16 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let app = try launchIntoFilterEditor(
             colorScheme: "light",
-            forceAutoPlayOff: true,
-            prepareFilterEditorVisuals: false
+            shouldForceAutoPlayOff: true,
+            shouldPrepareFilterEditorVisuals: false
         )
 
         try configureExifDiagnosticFilters(app: app)
 
         let doneButton = app.buttons["filter.editor.done.button"]
-        XCTAssertTrue(doneButton.waitForExistence(timeout: 8), "Filter editor top bar should show the 'Done' button")
+        XCTAssertTrue(
+            doneButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Filter editor top bar should show the 'Done' button")
         tapElement(doneButton)
 
         returnToSlideShowFromSettings(app: app)
@@ -620,22 +659,24 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     @MainActor
     func testIOSExifAlbumSamplingOverlayDiagnosticScreenshots() throws {
         try XCTSkipIf(
-            !environmentFlagEnabled(exifSamplingOverlayDiagnosticRunFlag),
+            !isEnvironmentFlagEnabled(exifSamplingOverlayDiagnosticRunFlag),
             "EXIF sampling overlay diagnostic screenshots are not part of regular UI regression by default; set \(exifSamplingOverlayDiagnosticRunFlag)=1 to run them explicitly."
         )
         let photoCount = try requireExifDiagnosticAlbumAssetCount()
 
         let app = try launchIntoFilterEditor(
             colorScheme: "light",
-            forceAutoPlayOff: true,
-            prepareFilterEditorVisuals: false,
-            showExifSamplingDebugOverlay: true
+            shouldForceAutoPlayOff: true,
+            shouldPrepareFilterEditorVisuals: false,
+            shouldShowExifSamplingDebugOverlay: true
         )
 
         try configureExifDiagnosticFilters(app: app)
 
         let doneButton = app.buttons["filter.editor.done.button"]
-        XCTAssertTrue(doneButton.waitForExistence(timeout: 8), "Filter editor top bar should show the 'Done' button")
+        XCTAssertTrue(
+            doneButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Filter editor top bar should show the 'Done' button")
         tapElement(doneButton)
 
         returnToSlideShowFromSettings(app: app)
@@ -643,7 +684,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             app: app,
             expectedCount: photoCount,
             screenshotNamePrefix: "ios-exif-sampling-overlay-diagnostic",
-            waitForSamplingOverlay: true
+            shouldWaitForSamplingOverlay: true
         )
     }
 
@@ -651,7 +692,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSSlideShowPlaybackEntryHintScreenshot() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            disablePlaybackEntryHint: false
+            shouldDisablePlaybackEntryHint: false
         )
 
         assertPlaybackEntryHint(
@@ -671,7 +712,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSSlideShowPlaybackEntryHintScreenshotLight() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            disablePlaybackEntryHint: false
+            shouldDisablePlaybackEntryHint: false
         )
 
         assertPlaybackEntryHint(
@@ -692,7 +733,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
             dynamicTypeSize: "accessibility5",
-            disablePlaybackEntryHint: false
+            shouldDisablePlaybackEntryHint: false
         )
 
         assertPlaybackEntryHint(
@@ -714,7 +755,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            disablePlaybackEntryHint: false
+            shouldDisablePlaybackEntryHint: false
         )
         setOrientation(
             .landscapeLeft,
@@ -739,8 +780,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSSlideShowPlaybackEntryHintEnglishScreenshot() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            forceEnglishLocalization: true,
-            disablePlaybackEntryHint: false
+            shouldForceEnglishLocalization: true,
+            shouldDisablePlaybackEntryHint: false
         )
 
         assertPlaybackEntryHint(
@@ -760,7 +801,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSSlideShowPlaybackEntryHintJapaneseScreenshot() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            disablePlaybackEntryHint: false,
+            shouldDisablePlaybackEntryHint: false,
             acceptanceLocale: .japanese
         )
 
@@ -781,12 +822,12 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            disablePlaybackEntryHint: false
+            shouldDisablePlaybackEntryHint: false
         )
         let entryHintBanner = app.otherElements["slideshow.entryHint.banner"]
 
         XCTAssertTrue(
-            entryHintBanner.waitForExistence(timeout: 6),
+            entryHintBanner.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "On first entering the playback page, the one-time tip should appear first"
         )
 
@@ -798,7 +839,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             "After returning from settings, the app should be back on the playback page"
         )
         XCTAssertFalse(
-            entryHintBanner.waitForExistence(timeout: 2),
+            entryHintBanner.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
             "The one-time tip should not reappear when returning from settings to the playback page in the same first-launch flow"
         )
     }
@@ -807,22 +848,23 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSSlideShowPlaybackEntryHintDismissesByTappingBubble() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            disablePlaybackEntryHint: false
+            shouldDisablePlaybackEntryHint: false
         )
         let entryHintBanner = app.otherElements["slideshow.entryHint.banner"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
 
         XCTAssertTrue(
-            entryHintBanner.waitForExistence(timeout: 6),
+            entryHintBanner.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "On first entering the playback page, the one-time tip should appear first"
         )
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 4), "Playback page should show the play button in the control bar"
+            playPauseButton.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds),
+            "Playback page should show the play button in the control bar"
         )
 
         playPauseButton.tap()
         XCTAssertTrue(
-            entryHintBanner.waitForExistence(timeout: 1),
+            entryHintBanner.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds),
             "Tapping a control bar button should not hide the bubble"
         )
 
@@ -836,7 +878,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
 
         openSettingsFromSlideShow(app: app)
@@ -862,12 +904,17 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         let saveButton = app.buttons["firstboot.saveConfig.button"]
 
         XCTAssertTrue(
-            serverURLField.waitForExistence(timeout: 8), "Server settings page should show the server URL field")
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "Server settings page should show the API Key field")
+            serverURLField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the server URL field")
         XCTAssertTrue(
-            testButton.waitForExistence(timeout: 8), "Server settings page should show the 'Test Connection' button")
+            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the API Key field")
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: 8), "Server settings page should show the 'Save Settings' button")
+            testButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the 'Test Connection' button")
+        XCTAssertTrue(
+            saveButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the 'Save Settings' button")
 
         attachScreenshot(
             app: app,
@@ -889,12 +936,17 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         let saveButton = app.buttons["firstboot.saveConfig.button"]
 
         XCTAssertTrue(
-            serverURLField.waitForExistence(timeout: 8), "Server settings page should show the server URL field")
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "Server settings page should show the API Key field")
+            serverURLField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the server URL field")
         XCTAssertTrue(
-            testButton.waitForExistence(timeout: 8), "Server settings page should show the 'Test Connection' button")
+            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the API Key field")
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: 8), "Server settings page should show the 'Save Settings' button")
+            testButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the 'Test Connection' button")
+        XCTAssertTrue(
+            saveButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the 'Save Settings' button")
 
         attachScreenshot(
             app: app,
@@ -915,12 +967,12 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let playbackModePicker = app.segmentedControls["settings.playback.mode.picker"]
         XCTAssertTrue(
-            playbackModePicker.waitForExistence(timeout: 8),
+            playbackModePicker.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Playback settings page should show the default playback mode segmented picker")
 
         let filteredModeSegment = playbackModePicker.buttons.element(boundBy: 1)
         XCTAssertTrue(
-            filteredModeSegment.waitForExistence(timeout: 5),
+            filteredModeSegment.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "Playback settings page should show the 'Filtered Playback' option")
         tapElement(filteredModeSegment)
 
@@ -930,7 +982,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
                 app: app,
                 // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
                 labels: ["无法切换到筛选播放", "Can't Switch to Filtered Playback"],
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "With empty filters, a blocking alert should appear directly on the current detail page"
         )
@@ -956,13 +1008,14 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let serverURLField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverURLField.waitForExistence(timeout: 8), "Server settings page should show the server URL field")
+            serverURLField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the server URL field")
         tapElement(serverURLField)
         serverURLField.clearAndType(text: "foo://invalid-host")
 
         let testConnectionButton = app.buttons["firstboot.testConnection.button"]
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: 8),
+            testConnectionButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the test connection button")
         dismissKeyboardIfNeeded(app: app)
         tapElement(testConnectionButton)
@@ -972,7 +1025,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             app: app,
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
             labels: ["连接测试失败", "Connection test failed", "Connection Test Failed"],
-            timeout: 8
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds
         )
 
         if serverErrorAlert == nil {
@@ -1019,7 +1072,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let clearDiskButton = app.buttons["settings.cache.clearDisk.button"]
         XCTAssertTrue(
-            clearDiskButton.waitForExistence(timeout: 8),
+            clearDiskButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Cache management page should show the clear disk cache button")
         tapElement(clearDiskButton)
 
@@ -1029,7 +1082,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
                 app: app,
                 // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
                 labels: ["确认清理磁盘缓存", "Confirm Disk Cache Clear"],
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "After tapping clear disk cache, a confirmation alert should appear directly on the current cache management detail page"
         )
@@ -1049,10 +1102,10 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         openSettingsSection(app: app, sectionID: "settings.item.cache")
 
         let clearDiskButton = app.buttons["settings.cache.clearDisk.button"]
-        XCTAssertTrue(clearDiskButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(clearDiskButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         tapElement(clearDiskButton)
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         XCTAssertNil(waitForAnyElement(app: app, labels: ["unrelated alert sentinel"], timeout: 0.2))
@@ -1062,7 +1115,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
                 app: app,
                 // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
                 labels: ["确认清理磁盘缓存", "Confirm Disk Cache Clear"],
-                timeout: 2
+                timeout: WaitTiming.readbackTimeoutSeconds
             )
         )
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
@@ -1130,10 +1183,11 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(
             // ui-label-lookup: This is a translated About copy assertion.
-            anyElement(app: app, withLabel: "应用名称").waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: "应用名称").waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "In landscape, the About page should still show the app name"
         )
-        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.transitionPollSeconds))
 
         attachScreenshot(
             app: app,
@@ -1145,12 +1199,12 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSSettingsAboutPageEnglishLocalizationScreenshotLight() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
 
         openSettingsFromSlideShow(app: app)
         openSettingsAboutPage(app: app)
-        assertSettingsAboutPageLoaded(app: app, forceEnglishLocalization: true)
+        assertSettingsAboutPageLoaded(app: app, shouldForceEnglishLocalization: true)
 
         attachScreenshot(
             app: app,
@@ -1171,7 +1225,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             .matching(identifier: "settings.about.opensource.link")
             .firstMatch
         XCTAssertTrue(
-            openSourceLink.waitForExistence(timeout: 8), "About page should show the 'Open Source Licenses' entry")
+            openSourceLink.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "About page should show the 'Open Source Licenses' entry")
 
         attachScreenshot(
             app: app,
@@ -1183,15 +1238,17 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             app.descendants(matching: .any)
                 .matching(identifier: "settings.about.opensource.page")
                 .firstMatch
-                .waitForExistence(timeout: 3),
+                .waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "Tapping should open the open source licenses detail page"
         )
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "SDWebImage").waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: "SDWebImage").waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Open source licenses page should show the SDWebImage card"
         )
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "SDWebImageSwiftUI").waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: "SDWebImageSwiftUI").waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Open source licenses page should show the SDWebImageSwiftUI card"
         )
 
@@ -1243,21 +1300,23 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             .matching(identifier: "settings.about.opensource.link")
             .firstMatch
         XCTAssertTrue(
-            openSourceLink.waitForExistence(timeout: 8), "About page should show the 'Open Source Licenses' entry")
+            openSourceLink.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "About page should show the 'Open Source Licenses' entry")
         tapElement(openSourceLink)
 
         XCTAssertTrue(
             app.descendants(matching: .any)
                 .matching(identifier: "settings.about.opensource.page")
                 .firstMatch
-                .waitForExistence(timeout: 3),
+                .waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "Tapping should open the open source licenses detail page"
         )
 
         openSettingsSection(app: app, sectionID: "settings.item.server")
 
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: 8),
+            app.textFields["firstboot.serverURL.field"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After tapping 'Server' in the left sidebar from the open source licenses page, the right detail pane should switch to server settings immediately"
         )
 
@@ -1421,7 +1480,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func runIOSLocalizedFilterEditorAcceptance(locale: LocalizedAcceptanceLocale) throws {
         let filterEditorApp = try launchIntoFilterEditor(
             colorScheme: "light",
-            prepareFilterEditorVisuals: false,
+            shouldPrepareFilterEditorVisuals: false,
             acceptanceLocale: locale
         )
         XCTAssertTrue(
@@ -1429,7 +1488,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
                 filterEditorApp,
                 identifier: "filterEditor.page.title",
                 label: locale.filterEditorTitle,
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "In the localized environment, the filter editor should show text for the target locale"
         )
@@ -1480,7 +1539,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
                 settingsApp,
                 identifier: "settings.item.playback",
                 label: locale.playbackSettingsTitle,
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "In the localized environment, the settings root should show the playback settings entry"
         )
@@ -1494,7 +1553,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             sectionID: "settings.item.playback"
         )
         XCTAssertTrue(
-            settingsApp.buttons["settings.playback.filterConfig.button"].waitForExistence(timeout: 8),
+            settingsApp.buttons["settings.playback.filterConfig.button"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized playback settings page should show the edit filters entry"
         )
         attachScreenshot(
@@ -1508,7 +1568,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
         XCTAssertTrue(
             anyElement(app: settingsApp, withLabel: locale.accessProtectionDisabledTitle)
-                .waitForExistence(timeout: 8),
+                .waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized access protection page should show the disabled status"
         )
         attachScreenshot(
@@ -1521,7 +1581,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             sectionID: "settings.item.server"
         )
         XCTAssertTrue(
-            settingsApp.textFields["firstboot.serverURL.field"].waitForExistence(timeout: 8),
+            settingsApp.textFields["firstboot.serverURL.field"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized server settings page should show the server URL field"
         )
         attachScreenshot(
@@ -1534,7 +1595,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             sectionID: "settings.item.cache"
         )
         XCTAssertTrue(
-            settingsApp.buttons["settings.cache.clearDisk.button"].waitForExistence(timeout: 8),
+            settingsApp.buttons["settings.cache.clearDisk.button"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized cache management page should show the clear disk cache button"
         )
         attachScreenshot(
@@ -1556,11 +1618,13 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             sectionID: "settings.item.about"
         )
         XCTAssertTrue(
-            anyElement(app: aboutApp, withLabel: locale.appInfoTitle).waitForExistence(timeout: 8),
+            anyElement(app: aboutApp, withLabel: locale.appInfoTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized About page should show the App info section"
         )
         XCTAssertTrue(
-            anyElement(app: aboutApp, withLabel: locale.privacyPolicyTitle).waitForExistence(timeout: 8),
+            anyElement(app: aboutApp, withLabel: locale.privacyPolicyTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized About page should show the privacy policy entry text for the target locale"
         )
         attachScreenshot(
@@ -1570,7 +1634,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         openOpenSourceLicensesFromAbout(app: aboutApp)
         XCTAssertTrue(
-            anyElement(app: aboutApp, withLabel: locale.openSourceTitle).waitForExistence(timeout: 8),
+            anyElement(app: aboutApp, withLabel: locale.openSourceTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized open source licenses page should show text for the target locale"
         )
         attachScreenshot(
@@ -1584,7 +1649,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let app = launchIntoOnboardingFirstBoot(
             colorScheme: "light",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
         assertOnboardingHeader(
             app: app,
@@ -1602,7 +1667,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSEnglishAcceptanceModeSelectionScreenshot() throws {
         let app = try launchIntoOnboardingModeSelection(
             colorScheme: "light",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
         assertOnboardingHeader(
             app: app,
@@ -1620,7 +1685,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSEnglishAcceptanceFilterSummaryScreenshot() throws {
         let app = try launchIntoOnboardingFilterSummary(
             colorScheme: "light",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
         assertOnboardingHeader(
             app: app,
@@ -1639,11 +1704,12 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let app = try launchIntoFilterEditor(
             colorScheme: "light",
-            prepareFilterEditorVisuals: false,
-            forceEnglishLocalization: true
+            shouldPrepareFilterEditorVisuals: false,
+            shouldForceEnglishLocalization: true
         )
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "Edit Filters").waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: "Edit Filters").waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "In English, the filter editor title should be Edit Filters"
         )
         attachScreenshot(
@@ -1657,7 +1723,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         let app = try launchIntoAlbumFilterPage(
             colorScheme: "light",
             dynamicTypeSize: nil,
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
         attachScreenshot(
             app: app,
@@ -1670,7 +1736,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         let app = try launchIntoPersonFilterPage(
             colorScheme: "light",
             dynamicTypeSize: nil,
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
         attachScreenshot(
             app: app,
@@ -1683,7 +1749,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
 
         attachScreenshot(
@@ -1703,14 +1769,15 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSEnglishAcceptanceSettingsPlaybackScreenshot() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
 
         openSettingsFromSlideShow(app: app)
 
         openSettingsSection(app: app, sectionID: "settings.item.playback")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "Autoplay").waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: "Autoplay").waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English playback settings page should show Autoplay"
         )
         attachScreenshot(
@@ -1723,14 +1790,15 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSEnglishAcceptanceSettingsServerScreenshot() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
 
         openSettingsFromSlideShow(app: app)
 
         openSettingsSection(app: app, sectionID: "settings.item.server")
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: 8),
+            app.textFields["firstboot.serverURL.field"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English server settings page should show the server URL field"
         )
         attachScreenshot(
@@ -1743,14 +1811,15 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSEnglishAcceptanceSettingsCacheScreenshot() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
 
         openSettingsFromSlideShow(app: app)
 
         openSettingsSection(app: app, sectionID: "settings.item.cache")
         XCTAssertTrue(
-            app.buttons["settings.cache.clearDisk.button"].waitForExistence(timeout: 8),
+            app.buttons["settings.cache.clearDisk.button"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English cache management page should show the clear disk cache button"
         )
         attachScreenshot(
@@ -1763,13 +1832,13 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSEnglishAcceptanceSettingsAboutOpenSourceScreenshots() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
 
         openSettingsFromSlideShow(app: app)
 
         openSettingsAboutPage(app: app)
-        assertSettingsAboutPageLoaded(app: app, forceEnglishLocalization: true)
+        assertSettingsAboutPageLoaded(app: app, shouldForceEnglishLocalization: true)
         attachScreenshot(
             app: app,
             name: "english-ios-settings-about-\(currentDeviceTag())"
@@ -1777,7 +1846,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         openOpenSourceLicensesFromAbout(app: app)
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "Open Source Licenses").waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: "Open Source Licenses").waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English open source licenses page should show the Open Source Licenses title"
         )
         attachScreenshot(
@@ -1804,9 +1874,9 @@ private extension FilterSummaryIOSVisualUITests {
     func launchIntoOnboardingFirstBoot(
         colorScheme: String,
         dynamicTypeSize: String? = nil,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         acceptanceLocale: LocalizedAcceptanceLocale? = nil,
-        disableDebugFillConfigButton: Bool = true
+        shouldDisableDebugFillConfigButton: Bool = true
     ) -> XCUIApplication {
 
         let app: XCUIApplication
@@ -1815,20 +1885,20 @@ private extension FilterSummaryIOSVisualUITests {
                 colorScheme: colorScheme,
                 acceptanceLocale: acceptanceLocale,
                 dynamicTypeSize: dynamicTypeSize,
-                disableDebugFillConfigButton: disableDebugFillConfigButton
+                shouldDisableDebugFillConfigButton: shouldDisableDebugFillConfigButton
             )
-        } else if forceEnglishLocalization {
+        } else if shouldForceEnglishLocalization {
             app = makeLaunchApp(
                 colorScheme: colorScheme,
-                forceEnglishLocalization: true,
+                shouldForceEnglishLocalization: true,
                 dynamicTypeSize: dynamicTypeSize,
-                disableDebugFillConfigButton: disableDebugFillConfigButton
+                shouldDisableDebugFillConfigButton: shouldDisableDebugFillConfigButton
             )
         } else {
             app = makeChineseLaunchApp(
                 colorScheme: colorScheme,
                 dynamicTypeSize: dynamicTypeSize,
-                disableDebugFillConfigButton: disableDebugFillConfigButton
+                shouldDisableDebugFillConfigButton: shouldDisableDebugFillConfigButton
             )
         }
         app.launch()
@@ -1839,7 +1909,7 @@ private extension FilterSummaryIOSVisualUITests {
     func launchIntoOnboardingModeSelection(
         colorScheme: String,
         dynamicTypeSize: String? = nil,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         acceptanceLocale: LocalizedAcceptanceLocale? = nil
     ) throws -> XCUIApplication {
 
@@ -1850,10 +1920,10 @@ private extension FilterSummaryIOSVisualUITests {
                 acceptanceLocale: acceptanceLocale,
                 dynamicTypeSize: dynamicTypeSize
             )
-        } else if forceEnglishLocalization {
+        } else if shouldForceEnglishLocalization {
             app = makeLaunchApp(
                 colorScheme: colorScheme,
-                forceEnglishLocalization: true,
+                shouldForceEnglishLocalization: true,
                 dynamicTypeSize: dynamicTypeSize
             )
         } else {
@@ -1870,7 +1940,7 @@ private extension FilterSummaryIOSVisualUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 15),
+            continueButton.waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page")
         return app
     }
@@ -1879,34 +1949,36 @@ private extension FilterSummaryIOSVisualUITests {
     func launchIntoOnboardingFilterSummary(
         colorScheme: String,
         dynamicTypeSize: String? = nil,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         acceptanceLocale: LocalizedAcceptanceLocale? = nil
     ) throws -> XCUIApplication {
 
         let app = try launchIntoOnboardingModeSelection(
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
-            forceEnglishLocalization: forceEnglishLocalization,
+            shouldForceEnglishLocalization: shouldForceEnglishLocalization,
             acceptanceLocale: acceptanceLocale
         )
 
         let modeFilteredButton = app.buttons["mode.filtered.button"]
-        XCTAssertTrue(modeFilteredButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(modeFilteredButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         modeFilteredButton.tap()
 
         let modeContinueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(modeContinueButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(modeContinueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(modeContinueButton.isEnabled)
         modeContinueButton.tap()
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
-        XCTAssertTrue(startPlaybackButton.waitForExistence(timeout: 12))
-        XCTAssertTrue(app.buttons["filterSummary.album.button"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["filterSummary.person.button"].waitForExistence(timeout: 10))
+        XCTAssertTrue(startPlaybackButton.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds))
+        XCTAssertTrue(
+            app.buttons["filterSummary.album.button"].waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds))
+        XCTAssertTrue(
+            app.buttons["filterSummary.person.button"].waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds))
         assertFilterSummaryUsesOnlyTopBackButton(app: app)
 
         // Short wait so the screenshot does not catch a mid-transition frame.
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.playbackEntrySettleSeconds))
         return app
     }
 
@@ -1936,28 +2008,28 @@ private extension FilterSummaryIOSVisualUITests {
 
     func makeLaunchApp(
         colorScheme: String,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         dynamicTypeSize: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        disableDebugFillConfigButton: Bool = true,
-        forceAutoPlayOff: Bool = false,
-        showExifSamplingDebugOverlay: Bool = false
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldDisableDebugFillConfigButton: Bool = true,
+        shouldForceAutoPlayOff: Bool = false,
+        shouldShowExifSamplingDebugOverlay: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_COLOR_SCHEME"] = colorScheme
-        if disableDebugFillConfigButton {
+        if shouldDisableDebugFillConfigButton {
 
             app.launchEnvironment["UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON"] = "1"
         }
-        if disablePlaybackEntryHint {
+        if shouldDisablePlaybackEntryHint {
             app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         }
-        if forceAutoPlayOff {
+        if shouldForceAutoPlayOff {
 
             app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
         }
-        if showExifSamplingDebugOverlay {
+        if shouldShowExifSamplingDebugOverlay {
 
             app.launchEnvironment["UI_TEST_SHOW_EXIF_SAMPLING_DEBUG"] = "1"
         }
@@ -1965,7 +2037,7 @@ private extension FilterSummaryIOSVisualUITests {
 
             app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = dynamicTypeSize
         }
-        if forceEnglishLocalization {
+        if shouldForceEnglishLocalization {
 
             app.launchArguments += [
                 "-AppleLanguages", "(en)",
@@ -1978,19 +2050,19 @@ private extension FilterSummaryIOSVisualUITests {
     func makeChineseLaunchApp(
         colorScheme: String,
         dynamicTypeSize: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        disableDebugFillConfigButton: Bool = true,
-        forceAutoPlayOff: Bool = false,
-        showExifSamplingDebugOverlay: Bool = false
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldDisableDebugFillConfigButton: Bool = true,
+        shouldForceAutoPlayOff: Bool = false,
+        shouldShowExifSamplingDebugOverlay: Bool = false
     ) -> XCUIApplication {
 
         let app = makeLaunchApp(
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
-            disablePlaybackEntryHint: disablePlaybackEntryHint,
-            disableDebugFillConfigButton: disableDebugFillConfigButton,
-            forceAutoPlayOff: forceAutoPlayOff,
-            showExifSamplingDebugOverlay: showExifSamplingDebugOverlay
+            shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+            shouldDisableDebugFillConfigButton: shouldDisableDebugFillConfigButton,
+            shouldForceAutoPlayOff: shouldForceAutoPlayOff,
+            shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay
         )
         app.launchArguments += [
             "-AppleLanguages", "(zh-Hans)",
@@ -2003,19 +2075,19 @@ private extension FilterSummaryIOSVisualUITests {
         colorScheme: String,
         acceptanceLocale: LocalizedAcceptanceLocale,
         dynamicTypeSize: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        disableDebugFillConfigButton: Bool = true,
-        forceAutoPlayOff: Bool = false,
-        showExifSamplingDebugOverlay: Bool = false
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldDisableDebugFillConfigButton: Bool = true,
+        shouldForceAutoPlayOff: Bool = false,
+        shouldShowExifSamplingDebugOverlay: Bool = false
     ) -> XCUIApplication {
 
         let app = makeLaunchApp(
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
-            disablePlaybackEntryHint: disablePlaybackEntryHint,
-            disableDebugFillConfigButton: disableDebugFillConfigButton,
-            forceAutoPlayOff: forceAutoPlayOff,
-            showExifSamplingDebugOverlay: showExifSamplingDebugOverlay
+            shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+            shouldDisableDebugFillConfigButton: shouldDisableDebugFillConfigButton,
+            shouldForceAutoPlayOff: shouldForceAutoPlayOff,
+            shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay
         )
         app.launchArguments += [
             "-AppleLanguages", "(\(acceptanceLocale.languageCode))",
@@ -2027,12 +2099,12 @@ private extension FilterSummaryIOSVisualUITests {
     @MainActor
     func launchIntoFilterSummary(
         colorScheme: String,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         dynamicTypeSize: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        prepareFilterEditorVisuals: Bool = false,
-        forceAutoPlayOff: Bool = false,
-        showExifSamplingDebugOverlay: Bool = false,
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldPrepareFilterEditorVisuals: Bool = false,
+        shouldForceAutoPlayOff: Bool = false,
+        shouldShowExifSamplingDebugOverlay: Bool = false,
         acceptanceLocale: LocalizedAcceptanceLocale? = nil
     ) throws -> XCUIApplication {
 
@@ -2042,27 +2114,27 @@ private extension FilterSummaryIOSVisualUITests {
                 colorScheme: colorScheme,
                 acceptanceLocale: acceptanceLocale,
                 dynamicTypeSize: dynamicTypeSize,
-                disablePlaybackEntryHint: disablePlaybackEntryHint,
-                forceAutoPlayOff: forceAutoPlayOff,
-                showExifSamplingDebugOverlay: showExifSamplingDebugOverlay
+                shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+                shouldForceAutoPlayOff: shouldForceAutoPlayOff,
+                shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay
             )
-        } else if forceEnglishLocalization {
+        } else if shouldForceEnglishLocalization {
             app = makeLaunchApp(
                 colorScheme: colorScheme,
-                forceEnglishLocalization: true,
+                shouldForceEnglishLocalization: true,
                 dynamicTypeSize: dynamicTypeSize,
-                disablePlaybackEntryHint: disablePlaybackEntryHint,
-                forceAutoPlayOff: forceAutoPlayOff,
-                showExifSamplingDebugOverlay: showExifSamplingDebugOverlay
+                shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+                shouldForceAutoPlayOff: shouldForceAutoPlayOff,
+                shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay
             )
         } else {
 
             app = makeChineseLaunchApp(
                 colorScheme: colorScheme,
                 dynamicTypeSize: dynamicTypeSize,
-                disablePlaybackEntryHint: disablePlaybackEntryHint,
-                forceAutoPlayOff: forceAutoPlayOff,
-                showExifSamplingDebugOverlay: showExifSamplingDebugOverlay
+                shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+                shouldForceAutoPlayOff: shouldForceAutoPlayOff,
+                shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay
             )
         }
         let config = try requireTestServerConfig()
@@ -2071,21 +2143,21 @@ private extension FilterSummaryIOSVisualUITests {
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         try requireServerAlbumAndPerson()
         app.launchEnvironment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] = "1"
-        if prepareFilterEditorVisuals {
+        if shouldPrepareFilterEditorVisuals {
             app.launchEnvironment["UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS"] = "1"
         }
         app.launch()
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 15),
+            continueButton.waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page")
         startFilteredFlowFromModeSelection(app: app)
 
         let albumButton = app.buttons["filterSummary.album.button"]
         let peopleButton = app.buttons["filterSummary.person.button"]
-        XCTAssertTrue(albumButton.waitForExistence(timeout: 10))
-        XCTAssertTrue(peopleButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(albumButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds))
+        XCTAssertTrue(peopleButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds))
         assertFilterSummaryUsesOnlyTopBackButton(app: app)
         return app
     }
@@ -2094,17 +2166,17 @@ private extension FilterSummaryIOSVisualUITests {
     func launchIntoRandomSlideShow(
         colorScheme: String,
         dynamicTypeSize: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        forceAutoPlayOff: Bool = false,
-        showExifSamplingDebugOverlay: Bool = false
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldForceAutoPlayOff: Bool = false,
+        shouldShowExifSamplingDebugOverlay: Bool = false
     ) throws -> XCUIApplication {
 
         let app = makeChineseLaunchApp(
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
-            disablePlaybackEntryHint: disablePlaybackEntryHint,
-            forceAutoPlayOff: forceAutoPlayOff,
-            showExifSamplingDebugOverlay: showExifSamplingDebugOverlay
+            shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+            shouldForceAutoPlayOff: shouldForceAutoPlayOff,
+            shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay
         )
 
         let config = try requireTestServerConfig()
@@ -2116,7 +2188,7 @@ private extension FilterSummaryIOSVisualUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 15),
+            continueButton.waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page"
         )
 
@@ -2124,11 +2196,11 @@ private extension FilterSummaryIOSVisualUITests {
 
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 10),
+            playPauseButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
             "After random playback opens the playback page, the play/pause button should be visible"
         )
 
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.playbackEntrySettleSeconds))
         return app
     }
 
@@ -2140,7 +2212,7 @@ private extension FilterSummaryIOSVisualUITests {
 
         let globalBackButton = app.buttons["global.back.button"]
         XCTAssertTrue(
-            globalBackButton.waitForExistence(timeout: 6),
+            globalBackButton.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "Filter summary page should keep the top-left back button",
             file: file,
             line: line
@@ -2165,7 +2237,7 @@ private extension FilterSummaryIOSVisualUITests {
 
         let wizardTitle = app.staticTexts["onboardingWizard.title"]
         XCTAssertTrue(
-            wizardTitle.waitForExistence(timeout: 8),
+            wizardTitle.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The top of the page should show the shared setup wizard header",
             file: file,
             line: line
@@ -2174,7 +2246,7 @@ private extension FilterSummaryIOSVisualUITests {
 
         let pageTitle = app.staticTexts[pageTitleIdentifier]
         XCTAssertTrue(
-            pageTitle.waitForExistence(timeout: 8),
+            pageTitle.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The page main title should clearly state the task of the current step",
             file: file,
             line: line
@@ -2212,34 +2284,34 @@ private extension FilterSummaryIOSVisualUITests {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            banner.waitForExistence(timeout: 6),
+            banner.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "On first entering the playback page, the one-time tip bubble should appear",
             file: file,
             line: line
         )
         XCTAssertTrue(
-            title.waitForExistence(timeout: 2),
+            title.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
             "The tip should show its main text",
             file: file,
             line: line
         )
         XCTAssertEqual(title.label, expectedTitle, file: file, line: line)
         XCTAssertTrue(
-            action.waitForExistence(timeout: 2),
+            action.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
             "The tip should show the action hint",
             file: file,
             line: line
         )
         XCTAssertEqual(action.label, expectedAction, file: file, line: line)
         XCTAssertTrue(
-            keycap.waitForExistence(timeout: 2),
+            keycap.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
             "The tip should show the dismiss target as a separate keycap",
             file: file,
             line: line
         )
         XCTAssertEqual(keycap.label, expectedKeycap, file: file, line: line)
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: 4),
+            settingsButton.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds),
             "The playback page should keep the settings button; the tip must not break the entry itself",
             file: file,
             line: line
@@ -2270,13 +2342,13 @@ private extension FilterSummaryIOSVisualUITests {
         )
         XCTAssertLessThanOrEqual(
             bubbleToSettingsGap,
-            12,
+            Calibration.maximumTipGapPoints,
             "The tip's tail should sit right above the settings button, not float. gap=\(bubbleToSettingsGap), banner=\(bannerFrame), settings=\(settingsButtonFrame)",
             file: file,
             line: line
         )
 
-        let maxSingleLineHeight = banner.frame.height * 0.46
+        let maxSingleLineHeight = banner.frame.height * Calibration.singleLineBannerHeightFraction
         XCTAssertLessThanOrEqual(
             title.frame.height,
             maxSingleLineHeight,
@@ -2311,7 +2383,7 @@ private extension FilterSummaryIOSVisualUITests {
 
         let deadline = Date().addingTimeInterval(timeout)
         while entryHintBanner.exists && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
     }
 
@@ -2323,7 +2395,7 @@ private extension FilterSummaryIOSVisualUITests {
     ) -> CGRect {
         let title = app.staticTexts[identifier]
         XCTAssertTrue(
-            title.waitForExistence(timeout: 8),
+            title.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Should be able to read the page main title position: \(identifier)",
             file: file,
             line: line
@@ -2347,7 +2419,7 @@ private extension FilterSummaryIOSVisualUITests {
         )
         XCTAssertLessThanOrEqual(
             abs(frame.minY - baseline.minY),
-            12,
+            Calibration.titlePositionTolerancePoints,
             "\(pageName) main title vertical position should match step 1",
             file: file,
             line: line
@@ -2357,28 +2429,28 @@ private extension FilterSummaryIOSVisualUITests {
     @MainActor
     func launchIntoSlideShow(
         colorScheme: String,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         dynamicTypeSize: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        prepareFilterEditorVisuals: Bool = false,
-        forceAutoPlayOff: Bool = false,
-        showExifSamplingDebugOverlay: Bool = false,
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldPrepareFilterEditorVisuals: Bool = false,
+        shouldForceAutoPlayOff: Bool = false,
+        shouldShowExifSamplingDebugOverlay: Bool = false,
         acceptanceLocale: LocalizedAcceptanceLocale? = nil
     ) throws -> XCUIApplication {
 
         let app = try launchIntoFilterSummary(
             colorScheme: colorScheme,
-            forceEnglishLocalization: forceEnglishLocalization,
+            shouldForceEnglishLocalization: shouldForceEnglishLocalization,
             dynamicTypeSize: dynamicTypeSize,
-            disablePlaybackEntryHint: disablePlaybackEntryHint,
-            prepareFilterEditorVisuals: prepareFilterEditorVisuals,
-            forceAutoPlayOff: forceAutoPlayOff,
-            showExifSamplingDebugOverlay: showExifSamplingDebugOverlay,
+            shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+            shouldPrepareFilterEditorVisuals: shouldPrepareFilterEditorVisuals,
+            shouldForceAutoPlayOff: shouldForceAutoPlayOff,
+            shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay,
             acceptanceLocale: acceptanceLocale
         )
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(timeout: 8),
+            startPlaybackButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Filter summary page should show the 'Start Playback' button")
         // Start stays disabled until the page has loaded and selected the first album from the server.
         waitForReadinessMarker(app: app, identifier: "filterSummary.visual.ready")
@@ -2388,13 +2460,15 @@ private extension FilterSummaryIOSVisualUITests {
 
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: 20),
+            settingsButton.waitForExistence(timeout: WaitTiming.playbackControlTimeoutSeconds),
             "After starting playback, the playback page should open and show the control bar")
 
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
-        XCTAssertTrue(playPauseButton.waitForExistence(timeout: 10), "Playback page should show the play/pause button")
+        XCTAssertTrue(
+            playPauseButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the play/pause button")
 
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.playbackEntrySettleSeconds))
         return app
     }
 
@@ -2402,20 +2476,20 @@ private extension FilterSummaryIOSVisualUITests {
     func launchIntoFilterEditor(
         colorScheme: String,
         dynamicTypeSize: String? = nil,
-        forceAutoPlayOff: Bool = false,
-        prepareFilterEditorVisuals: Bool = true,
-        showExifSamplingDebugOverlay: Bool = false,
-        forceEnglishLocalization: Bool = false,
+        shouldForceAutoPlayOff: Bool = false,
+        shouldPrepareFilterEditorVisuals: Bool = true,
+        shouldShowExifSamplingDebugOverlay: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         acceptanceLocale: LocalizedAcceptanceLocale? = nil
     ) throws -> XCUIApplication {
 
         let app = try launchIntoSlideShow(
             colorScheme: colorScheme,
-            forceEnglishLocalization: forceEnglishLocalization,
+            shouldForceEnglishLocalization: shouldForceEnglishLocalization,
             dynamicTypeSize: dynamicTypeSize,
-            prepareFilterEditorVisuals: prepareFilterEditorVisuals,
-            forceAutoPlayOff: forceAutoPlayOff,
-            showExifSamplingDebugOverlay: showExifSamplingDebugOverlay,
+            shouldPrepareFilterEditorVisuals: shouldPrepareFilterEditorVisuals,
+            shouldForceAutoPlayOff: shouldForceAutoPlayOff,
+            shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay,
             acceptanceLocale: acceptanceLocale
         )
 
@@ -2427,24 +2501,29 @@ private extension FilterSummaryIOSVisualUITests {
 
         let filterConfigButton = app.buttons["settings.playback.filterConfig.button"]
         XCTAssertTrue(
-            filterConfigButton.waitForExistence(timeout: 8),
+            filterConfigButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Playback settings page should show the 'Edit Filters' entry"
         )
         XCTAssertTrue(
-            waitForElementToBecomeHittable(filterConfigButton, app: app, timeout: 5),
+            waitForElementToBecomeHittable(
+                filterConfigButton, app: app, timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The 'Edit Filters' entry on the playback settings page should scroll into a tappable position"
         )
         tapElement(filterConfigButton)
 
         let albumEntry = app.buttons["filter.editor.album.entry"]
         let personEntry = app.buttons["filter.editor.person.entry"]
-        XCTAssertTrue(albumEntry.waitForExistence(timeout: 10), "Filter editor should show the album entry")
-        XCTAssertTrue(personEntry.waitForExistence(timeout: 10), "Filter editor should show the people entry")
+        XCTAssertTrue(
+            albumEntry.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Filter editor should show the album entry")
+        XCTAssertTrue(
+            personEntry.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Filter editor should show the people entry")
 
-        if prepareFilterEditorVisuals {
+        if shouldPrepareFilterEditorVisuals {
             waitForReadinessMarker(app: app, identifier: "filterEditor.visual.ready")
         }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.snapshotPollSeconds))
         return app
     }
 
@@ -2452,9 +2531,10 @@ private extension FilterSummaryIOSVisualUITests {
     func launchIntoAlbumFilterFromSummary() throws -> XCUIApplication {
         let app = try launchIntoFilterSummary(colorScheme: "dark")
         let albumButton = app.buttons["filterSummary.album.button"]
-        XCTAssertTrue(albumButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(albumButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds))
         tapElement(albumButton)
-        XCTAssertTrue(app.buttons["albumFilter.back.button"].waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            app.buttons["albumFilter.back.button"].waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds))
         return app
     }
 
@@ -2462,29 +2542,31 @@ private extension FilterSummaryIOSVisualUITests {
     func launchIntoAlbumFilterPage(
         colorScheme: String,
         dynamicTypeSize: String?,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         acceptanceLocale: LocalizedAcceptanceLocale? = nil
     ) throws -> XCUIApplication {
         let app = try launchIntoFilterEditor(
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
-            prepareFilterEditorVisuals: acceptanceLocale == nil && forceEnglishLocalization == false,
-            forceEnglishLocalization: forceEnglishLocalization,
+            shouldPrepareFilterEditorVisuals: acceptanceLocale == nil && shouldForceEnglishLocalization == false,
+            shouldForceEnglishLocalization: shouldForceEnglishLocalization,
             acceptanceLocale: acceptanceLocale
         )
 
         setOrientation(.portrait, app: app, waitForTitleIdentifier: "filterEditor.page.title")
 
         let albumEntry = app.buttons["filter.editor.album.entry"]
-        XCTAssertTrue(albumEntry.waitForExistence(timeout: 10), "Filter editor should show the album entry")
+        XCTAssertTrue(
+            albumEntry.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Filter editor should show the album entry")
         tapElement(albumEntry)
 
         assertInAlbumFilterEditorPage(
             app: app,
-            forceEnglishLocalization: forceEnglishLocalization,
+            shouldForceEnglishLocalization: shouldForceEnglishLocalization,
             expectedTitleText: acceptanceLocale?.albumFilterTitle
         )
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.snapshotPollSeconds))
         return app
     }
 
@@ -2492,29 +2574,31 @@ private extension FilterSummaryIOSVisualUITests {
     func launchIntoPersonFilterPage(
         colorScheme: String,
         dynamicTypeSize: String?,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         acceptanceLocale: LocalizedAcceptanceLocale? = nil
     ) throws -> XCUIApplication {
         let app = try launchIntoFilterEditor(
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
-            prepareFilterEditorVisuals: acceptanceLocale == nil && forceEnglishLocalization == false,
-            forceEnglishLocalization: forceEnglishLocalization,
+            shouldPrepareFilterEditorVisuals: acceptanceLocale == nil && shouldForceEnglishLocalization == false,
+            shouldForceEnglishLocalization: shouldForceEnglishLocalization,
             acceptanceLocale: acceptanceLocale
         )
 
         setOrientation(.portrait, app: app, waitForTitleIdentifier: "filterEditor.page.title")
 
         let personEntry = app.buttons["filter.editor.person.entry"]
-        XCTAssertTrue(personEntry.waitForExistence(timeout: 10), "Filter editor should show the people entry")
+        XCTAssertTrue(
+            personEntry.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Filter editor should show the people entry")
         tapElement(personEntry)
 
         assertInPersonFilterEditorPage(
             app: app,
-            forceEnglishLocalization: forceEnglishLocalization,
+            shouldForceEnglishLocalization: shouldForceEnglishLocalization,
             expectedTitleText: acceptanceLocale?.personFilterTitle
         )
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.snapshotPollSeconds))
         return app
     }
 
@@ -2526,12 +2610,12 @@ private extension FilterSummaryIOSVisualUITests {
 
         let personEntry = app.buttons["filter.editor.person.entry"]
         XCTAssertTrue(
-            personEntry.waitForExistence(timeout: 8),
+            personEntry.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After returning to the filter editor, the people entry should still be visible")
 
         let albumEntry = app.buttons["filter.editor.album.entry"]
         XCTAssertTrue(
-            albumEntry.waitForExistence(timeout: 8),
+            albumEntry.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After returning to the filter editor, the album entry should still be visible")
         attachScreenshot(app: app, name: "ios-exif-diagnostic-filter-configured")
     }
@@ -2539,36 +2623,46 @@ private extension FilterSummaryIOSVisualUITests {
     @MainActor
     func clearAllPeopleSelections(app: XCUIApplication) {
         let personEntry = app.buttons["filter.editor.person.entry"]
-        XCTAssertTrue(personEntry.waitForExistence(timeout: 8), "Filter editor should show the people entry")
+        XCTAssertTrue(
+            personEntry.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Filter editor should show the people entry")
         tapElement(personEntry)
 
         assertInPersonFilterEditorPage(app: app)
 
         let clearButton = app.buttons["personFilter.clear.button"]
-        XCTAssertTrue(clearButton.waitForExistence(timeout: 8), "People filter page should show the clear button")
+        XCTAssertTrue(
+            clearButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "People filter page should show the clear button")
         tapElement(clearButton)
 
         let backButton = app.buttons["personFilter.back.button"]
-        XCTAssertTrue(backButton.waitForExistence(timeout: 8), "People filter page should show the back button")
+        XCTAssertTrue(
+            backButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "People filter page should show the back button")
         tapElement(backButton)
     }
 
     @MainActor
     func selectOnlyExifDiagnosticAlbum(app: XCUIApplication) throws {
         let albumEntry = app.buttons["filter.editor.album.entry"]
-        XCTAssertTrue(albumEntry.waitForExistence(timeout: 8), "Filter editor should show the album entry")
+        XCTAssertTrue(
+            albumEntry.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Filter editor should show the album entry")
         tapElement(albumEntry)
 
         assertInAlbumFilterEditorPage(app: app)
 
         let clearButton = app.buttons["albumFilter.clear.button"]
-        XCTAssertTrue(clearButton.waitForExistence(timeout: 8), "Album filter page should show the clear button")
+        XCTAssertTrue(
+            clearButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Album filter page should show the clear button")
         tapElement(clearButton)
 
         let diagnosticAlbumButton = waitForAlbumFilterButton(
             app: app,
             albumID: try requireExifDiagnosticAlbumID(),
-            timeout: 12
+            timeout: WaitTiming.screenTransitionTimeoutSeconds
         )
         guard diagnosticAlbumButton.exists else {
             throw XCTSkip(
@@ -2578,7 +2672,9 @@ private extension FilterSummaryIOSVisualUITests {
         tapElement(diagnosticAlbumButton)
 
         let backButton = app.buttons["albumFilter.back.button"]
-        XCTAssertTrue(backButton.waitForExistence(timeout: 8), "Album filter page should show the back button")
+        XCTAssertTrue(
+            backButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Album filter page should show the back button")
         tapElement(backButton)
     }
 
@@ -2602,7 +2698,7 @@ private extension FilterSummaryIOSVisualUITests {
             } else {
                 app.swipeUp()
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.controlSettleSeconds))
         }
 
         return albumButton
@@ -2613,14 +2709,14 @@ private extension FilterSummaryIOSVisualUITests {
         app: XCUIApplication,
         expectedCount: Int,
         screenshotNamePrefix: String = "ios-exif-diagnostic",
-        waitForSamplingOverlay: Bool = false
+        shouldWaitForSamplingOverlay: Bool = false
     ) {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 8),
+            playPauseButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After returning to the playback page, the play/pause button should be visible")
         XCTAssertTrue(
-            waitUntil(timeout: 4) {
+            waitUntil(timeout: WaitTiming.stateChangeTimeoutSeconds) {
                 ((playPauseButton.value as? String) ?? "").lowercased() == "play"
             },
             "In diagnostic mode autoplay should be off, and the middle control bar button should be in the 'play' state"
@@ -2628,13 +2724,13 @@ private extension FilterSummaryIOSVisualUITests {
 
         for index in 0..<expectedCount {
             XCTAssertTrue(
-                waitForSlideshowSettingsButton(app: app, timeout: 8),
+                waitForSlideshowSettingsButton(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                 "Before each screenshot, the playback control bar should wake up reliably"
             )
 
-            if waitForSamplingOverlay {
+            if shouldWaitForSamplingOverlay {
                 XCTAssertTrue(
-                    waitForExifSamplingDebugOverlay(app: app, timeout: 8),
+                    waitForExifSamplingDebugOverlay(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                     "In sampling-region diagnostic mode, the playback page should render the reconstructed sampling image, not stay in the loading state"
                 )
             }
@@ -2646,9 +2742,9 @@ private extension FilterSummaryIOSVisualUITests {
 
             guard index < expectedCount - 1 else { continue }
 
-            if waitForSamplingOverlay {
+            if shouldWaitForSamplingOverlay {
                 XCTAssertTrue(
-                    waitForSlideshowSettingsButton(app: app, timeout: 8),
+                    waitForSlideshowSettingsButton(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                     "The control bar may have auto-hidden while waiting for the sampling overlay; it should wake up again before tapping next"
                 )
             }
@@ -2666,16 +2762,18 @@ private extension FilterSummaryIOSVisualUITests {
 
         for _ in 0..<3 {
             XCTAssertTrue(
-                waitForSlideshowSettingsButton(app: app, timeout: 8),
+                waitForSlideshowSettingsButton(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                 "Before retrying next, the playback control bar should wake up again"
             )
             let nextButton = app.buttons["slideshow.control.next.button"]
-            XCTAssertTrue(nextButton.waitForExistence(timeout: 8), "Playback page should show the 'Next' button")
+            XCTAssertTrue(
+                nextButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+                "Playback page should show the 'Next' button")
             tapElement(nextButton)
 
             if let previousAssetID {
                 if waitUntil(
-                    timeout: 8,
+                    timeout: WaitTiming.controlAppearanceTimeoutSeconds,
                     condition: {
                         guard let currentAssetID = self.currentSlideshowAssetID(app: app) else { return false }
                         return currentAssetID != previousAssetID
@@ -2685,7 +2783,7 @@ private extension FilterSummaryIOSVisualUITests {
                 }
             } else if let previousDateLabel {
                 if waitUntil(
-                    timeout: 8,
+                    timeout: WaitTiming.controlAppearanceTimeoutSeconds,
                     condition: {
                         self.currentExifDateLabel(app: app) != previousDateLabel
                     })
@@ -2693,7 +2791,7 @@ private extension FilterSummaryIOSVisualUITests {
                     return true
                 }
             } else {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.screenSettleSeconds))
                 return true
             }
         }
@@ -2704,7 +2802,7 @@ private extension FilterSummaryIOSVisualUITests {
     func currentExifToneDebugLabel(app: XCUIApplication) -> String {
         let toneFlag = app.descendants(matching: .any)["slideshow.exifForegroundTone.flag"]
         XCTAssertTrue(
-            toneFlag.waitForExistence(timeout: 6),
+            toneFlag.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "Playback page should expose the current EXIF text color diagnostic marker")
 
         let candidates = [
@@ -2722,7 +2820,7 @@ private extension FilterSummaryIOSVisualUITests {
 
     func currentSlideshowAssetID(app: XCUIApplication) -> String? {
         let assetFlag = app.descendants(matching: .any)["slideshow.currentAssetId.flag"]
-        guard assetFlag.waitForExistence(timeout: 4) else { return nil }
+        guard assetFlag.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds) else { return nil }
 
         let candidates = [
             assetFlag.label,
@@ -2756,12 +2854,13 @@ private extension FilterSummaryIOSVisualUITests {
     func openSettingsFromSlideShow(app: XCUIApplication) {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            waitForSlideshowSettingsButton(app: app, timeout: 12), "Playback page should show the settings button")
+            waitForSlideshowSettingsButton(app: app, timeout: WaitTiming.screenTransitionTimeoutSeconds),
+            "Playback page should show the settings button")
 
         tapElement(settingsButton)
 
         XCTAssertTrue(
-            waitForAnySettingsRootEntry(app: app, timeout: 10),
+            waitForAnySettingsRootEntry(app: app, timeout: WaitTiming.navigationTimeoutSeconds),
             "After opening settings from the playback page, the settings list should be visible"
         )
     }
@@ -2781,16 +2880,20 @@ private extension FilterSummaryIOSVisualUITests {
         let summary = app.descendants(matching: .any)["filterTopBar.summary"]
 
         XCTAssertTrue(
-            backButton.waitForExistence(timeout: 8), "Top bar should still show the back button", file: file, line: line
+            backButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Top bar should still show the back button", file: file, line: line
         )
         XCTAssertTrue(
-            selectAllButton.waitForExistence(timeout: 8), "Top bar should still show the select all button", file: file,
+            selectAllButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Top bar should still show the select all button", file: file,
             line: line)
         XCTAssertTrue(
-            clearButton.waitForExistence(timeout: 8), "Top bar should still show the clear button", file: file,
+            clearButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Top bar should still show the clear button", file: file,
             line: line)
         XCTAssertTrue(
-            title.waitForExistence(timeout: 8), "Top bar should still show the page title", file: file, line: line)
+            title.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Top bar should still show the page title", file: file, line: line)
         // ui-label-lookup: The filter title is the localization assertion for this top bar.
         XCTAssertEqual(title.label, expectedTitle, file: file, line: line)
 
@@ -2823,19 +2926,19 @@ private extension FilterSummaryIOSVisualUITests {
 
     func assertInAlbumFilterEditorPage(
         app: XCUIApplication,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         expectedTitleText: String? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let titleText = expectedTitleText ?? (forceEnglishLocalization ? "Filter Albums" : "筛选相册")
+        let titleText = expectedTitleText ?? (shouldForceEnglishLocalization ? "Filter Albums" : "筛选相册")
         let title = app.staticTexts["filterTopBar.title"]
         let backButton = app.buttons["albumFilter.back.button"]
         let selectAllButton = app.buttons["albumFilter.selectAll.button"]
         let clearButton = app.buttons["albumFilter.clear.button"]
 
         XCTAssertTrue(
-            title.waitForExistence(timeout: 8),
+            title.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After entering the album filter page, the page title in the target language should be visible",
             file: file,
             line: line
@@ -2852,19 +2955,19 @@ private extension FilterSummaryIOSVisualUITests {
 
     func assertInPersonFilterEditorPage(
         app: XCUIApplication,
-        forceEnglishLocalization: Bool = false,
+        shouldForceEnglishLocalization: Bool = false,
         expectedTitleText: String? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let titleText = expectedTitleText ?? (forceEnglishLocalization ? "Filter People" : "筛选人物")
+        let titleText = expectedTitleText ?? (shouldForceEnglishLocalization ? "Filter People" : "筛选人物")
         let title = app.staticTexts["filterTopBar.title"]
         let backButton = app.buttons["personFilter.back.button"]
         let selectAllButton = app.buttons["personFilter.selectAll.button"]
         let clearButton = app.buttons["personFilter.clear.button"]
 
         XCTAssertTrue(
-            title.waitForExistence(timeout: 8),
+            title.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After entering the people filter page, the page title in the target language should be visible",
             file: file,
             line: line
@@ -2889,14 +2992,14 @@ private extension FilterSummaryIOSVisualUITests {
             ]
 
             for candidate in typedCandidates {
-                if candidate.waitForExistence(timeout: 1) {
+                if candidate.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds) {
                     tapElement(candidate)
                     return
                 }
             }
 
             let fallback = app.descendants(matching: .any).matching(identifier: sectionID).firstMatch
-            if fallback.waitForExistence(timeout: 1) {
+            if fallback.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds) {
                 tapElement(fallback)
                 return
             }
@@ -2916,7 +3019,7 @@ private extension FilterSummaryIOSVisualUITests {
                 let navBack = preferredNavigationBackButton(app: app)
             {
                 tapElement(navBack)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.readbackPollSeconds))
                 continue
             }
 
@@ -2940,97 +3043,113 @@ private extension FilterSummaryIOSVisualUITests {
     // ui-label-lookup: This helper verifies the translated About page copy.
     func assertSettingsAboutPageLoaded(
         app: XCUIApplication,
-        forceEnglishLocalization: Bool = false
+        shouldForceEnglishLocalization: Bool = false
     ) {
-        let appInfoTitle = forceEnglishLocalization ? "App Information" : "应用信息"
-        let appNameTitle = forceEnglishLocalization ? "App Name" : "应用名称"
-        let versionTitle = forceEnglishLocalization ? "Version" : "版本号"
-        let platformTitle = forceEnglishLocalization ? "Platform" : "运行平台"
-        let unofficialNoticeTitle = forceEnglishLocalization ? "Unofficial Notice" : "非官方声明"
+        let appInfoTitle = shouldForceEnglishLocalization ? "App Information" : "应用信息"
+        let appNameTitle = shouldForceEnglishLocalization ? "App Name" : "应用名称"
+        let versionTitle = shouldForceEnglishLocalization ? "Version" : "版本号"
+        let platformTitle = shouldForceEnglishLocalization ? "Platform" : "运行平台"
+        let unofficialNoticeTitle = shouldForceEnglishLocalization ? "Unofficial Notice" : "非官方声明"
         let unofficialNoticeText =
-            forceEnglishLocalization
+            shouldForceEnglishLocalization
             ? "immichSlides is an independently developed unofficial app. It is not the official Immich app and is not endorsed, sponsored, or approved by Immich."
             : "immichSlides 是独立开发的非官方应用，不是 Immich 官方应用，也未获得 Immich 官方背书、赞助或认可。"
-        let feedbackTitle = forceEnglishLocalization ? "Feedback & Support" : "反馈与支持"
+        let feedbackTitle = shouldForceEnglishLocalization ? "Feedback & Support" : "反馈与支持"
         let feedbackHintText =
-            forceEnglishLocalization
+            shouldForceEnglishLocalization
             ? "To report an issue, note the version number and steps to reproduce."
             : "如需反馈问题，可先记录版本号与复现步骤。"
-        let privacySectionTitle = forceEnglishLocalization ? "Privacy & Protection" : "隐私与保护"
-        let privacyEntryTitle = forceEnglishLocalization ? "Privacy Policy" : "隐私政策"
+        let privacySectionTitle = shouldForceEnglishLocalization ? "Privacy & Protection" : "隐私与保护"
+        let privacyEntryTitle = shouldForceEnglishLocalization ? "Privacy Policy" : "隐私政策"
         let privacyEntrySubtitle =
-            forceEnglishLocalization
+            shouldForceEnglishLocalization
             ? "Open the full policy text in your browser."
             : "在浏览器中查看完整政策文本。"
 
         XCTAssertTrue(
-            anyElement(app: app, withLabel: appInfoTitle).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: appInfoTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the app information title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: appNameTitle).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: appNameTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the app name title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: versionTitle).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: versionTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the version title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: platformTitle).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: platformTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the platform title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: unofficialNoticeTitle).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: unofficialNoticeTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the unofficial notice title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: unofficialNoticeText).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: unofficialNoticeText).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the unofficial notice text")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: feedbackTitle).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: feedbackTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the feedback and support title")
         XCTAssertTrue(
             app.descendants(matching: .any)
                 .matching(identifier: "settings.about.feedback.email.link")
                 .firstMatch
-                .waitForExistence(timeout: 8),
+                .waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the real support email entry"
         )
         XCTAssertTrue(
-            anyElement(app: app, withLabel: feedbackHintText).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: feedbackHintText).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the feedback hint")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: privacySectionTitle).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: privacySectionTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the privacy and protection title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: privacyEntryTitle).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: privacyEntryTitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the privacy policy entry title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: privacyEntrySubtitle).waitForExistence(timeout: 8),
+            anyElement(app: app, withLabel: privacyEntrySubtitle).waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the privacy policy entry description")
 
-        if forceEnglishLocalization {
+        if shouldForceEnglishLocalization {
 
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "App Information").waitForExistence(timeout: 8),
+                anyElement(app: app, withLabel: "App Information").waitForExistence(
+                    timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'App Information'"
             )
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "Feedback & Support").waitForExistence(timeout: 8),
+                anyElement(app: app, withLabel: "Feedback & Support").waitForExistence(
+                    timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'Feedback & Support'"
             )
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "Unofficial Notice").waitForExistence(timeout: 8),
+                anyElement(app: app, withLabel: "Unofficial Notice").waitForExistence(
+                    timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'Unofficial Notice'"
             )
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "Privacy & Protection").waitForExistence(timeout: 8),
+                anyElement(app: app, withLabel: "Privacy & Protection").waitForExistence(
+                    timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'Privacy & Protection'"
             )
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "Privacy Policy").waitForExistence(timeout: 8),
+                anyElement(app: app, withLabel: "Privacy Policy").waitForExistence(
+                    timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'Privacy Policy'"
             )
             XCTAssertTrue(
                 anyElement(
                     app: app,
                     withLabel: "View the current version, runtime environment, and feedback guidance."
-                ).waitForExistence(timeout: 8),
+                ).waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show the new header description"
             )
         }
@@ -3060,7 +3179,7 @@ private extension FilterSummaryIOSVisualUITests {
             app.descendants(matching: .any)
                 .matching(identifier: "settings.about.opensource.page")
                 .firstMatch
-                .waitForExistence(timeout: 3),
+                .waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "Tapping 'Open Source Licenses' should quickly open the open source licenses detail page",
             file: file,
             line: line
@@ -3075,7 +3194,7 @@ private extension FilterSummaryIOSVisualUITests {
     ) {
 
         let aboutBackButton = app.navigationBars.buttons["settings.about.opensource.back.button"].firstMatch
-        if aboutBackButton.waitForExistence(timeout: 4) {
+        if aboutBackButton.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds) {
             tapElement(aboutBackButton)
         } else {
 
@@ -3110,7 +3229,9 @@ private extension FilterSummaryIOSVisualUITests {
 
         for _ in 0..<5 {
             let openSourceButton = app.buttons["settings.about.opensource.link"]
-            if openSourceButton.waitForExistence(timeout: 1), openSourceButton.isHittable {
+            if openSourceButton.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds),
+                openSourceButton.isHittable
+            {
                 return openSourceButton
             }
 
@@ -3122,7 +3243,7 @@ private extension FilterSummaryIOSVisualUITests {
             }
 
             app.swipeUp()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.snapshotPollSeconds))
         }
 
         return nil
@@ -3132,7 +3253,9 @@ private extension FilterSummaryIOSVisualUITests {
     func returnToSlideShowFromSettings(app: XCUIApplication) {
 
         for _ in 0..<3 {
-            if app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 2) {
+            if app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: WaitTiming.readbackTimeoutSeconds)
+            {
                 return
             }
 
@@ -3144,7 +3267,8 @@ private extension FilterSummaryIOSVisualUITests {
         }
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 5),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "Could not return from settings to the playback page"
         )
     }
@@ -3157,7 +3281,7 @@ private extension FilterSummaryIOSVisualUITests {
                 return true
             }
             app.tap()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.readbackPollSeconds))
         }
         return button.exists
     }
@@ -3180,7 +3304,7 @@ private extension FilterSummaryIOSVisualUITests {
             } else {
                 app.swipeUp()
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.selectionPollSeconds))
         }
 
         return element.exists && element.isHittable
@@ -3254,7 +3378,7 @@ private extension FilterSummaryIOSVisualUITests {
             let button = app.keyboards.buttons[label]
             if button.exists && button.isHittable {
                 button.tap()
-                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.readbackPollSeconds))
                 if app.keyboards.count == 0 {
                     return
                 }
@@ -3266,7 +3390,7 @@ private extension FilterSummaryIOSVisualUITests {
         let toolbarDoneButton = app.buttons["server.keyboard.done.button"]
         if toolbarDoneButton.exists && toolbarDoneButton.isHittable {
             toolbarDoneButton.tap()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.readbackPollSeconds))
             if app.keyboards.count == 0 {
                 return
             }
@@ -3274,7 +3398,7 @@ private extension FilterSummaryIOSVisualUITests {
 
         let safeTopTapArea = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06))
         safeTopTapArea.tap()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.readbackPollSeconds))
 
         if app.keyboards.count == 0 {
             return
@@ -3283,7 +3407,7 @@ private extension FilterSummaryIOSVisualUITests {
         let navigationBar = app.navigationBars.firstMatch
         if navigationBar.exists {
             navigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.readbackPollSeconds))
         }
     }
 
@@ -3291,13 +3415,14 @@ private extension FilterSummaryIOSVisualUITests {
 
         let modeRandomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            modeRandomButton.waitForExistence(timeout: 8),
+            modeRandomButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Mode selection page should show the 'Shuffle All Photos' entry")
         tapElement(modeRandomButton)
 
         let modeContinueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            modeContinueButton.waitForExistence(timeout: 8), "Mode selection page should show the continue button")
+            modeContinueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Mode selection page should show the continue button")
         XCTAssertTrue(
             modeContinueButton.isEnabled, "After choosing random playback, the continue button should be enabled")
         tapElement(modeContinueButton)
@@ -3310,15 +3435,17 @@ private extension FilterSummaryIOSVisualUITests {
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
         let modeFilteredButton = app.buttons["mode.filtered.button"]
-        XCTAssertTrue(modeFilteredButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(modeFilteredButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         modeFilteredButton.tap()
 
         let modeContinueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(modeContinueButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(modeContinueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(modeContinueButton.isEnabled)
         modeContinueButton.tap()
 
-        XCTAssertTrue(app.buttons["filterSummary.startPlayback.button"].waitForExistence(timeout: 12))
+        XCTAssertTrue(
+            app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+                timeout: WaitTiming.screenTransitionTimeoutSeconds))
     }
 
     @MainActor
@@ -3327,13 +3454,13 @@ private extension FilterSummaryIOSVisualUITests {
     ) {
         let readinessLabel = app.staticTexts[identifier]
         XCTAssertTrue(
-            readinessLabel.waitForExistence(timeout: 12),
+            readinessLabel.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
             "Should expose a readable UI test readiness marker: \(identifier)", file: file, line: line)
 
         // ui-label-lookup: This checks readiness marker copy after identifier lookup.
         let predicate = NSPredicate(format: "label == %@", "ready")
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: readinessLabel)
-        let result = XCTWaiter.wait(for: [expectation], timeout: 20)
+        let result = XCTWaiter.wait(for: [expectation], timeout: WaitTiming.playbackControlTimeoutSeconds)
         XCTAssertEqual(
             result, .completed, "Timed out waiting for the page to finish loading: \(identifier)", file: file,
             line: line)
@@ -3344,7 +3471,7 @@ private extension FilterSummaryIOSVisualUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         return condition()
     }
@@ -3434,7 +3561,7 @@ private extension FilterSummaryIOSVisualUITests {
             if hasAnySettingsRootEntry(app: app) {
                 return true
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         return hasAnySettingsRootEntry(app: app)
     }
@@ -3448,7 +3575,7 @@ private extension FilterSummaryIOSVisualUITests {
                 app,
                 identifier: "settings.item.playback",
                 label: "Playback Settings",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "Settings page should show English 'Playback Settings'"
         )
@@ -3457,7 +3584,7 @@ private extension FilterSummaryIOSVisualUITests {
                 app,
                 identifier: "settings.item.accessProtection",
                 label: "Access Protection",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "Settings page should show English 'Access Protection'"
         )
@@ -3466,12 +3593,14 @@ private extension FilterSummaryIOSVisualUITests {
                 app,
                 identifier: "settings.item.cache",
                 label: "Cache Management",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "Settings page should show English 'Cache Management'"
         )
         XCTAssertTrue(
-            waitForLocalizedElement(app, identifier: "settings.item.about", label: "About", timeout: 8),
+            waitForLocalizedElement(
+                app, identifier: "settings.item.about", label: "About",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Settings page should show English 'About'"
         )
     }
@@ -3485,7 +3614,7 @@ private extension FilterSummaryIOSVisualUITests {
             isShowSidebarLabel(toggleSidebarButton.label)
         {
             toggleSidebarButton.tap()
-            _ = waitForAnySettingsRootEntry(app: app, timeout: 2)
+            _ = waitForAnySettingsRootEntry(app: app, timeout: WaitTiming.readbackTimeoutSeconds)
         }
     }
 
@@ -3537,8 +3666,12 @@ private extension FilterSummaryIOSVisualUITests {
         // After rotating, wait until the main entry is visible again before taking a screenshot or tapping on.
 
         let albumButton = app.buttons["filterSummary.album.button"]
-        XCTAssertTrue(albumButton.waitForExistence(timeout: 8))
-        XCTAssertTrue(albumButton.isHittable || app.buttons["filterSummary.person.button"].waitForExistence(timeout: 2))
+        XCTAssertTrue(albumButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            albumButton.isHittable
+                || app.buttons["filterSummary.person.button"].waitForExistence(
+                    timeout: WaitTiming.readbackTimeoutSeconds)
+        )
     }
 
     @MainActor
@@ -3550,8 +3683,8 @@ private extension FilterSummaryIOSVisualUITests {
         XCUIDevice.shared.orientation = orientation
 
         let title = app.staticTexts[titleIdentifier]
-        XCTAssertTrue(title.waitForExistence(timeout: 8))
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertTrue(title.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.snapshotPollSeconds))
     }
 
     @MainActor
@@ -3563,8 +3696,8 @@ private extension FilterSummaryIOSVisualUITests {
         XCUIDevice.shared.orientation = orientation
 
         let element = app.descendants(matching: .any)[identifier]
-        XCTAssertTrue(element.waitForExistence(timeout: 8))
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertTrue(element.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.snapshotPollSeconds))
     }
 }
 

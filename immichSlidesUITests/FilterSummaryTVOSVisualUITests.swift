@@ -7,6 +7,47 @@
 
 import XCTest
 
+private enum CapsuleGeometry {
+    static let maximumLeadingPositionPoints: CGFloat = 170
+    static let maximumTopPositionPoints: CGFloat = 90
+}
+
+private enum AccessProtection {
+    static let pinDigitCount: Int = 6
+}
+
+private enum SettingsNavigation {
+    static let playbackSteps: Int = 0
+    static let accessProtectionSteps: Int = 1
+    static let serverSteps: Int = 2
+    static let cacheSteps: Int = 3
+    static let aboutSteps: Int = 4
+}
+
+private enum WaitTiming {
+    static let albumFocusSettleSeconds: TimeInterval = 0.18
+    static let briefElementTimeoutSeconds: TimeInterval = 1
+    static let connectionTimeoutSeconds: TimeInterval = 15
+    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
+    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
+    static let focusPollSeconds: TimeInterval = 0.08
+    static let focusSettleSeconds: TimeInterval = 0.16
+    static let navigationFocusSettleSeconds: TimeInterval = 0.22
+    static let navigationTimeoutSeconds: TimeInterval = 10
+    static let pollIntervalSeconds: TimeInterval = 0.1
+    static let readbackTimeoutSeconds: TimeInterval = 2
+    static let remotePressSettleSeconds: TimeInterval = 0.12
+    static let screenSettleSeconds: TimeInterval = 0.8
+    static let screenTransitionTimeoutSeconds: TimeInterval = 12
+    static let selectionPollSeconds: TimeInterval = 0.25
+    static let settingsChangeTimeoutSeconds: TimeInterval = 6
+    static let shortFocusSettleSeconds: TimeInterval = 0.15
+    static let shortInteractionTimeoutSeconds: TimeInterval = 3
+    static let snapshotPollSeconds: TimeInterval = 0.5
+    static let stateChangeTimeoutSeconds: TimeInterval = 4
+    static let transitionPollSeconds: TimeInterval = 0.4
+}
+
 #if os(tvOS)
 final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
@@ -190,11 +231,11 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         ).firstMatch
 
         XCTAssertTrue(
-            singularAlbumSummary.waitForExistence(timeout: 8),
+            singularAlbumSummary.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Spanish summary for a single album should use the singular álbum"
         )
         XCTAssertTrue(
-            singularPeopleSummary.waitForExistence(timeout: 8),
+            singularPeopleSummary.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Spanish summary for a single person should use the singular persona"
         )
         waitForFocusVisualSettle()
@@ -229,7 +270,8 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             localeIdentifier: locale.localeIdentifier
         )
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: modeApp, label: locale.modeSelectionTitle, timeout: 8),
+            waitForElementWithLabelExists(
+                app: modeApp, label: locale.modeSelectionTitle, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS mode selection page should show the target locale text"
         )
         waitForFocusVisualSettle()
@@ -242,7 +284,9 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             localeIdentifier: locale.localeIdentifier
         )
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: filterSummaryApp, label: locale.filterSummaryTitle, timeout: 8),
+            waitForElementWithLabelExists(
+                app: filterSummaryApp, label: locale.filterSummaryTitle,
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS filter summary page should show the target locale text"
         )
         waitForReadinessMarker(app: filterSummaryApp, identifier: "filterSummary.album.ready")
@@ -258,7 +302,8 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         openAlbumFilter(from: albumApp)
         waitForAlbumFilterReady(app: albumApp)
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: albumApp, label: locale.albumFilterTitle, timeout: 8),
+            waitForElementWithLabelExists(
+                app: albumApp, label: locale.albumFilterTitle, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS album filter page should show the target locale text"
         )
         waitForFocusVisualSettle()
@@ -273,7 +318,8 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         openPersonFilter(from: personApp)
         waitForPersonFilterReady(app: personApp)
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: personApp, label: locale.personFilterTitle, timeout: 8),
+            waitForElementWithLabelExists(
+                app: personApp, label: locale.personFilterTitle, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS person filter page should show the target locale text"
         )
         waitForFocusVisualSettle()
@@ -294,11 +340,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: settingsApp,
             identifier: "settings.item.playback",
-            downStepsFromPlayback: 0,
+            downStepsFromPlayback: SettingsNavigation.playbackSteps,
             failureMessage: "Localized tvOS settings home should show Playback Settings"
         )
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: settingsApp, label: locale.playbackSettingsTitle, timeout: 8),
+            waitForElementWithLabelExists(
+                app: settingsApp, label: locale.playbackSettingsTitle,
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS settings home should show the Playback Settings entry"
         )
         waitForFocusVisualSettle()
@@ -306,7 +354,9 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForSettingsControlExists(app: settingsApp, identifier: "settings.playback.autoPlay.link", timeout: 8),
+            waitForSettingsControlExists(
+                app: settingsApp, identifier: "settings.playback.autoPlay.link",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS playback settings page should show the Autoplay entry"
         )
         waitForFocusVisualSettle()
@@ -324,18 +374,19 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: accessProtectionApp,
             identifier: "settings.item.accessProtection",
-            downStepsFromPlayback: 1,
+            downStepsFromPlayback: SettingsNavigation.accessProtectionSteps,
             failureMessage: "Localized tvOS settings home should be able to open Access Protection"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitForElementWithLabelExists(
-                app: accessProtectionApp, label: locale.accessProtectionDisabledTitle, timeout: 8),
+                app: accessProtectionApp, label: locale.accessProtectionDisabledTitle,
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS access protection page should show the disabled state"
         )
         // UI-test mode exposes row values verbatim; they must still be localized, not catalog keys.
         let enableButton = accessProtectionApp.buttons["settings.pin.enable.button"]
-        XCTAssertTrue(enableButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(enableButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         let enableValue = enableButton.value as? String ?? ""
         XCTAssertTrue(
             enableValue.contains(locale.accessProtectionEnableRequirement),
@@ -356,12 +407,14 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: serverApp,
             identifier: "settings.item.server",
-            downStepsFromPlayback: 2,
+            downStepsFromPlayback: SettingsNavigation.serverSteps,
             failureMessage: "Localized tvOS settings home should be able to open Server"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForSettingsControlExists(app: serverApp, identifier: "server.apiKey.help.button", timeout: 8),
+            waitForSettingsControlExists(
+                app: serverApp, identifier: "server.apiKey.help.button",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS server page should show the API Key help entry"
         )
         waitForFocusVisualSettle()
@@ -377,12 +430,14 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: cacheApp,
             identifier: "settings.item.cache",
-            downStepsFromPlayback: 3,
+            downStepsFromPlayback: SettingsNavigation.cacheSteps,
             failureMessage: "Localized tvOS settings home should be able to open Cache Management"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForSettingsControlExists(app: cacheApp, identifier: "settings.cache.disk.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: cacheApp, identifier: "settings.cache.disk.row",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS cache page should show the disk cache metric"
         )
         waitForFocusVisualSettle()
@@ -400,7 +455,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: aboutApp,
             identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
+            downStepsFromPlayback: SettingsNavigation.aboutSteps,
             failureMessage: "Localized tvOS settings home should be able to open About"
         )
         XCUIRemote.shared.press(.select)
@@ -408,16 +463,17 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let appInfoSection = waitForSettingsControl(
             app: aboutApp,
             identifier: "settings.about.appInfo.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Localized tvOS About page should show the App Info section"
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Localized tvOS About page default focus should land on App Info"
         )
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: aboutApp, label: locale.appInfoTitle, timeout: 8),
+            waitForElementWithLabelExists(
+                app: aboutApp, label: locale.appInfoTitle, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS About page should show the target locale text"
         )
         waitForFocusVisualSettle()
@@ -426,7 +482,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let privacyPolicyLink = waitForSettingsControl(
             app: aboutApp,
             identifier: "settings.about.privacyPolicy.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Localized tvOS About page should show the Privacy Policy entry"
         )
         for _ in 0..<3 {
@@ -435,14 +491,15 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         }
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Localized tvOS About page should let focus move to Privacy Policy"
         )
         attachScreenshot(app: aboutApp, name: "\(locale.screenshotPrefix)-tvos-settings-about-bottom")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
-                app: aboutApp, identifier: "settings.about.privacyPolicy.section.0", timeout: 8),
+                app: aboutApp, identifier: "settings.about.privacyPolicy.section.0",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS privacy policy page should open the policy text"
         )
         waitForFocusVisualSettle()
@@ -458,7 +515,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: openSourceApp,
             identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
+            downStepsFromPlayback: SettingsNavigation.aboutSteps,
             failureMessage: "Localized tvOS settings home should be able to open About again"
         )
         XCUIRemote.shared.press(.select)
@@ -466,19 +523,19 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let openSourceAppInfoSection = waitForSettingsControl(
             app: openSourceApp,
             identifier: "settings.about.appInfo.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Localized tvOS About page should show the App Info section"
         )
         waitForButtonToGainFocus(
             openSourceAppInfoSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Localized tvOS About page default focus should land on App Info"
         )
 
         let openSourceLink = waitForSettingsControl(
             app: openSourceApp,
             identifier: "settings.about.opensource.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Localized tvOS About page should show the Open Source Licenses entry"
         )
         for _ in 0..<4 {
@@ -487,12 +544,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         }
         waitForButtonToGainFocus(
             openSourceLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Localized tvOS About page should let focus move to Open Source Licenses"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: openSourceApp, label: locale.openSourceTitle, timeout: 8),
+            waitForElementWithLabelExists(
+                app: openSourceApp, label: locale.openSourceTitle, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Localized tvOS open source licenses page should show the target locale text"
         )
         waitForFocusVisualSettle()
@@ -536,10 +594,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let continueButton = app.buttons["mode.continue.button"]
 
         XCTAssertTrue(
-            filteredButton.waitForExistence(timeout: 8), "Mode selection page should show the 'Filtered slideshow' card"
+            filteredButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Mode selection page should show the 'Filtered slideshow' card"
         )
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 8), "Mode selection page should show the 'Continue' button")
+            continueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Mode selection page should show the 'Continue' button")
 
         moveFocusToFilteredModeCard()
         XCUIRemote.shared.press(.select)
@@ -576,7 +636,8 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 8), "In light mode the 'Continue' button should be visible")
+            continueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "In light mode the 'Continue' button should be visible")
         XCTAssertTrue(
             continueButton.isEnabled, "In light mode, after choosing a mode, the 'Continue' button should be enabled")
         XCTAssertTrue(
@@ -697,10 +758,10 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let peopleButton = app.buttons["filterSummary.person.button"]
 
         XCTAssertTrue(
-            backButton.waitForExistence(timeout: 8),
+            backButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After repeated switching, the 'Back to mode selection' button should still exist")
         XCTAssertTrue(
-            peopleButton.waitForExistence(timeout: 8),
+            peopleButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After repeated switching, the 'Filter people' card should still exist")
 
         XCTAssertTrue(
@@ -725,7 +786,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
     @MainActor
     func testTVOSEmptyAlbumAndPersonFilterPagesCanReturn() throws {
 
-        let app = launchApp(resetState: true, colorScheme: "dark")
+        let app = launchApp(shouldResetState: true, colorScheme: "dark")
         app.launchEnvironment["UI_TEST_SERVER_URL"] = "https://ui-test-empty-filter.invalid"
         app.launchEnvironment["UI_TEST_API_KEY"] = "ui-test-empty-filter-key"
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
@@ -734,47 +795,55 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 15),
+            continueButton.waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page")
         startFilteredFlowFromModeSelection(app: app)
 
         openAlbumFilter(from: app)
         XCTAssertTrue(
             // ui-label-lookup: This lookup asserts the displayed empty album copy.
-            waitForElementWithLabelExists(app: app, label: "immich中还没有相册哦～快去添加一些试试吧！", timeout: 8),
+            waitForElementWithLabelExists(
+                app: app, label: "immich中还没有相册哦～快去添加一些试试吧！", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Empty album page should show the empty-state text, confirming the no-albums branch was reached"
         )
         let albumBackButton = app.buttons["albumFilter.back.button"]
-        XCTAssertTrue(albumBackButton.waitForExistence(timeout: 8), "Empty album page should show the back button")
+        XCTAssertTrue(
+            albumBackButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Empty album page should show the back button")
         waitForButtonToGainFocus(
-            albumBackButton, timeout: 8,
+            albumBackButton, timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "The back button on the empty album page should be able to get tvOS focus")
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "tvos-empty-album-filter-back-focused")
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.person.button"].waitForExistence(timeout: 8),
+            app.buttons["filterSummary.person.button"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After pressing Select to go back from the empty album page, the filter summary page should be shown again"
         )
 
         openPersonFilter(from: app)
         XCTAssertTrue(
             // ui-label-lookup: This lookup asserts the displayed empty people copy.
-            waitForElementWithLabelExists(app: app, label: "immich 中还没有人物", timeout: 8),
+            waitForElementWithLabelExists(
+                app: app, label: "immich 中还没有人物", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Empty person page should show the empty-state text, confirming the no-people branch was reached"
         )
         let personBackButton = app.buttons["personFilter.back.button"]
-        XCTAssertTrue(personBackButton.waitForExistence(timeout: 8), "Empty person page should show the back button")
+        XCTAssertTrue(
+            personBackButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Empty person page should show the back button")
         waitForButtonToGainFocus(
-            personBackButton, timeout: 8,
+            personBackButton, timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "The back button on the empty person page should be able to get tvOS focus")
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "tvos-empty-person-filter-back-focused")
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(timeout: 8),
+            app.buttons["filterSummary.album.button"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After pressing Select to go back from the empty person page, the filter summary page should be shown again"
         )
     }
@@ -851,7 +920,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForAlbumFilterReady(app: app)
 
         XCUIRemote.shared.press(.up)
-        waitForAnyAlbumTopBarButtonToGainFocus(app: app, timeout: 8)
+        waitForAnyAlbumTopBarButtonToGainFocus(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds)
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "tvos-album-filter-topbar-focused")
     }
@@ -866,21 +935,22 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let secondCard = try albumCardInServerOrder(at: 1, in: app)
 
         XCTAssertTrue(
-            firstCard.waitForExistence(timeout: 8), "Album filter page should render at least the first album card")
+            firstCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Album filter page should render at least the first album card")
         XCTAssertTrue(
-            secondCard.waitForExistence(timeout: 8),
+            secondCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Album filter page should render at least a second album card to verify horizontal focus movement")
 
         waitForElementToGainFocus(
             firstCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "When the album filter page opens, default focus should land on the first album card"
         )
 
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving right from the first album card, focus should reach the second album card"
         )
     }
@@ -893,12 +963,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let secondCard = try albumCardInServerOrder(at: 1, in: app)
         XCTAssertTrue(
-            secondCard.waitForExistence(timeout: 8), "Album filter page should render at least a second album card")
+            secondCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Album filter page should render at least a second album card")
 
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After moving right, focus should land on the second album card"
         )
 
@@ -907,7 +978,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForElementValue(
             secondCard,
             expectedValue: "已选中，已聚焦",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Pressing Select on the second album card should switch it to selected and keep focus"
         )
     }
@@ -920,17 +991,18 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let secondCard = try albumCardInServerOrder(at: 1, in: app)
         XCTAssertTrue(
-            secondCard.waitForExistence(timeout: 8), "Album filter page should render at least a second album card")
+            secondCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Album filter page should render at least a second album card")
 
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After moving right, focus should land on the second album card"
         )
 
         XCUIRemote.shared.press(.up)
-        waitForAnyAlbumTopBarButtonToGainFocus(app: app, timeout: 8)
+        waitForAnyAlbumTopBarButtonToGainFocus(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds)
     }
 
     @MainActor
@@ -941,18 +1013,19 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let thirdCard = try albumCardInServerOrder(at: 2, in: app)
         XCTAssertTrue(
-            thirdCard.waitForExistence(timeout: 8), "Album filter page should render at least a third album card")
+            thirdCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Album filter page should render at least a third album card")
 
         XCUIRemote.shared.press(.right)
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             thirdCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After moving right twice, focus should land on the third album card"
         )
 
         XCUIRemote.shared.press(.up)
-        waitForAnyAlbumTopBarButtonToGainFocus(app: app, timeout: 8)
+        waitForAnyAlbumTopBarButtonToGainFocus(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds)
     }
 
     @MainActor
@@ -1019,7 +1092,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let backButton = app.buttons["personFilter.back.button"]
         waitForButtonToGainFocus(
             backButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After moving up on the person filter page, the back button should get focus"
         )
         waitForFocusVisualSettle()
@@ -1028,7 +1101,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
     @MainActor
     func testTVOSPersonFilterLongNamesScreenshot() throws {
-        let app = try launchIntoFilterSummary(longPersonNames: true)
+        let app = try launchIntoFilterSummary(shouldUseLongPersonNames: true)
         openPersonFilter(from: app)
         waitForPersonFilterReady(app: app)
         waitForFocusVisualSettle()
@@ -1052,11 +1125,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let firstCard = personPrimaryCardButtons(in: app).element(boundBy: 0)
         XCTAssertTrue(
-            firstCard.waitForExistence(timeout: 8), "Person filter page should render at least the first person card")
+            firstCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Person filter page should render at least the first person card")
 
         waitForElementToGainFocus(
             firstCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "When the person filter page opens, default focus should land on the first person card"
         )
 
@@ -1065,7 +1139,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForElementValue(
             firstCard,
             expectedValue: "已选中，单人模式，已聚焦",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "Pressing Play/Pause on the focused person card should go straight to selected with solo mode"
         )
@@ -1082,12 +1156,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let firstCard = personPrimaryCardButtons(in: app).element(boundBy: 0)
         XCTAssertTrue(
-            firstCard.waitForExistence(timeout: 8),
+            firstCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English person filter page should render at least the first person card")
 
         waitForElementToGainFocus(
             firstCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "When the English person filter page opens, default focus should land on the first person card"
         )
@@ -1096,7 +1170,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForElementValue(
             firstCard,
             expectedValue: "Selected, Solo Mode, Focused",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In English, pressing Play/Pause should switch to selected with solo mode"
         )
         waitForFocusVisualSettle()
@@ -1114,16 +1188,16 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let secondCard = personCards.element(boundBy: 1)
 
         XCTAssertTrue(
-            firstCard.waitForExistence(timeout: 8),
+            firstCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Person filter page should render at least the first primary person card")
         XCTAssertTrue(
-            secondCard.waitForExistence(timeout: 8),
+            secondCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Person filter page should render at least a second primary person card to verify horizontal focus movement"
         )
 
         waitForElementToGainFocus(
             firstCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "When the person filter page opens, default focus should land on the first primary person card"
         )
@@ -1131,7 +1205,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "Moving right from the first person card, focus should reach the second, not stay stuck in the first"
         )
@@ -1145,12 +1219,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let secondCard = personPrimaryCardButtons(in: app).element(boundBy: 1)
         XCTAssertTrue(
-            secondCard.waitForExistence(timeout: 8), "Person filter page should render at least a second person card")
+            secondCard.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Person filter page should render at least a second person card")
 
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After moving right, focus should land on the second person card"
         )
 
@@ -1159,7 +1234,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForElementValue(
             secondCard,
             expectedValue: "已选中，普通模式，已聚焦",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "Pressing Select on the second person card should add that person to the filter and keep normal mode"
         )
@@ -1170,9 +1245,9 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let photoCount = try requireExifDiagnosticAlbumAssetCount()
         // The EXIF panel belongs to single-photo scenes; SmartFill, the default, shows several photos at once.
         let app = try launchIntoSlideShow(
-            forceAutoPlayOff: true,
+            shouldForceAutoPlayOff: true,
             exifDiagnosticAlbumID: try requireExifDiagnosticAlbumID(),
-            prepareFilterSummaryVisuals: false,
+            shouldPrepareFilterSummaryVisuals: false,
             extraLaunchEnvironment: ["UI_TEST_FORCE_PLAYBACK_DISPLAY_MODE": "singlePhoto"]
         )
 
@@ -1190,7 +1265,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         }
 
         let input = try requireStrictE2EInput()
-        let app = launchApp(resetState: true, disablePlaybackEntryHint: true)
+        let app = launchApp(shouldResetState: true, shouldDisablePlaybackEntryHint: true)
         app.launchEnvironment["UI_TEST_SERVER_URL"] = input.serverURL
         app.launchEnvironment["UI_TEST_API_KEY"] = input.publicKey
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
@@ -1223,12 +1298,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
 
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 10),
+            playPauseButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
             "After entering the playback page, the Play/Pause button should be shown")
 
         waitForButtonToGainFocus(
             playPauseButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage:
                 "On first entering the tvOS playback page, default focus should land on the Play/Pause button"
         )
@@ -1237,14 +1312,14 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
     @MainActor
     func testTVOSSlideShowPlaybackEntryHintScreenshot() throws {
-        let app = try launchIntoSlideShow(disablePlaybackEntryHint: false)
+        let app = try launchIntoSlideShow(shouldDisablePlaybackEntryHint: false)
         let entryHintTitle = app.staticTexts["slideshow.entryHint.title"]
         let entryHintAction = app.otherElements["slideshow.entryHint.action"]
         let entryHintKeycap = app.otherElements["slideshow.entryHint.keycap"]
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            entryHintTitle.waitForExistence(timeout: 6),
+            entryHintTitle.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "On first reaching the playback page after the first-launch flow, the one-time tip should appear"
         )
         XCTAssertEqual(
@@ -1252,7 +1327,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             "在这里调整照片播放范围和速度"
         )
         XCTAssertTrue(
-            entryHintAction.waitForExistence(timeout: 2),
+            entryHintAction.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
             "The tip bubble should show a separate action sentence that helps the user understand the next step"
         )
         XCTAssertEqual(
@@ -1260,13 +1335,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             "按 向下键 隐藏提示"
         )
         XCTAssertTrue(
-            entryHintKeycap.waitForExistence(timeout: 2),
+            entryHintKeycap.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
             "The 'Down key' in the tip bubble should show as a separate keycap label"
         )
         XCTAssertEqual(entryHintKeycap.label, "向下键")
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage:
                 "First-run tip: focus should start on the settings button so the user sees what the bubble points to"
         )
@@ -1278,7 +1353,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
     @MainActor
     func testTVOSSlideShowPlaybackEntryHintEnglishScreenshot() throws {
         let app = try launchIntoSlideShow(
-            disablePlaybackEntryHint: false,
+            shouldDisablePlaybackEntryHint: false,
             languageCode: "en",
             localeIdentifier: "en_US"
         )
@@ -1288,7 +1363,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            entryHintTitle.waitForExistence(timeout: 6),
+            entryHintTitle.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "In English, first entering the playback page should also show the one-time tip"
         )
         XCTAssertEqual(
@@ -1296,7 +1371,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             "Adjust photo range and speed here"
         )
         XCTAssertTrue(
-            entryHintAction.waitForExistence(timeout: 2),
+            entryHintAction.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
             "In English, the action sentence should also be shown in full"
         )
         XCTAssertEqual(
@@ -1304,13 +1379,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             "Press Down to hide this tip"
         )
         XCTAssertTrue(
-            entryHintKeycap.waitForExistence(timeout: 2),
+            entryHintKeycap.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
             "In English, the Down key should still show as a separate keycap label"
         )
         XCTAssertEqual(entryHintKeycap.label, "Down")
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage:
                 "In English, when the first-run tip appears, default focus should still land on the settings button"
         )
@@ -1322,7 +1397,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
     @MainActor
     func testTVOSSlideShowPlaybackEntryHintJapaneseScreenshot() throws {
         let app = try launchIntoSlideShow(
-            disablePlaybackEntryHint: false,
+            shouldDisablePlaybackEntryHint: false,
             languageCode: "ja",
             localeIdentifier: "ja_JP"
         )
@@ -1331,15 +1406,15 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let entryHintKeycap = app.otherElements["slideshow.entryHint.keycap"]
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
-        XCTAssertTrue(entryHintTitle.waitForExistence(timeout: 6))
+        XCTAssertTrue(entryHintTitle.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds))
         XCTAssertEqual(entryHintTitle.label, "ここで写真の範囲と速度を調整します")
-        XCTAssertTrue(entryHintAction.waitForExistence(timeout: 2))
+        XCTAssertTrue(entryHintAction.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds))
         XCTAssertEqual(entryHintAction.label, "下キーを押すとヒントが閉じます")
-        XCTAssertTrue(entryHintKeycap.waitForExistence(timeout: 2))
+        XCTAssertTrue(entryHintKeycap.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds))
         XCTAssertEqual(entryHintKeycap.label, "下キー")
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "When the Japanese tip appears, the settings button should still get default focus"
         )
 
@@ -1349,16 +1424,16 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
     @MainActor
     func testTVOSSlideShowPlaybackEntryHintDismissesHintAndControlBarWithDown() throws {
-        let app = try launchIntoSlideShow(disablePlaybackEntryHint: false)
+        let app = try launchIntoSlideShow(shouldDisablePlaybackEntryHint: false)
         let entryHintBanner = app.otherElements["slideshow.entryHint.banner"]
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            entryHintBanner.waitForExistence(timeout: 6),
+            entryHintBanner.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "The first-run tip state should show a bubble anchored to the settings button")
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "In the first-run tip state, default focus should land on the settings button"
         )
 
@@ -1366,23 +1441,23 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         waitForElementToDisappear(
             entryHintBanner,
-            timeout: 4,
+            timeout: WaitTiming.stateChangeTimeoutSeconds,
             failureMessage: "After pressing Down, the tip bubble should disappear immediately"
         )
         waitForElementToDisappear(
             settingsButton,
-            timeout: 4,
+            timeout: WaitTiming.stateChangeTimeoutSeconds,
             failureMessage: "After pressing Down, the bottom control bar should hide too"
         )
     }
 
     @MainActor
     func testTVOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow() throws {
-        let app = try launchIntoSlideShow(disablePlaybackEntryHint: false)
+        let app = try launchIntoSlideShow(shouldDisablePlaybackEntryHint: false)
         let entryHint = app.staticTexts["slideshow.entryHint.title"]
 
         XCTAssertTrue(
-            entryHint.waitForExistence(timeout: 6),
+            entryHint.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "On first entering the playback page, the one-time tip should appear"
         )
 
@@ -1390,7 +1465,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         exitSettingsToSlideShow(app: app)
 
         XCTAssertFalse(
-            entryHint.waitForExistence(timeout: 2),
+            entryHint.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
             "The one-time tip should not reappear on return from settings to playback in the same first-launch flow"
         )
     }
@@ -1416,7 +1491,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let app = try launchIntoSlideShow()
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 10),
+            playPauseButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
             "After entering the playback page, the Play/Pause button should be visible")
 
         let initialValue = (playPauseButton.value as? String) ?? ""
@@ -1425,7 +1500,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         waitForElementToDisappear(
             playPauseButton,
-            timeout: 12,
+            timeout: WaitTiming.screenTransitionTimeoutSeconds,
             failureMessage: "The control bar should hide on its own before the Play/Pause wake path is verified"
         )
 
@@ -1433,7 +1508,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.playPause)
 
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 5),
+            playPauseButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "Pressing Play/Pause while the control bar is hidden should wake the bar and show the playback state"
         )
 
@@ -1452,29 +1527,29 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
 
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 10),
+            playPauseButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
             "After entering the playback page, the Play/Pause button should be visible")
         waitForButtonToGainFocus(
             playPauseButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "When the playback page first opens, focus should land on the Play/Pause button"
         )
 
         // Wake as soon as the bar starts hiding: a press during the fade-out is the hardest case for focus.
         XCTAssertTrue(
-            waitUntil(timeout: 12) { !playPauseButton.exists },
+            waitUntil(timeout: WaitTiming.screenTransitionTimeoutSeconds) { !playPauseButton.exists },
             "The control bar must hide on its own before it can be woken"
         )
 
         XCUIRemote.shared.press(.up)
 
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 5),
+            playPauseButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "Pressing a direction key while the control bar is hidden should wake the bar first"
         )
         waitForButtonToGainFocus(
             playPauseButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "After the control bar wakes again, focus should return to the Play/Pause button"
         )
         attachScreenshot(app: app, name: "tvos-slideshow-wake-focus-playpause")
@@ -1485,7 +1560,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         var receiverFocusedSince: Date?
         // The bar hides 8 seconds after the first wake; the wait also covers the fade and the focus hold.
         XCTAssertTrue(
-            waitUntil(timeout: 15) {
+            waitUntil(timeout: WaitTiming.connectionTimeoutSeconds) {
                 guard !playPauseButton.exists, wakeReceiver.exists, wakeReceiver.hasFocus else {
                     receiverFocusedSince = nil
                     return false
@@ -1498,12 +1573,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         XCUIRemote.shared.press(.up)
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 5),
+            playPauseButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "A directional press must bring back a fully hidden control bar"
         )
         waitForButtonToGainFocus(
             playPauseButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Waking a fully hidden control bar must focus Play/Pause"
         )
     }
@@ -1516,20 +1591,28 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         let nextButton = app.buttons["slideshow.control.next.button"]
 
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 10), "Playback page should show the settings button")
-        XCTAssertTrue(previousButton.waitForExistence(timeout: 10), "Playback page should show the previous button")
-        XCTAssertTrue(playPauseButton.waitForExistence(timeout: 10), "Playback page should show the Play/Pause button")
-        XCTAssertTrue(nextButton.waitForExistence(timeout: 10), "Playback page should show the next button")
+        XCTAssertTrue(
+            settingsButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the settings button")
+        XCTAssertTrue(
+            previousButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the previous button")
+        XCTAssertTrue(
+            playPauseButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the Play/Pause button")
+        XCTAssertTrue(
+            nextButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the next button")
 
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
             XCUIRemote.shared.press(.left)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
 
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "The control bar should be able to bring focus to the settings button (far left)"
         )
         attachScreenshot(app: app, name: "tvos-slideshow-controlbar-focus-settings")
@@ -1541,7 +1624,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             playPauseButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage:
                 "Previous is disabled at the initial history boundary, so moving right should jump focus to Play/Pause"
         )
@@ -1550,28 +1633,28 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             nextButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Moving right again, focus should reach the next button"
         )
         attachScreenshot(app: app, name: "tvos-slideshow-controlbar-focus-next")
 
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitUntil(timeout: 6) { previousButton.isEnabled },
+            waitUntil(timeout: WaitTiming.settingsChangeTimeoutSeconds) { previousButton.isEnabled },
             "One next should create history to go back to and enable previous again"
         )
 
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             playPauseButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Moving left from next, focus should return to the Play/Pause button"
         )
 
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             previousButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Once history exists, moving left again should reach the previous button"
         )
         attachScreenshot(app: app, name: "tvos-slideshow-controlbar-focus-previous")
@@ -1582,17 +1665,18 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let app = try launchIntoSlideShow(colorScheme: "light")
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: 10), "Light mode playback page should show the control bar")
+            settingsButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Light mode playback page should show the control bar")
 
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
             XCUIRemote.shared.press(.left)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
 
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Before the light mode screenshot, focus should land back on the settings button reliably"
         )
         waitForFocusVisualSettle()
@@ -1608,10 +1692,18 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let nextButton = app.buttons["slideshow.control.next.button"]
         let removedProgressLabel = app.staticTexts["slideshow.control.progress.label"]
 
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 10), "Playback page should show the settings button")
-        XCTAssertTrue(previousButton.waitForExistence(timeout: 10), "Playback page should show the previous button")
-        XCTAssertTrue(playPauseButton.waitForExistence(timeout: 10), "Playback page should show the Play/Pause button")
-        XCTAssertTrue(nextButton.waitForExistence(timeout: 10), "Playback page should show the next button")
+        XCTAssertTrue(
+            settingsButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the settings button")
+        XCTAssertTrue(
+            previousButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the previous button")
+        XCTAssertTrue(
+            playPauseButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the Play/Pause button")
+        XCTAssertTrue(
+            nextButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the next button")
         XCTAssertFalse(
             removedProgressLabel.exists, "The visible photo index above the control bar should have been removed")
 
@@ -1619,12 +1711,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
             XCUIRemote.shared.press(.left)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
 
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage:
                 "Before the control bar activation test starts, focus should return to the settings button reliably"
         )
@@ -1638,7 +1730,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             playPauseButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage:
                 "Previous is disabled at the initial history boundary, so moving right should focus Play/Pause"
         )
@@ -1647,7 +1739,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCTAssertFalse(initialPlayPauseValue.isEmpty, "The Play/Pause button should expose its current state value")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitUntil(timeout: 4) {
+            waitUntil(timeout: WaitTiming.stateChangeTimeoutSeconds) {
                 ((playPauseButton.value as? String) ?? "") != initialPlayPauseValue
             },
             "Pressing Select on the Play/Pause button should toggle the current playback state"
@@ -1656,7 +1748,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             nextButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "After moving right again, focus should reach the next button"
         )
 
@@ -1664,61 +1756,71 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let signatureAfterNext = try waitForTVOSSceneSignatureChange(
             app: app,
             from: initialSignature,
-            timeout: 8
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds
         )
         XCTAssertNotEqual(signatureAfterNext, initialSignature, "The next button should move the visible scene forward")
 
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             playPauseButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Moving left from next, focus should return to the Play/Pause button"
         )
 
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             previousButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Moving left again, focus should reach the previous button"
         )
 
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitUntil(timeout: 8) { self.currentTVOSSceneSignatureValue(app: app) == initialSignature },
+            waitUntil(timeout: WaitTiming.controlAppearanceTimeoutSeconds) {
+                self.currentTVOSSceneSignatureValue(app: app) == initialSignature
+            },
             "Pressing Select on the previous button should go back to the previous scene in playback history"
         )
 
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Moving left again, focus should return to the settings button"
         )
 
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForAnySettingsSurface(app: app, timeout: 6),
+            waitForAnySettingsSurface(app: app, timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "Pressing Select on the settings button should open the settings page or the PIN check page"
         )
     }
 
     @MainActor
     func testTVOSPreviousNextRetainedHistoryFromSlideshowControls() throws {
-        let app = try launchIntoSlideShow(forceAutoPlayOff: true)
+        let app = try launchIntoSlideShow(shouldForceAutoPlayOff: true)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         let previousButton = app.buttons["slideshow.control.previous.button"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         let nextButton = app.buttons["slideshow.control.next.button"]
 
         ensureTVOSSlideshowControlBarVisible(app: app)
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 10), "Playback page should show the settings button")
-        XCTAssertTrue(previousButton.waitForExistence(timeout: 10), "Playback page should show the previous button")
-        XCTAssertTrue(playPauseButton.waitForExistence(timeout: 10), "Playback page should show the Play/Pause button")
-        XCTAssertTrue(nextButton.waitForExistence(timeout: 10), "Playback page should show the next button")
+        XCTAssertTrue(
+            settingsButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the settings button")
+        XCTAssertTrue(
+            previousButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the previous button")
+        XCTAssertTrue(
+            playPauseButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the Play/Pause button")
+        XCTAssertTrue(
+            nextButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the next button")
 
         waitForButtonToGainFocus(
             playPauseButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Once the control bar appears, default focus should be on the Play/Pause button"
         )
         attachScreenshot(app: app, name: "tvos-retained-history-01-initial")
@@ -1731,16 +1833,18 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         XCUIRemote.shared.press(.right)
         XCUIRemote.shared.press(.select)
-        let secondSignature = try waitForTVOSSceneSignatureChange(app: app, from: initialSignature, timeout: 8)
+        let secondSignature = try waitForTVOSSceneSignatureChange(
+            app: app, from: initialSignature, timeout: WaitTiming.controlAppearanceTimeoutSeconds)
         XCTAssertTrue(
-            waitUntil(timeout: 4) { previousButton.isEnabled },
+            waitUntil(timeout: WaitTiming.stateChangeTimeoutSeconds) { previousButton.isEnabled },
             "Once there is history to go back to, previous should be enabled again"
         )
         attachScreenshot(app: app, name: "tvos-retained-history-02-after-next")
 
         XCUIRemote.shared.press(.right)
         XCUIRemote.shared.press(.select)
-        let thirdSignature = try waitForTVOSSceneSignatureChange(app: app, from: secondSignature, timeout: 8)
+        let thirdSignature = try waitForTVOSSceneSignatureChange(
+            app: app, from: secondSignature, timeout: WaitTiming.controlAppearanceTimeoutSeconds)
         XCTAssertNotEqual(thirdSignature, initialSignature, "Two nexts in a row should reach a new playback scene")
         attachScreenshot(app: app, name: "tvos-retained-history-03-after-second-next")
 
@@ -1750,18 +1854,22 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitUntil(timeout: 8) { self.currentTVOSSceneSignatureValue(app: app) == secondSignature },
+            waitUntil(timeout: WaitTiming.controlAppearanceTimeoutSeconds) {
+                self.currentTVOSSceneSignatureValue(app: app) == secondSignature
+            },
             "The first previous should go back to the prior retained-history position"
         )
         attachScreenshot(app: app, name: "tvos-retained-history-04-previous-to-second")
 
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitUntil(timeout: 8) { self.currentTVOSSceneSignatureValue(app: app) == initialSignature },
+            waitUntil(timeout: WaitTiming.controlAppearanceTimeoutSeconds) {
+                self.currentTVOSSceneSignatureValue(app: app) == initialSignature
+            },
             "The second previous should continue along retained history back to the initial position"
         )
         XCTAssertTrue(
-            waitUntil(timeout: 4) { previousButton.isEnabled == false },
+            waitUntil(timeout: WaitTiming.stateChangeTimeoutSeconds) { previousButton.isEnabled == false },
             "Back at the oldest history boundary, previous should be disabled again"
         )
         attachScreenshot(app: app, name: "tvos-retained-history-05-previous-to-initial")
@@ -1774,12 +1882,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: 8),
+            playbackItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After opening settings, the home page should show the 'Playback Settings' entry")
 
-        waitForSettingsSidebarButtonSelection(
+        waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening settings, default focus should land on 'Playback Settings'"
         )
 
@@ -1794,10 +1902,11 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: 8), "Settings home should show the 'Playback Settings' entry")
-        waitForSettingsSidebarButtonSelection(
+            playbackItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Settings home should show the 'Playback Settings' entry")
+        waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Settings home default focus should land on 'Playback Settings'"
         )
         XCUIRemote.shared.press(.select)
@@ -1805,13 +1914,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let autoPlayLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.autoPlay.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening Playback Settings, the 'Autoplay' row should be visible"
         )
 
         waitForButtonToGainFocus(
             autoPlayLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "After opening 'Playback Settings', default focus should land on the first actionable item, 'Autoplay'"
         )
@@ -1821,35 +1930,36 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let autoPlayOnButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.autoPlay.on.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening 'Autoplay', the 'Autoplay on' option should be shown"
         )
         let autoPlayOffButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.autoPlay.off.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening 'Autoplay', the 'Autoplay off' option should be shown"
         )
 
         waitForButtonToGainFocus(
             autoPlayOnButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening 'Autoplay', default focus should land on the first item, 'Autoplay on'"
         )
         waitForFocusVisualSettle()
 
-        let wasOnSelected = accessibilityValueString(for: autoPlayOnButton).contains("已选中")
-        if wasOnSelected {
+        let isOnOptionSelected = accessibilityValueString(for: autoPlayOnButton).contains("已选中")
+        if isOnOptionSelected {
             XCUIRemote.shared.press(.down)
             waitForFocusVisualSettle()
         }
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitUntil(timeout: 8) {
+            waitUntil(timeout: WaitTiming.controlAppearanceTimeoutSeconds) {
 
-                self.accessibilityValueString(for: autoPlayOnButton).contains(wasOnSelected ? "未选中" : "已选中")
-                    && self.accessibilityValueString(for: autoPlayOffButton).contains(wasOnSelected ? "已选中" : "未选中")
+                self.accessibilityValueString(for: autoPlayOnButton).contains(isOnOptionSelected ? "未选中" : "已选中")
+                    && self.accessibilityValueString(for: autoPlayOffButton).contains(
+                        isOnOptionSelected ? "已选中" : "未选中")
             },
             """
             After picking the other option on the 'Autoplay' subpage, the selection on this page should switch.
@@ -1870,10 +1980,11 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: 8), "Settings home should show the 'Playback Settings' entry")
-        waitForSettingsSidebarButtonSelection(
+            playbackItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Settings home should show the 'Playback Settings' entry")
+        waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Settings home default focus should land on 'Playback Settings'"
         )
         XCUIRemote.shared.press(.select)
@@ -1881,38 +1992,38 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let autoPlayLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.autoPlay.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Playback settings page should show the 'Autoplay' row"
         )
         let intervalLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.interval.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Playback settings page should show the 'Autoplay Interval' entry"
         )
         let modeLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.mode.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Playback settings page should show the 'Default Playback Mode' entry"
         )
         let displayLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.display.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Playback settings page should show the 'Display Items' entry"
         )
 
         waitForButtonToGainFocus(
             autoPlayLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening 'Playback Settings', default focus should land on the 'Autoplay' entry"
         )
 
         XCUIRemote.shared.press(.down)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitUntil(timeout: 8) {
+            waitUntil(timeout: WaitTiming.controlAppearanceTimeoutSeconds) {
                 app.buttons["settings.playback.interval.5.button"].exists
             },
             """
@@ -1938,10 +2049,11 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: 8), "Settings home should show the 'Playback Settings' entry")
-        waitForSettingsSidebarButtonSelection(
+            playbackItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Settings home should show the 'Playback Settings' entry")
+        waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Settings home default focus should land on 'Playback Settings'"
         )
         XCUIRemote.shared.press(.select)
@@ -1949,20 +2061,20 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let autoPlayLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.autoPlay.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Playback settings page should show the 'Autoplay' entry"
         )
         let filterConfigButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.filterConfig.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "When the default playback mode is 'Filtered playback', the 'Edit Filters' entry should be shown"
         )
 
         waitForButtonToGainFocus(
             autoPlayLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening 'Playback Settings', default focus should land on the 'Autoplay' entry"
         )
 
@@ -1974,7 +2086,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitUntil(timeout: 10) {
+            waitUntil(timeout: WaitTiming.navigationTimeoutSeconds) {
                 app.buttons["filter.editor.done.button"].exists && app.buttons["filter.editor.album.entry"].exists
                     && app.buttons["filter.editor.person.entry"].exists
             },
@@ -2002,22 +2114,22 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
 
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: 8),
+            playbackItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After opening settings, the home page should show the 'Playback Settings' entry")
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(timeout: 8),
+            accessProtectionItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After opening settings, the home page should show the 'Access Protection' entry")
 
-        waitForSettingsSidebarButtonSelection(
+        waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening settings, default focus should land on 'Playback Settings'"
         )
 
         XCUIRemote.shared.press(.down)
-        waitForSettingsSidebarButtonSelection(
+        waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After moving down once on the home page, focus should reach 'Access Protection'"
         )
 
@@ -2026,7 +2138,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.pin.enable.button",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "After opening 'Access Protection', the PIN enable controls should be shown"
         )
@@ -2044,34 +2156,35 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
 
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: 8), "Settings home page should show the 'Playback Settings' entry")
+            playbackItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Settings home page should show the 'Playback Settings' entry")
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(timeout: 8),
+            accessProtectionItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home page should show the 'Access Protection' entry")
 
-        waitForSettingsSidebarButtonSelection(
+        waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening settings, default focus should land reliably on 'Playback Settings'"
         )
 
         XCUIRemote.shared.press(.down)
-        waitForSettingsSidebarButtonSelection(
+        waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Pressing Down on 'Playback Settings' should move focus to 'Access Protection'"
         )
         XCUIRemote.shared.press(.select)
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening 'Access Protection', the PIN settings should be shown"
         )
 
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening 'Access Protection', default focus should go to the first PIN input entry"
         )
     }
@@ -2084,13 +2197,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(timeout: 8),
+            accessProtectionItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After opening settings, the home page should show the 'Access Protection' entry")
 
         XCUIRemote.shared.press(.down)
-        waitForSettingsSidebarButtonSelection(
+        waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In light mode, moving down on the home page should also reliably focus 'Access Protection'"
         )
 
@@ -2098,12 +2211,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In light mode, opening 'Access Protection' should show the PIN input entry"
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "In light mode, on the access protection page default focus should be on the 'Set PIN' input entry"
         )
@@ -2121,7 +2234,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.accessProtection",
-            downStepsFromPlayback: 1,
+            downStepsFromPlayback: SettingsNavigation.accessProtectionSteps,
             failureMessage:
                 "With large text, settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
@@ -2130,12 +2243,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "With large text, opening 'Access Protection' should show the 'Set PIN' input entry"
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "With large text, on the access protection page default focus should be on the 'Set PIN' input entry"
         )
@@ -2153,7 +2266,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.accessProtection",
-            downStepsFromPlayback: 1,
+            downStepsFromPlayback: SettingsNavigation.accessProtectionSteps,
             failureMessage:
                 "With large text, settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
@@ -2162,12 +2275,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "With large text, the access protection page should show the 'Set PIN' input entry"
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "With large text, entering the access protection page should focus the 'Set PIN' input entry first"
         )
@@ -2179,18 +2292,21 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let deleteButton = app.buttons["pinEntry.delete.button"]
 
         XCTAssertTrue(
-            closeButton.waitForExistence(timeout: 8),
+            closeButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "With large text, the opened PIN sheet should show the close button")
         XCTAssertTrue(
-            digitOneButton.waitForExistence(timeout: 8),
+            digitOneButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "With large text, the opened PIN sheet should show the number pad")
-        XCTAssertTrue(zeroButton.waitForExistence(timeout: 8), "With large text, the PIN sheet should show digit 0")
         XCTAssertTrue(
-            deleteButton.waitForExistence(timeout: 8), "With large text, the PIN sheet should show the delete button")
+            zeroButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "With large text, the PIN sheet should show digit 0")
+        XCTAssertTrue(
+            deleteButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "With large text, the PIN sheet should show the delete button")
 
         waitForButtonToGainFocus(
             digitOneButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "With large text, default focus in the opened PIN sheet should land on digit 1"
         )
 
@@ -2199,21 +2315,21 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             closeButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "With large text, moving down three times from digit 1 should land focus on 'Close'"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             zeroButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "With large text, moving right from 'Close' should move focus to digit 0"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             deleteButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "With large text, moving right from digit 0 should move focus to 'Delete'"
         )
 
@@ -2228,13 +2344,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(timeout: 8),
+            accessProtectionItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home page should show the 'Access Protection' entry")
 
         XCUIRemote.shared.press(.down)
-        waitForSettingsSidebarButtonSelection(
+        waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After moving down, focus should reach 'Access Protection'"
         )
 
@@ -2243,12 +2359,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Set PIN' input entry"
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "On entering the access protection page, focus should land on the 'Set PIN' input entry first"
         )
@@ -2261,30 +2377,40 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let zeroButton = app.buttons["pinEntry.digit.0.button"]
         let deleteButton = app.buttons["pinEntry.delete.button"]
 
-        XCTAssertTrue(closeButton.waitForExistence(timeout: 8), "The opened PIN sheet should show the close button")
-        XCTAssertTrue(digitOneButton.waitForExistence(timeout: 8), "The opened PIN sheet should show the number pad")
-        XCTAssertTrue(digitTwoButton.waitForExistence(timeout: 8), "The opened PIN sheet should show digit 2")
-        XCTAssertTrue(zeroButton.waitForExistence(timeout: 8), "The PIN sheet should show digit 0")
-        XCTAssertTrue(deleteButton.waitForExistence(timeout: 8), "The PIN sheet should show the delete button")
+        XCTAssertTrue(
+            closeButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "The opened PIN sheet should show the close button")
+        XCTAssertTrue(
+            digitOneButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "The opened PIN sheet should show the number pad")
+        XCTAssertTrue(
+            digitTwoButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "The opened PIN sheet should show digit 2")
+        XCTAssertTrue(
+            zeroButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "The PIN sheet should show digit 0")
+        XCTAssertTrue(
+            deleteButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "The PIN sheet should show the delete button")
 
         // The PIN sheet's default focus must be on the digit pad, not drift to the close button.
         waitForButtonToGainFocus(
             digitOneButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "When the PIN sheet opens, default focus should land on digit 1"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             digitTwoButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving right from digit 1, focus should reach digit 2"
         )
 
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             digitOneButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving left from digit 2, focus should return to digit 1"
         )
 
@@ -2293,21 +2419,21 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             closeButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down three times from digit 1, focus should land reliably on 'Close'"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             zeroButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving right from 'Close', focus should reach digit 0"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             deleteButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving right from digit 0, focus should reach 'Delete'"
         )
 
@@ -2322,13 +2448,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(timeout: 8),
+            accessProtectionItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home page should show the 'Access Protection' entry")
 
         XCUIRemote.shared.press(.down)
-        waitForSettingsSidebarButtonSelection(
+        waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After moving down, focus should reach 'Access Protection'"
         )
         XCUIRemote.shared.press(.select)
@@ -2336,25 +2462,25 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Set PIN' input entry"
         )
         let enablePinConfirmInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enableConfirm",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Confirm PIN' input entry"
         )
         let enableProtectionButton = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.enable.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Enable Access Protection' button"
         )
 
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the access protection page, default focus should land on the 'Set PIN' input entry"
         )
         XCUIRemote.shared.press(.select)
@@ -2363,7 +2489,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enablePinConfirmInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After filling 'Set PIN', moving down should focus 'Confirm PIN'"
         )
         XCUIRemote.shared.press(.select)
@@ -2372,7 +2498,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enableProtectionButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "After entering and confirming the PIN, moving down should focus the 'Enable Access Protection' button"
         )
@@ -2382,7 +2508,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.pin.feedback.success.prominent",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "After access protection is enabled, a prominent success banner should show at the top of the page. state=\(accessibilityValueString(for: app.otherElements["settings.pin.stateProbe"]))"
         )
@@ -2390,7 +2516,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.pin.disable.button",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "After access protection is enabled, the page should switch to the 'Disable Access Protection' controls"
         )
@@ -2406,13 +2532,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(timeout: 8),
+            accessProtectionItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home page should show the 'Access Protection' entry")
 
         XCUIRemote.shared.press(.down)
-        waitForSettingsSidebarButtonSelection(
+        waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After moving down, focus should reach 'Access Protection'"
         )
         XCUIRemote.shared.press(.select)
@@ -2420,25 +2546,25 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Set PIN' input entry"
         )
         let enablePinConfirmInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enableConfirm",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Confirm PIN' input entry"
         )
         let enableProtectionButton = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.enable.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Enable Access Protection' button"
         )
 
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the access protection page, default focus should land on the 'Set PIN' input entry"
         )
         XCUIRemote.shared.press(.select)
@@ -2447,7 +2573,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enablePinConfirmInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After filling 'Set PIN', moving down should focus 'Confirm PIN'"
         )
         XCUIRemote.shared.press(.select)
@@ -2456,7 +2582,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enableProtectionButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "After entering and confirming the PIN, moving down should focus the 'Enable Access Protection' button"
         )
@@ -2465,20 +2591,20 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let disableCurrentPinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.disableCurrent",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "After enabling access protection, the 'Enter current PIN' entry should be shown. state=\(accessibilityValueString(for: app.otherElements["settings.pin.stateProbe"]))"
         )
         let disableProtectionButton = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.disable.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After enabling access protection, the 'Disable Access Protection' button should be shown"
         )
 
         waitForButtonToGainFocus(
             disableCurrentPinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "After access protection is enabled, default focus should be on the 'Enter current PIN' entry"
         )
@@ -2488,7 +2614,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             disableProtectionButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "After entering the current PIN, moving down should focus the 'Disable Access Protection' button"
         )
@@ -2498,7 +2624,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.pin.feedback.success.prominent",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "After access protection is disabled, a prominent success banner should be shown. state=\(accessibilityValueString(for: app.otherElements["settings.pin.stateProbe"]))"
         )
@@ -2506,7 +2632,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.pin.enable.button",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "After disabling access protection, the page should switch back to the 'Enable Access Protection' controls"
         )
@@ -2523,54 +2649,61 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.server",
-            downStepsFromPlayback: 2,
+            downStepsFromPlayback: SettingsNavigation.serverSteps,
             failureMessage: "Settings home should reliably reach the 'Server' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "firstboot.serverURL.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "firstboot.serverURL.row", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The server page should show the server URL input row"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "firstboot.apiKey.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "firstboot.apiKey.row", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The server page should show the API Key input row"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "firstboot.testConnection.button", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "firstboot.testConnection.button",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The server page should show the Test Connection button"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "server.apiKey.help.button", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "server.apiKey.help.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The server page should show the API Key help entry"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.server.hero.summary", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.server.hero.summary",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Server page should show the connection status summary in the Hero area"
         )
 
         _ = waitForSettingsControl(
             app: app,
             identifier: "firstboot.serverURL.row",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "The server page should show the server URL input row"
         )
         let serverURLField = waitForSettingsControl(
             app: app,
             identifier: "firstboot.serverURL.field",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "The server page should expose the server URL text field itself"
         )
         waitForButtonToGainFocus(
             serverURLField,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the server page, default focus should land reliably on the server URL field"
         )
 
         assertTVOSServerSettingsAPIKeyHelpSheet(
             app: app,
             context: "tvOS server settings page",
-            verifySimplifiedChineseContent: true,
+            shouldVerifySimplifiedChineseContent: true,
             screenshotName: "tvos-settings-server-api-key-help-sheet-dark"
         )
 
@@ -2590,30 +2723,32 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.server",
-            downStepsFromPlayback: 2,
+            downStepsFromPlayback: SettingsNavigation.serverSteps,
             failureMessage: "Settings home should reliably reach the 'Server' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.server.hero.summary", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.server.hero.summary",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The server detail page should show the server settings Hero"
         )
 
         let testConnectionButton = waitForSettingsControl(
             app: app,
             identifier: "firstboot.testConnection.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Server detail page should show the Test Connection button"
         )
         for _ in 0..<4 {
             if testConnectionButton.hasFocus { break }
             XCUIRemote.shared.press(.down)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.shortFocusSettleSeconds))
         }
         waitForButtonToGainFocus(
             testConnectionButton,
-            timeout: 4,
+            timeout: WaitTiming.stateChangeTimeoutSeconds,
             failureMessage:
                 "On the server detail page, direction keys should be able to focus the Test Connection button"
         )
@@ -2623,11 +2758,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let alert = app.alerts["连接测试失败"]
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-            alert.waitForExistence(timeout: 4),
+            alert.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds),
             "Test Connection on server detail should show the error there at once, not after returning to settings root"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.server.hero.summary", timeout: 1),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.server.hero.summary", timeout: WaitTiming.briefElementTimeoutSeconds),
             "When the alert appears, the server detail page should still be underneath, not the settings root"
         )
         XCTAssertTrue(
@@ -2647,29 +2783,38 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.cache",
-            downStepsFromPlayback: 3,
+            downStepsFromPlayback: SettingsNavigation.cacheSteps,
             failureMessage: "Settings home should reliably reach the 'Cache Management' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.cache.disk.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.cache.disk.row", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Cache page should show the 'Disk Cache' metric"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.cache.trackedURL.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.cache.trackedURL.row",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Cache page should show the 'Tracked URLs' metric"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.cache.trackedState.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.cache.trackedState.row",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Cache page should show the 'Tracked States' metric"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.cache.runningTask.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.cache.runningTask.row",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Cache page should show the 'Running Tasks' metric"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.cache.clearDisk.button", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.cache.clearDisk.button",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Cache page should show the clear disk cache button"
         )
 
@@ -2685,7 +2830,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.cache",
-            downStepsFromPlayback: 3,
+            downStepsFromPlayback: SettingsNavigation.cacheSteps,
             failureMessage: "Settings home should reliably reach the 'Cache Management' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
@@ -2693,7 +2838,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let clearCacheButton = waitForSettingsControl(
             app: app,
             identifier: "settings.cache.clearDisk.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Cache page should show the 'Clear Disk Cache' button"
         )
 
@@ -2702,19 +2847,19 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
                 break
             }
             XCUIRemote.shared.press(.down)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
 
         waitForButtonToGainFocus(
             clearCacheButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the cache page, direction keys should be able to focus the 'Clear Disk Cache' button"
         )
 
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitUntil(timeout: 4) {
+            waitUntil(timeout: WaitTiming.stateChangeTimeoutSeconds) {
                 // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
                 self.waitForElementWithLabelExists(app: app, label: "确认清理磁盘缓存", timeout: 0)
                     // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
@@ -2728,12 +2873,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-            waitForElementWithLabelExists(app: app, label: "清理", timeout: 4),
+            waitForElementWithLabelExists(app: app, label: "清理", timeout: WaitTiming.stateChangeTimeoutSeconds),
             "The confirmation dialog should show the 'Clear' action button"
         )
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-            waitForElementWithLabelExists(app: app, label: "取消", timeout: 4),
+            waitForElementWithLabelExists(app: app, label: "取消", timeout: WaitTiming.stateChangeTimeoutSeconds),
             "The confirmation dialog should show the 'Cancel' button"
         )
     }
@@ -2746,52 +2891,65 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
+            downStepsFromPlayback: SettingsNavigation.aboutSteps,
             failureMessage: "Settings home should reliably reach the 'About' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.about.appName.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.about.appName.row", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the app name"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.about.version.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.about.version.row", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the version number"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.about.platform.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.about.platform.row", timeout: WaitTiming.controlAppearanceTimeoutSeconds
+            ),
             "About page should show the platform info"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.about.feedback.hint", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.about.feedback.hint",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the feedback hint"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.about.feedback.email", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.about.feedback.email",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the support email row (existence only; the address text is not read)"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.about.unofficialNotice.hint", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.about.unofficialNotice.hint",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the unofficial notice"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.about.privacyPolicy.link", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.about.privacyPolicy.link",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the Privacy Policy entry"
         )
         XCTAssertTrue(
             // ui-label-lookup: This lookup asserts the displayed feedback hint copy.
-            app.staticTexts["提交问题前，建议先确认版本号与运行平台。"].waitForExistence(timeout: 8),
+            app.staticTexts["提交问题前，建议先确认版本号与运行平台。"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the real feedback text, not placeholder text"
         )
         XCTAssertTrue(
             // ui-label-lookup: This lookup asserts the displayed privacy description copy.
-            app.staticTexts["查看完整隐私政策与数据处理说明。"].waitForExistence(timeout: 8),
+            app.staticTexts["查看完整隐私政策与数据处理说明。"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the privacy policy description"
         )
         XCTAssertFalse(
             // ui-label-lookup: This lookup rejects obsolete displayed placeholder copy.
-            app.staticTexts["后续会在这里补齐反馈入口和开源协议链接。"].waitForExistence(timeout: 1),
+            app.staticTexts["后续会在这里补齐反馈入口和开源协议链接。"].waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds),
             "About page should no longer show 'to be added later' placeholder text"
         )
 
@@ -2808,7 +2966,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
+            downStepsFromPlayback: SettingsNavigation.aboutSteps,
             failureMessage: "Settings home should reliably reach the 'About' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
@@ -2816,68 +2974,68 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let appInfoSection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.appInfo.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should expose the 'App Info' focus area"
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the About page, the first focus should land on the 'App Info' section"
         )
 
         let unofficialNoticeSection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.unofficialNotice.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should expose the 'Unofficial Notice' focus area"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             unofficialNoticeSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down from 'App Info', focus should reach the 'Unofficial Notice' section"
         )
 
         let feedbackSection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.feedback.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should expose the 'Feedback & Support' focus area"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             feedbackSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down again, focus should reach the 'Feedback & Support' section"
         )
 
         let privacyPolicyLink = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should show the 'Privacy Policy' entry"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down again, focus should reach the 'Privacy Policy' entry"
         )
 
         let openSourceLink = waitForSettingsControl(
             app: app,
             identifier: "settings.about.opensource.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should show the 'Open Source Licenses' entry"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             openSourceLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down again, focus should reach the 'Open Source Licenses' entry"
         )
 
@@ -2887,7 +3045,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "Moving back up from 'Open Source Licenses', focus should return reliably to the 'Privacy Policy' entry"
         )
@@ -2905,7 +3063,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
+            downStepsFromPlayback: SettingsNavigation.aboutSteps,
             failureMessage: "Settings home should reliably reach the 'About' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
@@ -2913,19 +3071,19 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let appInfoSection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.appInfo.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the About page, the top 'App Info' focus area should be found first"
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the About page, the first focus should land on the 'App Info' section"
         )
 
         let privacyPolicyLink = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should show the 'Privacy Policy' entry"
         )
 
@@ -2936,7 +3094,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "In the lower half of the About page, focus should land reliably on the 'Privacy Policy' entry"
         )
@@ -2946,19 +3104,19 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let chineseLanguageButton = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.language.zh.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Privacy policy page should show the 'Chinese' language button"
         )
         let englishLanguageButton = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.language.en.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Privacy policy page should show the 'English' language button"
         )
         let firstPolicySection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.section.0",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Privacy policy page should show at least the first body section"
         )
         XCTAssertTrue(
@@ -2968,7 +3126,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         waitForButtonToGainFocus(
             chineseLanguageButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "On the privacy policy page, default focus should land directly on the 'Chinese' language button"
         )
@@ -2977,7 +3135,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             firstPolicySection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down from the language button, focus should enter the privacy policy text"
         )
 
@@ -2987,7 +3145,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             chineseLanguageButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving back up from the text, focus should return to the current language button"
         )
 
@@ -2995,7 +3153,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             englishLanguageButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving right from the Chinese button, focus should reach the English button"
         )
 
@@ -3005,7 +3163,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let englishFirstPolicySection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.section.0",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After choosing English, the privacy policy page should still show the first body section"
         )
         XCTAssertTrue(
@@ -3016,7 +3174,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let tablePolicySection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.section.2",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "The privacy policy data processing section should remain a separate focusable section"
         )
 
@@ -3027,7 +3185,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         waitForButtonToGainFocus(
             tablePolicySection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down again, focus should reach the section with the data processing table"
         )
 
@@ -3042,7 +3200,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.accessProtection",
-            downStepsFromPlayback: 1,
+            downStepsFromPlayback: SettingsNavigation.accessProtectionSteps,
             failureMessage: "Settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
 
@@ -3050,12 +3208,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In dark mode, opening 'Access Protection' should show the PIN input entry"
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "In dark mode, on the access protection page default focus should be on the 'Set PIN' input entry"
         )
@@ -3072,36 +3230,39 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.server",
-            downStepsFromPlayback: 2,
+            downStepsFromPlayback: SettingsNavigation.serverSteps,
             failureMessage:
                 "In light mode, the settings home should reliably reach the 'Server' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.server.hero.summary", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.server.hero.summary",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "In light mode, the server page should show the connection status summary in the Hero area"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "server.apiKey.help.button", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "server.apiKey.help.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "In light mode, the server page should show the API Key help entry"
         )
 
         _ = waitForSettingsControl(
             app: app,
             identifier: "firstboot.serverURL.row",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In light mode, the server page should show the server URL input row"
         )
         let serverURLField = waitForSettingsControl(
             app: app,
             identifier: "firstboot.serverURL.field",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In light mode, the server page should expose the server URL text field itself"
         )
         waitForButtonToGainFocus(
             serverURLField,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In light mode, on the server page default focus should be on the server URL field"
         )
 
@@ -3122,7 +3283,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.server",
-            downStepsFromPlayback: 2,
+            downStepsFromPlayback: SettingsNavigation.serverSteps,
             failureMessage: "In English, the settings home should reliably reach the 'Server' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
@@ -3130,21 +3291,23 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let serverURLField = waitForSettingsControl(
             app: app,
             identifier: "firstboot.serverURL.field",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In English, the server page should expose the server URL text field itself"
         )
         waitForButtonToGainFocus(
             serverURLField,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In English, on the server page default focus should be on the server URL field"
         )
 
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "server.apiKey.help.button", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "server.apiKey.help.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "In English, the server page should show the API Key help entry"
         )
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: app, label: "Test Connection", timeout: 6),
+            waitForElementWithLabelExists(
+                app: app, label: "Test Connection", timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "In English, the action buttons should still show English text"
         )
 
@@ -3160,14 +3323,15 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.cache",
-            downStepsFromPlayback: 3,
+            downStepsFromPlayback: SettingsNavigation.cacheSteps,
             failureMessage:
                 "In light mode, settings home should reliably reach the 'Cache Management' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.cache.disk.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.cache.disk.row", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "In light mode, the cache page should show the metrics area"
         )
 
@@ -3183,18 +3347,21 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
+            downStepsFromPlayback: SettingsNavigation.aboutSteps,
             failureMessage:
                 "In light mode, the settings home should reliably reach the 'About' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.about.version.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.about.version.row", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "In light mode, the About page should show the version info"
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.about.unofficialNotice.hint", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.about.unofficialNotice.hint",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "In light mode, the About page should show the unofficial notice"
         )
 
@@ -3211,7 +3378,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
+            downStepsFromPlayback: SettingsNavigation.aboutSteps,
             failureMessage: "Settings home should reliably reach the 'About' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
@@ -3219,64 +3386,64 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let openSourceLink = waitForSettingsControl(
             app: app,
             identifier: "settings.about.opensource.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should show the 'Open Source Licenses' entry"
         )
         let appInfoSection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.appInfo.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should expose the 'App Info' focus area"
         )
         let unofficialNoticeSection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.unofficialNotice.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should expose the 'Unofficial Notice' focus area"
         )
         let feedbackSection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.feedback.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should expose the 'Feedback & Support' focus area"
         )
         let privacyPolicyLink = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should show the 'Privacy Policy' entry"
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the About page, default focus should land on the 'App Info' section"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             unofficialNoticeSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down from 'App Info', focus should reach the 'Unofficial Notice' section"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             feedbackSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down again, focus should reach the 'Feedback & Support' section"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down again, focus should reach the 'Privacy Policy' entry"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             openSourceLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Moving down from 'Privacy Policy' should reliably focus the 'Open Source Licenses' entry"
         )
 
@@ -3288,7 +3455,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.about.opensource.sdwebimage.summary",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "Open source licenses page should show the SDWebImage component info"
         )
@@ -3296,7 +3463,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.about.opensource.sdwebimageswiftui.summary",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "Open source licenses page should show the SDWebImageSwiftUI component info"
         )
@@ -3304,7 +3471,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.about.opensource.sharedLicense",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "Open source licenses page should show the shared license text"
         )
@@ -3325,14 +3492,16 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: playbackApp,
             identifier: "settings.item.playback",
-            downStepsFromPlayback: 0,
+            downStepsFromPlayback: SettingsNavigation.playbackSteps,
             failureMessage: "In English, the tvOS settings home should show Playback Settings"
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: playbackApp, name: "english-tvos-settings-root")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForSettingsControlExists(app: playbackApp, identifier: "settings.playback.autoPlay.link", timeout: 8),
+            waitForSettingsControlExists(
+                app: playbackApp, identifier: "settings.playback.autoPlay.link",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English playback settings page should show the Autoplay entry"
         )
         waitForFocusVisualSettle()
@@ -3348,12 +3517,14 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: accessProtectionApp,
             identifier: "settings.item.accessProtection",
-            downStepsFromPlayback: 1,
+            downStepsFromPlayback: SettingsNavigation.accessProtectionSteps,
             failureMessage: "In English, the settings home should be able to open Access Protection"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: accessProtectionApp, label: "Access protection is disabled", timeout: 8),
+            waitForElementWithLabelExists(
+                app: accessProtectionApp, label: "Access protection is disabled",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English access protection page should show the disabled state"
         )
         waitForFocusVisualSettle()
@@ -3369,12 +3540,14 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: serverApp,
             identifier: "settings.item.server",
-            downStepsFromPlayback: 2,
+            downStepsFromPlayback: SettingsNavigation.serverSteps,
             failureMessage: "In English, the settings home should be able to open Server"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForSettingsControlExists(app: serverApp, identifier: "server.apiKey.help.button", timeout: 8),
+            waitForSettingsControlExists(
+                app: serverApp, identifier: "server.apiKey.help.button",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English server page should show the API Key help entry"
         )
         waitForFocusVisualSettle()
@@ -3390,12 +3563,14 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: cacheApp,
             identifier: "settings.item.cache",
-            downStepsFromPlayback: 3,
+            downStepsFromPlayback: SettingsNavigation.cacheSteps,
             failureMessage: "In English, the settings home should be able to open Cache Management"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForSettingsControlExists(app: cacheApp, identifier: "settings.cache.disk.row", timeout: 8),
+            waitForSettingsControlExists(
+                app: cacheApp, identifier: "settings.cache.disk.row",
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English cache page should show the disk cache metric"
         )
         waitForFocusVisualSettle()
@@ -3415,7 +3590,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
+            downStepsFromPlayback: SettingsNavigation.aboutSteps,
             failureMessage: "In English, the settings home should be able to open About"
         )
         XCUIRemote.shared.press(.select)
@@ -3423,16 +3598,17 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let appInfoSection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.appInfo.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should show the App Information section"
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the English About page, the first focus should land on App Information"
         )
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: app, label: "App Information", timeout: 8),
+            waitForElementWithLabelExists(
+                app: app, label: "App Information", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English About page should show App Information"
         )
         waitForFocusVisualSettle()
@@ -3441,7 +3617,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let privacyPolicyLink = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should show the Privacy Policy entry"
         )
         for _ in 0..<3 {
@@ -3450,7 +3626,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         }
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should let focus move to Privacy Policy"
         )
         attachScreenshot(app: app, name: "english-tvos-settings-about-bottom")
@@ -3459,13 +3635,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let chineseLanguageButton = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.language.zh.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Privacy policy page should show the Chinese language button"
         )
         let englishLanguageButton = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.language.en.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Privacy policy page should show the English language button"
         )
         let chineseLanguageValue = accessibilityValueString(for: chineseLanguageButton)
@@ -3482,7 +3658,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let englishFirstPolicySection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.section.0",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In English, the privacy policy page should show the English text right away"
         )
         XCTAssertTrue(
@@ -3502,7 +3678,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: openSourceApp,
             identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
+            downStepsFromPlayback: SettingsNavigation.aboutSteps,
             failureMessage: "In English, the settings home should be able to open About again"
         )
         XCUIRemote.shared.press(.select)
@@ -3510,69 +3686,70 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let openSourceAppInfoSection = waitForSettingsControl(
             app: openSourceApp,
             identifier: "settings.about.appInfo.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should expose the App Information section"
         )
         let openSourceUnofficialSection = waitForSettingsControl(
             app: openSourceApp,
             identifier: "settings.about.unofficialNotice.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should expose the Unofficial Notice section"
         )
         let openSourceFeedbackSection = waitForSettingsControl(
             app: openSourceApp,
             identifier: "settings.about.feedback.section",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should expose the Feedback & Support section"
         )
         let openSourcePrivacyLink = waitForSettingsControl(
             app: openSourceApp,
             identifier: "settings.about.privacyPolicy.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should show the Privacy Policy entry"
         )
         let openSourceLink = waitForSettingsControl(
             app: openSourceApp,
             identifier: "settings.about.opensource.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should show the Open Source Licenses entry"
         )
         waitForButtonToGainFocus(
             openSourceAppInfoSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page default focus should land on App Information"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             openSourceUnofficialSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should let focus go from App Information to Unofficial Notice"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             openSourceFeedbackSection,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should let focus go from Unofficial Notice to Feedback & Support"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             openSourcePrivacyLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should let focus go from Feedback & Support to Privacy Policy"
         )
         XCUIRemote.shared.press(.down)
         waitForFocusVisualSettle(seconds: 0.22)
         waitForButtonToGainFocus(
             openSourceLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "English About page should let focus move to Open Source Licenses"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForElementWithLabelExists(app: openSourceApp, label: "Open Source Licenses", timeout: 8),
+            waitForElementWithLabelExists(
+                app: openSourceApp, label: "Open Source Licenses", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "English open source licenses page should show Open Source Licenses"
         )
         waitForFocusVisualSettle()
@@ -3586,13 +3763,13 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(timeout: 8),
+            startPlaybackButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Filter summary page should show the 'Start Playback' button")
 
         if startPlaybackButton.hasFocus == false {
             for _ in 0..<8 {
                 XCUIRemote.shared.press(.down)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
                 if startPlaybackButton.hasFocus {
                     break
                 }
@@ -3610,13 +3787,14 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.accessProtection",
-            downStepsFromPlayback: 1,
+            downStepsFromPlayback: SettingsNavigation.accessProtectionSteps,
             failureMessage: "Settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.pin.input.enable", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.pin.input.enable", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "On the access protection page, the 'Set PIN' input entry should be shown"
         )
     }
@@ -3630,7 +3808,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         _ = waitForSettingsHomeItem(
             app: app,
             identifier: "settings.item.accessProtection",
-            downStepsFromPlayback: 1,
+            downStepsFromPlayback: SettingsNavigation.accessProtectionSteps,
             failureMessage: "Settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
         XCUIRemote.shared.press(.select)
@@ -3638,25 +3816,25 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Set PIN' input entry"
         )
         let enablePinConfirmInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enableConfirm",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Confirm PIN' input entry"
         )
         let enableProtectionButton = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.enable.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Access protection page should show the 'Enable Access Protection' button"
         )
 
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "On the access protection page, default focus should land on the 'Set PIN' input entry"
         )
         XCUIRemote.shared.press(.select)
@@ -3665,7 +3843,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enablePinConfirmInput,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After filling 'Set PIN', moving down should focus the 'Confirm PIN' input entry"
         )
         XCUIRemote.shared.press(.select)
@@ -3674,13 +3852,15 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enableProtectionButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "After entering and confirming the PIN, moving down should focus the 'Enable Access Protection' button"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.pin.disable.button", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.pin.disable.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds
+            ),
             "After access protection is enabled, the page should switch to the 'Disable Access Protection' controls"
         )
 
@@ -3689,13 +3869,14 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
         let pinCloseButton = app.buttons["pinEntry.close.button"]
         XCTAssertTrue(
-            pinCloseButton.waitForExistence(timeout: 8),
+            pinCloseButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "With access protection enabled, opening settings again should first show the PIN check sheet"
         )
 
         enterSixDigitsInPinSheetUsingDigitOne(app: app, operationName: "Settings unlock")
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "settings.item.playback", timeout: 8),
+            waitForSettingsControlExists(
+                app: app, identifier: "settings.item.playback", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After the correct PIN, the settings home should open"
         )
     }
@@ -3720,22 +3901,22 @@ private extension FilterSummaryTVOSVisualUITests {
     }
 
     func launchApp(
-        resetState: Bool,
-        seedFilterSelection: Bool = false,
+        shouldResetState: Bool,
+        shouldSeedFilterSelection: Bool = false,
         colorScheme: String? = nil,
         dynamicTypeSize: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        longPersonNames: Bool = false,
-        forceAutoPlayOff: Bool = false,
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldUseLongPersonNames: Bool = false,
+        shouldForceAutoPlayOff: Bool = false,
         exifDiagnosticAlbumID: String? = nil,
         languageCode: String? = nil,
         localeIdentifier: String? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
-        if resetState {
+        if shouldResetState {
             app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         }
-        if seedFilterSelection {
+        if shouldSeedFilterSelection {
             app.launchEnvironment["UI_TEST_SEED_FILTER_SELECTION"] = "1"
         }
         if let colorScheme {
@@ -3745,15 +3926,15 @@ private extension FilterSummaryTVOSVisualUITests {
 
             app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = dynamicTypeSize
         }
-        if disablePlaybackEntryHint {
+        if shouldDisablePlaybackEntryHint {
 
             app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         }
-        if longPersonNames {
+        if shouldUseLongPersonNames {
 
             app.launchEnvironment["UI_TEST_FORCE_LONG_PERSON_NAMES"] = "1"
         }
-        if forceAutoPlayOff {
+        if shouldForceAutoPlayOff {
 
             app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
         }
@@ -3775,24 +3956,24 @@ private extension FilterSummaryTVOSVisualUITests {
     func launchIntoFilterSummary(
         colorScheme: String = "dark",
         dynamicTypeSize: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        longPersonNames: Bool = false,
-        forceAutoPlayOff: Bool = false,
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldUseLongPersonNames: Bool = false,
+        shouldForceAutoPlayOff: Bool = false,
         exifDiagnosticAlbumID: String? = nil,
-        prepareFilterSummaryVisuals: Bool = true,
+        shouldPrepareFilterSummaryVisuals: Bool = true,
         languageCode: String? = nil,
         localeIdentifier: String? = nil,
         extraLaunchEnvironment: [String: String] = [:]
     ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = launchApp(
-            resetState: true,
-            seedFilterSelection: true,
+            shouldResetState: true,
+            shouldSeedFilterSelection: true,
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
-            disablePlaybackEntryHint: disablePlaybackEntryHint,
-            longPersonNames: longPersonNames,
-            forceAutoPlayOff: forceAutoPlayOff,
+            shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+            shouldUseLongPersonNames: shouldUseLongPersonNames,
+            shouldForceAutoPlayOff: shouldForceAutoPlayOff,
             exifDiagnosticAlbumID: exifDiagnosticAlbumID,
             languageCode: languageCode,
             localeIdentifier: localeIdentifier
@@ -3800,7 +3981,7 @@ private extension FilterSummaryTVOSVisualUITests {
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        if prepareFilterSummaryVisuals {
+        if shouldPrepareFilterSummaryVisuals {
             try requireServerAlbumAndPerson()
             app.launchEnvironment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] = "1"
         }
@@ -3833,11 +4014,11 @@ private extension FilterSummaryTVOSVisualUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 15),
+            continueButton.waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page")
         startFilteredFlowFromModeSelection(app: app)
 
-        if prepareFilterSummaryVisuals {
+        if shouldPrepareFilterSummaryVisuals {
             assertFilterSummaryMinimalOnboardingHeader(
                 app: app,
                 expectedFilterSummaryOnboardingTitles: expectedOnboardingTitles,
@@ -3845,15 +4026,16 @@ private extension FilterSummaryTVOSVisualUITests {
             )
         } else {
             XCTAssertTrue(
-                app.buttons["filterSummary.startPlayback.button"].waitForExistence(timeout: 12),
+                app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+                    timeout: WaitTiming.screenTransitionTimeoutSeconds),
                 "Without visual prep, the filter summary page should still open and show the Start Playback button"
             )
         }
 
         let albumButton = app.buttons["filterSummary.album.button"]
         let peopleButton = app.buttons["filterSummary.person.button"]
-        XCTAssertTrue(albumButton.waitForExistence(timeout: 10))
-        XCTAssertTrue(peopleButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(albumButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds))
+        XCTAssertTrue(peopleButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds))
         return app
     }
 
@@ -3866,7 +4048,7 @@ private extension FilterSummaryTVOSVisualUITests {
     ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = launchApp(
-            resetState: true,
+            shouldResetState: true,
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
             languageCode: languageCode,
@@ -3896,34 +4078,36 @@ private extension FilterSummaryTVOSVisualUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 15),
+            continueButton.waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page")
         return app
     }
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
         let modeFilteredButton = app.buttons["mode.filtered.button"]
-        XCTAssertTrue(modeFilteredButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(modeFilteredButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCUIRemote.shared.press(.right)
         XCUIRemote.shared.press(.select)
 
         let modeContinueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(modeContinueButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(modeContinueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(modeContinueButton.isEnabled)
         XCUIRemote.shared.press(.down)
         XCUIRemote.shared.press(.select)
 
-        XCTAssertTrue(app.buttons["filterSummary.startPlayback.button"].waitForExistence(timeout: 12))
+        XCTAssertTrue(
+            app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+                timeout: WaitTiming.screenTransitionTimeoutSeconds))
     }
 
     @MainActor
     func launchIntoSlideShow(
         colorScheme: String = "dark",
         dynamicTypeSize: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        forceAutoPlayOff: Bool = false,
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldForceAutoPlayOff: Bool = false,
         exifDiagnosticAlbumID: String? = nil,
-        prepareFilterSummaryVisuals: Bool = true,
+        shouldPrepareFilterSummaryVisuals: Bool = true,
         languageCode: String? = nil,
         localeIdentifier: String? = nil,
         extraLaunchEnvironment: [String: String] = [:]
@@ -3931,17 +4115,17 @@ private extension FilterSummaryTVOSVisualUITests {
         let app = try launchIntoFilterSummary(
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
-            disablePlaybackEntryHint: disablePlaybackEntryHint,
-            forceAutoPlayOff: forceAutoPlayOff,
+            shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+            shouldForceAutoPlayOff: shouldForceAutoPlayOff,
             exifDiagnosticAlbumID: exifDiagnosticAlbumID,
-            prepareFilterSummaryVisuals: prepareFilterSummaryVisuals,
+            shouldPrepareFilterSummaryVisuals: shouldPrepareFilterSummaryVisuals,
             languageCode: languageCode,
             localeIdentifier: localeIdentifier,
             extraLaunchEnvironment: extraLaunchEnvironment
         )
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(timeout: 8),
+            startPlaybackButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Filter summary page should show the 'Start Playback' button")
 
         if startPlaybackButton.hasFocus == false {
@@ -3949,7 +4133,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
             for _ in 0..<8 {
                 XCUIRemote.shared.press(.down)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
                 if startPlaybackButton.hasFocus {
                     break
                 }
@@ -3975,9 +4159,10 @@ private extension FilterSummaryTVOSVisualUITests {
     ) {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 12), "The tvOS playback page should show the Play/Pause button")
+            playPauseButton.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
+            "The tvOS playback page should show the Play/Pause button")
         XCTAssertTrue(
-            waitUntil(timeout: 6) {
+            waitUntil(timeout: WaitTiming.settingsChangeTimeoutSeconds) {
                 ((playPauseButton.value as? String) ?? "").lowercased() == "play"
             },
             "Autoplay should be off in tvOS EXIF diagnostic mode so photos do not advance during screenshots"
@@ -3985,7 +4170,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
         for index in 0..<expectedCount {
             XCTAssertTrue(
-                waitForTVOSExifToneReady(app: app, timeout: 10),
+                waitForTVOSExifToneReady(app: app, timeout: WaitTiming.navigationTimeoutSeconds),
                 "EXIF text color sampling should be done before the screenshot of photo \(index + 1)"
             )
 
@@ -4006,20 +4191,20 @@ private extension FilterSummaryTVOSVisualUITests {
 
             if !currentIndexValue.isEmpty {
                 XCTAssertTrue(
-                    waitUntil(timeout: 8) {
+                    waitUntil(timeout: WaitTiming.controlAppearanceTimeoutSeconds) {
                         self.accessibilityValueString(for: indexProbe) != currentIndexValue
                     },
                     "After next, the playback index probe should change so the same photo is not captured twice"
                 )
             } else if let currentDateLabel {
                 XCTAssertTrue(
-                    waitUntil(timeout: 8) {
+                    waitUntil(timeout: WaitTiming.controlAppearanceTimeoutSeconds) {
                         self.currentTVOSExifDateLabel(app: app) != currentDateLabel
                     },
                     "After next, the EXIF date at the top should change so the same photo is not captured twice"
                 )
             } else {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.screenSettleSeconds))
             }
         }
     }
@@ -4032,7 +4217,7 @@ private extension FilterSummaryTVOSVisualUITests {
     func currentTVOSExifToneDebugLabel(app: XCUIApplication) -> String {
         let toneFlag = app.descendants(matching: .any)["slideshow.exifForegroundTone.flag"]
         XCTAssertTrue(
-            toneFlag.waitForExistence(timeout: 6),
+            toneFlag.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "tvOS playback page should expose the current EXIF text color diagnostic flag")
 
         let candidates = [
@@ -4064,7 +4249,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
         XCUIRemote.shared.press(.up)
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 5),
+            playPauseButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "Once hidden, the control bar should wake again with a direction key"
         )
     }
@@ -4072,19 +4257,21 @@ private extension FilterSummaryTVOSVisualUITests {
     @MainActor
     func moveFocusToTVOSSlideshowNextButton(app: XCUIApplication) {
         let nextButton = app.buttons["slideshow.control.next.button"]
-        XCTAssertTrue(nextButton.waitForExistence(timeout: 6), "Playback page should show the next button")
+        XCTAssertTrue(
+            nextButton.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
+            "Playback page should show the next button")
 
         for _ in 0..<4 {
             if nextButton.hasFocus || accessibilityValueString(for: nextButton).contains("focused") {
                 return
             }
             XCUIRemote.shared.press(.right)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusSettleSeconds))
         }
 
         waitForButtonToGainFocus(
             nextButton,
-            timeout: 3,
+            timeout: WaitTiming.shortInteractionTimeoutSeconds,
             failureMessage: "During per-photo EXIF screenshots, focus should move to the next button"
         )
     }
@@ -4093,22 +4280,22 @@ private extension FilterSummaryTVOSVisualUITests {
     func enterRandomPlaybackFromModeSelection(app: XCUIApplication) throws {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: 15),
+            randomButton.waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
             "After injecting the public fixture, the app must reach the mode selection page")
         if randomButton.hasFocus == false {
             XCUIRemote.shared.press(.left)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusSettleSeconds))
         }
         XCUIRemote.shared.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 5),
+            continueButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "After choosing random playback, the Continue button must be shown")
         XCTAssertTrue(continueButton.isEnabled, "After choosing random playback, the Continue button must be enabled")
         for _ in 0..<2 where continueButton.hasFocus == false {
             XCUIRemote.shared.press(.down)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusSettleSeconds))
         }
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
@@ -4128,7 +4315,7 @@ private extension FilterSummaryTVOSVisualUITests {
     ) throws {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: 10),
+            settingsButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
             "\(scenarioName): the control bar should be visible after entering the playback page",
             file: file,
             line: line
@@ -4136,7 +4323,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
         waitForElementToDisappear(
             settingsButton,
-            timeout: 12,
+            timeout: WaitTiming.screenTransitionTimeoutSeconds,
             failureMessage:
                 "\(scenarioName): the control bar should hide on its own before waking from hidden can be verified",
             file: file,
@@ -4144,14 +4331,15 @@ private extension FilterSummaryTVOSVisualUITests {
         )
         let wakeReceiver = app.descendants(matching: .any)["slideshow.hiddenWakeReceiver"]
         XCTAssertTrue(
-            wakeReceiver.waitForExistence(timeout: 4) || settingsButton.exists == false,
+            wakeReceiver.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds)
+                || settingsButton.exists == false,
             "\(scenarioName): the wake receiver should appear after hiding",
             file: file,
             line: line
         )
         let focusDeadline = Date().addingTimeInterval(4)
         while Date() < focusDeadline, wakeReceiver.exists, wakeReceiver.hasFocus == false {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.08))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusPollSeconds))
         }
 
         let beforePNG = app.screenshot().pngRepresentation
@@ -4163,7 +4351,7 @@ private extension FilterSummaryTVOSVisualUITests {
         trigger(app)
 
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: 5),
+            settingsButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "\(scenarioName): the hidden control bar should wake successfully",
             file: file,
             line: line
@@ -4179,22 +4367,24 @@ private extension FilterSummaryTVOSVisualUITests {
     @MainActor
     func openSettingsFromSlideShow(app: XCUIApplication) {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 10), "Playback page should show the settings button")
+        XCTAssertTrue(
+            settingsButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the settings button")
 
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
             XCUIRemote.shared.press(.left)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
 
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Before opening settings, focus should return reliably to the leftmost settings button"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForAnySettingsSurface(app: app, timeout: 8),
+            waitForAnySettingsSurface(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Pressing Select on the settings button should open the settings page")
     }
 
@@ -4205,16 +4395,16 @@ private extension FilterSummaryTVOSVisualUITests {
                 return
             }
             XCUIRemote.shared.press(.menu)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.22))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.navigationFocusSettleSeconds))
         }
 
         XCTAssertTrue(
-            waitUntil(timeout: 8) {
+            waitUntil(timeout: WaitTiming.controlAppearanceTimeoutSeconds) {
                 if app.buttons["slideshow.control.settings.button"].exists {
                     return true
                 }
                 XCUIRemote.shared.press(.down)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusSettleSeconds))
                 return app.buttons["slideshow.control.settings.button"].exists
             },
             "Should be able to return from settings to playback and wake the control bar"
@@ -4234,7 +4424,7 @@ private extension FilterSummaryTVOSVisualUITests {
         let playbackItem = waitForSettingsControl(
             app: app,
             identifier: "settings.item.playback",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Settings home should show the 'Playback Settings' entry",
             file: file,
             line: line
@@ -4245,12 +4435,12 @@ private extension FilterSummaryTVOSVisualUITests {
                 break
             }
             XCUIRemote.shared.press(.up)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
 
         waitForButtonToGainFocus(
             playbackItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Settings home should be able to bring focus back to the 'Playback Settings' entry",
             file: file,
             line: line
@@ -4260,13 +4450,13 @@ private extension FilterSummaryTVOSVisualUITests {
 
         for _ in 0..<downStepsFromPlayback {
             XCUIRemote.shared.press(.down)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
 
         let target = waitForSettingsControl(
             app: app,
             identifier: identifier,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: failureMessage,
             file: file,
             line: line
@@ -4274,7 +4464,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             target,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: failureMessage,
             file: file,
             line: line
@@ -4290,29 +4480,29 @@ private extension FilterSummaryTVOSVisualUITests {
     @MainActor
     func moveFocusToFilteredModeCard() {
         XCUIRemote.shared.press(.right)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.selectionPollSeconds))
     }
 
     @MainActor
     func moveFocusToModeContinueButton() {
         XCUIRemote.shared.press(.down)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.selectionPollSeconds))
     }
 
     @MainActor
     func moveFocusToPeopleCard() {
         XCUIRemote.shared.press(.right)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.snapshotPollSeconds))
     }
 
     @MainActor
     func moveFocusToBackButton() {
         XCUIRemote.shared.press(.right)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.selectionPollSeconds))
         XCUIRemote.shared.press(.right)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.selectionPollSeconds))
         XCUIRemote.shared.press(.down)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.selectionPollSeconds))
     }
 
     @MainActor
@@ -4320,22 +4510,22 @@ private extension FilterSummaryTVOSVisualUITests {
 
         moveFocusToBackButton()
         XCUIRemote.shared.press(.up)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.selectionPollSeconds))
     }
 
     @MainActor
     func openAlbumFilter(from app: XCUIApplication) {
         let albumButton = app.buttons["filterSummary.album.button"]
-        XCTAssertTrue(albumButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(albumButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCUIRemote.shared.press(.select)
     }
 
     @MainActor
     func openPersonFilter(from app: XCUIApplication) {
         let peopleButton = app.buttons["filterSummary.person.button"]
-        XCTAssertTrue(peopleButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(peopleButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCUIRemote.shared.press(.right)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.transitionPollSeconds))
         XCUIRemote.shared.press(.select)
     }
 
@@ -4343,13 +4533,15 @@ private extension FilterSummaryTVOSVisualUITests {
     func waitForAlbumFilterReady(app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let backButton = app.buttons["albumFilter.back.button"]
         XCTAssertTrue(
-            backButton.waitForExistence(timeout: 12), "Album filter page should show the back button", file: file,
+            backButton.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
+            "Album filter page should show the back button", file: file,
             line: line)
         let firstAlbumCard = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "albumFilter.album.")
         ).firstMatch
         XCTAssertTrue(
-            firstAlbumCard.waitForExistence(timeout: 12), "Album filter page should render at least one focusable card",
+            firstAlbumCard.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
+            "Album filter page should render at least one focusable card",
             file: file, line: line)
     }
 
@@ -4357,13 +4549,14 @@ private extension FilterSummaryTVOSVisualUITests {
     func waitForPersonFilterReady(app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let backButton = app.buttons["personFilter.back.button"]
         XCTAssertTrue(
-            backButton.waitForExistence(timeout: 12), "Person filter page should show the back button", file: file,
+            backButton.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
+            "Person filter page should show the back button", file: file,
             line: line)
         let firstPersonCard = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "personFilter.person.")
         ).firstMatch
         XCTAssertTrue(
-            firstPersonCard.waitForExistence(timeout: 12),
+            firstPersonCard.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
             "Person filter page should render at least one focusable card", file: file, line: line)
     }
 
@@ -4402,7 +4595,7 @@ private extension FilterSummaryTVOSVisualUITests {
         let firstCard = try albumCardInServerOrder(at: 0, in: app)
         waitForElementToGainFocus(
             firstCard,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage:
                 "Album filter page should focus the first card by default before the scroll-to-bottom screenshot"
         )
@@ -4412,7 +4605,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
         for _ in 0..<maxSteps {
             XCUIRemote.shared.press(.down)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.18))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.albumFocusSettleSeconds))
 
             guard let currentFocusedIndex = focusedAlbumCardIndex(in: app) else {
                 continue
@@ -4461,7 +4654,7 @@ private extension FilterSummaryTVOSVisualUITests {
             if candidates.contains(where: { $0.exists && $0.hasFocus }) {
                 return
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
 
         let focusDump = candidates.map { button in
@@ -4477,7 +4670,7 @@ private extension FilterSummaryTVOSVisualUITests {
     ) {
         let readinessLabel = app.staticTexts[identifier]
         XCTAssertTrue(
-            readinessLabel.waitForExistence(timeout: 12),
+            readinessLabel.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
             "A readable UI test readiness marker should be exposed: \(identifier)", file: file, line: line)
 
         waitForFocusVisualSettle(seconds: 1.2)
@@ -4542,13 +4735,13 @@ private extension FilterSummaryTVOSVisualUITests {
             if button.exists && (button.hasFocus || accessibilityValueString(for: button).contains("focused")) {
                 return
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         XCTFail(failureMessage, file: file, line: line)
     }
 
     @MainActor
-    func waitForSettingsSidebarButtonSelection(
+    func waitForSettingsHomeItemFocus(
         button: XCUIElement,
         timeout: TimeInterval,
         failureMessage: String,
@@ -4578,7 +4771,9 @@ private extension FilterSummaryTVOSVisualUITests {
     }
 
     func currentTVOSSceneSignature(app: XCUIApplication) throws -> String {
-        _ = waitUntil(timeout: 12, condition: { self.currentTVOSSceneSignatureValue(app: app) != nil })
+        _ = waitUntil(
+            timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            condition: { self.currentTVOSSceneSignatureValue(app: app) != nil })
         return try XCTUnwrap(
             currentTVOSSceneSignatureValue(app: app),
             "The tvOS slideshow manifest probe stayed empty, so retained history cannot be verified"
@@ -4613,7 +4808,7 @@ private extension FilterSummaryTVOSVisualUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         return condition()
     }
@@ -4627,7 +4822,7 @@ private extension FilterSummaryTVOSVisualUITests {
             {
                 return true
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.shortFocusSettleSeconds))
         }
         return false
     }
@@ -4644,7 +4839,7 @@ private extension FilterSummaryTVOSVisualUITests {
         let closeButton = app.buttons["pinEntry.close.button"]
 
         XCTAssertTrue(
-            digitOneButton.waitForExistence(timeout: 8),
+            digitOneButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "\(operationName): the opened PIN sheet should show the number pad",
             file: file,
             line: line
@@ -4652,20 +4847,20 @@ private extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             digitOneButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "\(operationName): when the PIN sheet opens, default focus should be on digit 1",
             file: file,
             line: line
         )
 
-        for _ in 0..<6 {
+        for _ in 0..<AccessProtection.pinDigitCount {
             XCUIRemote.shared.press(.select)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.08))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusPollSeconds))
         }
 
         waitForElementToDisappear(
             closeButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "\(operationName): after 6 digits are entered, the PIN sheet should close on its own",
             file: file,
             line: line
@@ -4706,7 +4901,7 @@ private extension FilterSummaryTVOSVisualUITests {
             {
                 return true
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         // ui-label-lookup: This helper is reserved for assertions about displayed copy and localization.
         return app.buttons[label].exists
@@ -4726,7 +4921,7 @@ private extension FilterSummaryTVOSVisualUITests {
     func assertTVOSServerSettingsAPIKeyHelpSheet(
         app: XCUIApplication,
         context: String,
-        verifySimplifiedChineseContent: Bool = false,
+        shouldVerifySimplifiedChineseContent: Bool = false,
         screenshotName: String? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
@@ -4734,7 +4929,7 @@ private extension FilterSummaryTVOSVisualUITests {
         _ = waitForSettingsControl(
             app: app,
             identifier: "server.apiKey.help.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "\(context) should show the API Key help entry",
             file: file,
             line: line
@@ -4751,34 +4946,34 @@ private extension FilterSummaryTVOSVisualUITests {
         waitForFocusVisualSettle(seconds: 0.22)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            sheet.waitForExistence(timeout: 3),
+            sheet.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "\(context) should open the API Key help sheet after the help entry is selected", file: file, line: line)
-        if verifySimplifiedChineseContent {
+        if shouldVerifySimplifiedChineseContent {
             let title = app.staticTexts["server.apiKey.help.sheet"]
             let stepsTitle = app.staticTexts["server.apiKey.help.section.list.number.title"]
             let permissionsTitle = app.staticTexts["server.apiKey.help.section.checklist.title"]
             let securityTitle = app.staticTexts["server.apiKey.help.section.key.fill.title"]
             XCTAssertTrue(
-                title.waitForExistence(timeout: 3),
+                title.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
                 "\(context) help sheet should show the title", file: file, line: line)
             // ui-label-lookup: These assertions verify translated help copy after identifier lookup.
             XCTAssertEqual(title.label, "如何创建 Immich API Key", file: file, line: line)
             XCTAssertTrue(
-                stepsTitle.waitForExistence(timeout: 3),
+                stepsTitle.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
                 "\(context) help sheet should show the creation steps",
                 file: file, line: line)
             XCTAssertEqual(stepsTitle.label, "创建步骤", file: file, line: line)
             XCTAssertTrue(
-                permissionsTitle.waitForExistence(timeout: 3),
+                permissionsTitle.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
                 "\(context) help sheet should show the permissions section",
                 file: file, line: line)
             XCTAssertEqual(permissionsTitle.label, "需要勾选的权限", file: file, line: line)
-            if !securityTitle.waitForExistence(timeout: 1) {
+            if !securityTitle.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds) {
                 XCUIRemote.shared.press(.down)
                 waitForFocusVisualSettle(seconds: 0.22)
             }
             XCTAssertTrue(
-                securityTitle.waitForExistence(timeout: 2),
+                securityTitle.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds),
                 "\(context) help sheet should show the security reminder",
                 file: file, line: line)
             XCTAssertEqual(securityTitle.label, "安全提醒", file: file, line: line)
@@ -4791,24 +4986,29 @@ private extension FilterSummaryTVOSVisualUITests {
         _ = waitForSettingsControl(
             app: app,
             identifier: "server.apiKey.help.close.button",
-            timeout: 3,
+            timeout: WaitTiming.shortInteractionTimeoutSeconds,
             failureMessage: "\(context) help sheet should have a close button",
             file: file,
             line: line
         )
         XCUIRemote.shared.press(.select)
         XCTAssertFalse(
-            sheet.waitForExistence(timeout: 1), "\(context) should not stay on the help sheet after closing",
+            sheet.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds),
+            "\(context) should not stay on the help sheet after closing",
             file: file, line: line)
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "firstboot.serverURL.row", timeout: 3)
-                || waitForSettingsControlExists(app: app, identifier: "firstboot.serverURL.field", timeout: 3),
+            waitForSettingsControlExists(
+                app: app, identifier: "firstboot.serverURL.row", timeout: WaitTiming.shortInteractionTimeoutSeconds)
+                || waitForSettingsControlExists(
+                    app: app, identifier: "firstboot.serverURL.field",
+                    timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "\(context) should return to the server settings form after closing the help sheet",
             file: file,
             line: line
         )
         XCTAssertTrue(
-            waitForSettingsControlExists(app: app, identifier: "firstboot.apiKey.row", timeout: 3),
+            waitForSettingsControlExists(
+                app: app, identifier: "firstboot.apiKey.row", timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "\(context) should return to the API Key input row after closing the help sheet",
             file: file,
             line: line
@@ -4825,7 +5025,7 @@ private extension FilterSummaryTVOSVisualUITests {
             if settingsControlCandidates(app: app, identifier: identifier).contains(where: \.exists) {
                 return true
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         return settingsControlCandidates(app: app, identifier: identifier).contains(where: \.exists)
     }
@@ -4843,7 +5043,7 @@ private extension FilterSummaryTVOSVisualUITests {
             if let matchedElement = settingsControlCandidates(app: app, identifier: identifier).first(where: \.exists) {
                 return matchedElement
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
 
         XCTFail(failureMessage, file: file, line: line)
@@ -4885,7 +5085,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
         let onboardingTitle = app.staticTexts["mode.onboarding.title"]
         XCTAssertTrue(
-            onboardingTitle.waitForExistence(timeout: 6),
+            onboardingTitle.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "Mode selection page should keep using the minimal capsule to show the user is still in first-time setup")
         assertText(
             onboardingTitle.label,
@@ -4897,7 +5097,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
         let pageTitle = app.staticTexts["mode.page.title"]
         XCTAssertTrue(
-            pageTitle.waitForExistence(timeout: 6),
+            pageTitle.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "Mode selection main title should describe this step's task, not repeat the wizard capsule's flow level"
         )
         assertText(
@@ -4915,7 +5115,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
         let onboardingTitle = app.staticTexts["filterSummary.onboarding.title"]
         XCTAssertTrue(
-            onboardingTitle.waitForExistence(timeout: 6),
+            onboardingTitle.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "Filter summary page should show the minimal capsule to indicate the user is still in first-time setup")
         assertText(
             onboardingTitle.label,
@@ -4927,7 +5127,7 @@ private extension FilterSummaryTVOSVisualUITests {
 
         let pageTitle = app.staticTexts["filterSummary.page.title"]
         XCTAssertTrue(
-            pageTitle.waitForExistence(timeout: 6),
+            pageTitle.waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
             "Filter summary main title should describe this step's task, not repeat the top-left wizard's meaning"
         )
         assertText(
@@ -5019,10 +5219,10 @@ private extension FilterSummaryTVOSVisualUITests {
     func assertOnboardingCapsuleIsTopLeading(_ element: XCUIElement, pageName: String) {
 
         XCTAssertLessThan(
-            element.frame.minX, 170,
+            element.frame.minX, CapsuleGeometry.maximumLeadingPositionPoints,
             "\(pageName): the first-time setup capsule should stay inside the top-left safe area")
         XCTAssertLessThan(
-            element.frame.minY, 90,
+            element.frame.minY, CapsuleGeometry.maximumTopPositionPoints,
             "\(pageName): the first-time setup capsule should stay inside the top-left safe area")
     }
 

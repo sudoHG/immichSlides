@@ -2,6 +2,27 @@ import ImageIO
 import UIKit
 import XCTest
 
+private enum SliderGeometry {
+    // Drag beyond the track to reach the maximum after accessibility adjustment stops short.
+    static let maximumThumbFraction: CGFloat = 0.93
+    static let dragBeyondMaximumFraction: CGFloat = 1.05
+}
+
+private enum WaitTiming {
+    static let briefElementTimeoutSeconds: TimeInterval = 1
+    static let connectionTimeoutSeconds: TimeInterval = 15
+    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
+    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
+    static let identityPollSeconds: TimeInterval = 0.3
+    static let playbackStartupTimeoutSeconds: TimeInterval = 30
+    static let readbackTimeoutSeconds: TimeInterval = 2
+    static let sceneReadyTimeoutSeconds: TimeInterval = 45
+    static let screenTransitionTimeoutSeconds: TimeInterval = 12
+    static let settingsChangeTimeoutSeconds: TimeInterval = 6
+    static let shortInteractionTimeoutSeconds: TimeInterval = 3
+    static let stateChangeTimeoutSeconds: TimeInterval = 4
+}
+
 // Shared by the strict end-to-end UI tests: writing required PNGs / steps to disk, stable-frame waits, and real settings
 // actions on both platforms.
 // scripts/strict_e2e_p2_contract.py is the single source of truth for the p2-steps.json format.
@@ -280,7 +301,7 @@ enum PlaybackSetting {
     // Positive control for Reduce Motion: moves faster than 30 seconds and is easier to see, yet still leaves
     // enough time to observe the same scene after returning.
     case interval15Seconds
-    case displayMode(singlePhoto: Bool)
+    case displayMode(isSinglePhoto: Bool)
     case showExif(Bool)
 }
 
@@ -422,38 +443,48 @@ struct IOSDriver: PlaybackDriver {
         XCTAssertTrue(serverField.waitForExistence(timeout: 20), "Fresh install must open the normal first-boot page.")
         replaceText(in: serverField, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "First-boot page must show the API Key field.")
+        XCTAssertTrue(
+            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "First-boot page must show the API Key field.")
         replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
-            Wait.until(timeout: 3) { secureFieldHasValue(apiKeyField) },
+            Wait.until(timeout: WaitTiming.shortInteractionTimeoutSeconds) { secureFieldHasValue(apiKeyField) },
             "The API Key must be entered into the secure field.")
         commitFocusedInput()
 
         let testConnection = control("firstboot.testConnection.button")
-        XCTAssertTrue(testConnection.waitForExistence(timeout: 8), "First-boot page must show Test Connection.")
+        XCTAssertTrue(
+            testConnection.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "First-boot page must show Test Connection.")
         tap(testConnection)
         let save = control("firstboot.saveConfig.button")
-        XCTAssertTrue(save.waitForExistence(timeout: 8), "First-boot page must show the Save Settings button.")
+        XCTAssertTrue(
+            save.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "First-boot page must show the Save Settings button.")
         XCTAssertTrue(waitForSaveEnabled(save), "Save must become enabled after a real connection test succeeds.")
         tap(save)
 
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: 15),
+            app.buttons["mode.random.button"].waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
             "A successful save must lead to mode selection.")
         let random = control("mode.random.button")
         let continueButton = control("mode.continue.button")
         if !(continueButton.exists && continueButton.isEnabled && random.isSelected) {
             tap(random)
             XCTAssertTrue(
-                Wait.until(timeout: 2) { continueButton.exists && continueButton.isEnabled },
+                Wait.until(timeout: WaitTiming.readbackTimeoutSeconds) {
+                    continueButton.exists && continueButton.isEnabled
+                },
                 "Continue must be enabled after selecting Random.")
         }
         tap(continueButton)
-        dismissSavePasswordPrompt(timeout: 5)
+        dismissSavePasswordPrompt(timeout: WaitTiming.elementAppearanceTimeoutSeconds)
         if continueButton.exists && continueButton.isHittable && continueButton.isEnabled {
             tap(continueButton)
         }
-        XCTAssertTrue(waitForPlaybackControls(timeout: 30), "Random mode must reach the playback page.")
+        XCTAssertTrue(
+            waitForPlaybackControls(timeout: WaitTiming.playbackStartupTimeoutSeconds),
+            "Random mode must reach the playback page.")
     }
 
     func applyPlaybackSettings(_ settings: [PlaybackSetting]) {
@@ -463,47 +494,64 @@ struct IOSDriver: PlaybackDriver {
             switch setting {
             case .interval30Seconds:
                 let slider = app.sliders["settings.playback.interval.slider"]
-                XCTAssertTrue(slider.waitForExistence(timeout: 8), "Playback settings must have the interval slider.")
+                XCTAssertTrue(
+                    slider.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+                    "Playback settings must have the interval slider.")
                 XCTAssertTrue(slider.isEnabled, "With auto-play on, the interval slider must be adjustable.")
                 slider.adjust(toNormalizedSliderPosition: 1)
                 let interval30 = app.staticTexts["settings.playback.interval.value"]
                 if UIDevice.current.userInterfaceIdiom == .pad
-                    && !Wait.until(timeout: 1, { interval30.exists && interval30.label == "30 秒" })
+                    && !Wait.until(
+                        timeout: WaitTiming.briefElementTimeoutSeconds,
+                        { interval30.exists && interval30.label == "30 秒" })
                 {
-                    let thumb = slider.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5))
-                    let beyondRightEnd = slider.coordinate(withNormalizedOffset: CGVector(dx: 1.05, dy: 0.5))
+                    let thumb = slider.coordinate(
+                        withNormalizedOffset: CGVector(dx: SliderGeometry.maximumThumbFraction, dy: 0.5))
+                    let beyondRightEnd = slider.coordinate(
+                        withNormalizedOffset: CGVector(dx: SliderGeometry.dragBeyondMaximumFraction, dy: 0.5))
                     thumb.press(forDuration: 0.1, thenDragTo: beyondRightEnd)
                 }
-                let reached30 = Wait.until(timeout: 3) { interval30.exists && interval30.label == "30 秒" }
+                let reached30 = Wait.until(timeout: WaitTiming.shortInteractionTimeoutSeconds) {
+                    interval30.exists && interval30.label == "30 秒"
+                }
                 if !reached30 {
                     try? Evidence().reject("interval30-setting", png: app.screenshot().pngRepresentation)
                 }
                 XCTAssertTrue(reached30, "The interval must be set to 30 seconds with the real slider.")
             case .interval15Seconds:
                 let slider = app.sliders["settings.playback.interval.slider"]
-                XCTAssertTrue(slider.waitForExistence(timeout: 8), "Playback settings must have the interval slider.")
+                XCTAssertTrue(
+                    slider.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+                    "Playback settings must have the interval slider.")
                 XCTAssertTrue(slider.isEnabled, "With auto-play on, the interval slider must be adjustable.")
                 XCTAssertTrue(
                     adjustInterval(slider, toNormalized: Self.interval15SliderPosition, label: "15 秒"),
                     "The interval must be set to 15 seconds with the real slider."
                 )
-            case .displayMode(let singlePhoto):
+            case .displayMode(let isSinglePhoto):
                 let picker = app.segmentedControls["settings.playback.displayMode.picker"]
-                XCTAssertTrue(picker.waitForExistence(timeout: 8), "Playback settings must have display mode segments.")
+                XCTAssertTrue(
+                    picker.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+                    "Playback settings must have display mode segments.")
                 let option = picker.buttons[
-                    singlePhoto
+                    isSinglePhoto
                         ? "settings.playback.displayMode.singlePhoto.option"
                         : "settings.playback.displayMode.smartFill.option"]
-                XCTAssertTrue(option.waitForExistence(timeout: 3), "Display mode must offer the target option.")
+                XCTAssertTrue(
+                    option.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
+                    "Display mode must offer the target option.")
                 tap(option)
                 XCTAssertTrue(
-                    Wait.until(timeout: 3) { option.isSelected }, "Display mode must switch to the target option.")
+                    Wait.until(timeout: WaitTiming.shortInteractionTimeoutSeconds) { option.isSelected },
+                    "Display mode must switch to the target option.")
             case .showExif(let isOn):
                 let toggle = app.switches["settings.playback.showExif.toggle"]
-                XCTAssertTrue(toggle.waitForExistence(timeout: 8), "Playback settings must provide the EXIF toggle.")
+                XCTAssertTrue(
+                    toggle.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+                    "Playback settings must provide the EXIF toggle.")
                 if isToggleOn(toggle) != isOn { tap(toggle) }
                 XCTAssertTrue(
-                    Wait.until(timeout: 4) { isToggleOn(toggle) == isOn },
+                    Wait.until(timeout: WaitTiming.stateChangeTimeoutSeconds) { isToggleOn(toggle) == isOn },
                     "The EXIF toggle must reach the target state through the real settings.")
             }
         }
@@ -513,17 +561,21 @@ struct IOSDriver: PlaybackDriver {
     func pause() {
         revealControls()
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        XCTAssertTrue(playPause.waitForExistence(timeout: 8), "Playback page must provide play/pause.")
+        XCTAssertTrue(
+            playPause.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Playback page must provide play/pause.")
         if playPauseValue(playPause) != "play" { tap(playPause) }
         XCTAssertTrue(
-            Wait.until(timeout: 4) { playPauseValue(playPause) == "play" },
+            Wait.until(timeout: WaitTiming.stateChangeTimeoutSeconds) { playPauseValue(playPause) == "play" },
             "After pausing, the control value must be play.")
     }
 
     func next() {
         revealControls()
         let nextButton = app.buttons["slideshow.control.next.button"]
-        XCTAssertTrue(nextButton.waitForExistence(timeout: 4), "Playback page must provide Next.")
+        XCTAssertTrue(
+            nextButton.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds),
+            "Playback page must provide Next.")
         tap(nextButton)
     }
 
@@ -533,12 +585,12 @@ struct IOSDriver: PlaybackDriver {
             if settingsButton.exists && settingsButton.isHittable { return }
             if !isOnSettingsSurface() {
                 revealControls()
-                if settingsButton.waitForExistence(timeout: 2) { return }
+                if settingsButton.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds) { return }
             }
             let globalBack = app.buttons["global.back.button"]
             if globalBack.exists && globalBack.isHittable {
                 tap(globalBack)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.identityPollSeconds))
                 continue
             }
             let navigationButtons = app.navigationBars.buttons.allElementsBoundByIndex
@@ -551,28 +603,36 @@ struct IOSDriver: PlaybackDriver {
                 }
             if let backButton {
                 tap(backButton)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.identityPollSeconds))
                 continue
             }
             app.swipeDown()
         }
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 8), "Must be able to return from settings to playback.")
+        XCTAssertTrue(
+            settingsButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Must be able to return from settings to playback.")
     }
 
     func clearDiskCache(onCachePage: () throws -> Void) throws {
         openSettings()
         openCacheSection()
         let clearButton = app.buttons["settings.cache.clearDisk.button"]
-        XCTAssertTrue(clearButton.waitForExistence(timeout: 8), "Cache page must provide the Clear Disk Cache button.")
+        XCTAssertTrue(
+            clearButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Cache page must provide the Clear Disk Cache button.")
         if !clearButton.isHittable { app.swipeUp() }
         try onCachePage()
         tap(clearButton)
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let alert = app.alerts["确认清理磁盘缓存"]
-        XCTAssertTrue(alert.waitForExistence(timeout: 5), "Tapping Clear must show the confirmation alert.")
+        XCTAssertTrue(
+            alert.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            "Tapping Clear must show the confirmation alert.")
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let confirm = alert.buttons.matching(NSPredicate(format: "label == %@", "清理")).firstMatch
-        XCTAssertTrue(confirm.waitForExistence(timeout: 3), "Confirmation alert must offer Clear.")
+        XCTAssertTrue(
+            confirm.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
+            "Confirmation alert must offer Clear.")
         confirm.tap()
         waitForClearCompletion()
     }
@@ -580,20 +640,29 @@ struct IOSDriver: PlaybackDriver {
     private func openSettings() {
         revealControls()
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 15), "Playback page must provide the settings entry.")
+        XCTAssertTrue(
+            settingsButton.waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
+            "Playback page must provide the settings entry.")
         tap(settingsButton)
-        XCTAssertTrue(Wait.until(timeout: 8) { isOnSettingsSurface() }, "Tapping settings must open the settings page.")
+        XCTAssertTrue(
+            Wait.until(timeout: WaitTiming.controlAppearanceTimeoutSeconds) { isOnSettingsSurface() },
+            "Tapping settings must open the settings page.")
     }
 
     // On iPad the split view shows playback settings on the right by default; iPhone goes through the list.
     private func openPlaybackSection() {
         let autoPlay = app.switches["settings.playback.autoPlay.toggle"]
-        if autoPlay.waitForExistence(timeout: 2) { return }
+        if autoPlay.waitForExistence(timeout: WaitTiming.readbackTimeoutSeconds) { return }
         showSidebarIfCollapsed()
         let playbackItem = app.buttons["settings.item.playback"]
-        XCTAssertTrue(playbackItem.waitForExistence(timeout: 8), "Settings list must have the playback settings entry.")
+        XCTAssertTrue(
+            playbackItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Settings list must have the playback settings entry.")
         playbackItem.tap()
-        if !Wait.until(timeout: 2, { autoPlay.exists || app.staticTexts["settings.playback.title"].exists }) {
+        if !Wait.until(
+            timeout: WaitTiming.readbackTimeoutSeconds,
+            { autoPlay.exists || app.staticTexts["settings.playback.title"].exists })
+        {
             app.cells.element(boundBy: 0).tap()
         }
         XCTAssertTrue(
@@ -611,9 +680,11 @@ struct IOSDriver: PlaybackDriver {
                 app.descendants(matching: .any).matching(identifier: "settings.item.cache").firstMatch,
                 app.staticTexts["settings.item.cache"]
             ]
-            if let entry = candidates.first(where: { $0.waitForExistence(timeout: 1) }) {
+            if let entry = candidates.first(where: {
+                $0.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds)
+            }) {
                 tap(entry)
-                if clearButton.waitForExistence(timeout: 4) { return }
+                if clearButton.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds) { return }
             }
             if attempt % 2 == 0 { app.swipeUp() } else { app.swipeDown() }
         }
@@ -653,14 +724,19 @@ struct IOSDriver: PlaybackDriver {
     private func revealControls() {
         if app.buttons["slideshow.control.settings.button"].exists { return }
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-        _ = app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 3)
+        _ = app.buttons["slideshow.control.settings.button"].waitForExistence(
+            timeout: WaitTiming.shortInteractionTimeoutSeconds)
     }
 
     private func adjustInterval(_ slider: XCUIElement, toNormalized target: Double, label: String) -> Bool {
         for offset in Self.sliderNudgeOffsets {
             slider.adjust(toNormalizedSliderPosition: min(max(target + offset, 0), 1))
             let interval = app.staticTexts["settings.playback.interval.value"]
-            if Wait.until(timeout: 1, { interval.exists && interval.label == label }) { return true }
+            if Wait.until(
+                timeout: WaitTiming.briefElementTimeoutSeconds, { interval.exists && interval.label == label })
+            {
+                return true
+            }
         }
         return false
     }
@@ -677,7 +753,7 @@ struct IOSDriver: PlaybackDriver {
     }
 
     private func waitForSaveEnabled(_ save: XCUIElement) -> Bool {
-        Wait.until(timeout: 45) {
+        Wait.until(timeout: WaitTiming.sceneReadyTimeoutSeconds) {
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             // ui-label-lookup: The local-network permission alert belongs to iOS.
             for label in ["允许", "Allow"] where springboard.alerts.buttons[label].exists {
@@ -772,10 +848,14 @@ struct TVDriver: PlaybackDriver {
 
     func launchToPlayback(input: StrictE2EInput) {
         let serverField = app.textFields["firstboot.serverURL.field"]
-        XCTAssertTrue(serverField.waitForExistence(timeout: 12), "A clean install must open the first-boot form.")
+        XCTAssertTrue(
+            serverField.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
+            "A clean install must open the first-boot form.")
         replaceFocusedText(in: serverField, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "First-boot form must show the API Key field.")
+        XCTAssertTrue(
+            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "First-boot form must show the API Key field.")
         focus(
             apiKeyField, trying: [.down], maxPresses: 2,
             "After submitting the URL, focus must be able to move down to the API Key.")
@@ -783,32 +863,41 @@ struct TVDriver: PlaybackDriver {
 
         let testConnection = firstBootControl("firstboot.testConnection.button")
         XCTAssertTrue(
-            testConnection.waitForExistence(timeout: 5), "First-boot form must show the Test Connection button.")
+            testConnection.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            "First-boot form must show the Test Connection button.")
         press(.down)
         press(.right)
         press(.select)
         XCTAssertTrue(
-            app.staticTexts["firstboot.connection.success"].waitForExistence(timeout: 45),
+            app.staticTexts["firstboot.connection.success"].waitForExistence(
+                timeout: WaitTiming.sceneReadyTimeoutSeconds),
             "Once the real controlled server is reachable, it must show that the connection test passed.")
         let save = firstBootControl("firstboot.saveConfig.button")
-        XCTAssertTrue(save.waitForExistence(timeout: 5), "Once connected, the Save Settings button must show.")
+        XCTAssertTrue(
+            save.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            "Once connected, the Save Settings button must show.")
         XCTAssertTrue(save.isEnabled, "After a successful connection, Save Settings must be enabled.")
         press(.select)
 
         let random = app.buttons["mode.random.button"]
-        XCTAssertTrue(random.waitForExistence(timeout: 15), "Saving the settings must open the mode selection page.")
-        XCTAssertTrue(waitForFocus(random, timeout: 5), "Mode selection default focus must be on Random playback.")
+        XCTAssertTrue(
+            random.waitForExistence(timeout: WaitTiming.connectionTimeoutSeconds),
+            "Saving the settings must open the mode selection page.")
+        XCTAssertTrue(
+            waitForFocus(random, timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            "Mode selection default focus must be on Random playback.")
         press(.select)
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 5),
+            continueButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "After choosing Random playback, the Continue button must show.")
         focus(
             continueButton, trying: [.down], maxPresses: 2,
             "After choosing Random playback, focus must be able to move down to Continue.")
         press(.select)
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 30),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: WaitTiming.playbackStartupTimeoutSeconds),
             "The control bar must appear after starting random playback.")
     }
 
@@ -819,7 +908,8 @@ struct TVDriver: PlaybackDriver {
             "Settings home must be able to focus playback settings.")
         press(.select)
         XCTAssertTrue(
-            app.buttons["settings.playback.autoPlay.link"].waitForExistence(timeout: 8),
+            app.buttons["settings.playback.autoPlay.link"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Must open the playback settings subpage.")
         for setting in settings {
             switch setting {
@@ -827,10 +917,10 @@ struct TVDriver: PlaybackDriver {
                 choose(link: "settings.playback.interval.link", option: "settings.playback.interval.30.button")
             case .interval15Seconds:
                 choose(link: "settings.playback.interval.link", option: "settings.playback.interval.15.button")
-            case .displayMode(let singlePhoto):
+            case .displayMode(let isSinglePhoto):
                 choose(
                     link: "settings.playback.displayMode.link",
-                    option: singlePhoto
+                    option: isSinglePhoto
                         ? "settings.playback.displayMode.singlePhoto.button"
                         : "settings.playback.displayMode.smartFill.button"
                 )
@@ -843,7 +933,8 @@ struct TVDriver: PlaybackDriver {
                 )
                 press(.menu)
                 XCTAssertTrue(
-                    app.buttons["settings.playback.display.link"].waitForExistence(timeout: 6),
+                    app.buttons["settings.playback.display.link"].waitForExistence(
+                        timeout: WaitTiming.settingsChangeTimeoutSeconds),
                     "After Menu, must return to playback settings.")
             }
         }
@@ -856,7 +947,7 @@ struct TVDriver: PlaybackDriver {
         focus(playPause, trying: [.right, .left], maxPresses: 3, "Focus must be able to reach play/pause.")
         if playPauseValue(playPause) != "play" { press(.select) }
         XCTAssertTrue(
-            Wait.until(timeout: 4) { playPauseValue(playPause) == "play" },
+            Wait.until(timeout: WaitTiming.stateChangeTimeoutSeconds) { playPauseValue(playPause) == "play" },
             "After pausing, the control value must be play.")
     }
 
@@ -865,13 +956,14 @@ struct TVDriver: PlaybackDriver {
         // 8-second visible window.
         let receiver = app.descendants(matching: .any).matching(identifier: "slideshow.hiddenWakeReceiver").firstMatch
         XCTAssertTrue(
-            Wait.until(timeout: 12) { receiver.exists && receiver.hasFocus },
+            Wait.until(timeout: WaitTiming.screenTransitionTimeoutSeconds) { receiver.exists && receiver.hasFocus },
             "Before Next, the control bar must be hidden and the hidden receiver layer must have focus."
         )
         press(.up)
         let nextButton = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: 4), "After a direction key wakes the controls, Next must show.")
+            nextButton.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds),
+            "After a direction key wakes the controls, Next must show.")
         focus(nextButton, trying: [.right, .left], maxPresses: 3, "Focus must be able to reach Next.")
         press(.select)
     }
@@ -884,7 +976,7 @@ struct TVDriver: PlaybackDriver {
             press(.menu)
         }
         XCTAssertTrue(
-            Wait.held(timeout: 8, hold: 1.2) { isOnPlaybackLayer() },
+            Wait.held(timeout: WaitTiming.controlAppearanceTimeoutSeconds, hold: 1.2) { isOnPlaybackLayer() },
             "Must be able to return from settings to playback."
         )
     }
@@ -894,17 +986,22 @@ struct TVDriver: PlaybackDriver {
         focusSettingsControl("settings.item.cache")
         press(.select)
         XCTAssertTrue(
-            app.buttons["settings.cache.clearDisk.button"].waitForExistence(timeout: 8),
+            app.buttons["settings.cache.clearDisk.button"].waitForExistence(
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Cache page must provide the Clear Disk Cache button.")
         focusSettingsControl("settings.cache.clearDisk.button")
         try onCachePage()
         press(.select)
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let alert = app.alerts.firstMatch
-        XCTAssertTrue(alert.waitForExistence(timeout: 5), "Selecting Clear must show the confirmation alert.")
+        XCTAssertTrue(
+            alert.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            "Selecting Clear must show the confirmation alert.")
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let confirmButtons = alert.buttons.matching(NSPredicate(format: "label == %@", "清理"))
-        XCTAssertTrue(confirmButtons.firstMatch.waitForExistence(timeout: 3), "Confirmation alert must offer Clear.")
+        XCTAssertTrue(
+            confirmButtons.firstMatch.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
+            "Confirmation alert must offer Clear.")
         let hasFocusedConfirm = {
             confirmButtons.allElementsBoundByIndex.contains { $0.exists && $0.hasFocus }
         }
@@ -917,7 +1014,9 @@ struct TVDriver: PlaybackDriver {
             press(.left)
             try Evidence().capture("cache-confirm-left", from: app)
         }
-        XCTAssertTrue(Wait.until(timeout: 3) { hasFocusedConfirm() }, "Alert focus must be able to reach Clear.")
+        XCTAssertTrue(
+            Wait.until(timeout: WaitTiming.shortInteractionTimeoutSeconds) { hasFocusedConfirm() },
+            "Alert focus must be able to reach Clear.")
         XCUIRemote.shared.press(.select)
         waitForClearCompletion()
     }
@@ -930,7 +1029,7 @@ struct TVDriver: PlaybackDriver {
             "Before opening settings, focus must be on the settings button.")
         press(.select)
         XCTAssertTrue(
-            app.buttons["settings.item.playback"].waitForExistence(timeout: 8),
+            app.buttons["settings.item.playback"].waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Selecting settings must open the settings home.")
     }
 
@@ -942,9 +1041,12 @@ struct TVDriver: PlaybackDriver {
         focusSettingsControl(option)
         press(.select)
         XCTAssertTrue(
-            Wait.until(timeout: 3) { isSelected(optionButton) }, "After choosing \(option), it must be selected.")
+            Wait.until(timeout: WaitTiming.shortInteractionTimeoutSeconds) { isSelected(optionButton) },
+            "After choosing \(option), it must be selected.")
         press(.menu)
-        XCTAssertTrue(app.buttons[link].waitForExistence(timeout: 6), "Menu must return to the page with \(link).")
+        XCTAssertTrue(
+            app.buttons[link].waitForExistence(timeout: WaitTiming.settingsChangeTimeoutSeconds),
+            "Menu must return to the page with \(link).")
     }
 
     // The settings page is a single column: search down first, then up if nothing is found at the bottom.
@@ -958,10 +1060,12 @@ struct TVDriver: PlaybackDriver {
         let playPause = app.buttons["slideshow.control.playPause.button"]
         let receiver = app.descendants(matching: .any).matching(identifier: "slideshow.hiddenWakeReceiver").firstMatch
         for _ in 0..<2 where !playPause.exists {
-            _ = Wait.until(timeout: 8) { playPause.exists || (receiver.exists && receiver.hasFocus) }
+            _ = Wait.until(timeout: WaitTiming.controlAppearanceTimeoutSeconds) {
+                playPause.exists || (receiver.exists && receiver.hasFocus)
+            }
             if playPause.exists { break }
             press(.up)
-            _ = playPause.waitForExistence(timeout: 4)
+            _ = playPause.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds)
         }
         XCTAssertTrue(playPause.exists, "A direction key must wake the playback control bar.")
     }
@@ -975,32 +1079,38 @@ struct TVDriver: PlaybackDriver {
     }
 
     private func replaceFocusedText(in field: XCUIElement, with value: String) {
-        XCTAssertTrue(waitForFocus(field, timeout: 4), "The field must be focused before input.")
+        XCTAssertTrue(
+            waitForFocus(field, timeout: WaitTiming.stateChangeTimeoutSeconds),
+            "The field must be focused before input.")
         press(.select)
         app.typeText(value)
         // ui-label-lookup: tvOS owns the on-screen keyboard submit buttons.
         let submit = app.buttons.matching(NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])).firstMatch
-        XCTAssertTrue(submit.waitForExistence(timeout: 4), "The system keyboard must show Next or Done.")
+        XCTAssertTrue(
+            submit.waitForExistence(timeout: WaitTiming.stateChangeTimeoutSeconds),
+            "The system keyboard must show Next or Done.")
         for _ in 0..<6 where !submit.hasFocus {
             press(.down)
         }
         XCTAssertTrue(submit.hasFocus, "The system keyboard submit button must be focused before submitting text.")
         press(.select)
         press(.menu)
-        XCTAssertTrue(waitForFocus(field, timeout: 4), "After submitting, focus must return to the original field.")
+        XCTAssertTrue(
+            waitForFocus(field, timeout: WaitTiming.stateChangeTimeoutSeconds),
+            "After submitting, focus must return to the original field.")
     }
 
     private func focus(
         _ element: XCUIElement, trying directions: [XCUIRemote.Button], maxPresses: Int, _ message: String
     ) {
-        XCTAssertTrue(element.waitForExistence(timeout: 8), message)
+        XCTAssertTrue(element.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds), message)
         for direction in directions {
             for _ in 0..<maxPresses {
                 if element.exists && element.hasFocus { return }
                 press(direction)
             }
         }
-        XCTAssertTrue(waitForFocus(element, timeout: 3), message)
+        XCTAssertTrue(waitForFocus(element, timeout: WaitTiming.shortInteractionTimeoutSeconds), message)
     }
 
     private func waitForFocus(_ element: XCUIElement, timeout: TimeInterval) -> Bool {

@@ -328,6 +328,8 @@ def check_swift_testing_names(path: str, source: str) -> list[Violation]:
 # Rule d: source-text (no reading project .swift sources from tests)
 # ---------------------------------------------------------------------------
 
+SOURCE_CONTEXT_RADIUS_CHARACTERS = 200
+
 def check_source_text(path: str, source: str) -> list[Violation]:
     code = mask_comments(source)
     violations: list[Violation] = []
@@ -336,12 +338,12 @@ def check_source_text(path: str, source: str) -> list[Violation]:
             violations.append(Violation(path, line_of(source, match.start()), "source-text", identifier,
                                         f"test must not use {identifier} to read project source"))
     for match in CONTENTS_OF_PATTERN.finditer(code):
-        window = code[max(0, match.start() - 200):match.end() + 200]
+        window = code[max(0, match.start() - SOURCE_CONTEXT_RADIUS_CHARACTERS):match.end() + SOURCE_CONTEXT_RADIUS_CHARACTERS]
         if ".swift" in window:
             violations.append(Violation(path, line_of(source, match.start()), "source-text", "contentsOf",
                                         "test must not read a .swift source file via contentsOf:/contentsOfFile"))
     for match in FILE_PATH_PATTERN.finditer(code):
-        window = code[max(0, match.start() - 200):match.end() + 200]
+        window = code[max(0, match.start() - SOURCE_CONTEXT_RADIUS_CHARACTERS):match.end() + SOURCE_CONTEXT_RADIUS_CHARACTERS]
         if "immichSlides/" in window:
             violations.append(Violation(path, line_of(source, match.start()), "source-text", "filePath",
                                         "test must not resolve immichSlides/ sources relative to #filePath"))

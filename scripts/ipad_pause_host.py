@@ -55,44 +55,82 @@ def public_fixture_server_command(script_path, ready_path, log_path):
     ]
 
 
+MARK_CROP_LEFT_FRACTION = .08
+MARK_CROP_TOP_FRACTION = .32
+MARK_CROP_RIGHT_FRACTION = .92
+MARK_CROP_BOTTOM_FRACTION = .68
+MARK_WHITE_CHANNEL_THRESHOLD = 220
+MARK_GLYPH_ROWS = 7
+MARK_GRID_COLUMNS = 11
+MARK_GRID_CELL_COUNT = 77
+MARK_MINIMUM_CELL_PIXELS = 4
+MARK_MINIMUM_MATCH_RATIO = .96
+MARK_MINIMUM_SCORE_MARGIN = .04
+CONTROL_CROP_START_FRACTION = .23
+CONTROL_CROP_END_FRACTION = .77
+CONTROL_DARK_CHANNEL_THRESHOLD = 75
+CONTROL_MINIMUM_DARK_COLUMN_FRACTION = .25
+CONTROL_MINIMUM_PAUSE_BAR_PIXELS = 4
+CONTROL_MINIMUM_PLAY_BAR_PIXELS = 6
+# USB HID usage codes: left Command plus A selects all text.
+SELECT_ALL_MODIFIER_CODE = "227"
+SELECT_ALL_KEY_CODE = "4"
+
+MAXIMUM_PRESS_DURATION_SECONDS = 2
+MINIMUM_BASELINE_LUMA = .1
+MINIMUM_ASSESSMENT_FRAME_COUNT = 15
+MAXIMUM_FIRST_FRAME_DELAY_SECONDS = 3
+MINIMUM_CAPTURE_DURATION_SECONDS = 18
+MAXIMUM_FRAME_CAPTURE_SECONDS = 1
+MAXIMUM_FRAME_GAP_SECONDS = .6
+ORIGINAL_PHOTO_HOLD_SECONDS = 6
+BASELINE_DARKENING_RATIO = .95
+ADJACENT_FRAME_DARKENING_RATIO = .998
+FIRST_TRANSITION_EARLIEST_SECONDS = 10
+FIRST_TRANSITION_LATEST_SECONDS = 14
+MAXIMUM_NEW_PHOTO_DELAY_SECONDS = 4
+NEW_PHOTO_STABILITY_WINDOW_SECONDS = 2
+MINIMUM_STABLE_FRAME_COUNT = 3
+MINIMUM_STABLE_DURATION_SECONDS = 1
+
 def visible_mark(path):
     image = Image.open(path).convert("RGB")
     w, h = image.size
-    image = image.crop((int(w*.08), int(h*.32), int(w*.92), int(h*.68)))
+    image = image.crop((int(w*MARK_CROP_LEFT_FRACTION), int(h*MARK_CROP_TOP_FRACTION), int(w*MARK_CROP_RIGHT_FRACTION), int(h*MARK_CROP_BOTTOM_FRACTION)))
     r, g, b = image.split()
-    white = ImageChops.darker(ImageChops.darker(r, g), b).point(lambda x: 255 if x > 220 else 0)
+    white = ImageChops.darker(ImageChops.darker(r, g), b).point(lambda x: 255 if x > MARK_WHITE_CHANNEL_THRESHOLD else 0)
     box = white.getbbox()
     if box is None:
         return None
     x, y, _, bottom = box
-    step = (bottom-y)/7
-    if step < 4 or x+11*step > white.width:
+    step = (bottom-y)/MARK_GLYPH_ROWS
+    if step < MARK_MINIMUM_CELL_PIXELS or x+MARK_GRID_COLUMNS*step > white.width:
         return None
     bits = []
-    for row in range(7):
-        bits.append("".join("1" if white.getpixel((int(x+(col+.5)*step), int(y+(row+.5)*step))) else "0" for col in range(11)))
+    for row in range(MARK_GLYPH_ROWS):
+        bits.append("".join("1" if white.getpixel((int(x+(col+.5)*step), int(y+(row+.5)*step))) else "0" for col in range(MARK_GRID_COLUMNS)))
     def score(glyph):
-        template = [GLYPHS["A"][row]+"0"+GLYPHS[glyph][row] for row in range(7)]
-        return sum(a == b for a, b in zip("".join(bits), "".join(template)))/77
+        template = [GLYPHS["A"][row]+"0"+GLYPHS[glyph][row] for row in range(MARK_GLYPH_ROWS)]
+        return sum(a == b for a, b in zip("".join(bits), "".join(template)))/MARK_GRID_CELL_COUNT
     ranked = sorted(((score(str(i)), f"A{i}") for i in range(1, 6)), reverse=True)
-    return ranked[0][1] if ranked[0][0] >= .96 and ranked[0][0]-ranked[1][0] >= .04 else None
+    return ranked[0][1] if ranked[0][0] >= MARK_MINIMUM_MATCH_RATIO and ranked[0][0]-ranked[1][0] >= MARK_MINIMUM_SCORE_MARGIN else None
 
 
 def control_state(path, frame, screen_width):
     image = Image.open(path).convert("RGB")
     scale = image.width / screen_width
     x,y,w,h = (frame[k] for k in ("x", "y", "width", "height"))
-    crop = image.crop(tuple(int(v*scale) for v in (x+w*.23,y+h*.23,x+w*.77,y+h*.77)))
-    columns = [sum(max(crop.getpixel((x,y))) < 75 for y in range(crop.height)) > crop.height*.25 for x in range(crop.width)]
+    crop = image.crop(tuple(int(v*scale) for v in (x+w*CONTROL_CROP_START_FRACTION,y+h*CONTROL_CROP_START_FRACTION,x+w*CONTROL_CROP_END_FRACTION,y+h*CONTROL_CROP_END_FRACTION)))
+    columns = [sum(max(crop.getpixel((x,y))) < CONTROL_DARK_CHANNEL_THRESHOLD for y in range(crop.height)) > crop.height*CONTROL_MINIMUM_DARK_COLUMN_FRACTION for x in range(crop.width)]
     groups = []
     for i, bit in enumerate(columns):
         if bit and (i == 0 or not columns[i-1]):
             groups.append([])
         if bit:
             groups[-1].append(i)
-    if len(groups) == 2 and min(map(len, groups)) >= 4:
+    if len(groups) == 2 and min(map(len, groups)) >= CONTROL_MINIMUM_PAUSE_BAR_PIXELS:
         return "pause"
-    if len(groups) == 1 and len(groups[0]) >= 6:
+    if len(groups) == 1 and len(groups[0]) >= CONTROL_MINIMUM_PLAY_BAR_PIXELS:
         return "play"
     return None
 
@@ -212,32 +250,32 @@ def _sha256_argument(value):
 
 
 def assess(frames, mark, baseline, press_duration):
-    require(0 <= press_duration <= 2, "Tap time uncertainty exceeds 2 seconds")
-    require(baseline > .1, "Baseline photo is too dark to detect the transition automatically")
-    require(len(frames) >= 15, "Not enough valid frames")
-    require(frames[0]["start"] <= 3, "Missing the starting frames after resume")
-    require(frames[-1]["end"] >= 18, "Recording/sampling does not cover the window where the new photo is recognizable")
+    require(0 <= press_duration <= MAXIMUM_PRESS_DURATION_SECONDS, "Tap time uncertainty exceeds 2 seconds")
+    require(baseline > MINIMUM_BASELINE_LUMA, "Baseline photo is too dark to detect the transition automatically")
+    require(len(frames) >= MINIMUM_ASSESSMENT_FRAME_COUNT, "Not enough valid frames")
+    require(frames[0]["start"] <= MAXIMUM_FIRST_FRAME_DELAY_SECONDS, "Missing the starting frames after resume")
+    require(frames[-1]["end"] >= MINIMUM_CAPTURE_DURATION_SECONDS, "Recording/sampling does not cover the window where the new photo is recognizable")
     for i, f in enumerate(frames):
-        require(0 <= f["end"] - f["start"] <= 1, "A single screenshot took longer than 1 second")
+        require(0 <= f["end"] - f["start"] <= MAXIMUM_FRAME_CAPTURE_SECONDS, "A single screenshot took longer than 1 second")
         if i:
-            require(0 <= f["start"] - frames[i-1]["end"] <= .6, "Gap in frame capture")
-    early = [f for f in frames if f["end"] <= 6]
+            require(0 <= f["start"] - frames[i-1]["end"] <= MAXIMUM_FRAME_GAP_SECONDS, "Gap in frame capture")
+    early = [f for f in frames if f["end"] <= ORIGINAL_PHOTO_HOLD_SECONDS]
     require(early and all(f["mark"] == mark for f in early), "Early frames after resume are not the original photo")
     # A brightness drop only locates the candidate onset; a different public photo must follow,
     # and the final frames need review.
     onset = next((i for i, f in enumerate(frames)
-                  if f["luma"] < baseline * .95 or f["mark"] != mark
-                  or (i > 0 and f["luma"] < frames[i-1]["luma"] * .998)), None)
+                  if f["luma"] < baseline * BASELINE_DARKENING_RATIO or f["mark"] != mark
+                  or (i > 0 and f["luma"] < frames[i-1]["luma"] * ADJACENT_FRAME_DARKENING_RATIO)), None)
     require(onset is not None and onset > 0, "First transition not captured")
     lo = frames[onset-1]["start"] - press_duration
     hi = frames[onset]["end"]
-    require(lo >= 10 and hi <= 14, f"Possible first-transition interval [{lo:.3f}, {hi:.3f}] is out of range")
+    require(lo >= FIRST_TRANSITION_EARLIEST_SECONDS and hi <= FIRST_TRANSITION_LATEST_SECONDS, f"Possible first-transition interval [{lo:.3f}, {hi:.3f}] is out of range")
     require(all(f["mark"] == mark for f in frames[:onset]), "Unknown or different photo before the transition")
     new = next((f for f in frames[onset:] if f["mark"] not in (None, mark)), None)
     require(new is not None, "No recognizable different public photo after the transition")
-    require(new["end"] - frames[onset]["start"] <= 4, "New photo appeared too late after the candidate darkening")
-    stable = [f for f in frames if new["start"] <= f["start"] <= new["start"]+2]
-    require(len(stable) >= 3 and stable[-1]["end"]-stable[0]["start"] >= 1
+    require(new["end"] - frames[onset]["start"] <= MAXIMUM_NEW_PHOTO_DELAY_SECONDS, "New photo appeared too late after the candidate darkening")
+    stable = [f for f in frames if new["start"] <= f["start"] <= new["start"]+NEW_PHOTO_STABILITY_WINDOW_SECONDS]
+    require(len(stable) >= MINIMUM_STABLE_FRAME_COUNT and stable[-1]["end"]-stable[0]["start"] >= MINIMUM_STABLE_DURATION_SECONDS
             and all(f["mark"] == new["mark"] for f in stable), "New photo did not stay recognizable")
     return {"status": "PASS", "first_transition_interval": [lo, hi],
             "new_mark": new["mark"], "new_photo_by": new["end"],
@@ -305,7 +343,7 @@ class Run:
 
     def replace_text(self, uid, value, *, verify_value):
         self.tap(uid)
-        self.command("axe", "key-combo", "--modifiers", "227", "--key", "4", "--udid", self.args.udid)
+        self.command("axe", "key-combo", "--modifiers", SELECT_ALL_MODIFIER_CODE, "--key", SELECT_ALL_KEY_CODE, "--udid", self.args.udid)
         self.command("axe", "type", value, "--udid", self.args.udid)
         if verify_value:
             current = self.wait_for_ui(

@@ -1,5 +1,9 @@
 import XCTest
 
+private enum SwitchGeometry {
+    static let trailingTapFraction: CGFloat = 0.93
+}
+
 // P2-03 Reduce Motion: toggle "Reduce Motion" through the real system settings and record both display modes in
 // separate video segments; only a person watching the recording decides whether there is motion.
 final class ReduceMotionUITests: XCTestCase {
@@ -53,11 +57,11 @@ final class ReduceMotionUITests: XCTestCase {
         _ system: System,
         evidence: Evidence
     ) throws -> ReduceMotionRestore {
-        let original = try system.read()
-        let restore = registerRestore(System.self, original: original)
+        let isOriginallyOn = try system.read()
+        let restore = registerRestore(System.self, isOriginallyOn: isOriginallyOn)
         try evidence.record(
             "motion-system-original", png: system.screenshot(), capturedAt: Date(), orientation: .notApplicable)
-        if original {
+        if isOriginallyOn {
             try system.set(false)
             try evidence.record(
                 "motion-system-disabled", png: system.screenshot(), capturedAt: Date(), orientation: .notApplicable)
@@ -75,11 +79,11 @@ final class ReduceMotionUITests: XCTestCase {
         evidence: Evidence,
         restore: ReduceMotionRestore
     ) throws {
-        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(singlePhoto: true)])
+        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: true)])
         driver.next()
         try recordSegment(
             "motion-off-single", in: driver.app, evidence: evidence, hold: MotionTiming.positiveControlHold)
-        driver.applyPlaybackSettings([.displayMode(singlePhoto: false)])
+        driver.applyPlaybackSettings([.displayMode(isSinglePhoto: false)])
         try driver.advanceToMultiPhotoScene()
         try recordSegment(
             "motion-off-smartfill", in: driver.app, evidence: evidence, hold: MotionTiming.positiveControlHold)
@@ -93,13 +97,13 @@ final class ReduceMotionUITests: XCTestCase {
         driver.next()
         try recordSegment(
             "motion-on-smartfill-next", in: driver.app, evidence: evidence, hold: MotionTiming.reducedMotionHold)
-        driver.applyPlaybackSettings([.displayMode(singlePhoto: true)])
+        driver.applyPlaybackSettings([.displayMode(isSinglePhoto: true)])
         try recordSegment("motion-on-single", in: driver.app, evidence: evidence, hold: MotionTiming.reducedMotionHold)
         driver.next()
         try recordSegment(
             "motion-on-single-next", in: driver.app, evidence: evidence, hold: MotionTiming.reducedMotionHold)
 
-        try system.set(restore.original)
+        try system.set(restore.isOriginallyOn)
         try evidence.record(
             "motion-system-restored", png: system.screenshot(), capturedAt: Date(), orientation: .notApplicable)
         restore.isSettled = true
@@ -133,21 +137,23 @@ final class ReduceMotionUITests: XCTestCase {
             throw XCTSkip(
                 "Temporarily toggles system Reduce Motion; runs only in the StrictE2E plan with an evidence directory.")
         }
-        let original = try system.read()
-        let restore = registerRestore(System.self, original: original)
+        let isOriginallyOn = try system.read()
+        let restore = registerRestore(System.self, isOriginallyOn: isOriginallyOn)
         try StrictE2EVisualEvidence.writeRequiredPNG(system.screenshot(), name: "selfcheck-reduce-motion-original")
-        try system.set(!original)
-        let flipped = try system.read()
+        try system.set(!isOriginallyOn)
+        let isFlippedOn = try system.read()
         try StrictE2EVisualEvidence.writeRequiredPNG(system.screenshot(), name: "selfcheck-reduce-motion-flipped")
-        try system.set(original)
-        let restored = try system.read()
+        try system.set(isOriginallyOn)
+        let isRestoredOn = try system.read()
         try StrictE2EVisualEvidence.writeRequiredPNG(system.screenshot(), name: "selfcheck-reduce-motion-restored")
         try StrictE2EVisualEvidence.writeRequiredJSON(
-            ["original": original, "flipped_readback": flipped, "restored_readback": restored],
+            ["original": isOriginallyOn, "flipped_readback": isFlippedOn, "restored_readback": isRestoredOn],
             name: "selfcheck-reduce-motion.json"
         )
-        guard flipped == !original, restored == original else {
-            throw Failure("Reopened readback mismatch: original \(original), flipped \(flipped), restored \(restored).")
+        guard isFlippedOn == !isOriginallyOn, isRestoredOn == isOriginallyOn else {
+            throw Failure(
+                "Reopened readback mismatch: original \(isOriginallyOn), flipped \(isFlippedOn), restored \(isRestoredOn)."
+            )
         }
         restore.isSettled = true
     }
@@ -157,16 +163,16 @@ final class ReduceMotionUITests: XCTestCase {
     @MainActor
     private func registerRestore<System: ReduceMotionSystemSetting>(
         _: System.Type,
-        original: Bool
+        isOriginallyOn: Bool
     ) -> ReduceMotionRestore {
-        let restore = ReduceMotionRestore(original: original)
+        let restore = ReduceMotionRestore(isOriginallyOn: isOriginallyOn)
         addTeardownBlock { @MainActor in
             guard !restore.isSettled else { return }
             do {
-                try System().set(restore.original)
+                try System().set(restore.isOriginallyOn)
             } catch {
                 throw Failure(
-                    "System Reduce Motion not restored to \(restore.original ? "on" : "off"): \(error.localizedDescription)"
+                    "System Reduce Motion not restored to \(restore.isOriginallyOn ? "on" : "off"): \(error.localizedDescription)"
                         + ". Environment not cleaned up. Restore by hand: Simulator Settings › Accessibility › Motion › Reduce Motion, set it back to the original value, read it back, then rerun."
                 )
             }
@@ -189,11 +195,11 @@ private enum MotionTiming {
 
 @MainActor
 private final class ReduceMotionRestore {
-    let original: Bool
+    let isOriginallyOn: Bool
     var isSettled = false
 
-    init(original: Bool) {
-        self.original = original
+    init(isOriginallyOn: Bool) {
+        self.isOriginallyOn = isOriginallyOn
     }
 }
 
@@ -267,7 +273,9 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
         // The switch's tappable area varies by OS version: tap the switch position at the right of the row first,
         // then fall back to the element center.
         let taps: [() -> Void] = [
-            { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap() },
+            {
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: SwitchGeometry.trailingTapFraction, dy: 0.5)).tap()
+            },
             { toggle.tap() }
         ]
         for tap in taps where ToggleValue.parse(toggle.value) != isOn {

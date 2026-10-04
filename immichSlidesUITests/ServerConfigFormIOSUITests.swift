@@ -2,6 +2,20 @@
 
 import XCTest
 
+private enum KeyboardGeometry {
+    static let dismissalHorizontalFraction: CGFloat = 0.5
+    static let dismissalTopFraction: CGFloat = 0.06
+}
+
+private enum WaitTiming {
+    static let briefElementTimeoutSeconds: TimeInterval = 1
+    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
+    static let keyboardTransitionTimeoutSeconds: TimeInterval = 1.5
+    static let readbackTimeoutSeconds: TimeInterval = 2
+    static let screenTransitionTimeoutSeconds: TimeInterval = 12
+    static let shortFocusSettleSeconds: TimeInterval = 0.15
+}
+
 #if os(iOS)
 final class ServerConfigFormIOSUITests: XCTestCase {
 
@@ -16,11 +30,13 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         openServerSettingsFromModeSelection(app: app)
 
         let serverField = app.textFields["firstboot.serverURL.field"]
-        XCTAssertTrue(serverField.waitForExistence(timeout: 8), "Server settings page should show the URL field")
+        XCTAssertTrue(
+            serverField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the URL field")
         tapFieldAndAssertKeyboardAppears(
             serverField,
             app: app,
-            timeout: 1.5,
+            timeout: WaitTiming.keyboardTransitionTimeoutSeconds,
             message: "After tapping the URL field, the keyboard should appear quickly"
         )
     }
@@ -31,11 +47,13 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         openServerSettingsFromModeSelection(app: app)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "Server settings page should show the API Key field")
+        XCTAssertTrue(
+            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the API Key field")
         tapFieldAndAssertKeyboardAppears(
             apiKeyField,
             app: app,
-            timeout: 2.0,
+            timeout: WaitTiming.readbackTimeoutSeconds,
             message: "With an API Key already saved, tapping the field should open the real keyboard"
         )
     }
@@ -46,22 +64,26 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         openServerSettingsFromModeSelection(app: app)
 
         let serverField = app.textFields["firstboot.serverURL.field"]
-        XCTAssertTrue(serverField.waitForExistence(timeout: 8), "Server settings page should show the URL field")
+        XCTAssertTrue(
+            serverField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the URL field")
         tapFieldAndAssertKeyboardAppears(
             serverField,
             app: app,
-            timeout: 1.5,
+            timeout: WaitTiming.keyboardTransitionTimeoutSeconds,
             message: "After tapping the URL field, the keyboard should appear"
         )
         serverField.clearAndType(text: "foo://invalid-host")
         dismissKeyboardIfNeeded(app: app)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "Server settings page should show the API Key field")
+        XCTAssertTrue(
+            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Server settings page should show the API Key field")
         tapFieldAndAssertKeyboardAppears(
             apiKeyField,
             app: app,
-            timeout: 2.0,
+            timeout: WaitTiming.readbackTimeoutSeconds,
             message: "After editing the URL and then tapping API Key, the keyboard should still appear"
         )
     }
@@ -71,21 +93,25 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         let app = launchFirstBootApp()
 
         let serverField = app.textFields["firstboot.serverURL.field"]
-        XCTAssertTrue(serverField.waitForExistence(timeout: 8), "First-launch page should show the URL field")
+        XCTAssertTrue(
+            serverField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "First-launch page should show the URL field")
         tapFieldAndAssertKeyboardAppears(
             serverField,
             app: app,
-            timeout: 1.5,
+            timeout: WaitTiming.keyboardTransitionTimeoutSeconds,
             message: "After tapping the URL field on the first-launch page, the keyboard should appear"
         )
         dismissKeyboardIfNeeded(app: app)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "First-launch page should show the API Key field")
+        XCTAssertTrue(
+            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "First-launch page should show the API Key field")
         tapFieldAndAssertKeyboardAppears(
             apiKeyField,
             app: app,
-            timeout: 2.0,
+            timeout: WaitTiming.readbackTimeoutSeconds,
             message: "After tapping the API Key field on the first-launch page, the keyboard should appear"
         )
     }
@@ -101,7 +127,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: 12),
+            app.buttons["mode.continue.button"].waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
             "After injecting the test server config, the app should open the mode selection page"
         )
         return app
@@ -123,11 +149,15 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
     private func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         let randomButton = app.buttons["mode.random.button"]
-        XCTAssertTrue(randomButton.waitForExistence(timeout: 8), "Mode selection page should show random playback")
+        XCTAssertTrue(
+            randomButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Mode selection page should show random playback")
         tapElement(randomButton)
 
         let continueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(continueButton.waitForExistence(timeout: 8), "Mode selection page should show Continue")
+        XCTAssertTrue(
+            continueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Mode selection page should show Continue")
         XCTAssertTrue(continueButton.isEnabled, "After selecting random playback, Continue should be tappable")
         tapElement(continueButton)
 
@@ -139,9 +169,13 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
     private func openSettingsFromSlideshow(app: XCUIApplication) {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        XCTAssertTrue(waitForSlideshowSettingsButton(app: app, timeout: 12), "Playback page should show Settings")
+        XCTAssertTrue(
+            waitForSlideshowSettingsButton(app: app, timeout: WaitTiming.screenTransitionTimeoutSeconds),
+            "Playback page should show Settings")
         tapElement(settingsButton)
-        XCTAssertTrue(waitForAnySettingsRootEntry(app: app, timeout: 8), "Tapping Settings should open settings")
+        XCTAssertTrue(
+            waitForAnySettingsRootEntry(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            "Tapping Settings should open settings")
     }
 
     private func openSettingsSection(app: XCUIApplication, sectionID: String) {
@@ -152,13 +186,14 @@ final class ServerConfigFormIOSUITests: XCTestCase {
                 app.otherElements[sectionID]
             ]
 
-            for candidate in candidates where candidate.waitForExistence(timeout: 1) {
+            for candidate in candidates where candidate.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds)
+            {
                 tapElement(candidate)
                 return
             }
 
             let fallback = app.descendants(matching: .any).matching(identifier: sectionID).firstMatch
-            if fallback.waitForExistence(timeout: 1) {
+            if fallback.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds) {
                 tapElement(fallback)
                 return
             }
@@ -170,7 +205,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
                 isShowSidebarLabel(toggleSidebarButton.label)
             {
                 toggleSidebarButton.tap()
-                _ = waitForAnySettingsRootEntry(app: app, timeout: 1.5)
+                _ = waitForAnySettingsRootEntry(app: app, timeout: WaitTiming.keyboardTransitionTimeoutSeconds)
                 continue
             }
 
@@ -195,14 +230,14 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         let start = Date()
         tapElement(field)
         let keyboard = app.keyboards.firstMatch
-        let appeared = keyboard.waitForExistence(timeout: timeout)
-        if !appeared {
+        let didAppear = keyboard.waitForExistence(timeout: timeout)
+        if !didAppear {
             attachScreenshot(app: app, name: "ios-server-keyboard-missing-\(currentDeviceTag())")
         }
-        XCTAssertTrue(appeared, message, file: file, line: line)
+        XCTAssertTrue(didAppear, message, file: file, line: line)
         let elapsed = Date().timeIntervalSince(start)
         XCTContext.runActivity(named: "keyboard-appearance-\(String(format: "%.2f", elapsed))s") { _ in }
-        if appeared {
+        if didAppear {
             attachScreenshot(app: app, name: "Desktop-keyboard-visible-\(currentDeviceTag())")
         }
     }
@@ -217,7 +252,9 @@ final class ServerConfigFormIOSUITests: XCTestCase {
             let keyboardButton = app.keyboards.buttons[label]
             if keyboardButton.exists && keyboardButton.isHittable {
                 keyboardButton.tap()
-                if waitUntil(timeout: 1.5, condition: { app.keyboards.count == 0 }) {
+                if waitUntil(
+                    timeout: WaitTiming.keyboardTransitionTimeoutSeconds, condition: { app.keyboards.count == 0 })
+                {
                     return
                 }
             }
@@ -227,13 +264,17 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         let appButton = app.buttons["server.keyboard.done.button"]
         if appButton.exists && appButton.isHittable {
             appButton.tap()
-            if waitUntil(timeout: 1.5, condition: { app.keyboards.count == 0 }) {
+            if waitUntil(timeout: WaitTiming.keyboardTransitionTimeoutSeconds, condition: { app.keyboards.count == 0 })
+            {
                 return
             }
         }
 
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
-        _ = waitUntil(timeout: 1.5, condition: { app.keyboards.count == 0 })
+        app.coordinate(
+            withNormalizedOffset: CGVector(
+                dx: KeyboardGeometry.dismissalHorizontalFraction, dy: KeyboardGeometry.dismissalTopFraction)
+        ).tap()
+        _ = waitUntil(timeout: WaitTiming.keyboardTransitionTimeoutSeconds, condition: { app.keyboards.count == 0 })
     }
 
     private func waitForSlideshowSettingsButton(app: XCUIApplication, timeout: TimeInterval) -> Bool {
@@ -274,7 +315,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.shortFocusSettleSeconds))
         }
         return condition()
     }

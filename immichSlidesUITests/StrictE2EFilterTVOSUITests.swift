@@ -1,5 +1,9 @@
 import XCTest
 
+private enum Calibration {
+    static let displayCandidateFrameLimit: Int = 4
+}
+
 #if os(tvOS)
 final class StrictE2EFilterTVOSUITests: XCTestCase {
     private enum Timing {
@@ -118,13 +122,13 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             app: app,
             albumID: targetAlbumID,
             neighborID: nonTargetAlbumID,
-            selected: false
+            shouldSelect: false
         )
         try setAlbumSelectionInCurrentList(
             app: app,
             albumID: nonTargetAlbumID,
             neighborID: targetAlbumID,
-            selected: true
+            shouldSelect: true
         )
         let selectedCard = app.buttons["albumFilter.album.\(nonTargetAlbumID).button"]
         XCTAssertEqual(
@@ -219,8 +223,8 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try openFilterEditorFromPlaybackSettings(app: app)
         try isolateAndSelectEmptyAlbum(app: app, emptyAlbumID: "album-a-empty", neighborID: "album-a-target")
         let editorStart = app.buttons["filterSummary.startPlayback.button"]
-        let startObserved = editorStart.exists
-        let startEnabledAfterEmpty = startObserved && editorStart.isEnabled
+        let didObserveStart = editorStart.exists
+        let isStartEnabledAfterEmpty = didObserveStart && editorStart.isEnabled
         try returnToSlideshowFromSettings(app: app)
         let emptyLabel = app.staticTexts["slideshow.emptyState.message"]
         // ui-label-lookup: Preserve the Simplified Chinese empty-result copy check after identifier lookup.
@@ -233,8 +237,8 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "album_id": "album-a-empty",
-                "start_enabled": startEnabledAfterEmpty,
-                "start_button_observed": startObserved,
+                "start_enabled": isStartEnabledAfterEmpty,
+                "start_button_observed": didObserveStart,
                 "empty_copy": emptyLabel.label,
                 "identity_source": "public_fixture_photo_mark",
                 "entry": "settings.playback.filterConfig.button"
@@ -269,25 +273,25 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try runPersonPlayback(
             app: app,
             personID: "person-a-normal",
-            soloOnly: false,
+            isSoloOnly: false,
             evidenceName: "person-normal"
         )
         try runPersonPlayback(
             app: app,
             personID: "person-a-solo",
-            soloOnly: false,
+            isSoloOnly: false,
             evidenceName: "person-conflict-normal"
         )
         try runPersonPlayback(
             app: app,
             personID: "person-a-solo",
-            soloOnly: true,
+            isSoloOnly: true,
             evidenceName: "person-conflict-solo"
         )
         try runPersonPlayback(
             app: app,
             personID: "person-a-no-faces",
-            soloOnly: false,
+            isSoloOnly: false,
             evidenceName: "person-no-faces"
         )
     }
@@ -417,7 +421,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             }, "Playback must be paused before sampling candidates.")
         var steps: [String] = []
         var selected: Data?
-        for index in 1...4 {
+        for index in 1...Calibration.displayCandidateFrameLimit {
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
             let png = app.screenshot().pngRepresentation
             let step = String(format: "display-before-candidate-%02d", index)
@@ -427,7 +431,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
                 selected = png
                 break
             }
-            if index < 4 {
+            if index < Calibration.displayCandidateFrameLimit {
                 let next = app.buttons["slideshow.control.next.button"]
                 ensureControlBarVisible(app: app, playPauseButton: pause)
                 moveFocusTo(next, directions: [.right, .left], message: "Focus Next.")
@@ -600,12 +604,12 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
     private func runPersonPlayback(
         app: XCUIApplication,
         personID: String,
-        soloOnly: Bool,
+        isSoloOnly: Bool,
         evidenceName: String
     ) throws {
         try returnToFilterSummary(app: app)
         try openPeopleFilter(app: app)
-        try focusAndConfigurePerson(app: app, personID: personID, soloOnly: soloOnly)
+        try focusAndConfigurePerson(app: app, personID: personID, isSoloOnly: isSoloOnly)
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(
             app.buttons["filterSummary.person.button"].waitForExistence(timeout: 10)
@@ -731,7 +735,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         app: XCUIApplication,
         albumID: String,
         neighborID: String,
-        selected: Bool
+        shouldSelect: Bool
     ) throws {
         let card = app.buttons["albumFilter.album.\(albumID).button"]
         let neighbor = app.buttons["albumFilter.album.\(neighborID).button"]
@@ -741,20 +745,20 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         moveFocusTo(card, directions: [.down, .right, .left], message: "Focus must be able to land on \(albumID)")
         assertNoFocusCollision(focused: card, neighbor: neighbor)
         let isSelected = String(describing: card.value ?? "").contains("已选中") || card.isSelected
-        if isSelected != selected {
+        if isSelected != shouldSelect {
             XCUIRemote.shared.press(.select)
         }
         XCTAssertTrue(
             waitUntil(timeout: 5) {
                 let currentValue = String(describing: card.value ?? "")
-                return (currentValue.contains("已选中") || card.isSelected) == selected
+                return (currentValue.contains("已选中") || card.isSelected) == shouldSelect
             },
             "Album \(albumID) must reach the requested real selection state"
         )
         try writeScreenshotPNG(
             app: app,
-            name: "album-edit-switch-\(albumID)-\(selected ? "selected" : "cleared")",
-            attachmentName: "album-edit-switch-\(albumID)-\(selected ? "selected" : "cleared")"
+            name: "album-edit-switch-\(albumID)-\(shouldSelect ? "selected" : "cleared")",
+            attachmentName: "album-edit-switch-\(albumID)-\(shouldSelect ? "selected" : "cleared")"
         )
     }
 
@@ -832,7 +836,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func focusAndConfigurePerson(app: XCUIApplication, personID: String, soloOnly: Bool) throws {
+    private func focusAndConfigurePerson(app: XCUIApplication, personID: String, isSoloOnly: Bool) throws {
         let button = app.buttons["personFilter.person.\(personID).button"]
         XCTAssertTrue(button.waitForExistence(timeout: 15), "The people list must show \(personID).")
         isolatePersonSelection(app: app, keeping: personID)
@@ -848,7 +852,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             )
         }
         let value = String(describing: button.value ?? "")
-        if soloOnly {
+        if isSoloOnly {
             if !value.contains("单人") {
                 XCUIRemote.shared.press(.playPause)
                 RunLoop.current.run(until: Date().addingTimeInterval(0.4))
@@ -1379,7 +1383,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
 
     @MainActor
     private func waitForFilterEditorSurface(app: XCUIApplication, message: String) throws {
-        let reached = waitUntil(timeout: 12) {
+        let didReach = waitUntil(timeout: 12) {
             let done = app.buttons["filter.editor.done.button"]
             let album = app.buttons["filter.editor.album.entry"]
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
@@ -1388,7 +1392,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try writeScreenshotPNG(app: app, name: "desktop-editor-transition", attachmentName: "desktop-editor-transition")
         try StrictE2EVisualEvidence.writeRequiredJSON(
             ["ui": app.debugDescription], name: "desktop-editor-transition.json")
-        XCTAssertTrue(reached, message)
+        XCTAssertTrue(didReach, message)
     }
 
     // Deselect other albums first and keep only the controlled empty album, so the union holds no old photos.

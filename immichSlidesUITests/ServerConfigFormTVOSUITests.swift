@@ -2,6 +2,18 @@
 
 import XCTest
 
+private enum CapsuleGeometry {
+    static let maximumLeadingPositionPoints: CGFloat = 170
+    static let maximumTopPositionPoints: CGFloat = 90
+}
+
+private enum WaitTiming {
+    static let briefElementTimeoutSeconds: TimeInterval = 1
+    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
+    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
+    static let shortInteractionTimeoutSeconds: TimeInterval = 3
+}
+
 #if os(tvOS)
 final class ServerConfigFormTVOSUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -11,11 +23,11 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
 
     @MainActor
     func testTVOSFirstBootCoreElementsAndDisabledSave() throws {
-        let app = launchApp(resetState: true)
+        let app = launchApp(shouldResetState: true)
         assertFirstBootCoreElements(app: app)
 
         let saveButton = firstBootSaveButton(in: app)
-        XCTAssertTrue(saveButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(saveButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds))
         XCTAssertFalse(saveButton.isEnabled, "Before the connection is tested, the save button should stay disabled")
 
         attachScreenshot(app: app, name: "tvos-firstboot-core-elements-disabled-save")
@@ -23,20 +35,20 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
 
     @MainActor
     func testTVOSFirstBootAPIKeyHelpSheet() throws {
-        let app = launchApp(resetState: true)
+        let app = launchApp(shouldResetState: true)
         assertFirstBootCoreElements(app: app)
 
         let helpButton = firstBootAPIKeyHelpButton(in: app)
         let testConnectionButton = firstBootTestConnectionButton(in: app)
         let saveButton = firstBootSaveButton(in: app)
         XCTAssertTrue(
-            helpButton.waitForExistence(timeout: 5),
+            helpButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The tvOS first-launch action row should provide a focusable help entry")
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: 5),
+            testConnectionButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The tvOS first-launch action row should provide the Test Connection button")
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: 5),
+            saveButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The tvOS first-launch action row should provide the Save Settings button")
         // ui-label-lookup: These assertions verify localized copy after finding each control by identifier.
         XCTAssertEqual(helpButton.label, "需要帮助？")
@@ -53,7 +65,7 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
 
         XCUIRemote.shared.press(.down)
         XCTAssertTrue(
-            firstBootApiField(in: app).waitForExistence(timeout: 3),
+            firstBootApiField(in: app).waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "The first-launch page should keep the API Key input row")
 
         XCUIRemote.shared.press(.down)
@@ -61,11 +73,12 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            sheet.waitForExistence(timeout: 3), "After tapping the help entry, the API Key help sheet should be shown")
+            sheet.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
+            "After tapping the help entry, the API Key help sheet should be shown")
         let helpTitle = app.staticTexts["server.apiKey.help.sheet"]
         let stepsTitle = app.staticTexts["server.apiKey.help.section.list.number.title"]
         let permissionsTitle = app.staticTexts["server.apiKey.help.section.checklist.title"]
-        XCTAssertTrue(helpTitle.waitForExistence(timeout: 3))
+        XCTAssertTrue(helpTitle.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds))
         // ui-label-lookup: These checks verify translated help copy after identifier lookup.
         XCTAssertEqual(helpTitle.label, "如何创建 Immich API Key")
         XCTAssertTrue(stepsTitle.exists)
@@ -75,16 +88,19 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
         attachScreenshot(app: app, name: "tvos-firstboot-api-key-help-sheet")
 
         let closeButton = app.buttons["server.apiKey.help.close.button"]
-        XCTAssertTrue(closeButton.waitForExistence(timeout: 3), "The tvOS help sheet must have a clear close button")
+        XCTAssertTrue(
+            closeButton.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
+            "The tvOS help sheet must have a clear close button")
         XCUIRemote.shared.press(.select)
         XCTAssertFalse(
-            sheet.waitForExistence(timeout: 1), "After closing the help sheet, the app should not stay on the sheet")
-        XCTAssertTrue(firstBootApiField(in: app).waitForExistence(timeout: 3))
+            sheet.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds),
+            "After closing the help sheet, the app should not stay on the sheet")
+        XCTAssertTrue(firstBootApiField(in: app).waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds))
     }
 
     @MainActor
     func testTVOSFirstBootTestConnectionSelectShowsValidationAlertInline() throws {
-        let app = launchApp(resetState: true)
+        let app = launchApp(shouldResetState: true)
         assertFirstBootCoreElements(app: app)
 
         XCUIRemote.shared.press(.down)
@@ -95,7 +111,7 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
         let alert = app.alerts["连接测试失败"]
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-            alert.waitForExistence(timeout: 3),
+            alert.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "Select on Test Connection should show the validation alert at once on this page, not only after going back"
         )
         XCTAssertTrue(
@@ -109,13 +125,13 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
 
     @MainActor
     func testTVOSFirstBootInputCapsulesKeepSameHeightAndWidth() throws {
-        let app = launchApp(resetState: true)
+        let app = launchApp(shouldResetState: true)
 
         let serverField = firstBootServerField(in: app)
         let apiField = firstBootApiField(in: app)
 
-        XCTAssertTrue(serverField.waitForExistence(timeout: 8))
-        XCTAssertTrue(apiField.waitForExistence(timeout: 8))
+        XCTAssertTrue(serverField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(apiField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
 
         let serverFrame = serverField.frame
         let apiFrame = apiField.frame
@@ -132,7 +148,7 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
     func testTVOSFirstBootDarkModeSnapshot() throws {
         // Launching light and dark back to back is unstable in the full test plan, so light mode has its own test.
 
-        let app = launchApp(resetState: true, colorScheme: "dark")
+        let app = launchApp(shouldResetState: true, colorScheme: "dark")
         assertFirstBootCoreElements(app: app)
         attachScreenshot(app: app, name: "tvos-firstboot-dark-mode")
     }
@@ -141,7 +157,7 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
     func testTVOSFirstBootLightModeSnapshot() throws {
         // The light first-launch screenshot is a separate test so it is easy to export from the xcresult.
 
-        let app = launchApp(resetState: true, colorScheme: "light")
+        let app = launchApp(shouldResetState: true, colorScheme: "light")
         assertFirstBootCoreElements(app: app)
         attachScreenshot(app: app, name: "tvos-firstboot-light-mode")
     }
@@ -150,14 +166,14 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
     func testTVOSFirstBootAccessibilityTextSnapshot() throws {
         // Screenshot evidence for manual review of large-text fit; this test does not assert clipping or overlap.
 
-        let app = launchApp(resetState: true, dynamicTypeSize: "accessibility3")
+        let app = launchApp(shouldResetState: true, dynamicTypeSize: "accessibility3")
         assertFirstBootCoreElements(app: app)
         attachScreenshot(app: app, name: "tvos-firstboot-accessibility-text")
     }
 
     @MainActor
     func testTVOSFirstBootEnglishLocalizationSnapshot() throws {
-        let app = launchApp(resetState: true, forceEnglishLocalization: true)
+        let app = launchApp(shouldResetState: true, shouldForceEnglishLocalization: true)
         assertFirstBootCoreElements(
             app: app,
             expectedWizardTitle: "Setup Wizard",
@@ -168,13 +184,13 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
 
     @MainActor
     func testTVOSFirstBootIdleStateCollapsesStatusCard() throws {
-        let app = launchApp(resetState: true)
+        let app = launchApp(shouldResetState: true)
         assertFirstBootCoreElements(app: app)
 
         let statusCard = app.otherElements["firstboot.status.card"].firstMatch
 
         XCTAssertFalse(
-            statusCard.waitForExistence(timeout: 1),
+            statusCard.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds),
             "The idle state should not render the status card, or light mode shows an extra blank rectangle"
         )
 
@@ -193,13 +209,13 @@ private extension ServerConfigFormTVOSUITests {
     }
 
     func launchApp(
-        resetState: Bool,
+        shouldResetState: Bool,
         colorScheme: String? = nil,
         dynamicTypeSize: String? = nil,
-        forceEnglishLocalization: Bool = false
+        shouldForceEnglishLocalization: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
-        if resetState {
+        if shouldResetState {
             app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         }
         if let colorScheme {
@@ -208,7 +224,7 @@ private extension ServerConfigFormTVOSUITests {
         if let dynamicTypeSize {
             app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = dynamicTypeSize
         }
-        if forceEnglishLocalization {
+        if shouldForceEnglishLocalization {
             app.launchArguments += [
                 "-AppleLanguages", "(en)",
                 "-AppleLocale", "en_US"
@@ -295,25 +311,29 @@ private extension ServerConfigFormTVOSUITests {
         let wizardTitle = app.staticTexts["onboardingWizard.title"]
 
         XCTAssertTrue(
-            wizardTitle.waitForExistence(timeout: 5),
+            wizardTitle.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The first-launch page should show the setup progress capsule in the top-left corner")
         XCTAssertEqual(wizardTitle.label, expectedWizardTitle)
         XCTAssertLessThan(
-            wizardTitle.frame.minX, 170,
+            wizardTitle.frame.minX, CapsuleGeometry.maximumLeadingPositionPoints,
             "The progress capsule should stay in the top-left safe area, not return to the large centered shell")
         XCTAssertLessThan(
-            wizardTitle.frame.minY, 90,
+            wizardTitle.frame.minY, CapsuleGeometry.maximumTopPositionPoints,
             "The progress capsule should stay in the top-left safe area, not take over the title area")
 
         let pageTitle = app.staticTexts["firstboot.page.title"]
         XCTAssertTrue(
-            pageTitle.waitForExistence(timeout: 5),
+            pageTitle.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The first-launch main title should describe the current step, not repeat a welcome or wizard message")
         XCTAssertEqual(pageTitle.label, expectedPageTitle)
-        XCTAssertTrue(firstBootServerField(in: app).waitForExistence(timeout: 8))
-        XCTAssertTrue(firstBootApiField(in: app).waitForExistence(timeout: 8))
-        XCTAssertTrue(firstBootTestConnectionButton(in: app).waitForExistence(timeout: 5))
-        XCTAssertTrue(firstBootSaveButton(in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            firstBootServerField(in: app).waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(firstBootApiField(in: app).waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            firstBootTestConnectionButton(in: app).waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds)
+        )
+        XCTAssertTrue(
+            firstBootSaveButton(in: app).waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds))
     }
 }
 #endif

@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from album_server_narrow_contract import (
+    EXPECTED_OFFICIAL_CASE_COUNT,
     OFFICIAL_CASES,
     AlbumServerContractError,
     official_device_command,
@@ -34,8 +35,8 @@ DESTINATION_PLACEHOLDERS = {
 def host_check() -> int:
     try:
         validate_official_case_table()
-        if official_case_count() != 15:
-            raise AlbumServerContractError("official method count is not 15")
+        if official_case_count() != EXPECTED_OFFICIAL_CASE_COUNT:
+            raise AlbumServerContractError(f"official method count is not {EXPECTED_OFFICIAL_CASE_COUNT}")
         if fixture_manifest("a")["fixture_sha256"] != FROZEN_FIXTURE_SHA256["a"]:
             raise AlbumServerContractError("fixture A hash deviates from the frozen contract")
         if fixture_manifest("b")["fixture_sha256"] != FROZEN_FIXTURE_SHA256["b"]:
@@ -51,7 +52,7 @@ def host_check() -> int:
     except AlbumServerContractError as error:
         print(str(error), file=sys.stderr)
         return 2
-    print(json.dumps({"official_cases": 15, "empty_album": True, "device_run": False}, sort_keys=True))
+    print(json.dumps({"official_cases": EXPECTED_OFFICIAL_CASE_COUNT, "empty_album": True, "device_run": False}, sort_keys=True))
     return 0
 
 

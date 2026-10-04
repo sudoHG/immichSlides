@@ -64,7 +64,7 @@ def _side_by_side(left: bytes, right: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def _stack_vertical_lower_bias(top: bytes, bottom: bytes, canvas: tuple[int, int] = (1170, 2532)) -> bytes:
+def _stack_vertical_lower_bias(top: bytes, bottom: bytes, canvas: tuple[int, int] = IPHONE_SCREEN) -> bytes:
     """Top photo ~40%, bottom ~60%, so center lands on the bottom one; simulates iPhone portrait Smart Fill."""
     top_image = Image.open(io.BytesIO(top)).convert("RGB")
     bottom_image = Image.open(io.BytesIO(bottom)).convert("RGB")
@@ -118,7 +118,7 @@ def _photo_on_empty_background(background: bytes, photo: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def _smart_fill_single(png: bytes, canvas: tuple[int, int] = (1170, 2532)) -> bytes:
+def _smart_fill_single(png: bytes, canvas: tuple[int, int] = IPHONE_SCREEN) -> bytes:
     """One photo over its own blurred background; simulates a Smart Fill single photo, not two separate photos."""
     image = Image.open(io.BytesIO(png)).convert("RGB")
     background = image.resize(canvas, Image.Resampling.BILINEAR).filter(ImageFilter.GaussianBlur(radius=48))

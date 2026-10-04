@@ -46,7 +46,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-edit-switch")
         enterFilterSummary(app: app)
         openAlbumFilterHandlingSystemPrompt(app: app)
-        setAlbumSelection(app: app, albumID: targetAlbumID, selected: true)
+        setAlbumSelection(app: app, albumID: targetAlbumID, isSelectionRequested: true)
         returnFromAlbumFilter(app: app)
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
@@ -54,8 +54,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openSettingsHomeFromPlayback(app: app)
         openFilterEditorFromSettings(app: app)
         openAlbumFilterFromEditor(app: app)
-        setAlbumSelection(app: app, albumID: targetAlbumID, selected: false)
-        setAlbumSelection(app: app, albumID: nonTargetAlbumID, selected: true)
+        setAlbumSelection(app: app, albumID: targetAlbumID, isSelectionRequested: false)
+        setAlbumSelection(app: app, albumID: nonTargetAlbumID, isSelectionRequested: true)
         let selectedCard = albumCard(app: app, albumID: nonTargetAlbumID)
         XCTAssertEqual(
             selectedCard.identifier,
@@ -93,7 +93,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let clearedNonTarget = albumCard(app: app, albumID: nonTargetAlbumID)
         XCTAssertTrue(
             waitUntil(timeout: 6) {
-                !self.albumCardLooksSelected(clearedTarget) && !self.albumCardLooksSelected(clearedNonTarget)
+                !self.isAlbumCardSelected(clearedTarget) && !self.isAlbumCardSelected(clearedNonTarget)
             },
             "After tapping Clear, target and non-target albums must both really become unselected; tapping cards one by one must not stand in for the clear result"
         )
@@ -188,8 +188,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         selectAlbum(app: app, albumID: emptyAlbumID)
         returnFromAlbumFilter(app: app)
         let editorStart = app.buttons["filterSummary.startPlayback.button"]
-        let startObserved = editorStart.exists
-        let startEnabledAfterEmpty = startObserved && editorStart.isEnabled
+        let didObserveStart = editorStart.exists
+        let isStartEnabledAfterEmpty = didObserveStart && editorStart.isEnabled
         attachStrictE2EScreenshot(app: app, name: "album-empty-selected-\(currentDeviceTag())")
         finishFilterEditor(app: app)
         returnToSlideshowFromSettings(app: app)
@@ -202,8 +202,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "album_id": emptyAlbumID,
-                "start_enabled": startEnabledAfterEmpty,
-                "start_button_observed": startObserved,
+                "start_enabled": isStartEnabledAfterEmpty,
+                "start_button_observed": didObserveStart,
                 "empty_copy": emptyLabel.label,
                 "identity_source": "public_fixture_photo_mark",
                 "entry": "settings.playback.filterConfig.button"
@@ -221,7 +221,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             try loadEvidenceManifest(), keyPath: ["person_cases", "normal_match", "person_id"])
         try playPersonRuleFromFirstBoot(
             personID: personID,
-            soloOnly: false,
+            isSoloOnly: false,
             screenshotName: "person-normal-1",
             evidencePrefix: "filter-person-normal"
         )
@@ -251,7 +251,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             card.waitForExistence(timeout: 20) && card.isHittable,
             "Before selection, the target person card must be visible and hittable", app: app, personID: personID)
 
-        selectPerson(app: app, personID: personID, soloOnly: false)
+        selectPerson(app: app, personID: personID, isSoloOnly: false)
 
         let soloOnlySwitch = personSoloOnlySwitch(app: app, personID: personID)
         attachStrictE2EScreenshot(app: app, name: "person-navigation-after-selection-\(currentDeviceTag())")
@@ -294,7 +294,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-person-solo-toggle")
         enterFilterSummary(app: app)
         openPersonFilter(app: app)
-        selectPerson(app: app, personID: personID, soloOnly: true)
+        selectPerson(app: app, personID: personID, isSoloOnly: true)
         attachStrictE2EScreenshot(app: app, name: "person-solo-enabled-\(currentDeviceTag())")
         try returnFromPersonFilterToSummary(app: app)
         openPersonFilter(app: app)
@@ -303,7 +303,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             toggle.waitForExistence(timeout: 6) && (toggle.value as? String) == "1",
             "After going back and reopening, the target person's solo-only mode must still be on", app: app,
             personID: personID)
-        selectPerson(app: app, personID: personID, soloOnly: false)
+        selectPerson(app: app, personID: personID, isSoloOnly: false)
         attachStrictE2EScreenshot(app: app, name: "person-solo-disabled-\(currentDeviceTag())")
         try returnFromPersonFilterToSummary(app: app)
         openPersonFilter(app: app)
@@ -346,7 +346,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         )
         try playPersonRuleFromFirstBoot(
             personID: personID,
-            soloOnly: false,
+            isSoloOnly: false,
             screenshotName: "person-conflict-normal-1",
             evidencePrefix: "filter-person-conflict"
         )
@@ -359,7 +359,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let personID = try stringValue(try loadEvidenceManifest(), keyPath: ["person_cases", "no_faces", "person_id"])
         try playPersonRuleFromFirstBoot(
             personID: personID,
-            soloOnly: false,
+            isSoloOnly: false,
             screenshotName: "person-nofaces-1",
             evidencePrefix: "filter-person-nofaces"
         )
@@ -517,7 +517,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-switch-a")
         enterFilterSummary(app: app)
         openAlbumFilterHandlingSystemPrompt(app: app)
-        setAlbumSelection(app: app, albumID: albumA, selected: true)
+        setAlbumSelection(app: app, albumID: albumA, isSelectionRequested: true)
         returnFromAlbumFilter(app: app)
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
@@ -533,7 +533,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         }
 
         openAlbumFilterFromEditor(app: app)
-        setAlbumSelection(app: app, albumID: albumB, selected: true)
+        setAlbumSelection(app: app, albumID: albumB, isSelectionRequested: true)
         returnFromAlbumFilter(app: app)
         finishFilterEditor(app: app)
         returnToSlideshowFromSettings(app: app)
@@ -710,7 +710,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-vision")
         enterFilterSummary(app: app)
         openPersonFilter(app: app)
-        selectPerson(app: app, personID: soloID, soloOnly: true)
+        selectPerson(app: app, personID: soloID, isSoloOnly: true)
         returnFromPersonFilter(app: app)
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
@@ -808,7 +808,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     @MainActor
     private func playPersonRuleFromFirstBoot(
         personID: String,
-        soloOnly: Bool,
+        isSoloOnly: Bool,
         screenshotName: String,
         evidencePrefix: String
     ) throws {
@@ -818,7 +818,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: evidencePrefix)
         enterFilterSummary(app: app)
         openPersonFilter(app: app)
-        selectPerson(app: app, personID: personID, soloOnly: soloOnly)
+        selectPerson(app: app, personID: personID, isSoloOnly: isSoloOnly)
         try returnFromPersonFilterToSummary(app: app)
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
@@ -827,14 +827,14 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     }
 
     private func writePersonResultsJSON() throws {
-        let soloOnly: [String: Any] =
+        let soloOnlyEvidence: [String: Any] =
             isRunningOnSimulator
             ? ["environment": "simulator", "verdict": "UNVERIFIED"]
             : ["environment": "device", "verdict": "UNVERIFIED"]
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "cases": [
-                    "solo_only": soloOnly
+                    "solo_only": soloOnlyEvidence
                 ]
             ],
             name: "person-results.json"
@@ -893,14 +893,14 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             serverField.waitForExistence(timeout: 20), "A fresh install must open the normal first-boot page.")
         replaceText(
             in: serverField, app: app, with: input.serverURL, evidenceName: "firstboot-url-replace",
-            requireExactValue: true)
+            shouldRequireExactValue: true)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "First-boot page must show the API Key field.")
         replaceText(
             in: apiKeyField, app: app, with: input.publicKey, evidenceName: "firstboot-apikey-replace",
-            requireExactValue: false)
+            shouldRequireExactValue: false)
         XCTAssertTrue(
-            waitUntil(timeout: 3) { self.secureFieldHasEnteredValue(apiKeyField) },
+            waitUntil(timeout: 3) { self.hasSecureFieldEnteredValue(apiKeyField) },
             "API Key must actually be entered into the secure field.")
         commitFocusedInputIfNeeded(app: app)
     }
@@ -929,19 +929,19 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     @MainActor
     private func openAlbumFilterHandlingSystemPrompt(app: XCUIApplication) {
         let deadline = Date().addingTimeInterval(15)
-        var tapped = false
+        var didTap = false
         while Date() < deadline {
-            if systemSavePasswordPromptVisible(app: app) {
+            if isSystemSavePasswordPromptVisible(app: app) {
                 _ = captureNamedPNG(app: app, name: "server-switch-entry-password-prompt")
                 guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 4) else { break }
-                tapped = false
+                didTap = false
             }
             let back = app.buttons["albumFilter.back.button"]
             if back.exists && back.isHittable { return }
             let entry = app.buttons["filterSummary.album.button"]
-            if !tapped && entry.exists && entry.isHittable {
+            if !didTap && entry.exists && entry.isHittable {
                 entry.tap()
-                tapped = true
+                didTap = true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
@@ -993,12 +993,12 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func setAlbumSelection(app: XCUIApplication, albumID: String, selected: Bool) {
+    private func setAlbumSelection(app: XCUIApplication, albumID: String, isSelectionRequested: Bool) {
         let card = albumCard(app: app, albumID: albumID)
         XCTAssertTrue(card.waitForExistence(timeout: 20), "Album \(albumID) must appear")
         XCTAssertTrue(
             waitUntil(timeout: 12) {
-                if self.systemSavePasswordPromptVisible(app: app) {
+                if self.isSystemSavePasswordPromptVisible(app: app) {
                     _ = self.dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 2)
                     return false
                 }
@@ -1006,15 +1006,15 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             },
             "Album must be visible and hittable; state injection is no substitute"
         )
-        if albumCardLooksSelected(card) != selected {
-            guard !systemSavePasswordPromptVisible(app: app), card.isHittable else {
+        if isAlbumCardSelected(card) != isSelectionRequested {
+            guard !isSystemSavePasswordPromptVisible(app: app), card.isHittable else {
                 XCTFail("Before the tap, the album must still be visible and not covered by a system prompt")
                 return
             }
             card.tap()
         }
         XCTAssertTrue(
-            waitUntil(timeout: 6) { self.albumCardLooksSelected(card) == selected },
+            waitUntil(timeout: 6) { self.isAlbumCardSelected(card) == isSelectionRequested },
             "Album \(albumID) must actually reach the requested selection state"
         )
     }
@@ -1023,7 +1023,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     // wait until the album is hittable before tapping, and never tap through the prompt by coordinates.
     @MainActor
     private func selectAlbumHandlingSystemPrompt(app: XCUIApplication, albumID: String) {
-        if systemSavePasswordPromptVisible(app: app) {
+        if isSystemSavePasswordPromptVisible(app: app) {
             XCTAssertTrue(
                 dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 6),
                 "The system Save Password prompt must be closed with 'Not Now'; test credentials must not be saved"
@@ -1031,8 +1031,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         }
         _ = captureNamedPNG(app: app, name: "server-switch-album-before-select-\(albumID)")
         tapAlbumWhenHittable(app: app, albumID: albumID)
-        if !albumCardLooksSelected(albumCard(app: app, albumID: albumID))
-            && systemSavePasswordPromptVisible(app: app)
+        if !isAlbumCardSelected(albumCard(app: app, albumID: albumID))
+            && isSystemSavePasswordPromptVisible(app: app)
         {
             _ = captureNamedPNG(app: app, name: "server-switch-save-password-late-\(albumID)")
             XCTAssertTrue(
@@ -1042,7 +1042,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             tapAlbumWhenHittable(app: app, albumID: albumID)
         }
         XCTAssertTrue(
-            waitUntil(timeout: 4) { self.albumCardLooksSelected(self.albumCard(app: app, albumID: albumID)) },
+            waitUntil(timeout: 4) { self.isAlbumCardSelected(self.albumCard(app: app, albumID: albumID)) },
             "Target album must be selected; no blind taps while the prompt covers it"
         )
         _ = captureNamedPNG(app: app, name: "server-switch-album-after-select-\(albumID)")
@@ -1050,7 +1050,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
 
     @MainActor
     private func tapAlbumWhenHittable(app: XCUIApplication, albumID: String) {
-        if systemSavePasswordPromptVisible(app: app) {
+        if isSystemSavePasswordPromptVisible(app: app) {
             XCTAssertTrue(
                 dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 6),
                 "Do not tap the album while the prompt covers it"
@@ -1059,7 +1059,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let identifier = "albumFilter.album.\(albumID).button"
         XCTAssertTrue(
             waitUntil(timeout: 12) {
-                if self.systemSavePasswordPromptVisible(app: app) {
+                if self.isSystemSavePasswordPromptVisible(app: app) {
                     _ = self.dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 2)
                     return false
                 }
@@ -1069,9 +1069,9 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             "After closing the Save Password prompt, a fresh query must find the target album hittable"
         )
         let button = app.buttons[identifier]
-        XCTAssertFalse(systemSavePasswordPromptVisible(app: app), "Do not tap the album while the prompt covers it")
+        XCTAssertFalse(isSystemSavePasswordPromptVisible(app: app), "Do not tap the album while the prompt covers it")
         XCTAssertTrue(button.isHittable, "Target album must be hittable; no coordinate fallback")
-        if albumCardLooksSelected(button) { return }
+        if isAlbumCardSelected(button) { return }
         button.tap()
     }
 
@@ -1081,7 +1081,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func albumCardLooksSelected(_ button: XCUIElement) -> Bool {
+    private func isAlbumCardSelected(_ button: XCUIElement) -> Bool {
         if button.isSelected { return true }
         let value = String(describing: button.value ?? "")
         if value.contains("已选中") { return true }
@@ -1113,7 +1113,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func systemSavePasswordPromptVisible(app: XCUIApplication) -> Bool {
+    private func isSystemSavePasswordPromptVisible(app: XCUIApplication) -> Bool {
         namedSavePasswordPrompt(in: app) != nil
             || namedSavePasswordPrompt(in: XCUIApplication(bundleIdentifier: "com.apple.springboard")) != nil
     }
@@ -1130,13 +1130,13 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
                 let later = prompt.buttons["以后"].exists ? prompt.buttons["以后"] : prompt.buttons["Not Now"]
                 guard later.exists else { continue }
                 later.tap()
-                _ = waitUntil(timeout: 2) { !self.systemSavePasswordPromptVisible(app: app) }
-                return !systemSavePasswordPromptVisible(app: app)
+                _ = waitUntil(timeout: 2) { !self.isSystemSavePasswordPromptVisible(app: app) }
+                return !isSystemSavePasswordPromptVisible(app: app)
             }
-            if !systemSavePasswordPromptVisible(app: app) { return true }
+            if !isSystemSavePasswordPromptVisible(app: app) { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
-        return !systemSavePasswordPromptVisible(app: app)
+        return !isSystemSavePasswordPromptVisible(app: app)
     }
 
     @MainActor
@@ -1159,7 +1159,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func selectPerson(app: XCUIApplication, personID: String, soloOnly: Bool) {
+    private func selectPerson(app: XCUIApplication, personID: String, isSoloOnly: Bool) {
         let card = personNameElement(app: app, personID: personID)
         let toggle = personSoloOnlySwitch(app: app, personID: personID)
         if !toggle.exists {
@@ -1167,13 +1167,13 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         }
         XCTAssertTrue(toggle.waitForExistence(timeout: 6), "Solo-only switch must appear after selecting the person")
         let isOn = (toggle.value as? String) == "1"
-        if soloOnly != isOn {
+        if isSoloOnly != isOn {
             // Tap the actual knob on the right of the switch; tapping the middle of the combined SwiftUI label
             // may not toggle the value.
             toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         }
         assertPersonNavigation(
-            waitUntil(timeout: 6) { (toggle.value as? String) == (soloOnly ? "1" : "0") },
+            waitUntil(timeout: 6) { (toggle.value as? String) == (isSoloOnly ? "1" : "0") },
             "Target person's solo-only mode must reach the requested value", app: app, personID: personID)
     }
 
@@ -1324,12 +1324,12 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         pendingPhotos: String
     ) -> Bool {
         // On iPad the summary tile may merge the count and the selected-albums text into one label.
-        summaryCountVisible(app, value: selectedAlbums, label: "已选相册")
-            && summaryCountVisible(app, value: pendingPhotos, label: "待播照片")
+        isSummaryCountVisible(app, value: selectedAlbums, label: "已选相册")
+            && isSummaryCountVisible(app, value: pendingPhotos, label: "待播照片")
     }
 
     @MainActor
-    private func summaryCountVisible(_ app: XCUIApplication, value: String, label: String) -> Bool {
+    private func isSummaryCountVisible(_ app: XCUIApplication, value: String, label: String) -> Bool {
         // ui-label-lookup: Verify the displayed summary count and caption.
         if app.staticTexts[value].exists && app.staticTexts[label].exists { return true }
         let combined = "\(value) \(label)"
@@ -1439,7 +1439,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(serverField.waitForExistence(timeout: 8), "Server settings page should show the URL")
         replaceText(
-            in: serverField, app: app, with: serverURL, evidenceName: "server-url-replace", requireExactValue: true)
+            in: serverField, app: app, with: serverURL, evidenceName: "server-url-replace",
+            shouldRequireExactValue: true)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         if apiKeyField.waitForExistence(timeout: 4) {
             let current = apiKeyField.value as? String ?? ""
@@ -1449,7 +1450,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
                     app: app,
                     with: publicKey,
                     evidenceName: "server-apikey-replace",
-                    requireExactValue: false
+                    shouldRequireExactValue: false
                 )
             }
         }
@@ -1731,7 +1732,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         // still prove the target mode is selected.
         _ = waitUntil(timeout: 2) { continueButton.exists && continueButton.isEnabled }
         for _ in 0..<2 {
-            if systemSavePasswordPromptVisible(app: app) {
+            if isSystemSavePasswordPromptVisible(app: app) {
                 _ = captureNamedPNG(app: app, name: "mode-selection-password-prompt")
                 guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 4) else {
                     XCTFail("The named Save Password prompt must be gone before choosing a mode")
@@ -1749,7 +1750,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
                     "exists": modeButton.exists, "enabled": modeButton.isEnabled,
                     "hittable": modeButton.isHittable, "frame": String(describing: frame),
                     "app_frame": String(describing: app.frame),
-                    "password_prompt_visible": systemSavePasswordPromptVisible(app: app)
+                    "password_prompt_visible": isSystemSavePasswordPromptVisible(app: app)
                 ]
                 if let data = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]) {
                     let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
@@ -1759,7 +1760,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
                 }
                 _ = captureNamedPNG(app: app, name: "mode-card-not-hittable")
                 guard matches.count == 1, modeButton.exists, modeButton.isEnabled,
-                    !systemSavePasswordPromptVisible(app: app),
+                    !isSystemSavePasswordPromptVisible(app: app),
                     frame.width > 0, frame.height > 0, app.frame.contains(frame)
                 else {
                     XCTFail("Target mode card must be unique, enabled, fully visible and unobstructed")
@@ -1770,10 +1771,10 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
                 modeButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             }
             _ = waitUntil(timeout: 4) {
-                self.systemSavePasswordPromptVisible(app: app) || self.isOnboardingModeSelected(modeButton)
+                self.isSystemSavePasswordPromptVisible(app: app) || self.isOnboardingModeSelected(modeButton)
             }
         }
-        if systemSavePasswordPromptVisible(app: app) {
+        if isSystemSavePasswordPromptVisible(app: app) {
             _ = captureNamedPNG(app: app, name: "mode-selection-password-prompt")
             guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 4) else {
                 XCTFail("The named Save Password prompt must be dismissed before Continue on the mode page")
@@ -1788,17 +1789,17 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         // The password prompt may appear only after tapping Continue; resend the blocked Continue once,
         // and only if the prompt was actually dismissed.
         let departureDeadline = Date().addingTimeInterval(8)
-        var resumedAfterPrompt = false
+        var didResumeAfterPrompt = false
         while Date() < departureDeadline {
-            if systemSavePasswordPromptVisible(app: app) {
+            if isSystemSavePasswordPromptVisible(app: app) {
                 _ = captureNamedPNG(app: app, name: "mode-departure-password-prompt")
-                guard !resumedAfterPrompt,
+                guard !didResumeAfterPrompt,
                     dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 4)
                 else {
                     XCTFail("A Save Password prompt shown while leaving the mode page must be dismissed")
                     return
                 }
-                resumedAfterPrompt = true
+                didResumeAfterPrompt = true
                 if modeButton.exists && continueButton.exists {
                     guard isOnboardingModeSelected(modeButton) else {
                         XCTFail("Target mode must stay selected after the prompt goes away")
@@ -1883,12 +1884,12 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         app: XCUIApplication,
         with value: String,
         evidenceName: String,
-        requireExactValue: Bool
+        shouldRequireExactValue: Bool
     ) {
         field.tap()
         clearTextFieldOrFail(field, app: app, evidenceName: evidenceName)
         field.typeText(value)
-        guard requireExactValue else { return }
+        guard shouldRequireExactValue else { return }
         let actual = field.value as? String ?? ""
         if actual != value {
             _ = captureNamedPNG(app: app, name: "\(evidenceName)-mismatch")
@@ -1898,31 +1899,31 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
 
     @MainActor
     private func clearTextFieldOrFail(_ field: XCUIElement, app: XCUIApplication, evidenceName: String) {
-        if textFieldLooksEmpty(field) { return }
+        if isTextFieldEmpty(field) { return }
         // Command-A does not always select the whole URL field, so fall back to end-of-field deletes.
         field.typeKey("a", modifierFlags: .command)
         field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
-        if !textFieldLooksEmpty(field) {
+        if !isTextFieldEmpty(field) {
             field.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .command)
             let remaining = field.value as? String ?? ""
             if !remaining.isEmpty {
                 field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: remaining.count))
             }
         }
-        if !textFieldLooksEmpty(field) {
+        if !isTextFieldEmpty(field) {
             _ = captureNamedPNG(app: app, name: "\(evidenceName)-clear-failed")
             XCTFail("Failed to clear the URL field; read back \(field.value as? String ?? "")")
         }
     }
 
-    private func textFieldLooksEmpty(_ field: XCUIElement) -> Bool {
+    private func isTextFieldEmpty(_ field: XCUIElement) -> Bool {
         let value = field.value as? String ?? ""
         return value.isEmpty
             || value.contains("请输入")
             || value.localizedCaseInsensitiveContains("enter")
     }
 
-    private func secureFieldHasEnteredValue(_ field: XCUIElement) -> Bool {
+    private func hasSecureFieldEnteredValue(_ field: XCUIElement) -> Bool {
         let value = field.value as? String ?? ""
         return !value.isEmpty && !value.contains("请输入") && !value.localizedCaseInsensitiveContains("api key")
     }

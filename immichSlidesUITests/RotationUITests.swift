@@ -19,7 +19,7 @@ final class RotationUITests: XCTestCase {
         let driver = IOSDriver(app: app)
         let evidence = Evidence()
         driver.launchToPlayback(input: input)
-        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(singlePhoto: false)])
+        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: false)])
         let targets: [(name: String, device: UIDeviceOrientation, orientation: StepOrientation)] = [
             ("layout-landscape-multi", .landscapeLeft, .landscape),
             ("layout-portrait-multi", .portrait, .portrait)
@@ -44,7 +44,7 @@ final class RotationUITests: XCTestCase {
         let driver = IOSDriver(app: app)
         let evidence = Evidence()
         driver.launchToPlayback(input: input)
-        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(singlePhoto: false)])
+        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: false)])
         var observedMark: String?
         _ = Wait.until(timeout: Timing.multiPhotoWait) {
             observedMark = visibleSceneMark()

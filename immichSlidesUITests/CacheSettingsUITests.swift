@@ -56,7 +56,7 @@ final class CacheSettingsUITests: XCTestCase {
     private func runCacheClearFlow(_ driver: some PlaybackDriver, input: StrictE2EInput) throws {
         let evidence = Evidence()
         driver.launchToPlayback(input: input)
-        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(singlePhoto: true)])
+        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: true)])
         driver.pause()
         guard driver.stableMark() != nil else {
             throw Failure("No recognizable public photo was shown before clearing.")

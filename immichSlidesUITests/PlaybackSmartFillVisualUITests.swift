@@ -1,6 +1,17 @@
 import Foundation
 import XCTest
 
+private enum EvidenceCalibration {
+    static let defaultSceneCount: Int = 20
+    static let minimumPersonAssetCount: Int = 20
+    static let defaultMotionSampleSeconds: Double = 36
+    static let defaultMotionIntervalSeconds: Double = 5.0
+    static let defaultMotionTraceTimeoutSeconds: Double = 60
+    static let cropRetentionThreshold: Double = 0.60
+    static let fnvOffsetBasis: UInt64 = 14_695_981_039_346_656_037
+    static let fnvPrime: UInt64 = 1_099_511_628_211
+}
+
 private enum SmartFillRuntimeEvidenceSupport {
     static func writeScreenshotPNG(_ data: Data, to fileURL: URL) -> URL? {
         do {
@@ -399,7 +410,8 @@ private enum SmartFillRuntimeEvidenceSupport {
                 "currentAssetSubjectProtectionPassed", in: fields,
                 default: currentAssetVisibleQualityClass == "acceptable"),
             "currentAssetVisibleQualityClass": currentAssetVisibleQualityClass,
-            "cropRetentionThresholdUsed": doubleValue("cropRetentionThresholdUsed", in: fields, default: 0.60),
+            "cropRetentionThresholdUsed": doubleValue(
+                "cropRetentionThresholdUsed", in: fields, default: EvidenceCalibration.cropRetentionThreshold),
             "slotRoles": listValue("slotRoles", in: fields),
             "slotRefs": slotRefs,
             "candidateWindowRequested": intValue("candidateWindowRequested", in: fields, default: candidateWindowUsed),
@@ -830,16 +842,16 @@ private enum SmartFillRuntimeEvidenceSupport {
 
     private static func redactedReasonListValue(_ key: String, in fields: [String: String]) -> [String] {
         listValue(key, in: fields).map { rawValue in
-            containsSensitiveToken(rawValue) ? "redacted-\(stableHash(rawValue).prefix(12))" : rawValue
+            hasSensitiveToken(rawValue) ? "redacted-\(stableHash(rawValue).prefix(12))" : rawValue
         }
     }
 
     private static func redactedRootCauseBucket(_ rawValue: String) -> String {
-        containsSensitiveToken(rawValue) ? "unknown" : rawValue
+        hasSensitiveToken(rawValue) ? "unknown" : rawValue
     }
 
     private static func redactedDiagnosticValue(_ rawValue: String) -> String {
-        containsSensitiveToken(rawValue) ? "redacted-\(stableHash(rawValue).prefix(12))" : rawValue
+        hasSensitiveToken(rawValue) ? "redacted-\(stableHash(rawValue).prefix(12))" : rawValue
     }
 
     private static func normalizedFallbackRootCauseBucket(
@@ -897,7 +909,7 @@ private enum SmartFillRuntimeEvidenceSupport {
         }
     }
 
-    private static func containsSensitiveToken(_ value: String) -> Bool {
+    private static func hasSensitiveToken(_ value: String) -> Bool {
         let lowercased = value.lowercased()
         return lowercased.contains("http://") || lowercased.contains("https://") || lowercased.contains("api_key")
             || lowercased.contains("api key") || lowercased.contains("token") || lowercased.contains("bearer")
@@ -1029,10 +1041,10 @@ private enum SmartFillRuntimeEvidenceSupport {
     }
 
     private static func stableHash(_ value: String) -> String {
-        var hash: UInt64 = 14_695_981_039_346_656_037
+        var hash: UInt64 = EvidenceCalibration.fnvOffsetBasis
         for byte in value.utf8 {
             hash ^= UInt64(byte)
-            hash = hash &* 1_099_511_628_211
+            hash = hash &* EvidenceCalibration.fnvPrime
         }
         return String(format: "%016llx", hash)
     }
@@ -1141,7 +1153,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         let app = try launchConfiguredAppAtModeSelection()
         startRandomPlaybackFromModeSelection(app: app)
 
-        let evidence = try collectTwentySceneEvidence(app: app, scenario: "random")
+        let evidence = try collectSceneEvidence(app: app, scenario: "random")
         assertPolicies(in: evidence, contain: "portrait", scenario: "random playback, portrait")
         assertSurfaces(in: evidence, orientation: .portrait, scenario: "random playback, portrait")
         assertFallbackDistributionMeetsSpec(in: evidence, scenario: "random playback, portrait")
@@ -1154,8 +1166,8 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         )
         let app = try launchSmartFillMotionEvidenceAppAtModeSelection(
             scenario: scenario,
-            forceAutoplayOff: false,
-            enableSmartFillMotionTrace: true
+            shouldForceAutoplayOff: false,
+            shouldEnableSmartFillMotionTrace: true
         )
         startRandomPlaybackFromModeSelection(app: app)
 
@@ -1261,7 +1273,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         _ = captureRuntimeScreenshot(
             app: app,
             name: "smartfill-\(scenario)-\(deviceTag())-final",
-            attachToXCTest: true
+            shouldAttachToXCTest: true
         )
     }
 
@@ -1272,8 +1284,8 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         )
         let app = try launchSmartFillMotionEvidenceAppAtModeSelection(
             scenario: scenario,
-            forceAutoplayOff: false,
-            enableSmartFillMotionTrace: true
+            shouldForceAutoplayOff: false,
+            shouldEnableSmartFillMotionTrace: true
         )
         startRandomPlaybackFromModeSelection(app: app)
 
@@ -1386,14 +1398,14 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         _ = captureRuntimeScreenshot(
             app: app,
             name: "smartfill-\(scenario)-\(deviceTag())-final",
-            attachToXCTest: true
+            shouldAttachToXCTest: true
         )
     }
 
     @MainActor
     func testPlaybackTransitionAnimationEvidenceSmartFillQuickSwitch() throws {
         try runPlaybackTransitionAnimationEvidence(
-            disableSmartFill: false,
+            shouldDisableSmartFill: false,
             scenario: "iphone-smartfill"
         )
     }
@@ -1401,7 +1413,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
     @MainActor
     func testPlaybackTransitionAnimationEvidenceSinglePhotoQuickSwitch() throws {
         try runPlaybackTransitionAnimationEvidence(
-            disableSmartFill: true,
+            shouldDisableSmartFill: true,
             scenario: "iphone-single-photo"
         )
     }
@@ -1413,11 +1425,11 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
 
         let scenario = "iphone-smartfill-exif-presence"
         var previousManifest = try waitForCurrentManifest(app: app, timeout: 45)
-        var previousVisible = exifOverlayVisible(in: previousManifest)
+        var isPreviousVisible = isExifOverlayVisible(in: previousManifest)
         saveEvidenceScreenshot(
             app: app,
             scenario: scenario,
-            step: "00-start-visible-\(previousVisible)"
+            step: "00-start-visible-\(isPreviousVisible)"
         )
 
         var coverage = ExifPresenceEdgeCoverage()
@@ -1436,9 +1448,9 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
                 return nextManifest.slotRefs != previousRefs
             }
 
-            let currentVisible = exifOverlayVisible(in: currentManifest)
-            let transitionLabel = "\(previousVisible)-to-\(currentVisible)"
-            switch coverage.observeTransition(from: previousVisible, to: currentVisible) {
+            let isCurrentVisible = isExifOverlayVisible(in: currentManifest)
+            let transitionLabel = "\(isPreviousVisible)-to-\(isCurrentVisible)"
+            switch coverage.observeTransition(from: isPreviousVisible, to: isCurrentVisible) {
             case .appear:
                 RunLoop.current.run(until: Date().addingTimeInterval(midTransitionDelay))
                 saveEvidenceScreenshot(app: app, scenario: scenario, step: "\(attempt)-appear-mid-\(transitionLabel)")
@@ -1457,7 +1469,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
             }
 
             previousManifest = currentManifest
-            previousVisible = currentVisible
+            isPreviousVisible = isCurrentVisible
         }
 
         guard coverage.isComplete else {
@@ -1514,7 +1526,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         let app = try launchConfiguredAppAtModeSelection()
         startRandomPlaybackFromModeSelection(app: app)
 
-        let evidence = try collectTwentySceneEvidence(app: app, scenario: "random-landscape")
+        let evidence = try collectSceneEvidence(app: app, scenario: "random-landscape")
         assertPolicies(in: evidence, contain: "landscape", scenario: "random playback, landscape")
         assertSurfaces(in: evidence, orientation: .landscape, scenario: "random playback, landscape")
         assertFallbackDistributionMeetsSpec(in: evidence, scenario: "random playback, landscape")
@@ -1522,12 +1534,12 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
 
     @MainActor
     func testSmartFillPeopleFilterPlaybackTwentyScenes() async throws {
-        let personID = try await findEligiblePersonID(minimumAssetCount: 20)
+        let personID = try await findEligiblePersonID(minimumAssetCount: EvidenceCalibration.minimumPersonAssetCount)
         let selectionJSON = makePersonFilterSelectionJSON(personID: personID)
         let app = try launchConfiguredAppAtModeSelection(selectionJSON: selectionJSON)
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let evidence = try collectTwentySceneEvidence(app: app, scenario: "people-filter")
+        let evidence = try collectSceneEvidence(app: app, scenario: "people-filter")
         assertPolicies(in: evidence, contain: "portrait", scenario: "people filter, portrait")
         assertSurfaces(in: evidence, orientation: .portrait, scenario: "people filter, portrait")
         assertFallbackDistributionMeetsSpec(in: evidence, scenario: "people filter, portrait")
@@ -1536,12 +1548,12 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
     @MainActor
     func testSmartFillPeopleFilterLandscapePlaybackTwentyScenes() async throws {
         XCUIDevice.shared.orientation = .landscapeLeft
-        let personID = try await findEligiblePersonID(minimumAssetCount: 20)
+        let personID = try await findEligiblePersonID(minimumAssetCount: EvidenceCalibration.minimumPersonAssetCount)
         let selectionJSON = makePersonFilterSelectionJSON(personID: personID)
         let app = try launchConfiguredAppAtModeSelection(selectionJSON: selectionJSON)
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let evidence = try collectTwentySceneEvidence(app: app, scenario: "people-filter-landscape")
+        let evidence = try collectSceneEvidence(app: app, scenario: "people-filter-landscape")
         assertPolicies(in: evidence, contain: "landscape", scenario: "people filter, landscape")
         assertSurfaces(in: evidence, orientation: .landscape, scenario: "people filter, landscape")
         assertFallbackDistributionMeetsSpec(in: evidence, scenario: "people filter, landscape")
@@ -1554,7 +1566,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         let app = try launchConfiguredAppAtModeSelection(selectionJSON: selectionJSON)
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let evidence = try collectTwentySceneEvidence(app: app, scenario: "fixed-album")
+        let evidence = try collectSceneEvidence(app: app, scenario: "fixed-album")
         assertPolicies(in: evidence, contain: "portrait", scenario: "fixed album, portrait")
         assertSurfaces(in: evidence, orientation: .portrait, scenario: "fixed album, portrait")
         assertFallbackDistributionMeetsSpec(in: evidence, scenario: "fixed album, portrait")
@@ -1568,7 +1580,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         let app = try launchConfiguredAppAtModeSelection(selectionJSON: selectionJSON)
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let evidence = try collectTwentySceneEvidence(app: app, scenario: "fixed-album-landscape")
+        let evidence = try collectSceneEvidence(app: app, scenario: "fixed-album-landscape")
         assertPolicies(in: evidence, contain: "landscape", scenario: "fixed album, landscape")
         assertSurfaces(in: evidence, orientation: .landscape, scenario: "fixed album, landscape")
         assertFallbackDistributionMeetsSpec(in: evidence, scenario: "fixed album, landscape")
@@ -1576,7 +1588,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
 
     @MainActor
     func testRandomPlaybackSwitchWorkloadTwentyScenesWithSmartFillDisabled() throws {
-        let app = try launchConfiguredAppAtModeSelection(disableSmartFill: true)
+        let app = try launchConfiguredAppAtModeSelection(shouldDisableSmartFill: true)
         startRandomPlaybackFromModeSelection(app: app)
 
         try exerciseTwentySceneSwitches(app: app, scenario: "cpu-baseline")
@@ -1584,7 +1596,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
 
     @MainActor
     func testRandomPlaybackSwitchWorkloadTwentyScenesWithSmartFillEnabled() throws {
-        let app = try launchConfiguredAppAtModeSelection(disableSmartFill: false)
+        let app = try launchConfiguredAppAtModeSelection(shouldDisableSmartFill: false)
         startRandomPlaybackFromModeSelection(app: app)
 
         try exerciseTwentySceneSwitches(app: app, scenario: "cpu-smartfill")
@@ -2155,35 +2167,35 @@ private extension PlaybackSmartFillVisualUITests {
     }
 
     struct ExifPresenceEdgeCoverage {
-        private(set) var sawAppear = false
-        private(set) var sawDisappear = false
+        private(set) var didAppear = false
+        private(set) var didDisappear = false
 
         var isComplete: Bool {
-            sawAppear && sawDisappear
+            didAppear && didDisappear
         }
 
         var missingEdgeDescription: String {
             var messages: [String] = []
-            if !sawAppear {
+            if !didAppear {
                 messages.append(
                     "Missing smooth EXIF overlay appearance: multi-photo without EXIF → single photo with EXIF")
             }
-            if !sawDisappear {
+            if !didDisappear {
                 messages.append(
                     "Missing smooth EXIF overlay disappearance: single photo with EXIF → multi-photo without EXIF")
             }
             return messages.joined(separator: "; ")
         }
 
-        mutating func observeTransition(from previousVisible: Bool, to currentVisible: Bool)
+        mutating func observeTransition(from isPreviousVisible: Bool, to isCurrentVisible: Bool)
             -> ExifPresenceTransitionEdge?
         {
-            switch (previousVisible, currentVisible) {
+            switch (isPreviousVisible, isCurrentVisible) {
             case (false, true):
-                sawAppear = true
+                didAppear = true
                 return .appear
             case (true, false):
-                sawDisappear = true
+                didDisappear = true
                 return .disappear
             default:
                 return nil
@@ -2193,27 +2205,27 @@ private extension PlaybackSmartFillVisualUITests {
 
     func launchConfiguredAppAtModeSelection(
         selectionJSON: String? = nil,
-        disableSmartFill: Bool = false,
-        forceAutoplayOff: Bool = true,
-        enableSmartFillMotionTrace: Bool = false,
-        resetState: Bool = true
+        shouldDisableSmartFill: Bool = false,
+        shouldForceAutoplayOff: Bool = true,
+        shouldEnableSmartFillMotionTrace: Bool = false,
+        shouldResetState: Bool = true
     ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
-        if resetState {
+        if shouldResetState {
             app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         }
         app.launchEnvironment["XCTestConfigurationFilePath"] =
             ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] ?? "SmartFillMotionEvidenceUITest"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
-        if forceAutoplayOff {
+        if shouldForceAutoplayOff {
             app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
         }
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
         SmartFillRuntimeEvidenceSupport.copyAssetIDReplayEnvironment(to: app)
-        if enableSmartFillMotionTrace {
+        if shouldEnableSmartFillMotionTrace {
             let environment = ProcessInfo.processInfo.environment
             app.launchEnvironment["UI_TEST_COLLECT_SMARTFILL_MOTION_TRACE"] = "1"
             app.launchEnvironment["UI_TEST_SMARTFILL_MOTION_TRACE_DURATION_SECONDS"] =
@@ -2226,7 +2238,7 @@ private extension PlaybackSmartFillVisualUITests {
                 environment["TEST_RUNNER_SMARTFILL_MOTION_TRACE_START_TIMEOUT_SECONDS"] ?? environment[
                     "SMARTFILL_MOTION_TRACE_START_TIMEOUT_SECONDS"] ?? "60"
         }
-        if disableSmartFill {
+        if shouldDisableSmartFill {
             app.launchEnvironment["IMMICHSLIDES_DISABLE_SMART_FILL"] = "1"
         }
         if let selectionJSON {
@@ -2249,25 +2261,25 @@ private extension PlaybackSmartFillVisualUITests {
 
     func launchSmartFillMotionEvidenceAppAtModeSelection(
         scenario: String,
-        forceAutoplayOff: Bool,
-        enableSmartFillMotionTrace: Bool
+        shouldForceAutoplayOff: Bool,
+        shouldEnableSmartFillMotionTrace: Bool
     ) throws -> XCUIApplication {
         let configuredInterval = smartFillMotionConfiguredIntervalSeconds()
         if abs(configuredInterval - 5.0) > 0.000_1 {
             XCTAssertTrue(
-                smartFillMotionIntervalIsPreseeded(),
+                isSmartFillMotionIntervalPreseeded(),
                 "\(scenario) non-5-second motion evidence must preseed PlaybackSettings.intervalSeconds (\(configuredInterval) s) in the app's saved settings and set SMARTFILL_MOTION_INTERVAL_PRESEEDED=1; the flag is trusted, not verified, so confirm the value in Settings before using the cadence evidence"
             )
             return try launchConfiguredAppAtModeSelection(
-                forceAutoplayOff: forceAutoplayOff,
-                enableSmartFillMotionTrace: enableSmartFillMotionTrace,
-                resetState: false
+                shouldForceAutoplayOff: shouldForceAutoplayOff,
+                shouldEnableSmartFillMotionTrace: shouldEnableSmartFillMotionTrace,
+                shouldResetState: false
             )
         }
 
         return try launchConfiguredAppAtModeSelection(
-            forceAutoplayOff: forceAutoplayOff,
-            enableSmartFillMotionTrace: enableSmartFillMotionTrace
+            shouldForceAutoplayOff: shouldForceAutoplayOff,
+            shouldEnableSmartFillMotionTrace: shouldEnableSmartFillMotionTrace
         )
     }
 
@@ -2280,8 +2292,8 @@ private extension PlaybackSmartFillVisualUITests {
         )
     }
 
-    func runPlaybackTransitionAnimationEvidence(disableSmartFill: Bool, scenario: String) throws {
-        let app = try launchConfiguredAppAtModeSelection(disableSmartFill: disableSmartFill)
+    func runPlaybackTransitionAnimationEvidence(shouldDisableSmartFill: Bool, scenario: String) throws {
+        let app = try launchConfiguredAppAtModeSelection(shouldDisableSmartFill: shouldDisableSmartFill)
         startRandomPlaybackFromModeSelection(app: app)
         saveEvidenceScreenshot(app: app, scenario: scenario, step: "00-before")
 
@@ -2299,7 +2311,7 @@ private extension PlaybackSmartFillVisualUITests {
         )
     }
 
-    func exifOverlayVisible(in manifest: SmartFillManifest) -> Bool {
+    func isExifOverlayVisible(in manifest: SmartFillManifest) -> Bool {
         manifest.rawFields["exifOverlayVisible"] == "true"
     }
 
@@ -2320,7 +2332,7 @@ private extension PlaybackSmartFillVisualUITests {
         )
     }
 
-    func collectTwentySceneEvidence(app: XCUIApplication, scenario: String) throws -> SmartFillEvidence {
+    func collectSceneEvidence(app: XCUIApplication, scenario: String) throws -> SmartFillEvidence {
         var manifests: [SmartFillManifest] = []
         var runtimeRecords: [[String: Any]] = []
         var attachedSceneTypes = Set<String>()
@@ -2335,7 +2347,7 @@ private extension PlaybackSmartFillVisualUITests {
         let replayCurrentAssetRefIndex = firstIndexMap(for: replayCurrentAssetRefs ?? [])
         var previousReplayAssetIndex: Int?
         var replayValidationRows: [SmartFillRuntimeEvidenceSupport.AssetIDReplayValidationRow] = []
-        var stoppedAtReplayBoundary = false
+        var didStopAtReplayBoundary = false
 
         for index in 0..<targetSceneCount {
             var manifest = try waitForCurrentManifest(app: app, timeout: index == 0 ? 45 : 25)
@@ -2414,7 +2426,7 @@ private extension PlaybackSmartFillVisualUITests {
                         break
                     }
                     if progress.shouldStopSampling {
-                        stoppedAtReplayBoundary = true
+                        didStopAtReplayBoundary = true
                         break
                     }
                     guard progress.shouldIncludeManifest else { break }
@@ -2433,7 +2445,7 @@ private extension PlaybackSmartFillVisualUITests {
             if let screenshot = captureRuntimeScreenshot(
                 app: app,
                 name: "smartfill-\(scenario)-\(deviceTag())-seq-\(sequence)-\(sceneIdHash)-\(manifest.sceneType)",
-                attachToXCTest: shouldAttach
+                shouldAttachToXCTest: shouldAttach
             ) {
                 if firstNonLoadingScreenshotCapturedMs == nil {
                     firstNonLoadingScreenshotCapturedMs =
@@ -2478,7 +2490,7 @@ private extension PlaybackSmartFillVisualUITests {
             scenario: scenario
         )
         writeAssetIDReplayEvidence(replayValidationRows, scenario: scenario)
-        if stoppedAtReplayBoundary {
+        if didStopAtReplayBoundary {
             XCTAssertLessThan(
                 manifests.count, targetSceneCount, "\(scenario) should stop cleanly before the replay wraps around")
         } else {
@@ -3049,7 +3061,7 @@ private extension PlaybackSmartFillVisualUITests {
     }
 
     func cropRetentionThreshold(for manifest: SmartFillManifest) -> Double {
-        Double(manifest.rawFields["cropRetentionThresholdUsed"] ?? "") ?? 0.60
+        Double(manifest.rawFields["cropRetentionThresholdUsed"] ?? "") ?? EvidenceCalibration.cropRetentionThreshold
     }
 
     func attachManifestSummary(_ manifests: [SmartFillManifest], scenario: String) {
@@ -3129,18 +3141,18 @@ private extension PlaybackSmartFillVisualUITests {
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        _ = captureRuntimeScreenshot(app: app, name: name, attachToXCTest: true)
+        _ = captureRuntimeScreenshot(app: app, name: name, shouldAttachToXCTest: true)
     }
 
     func captureRuntimeScreenshot(
         app: XCUIApplication,
         name: String,
-        attachToXCTest: Bool
+        shouldAttachToXCTest: Bool
     ) -> (path: String, captureTimestamp: String)? {
         // In a landscape Simulator an app-element screenshot can keep the old window bounds,
         // so runtime evidence takes a full-screen screenshot.
         let screenshot = XCUIScreen.main.screenshot()
-        if attachToXCTest {
+        if shouldAttachToXCTest {
             let attachment = XCTAttachment(screenshot: screenshot)
             attachment.name = name
             attachment.lifetime = .keepAlways
@@ -3229,7 +3241,7 @@ private extension PlaybackSmartFillVisualUITests {
             let count = Int(rawValue),
             count > 0
         else {
-            return 20
+            return EvidenceCalibration.defaultSceneCount
         }
         return count
     }
@@ -3396,7 +3408,7 @@ private extension PlaybackSmartFillVisualUITests {
             let value = TimeInterval(rawValue),
             value > 0
         else {
-            return 36
+            return EvidenceCalibration.defaultMotionSampleSeconds
         }
         return value
     }
@@ -3410,12 +3422,12 @@ private extension PlaybackSmartFillVisualUITests {
             let value = Double(rawValue),
             value > 0
         else {
-            return 5.0
+            return EvidenceCalibration.defaultMotionIntervalSeconds
         }
         return value
     }
 
-    func smartFillMotionIntervalIsPreseeded() -> Bool {
+    func isSmartFillMotionIntervalPreseeded() -> Bool {
         let environment = ProcessInfo.processInfo.environment
         return environment["TEST_RUNNER_SMARTFILL_MOTION_INTERVAL_PRESEEDED"] == "1"
             || environment["SMARTFILL_MOTION_INTERVAL_PRESEEDED"] == "1"
@@ -3446,7 +3458,7 @@ private extension PlaybackSmartFillVisualUITests {
             let value = TimeInterval(rawValue),
             value > 0
         else {
-            return 60
+            return EvidenceCalibration.defaultMotionTraceTimeoutSeconds
         }
         return value
     }
@@ -3934,7 +3946,7 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
         let app = try launchConfiguredAppAtModeSelection()
         startRandomPlaybackFromModeSelection(app: app)
 
-        let evidence = try collectTwentySceneEvidence(app: app, scenario: "random-tvos")
+        let evidence = try collectSceneEvidence(app: app, scenario: "random-tvos")
         assertPolicies(in: evidence, contain: "appletv-landscape", scenario: "Apple TV random playback")
         assertSurfacesAreLandscape(in: evidence, scenario: "Apple TV random playback")
         assertFallbackDistributionMeetsSpec(in: evidence, scenario: "Apple TV random playback")
@@ -3967,8 +3979,8 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
             defaultScenario: "apple-tv-smartfill-motion-real-autoplay"
         )
         let app = try launchConfiguredAppAtModeSelection(
-            forceAutoplayOff: false,
-            enableSmartFillMotionTrace: true
+            shouldForceAutoplayOff: false,
+            shouldEnableSmartFillMotionTrace: true
         )
         startRandomPlaybackFromModeSelection(app: app)
 
@@ -4039,7 +4051,7 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
             transitionRowsWithoutBacking.isEmpty,
             "\(scenario) accepted/single SmartFill transitions must enable the black backing"
         )
-        _ = captureRuntimeScreenshot(app: app, name: "smartfill-\(scenario)-appletv-final", attachToXCTest: true)
+        _ = captureRuntimeScreenshot(app: app, name: "smartfill-\(scenario)-appletv-final", shouldAttachToXCTest: true)
     }
 
     @MainActor
@@ -4048,8 +4060,8 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
             defaultScenario: "apple-tv-smartfill-motion-remote-interaction-liveness"
         )
         let app = try launchConfiguredAppAtModeSelection(
-            forceAutoplayOff: false,
-            enableSmartFillMotionTrace: true
+            shouldForceAutoplayOff: false,
+            shouldEnableSmartFillMotionTrace: true
         )
         startRandomPlaybackFromModeSelection(app: app)
 
@@ -4160,17 +4172,17 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
             motionRows.filter { $0.fields["progressFrameStatus"] == "available" }.isEmpty,
             "\(scenario) available motion rows must continue during the interaction"
         )
-        _ = captureRuntimeScreenshot(app: app, name: "smartfill-\(scenario)-appletv-final", attachToXCTest: true)
+        _ = captureRuntimeScreenshot(app: app, name: "smartfill-\(scenario)-appletv-final", shouldAttachToXCTest: true)
     }
 
     @MainActor
     func testSmartFillPeopleFilterPlaybackTwentyScenesOnAppleTV() async throws {
-        let personID = try await findEligiblePersonID(minimumAssetCount: 20)
+        let personID = try await findEligiblePersonID(minimumAssetCount: EvidenceCalibration.minimumPersonAssetCount)
         let selectionJSON = makePersonFilterSelectionJSON(personID: personID)
         let app = try launchConfiguredAppAtModeSelection(selectionJSON: selectionJSON)
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let evidence = try collectTwentySceneEvidence(app: app, scenario: "people-filter-tvos")
+        let evidence = try collectSceneEvidence(app: app, scenario: "people-filter-tvos")
         assertPolicies(in: evidence, contain: "appletv-landscape", scenario: "Apple TV people filter playback")
         assertSurfacesAreLandscape(in: evidence, scenario: "Apple TV people filter playback")
         assertFallbackDistributionMeetsSpec(in: evidence, scenario: "Apple TV people filter playback")
@@ -4183,7 +4195,7 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
         let app = try launchConfiguredAppAtModeSelection(selectionJSON: selectionJSON)
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let evidence = try collectTwentySceneEvidence(app: app, scenario: "fixed-album-tvos")
+        let evidence = try collectSceneEvidence(app: app, scenario: "fixed-album-tvos")
         assertPolicies(in: evidence, contain: "appletv-landscape", scenario: "Apple TV fixed album playback")
         assertSurfacesAreLandscape(in: evidence, scenario: "Apple TV fixed album playback")
         assertFallbackDistributionMeetsSpec(in: evidence, scenario: "Apple TV fixed album playback")
@@ -4255,17 +4267,17 @@ private extension PlaybackSmartFillTVOSVisualUITests {
 
     func launchConfiguredAppAtModeSelection(
         selectionJSON: String? = nil,
-        forceAutoplayOff: Bool = true,
-        enableSmartFillMotionTrace: Bool = false
+        shouldForceAutoplayOff: Bool = true,
+        shouldEnableSmartFillMotionTrace: Bool = false
     ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
-        if forceAutoplayOff {
+        if shouldForceAutoplayOff {
             app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
         }
-        if enableSmartFillMotionTrace {
+        if shouldEnableSmartFillMotionTrace {
             let environment = ProcessInfo.processInfo.environment
             app.launchEnvironment["UI_TEST_COLLECT_SMARTFILL_MOTION_TRACE"] = "1"
             app.launchEnvironment["UI_TEST_SMARTFILL_MOTION_TRACE_DURATION_SECONDS"] =
@@ -4655,7 +4667,7 @@ private extension PlaybackSmartFillTVOSVisualUITests {
             let value = TimeInterval(rawValue),
             value > 0
         else {
-            return 60
+            return EvidenceCalibration.defaultMotionTraceTimeoutSeconds
         }
         return value
     }
@@ -4671,7 +4683,7 @@ private extension PlaybackSmartFillTVOSVisualUITests {
             let value = TimeInterval(rawValue),
             value > 0
         else {
-            return 36
+            return EvidenceCalibration.defaultMotionSampleSeconds
         }
         return value
     }
@@ -4704,7 +4716,7 @@ private extension PlaybackSmartFillTVOSVisualUITests {
         return min(max(value, 0.05), 0.25)
     }
 
-    func collectTwentySceneEvidence(app: XCUIApplication, scenario: String) throws -> SmartFillEvidence {
+    func collectSceneEvidence(app: XCUIApplication, scenario: String) throws -> SmartFillEvidence {
         var manifests: [SmartFillManifest] = []
         var runtimeRecords: [[String: Any]] = []
         var attachedSceneTypes = Set<String>()
@@ -4753,7 +4765,7 @@ private extension PlaybackSmartFillTVOSVisualUITests {
             if let screenshot = captureRuntimeScreenshot(
                 app: app,
                 name: "smartfill-\(scenario)-appletv-seq-\(sequence)-\(sceneIdHash)-\(manifest.sceneType)",
-                attachToXCTest: shouldAttach
+                shouldAttachToXCTest: shouldAttach
             ) {
                 if firstNonLoadingScreenshotCapturedMs == nil {
                     firstNonLoadingScreenshotCapturedMs =
@@ -5031,7 +5043,7 @@ private extension PlaybackSmartFillTVOSVisualUITests {
     }
 
     func cropRetentionThreshold(for manifest: SmartFillManifest) -> Double {
-        Double(manifest.rawFields["cropRetentionThresholdUsed"] ?? "") ?? 0.60
+        Double(manifest.rawFields["cropRetentionThresholdUsed"] ?? "") ?? EvidenceCalibration.cropRetentionThreshold
     }
 
     func attachManifestSummary(_ manifests: [SmartFillManifest], scenario: String) {
@@ -5196,16 +5208,16 @@ private extension PlaybackSmartFillTVOSVisualUITests {
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        _ = captureRuntimeScreenshot(app: app, name: name, attachToXCTest: true)
+        _ = captureRuntimeScreenshot(app: app, name: name, shouldAttachToXCTest: true)
     }
 
     func captureRuntimeScreenshot(
         app: XCUIApplication,
         name: String,
-        attachToXCTest: Bool
+        shouldAttachToXCTest: Bool
     ) -> (path: String, captureTimestamp: String)? {
         let screenshot = app.screenshot()
-        if attachToXCTest {
+        if shouldAttachToXCTest {
             let attachment = XCTAttachment(screenshot: screenshot)
             attachment.name = name
             attachment.lifetime = .keepAlways
@@ -5245,7 +5257,7 @@ private extension PlaybackSmartFillTVOSVisualUITests {
             let count = Int(rawValue),
             count > 0
         else {
-            return 20
+            return EvidenceCalibration.defaultSceneCount
         }
         return count
     }

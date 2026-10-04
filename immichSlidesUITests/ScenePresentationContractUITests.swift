@@ -7,19 +7,44 @@
 
 import XCTest
 
+private enum WaitTiming {
+    static let minimumSamplingWindowSeconds: TimeInterval = 4.2
+    static let samplingTimeoutSeconds: TimeInterval = 15
+    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
+    static let focusPollSeconds: TimeInterval = 0.08
+    static let focusSettleSeconds: TimeInterval = 0.16
+    static let inputSettleSeconds: TimeInterval = 0.05
+    static let remotePressSettleSeconds: TimeInterval = 0.12
+    static let sceneReadyTimeoutSeconds: TimeInterval = 45
+    static let screenTransitionTimeoutSeconds: TimeInterval = 12
+}
+
 #if os(iOS) || os(tvOS)
 final class ScenePresentationContractUITests: XCTestCase {
     private struct ContractOutcomes: Codable {
-        let readySceneRendered: Bool
-        let nextPerformed: Bool
-        let outgoingMotionContinued: Bool
+        let didRenderReadyScene: Bool
+        let didPerformNext: Bool
+        let didContinueOutgoingMotion: Bool
         let transitionDiagnostic: SceneTransitionDiagnostic.Verdict
-        let hiddenDecodeExcludedFromHistory: Bool
-        let visibleTickCommittedHistory: Bool
+        let didExcludeHiddenDecodeFromHistory: Bool
+        let didCommitHistoryOnVisibleTick: Bool
         let partialSlotFlashCount: Int
         let loadingFlashCount: Int
         let lowCoverageFramesAfterNext: Int
         let crossfadeFramesAfterNext: Int
+
+        private enum CodingKeys: String, CodingKey {
+            case didRenderReadyScene = "readySceneRendered"
+            case didPerformNext = "nextPerformed"
+            case didContinueOutgoingMotion = "outgoingMotionContinued"
+            case transitionDiagnostic
+            case didExcludeHiddenDecodeFromHistory = "hiddenDecodeExcludedFromHistory"
+            case didCommitHistoryOnVisibleTick = "visibleTickCommittedHistory"
+            case partialSlotFlashCount
+            case loadingFlashCount
+            case lowCoverageFramesAfterNext
+            case crossfadeFramesAfterNext
+        }
     }
 
     private struct ContractSample: Codable {
@@ -32,12 +57,30 @@ final class ScenePresentationContractUITests: XCTestCase {
         let decodedCount: Int
         let presentationReadyCount: Int
         let historyCount: Int
-        let partialSlotVisible: Bool
-        let loadingVisible: Bool
-        let playbackPaused: Bool
+        let isPartialSlotVisible: Bool
+        let isLoadingVisible: Bool
+        let isPlaybackPaused: Bool
         let lowCoverageFrameCount: Int
         let crossfadeFrameCount: Int
         let lastCrossfade: String
+
+        private enum CodingKeys: String, CodingKey {
+            case elapsedSeconds
+            case phase
+            case layerRoles
+            case layerIDs
+            case layerOpacities
+            case motionRawProgress
+            case decodedCount
+            case presentationReadyCount
+            case historyCount
+            case isPartialSlotVisible = "partialSlotVisible"
+            case isLoadingVisible = "loadingVisible"
+            case isPlaybackPaused = "playbackPaused"
+            case lowCoverageFrameCount
+            case crossfadeFrameCount
+            case lastCrossfade
+        }
     }
 
     private struct ContractMedia: Codable {
@@ -65,8 +108,8 @@ final class ScenePresentationContractUITests: XCTestCase {
 
     private struct ProbeState {
         let sample: ContractSample
-        let hiddenDecodeExcludedFromHistory: Bool
-        let visibleTickCommittedHistory: Bool
+        let didExcludeHiddenDecodeFromHistory: Bool
+        let didCommitHistoryOnVisibleTick: Bool
     }
 
     override func setUpWithError() throws {
@@ -78,9 +121,9 @@ final class ScenePresentationContractUITests: XCTestCase {
         let playback = ";playbackPaused=true;lowCoverageFrameCount=0;crossfadeFrameCount=0;lastCrossfade=none"
         let complete = prefix + ";partialSlotVisible=false;loadingVisible=false" + playback
         let sample = try XCTUnwrap(probeState(from: complete, elapsedSeconds: 0))
-        XCTAssertFalse(sample.sample.partialSlotVisible)
-        XCTAssertFalse(sample.sample.loadingVisible)
-        XCTAssertTrue(sample.sample.playbackPaused)
+        XCTAssertFalse(sample.sample.isPartialSlotVisible)
+        XCTAssertFalse(sample.sample.isLoadingVisible)
+        XCTAssertTrue(sample.sample.isPlaybackPaused)
         XCTAssertEqual(sample.sample.lowCoverageFrameCount, 0)
         for invalid in [
             prefix,
@@ -108,9 +151,9 @@ final class ScenePresentationContractUITests: XCTestCase {
                     + ";playbackPaused=false;lowCoverageFrameCount=3;crossfadeFrameCount=2;lastCrossfade=a>b@0.1>0.2@0.1>0.2@0.5@steady",
                 elapsedSeconds: 0
             ))
-        XCTAssertTrue(visible.sample.partialSlotVisible)
-        XCTAssertTrue(visible.sample.loadingVisible)
-        XCTAssertFalse(visible.sample.playbackPaused)
+        XCTAssertTrue(visible.sample.isPartialSlotVisible)
+        XCTAssertTrue(visible.sample.isLoadingVisible)
+        XCTAssertFalse(visible.sample.isPlaybackPaused)
         XCTAssertEqual(visible.sample.lowCoverageFrameCount, 3)
         XCTAssertEqual(visible.sample.crossfadeFrameCount, 2)
         XCTAssertEqual(visible.sample.lastCrossfade, "a>b@0.1>0.2@0.1>0.2@0.5@steady")
@@ -174,9 +217,11 @@ final class ScenePresentationContractUITests: XCTestCase {
         enterPlaybackFromFilteredMode(app: app)
 
         let probe = app.descendants(matching: .any)["slideshow.scenePresentation.contract.summary"]
-        XCTAssertTrue(probe.waitForExistence(timeout: 45), "The product host must expose the read-only contract probe")
         XCTAssertTrue(
-            waitUntil(timeout: 45) {
+            probe.waitForExistence(timeout: WaitTiming.sceneReadyTimeoutSeconds),
+            "The product host must expose the read-only contract probe")
+        XCTAssertTrue(
+            waitUntil(timeout: WaitTiming.sceneReadyTimeoutSeconds) {
                 guard let state = self.probeState(from: probe.label, elapsedSeconds: 0) else { return false }
                 return state.sample.phase == "stablePhoto" && state.sample.layerOpacities.contains(where: { $0 > 0 })
             },
@@ -202,8 +247,8 @@ final class ScenePresentationContractUITests: XCTestCase {
 
         // Watch at least the original window, and past a slow decode until the new photo has stayed settled a while;
         // the old photo may legitimately stay on screen that long.
-        let minimumSamplingEnd = Date().addingTimeInterval(4.2)
-        let samplingDeadline = Date().addingTimeInterval(15)
+        let minimumSamplingEnd = Date().addingTimeInterval(WaitTiming.minimumSamplingWindowSeconds)
+        let samplingDeadline = Date().addingTimeInterval(WaitTiming.samplingTimeoutSeconds)
         var settledSince: Date?
         while Date() < samplingDeadline {
             let state = try XCTUnwrap(
@@ -220,7 +265,7 @@ final class ScenePresentationContractUITests: XCTestCase {
             } else {
                 settledSince = nil
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.08))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusPollSeconds))
         }
 
         let samples = probeStates.map(\.sample)
@@ -232,20 +277,20 @@ final class ScenePresentationContractUITests: XCTestCase {
             before: diagnosticSample(stateBeforeNext),
             after: samples.map(diagnosticSample),
             crossfade: crossfade,
-            isPlaybackPaused: stateBeforeNext.playbackPaused
+            isPlaybackPaused: stateBeforeNext.isPlaybackPaused
         )
         let initialHistoryCount = historyCountBeforeNext
         let finalHistoryCount = samples.last?.historyCount ?? initialHistoryCount
         let outcomes = ContractOutcomes(
-            readySceneRendered: true,
-            nextPerformed: crossfadeFramesAfterNext > 0,
-            outgoingMotionContinued: transitionDiagnostic == .outgoingAdvanced,
+            didRenderReadyScene: true,
+            didPerformNext: crossfadeFramesAfterNext > 0,
+            didContinueOutgoingMotion: transitionDiagnostic == .outgoingAdvanced,
             transitionDiagnostic: transitionDiagnostic,
-            hiddenDecodeExcludedFromHistory: probeStates.contains(where: \.hiddenDecodeExcludedFromHistory),
-            visibleTickCommittedHistory: probeStates.contains(where: \.visibleTickCommittedHistory)
+            didExcludeHiddenDecodeFromHistory: probeStates.contains(where: \.didExcludeHiddenDecodeFromHistory),
+            didCommitHistoryOnVisibleTick: probeStates.contains(where: \.didCommitHistoryOnVisibleTick)
                 && finalHistoryCount > initialHistoryCount,
-            partialSlotFlashCount: samples.filter(\.partialSlotVisible).count,
-            loadingFlashCount: samples.filter(\.loadingVisible).count,
+            partialSlotFlashCount: samples.filter(\.isPartialSlotVisible).count,
+            loadingFlashCount: samples.filter(\.isLoadingVisible).count,
             lowCoverageFramesAfterNext: lastSample.lowCoverageFrameCount - stateBeforeNext.lowCoverageFrameCount,
             crossfadeFramesAfterNext: crossfadeFramesAfterNext
         )
@@ -254,16 +299,17 @@ final class ScenePresentationContractUITests: XCTestCase {
         diagnostic.name = "Desktop-transition-samples"
         diagnostic.lifetime = .keepAlways
         add(diagnostic)
-        XCTAssertTrue(stateBeforeNext.playbackPaused, "Autoplay is forced off, so playback must be paused before Next")
-        XCTAssertTrue(outcomes.nextPerformed, "Next must crossfade from the old photo to the new one")
+        XCTAssertTrue(
+            stateBeforeNext.isPlaybackPaused, "Autoplay is forced off, so playback must be paused before Next")
+        XCTAssertTrue(outcomes.didPerformNext, "Next must crossfade from the old photo to the new one")
         XCTAssertEqual(
-            outcomes.transitionDiagnostic, stateBeforeNext.playbackPaused ? .outgoingHeldStill : .outgoingAdvanced,
+            outcomes.transitionDiagnostic, stateBeforeNext.isPlaybackPaused ? .outgoingHeldStill : .outgoingAdvanced,
             "The old photo must stay on screen until the new one crossfades in, moving only while playback runs")
         XCTAssertEqual(
             outcomes.lowCoverageFramesAfterNext, 0, "No frame drawn after Next may show less than half a photo")
-        XCTAssertTrue(outcomes.hiddenDecodeExcludedFromHistory, "A hidden renderer decode must not commit history")
+        XCTAssertTrue(outcomes.didExcludeHiddenDecodeFromHistory, "A hidden renderer decode must not commit history")
         XCTAssertTrue(
-            outcomes.visibleTickCommittedHistory,
+            outcomes.didCommitHistoryOnVisibleTick,
             "A display tick after the full scene-root reaches opacity>0 must commit history")
         XCTAssertEqual(
             outcomes.partialSlotFlashCount, 0,
@@ -279,7 +325,7 @@ final class ScenePresentationContractUITests: XCTestCase {
         add(finalScreenshot)
 
         let trace = samples.map { sample in
-            "t=\(sample.elapsedSeconds);phase=\(sample.phase);roles=\(sample.layerRoles.joined(separator: "|"));ids=\(sample.layerIDs.joined(separator: "|"));opacity=\(sample.layerOpacities);progress=\(sample.motionRawProgress);decoded=\(sample.decodedCount);ready=\(sample.presentationReadyCount);history=\(sample.historyCount);partial=\(sample.partialSlotVisible);loading=\(sample.loadingVisible);paused=\(sample.playbackPaused);lowCoverageFrames=\(sample.lowCoverageFrameCount);crossfadeFrames=\(sample.crossfadeFrameCount);lastCrossfade=\(sample.lastCrossfade)"
+            "t=\(sample.elapsedSeconds);phase=\(sample.phase);roles=\(sample.layerRoles.joined(separator: "|"));ids=\(sample.layerIDs.joined(separator: "|"));opacity=\(sample.layerOpacities);progress=\(sample.motionRawProgress);decoded=\(sample.decodedCount);ready=\(sample.presentationReadyCount);history=\(sample.historyCount);partial=\(sample.isPartialSlotVisible);loading=\(sample.isLoadingVisible);paused=\(sample.isPlaybackPaused);lowCoverageFrames=\(sample.lowCoverageFrameCount);crossfadeFrames=\(sample.crossfadeFrameCount);lastCrossfade=\(sample.lastCrossfade)"
         }.joined(separator: "\n")
         if let runDirectory {
             let record = ContractRecord(
@@ -328,9 +374,9 @@ final class ScenePresentationContractUITests: XCTestCase {
             let lowCoverageRaw = fields["lowCoverageFrameCount"],
             let crossfadeCountRaw = fields["crossfadeFrameCount"],
             let lastCrossfade = fields["lastCrossfade"],
-            let partialSlotVisible = Bool(partialSlotRaw),
-            let loadingVisible = Bool(loadingRaw),
-            let playbackPaused = Bool(pausedRaw),
+            let isPartialSlotVisible = Bool(partialSlotRaw),
+            let isLoadingVisible = Bool(loadingRaw),
+            let isPlaybackPaused = Bool(pausedRaw),
             let lowCoverageFrameCount = Int(lowCoverageRaw),
             lowCoverageFrameCount >= 0,
             let crossfadeFrameCount = Int(crossfadeCountRaw),
@@ -353,15 +399,15 @@ final class ScenePresentationContractUITests: XCTestCase {
                 decodedCount: Int(fields["decodedCount"] ?? "") ?? 0,
                 presentationReadyCount: Int(fields["presentationReadyCount"] ?? "") ?? 0,
                 historyCount: Int(fields["historyCount"] ?? "") ?? 0,
-                partialSlotVisible: partialSlotVisible,
-                loadingVisible: loadingVisible,
-                playbackPaused: playbackPaused,
+                isPartialSlotVisible: isPartialSlotVisible,
+                isLoadingVisible: isLoadingVisible,
+                isPlaybackPaused: isPlaybackPaused,
                 lowCoverageFrameCount: lowCoverageFrameCount,
                 crossfadeFrameCount: crossfadeFrameCount,
                 lastCrossfade: lastCrossfade
             ),
-            hiddenDecodeExcludedFromHistory: fields["hiddenDecodeExcludedFromHistory"] == "true",
-            visibleTickCommittedHistory: fields["visibleTickCommittedHistory"] == "true"
+            didExcludeHiddenDecodeFromHistory: fields["hiddenDecodeExcludedFromHistory"] == "true",
+            didCommitHistoryOnVisibleTick: fields["visibleTickCommittedHistory"] == "true"
         )
     }
 
@@ -433,11 +479,11 @@ final class ScenePresentationContractUITests: XCTestCase {
         // tvOS must reach filtering through real remote focus, not a faked tap.
         XCUIRemote.shared.press(.right)
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(continueButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(continueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(continueButton.isEnabled)
         XCUIRemote.shared.press(.down)
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(startButton.waitForExistence(timeout: 12))
+        XCTAssertTrue(startButton.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds))
         // Starting before the page swaps in a real album and person would play the seeded placeholder album.
         for marker in ["filterSummary.album.ready", "filterSummary.people.ready"] {
             let readiness = app.staticTexts[marker]
@@ -446,20 +492,20 @@ final class ScenePresentationContractUITests: XCTestCase {
                 "The filter summary must select a real album and person before playback starts: \(marker)"
             )
         }
-        XCTAssertTrue(waitUntil(timeout: 12) { startButton.isEnabled })
+        XCTAssertTrue(waitUntil(timeout: WaitTiming.screenTransitionTimeoutSeconds) { startButton.isEnabled })
         for _ in 0..<8 where !startButton.hasFocus {
             XCUIRemote.shared.press(.down)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
         XCTAssertTrue(startButton.hasFocus, "The tvOS Start Playback button must be able to take focus")
         XCUIRemote.shared.press(.select)
         #else
         tap(filteredButton)
-        XCTAssertTrue(continueButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(continueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(continueButton.isEnabled)
         tap(continueButton)
-        XCTAssertTrue(startButton.waitForExistence(timeout: 12))
-        XCTAssertTrue(waitUntil(timeout: 12) { startButton.isEnabled })
+        XCTAssertTrue(startButton.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds))
+        XCTAssertTrue(waitUntil(timeout: WaitTiming.screenTransitionTimeoutSeconds) { startButton.isEnabled })
         tap(startButton)
         #endif
     }
@@ -472,7 +518,7 @@ final class ScenePresentationContractUITests: XCTestCase {
         #if os(tvOS)
         for _ in 0..<4 where !nextButton.hasFocus {
             XCUIRemote.shared.press(.right)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusSettleSeconds))
         }
         XCTAssertTrue(nextButton.hasFocus, "The tvOS Next button must be able to take focus")
         #endif
@@ -503,7 +549,7 @@ final class ScenePresentationContractUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.inputSettleSeconds))
         }
         return condition()
     }

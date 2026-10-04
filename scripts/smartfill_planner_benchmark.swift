@@ -26,12 +26,12 @@ struct SmartFillPlannerBenchmark {
         var samples: [CallSample] = []
         samples.reserveCapacity(corpus.count)
         var distribution = SceneTypeCounter()
-        var capped = false
+        var didReachWallTimeCap = false
         let benchmarkStart = DispatchTime.now().uptimeNanoseconds
         for scenario in corpus {
             if let maxWallMs = options.maxWallMs,
                milliseconds(from: benchmarkStart, to: DispatchTime.now().uptimeNanoseconds) >= maxWallMs {
-                capped = true
+                didReachWallTimeCap = true
                 break
             }
             let start = DispatchTime.now().uptimeNanoseconds
@@ -46,7 +46,7 @@ struct SmartFillPlannerBenchmark {
                 result: result
             )
             samples.append(sample)
-            if options.stream {
+            if options.shouldStream {
                 print("call \(sample.outputLine)")
                 fflush(stdout)
             }
@@ -70,7 +70,7 @@ struct SmartFillPlannerBenchmark {
             "p95_ms=\(format(stats.p95)) " +
             "max_ms=\(format(stats.max)) " +
             "wall_ms=\(format(wallMs)) " +
-            "capped=\(capped) " +
+            "capped=\(didReachWallTimeCap) " +
             "checksum=\(checksum)"
         )
         print(
@@ -282,12 +282,12 @@ private struct BenchmarkScenario {
 private struct BenchmarkOptions {
     let requireMaxMs: Double?
     let maxWallMs: Double?
-    let stream: Bool
+    let shouldStream: Bool
 
     init(arguments: [String]) {
         requireMaxMs = Self.doubleValue(after: "--require-max-ms", in: arguments)
         maxWallMs = Self.doubleValue(after: "--max-wall-ms", in: arguments)
-        stream = arguments.contains("--stream")
+        shouldStream = arguments.contains("--stream")
     }
 
     private static func doubleValue(after flag: String, in arguments: [String]) -> Double? {

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from strict_e2e_photo_identity import MARKS, classify_public_pattern, classify_screenshot, public_letter_from_bytes
-from strict_e2e_server import _fixture_data, fixture_manifest, public_visual_label
+from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest, public_visual_label
 
 
 # Hashes track the public fixture manifest fields.
@@ -70,6 +70,29 @@ REQUEST_LOG_LINE = re.compile(
 class FilterContractError(Exception):
     pass
 
+
+DISPLAY_MINIMUM_SURROUND_FRACTION = 0.04
+DISPLAY_REFERENCE_SAMPLE_PIXELS = 80
+DISPLAY_FOREGROUND_CHANNEL_TOLERANCE = 24
+DISPLAY_MINIMUM_FOREGROUND_MATCH_RATIO = 0.98
+DISPLAY_SURROUND_SAMPLE_WIDTH_PIXELS = 240
+DISPLAY_MINIMUM_SAMPLE_HEIGHT_PIXELS = 8
+DISPLAY_UI_WHITE_CHANNEL_THRESHOLD = 175
+DISPLAY_UI_BLACK_CHANNEL_THRESHOLD = 12
+DISPLAY_UI_INK_DILATION_PIXELS = 5
+DISPLAY_PUBLIC_COLOR_CHANNEL_TOLERANCE = 15
+DISPLAY_FOREGROUND_PADDING_PIXELS = 4
+DISPLAY_TEXTURE_EDGE_CHANNEL_DELTA = 45
+DISPLAY_TEXTURE_CELL_PIXELS = 20
+DISPLAY_COLOR_EDGE_CHANNEL_DELTA = 35
+DISPLAY_SHARP_COLOR_EDGE_LIMIT = 4
+DISPLAY_TEXTURE_AXIS_EDGE_LIMIT = 80
+DISPLAY_TEXTURE_BOTH_AXES_EDGE_LIMIT = 12
+DISPLAY_BACKGROUND_BLUR_FRACTIONS = (0.025, 0.0625, 0.125)
+DISPLAY_BACKGROUND_SAMPLE_STRIDE_PIXELS = 4
+DISPLAY_BACKGROUND_CHROMA_TOLERANCE = 26
+DISPLAY_MINIMUM_BACKGROUND_MATCH_RATIO = 0.90
+DISPLAY_MINIMUM_REGION_IMAGE_PIXELS = 16
 
 def _labels_for(asset_ids: Sequence[str], label_by_id: Mapping[str, str]) -> list[str]:
     try:
@@ -584,13 +607,13 @@ def _display_foreground_png(image_bytes: bytes) -> bytes:
                 scale = min(width / reference.width, height / reference.height)
                 fit_width, fit_height = round(reference.width * scale), round(reference.height * scale)
                 left, top = (width - fit_width) // 2, (height - fit_height) // 2
-                if max(left, top) < min(width, height) * 0.04:
+                if max(left, top) < min(width, height) * DISPLAY_MINIMUM_SURROUND_FRACTION:
                     continue
                 foreground = rgb.crop((left, top, left + fit_width, top + fit_height))
-                observed = list(foreground.resize((80, 80)).getdata())
-                expected = list(reference.resize((80, 80)).getdata())
-                matched = sum(max(abs(a[c] - b[c]) for c in range(3)) <= 24 for a, b in zip(observed, expected))
-                if matched / len(expected) < 0.98:
+                observed = list(foreground.resize((DISPLAY_REFERENCE_SAMPLE_PIXELS, DISPLAY_REFERENCE_SAMPLE_PIXELS)).getdata())
+                expected = list(reference.resize((DISPLAY_REFERENCE_SAMPLE_PIXELS, DISPLAY_REFERENCE_SAMPLE_PIXELS)).getdata())
+                matched = sum(max(abs(a[c] - b[c]) for c in range(3)) <= DISPLAY_FOREGROUND_CHANNEL_TOLERANCE for a, b in zip(observed, expected))
+                if matched / len(expected) < DISPLAY_MINIMUM_FOREGROUND_MATCH_RATIO:
                     continue
                 outer_boxes = (
                     ((0, 0, width, top), (0, top + fit_height, width, height))
@@ -601,12 +624,12 @@ def _display_foreground_png(image_bytes: bytes) -> bytes:
                     rgb.crop(box).save(buffer, format="PNG")
                     if public_letter_from_bytes(buffer.getvalue()) is not None:
                         raise FilterContractError("single-photo surround still shows a sharp public photo mark; a second photo cannot count as background")
-                sample_size = (240, max(8, round(height * 240 / width)))
+                sample_size = (DISPLAY_SURROUND_SAMPLE_WIDTH_PIXELS, max(DISPLAY_MINIMUM_SAMPLE_HEIGHT_PIXELS, round(height * DISPLAY_SURROUND_SAMPLE_WIDTH_PIXELS / width)))
                 sample = rgb.resize(sample_size)
                 pixels = sample.load()
                 ui_ink = Image.new("L", sample_size)
-                ui_ink.putdata([255 if min(pixel) > 175 or max(pixel) < 12 else 0 for pixel in sample.getdata()])
-                ui_ink_pixels = ui_ink.filter(ImageFilter.MaxFilter(5)).load()
+                ui_ink.putdata([255 if min(pixel) > DISPLAY_UI_WHITE_CHANNEL_THRESHOLD or max(pixel) < DISPLAY_UI_BLACK_CHANNEL_THRESHOLD else 0 for pixel in sample.getdata()])
+                ui_ink_pixels = ui_ink.filter(ImageFilter.MaxFilter(DISPLAY_UI_INK_DILATION_PIXELS)).load()
                 palette = tuple(
                     ((seed * 37 + block * 54) % 180,
                      (seed * 61 + (1 - block) * 48) % 180,
@@ -615,11 +638,11 @@ def _display_foreground_png(image_bytes: bytes) -> bytes:
                 )
 
                 def is_public_color(pixel: tuple[int, ...]) -> bool:
-                    return any(max(abs(pixel[c] - color[c]) for c in range(3)) <= 15 for color in palette)
+                    return any(max(abs(pixel[c] - color[c]) for c in range(3)) <= DISPLAY_PUBLIC_COLOR_CHANNEL_TOLERANCE for color in palette)
 
                 sharp_edges = 0
                 texture_cells: dict[tuple[int, int], list[int]] = {}
-                padding = width * 4 / sample.width
+                padding = width * DISPLAY_FOREGROUND_PADDING_PIXELS / sample.width
                 for y in range(0, sample.height - 2):
                     for x in range(0, sample.width - 2):
                         original_x, original_y = x * width / sample.width, y * height / sample.height
@@ -629,34 +652,34 @@ def _display_foreground_png(image_bytes: bytes) -> bytes:
                         for direction, (nx, ny) in enumerate(((x + 2, y), (x, y + 2))):
                             neighbor = pixels[nx, ny]
                             difference = max(abs(pixel[c] - neighbor[c]) for c in range(3))
-                            if not ui_ink_pixels[x, y] and not ui_ink_pixels[nx, ny] and difference > 45:
-                                texture_cells.setdefault((x // 20, y // 20), [0, 0])[direction] += 1
-                            if is_public_color(pixel) and is_public_color(neighbor) and difference > 35:
+                            if not ui_ink_pixels[x, y] and not ui_ink_pixels[nx, ny] and difference > DISPLAY_TEXTURE_EDGE_CHANNEL_DELTA:
+                                texture_cells.setdefault((x // DISPLAY_TEXTURE_CELL_PIXELS, y // DISPLAY_TEXTURE_CELL_PIXELS), [0, 0])[direction] += 1
+                            if is_public_color(pixel) and is_public_color(neighbor) and difference > DISPLAY_COLOR_EDGE_CHANNEL_DELTA:
                                 sharp_edges += 1
-                if sharp_edges >= 4:
+                if sharp_edges >= DISPLAY_SHARP_COLOR_EDGE_LIMIT:
                     raise FilterContractError("single-photo surround still has sharp public photo color-block edges; it cannot count as a blurred background")
-                if any(max(edges) >= 80 or min(edges) >= 12 for edges in texture_cells.values()):
+                if any(max(edges) >= DISPLAY_TEXTURE_AXIS_EDGE_LIMIT or min(edges) >= DISPLAY_TEXTURE_BOTH_AXES_EDGE_LIMIT for edges in texture_cells.values()):
                     raise FilterContractError("single-photo surround still has unexplained sharp texture; it cannot be cropped away as blurred background")
                 best_background_score = 0.0
-                for blur_fraction in (0.025, 0.0625, 0.125):
-                    background = ImageOps.fit(reference, sample_size).filter(ImageFilter.GaussianBlur(240 * blur_fraction))
+                for blur_fraction in DISPLAY_BACKGROUND_BLUR_FRACTIONS:
+                    background = ImageOps.fit(reference, sample_size).filter(ImageFilter.GaussianBlur(DISPLAY_SURROUND_SAMPLE_WIDTH_PIXELS * blur_fraction))
                     background_pixels = background.load()
                     hits = total = 0
-                    for y in range(0, sample.height, 4):
-                        for x in range(0, sample.width, 4):
+                    for y in range(0, sample.height, DISPLAY_BACKGROUND_SAMPLE_STRIDE_PIXELS):
+                        for x in range(0, sample.width, DISPLAY_BACKGROUND_SAMPLE_STRIDE_PIXELS):
                             original_x, original_y = x * width / sample.width, y * height / sample.height
-                            if left - 4 <= original_x <= left + fit_width + 4 and top - 4 <= original_y <= top + fit_height + 4:
+                            if left - DISPLAY_FOREGROUND_PADDING_PIXELS <= original_x <= left + fit_width + DISPLAY_FOREGROUND_PADDING_PIXELS and top - DISPLAY_FOREGROUND_PADDING_PIXELS <= original_y <= top + fit_height + DISPLAY_FOREGROUND_PADDING_PIXELS:
                                 continue
                             actual, predicted = pixels[x, y], background_pixels[x, y]
-                            if min(actual) > 175:
+                            if min(actual) > DISPLAY_UI_WHITE_CHANNEL_THRESHOLD:
                                 continue
                             total += 1
                             hits += max(
                                 abs(255 * actual[c] / max(1, sum(actual)) - 255 * predicted[c] / max(1, sum(predicted)))
                                 for c in range(3)
-                            ) <= 26
+                            ) <= DISPLAY_BACKGROUND_CHROMA_TOLERANCE
                     best_background_score = max(best_background_score, hits / max(1, total))
-                if best_background_score < 0.90:
+                if best_background_score < DISPLAY_MINIMUM_BACKGROUND_MATCH_RATIO:
                     raise FilterContractError("single-photo surround does not match this photo's blurred background; multi-photo or unknown-frame risk remains")
                 buffer = io.BytesIO()
                 foreground.save(buffer, format="PNG")
@@ -672,7 +695,7 @@ def _classify_display_regions(image_bytes: bytes) -> dict[str, Any]:
         with Image.open(io.BytesIO(_display_foreground_png(image_bytes))) as image:
             rgb = image.convert("RGB")
             width, height = rgb.size
-            if width < 16 or height < 16:
+            if width < DISPLAY_MINIMUM_REGION_IMAGE_PIXELS or height < DISPLAY_MINIMUM_REGION_IMAGE_PIXELS:
                 raise FilterContractError("display-policy screenshot is too small to check photo regions")
             regions: dict[str, Any] = {}
             for name, (left, top, right, bottom) in DISPLAY_REGION_BOXES.items():
@@ -1167,7 +1190,7 @@ def _evaluate_filter_switch(evidence_dir: Path) -> dict[str, Any]:
     log_path = evidence_dir / "request-log-b.log"
     if log_path.is_file():
         log_text = log_path.read_text(encoding="utf-8")
-        assert_request_log_contract(log_text, forbidden=("immichslides-public-e2e-key", "x-api-key"))
+        assert_request_log_contract(log_text, forbidden=(PUBLIC_API_KEY, "x-api-key"))
         assert_foreign_server_ids_absent(_extract_ids_from_request_log(log_text), fixture_set)
 
     bridge = _evaluate_switch_display_policy(evidence_dir, manifest_b)
