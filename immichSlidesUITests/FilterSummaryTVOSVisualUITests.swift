@@ -19,14 +19,9 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         let albumFilterTitle: String
         let personFilterTitle: String
         let playbackSettingsTitle: String
-        let accessProtectionTitle: String
         let accessProtectionDisabledTitle: String
         let accessProtectionEnableRequirement: String
-        let serverTitle: String
-        let cacheTitle: String
-        let aboutTitle: String
         let appInfoTitle: String
-        let privacyPolicyTitle: String
         let openSourceTitle: String
 
         static let hongKong = LocalizedAcceptanceLocale(
@@ -38,14 +33,9 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             albumFilterTitle: "篩選相簿",
             personFilterTitle: "篩選人物",
             playbackSettingsTitle: "播放設定",
-            accessProtectionTitle: "存取保護",
             accessProtectionDisabledTitle: "存取保護未開啟",
             accessProtectionEnableRequirement: "需要設定並確認 PIN",
-            serverTitle: "伺服器",
-            cacheTitle: "快取管理",
-            aboutTitle: "關於 App",
             appInfoTitle: "App 資訊",
-            privacyPolicyTitle: "私隱政策",
             openSourceTitle: "開源授權"
         )
 
@@ -58,14 +48,9 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             albumFilterTitle: "篩選相簿",
             personFilterTitle: "篩選人物",
             playbackSettingsTitle: "播放設定",
-            accessProtectionTitle: "存取保護",
             accessProtectionDisabledTitle: "存取保護未開啟",
             accessProtectionEnableRequirement: "需要設定並確認 PIN",
-            serverTitle: "伺服器",
-            cacheTitle: "快取管理",
-            aboutTitle: "關於 App",
             appInfoTitle: "App 資訊",
-            privacyPolicyTitle: "隱私權政策",
             openSourceTitle: "開源授權"
         )
 
@@ -78,14 +63,9 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             albumFilterTitle: "アルバムをフィルター",
             personFilterTitle: "人物をフィルター",
             playbackSettingsTitle: "再生設定",
-            accessProtectionTitle: "アクセス保護",
             accessProtectionDisabledTitle: "アクセス保護が無効になっています",
             accessProtectionEnableRequirement: "PIN の設定と確認が必要です",
-            serverTitle: "サーバー",
-            cacheTitle: "キャッシュ管理",
-            aboutTitle: "App情報",
             appInfoTitle: "App 情報",
-            privacyPolicyTitle: "プライバシーポリシー",
             openSourceTitle: "オープンソースライセンス"
         )
 
@@ -98,14 +78,9 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             albumFilterTitle: "Filtrar álbumes",
             personFilterTitle: "Filtrar personas",
             playbackSettingsTitle: "Ajustes de reproducción",
-            accessProtectionTitle: "Protección de acceso",
             accessProtectionDisabledTitle: "Protección inactiva",
             accessProtectionEnableRequirement: "Se requiere configuración y confirmación de PIN",
-            serverTitle: "Servidor",
-            cacheTitle: "Gestión de caché",
-            aboutTitle: "Acerca de",
             appInfoTitle: "Información de la app",
-            privacyPolicyTitle: "Política de privacidad",
             openSourceTitle: "Licencias de código abierto"
         )
     }
@@ -416,269 +391,6 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
 
     @MainActor
     func runTVOSLocalizedAboutAcceptance(locale: LocalizedAcceptanceLocale) throws {
-        let aboutApp = try launchIntoSlideShow(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        openSettingsFromSlideShow(app: aboutApp)
-        _ = waitForSettingsHomeItem(
-            app: aboutApp,
-            identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
-            failureMessage: "Localized tvOS settings home should be able to open About"
-        )
-        XCUIRemote.shared.press(.select)
-
-        let appInfoSection = waitForSettingsControl(
-            app: aboutApp,
-            identifier: "settings.about.appInfo.section",
-            timeout: 8,
-            failureMessage: "Localized tvOS About page should show the App Info section"
-        )
-        waitForButtonToGainFocus(
-            appInfoSection,
-            timeout: 8,
-            failureMessage: "Localized tvOS About page default focus should land on App Info"
-        )
-        XCTAssertTrue(
-            waitForElementWithLabelExists(app: aboutApp, label: locale.appInfoTitle, timeout: 8),
-            "Localized tvOS About page should show the target locale text"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: aboutApp, name: "\(locale.screenshotPrefix)-tvos-settings-about")
-
-        let privacyPolicyLink = waitForSettingsControl(
-            app: aboutApp,
-            identifier: "settings.about.privacyPolicy.link",
-            timeout: 8,
-            failureMessage: "Localized tvOS About page should show the Privacy Policy entry"
-        )
-        for _ in 0..<3 {
-            XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.22)
-        }
-        waitForButtonToGainFocus(
-            privacyPolicyLink,
-            timeout: 8,
-            failureMessage: "Localized tvOS About page should let focus move to Privacy Policy"
-        )
-        attachScreenshot(app: aboutApp, name: "\(locale.screenshotPrefix)-tvos-settings-about-bottom")
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(
-            waitForSettingsControlExists(
-                app: aboutApp, identifier: "settings.about.privacyPolicy.section.0", timeout: 8),
-            "Localized tvOS privacy policy page should open the policy text"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: aboutApp, name: "\(locale.screenshotPrefix)-tvos-settings-privacy-policy")
-        aboutApp.terminate()
-
-        let openSourceApp = try launchIntoSlideShow(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        openSettingsFromSlideShow(app: openSourceApp)
-        _ = waitForSettingsHomeItem(
-            app: openSourceApp,
-            identifier: "settings.item.about",
-            downStepsFromPlayback: 4,
-            failureMessage: "Localized tvOS settings home should be able to open About again"
-        )
-        XCUIRemote.shared.press(.select)
-
-        let openSourceAppInfoSection = waitForSettingsControl(
-            app: openSourceApp,
-            identifier: "settings.about.appInfo.section",
-            timeout: 8,
-            failureMessage: "Localized tvOS About page should show the App Info section"
-        )
-        waitForButtonToGainFocus(
-            openSourceAppInfoSection,
-            timeout: 8,
-            failureMessage: "Localized tvOS About page default focus should land on App Info"
-        )
-
-        let openSourceLink = waitForSettingsControl(
-            app: openSourceApp,
-            identifier: "settings.about.opensource.link",
-            timeout: 8,
-            failureMessage: "Localized tvOS About page should show the Open Source Licenses entry"
-        )
-        for _ in 0..<4 {
-            XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.22)
-        }
-        waitForButtonToGainFocus(
-            openSourceLink,
-            timeout: 8,
-            failureMessage: "Localized tvOS About page should let focus move to Open Source Licenses"
-        )
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(
-            waitForElementWithLabelExists(app: openSourceApp, label: locale.openSourceTitle, timeout: 8),
-            "Localized tvOS open source licenses page should show the target locale text"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: openSourceApp, name: "\(locale.screenshotPrefix)-tvos-settings-open-source")
-    }
-
-    @MainActor
-    func runTVOSLocalizedAcceptance(locale: LocalizedAcceptanceLocale) throws {
-
-        let modeApp = try launchIntoModeSelection(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        XCTAssertTrue(
-            waitForElementWithLabelExists(app: modeApp, label: locale.modeSelectionTitle, timeout: 8),
-            "Localized tvOS mode selection page should show the target locale text"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: modeApp, name: "\(locale.screenshotPrefix)-tvos-mode-selection")
-        modeApp.terminate()
-
-        let filterSummaryApp = try launchIntoFilterSummary(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        XCTAssertTrue(
-            waitForElementWithLabelExists(app: filterSummaryApp, label: locale.filterSummaryTitle, timeout: 8),
-            "Localized tvOS filter summary page should show the target locale text"
-        )
-        waitForReadinessMarker(app: filterSummaryApp, identifier: "filterSummary.album.ready")
-        waitForFocusVisualSettle()
-        attachScreenshot(app: filterSummaryApp, name: "\(locale.screenshotPrefix)-tvos-filter-summary")
-        filterSummaryApp.terminate()
-
-        let albumApp = try launchIntoFilterSummary(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        openAlbumFilter(from: albumApp)
-        waitForAlbumFilterReady(app: albumApp)
-        XCTAssertTrue(
-            waitForElementWithLabelExists(app: albumApp, label: locale.albumFilterTitle, timeout: 8),
-            "Localized tvOS album filter page should show the target locale text"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: albumApp, name: "\(locale.screenshotPrefix)-tvos-album-filter")
-        albumApp.terminate()
-
-        let personApp = try launchIntoFilterSummary(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        openPersonFilter(from: personApp)
-        waitForPersonFilterReady(app: personApp)
-        XCTAssertTrue(
-            waitForElementWithLabelExists(app: personApp, label: locale.personFilterTitle, timeout: 8),
-            "Localized tvOS person filter page should show the target locale text"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: personApp, name: "\(locale.screenshotPrefix)-tvos-person-filter")
-        personApp.terminate()
-
-        let settingsApp = try launchIntoSlideShow(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: settingsApp, name: "\(locale.screenshotPrefix)-tvos-slideshow")
-
-        openSettingsFromSlideShow(app: settingsApp)
-        _ = waitForSettingsHomeItem(
-            app: settingsApp,
-            identifier: "settings.item.playback",
-            downStepsFromPlayback: 0,
-            failureMessage: "Localized tvOS settings home should show Playback Settings"
-        )
-        XCTAssertTrue(
-            waitForElementWithLabelExists(app: settingsApp, label: locale.playbackSettingsTitle, timeout: 8),
-            "Localized tvOS settings home should show the Playback Settings entry"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: settingsApp, name: "\(locale.screenshotPrefix)-tvos-settings-root")
-
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(
-            waitForSettingsControlExists(app: settingsApp, identifier: "settings.playback.autoPlay.link", timeout: 8),
-            "Localized tvOS playback settings page should show the Autoplay entry"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: settingsApp, name: "\(locale.screenshotPrefix)-tvos-settings-playback")
-        settingsApp.terminate()
-
-        let accessProtectionApp = try launchIntoSlideShow(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        openSettingsFromSlideShow(app: accessProtectionApp)
-        _ = waitForSettingsHomeItem(
-            app: accessProtectionApp,
-            identifier: "settings.item.accessProtection",
-            downStepsFromPlayback: 1,
-            failureMessage: "Localized tvOS settings home should be able to open Access Protection"
-        )
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(
-            waitForElementWithLabelExists(
-                app: accessProtectionApp, label: locale.accessProtectionDisabledTitle, timeout: 8),
-            "Localized tvOS access protection page should show the disabled state"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: accessProtectionApp, name: "\(locale.screenshotPrefix)-tvos-settings-access-protection")
-        accessProtectionApp.terminate()
-
-        let serverApp = try launchIntoSlideShow(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        openSettingsFromSlideShow(app: serverApp)
-        _ = waitForSettingsHomeItem(
-            app: serverApp,
-            identifier: "settings.item.server",
-            downStepsFromPlayback: 2,
-            failureMessage: "Localized tvOS settings home should be able to open Server"
-        )
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(
-            waitForSettingsControlExists(app: serverApp, identifier: "server.apiKey.help.button", timeout: 8),
-            "Localized tvOS server page should show the API Key help entry"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: serverApp, name: "\(locale.screenshotPrefix)-tvos-settings-server")
-        serverApp.terminate()
-
-        let cacheApp = try launchIntoSlideShow(
-            colorScheme: "light",
-            languageCode: locale.languageCode,
-            localeIdentifier: locale.localeIdentifier
-        )
-        openSettingsFromSlideShow(app: cacheApp)
-        _ = waitForSettingsHomeItem(
-            app: cacheApp,
-            identifier: "settings.item.cache",
-            downStepsFromPlayback: 3,
-            failureMessage: "Localized tvOS settings home should be able to open Cache Management"
-        )
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(
-            waitForSettingsControlExists(app: cacheApp, identifier: "settings.cache.disk.row", timeout: 8),
-            "Localized tvOS cache page should show the disk cache metric"
-        )
-        waitForFocusVisualSettle()
-        attachScreenshot(app: cacheApp, name: "\(locale.screenshotPrefix)-tvos-settings-cache")
-        cacheApp.terminate()
-
         let aboutApp = try launchIntoSlideShow(
             colorScheme: "light",
             languageCode: locale.languageCode,
@@ -4856,86 +4568,6 @@ private extension FilterSummaryTVOSVisualUITests {
     func accessibilityValueString(for element: XCUIElement) -> String {
         guard let rawValue = element.value else { return "" }
         return String(describing: rawValue)
-    }
-
-    @MainActor
-    func moveFocusToTVOSControlButton(_ button: XCUIElement) {
-        for _ in 0..<5 {
-            if button.hasFocus || accessibilityValueString(for: button).contains("focused") {
-                return
-            }
-            XCUIRemote.shared.press(.left)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
-        }
-
-        waitForButtonToGainFocus(
-            button,
-            timeout: 6,
-            failureMessage: "Playback control bar focus should settle on the target button"
-        )
-    }
-
-    @MainActor
-    func moveFocusRight(to button: XCUIElement, maximumPresses: Int, failureMessage: String) {
-        moveFocus(to: button, direction: .right, maximumPresses: maximumPresses, failureMessage: failureMessage)
-    }
-
-    @MainActor
-    func moveFocusLeft(to button: XCUIElement, maximumPresses: Int, failureMessage: String) {
-        moveFocus(to: button, direction: .left, maximumPresses: maximumPresses, failureMessage: failureMessage)
-    }
-
-    @MainActor
-    private func moveFocus(
-        to button: XCUIElement,
-        direction: XCUIRemote.Button,
-        maximumPresses: Int,
-        failureMessage: String
-    ) {
-        for _ in 0..<maximumPresses {
-            guard button.exists else {
-                XCUIRemote.shared.press(.up)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-                continue
-            }
-            if button.hasFocus || accessibilityValueString(for: button).contains("focused") {
-                return
-            }
-            XCUIRemote.shared.press(direction)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
-        }
-
-        waitForButtonToGainFocus(
-            button,
-            timeout: 4,
-            failureMessage: failureMessage
-        )
-    }
-
-    func currentTVOSIndexProbeValue(_ indexProbe: XCUIElement) throws -> String {
-        let value = accessibilityValueString(for: indexProbe)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.isEmpty == false else {
-            throw XCTSkip(
-                "The hidden index probe on the tvOS playback page is empty; retained-history behavior cannot be proven."
-            )
-        }
-        return value
-    }
-
-    func waitForTVOSIndexProbeChange(
-        _ indexProbe: XCUIElement,
-        from oldValue: String,
-        timeout: TimeInterval
-    ) throws -> String {
-        XCTAssertTrue(
-            waitUntil(timeout: timeout) {
-                let value = self.accessibilityValueString(for: indexProbe)
-                return value.isEmpty == false && value != oldValue
-            },
-            "The playback index probe should change after the remote input"
-        )
-        return try currentTVOSIndexProbeValue(indexProbe)
     }
 
     func currentTVOSSceneSignatureValue(app: XCUIApplication) -> String? {

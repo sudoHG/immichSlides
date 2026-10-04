@@ -494,7 +494,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 }
 
 private extension PlaybackSettingsTVOSUITests {
-    func requireTVOSDestination(file: StaticString = #filePath, line: UInt = #line) throws {
+    func requireTVOSDestination() throws {
         guard UIDevice.current.userInterfaceIdiom == .tv else {
             throw XCTSkip(
                 "The destination is not tvOS (detected: \(UIDevice.current.model)); skipping the tvOS UI test.")

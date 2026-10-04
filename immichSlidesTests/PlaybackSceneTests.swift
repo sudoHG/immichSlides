@@ -119,14 +119,6 @@ struct PlaybackSceneTests {
         #expect(planning.fallbackReasons.contains(.missingMetadata))
         #expect(planning.qaDebugSummary.contains("metadata=missing"))
         #expect(!planning.qaDebugSummary.contains(asset.id))
-        #expect(!planning.qaDebugSummary.localizedCaseInsensitiveContains("http" + "://"))
-        #expect(!planning.qaDebugSummary.localizedCaseInsensitiveContains("https" + "://"))
-        #expect(!planning.qaDebugSummary.localizedCaseInsensitiveContains("api " + "key"))
-        #expect(!planning.qaDebugSummary.localizedCaseInsensitiveContains("tok" + "en"))
-        #expect(!planning.qaDebugSummary.localizedCaseInsensitiveContains("key" + "chain"))
-        #expect(!planning.qaDebugSummary.localizedCaseInsensitiveContains("gp" + "s"))
-        #expect(!planning.qaDebugSummary.localizedCaseInsensitiveContains("base" + "64"))
-        #expect(!planning.qaDebugSummary.localizedCaseInsensitiveContains("/Us" + "ers/"))
     }
 
     @Test

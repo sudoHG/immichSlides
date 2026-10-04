@@ -2,15 +2,10 @@
 //  PlaybackSettingsDisplayModeTests.swift
 //  immichSlidesTests
 //
-//  Placeholder; the template example() was removed so it does not skew test counts.
-//
 
 import Testing
 import Foundation
 @testable import immichSlides
-
-struct ImmichSlidesTestsPlaceholder {
-}
 
 @MainActor
 @Suite(.serialized)

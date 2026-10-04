@@ -1975,9 +1975,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     private func firstBootControl(in app: XCUIApplication, identifier: String) -> XCUIElement {
         let button = app.buttons[identifier]
         if button.exists { return button }
-        let identifiedElement = app.descendants(matching: .any)[identifier]
-        if identifiedElement.exists { return identifiedElement }
-        return identifiedElement
+        return app.descendants(matching: .any)[identifier]
     }
 
     private func tapElement(_ element: XCUIElement) {

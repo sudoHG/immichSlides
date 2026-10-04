@@ -743,7 +743,7 @@ final class immichSlidesUITests: XCTestCase {
 }
 
 private extension immichSlidesUITests {
-    func requireIPhoneDestination(file: StaticString = #filePath, line: UInt = #line) throws {
+    func requireIPhoneDestination() throws {
         let model = UIDevice.current.model.lowercased()
         let userInterfaceIdiom = UIDevice.current.userInterfaceIdiom
         guard userInterfaceIdiom == .phone || model.contains("iphone") else {

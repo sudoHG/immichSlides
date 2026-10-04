@@ -269,7 +269,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             lastProbeRaw = frameSynchronizedProbeRaw(app: app)
             lastProbeUptime = now
             if !lastProbeRaw.isEmpty,
-                let state = probeState(from: lastProbeRaw, elapsedSeconds: now - playUptime),
+                let state = probeState(from: lastProbeRaw),
                 isOutgoingOnlyPauseWindow(state)
             {
                 hitProbeRaw = lastProbeRaw
@@ -1036,10 +1036,6 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         }
     }
 
-    private func waitForElement(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
-        element.waitForExistence(timeout: timeout)
-    }
-
     private func waitUntil(timeout: TimeInterval, condition: @escaping () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -1270,7 +1266,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
     @MainActor
     private func waitForSettledPhoto(app: XCUIApplication) {
         _ = waitUntil(timeout: 4) {
-            guard let state = self.probeState(from: self.contractProbeRaw(app: app), elapsedSeconds: 0) else {
+            guard let state = self.probeState(from: self.contractProbeRaw(app: app)) else {
                 return false
             }
             return state.phase == "stablePhoto"
@@ -1303,8 +1299,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
 
     // Parsing copied from ScenePresentationContractUITests.probeState, keeping only the phase / roles /
     // opacities this test's HIT needs.
-    private func probeState(from label: String, elapsedSeconds: Double) -> PauseWindowProbeState? {
-        _ = elapsedSeconds
+    private func probeState(from label: String) -> PauseWindowProbeState? {
         let fields = probeFields(from: label)
         guard fields["schemaVersion"] == "scene-presentation-contract-probe-v1",
             let phase = fields["phase"]
@@ -1359,7 +1354,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
 
     // Positive condition after freezing: outgoing is still visible and incoming is still fully invisible.
     private func isPostPauseProbePositive(_ raw: String) -> Bool {
-        guard let state = probeState(from: raw, elapsedSeconds: 0),
+        guard let state = probeState(from: raw),
             let outgoing = layerOpacity(in: state, role: "outgoing"), outgoing > 0,
             let incoming = layerOpacity(in: state, role: "incoming"), incoming == 0
         else {
@@ -1370,7 +1365,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
 
     // Missing probe or outgoing at 0 means black/blank; 'no Fixture 3' alone must not count as a pass.
     private func isPostPauseBlackOrBlank(_ raw: String) -> Bool {
-        guard !raw.isEmpty, let state = probeState(from: raw, elapsedSeconds: 0) else {
+        guard !raw.isEmpty, let state = probeState(from: raw) else {
             return true
         }
         guard let outgoing = layerOpacity(in: state, role: "outgoing") else {

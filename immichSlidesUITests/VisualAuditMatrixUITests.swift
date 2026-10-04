@@ -105,33 +105,6 @@ private extension VisualAuditMatrixUITests {
         return app
     }
 
-    func completeFirstBootToModeSelection(app: XCUIApplication, serverURL: String, apiKey: String) throws {
-        let serverField = app.textFields["firstboot.serverURL.field"]
-        guard serverField.waitForExistence(timeout: 8) else {
-            throw XCTSkip("Not in the first-launch state; skipping the first-launch flow assertions.")
-        }
-        serverField.tap()
-        serverField.clearAndType(text: serverURL)
-
-        let apiField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiField.waitForExistence(timeout: 8))
-        apiField.tap()
-        apiField.clearAndType(text: apiKey)
-
-        let testConnectionButton = app.buttons["firstboot.testConnection.button"]
-        XCTAssertTrue(testConnectionButton.waitForExistence(timeout: 8))
-        testConnectionButton.tap()
-
-        let saveButton = app.buttons["firstboot.saveConfig.button"]
-        XCTAssertTrue(saveButton.waitForExistence(timeout: 12))
-        let saveEnabledExpectation = NSPredicate(format: "isEnabled == true")
-        let saveEnabledWait = expectation(for: saveEnabledExpectation, evaluatedWith: saveButton)
-        wait(for: [saveEnabledWait], timeout: 45)
-        saveButton.tap()
-
-        XCTAssertTrue(app.buttons["mode.continue.button"].waitForExistence(timeout: 10))
-    }
-
     func attachScreenshot(app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
@@ -149,19 +122,6 @@ private extension VisualAuditMatrixUITests {
 
     func deviceTag() -> String {
         UIDevice.current.model.replacingOccurrences(of: " ", with: "_").lowercased()
-    }
-}
-
-private extension XCUIElement {
-    func clearAndType(text: String) {
-        guard let existing = self.value as? String else {
-            self.typeText(text)
-            return
-        }
-        self.tap()
-        let deleteString = String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count)
-        self.typeText(deleteString)
-        self.typeText(text)
     }
 }
 #endif

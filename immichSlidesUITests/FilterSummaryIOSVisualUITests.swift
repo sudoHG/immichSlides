@@ -21,18 +21,13 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         let modeSelectionTitle: String
         let filterSummaryTitle: String
         let playbackSettingsTitle: String
-        let accessProtectionTitle: String
         let accessProtectionDisabledTitle: String
-        let serverTitle: String
-        let cacheTitle: String
-        let aboutTitle: String
         let appInfoTitle: String
         let privacyPolicyTitle: String
         let filterEditorTitle: String
         let albumFilterTitle: String
         let personFilterTitle: String
         let openSourceTitle: String
-        let selectAllTitle: String
 
         static let hongKong = LocalizedAcceptanceLocale(
             screenshotPrefix: "zh-Hant-HK",
@@ -43,18 +38,13 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             modeSelectionTitle: "選擇播放方式",
             filterSummaryTitle: "設定相片範圍",
             playbackSettingsTitle: "播放設定",
-            accessProtectionTitle: "存取保護",
             accessProtectionDisabledTitle: "目前狀態：未開啟",
-            serverTitle: "伺服器",
-            cacheTitle: "快取管理",
-            aboutTitle: "關於 App",
             appInfoTitle: "App 資訊",
             privacyPolicyTitle: "私隱政策",
             filterEditorTitle: "編輯篩選條件",
             albumFilterTitle: "篩選相簿",
             personFilterTitle: "篩選人物",
-            openSourceTitle: "開源授權",
-            selectAllTitle: "全選"
+            openSourceTitle: "開源授權"
         )
 
         static let taiwan = LocalizedAcceptanceLocale(
@@ -66,18 +56,13 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             modeSelectionTitle: "選擇播放方式",
             filterSummaryTitle: "設定照片範圍",
             playbackSettingsTitle: "播放設定",
-            accessProtectionTitle: "存取保護",
             accessProtectionDisabledTitle: "目前狀態：未開啟",
-            serverTitle: "伺服器",
-            cacheTitle: "快取管理",
-            aboutTitle: "關於 App",
             appInfoTitle: "App 資訊",
             privacyPolicyTitle: "隱私權政策",
             filterEditorTitle: "編輯篩選條件",
             albumFilterTitle: "篩選相簿",
             personFilterTitle: "篩選人物",
-            openSourceTitle: "開源授權",
-            selectAllTitle: "全選"
+            openSourceTitle: "開源授權"
         )
 
         static let japanese = LocalizedAcceptanceLocale(
@@ -89,18 +74,13 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             modeSelectionTitle: "再生方法を選択",
             filterSummaryTitle: "写真範囲を設定",
             playbackSettingsTitle: "再生設定",
-            accessProtectionTitle: "アクセス保護",
             accessProtectionDisabledTitle: "ステータス: オフ",
-            serverTitle: "サーバー",
-            cacheTitle: "キャッシュ管理",
-            aboutTitle: "App情報",
             appInfoTitle: "App 情報",
             privacyPolicyTitle: "プライバシーポリシー",
             filterEditorTitle: "フィルターを編集",
             albumFilterTitle: "アルバムをフィルター",
             personFilterTitle: "人物をフィルター",
-            openSourceTitle: "オープンソースライセンス",
-            selectAllTitle: "すべて選択"
+            openSourceTitle: "オープンソースライセンス"
         )
 
         static let spanish = LocalizedAcceptanceLocale(
@@ -112,18 +92,13 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             modeSelectionTitle: "Elegir modo de reproducción",
             filterSummaryTitle: "Rango de fotos",
             playbackSettingsTitle: "Ajustes de reproducción",
-            accessProtectionTitle: "Protección de acceso",
             accessProtectionDisabledTitle: "Estado: inactivo",
-            serverTitle: "Servidor",
-            cacheTitle: "Gestión de caché",
-            aboutTitle: "Acerca de",
             appInfoTitle: "Información de la app",
             privacyPolicyTitle: "Política de privacidad",
             filterEditorTitle: "Editar filtros",
             albumFilterTitle: "Filtrar álbumes",
             personFilterTitle: "Filtrar personas",
-            openSourceTitle: "Licencias de código abierto",
-            selectAllTitle: "Seleccionar todo"
+            openSourceTitle: "Licencias de código abierto"
         )
     }
 
@@ -1170,7 +1145,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
 
         openSettingsFromSlideShow(app: app)
-        openSettingsAboutPage(app: app, forceEnglishLocalization: true)
+        openSettingsAboutPage(app: app)
         assertSettingsAboutPageLoaded(app: app, forceEnglishLocalization: true)
 
         attachScreenshot(
@@ -1601,204 +1576,6 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     }
 
     @MainActor
-    func runIOSLocalizedAcceptance(locale: LocalizedAcceptanceLocale) throws {
-
-        let firstBootApp = launchIntoOnboardingFirstBoot(
-            colorScheme: "light",
-            acceptanceLocale: locale
-        )
-        assertOnboardingHeader(
-            app: firstBootApp,
-            expectedWizardTitle: locale.wizardTitle,
-            expectedPageTitle: locale.firstBootTitle,
-            pageTitleIdentifier: "firstboot.page.title"
-        )
-        attachScreenshot(
-            app: firstBootApp,
-            name: "\(locale.screenshotPrefix)-ios-firstboot-\(currentDeviceTag())"
-        )
-        firstBootApp.terminate()
-
-        let modeApp = try launchIntoOnboardingModeSelection(
-            colorScheme: "light",
-            acceptanceLocale: locale
-        )
-        assertOnboardingHeader(
-            app: modeApp,
-            expectedWizardTitle: locale.wizardTitle,
-            expectedPageTitle: locale.modeSelectionTitle,
-            pageTitleIdentifier: "mode.page.title"
-        )
-        attachScreenshot(
-            app: modeApp,
-            name: "\(locale.screenshotPrefix)-ios-mode-selection-\(currentDeviceTag())"
-        )
-        modeApp.terminate()
-
-        let filterSummaryApp = try launchIntoOnboardingFilterSummary(
-            colorScheme: "light",
-            acceptanceLocale: locale
-        )
-        assertOnboardingHeader(
-            app: filterSummaryApp,
-            expectedWizardTitle: locale.wizardTitle,
-            expectedPageTitle: locale.filterSummaryTitle,
-            pageTitleIdentifier: "filterSummary.page.title"
-        )
-        attachScreenshot(
-            app: filterSummaryApp,
-            name: "\(locale.screenshotPrefix)-ios-filter-summary-\(currentDeviceTag())"
-        )
-        filterSummaryApp.terminate()
-
-        let filterEditorApp = try launchIntoFilterEditor(
-            colorScheme: "light",
-            prepareFilterEditorVisuals: false,
-            acceptanceLocale: locale
-        )
-        XCTAssertTrue(
-            waitForLocalizedElement(
-                filterEditorApp,
-                identifier: "filterEditor.page.title",
-                label: locale.filterEditorTitle,
-                timeout: 8
-            ),
-            "In the localized environment, the filter editor should show text for the target locale"
-        )
-        attachScreenshot(
-            app: filterEditorApp,
-            name: "\(locale.screenshotPrefix)-ios-filter-editor-\(currentDeviceTag())"
-        )
-        filterEditorApp.terminate()
-
-        let albumApp = try launchIntoAlbumFilterPage(
-            colorScheme: "light",
-            dynamicTypeSize: nil,
-            acceptanceLocale: locale
-        )
-        attachScreenshot(
-            app: albumApp,
-            name: "\(locale.screenshotPrefix)-ios-album-filter-\(currentDeviceTag())"
-        )
-        albumApp.terminate()
-
-        let personApp = try launchIntoPersonFilterPage(
-            colorScheme: "light",
-            dynamicTypeSize: nil,
-            acceptanceLocale: locale
-        )
-        attachScreenshot(
-            app: personApp,
-            name: "\(locale.screenshotPrefix)-ios-person-filter-\(currentDeviceTag())"
-        )
-        personApp.terminate()
-
-        let settingsApp = try launchIntoSlideShow(
-            colorScheme: "light",
-            acceptanceLocale: locale
-        )
-        attachScreenshot(
-            app: settingsApp,
-            name: "\(locale.screenshotPrefix)-ios-slideshow-\(currentDeviceTag())"
-        )
-
-        openSettingsFromSlideShow(app: settingsApp)
-        XCTAssertTrue(
-            waitForLocalizedElement(
-                settingsApp,
-                identifier: "settings.item.playback",
-                label: locale.playbackSettingsTitle,
-                timeout: 8
-            ),
-            "In the localized environment, the settings root should show the playback settings entry"
-        )
-        attachScreenshot(
-            app: settingsApp,
-            name: "\(locale.screenshotPrefix)-ios-settings-root-\(currentDeviceTag())"
-        )
-
-        openSettingsSection(
-            app: settingsApp,
-            sectionID: "settings.item.playback"
-        )
-        XCTAssertTrue(
-            settingsApp.buttons["settings.playback.filterConfig.button"].waitForExistence(timeout: 8),
-            "Localized playback settings page should show the edit filters entry"
-        )
-        attachScreenshot(
-            app: settingsApp,
-            name: "\(locale.screenshotPrefix)-ios-settings-playback-\(currentDeviceTag())"
-        )
-
-        openSettingsSection(
-            app: settingsApp,
-            sectionID: "settings.item.accessProtection"
-        )
-        XCTAssertTrue(
-            anyElement(app: settingsApp, withLabel: locale.accessProtectionDisabledTitle)
-                .waitForExistence(timeout: 8),
-            "Localized access protection page should show the disabled status"
-        )
-        attachScreenshot(
-            app: settingsApp,
-            name: "\(locale.screenshotPrefix)-ios-settings-access-protection-\(currentDeviceTag())"
-        )
-
-        openSettingsSection(
-            app: settingsApp,
-            sectionID: "settings.item.server"
-        )
-        XCTAssertTrue(
-            settingsApp.textFields["firstboot.serverURL.field"].waitForExistence(timeout: 8),
-            "Localized server settings page should show the server URL field"
-        )
-        attachScreenshot(
-            app: settingsApp,
-            name: "\(locale.screenshotPrefix)-ios-settings-server-\(currentDeviceTag())"
-        )
-
-        openSettingsSection(
-            app: settingsApp,
-            sectionID: "settings.item.cache"
-        )
-        XCTAssertTrue(
-            settingsApp.buttons["settings.cache.clearDisk.button"].waitForExistence(timeout: 8),
-            "Localized cache management page should show the clear disk cache button"
-        )
-        attachScreenshot(
-            app: settingsApp,
-            name: "\(locale.screenshotPrefix)-ios-settings-cache-\(currentDeviceTag())"
-        )
-
-        openSettingsSection(
-            app: settingsApp,
-            sectionID: "settings.item.about"
-        )
-        XCTAssertTrue(
-            anyElement(app: settingsApp, withLabel: locale.appInfoTitle).waitForExistence(timeout: 8),
-            "Localized About page should show the App info section"
-        )
-        XCTAssertTrue(
-            anyElement(app: settingsApp, withLabel: locale.privacyPolicyTitle).waitForExistence(timeout: 8),
-            "Localized About page should show the privacy policy entry text for the target locale"
-        )
-        attachScreenshot(
-            app: settingsApp,
-            name: "\(locale.screenshotPrefix)-ios-settings-about-\(currentDeviceTag())"
-        )
-
-        openOpenSourceLicensesFromAbout(app: settingsApp)
-        XCTAssertTrue(
-            anyElement(app: settingsApp, withLabel: locale.openSourceTitle).waitForExistence(timeout: 8),
-            "Localized open source licenses page should show text for the target locale"
-        )
-        attachScreenshot(
-            app: settingsApp,
-            name: "\(locale.screenshotPrefix)-ios-settings-open-source-\(currentDeviceTag())"
-        )
-    }
-
-    @MainActor
     func testIOSEnglishAcceptanceFirstBootScreenshot() throws {
 
         let app = launchIntoOnboardingFirstBoot(
@@ -1987,7 +1764,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         openSettingsFromSlideShow(app: app)
 
-        openSettingsAboutPage(app: app, forceEnglishLocalization: true)
+        openSettingsAboutPage(app: app)
         assertSettingsAboutPageLoaded(app: app, forceEnglishLocalization: true)
         attachScreenshot(
             app: app,
@@ -2129,7 +1906,7 @@ private extension FilterSummaryIOSVisualUITests {
         return app
     }
 
-    func requireIOSDestination(file: StaticString = #filePath, line: UInt = #line) throws {
+    func requireIOSDestination() throws {
         let userInterfaceIdiom = UIDevice.current.userInterfaceIdiom
         guard userInterfaceIdiom != .tv else {
             throw XCTSkip("The current run destination is tvOS; skipping the iOS FilterSummary visual audit tests.")
@@ -3148,10 +2925,7 @@ private extension FilterSummaryIOSVisualUITests {
     }
 
     @MainActor
-    func openSettingsAboutPage(
-        app: XCUIApplication,
-        forceEnglishLocalization: Bool = false
-    ) {
+    func openSettingsAboutPage(app: XCUIApplication) {
         openSettingsSection(
             app: app,
             sectionID: "settings.item.about"

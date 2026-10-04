@@ -266,7 +266,7 @@ private enum SmartFillRuntimeEvidenceSupport {
         // The collector never accepts an env var as sign-off for human visual review;
         // per-image verdicts stay in a separate review record.
         let visualReviewStatus = "VISUAL_REVIEW_REQUIRED"
-        let visualUnverifiedCount = visualReviewStatus == "REVIEWED_PASS" ? 0 : 1
+        let visualUnverifiedCount = 1
         let hardFallbackCount = isFallback ? 1 : 0
         let smartFillSingleFillCount = !isFallback && slotCount == 1 && acceptedSceneSearchTier == "single-fill" ? 1 : 0
         let singleRiskCount = acceptedSceneSearchTier == "single-risk" ? 1 : 0
@@ -2549,71 +2549,6 @@ private extension PlaybackSmartFillVisualUITests {
         return manifest
     }
 
-    func waitForAcceptedSmartFillManifest(app: XCUIApplication, timeout: TimeInterval) throws -> SmartFillManifest {
-        var latest: SmartFillManifest?
-        guard
-            waitUntil(
-                timeout: timeout,
-                condition: {
-                    guard let manifest = self.currentManifest(app: app) else { return false }
-                    latest = manifest
-                    return manifest.sceneType == "double" || manifest.sceneType == "triple"
-                })
-        else {
-            attachScreenshot(app: app, name: "smartfill-motion-accepted-manifest-missing-\(deviceTag())")
-            throw SmartFillIOSFailure.missingManifest
-        }
-        return try XCTUnwrap(latest)
-    }
-
-    func currentMotionFrameRows(
-        app: XCUIApplication,
-        sampleIndex: Int,
-        elapsedSeconds: Double,
-        manifest: SmartFillManifest
-    ) -> [MotionFrameEvidenceRow] {
-        let summaryProbe = app.otherElements["slideshow.smartfill.motionFrame.summary"]
-        if summaryProbe.exists {
-            return summaryProbe.label
-                .split(separator: "\n", omittingEmptySubsequences: true)
-                .compactMap { rawLine -> MotionFrameEvidenceRow? in
-                    let fields = parseSemicolonFields(String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines))
-                    guard fields["eventType"] == "motionFrame" else { return nil }
-                    let identifier = [
-                        "slideshow.smartfill.motionFrame.summary",
-                        fields["renderRole"] ?? "unknown",
-                        fields["slotId"] ?? "unknown"
-                    ].joined(separator: ".")
-                    return MotionFrameEvidenceRow(
-                        sampleIndex: sampleIndex,
-                        elapsedSeconds: elapsedSeconds,
-                        probeIdentifier: identifier,
-                        fields: fields,
-                        manifestSlotRefs: manifest.slotRefs,
-                        manifestSceneType: manifest.sceneType
-                    )
-                }
-        }
-        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "slideshow.smartfill.motionFrame.")
-        let elements = app.descendants(matching: .any)
-            .matching(predicate)
-            .allElementsBoundByIndex
-        return elements.compactMap { element in
-            guard element.exists else { return nil }
-            let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            let fields = parseSemicolonFields(label)
-            guard fields["eventType"] == "motionFrame" else { return nil }
-            return MotionFrameEvidenceRow(
-                sampleIndex: sampleIndex,
-                elapsedSeconds: elapsedSeconds,
-                probeIdentifier: element.identifier,
-                fields: fields,
-                manifestSlotRefs: manifest.slotRefs,
-                manifestSceneType: manifest.sceneType
-            )
-        }
-    }
-
     func appSmartFillMotionTraceText(
         app: XCUIApplication,
         timeout: TimeInterval
@@ -2812,41 +2747,6 @@ private extension PlaybackSmartFillVisualUITests {
         let probe = app.descendants(matching: .any)["slideshow.smartfill.currentManifest.flag"]
         guard probe.exists else { return nil }
         return parseManifest(probe.label.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-
-    func currentProductTransitionFields(app: XCUIApplication) -> [String: String]? {
-        let probe = app.otherElements["slideshow.smartfill.productTransition.summary"]
-        guard probe.exists else { return nil }
-        let fields = parseSemicolonFields(probe.label.trimmingCharacters(in: .whitespacesAndNewlines))
-        guard fields["eventType"] == "productTransition" else { return nil }
-        return fields
-    }
-
-    func productSceneSequenceRows(
-        app: XCUIApplication,
-        duration: TimeInterval,
-        interval: TimeInterval
-    ) -> [ProductSceneSequenceRow] {
-        var rows: [ProductSceneSequenceRow] = []
-        let startedAt = ProcessInfo.processInfo.systemUptime
-        var sampleIndex = 0
-        while ProcessInfo.processInfo.systemUptime - startedAt < duration {
-            let elapsed = ProcessInfo.processInfo.systemUptime - startedAt
-            if let manifest = currentManifest(app: app) {
-                rows.append(
-                    ProductSceneSequenceRow(
-                        sampleIndex: sampleIndex,
-                        elapsedSeconds: elapsed,
-                        manifestSlotRefs: manifest.slotRefs,
-                        manifestSceneType: manifest.sceneType,
-                        productTransitionFields: currentProductTransitionFields(app: app) ?? [:]
-                    )
-                )
-            }
-            sampleIndex += 1
-            RunLoop.current.run(until: Date().addingTimeInterval(interval))
-        }
-        return rows
     }
 
     func waitForCurrentAssetReference(app: XCUIApplication, timeout: TimeInterval) throws -> String {
@@ -3512,20 +3412,6 @@ private extension PlaybackSmartFillVisualUITests {
             ? "\(Int(interval.rounded()))sec"
             : String(format: "%.3fsec", interval).replacingOccurrences(of: ".", with: "p")
         return defaultScenario.replacingOccurrences(of: "5sec", with: intervalText)
-    }
-
-    func smartFillProductSequenceSampleIntervalSeconds() -> TimeInterval {
-        let environment = ProcessInfo.processInfo.environment
-        let rawValue =
-            environment["TEST_RUNNER_SMARTFILL_PRODUCT_SEQUENCE_SAMPLE_INTERVAL_SECONDS"]
-            ?? environment["SMARTFILL_PRODUCT_SEQUENCE_SAMPLE_INTERVAL_SECONDS"]
-        guard let rawValue,
-            let value = TimeInterval(rawValue),
-            value > 0
-        else {
-            return 0.05
-        }
-        return min(value, 0.05)
     }
 
     func smartFillMotionTraceStartTimeoutSeconds() -> TimeInterval {

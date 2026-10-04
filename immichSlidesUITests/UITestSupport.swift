@@ -385,13 +385,6 @@ extension PlaybackDriver {
         )
     }
 
-    // Read only the currently published scene; render-layer probes may include both the old and new layers.
-    func currentSceneManifest() -> String? {
-        let manifests = snapshotNodes { $0.identifier == "slideshow.smartfill.currentManifest.flag" }
-        guard manifests.count == 1 else { return nil }
-        return manifests.first?.label
-    }
-
     // Confirm both orientation and two-photo identity from actual screen pixels.
     func isShowingMultiPhotoScene(in orientation: StepOrientation = .notApplicable) -> Bool {
         guard orientation.matches(app.frame.size) else { return false }
