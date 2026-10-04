@@ -29,8 +29,6 @@ struct ModeSelectionViewTV: View {
         case continueButton
     }
 
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.colorScheme) private var colorScheme
 
     @Binding var selectedMode: SlideMode?
@@ -53,14 +51,6 @@ struct ModeSelectionViewTV: View {
     @FocusedValue(\.modeSelectionFocusedTarget) private var systemFocusedTargetRawValue: String?
     @Namespace private var modeFocusScope
     private let currentOnboardingStep: TVOnboardingWizardStep = .choosePlaybackMode
-
-    private var layout: ViewLayoutTraits {
-        ViewLayoutTraits(
-            horizontalSizeClass: horizontalSizeClass,
-            verticalSizeClass: verticalSizeClass,
-            userInterfaceIdiom: UIDevice.current.userInterfaceIdiom
-        )
-    }
 
     private var requestedFocusedTarget: FocusTarget? {
         requestedFocusTarget

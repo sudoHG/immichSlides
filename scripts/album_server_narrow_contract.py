@@ -14,7 +14,6 @@ from access_lifecycle_contract import (
 )
 from strict_e2e_filter_contract import (
     START_PLAYBACK_BUTTON_ID,
-    FilterContractError,
     assert_empty_selection_cannot_start,
     assert_foreign_server_ids_absent,
     assert_playback_marks_in_target,

@@ -572,14 +572,6 @@ def _classify_person_conflict_normal(evidence_dir: Path) -> tuple[Any, list[str]
     return identities[0], marks
 
 
-def _marks_from_pngs(evidence_dir: Path, names: Sequence[str]) -> list[str]:
-    marks: list[str] = []
-    for name in names:
-        identity = _classify_named_png(evidence_dir, name)
-        marks.append(require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark))
-    return marks
-
-
 @lru_cache(maxsize=1)
 def _display_reference_photos() -> tuple[bytes, ...]:
     return tuple(image for name in ("a", "b") for image in _fixture_data(name)["images"].values())

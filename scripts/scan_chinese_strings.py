@@ -78,13 +78,6 @@ class StringHit:
     localized_context: bool
 
 
-def load_catalog_keys(root: Path) -> set[str]:
-    catalog_path = root / "immichSlides" / "Localizable.xcstrings"
-    with catalog_path.open("r", encoding="utf-8") as handle:
-        data = json.load(handle)
-    return set(data.get("strings", {}).keys())
-
-
 def load_catalog_strings(root: Path) -> dict[str, dict]:
     """Load the whole string catalog.
 

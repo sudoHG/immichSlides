@@ -495,7 +495,7 @@ struct FilterSummarySelectionCard: View {
                     .rotationEffect(.degrees(6))
                     .offset(x: 64, y: -8)
             } else {
-                IOSSelectionStageMosaic(urls: coverURLs, style: kind.mediaStyle, colorScheme: colorScheme)
+                IOSSelectionStageMosaic(urls: coverURLs, style: kind.mediaStyle)
             }
 
             LinearGradient(

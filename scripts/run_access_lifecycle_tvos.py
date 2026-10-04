@@ -550,9 +550,6 @@ def main(
     )
     arguments = parser.parse_args(argv)
 
-    if arguments.platform != "tvos":
-        print("This runner only runs the tvOS device test.", file=stderr)
-        return 2
     if "Simulator" not in arguments.destination:
         print("tvOS only accepts Simulator destinations; they must not be presented as a real device.", file=stderr)
         return 2

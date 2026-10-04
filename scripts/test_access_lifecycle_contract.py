@@ -19,15 +19,11 @@ from unittest import mock
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from run_offline_unit_tests import ACCESS_LIFECYCLE_HOST_SELECTORS  # noqa: E402
 from sensitive_scan_test_support import compressed_byte_coincidence  # noqa: E402
 from access_lifecycle_contract import (  # noqa: E402
     AccessLifecycleContractError,
     ALLOWED_SYSTEM_PAUSE_ACTIVATION,
     FROZEN_FIXTURE_SHA256,
-    FORBIDDEN_DISPLAY_MODE_KEY,
-    FORBIDDEN_SETTINGS_SOURCES,
-    KNOWN_REQUESTS,
     NEW_STABLE_MARK_CONFIRM_WINDOW,
     NEW_STABLE_MARK_MIN_LUMA,
     NEW_STABLE_MARK_POLL_INTERVAL,

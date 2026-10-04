@@ -227,11 +227,6 @@ struct ServerConfigFormViewIOS: View {
         apiKey = config.immichApiKey ?? ""
     }
 
-    private var inputFieldClipColor: Color {
-
-        Color.clear
-    }
-
     private var inputFieldBrightness: Double {
 
         colorScheme == .dark ? 0.14 : 0.18

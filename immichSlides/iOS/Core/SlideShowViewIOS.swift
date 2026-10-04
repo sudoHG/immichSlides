@@ -37,8 +37,6 @@ struct SlideShowViewIOS: View {
     @State private var pinEntryErrorMessage: String = ""
 
     @State private var showAccessProtectionRecoveryAlert: Bool = false
-    // Page-local mirror of the access protection toggle, used to update the back button immediately.
-    @State private var isAccessProtectionEnabled: Bool = AccessProtectionStore.shared.isEnabled
 
     @State private var showPlaybackEntryHint: Bool = false
     private let playbackEntryHintStore = PlaybackEntryHintStore()
@@ -405,10 +403,7 @@ struct SlideShowViewIOS: View {
                         .accessibilityIdentifier("slideshow.smartfill.currentManifest.flag")
                         .accessibilityLabel(manifest)
                 }
-                smartFillMotionFrameProbeOverlay(
-                    surfaceSize: geometry.size,
-                    safeAreaInsets: geometry.safeAreaInsets
-                )
+                smartFillMotionFrameProbeOverlay()
                 if exposesCurrentAssetIDProbeForUITests {
                     // The history contract reads the published visible scene identity,
                     // so this probe cannot live only in the single-photo EXIF branch.
@@ -558,7 +553,6 @@ struct SlideShowViewIOS: View {
         .onAppear {
             PlatformCompat.setIdleTimerDisabled(true)
             viewModel.updateSmartFillMotionReduceMotionEnabled(accessibilityReduceMotion)
-            syncAccessProtectionState()
             refreshPlaybackRelatedSettings()
             syncExifOverlayPresentation()
             maybePresentPlaybackEntryHintIfNeeded()
@@ -609,9 +603,6 @@ struct SlideShowViewIOS: View {
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             viewModel.updateSmartFillMotionReduceMotionEnabled(isEnabled)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .accessProtectionStateDidChange)) { _ in
-            syncAccessProtectionState()
-        }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
             // Resync playback settings once after returning from Settings.
             refreshPlaybackRelatedSettings()
@@ -648,10 +639,7 @@ struct SlideShowViewIOS: View {
     }
 
     @ViewBuilder
-    private func smartFillMotionFrameProbeOverlay(
-        surfaceSize: CGSize,
-        safeAreaInsets: EdgeInsets
-    ) -> some View {
+    private func smartFillMotionFrameProbeOverlay() -> some View {
         #if DEBUG
         if exposesSmartFillMotionFrameProbeForUITests {
             ZStack {
@@ -1200,19 +1188,6 @@ struct SlideShowViewIOS: View {
         return "legacy"
     }
 
-    private func singleFilledScopeProbeValue(for scene: PlaybackScene) -> String {
-        switch scene.smartFillReadback?.sceneType {
-        case .single:
-            return "smartFillSingle"
-        case .fallback:
-            return "smartFillFallback"
-        case .double, .triple:
-            return "none"
-        case nil:
-            return scene.photoSlots.count == 1 ? "legacySingle" : "legacyNonSmartFill"
-        }
-    }
-
     @ViewBuilder
     func renderPhoto(in size: CGSize, safeAreaInsets: EdgeInsets) -> some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { _ in
@@ -1504,10 +1479,6 @@ struct SlideShowViewIOS: View {
                 await viewModel.switchPlaybackSource(to: .filtered(selection))
             }
         }
-    }
-
-    private func syncAccessProtectionState() {
-        isAccessProtectionEnabled = AccessProtectionStore.shared.isEnabled
     }
 
     private var exifHorizontalPadding: CGFloat {

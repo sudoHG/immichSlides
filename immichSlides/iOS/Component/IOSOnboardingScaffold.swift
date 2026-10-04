@@ -49,11 +49,6 @@ struct IOSOnboardingVisualMetrics {
         return 24
     }
 
-    var pageOuterVerticalPadding: CGFloat {
-        if isCompactHeight { return 12 }
-        return isPad ? 24 : 18
-    }
-
     var pageSectionSpacing: CGFloat {
         if isCompactHeight { return 14 }
         return isPad ? 24 : 18

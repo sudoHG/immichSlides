@@ -10,11 +10,9 @@ import SwiftUI
 struct FilterSummaryViewIOS: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
-    @Environment(\.colorScheme) private var colorScheme
 
     @ObservedObject var viewModel: FilterViewModel
     let canShowBackToModeSelection: Bool
-    let onBackToModeSelection: (() -> Void)?
     let showsOnboardingProgress: Bool
     let onStartPlayback: () -> Void
 
@@ -42,13 +40,6 @@ struct FilterSummaryViewIOS: View {
 
     private var canStartPlayback: Bool {
         viewModel.selection.isEmpty == false
-    }
-
-    // No bottom Back to Mode Selection button, to avoid duplicating the root navigation back;
-    // the flag still drives the root back button and height compensation.
-
-    private var shouldShowBottomBackToModeSelectionButton: Bool {
-        false
     }
 
     private var shouldExposeUITestReadinessMarkers: Bool {
@@ -109,14 +100,11 @@ struct FilterSummaryViewIOS: View {
                 selectionStage
                 FilterSummaryActionBar(
                     viewModel: viewModel,
-                    canShowBackToModeSelection: shouldShowBottomBackToModeSelectionButton,
                     canStartPlayback: canStartPlayback,
-                    onBackToModeSelection: onBackToModeSelection,
                     onStartPlayback: onStartPlayback,
                     isPhone: isPhone,
                     isCompact: isCompact,
-                    isPhoneLandscape: isPhoneLandscape,
-                    isPhonePortrait: isPhonePortrait
+                    isPhoneLandscape: isPhoneLandscape
                 )
             }
         }
@@ -154,14 +142,11 @@ struct FilterSummaryViewIOS: View {
 
             FilterSummaryActionBar(
                 viewModel: viewModel,
-                canShowBackToModeSelection: shouldShowBottomBackToModeSelectionButton,
                 canStartPlayback: canStartPlayback,
-                onBackToModeSelection: onBackToModeSelection,
                 onStartPlayback: onStartPlayback,
                 isPhone: isPhone,
                 isCompact: isCompact,
-                isPhoneLandscape: isPhoneLandscape,
-                isPhonePortrait: isPhonePortrait
+                isPhoneLandscape: isPhoneLandscape
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -179,33 +164,7 @@ struct FilterSummaryViewIOS: View {
 
     private var selectionStage: some View {
         Group {
-            if isPhoneLandscape {
-                HStack(spacing: cardSpacing) {
-                    FilterSummarySelectionCard(
-                        viewModel: viewModel,
-                        kind: .album,
-                        isPhone: isPhone,
-                        isPhoneLandscape: isPhoneLandscape,
-                        isPhonePortrait: isPhonePortrait,
-                        isCompact: isCompact,
-                        isCompactHeight: isCompactHeight,
-                        isPad: isPad
-                    )
-                    .frame(maxWidth: phoneLandscapeCardWidth)
-
-                    FilterSummarySelectionCard(
-                        viewModel: viewModel,
-                        kind: .people,
-                        isPhone: isPhone,
-                        isPhoneLandscape: isPhoneLandscape,
-                        isPhonePortrait: isPhonePortrait,
-                        isCompact: isCompact,
-                        isCompactHeight: isCompactHeight,
-                        isPad: isPad
-                    )
-                    .frame(maxWidth: phoneLandscapeCardWidth)
-                }
-            } else if isCompact == false {
+            if isCompact == false {
                 HStack(alignment: .top, spacing: cardSpacing) {
                     FilterSummarySelectionCard(
                         viewModel: viewModel,
@@ -326,104 +285,6 @@ struct FilterSummaryViewIOS: View {
         return isCompactHeight ? 0 : -38
     }
 
-    private var primaryTextColor: Color {
-        colorScheme == .dark ? .white : Color.black.opacity(0.92)
-    }
-
-    private var secondaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.66) : Color(red: 0.34, green: 0.41, blue: 0.49)
-    }
-
-    private var tertiaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.52) : Color(red: 0.40, green: 0.48, blue: 0.56)
-    }
-
-    private var secondaryButtonFill: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.05)
-    }
-
-    private var albumTint: Color { Color(red: 0.31, green: 0.88, blue: 0.93) }
-    private var albumTintSecondary: Color { Color(red: 0.23, green: 0.79, blue: 0.73) }
-    private var peopleTint: Color { Color(red: 1.00, green: 0.73, blue: 0.36) }
-    private var peopleTintSecondary: Color { Color(red: 0.96, green: 0.63, blue: 0.28) }
-    private var summaryTint: Color { Color(red: 0.29, green: 0.75, blue: 0.96) }
-
-    private var startButtonGradient: some ShapeStyle {
-        AnyShapeStyle(
-            LinearGradient(
-                colors: [summaryTint, albumTintSecondary],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        )
-    }
-
-    private var selectionCardMediaHeight: CGFloat {
-        if isPhoneLandscape { return 110 }
-        if isPhonePortrait { return 180 }
-        if isCompactHeight { return 188 }
-        if isCompact { return 220 }
-        return isPad ? 268 : 238
-    }
-
-    private var selectionCardBodyPadding: CGFloat {
-        if isPhoneLandscape { return 14 }
-        return isCompact ? 18 : 20
-    }
-
-    private var selectionCardCornerRadius: CGFloat {
-        isCompact ? 28 : 32
-    }
-
-    private var selectionCardTitleSize: CGFloat {
-        if isPhoneLandscape { return 18 }
-        return isCompact ? 22 : 24
-    }
-
-    private var selectionCardSurface: some ShapeStyle {
-        if colorScheme == .dark {
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.16, green: 0.17, blue: 0.20),
-                        Color(red: 0.12, green: 0.14, blue: 0.17)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-        }
-
-        return AnyShapeStyle(
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(0.98),
-                    Color(red: 0.94, green: 0.97, blue: 0.995)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-    }
-
-    private var selectionCardBorderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color(red: 0.72, green: 0.81, blue: 0.91).opacity(0.40)
-    }
-
-    private var actionButtonWidth: CGFloat {
-        if isCompact {
-            return 176
-        }
-        return 188
-    }
-
-    private var actionMetricTileWidth: CGFloat {
-        if isCompact {
-            return 94
-        }
-        return 104
-    }
-
     private var phoneLandscapeColumnSpacing: CGFloat {
         12
     }
@@ -432,89 +293,6 @@ struct FilterSummaryViewIOS: View {
         14
     }
 
-    private var actionPanelHorizontalPadding: CGFloat {
-        if isPhoneLandscape { return 0 }
-        if isPhone { return 16 }
-        return isCompact ? 18 : 22
-    }
-
-    private var actionPanelVerticalPadding: CGFloat {
-        if isPhoneLandscape { return 0 }
-        if isPhone { return 16 }
-        return isCompact ? 18 : 20
-    }
-
-    private var phoneSelectionPreviewWidth: CGFloat {
-        isPhoneLandscape ? 56 : 74
-    }
-
-    private var phoneSelectionPreviewHeight: CGFloat {
-        isPhoneLandscape ? 56 : 74
-    }
-
-    private var phoneSelectionCardPadding: CGFloat {
-        isPhoneLandscape ? 16 : 12
-    }
-
-    private func phoneSelectionCardBackground(tint: Color, secondaryTint: Color) -> some ShapeStyle {
-        if isPhone {
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: colorScheme == .dark
-                        ? [
-                            Color(red: 0.18, green: 0.20, blue: 0.23),
-                            Color(red: 0.14, green: 0.16, blue: 0.19)
-                        ]
-                        : [
-                            Color.white.opacity(0.98),
-                            tint.opacity(0.05)
-                        ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-        }
-
-        return AnyShapeStyle(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.16, green: 0.18, blue: 0.22),
-                    tint.opacity(colorScheme == .dark ? 0.10 : 0.06),
-                    secondaryTint.opacity(colorScheme == .dark ? 0.05 : 0.03)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-    }
-
-    private func phoneSelectionCardBorder(tint: Color) -> Color {
-        if isPhone {
-            return colorScheme == .dark
-                ? Color.white.opacity(0.08)
-                : Color(red: 0.72, green: 0.81, blue: 0.91).opacity(0.38)
-        }
-        return tint.opacity(colorScheme == .dark ? 0.20 : 0.18)
-    }
-
-    private var phoneSelectionCardHighlight: Color {
-        colorScheme == .dark ? Color.white.opacity(0.04) : Color.white.opacity(0.88)
-    }
-
-    private var phoneSecondaryButtonFill: Color {
-        colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.90)
-    }
-
-    private var phoneDisabledButtonFill: Color {
-        colorScheme == .dark
-            ? Color.white.opacity(0.10)
-            : Color(red: 0.79, green: 0.87, blue: 0.93)
-    }
-
     private var phoneLandscapeCardWidth: CGFloat { 320 }
-
-    private var phoneSingleButtonWidth: CGFloat {
-        isPhoneLandscape ? 188 : 140
-    }
 
 }

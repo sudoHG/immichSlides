@@ -238,13 +238,6 @@ struct FilterSummaryViewTV: View {
         return LocalizedText.format("People: %lld", Int64(viewModel.selectedPersonCount))
     }
 
-    private var stageAssetSummary: String {
-        if currentStageMode == .album {
-            return LocalizedText.format("%lld photos in the current range", Int64(viewModel.selectedAlbumAssetsCount))
-        }
-        return LocalizedText.format("%lld photos in the current range", Int64(viewModel.selectedPersonAssetsCount))
-    }
-
     private var stageAmbientSummary: String {
         if currentStageMode == .album {
             return LocalizedText.format(

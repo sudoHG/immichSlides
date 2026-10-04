@@ -18,7 +18,6 @@ enum TVOSServerConfigFormMetrics {
 #endif
 
 struct ServerConfigFormViewTV: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.colorScheme) private var colorScheme
 

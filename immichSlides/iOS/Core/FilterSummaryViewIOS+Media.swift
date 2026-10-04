@@ -17,7 +17,6 @@ struct IOSSelectionStageMosaic: View {
 
     let urls: [URL]
     let style: Style
-    let colorScheme: ColorScheme
 
     var body: some View {
         GeometryReader { geometry in

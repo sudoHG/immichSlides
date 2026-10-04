@@ -155,9 +155,6 @@ struct SettingsView: View {
             showServerErrorAlert: $serverVM.showErrorAlert,
             onTestConnection: testServerConnection,
             onSaveServerConfig: saveServerConfiguration,
-            // Pass the same filterVM so the summary and the editor work on the same filter state.
-
-            filterViewModel: filterVM,
             playbackSettings: playbackVM.settings,
             filterSummaryText: filterSummaryText,
             isFilterSelectionEmpty: filterVM.selection.isEmpty,

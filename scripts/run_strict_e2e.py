@@ -871,11 +871,6 @@ def require_visual_identity(evidence_dir: Path, suite: str) -> dict[str, object]
         failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
         _write_visual_runner_report(evidence_dir, failed)
         raise CommandError(f"Visual assertion failed; cannot mark SUCCESS: {error}", code=2) from error
-    if payload.get("verdict") == "PARTIAL" and suite == "tvos-person":
-        vision = payload.get("vision") if isinstance(payload.get("vision"), dict) else {}
-        if vision.get("verdict") == "UNVERIFIED":
-            _write_visual_runner_report(evidence_dir, payload)
-            return payload
     if payload.get("verdict") != "PASS":
         _write_visual_runner_report(evidence_dir, payload)
         raise CommandError("Visual assertion did not pass; cannot mark SUCCESS.", code=2)

@@ -152,14 +152,11 @@ struct FilterViewIOS: View {
 
             FilterSummaryActionBar(
                 viewModel: viewModel,
-                canShowBackToModeSelection: false,
                 canStartPlayback: canStartPlayback,
-                onBackToModeSelection: nil,
                 onStartPlayback: { startFilteredPlayback() },
                 isPhone: isPhone,
                 isCompact: isCompact,
-                isPhoneLandscape: isPhoneLandscape,
-                isPhonePortrait: isPhonePortrait
+                isPhoneLandscape: isPhoneLandscape
             )
         } else {
 

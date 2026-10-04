@@ -9,7 +9,6 @@ import SwiftUI
 import UIKit
 
 struct SlideShowViewTV: View {
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var viewModel: SlideShowViewModel
@@ -67,8 +66,6 @@ struct SlideShowViewTV: View {
     // When the control bar is hidden, a hidden focus receiver handles arrow keys and Play/Pause.
 
     @FocusState private var hiddenWakeReceiverFocused: Bool
-    private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
-    private var isCompactHeight: Bool { verticalSizeClass == .compact }
     // For SmartFill multi-photo layouts, keep the subject readable first so EXIF doesn't cover faces.
     private var visibleExifOverlayAsset: Asset? {
         exifOverlayAsset(in: viewModel.visibleOverlayScene)
@@ -1384,16 +1381,10 @@ struct SlideShowViewTV: View {
     #endif
 
     private var exifHorizontalPadding: CGFloat {
-        if isPhone { return isCompactHeight ? 10 : 14 }
         return 30
     }
 
     private func exifTopPadding(for safeAreaInsets: EdgeInsets) -> CGFloat {
-        if isPhone {
-            // Add an offset to the top safe area so the Dynamic Island doesn't cover EXIF.
-            let minimumTopInset: CGFloat = isCompactHeight ? 24 : 52
-            return max(safeAreaInsets.top, minimumTopInset) + (isCompactHeight ? 6 : 10)
-        }
         return 30
     }
 

@@ -131,7 +131,6 @@ struct SmartFillPlannerBenchmark {
             candidates: [current] + lookahead,
             sceneOrdinal: sceneIndex,
             currentAspect: currentAspect,
-            currentPixelSize: currentPixelSize,
             candidateAspects: candidateAspects,
             candidateFaceFlags: candidateFaceFlags,
             candidatePixelSizes: candidatePixelSizes
@@ -275,7 +274,6 @@ private struct BenchmarkScenario {
     let candidates: [PlaybackSmartFillCandidateSummary]
     let sceneOrdinal: Int
     let currentAspect: Double
-    let currentPixelSize: PlaybackPlanningPixelSize
     let candidateAspects: [Double]
     let candidateFaceFlags: [Bool]
     let candidatePixelSizes: [PlaybackPlanningPixelSize]
