@@ -11,6 +11,7 @@ struct TestServerConfiguration {
 
     let serverURL: String
     let apiKey: String
+    let exifDiagnosticAlbumID: String?
 
     static let current: TestServerConfiguration? = resolve()
 
@@ -19,7 +20,21 @@ struct TestServerConfiguration {
         sourceFilePath: String = #filePath
     ) -> TestServerConfiguration? {
         // Process environment wins so a CI or xcodebuild injection overrides a leftover local env.xcconfig.
-        fromEnvironment(environment) ?? fromLocalEnvXCConfig(sourceFilePath: sourceFilePath)
+        guard
+            let configuration = fromEnvironment(environment)
+                ?? fromLocalEnvXCConfig(sourceFilePath: sourceFilePath)
+        else {
+            return nil
+        }
+
+        return TestServerConfiguration(
+            serverURL: configuration.serverURL,
+            apiKey: configuration.apiKey,
+            exifDiagnosticAlbumID: resolvedExifDiagnosticAlbumID(
+                environment: environment,
+                sourceFilePath: sourceFilePath
+            )
+        )
     }
 
     private static func fromEnvironment(_ environment: [String: String]) -> TestServerConfiguration? {
@@ -49,16 +64,7 @@ struct TestServerConfiguration {
     }
 
     private static func fromLocalEnvXCConfig(sourceFilePath: String) -> TestServerConfiguration? {
-        // This file is one level below the repository root, so go up two levels to reach it.
-
-        let currentFileURL = URL(fileURLWithPath: sourceFilePath)
-        let repositoryRootURL = currentFileURL.deletingLastPathComponent().deletingLastPathComponent()
-        let envFileURL = repositoryRootURL.appendingPathComponent("Config/env.xcconfig")
-
-        guard FileManager.default.fileExists(atPath: envFileURL.path) else { return nil }
-        guard let content = try? String(contentsOf: envFileURL, encoding: .utf8) else { return nil }
-
-        let values = parseXCConfig(content)
+        guard let values = localEnvXCConfigValues(sourceFilePath: sourceFilePath) else { return nil }
         let rawURL = firstNonEmptyValue(
             for: ["IMMICH_TEST_SERVER_URL", "IMMICH_TEST_URL", "IMMICH_SERVER_URL"],
             in: values
@@ -69,6 +75,39 @@ struct TestServerConfiguration {
         )
 
         return makeConfiguration(rawURL: rawURL, rawAPIKey: rawAPIKey)
+    }
+
+    private static func resolvedExifDiagnosticAlbumID(
+        environment: [String: String],
+        sourceFilePath: String
+    ) -> String? {
+        if let fromEnvironment = firstNonEmptyValue(
+            for: [
+                "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID",
+                "TEST_RUNNER_IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID"
+            ],
+            in: environment
+        ) {
+            return fromEnvironment
+        }
+
+        guard let values = localEnvXCConfigValues(sourceFilePath: sourceFilePath) else { return nil }
+        return firstNonEmptyValue(
+            for: ["IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID"],
+            in: values
+        )
+    }
+
+    private static func localEnvXCConfigValues(sourceFilePath: String) -> [String: String]? {
+        // This file is one level below the repository root, so go up two levels to reach it.
+
+        let currentFileURL = URL(fileURLWithPath: sourceFilePath)
+        let repositoryRootURL = currentFileURL.deletingLastPathComponent().deletingLastPathComponent()
+        let envFileURL = repositoryRootURL.appendingPathComponent("Config/env.xcconfig")
+
+        guard FileManager.default.fileExists(atPath: envFileURL.path) else { return nil }
+        guard let content = try? String(contentsOf: envFileURL, encoding: .utf8) else { return nil }
+        return parseXCConfig(content)
     }
 
     private static func makeConfiguration(rawURL: String?, rawAPIKey: String?) -> TestServerConfiguration? {
@@ -83,7 +122,11 @@ struct TestServerConfiguration {
         guard normalizedURL != "https://your-server.example.com/api" else { return nil }
         guard trimmedAPIKey != "YOUR_API_KEY" else { return nil }
 
-        return TestServerConfiguration(serverURL: normalizedURL, apiKey: trimmedAPIKey)
+        return TestServerConfiguration(
+            serverURL: normalizedURL,
+            apiKey: trimmedAPIKey,
+            exifDiagnosticAlbumID: nil
+        )
     }
 
     private static func firstNonEmptyValue(for keys: [String], in source: [String: String]) -> String? {
