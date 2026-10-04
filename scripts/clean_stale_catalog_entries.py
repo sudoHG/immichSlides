@@ -59,7 +59,7 @@ def normalize_key_shape(key: str) -> str:
     index = 0
 
     while index < len(key):
-        
+
         if key[index] == "\\" and index + 1 < len(key) and key[index + 1] == "(":
             result.append("{}")
             index += 2

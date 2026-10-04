@@ -213,6 +213,8 @@ OFFICIAL_CASES: tuple[dict[str, str], ...] = (
 )
 
 
+EXPECTED_OFFICIAL_CASE_COUNT = 15
+
 def official_case_count() -> int:
     return len(OFFICIAL_CASES)
 
@@ -222,11 +224,11 @@ def official_case_key(case: Mapping[str, str]) -> tuple[str, str, str]:
 
 
 def validate_official_case_table() -> None:
-    if official_case_count() != 15:
-        raise AlbumServerContractError(f"There must be 15 official methods, got {official_case_count()}")
+    if official_case_count() != EXPECTED_OFFICIAL_CASE_COUNT:
+        raise AlbumServerContractError(f"There must be {EXPECTED_OFFICIAL_CASE_COUNT} official methods, got {official_case_count()}")
     keys = [official_case_key(case) for case in OFFICIAL_CASES]
-    if len(set(keys)) != 15:
-        raise AlbumServerContractError("The platform+selector+scenario of the 15 official methods must all be distinct")
+    if len(set(keys)) != EXPECTED_OFFICIAL_CASE_COUNT:
+        raise AlbumServerContractError(f"The platform+selector+scenario of the {EXPECTED_OFFICIAL_CASE_COUNT} official methods must all be distinct")
     if any(case["selector"].count("/") < 2 for case in OFFICIAL_CASES):
         raise AlbumServerContractError("Selectors must be Target/Class/method")
 
@@ -234,9 +236,9 @@ def validate_official_case_table() -> None:
 def count_official_executions(summaries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Each official method needs its own 1/0/0. One execution must never be reported as three passes."""
     validate_official_case_table()
-    if len(summaries) != 15:
+    if len(summaries) != EXPECTED_OFFICIAL_CASE_COUNT:
         raise AlbumServerContractError(
-            f"Need exactly 15 official execution summaries, got {len(summaries)}; 1 execution cannot count as 3 passes"
+            f"Need exactly {EXPECTED_OFFICIAL_CASE_COUNT} official execution summaries, got {len(summaries)}; 1 execution cannot count as 3 passes"
         )
     seen: set[tuple[str, str, str]] = set()
     executed_total = 0
@@ -255,9 +257,9 @@ def count_official_executions(summaries: Sequence[Mapping[str, Any]]) -> dict[st
                 f"Case {case['id']} must be 1/0/0, got executed={executed} failed={failed} skipped={skipped} passed={passed}"
             )
         executed_total += executed
-    if executed_total != 15:
-        raise AlbumServerContractError(f"Official execution count must be 15, got {executed_total}")
-    return {"executed": 15, "failed": 0, "skipped": 0, "passed": 15}
+    if executed_total != EXPECTED_OFFICIAL_CASE_COUNT:
+        raise AlbumServerContractError(f"Official execution count must be {EXPECTED_OFFICIAL_CASE_COUNT}, got {executed_total}")
+    return {"executed": EXPECTED_OFFICIAL_CASE_COUNT, "failed": 0, "skipped": 0, "passed": EXPECTED_OFFICIAL_CASE_COUNT}
 
 
 def reject_success_without_executions(summary: Mapping[str, Any]) -> None:

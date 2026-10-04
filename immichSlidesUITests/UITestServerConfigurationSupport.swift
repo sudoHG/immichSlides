@@ -98,22 +98,22 @@ extension XCTestCase {
         request.setValue(config.apiKey, forHTTPHeaderField: "x-api-key")
 
         let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<Value, Error>?
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        var requestResult: Result<Value, Error>?
+        let task = URLSession.shared.dataTask(with: request) { responseBody, response, error in
             defer { semaphore.signal() }
             if let error {
-                result = .failure(error)
+                requestResult = .failure(error)
                 return
             }
             guard let httpResponse = response as? HTTPURLResponse else {
-                result = .failure(ServerRequestError(message: "No HTTP response for \(path)"))
+                requestResult = .failure(ServerRequestError(message: "No HTTP response for \(path)"))
                 return
             }
-            guard httpResponse.statusCode == 200, let data else {
-                result = .failure(ServerRequestError(message: "HTTP \(httpResponse.statusCode) for \(path)"))
+            guard httpResponse.statusCode == 200, let responseBody else {
+                requestResult = .failure(ServerRequestError(message: "HTTP \(httpResponse.statusCode) for \(path)"))
                 return
             }
-            result = Result { try JSONDecoder().decode(Value.self, from: data) }
+            requestResult = Result { try JSONDecoder().decode(Value.self, from: responseBody) }
         }
         task.resume()
 
@@ -121,7 +121,7 @@ extension XCTestCase {
             task.cancel()
             throw ServerRequestError(message: "The configured server did not answer \(path) within 15 seconds")
         }
-        switch result {
+        switch requestResult {
         case let .success(value)?:
             return value
         case let .failure(error)?:

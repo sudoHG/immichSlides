@@ -28,19 +28,19 @@ PRIVACY_URL = "https://slides.by331.net/privacy/"
 def render_inline(text: str) -> str:
     """Render inline Markdown; handles only the backtick code spans the current privacy policy uses."""
 
-    
+
     parts = text.split("`")
     rendered_parts: list[str] = []
 
     for index, part in enumerate(parts):
-        
+
         escaped = html.escape(part)
 
         if index % 2 == 1:
-            
+
             rendered_parts.append(f"<code>{escaped}</code>")
         else:
-            
+
             rendered_parts.append(escaped)
 
     return "".join(rendered_parts)
@@ -49,7 +49,7 @@ def render_inline(text: str) -> str:
 def slugify(text: str, used_slugs: set[str]) -> str:
     """Turn heading text into an HTML id for in-page links."""
 
-    
+
     special_slugs = {
         "中文": "chinese",
         "English": "english",
@@ -58,18 +58,18 @@ def slugify(text: str, used_slugs: set[str]) -> str:
     if text in special_slugs:
         base = special_slugs[text]
     else:
-        
+
         ascii_text = re.sub(r"[^A-Za-z0-9\s-]", " ", text)
         base = re.sub(r"\s+", "-", ascii_text.strip().lower()).strip("-")
 
-    
+
     if not base:
         base = "section"
 
     slug = base
     suffix = 2
 
-    
+
     while slug in used_slugs:
         slug = f"{base}-{suffix}"
         suffix += 1
@@ -98,7 +98,7 @@ def render_table(lines: list[str], start: int) -> tuple[str, int]:
     index = start + 2
     body_rows: list[list[str]] = []
 
-    
+
     while index < len(lines) and "|" in lines[index] and lines[index].strip():
         body_rows.append(split_table_row(lines[index]))
         index += 1
@@ -125,7 +125,7 @@ def render_table(lines: list[str], start: int) -> tuple[str, int]:
 def parse_blocks(lines: list[str], used_slugs: set[str] | None = None) -> str:
     """Convert the Markdown block syntax used by the current privacy policy into HTML."""
 
-    
+
     if used_slugs is None:
         used_slugs = set()
 
@@ -148,7 +148,7 @@ def parse_blocks(lines: list[str], used_slugs: set[str] | None = None) -> str:
         if stripped.startswith(">"):
             quote_lines: list[str] = []
 
-            
+
             while index < len(lines) and lines[index].strip().startswith(">"):
                 quote_line = lines[index].strip()[1:].lstrip()
                 quote_lines.append(quote_line)
@@ -187,7 +187,7 @@ def parse_blocks(lines: list[str], used_slugs: set[str] | None = None) -> str:
         if stripped.startswith("- "):
             item_html_parts: list[str] = []
 
-            
+
             while index < len(lines) and lines[index].strip().startswith("- "):
                 item_text = lines[index].strip()[2:].strip()
                 item_html_parts.append(f"<li>{render_inline(item_text)}</li>")
@@ -199,7 +199,7 @@ def parse_blocks(lines: list[str], used_slugs: set[str] | None = None) -> str:
         paragraph_lines = [stripped]
         index += 1
 
-        
+
         while index < len(lines):
             next_line = lines[index].strip()
 

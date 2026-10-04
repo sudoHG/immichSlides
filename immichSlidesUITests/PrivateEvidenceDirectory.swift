@@ -1,6 +1,7 @@
 import Foundation
 
 enum PrivateEvidenceDirectory {
+    private static let ownerOnlyPermissions: Int = 0o700
     enum ResolutionError: LocalizedError {
         case cannotPrepareDirectory
         case insideGitWorktree
@@ -39,13 +40,13 @@ enum PrivateEvidenceDirectory {
             try fileManager.createDirectory(
                 at: directory,
                 withIntermediateDirectories: true,
-                attributes: [.posixPermissions: NSNumber(value: 0o700)]
+                attributes: [.posixPermissions: NSNumber(value: ownerOnlyPermissions)]
             )
 
             let resolvedDirectory = directory.standardizedFileURL.resolvingSymlinksInPath()
             try rejectGitWorktreePath(resolvedDirectory, fileManager: fileManager)
             try fileManager.setAttributes(
-                [.posixPermissions: NSNumber(value: 0o700)],
+                [.posixPermissions: NSNumber(value: ownerOnlyPermissions)],
                 ofItemAtPath: resolvedDirectory.path
             )
             return resolvedDirectory

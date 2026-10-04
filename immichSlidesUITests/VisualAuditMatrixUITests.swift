@@ -19,7 +19,7 @@ final class VisualAuditMatrixUITests: XCTestCase {
 
         for scheme in schemes {
             for orientation in orientations {
-                let app = launchApp(resetState: true, colorScheme: scheme)
+                let app = launchApp(shouldResetState: true, colorScheme: scheme)
                 XCUIDevice.shared.orientation = orientation.value
 
                 XCTAssertTrue(app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: 8))
@@ -41,7 +41,7 @@ final class VisualAuditMatrixUITests: XCTestCase {
 
         for scheme in schemes {
             XCUIDevice.shared.orientation = .portrait
-            let app = try launchConfiguredAppAtModeSelection(resetState: true, colorScheme: scheme)
+            let app = try launchConfiguredAppAtModeSelection(shouldResetState: true, colorScheme: scheme)
 
             for orientation in orientations {
                 XCUIDevice.shared.orientation = orientation.value
@@ -60,9 +60,9 @@ final class VisualAuditMatrixUITests: XCTestCase {
 }
 
 private extension VisualAuditMatrixUITests {
-    func launchApp(resetState: Bool, colorScheme: String? = nil) -> XCUIApplication {
+    func launchApp(shouldResetState: Bool, colorScheme: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
-        if resetState {
+        if shouldResetState {
             app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         }
         if let colorScheme {
@@ -81,10 +81,12 @@ private extension VisualAuditMatrixUITests {
         return app
     }
 
-    func launchConfiguredAppAtModeSelection(resetState: Bool, colorScheme: String? = nil) throws -> XCUIApplication {
+    func launchConfiguredAppAtModeSelection(shouldResetState: Bool, colorScheme: String? = nil) throws
+        -> XCUIApplication
+    {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
-        if resetState {
+        if shouldResetState {
             app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         }
         if let colorScheme {

@@ -203,6 +203,70 @@ Result bundles normally go in the directory passed to `--evidence-dir`. The `p2-
 
 `ScenePresentationContractUITests` writes `<displayMode>-contract-evidence.json` and `<displayMode>-trace.txt` to the directory in `TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR`. Set it through the environment of `xcodebuild` to a directory outside the repository; on iOS the tests skip when it is unset, on tvOS it is optional. No runner script sets it.
 
+### Optional SmartFill evidence inputs
+
+`PlaybackSmartFillVisualUITests` runs from the Evidence plans. Its scene collectors default to 20 scenes;
+`IMMICHSLIDES_SMARTFILL_SCENE_COUNT` overrides that count, followed by
+`TEST_RUNNER_IMMICHSLIDES_SMARTFILL_SCENE_COUNT`. Fixed-album cases require
+`IMMICHSLIDES_SMARTFILL_FIXED_ALBUM_ID` or `TEST_RUNNER_IMMICHSLIDES_SMARTFILL_FIXED_ALBUM_ID` and only read
+that album from the configured server.
+
+Set `IMMICHSLIDES_SMARTFILL_EVIDENCE_ROOT` or `TEST_RUNNER_IMMICHSLIDES_SMARTFILL_EVIDENCE_ROOT` to an
+output directory outside any Git worktree. Runtime manifests and screenshots are written under
+`ui-runtime/<device>`. The general `TEST_RUNNER_UI_TEST_EVIDENCE_DIR` / `UI_TEST_EVIDENCE_DIR` input is
+used by the other evidence helpers. Motion evidence uses `TEST_RUNNER_SMARTFILL_MOTION_EVIDENCE_DIR`,
+then `SMARTFILL_MOTION_EVIDENCE_DIR`, or the SmartFill runtime directory's `motion-runtime` child. Keep real-server
+evidence private and delete it after review. See the helper implementations for timing and tracing inputs.
+
+### Optional reviewed screenshot calibration dataset
+
+The Python photo-identity calibration cases accept `STRICT_E2E_REVIEWED_SCREENSHOTS`, an external
+directory of reviewed public-fixture captures. The authoritative relative-path list is
+`REVIEWED_SCREENSHOT_RELATIVE_PATHS` in [test_strict_e2e_photo_identity.py](../scripts/test_strict_e2e_photo_identity.py).
+It includes iPhone/iPad history, an iPad pause-window transition and tvOS pause/resume captures. An unset
+input skips those calibration cases; a configured directory with missing files fails.
+
+Obtain the complete reviewed capture set from the maintainer, or regenerate the history and pause flows
+with the strict runner's `journey-b`, `pause-window` and `tvos-flow` suites on their applicable devices.
+Review the exported originals against the marks, history order and transition expectations in
+`ReviewedScreenshotCalibrationTests` before assigning the required relative paths; runner exports do
+not automatically produce this dataset's filenames. Run with
+`STRICT_E2E_REVIEWED_SCREENSHOTS='<external-directory>' python3 -B -m unittest discover -s scripts -p 'test_strict_e2e_photo_identity.py'`.
+Synthetic images do not replace reviewed Simulator captures for these calibration cases.
+
+### Standalone SmartFill planner benchmark
+
+Run from the repository root on macOS with Xcode's Swift compiler. The benchmark compiles the real
+planner and its model dependencies; it does not launch the app or access a server. Use an output path
+outside the repository:
+
+```bash
+xcrun swiftc -O -parse-as-library \
+    scripts/smartfill_planner_benchmark.swift \
+    immichSlides/Shared/Model/ImmichModels.swift \
+    immichSlides/Shared/Model/ImmichTypes.swift \
+    immichSlides/Shared/Model/LocalizedText.swift \
+    immichSlides/Shared/Model/PlaybackScene.swift \
+    immichSlides/Shared/Model/PlaybackProtection.swift \
+    immichSlides/Shared/Model/PlaybackSmartFillTypes.swift \
+    immichSlides/Shared/Model/PlaybackSmartFillLayoutPolicy.swift \
+    immichSlides/Shared/Model/PlaybackSmartFillRejectReason.swift \
+    immichSlides/Shared/Model/PlaybackSmartFillPlanner.swift \
+    immichSlides/Shared/Model/PlaybackSessionEngine.swift \
+    immichSlides/Shared/Model/ScenePresentationTypes.swift \
+    immichSlides/Shared/Model/ScenePresentationEffect.swift \
+    immichSlides/Shared/Model/SceneActiveTimeClock.swift \
+    immichSlides/Shared/Model/SceneLifecycleContract.swift \
+    immichSlides/Shared/Model/PlaybackIntervalPolicy.swift \
+    -o /tmp/immichslides-planner-benchmark
+/tmp/immichslides-planner-benchmark --max-wall-ms 1000
+rm /tmp/immichslides-planner-benchmark
+```
+
+`--max-wall-ms` bounds the corpus loop and reports whether it was capped. `--stream` prints each call;
+`--require-max-ms` fails when the slowest call reaches the supplied limit. Keep the corpus fingerprint,
+compiler options and execution environment identical when comparing timing results.
+
 ### Strict end-to-end case identifiers
 
 `case-manifest.json` lists the case IDs a suite covers. They name coverage that the mapped XCTest selector already implements; they are not a separate spec. `scripts/run_strict_e2e.py` (`CASE_E2E_IDS`) and `scripts/strict_e2e_p2_contract.py` (`P2_CASES`) are the sources of truth.

@@ -76,17 +76,17 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
         skipQuiescence(app: app) {
             tapElement(continueButton)
             let deadline = Date().addingTimeInterval(8)
-            var ready = false
+            var isReady = false
             while Date() < deadline {
                 self.dismissPlaybackEntryHintIfPresent(app: app)
                 if next.exists && !loading.exists {
-                    ready = true
+                    isReady = true
                     break
                 }
                 RunLoop.current.run(until: Date().addingTimeInterval(0.02))
             }
             XCTAssertTrue(
-                ready,
+                isReady,
                 "Next must be tappable twice right after entering the slideshow, before old image requests finish."
             )
             self.dismissPlaybackEntryHintIfPresent(app: app)

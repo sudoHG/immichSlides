@@ -38,6 +38,35 @@ TVOS_FLOW_STEPS = ("pause-immediate", "pause-after-10s", "resumed")
 VISUAL_SUITES = ("journey-b", "pause-window", "tvos-flow", "tvos-album", "tvos-person", "tvos-switch")
 
 
+IDENTITY_MINIMUM_IMAGE_PIXELS = 8
+IDENTITY_SAMPLE_WIDTH_PIXELS = 96
+IDENTITY_VISIBLE_HEIGHT_FRACTION = 0.86
+IDENTITY_CONTROLS_LEFT_FRACTION = 0.72
+IDENTITY_CONTROLS_BOTTOM_FRACTION = 0.22
+IDENTITY_MINIMUM_LUMA = 0.035
+IDENTITY_MAXIMUM_LUMA = 0.94
+IDENTITY_GRAY_SATURATION_THRESHOLD = 0.16
+IDENTITY_GREEN_HUE_MIN_DEGREES = 70
+IDENTITY_GREEN_HUE_MAX_DEGREES = 170
+IDENTITY_BLUE_HUE_MIN_DEGREES = 185
+IDENTITY_BLUE_HUE_MAX_DEGREES = 255
+IDENTITY_PURPLE_HUE_MIN_DEGREES = 265
+IDENTITY_PURPLE_HUE_MAX_DEGREES = 345
+IDENTITY_MAGENTA_SATURATION_THRESHOLD = 0.35
+IDENTITY_MAGENTA_LUMA_THRESHOLD = 0.55
+IDENTITY_BROWN_HUE_MIN_DEGREES = 8
+IDENTITY_BROWN_HUE_MAX_DEGREES = 50
+IDENTITY_OBSERVED_WIDTH_FRACTION = 0.85
+IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT = 18
+IDENTITY_BLACK_LUMA_THRESHOLD = 0.10
+IDENTITY_BLANK_LUMA_THRESHOLD = 0.86
+IDENTITY_DARK_WASH_LUMA_THRESHOLD = 0.30
+IDENTITY_DARK_WASH_GRAY_FRACTION = 0.60
+IDENTITY_MINIMUM_MATCH_SCORE = 0.045
+IDENTITY_MIXED_SECOND_SCORE_THRESHOLD = 0.05
+IDENTITY_AMBIGUOUS_SCORE_RATIO = 1.18
+IDENTITY_AMBIGUOUS_SCORE_MARGIN = 0.035
+
 class IdentityAssertionError(Exception):
     pass
 
@@ -81,9 +110,9 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
         with Image.open(io.BytesIO(image_bytes)) as image:
             rgb = image.convert("RGB")
             width, height = rgb.size
-            if width < 8 or height < 8:
+            if width < IDENTITY_MINIMUM_IMAGE_PIXELS or height < IDENTITY_MINIMUM_IMAGE_PIXELS:
                 return PhotoIdentity("UNRECOGNIZABLE", None, {}, 0.0, ("too-small",))
-            sample = rgb.resize((96, max(8, int(96 * height / width))), Image.Resampling.BILINEAR)
+            sample = rgb.resize((IDENTITY_SAMPLE_WIDTH_PIXELS, max(IDENTITY_MINIMUM_IMAGE_PIXELS, int(IDENTITY_SAMPLE_WIDTH_PIXELS * height / width))), Image.Resampling.BILINEAR)
     except Exception as error:
         return PhotoIdentity("UNRECOGNIZABLE", None, {}, 0.0, (f"unreadable:{type(error).__name__}",))
 
@@ -94,16 +123,16 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
     chromatic = 0
     for index, (red, green, blue) in enumerate(pixels):
         row, col = divmod(index, sample_w)
-        if row > int(sample_h * 0.86):
+        if row > int(sample_h * IDENTITY_VISIBLE_HEIGHT_FRACTION):
             continue
-        if col > int(sample_w * 0.72) and row < int(sample_h * 0.22):
+        if col > int(sample_w * IDENTITY_CONTROLS_LEFT_FRACTION) and row < int(sample_h * IDENTITY_CONTROLS_BOTTOM_FRACTION):
             continue
         luma = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0
         luma_sum += luma
         hue, saturation = _hue_saturation(red, green, blue)
-        if luma < 0.035 or luma > 0.94:
+        if luma < IDENTITY_MINIMUM_LUMA or luma > IDENTITY_MAXIMUM_LUMA:
             continue
-        if saturation < 0.16:
+        if saturation < IDENTITY_GRAY_SATURATION_THRESHOLD:
             counts["gray"] += 1
             chromatic += 1
             continue
@@ -111,27 +140,27 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
             counts["gray"] += 1
             chromatic += 1
             continue
-        if 70 <= hue <= 170:
+        if IDENTITY_GREEN_HUE_MIN_DEGREES <= hue <= IDENTITY_GREEN_HUE_MAX_DEGREES:
             counts["green"] += 1
-        elif 185 <= hue <= 255:
+        elif IDENTITY_BLUE_HUE_MIN_DEGREES <= hue <= IDENTITY_BLUE_HUE_MAX_DEGREES:
             counts["blue"] += 1
-        elif 265 <= hue <= 345:
-            if saturation > 0.35 and luma < 0.55:
+        elif IDENTITY_PURPLE_HUE_MIN_DEGREES <= hue <= IDENTITY_PURPLE_HUE_MAX_DEGREES:
+            if saturation > IDENTITY_MAGENTA_SATURATION_THRESHOLD and luma < IDENTITY_MAGENTA_LUMA_THRESHOLD:
                 counts["magenta"] += 1
             else:
                 counts["purple"] += 1
-        elif 8 <= hue <= 50:
+        elif IDENTITY_BROWN_HUE_MIN_DEGREES <= hue <= IDENTITY_BROWN_HUE_MAX_DEGREES:
             counts["brown"] += 1
         else:
             continue
         chromatic += 1
 
-    observed = max(1, int(sample_w * sample_h * 0.86 * 0.85))
+    observed = max(1, int(sample_w * sample_h * IDENTITY_VISIBLE_HEIGHT_FRACTION * IDENTITY_OBSERVED_WIDTH_FRACTION))
     mean_luma = luma_sum / observed
-    if chromatic < 18:
-        if mean_luma < 0.10:
+    if chromatic < IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT:
+        if mean_luma < IDENTITY_BLACK_LUMA_THRESHOLD:
             return PhotoIdentity("BLACK", None, {}, mean_luma, ("low-chroma-dark",))
-        if mean_luma > 0.86:
+        if mean_luma > IDENTITY_BLANK_LUMA_THRESHOLD:
             return PhotoIdentity("BLANK", None, {}, mean_luma, ("low-chroma-bright",))
         return PhotoIdentity("UNRECOGNIZABLE", None, {}, mean_luma, ("low-chroma",))
 
@@ -167,7 +196,7 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
         *(f"{key}={value:.3f}" for key, value in fraction.items()),
     )
     # The dark blurred background of an empty result has some blue/brown noise; a gray wash must not read as A4.
-    if mean_luma <= 0.30 and fraction.get("gray", 0.0) >= 0.60:
+    if mean_luma <= IDENTITY_DARK_WASH_LUMA_THRESHOLD and fraction.get("gray", 0.0) >= IDENTITY_DARK_WASH_GRAY_FRACTION:
         return PhotoIdentity(
             "UNRECOGNIZABLE",
             None,
@@ -175,13 +204,13 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
             mean_luma,
             notes + ("dark-gray-wash",),
         )
-    if best_score < 0.045:
+    if best_score < IDENTITY_MINIMUM_MATCH_SCORE:
         return PhotoIdentity("UNRECOGNIZABLE", None, scores, mean_luma, notes)
     mixed = (
-        second_score >= 0.05
+        second_score >= IDENTITY_MIXED_SECOND_SCORE_THRESHOLD
         and KEY_COLORS[best_mark].isdisjoint(KEY_COLORS[second_mark])
     )
-    close = second_score > 0 and best_score < second_score * 1.18 and (best_score - second_score) < 0.035
+    close = second_score > 0 and best_score < second_score * IDENTITY_AMBIGUOUS_SCORE_RATIO and (best_score - second_score) < IDENTITY_AMBIGUOUS_SCORE_MARGIN
     if mixed or close:
         return PhotoIdentity("TRANSITION", None, scores, mean_luma, notes)
     return PhotoIdentity("MATCH", best_mark, scores, mean_luma, notes)
@@ -201,7 +230,7 @@ def classify_public_pattern(image_bytes: bytes) -> str | None:
         with Image.open(io.BytesIO(image_bytes)) as image:
             rgb = image.convert("RGB")
             width, height = rgb.size
-            if width < 8 or height < 8:
+            if width < IDENTITY_MINIMUM_IMAGE_PIXELS or height < IDENTITY_MINIMUM_IMAGE_PIXELS:
                 return None
             working = rgb
             if width > 480:
@@ -260,7 +289,7 @@ def public_letter_from_bytes(image_bytes: bytes) -> str | None:
         with Image.open(io.BytesIO(image_bytes)) as image:
             rgb = image.convert("RGB")
             width, height = rgb.size
-            if width < 8 or height < 8:
+            if width < IDENTITY_MINIMUM_IMAGE_PIXELS or height < IDENTITY_MINIMUM_IMAGE_PIXELS:
                 return None
             if width > 480:
                 rgb = rgb.resize((480, max(8, int(480 * height / width))), Image.Resampling.NEAREST)

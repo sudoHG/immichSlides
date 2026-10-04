@@ -1,5 +1,12 @@
 import XCTest
 
+private enum WaitTiming {
+    static let defaultSnapshotTimeoutSeconds: TimeInterval = 30
+    static let selectionChangeTimeoutSeconds: TimeInterval = 3
+    static let selectionPollSeconds: TimeInterval = 0.25
+    static let snapshotPollSeconds: TimeInterval = 0.5
+}
+
 /// The album filter cards as one snapshot of the app shows them.
 ///
 /// A card shows its cover aspect-filled and clipped. Clipping hides the overflow on screen, but a portrait or
@@ -108,7 +115,7 @@ struct AlbumCardSnapshot: Equatable {
         var previous: AlbumCardSnapshot?
         var current = try AlbumCardSnapshot(app: app)
         while Date() < deadline, !current.isSettled(since: previous) {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.snapshotPollSeconds))
             previous = current
             current = try AlbumCardSnapshot(app: app)
         }
@@ -150,7 +157,7 @@ struct AlbumCardSnapshot: Equatable {
     @MainActor
     static func assertFramesIgnoreCoverShape(
         in app: XCUIApplication,
-        timeout: TimeInterval = 30,
+        timeout: TimeInterval = WaitTiming.defaultSnapshotTimeoutSeconds,
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws {
@@ -240,7 +247,7 @@ extension AlbumCardSnapshot {
     static func assertTapsIgnoreCoverShape(
         in app: XCUIApplication,
         maximumTaps: Int = 4,
-        timeout: TimeInterval = 30,
+        timeout: TimeInterval = WaitTiming.defaultSnapshotTimeoutSeconds,
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws {
@@ -279,10 +286,10 @@ extension AlbumCardSnapshot {
     @MainActor
     private static func waitForSelectionChange(in app: XCUIApplication, from before: [String: Bool]) throws -> [String]
     {
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(WaitTiming.selectionChangeTimeoutSeconds)
         var changed: [String] = []
         while changed.isEmpty && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.selectionPollSeconds))
             let now = try selection(in: app)
             changed = now.keys.filter { now[$0] != before[$0] }.sorted()
         }
@@ -292,9 +299,9 @@ extension AlbumCardSnapshot {
     /// Whether the selection returns to `expected` within 3 s.
     @MainActor
     private static func waitForSelection(in app: XCUIApplication, toEqual expected: [String: Bool]) throws -> Bool {
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(WaitTiming.selectionChangeTimeoutSeconds)
         while Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.selectionPollSeconds))
             if try selection(in: app) == expected { return true }
         }
         return false

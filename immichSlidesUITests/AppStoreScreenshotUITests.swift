@@ -10,6 +10,26 @@
 import ImageIO
 import XCTest
 
+private enum WaitTiming {
+    static let connectionTimeoutSeconds: TimeInterval = 15
+    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
+    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
+    static let hintAnimationSettleSeconds: TimeInterval = 1.2
+    static let identityPollSeconds: TimeInterval = 0.3
+    static let navigationTimeoutSeconds: TimeInterval = 10
+    static let playbackEntryTimeoutSeconds: TimeInterval = 25
+    static let pollIntervalSeconds: TimeInterval = 0.1
+    static let screenTransitionTimeoutSeconds: TimeInterval = 12
+    static let settingsChangeTimeoutSeconds: TimeInterval = 6
+    static let shortInteractionTimeoutSeconds: TimeInterval = 3
+    static let transitionPollSeconds: TimeInterval = 0.4
+}
+
+private enum ScreenshotSelection {
+    static let albumCardCount: Int = 3
+    static let personCardCount: Int = 4
+}
+
 // Bind directory name, launch language and region together so a directory never mismatches the actual language.
 
 private struct AppStoreScreenshotLocaleSpec {
@@ -72,7 +92,7 @@ private func screenshotEnvironmentList(_ name: String) -> [String] {
         .filter { !$0.isEmpty }
 }
 
-private func appStoreScreenshotRunEnabled() -> Bool {
+private func isAppStoreScreenshotRunEnabled() -> Bool {
     guard
         let rawValue = screenshotEnvironmentValue("APP_STORE_SCREENSHOT_RUN")
             ?? screenshotEnvironmentValue("APP_STORE_SCREENSHOT_RUN_BATCH")
@@ -242,7 +262,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             "This App Store screenshot test only runs on an iPhone or iPad simulator."
         )
         try XCTSkipIf(
-            !appStoreScreenshotRunEnabled(),
+            !isAppStoreScreenshotRunEnabled(),
             "App Store screenshot tests are excluded from the regular UI regression by default. Evidence plans select this suite but set only IMMICHSLIDES_EVIDENCE, which this gate ignores; set APP_STORE_SCREENSHOT_RUN=1 to run them."
         )
 
@@ -448,7 +468,7 @@ private extension AppStoreScreenshotUITests {
 
     @MainActor
     func capturePlayback(outputRoot: URL, slotDirectory: URL) throws {
-        let app = try launchIntoFilterSummary(disablePlaybackEntryHint: false)
+        let app = try launchIntoFilterSummary(shouldDisablePlaybackEntryHint: false)
 
         try openAlbumFilterFromSummary(app)
 
@@ -456,7 +476,7 @@ private extension AppStoreScreenshotUITests {
         try tapCard(
             identifier: albumCardIdentifier(id: playbackAlbumID),
             in: app,
-            timeout: 15,
+            timeout: WaitTiming.connectionTimeoutSeconds,
             missingMessage: "Album filter page should find \(playbackAlbumName)"
         )
 
@@ -464,7 +484,8 @@ private extension AppStoreScreenshotUITests {
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         try waitOrThrow(
-            startPlaybackButton, timeout: 12, "Start playback button should appear after selecting an album")
+            startPlaybackButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Start playback button should appear after selecting an album")
         guard startPlaybackButton.isEnabled else {
             throw ScreenshotError.message(
                 "Start playback button is disabled; the album selection may not have taken effect.")
@@ -474,7 +495,7 @@ private extension AppStoreScreenshotUITests {
         try waitForPlaybackPageReady(app)
         try waitOrThrow(
             app.otherElements["slideshow.entryHint.banner"],
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             "Playback page should show the settings hint bubble"
         )
 
@@ -493,9 +514,11 @@ private extension AppStoreScreenshotUITests {
         let app = try launchIntoModeSelection()
 
         try waitOrThrow(
-            app.buttons["mode.random.button"], timeout: 12, "Mode selection should show the random playback option")
+            app.buttons["mode.random.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the random playback option")
         try waitOrThrow(
-            app.buttons["mode.filtered.button"], timeout: 12, "Mode selection should show the filtered playback option")
+            app.buttons["mode.filtered.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the filtered playback option")
 
         capture(app: app, slot: .playbackMode, outputRoot: outputRoot, slotDirectory: slotDirectory)
         app.terminate()
@@ -508,11 +531,14 @@ private extension AppStoreScreenshotUITests {
         try selectFirstAlbumAndPersonCardsForSummary(app)
 
         try waitOrThrow(
-            app.buttons["filterSummary.album.button"], timeout: 12, "Filter summary should show the album entry")
+            app.buttons["filterSummary.album.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the album entry")
         try waitOrThrow(
-            app.buttons["filterSummary.person.button"], timeout: 12, "Filter summary should show the people entry")
+            app.buttons["filterSummary.person.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the people entry")
         try waitUntilOrThrow(
-            timeout: 8, "Filter summary should enable Start playback after albums and people are selected"
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
+            "Filter summary should enable Start playback after albums and people are selected"
         ) {
             app.buttons["filterSummary.startPlayback.button"].isEnabled
         }
@@ -551,18 +577,23 @@ private extension AppStoreScreenshotUITests {
 
     @MainActor
     func capturePinProtection(outputRoot: URL, slotDirectory: URL) throws {
-        let app = try launchIntoSlideShow(disablePlaybackEntryHint: true)
+        let app = try launchIntoSlideShow(shouldDisablePlaybackEntryHint: true)
 
         try openSettingsFromSlideShow(app)
         try openSettingsSection(app: app, sectionID: "settings.item.accessProtection")
 
         let pinInputButton = app.buttons["settings.pin.input.enable"]
-        try waitOrThrow(pinInputButton, timeout: 12, "Access protection page should show the set-PIN entry")
+        try waitOrThrow(
+            pinInputButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Access protection page should show the set-PIN entry")
         tapElement(pinInputButton)
 
         try waitOrThrow(
-            app.buttons["pinEntry.close.button"], timeout: 8, "Choosing set PIN should show the PIN overlay")
-        try waitOrThrow(app.buttons["pinEntry.digit.1.button"], timeout: 8, "PIN overlay should show the number pad")
+            app.buttons["pinEntry.close.button"], timeout: WaitTiming.controlAppearanceTimeoutSeconds,
+            "Choosing set PIN should show the PIN overlay")
+        try waitOrThrow(
+            app.buttons["pinEntry.digit.1.button"], timeout: WaitTiming.controlAppearanceTimeoutSeconds,
+            "PIN overlay should show the number pad")
 
         capture(app: app, slot: .pinProtection, outputRoot: outputRoot, slotDirectory: slotDirectory)
         app.terminate()
@@ -570,23 +601,30 @@ private extension AppStoreScreenshotUITests {
 
     @MainActor
     func captureConnectImmich(outputRoot: URL, slotDirectory: URL) throws {
-        let app = makeBaseLaunchApp(disablePlaybackEntryHint: true)
+        let app = makeBaseLaunchApp(shouldDisablePlaybackEntryHint: true)
         app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_PREFILL_CONNECTION"] = "1"
         app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_SERVER_URL"] = appStoreDemoServerURL
         app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_API_KEY"] = appStoreDemoAPIKey
         app.launch()
 
         let serverURLField = app.textFields["firstboot.serverURL.field"]
-        try waitOrThrow(serverURLField, timeout: 12, "A fresh install should open the first-launch server setup page")
+        try waitOrThrow(
+            serverURLField, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "A fresh install should open the first-launch server setup page")
         let displayedURL = (serverURLField.value as? String) ?? ""
         guard displayedURL.contains(appStoreDemoServerURL) else {
             throw ScreenshotError.message("First-launch page should prefill the screenshot demo URL.")
         }
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        try waitOrThrow(apiKeyField, timeout: 8, "First-launch page should show the secure API Key field")
+        try waitOrThrow(
+            apiKeyField, timeout: WaitTiming.controlAppearanceTimeoutSeconds,
+            "First-launch page should show the secure API Key field")
 
-        try waitUntilOrThrow(timeout: 5, "Save configuration button should be enabled after the screenshot prefill") {
+        try waitUntilOrThrow(
+            timeout: WaitTiming.elementAppearanceTimeoutSeconds,
+            "Save configuration button should be enabled after the screenshot prefill"
+        ) {
             app.buttons["firstboot.saveConfig.button"].isEnabled
         }
 
@@ -617,7 +655,7 @@ private extension AppStoreScreenshotUITests {
         try openAlbumFilterFromSummary(app)
         try tapFirstCards(
             prefix: "albumFilter.album.",
-            count: 3,
+            count: ScreenshotSelection.albumCardCount,
             in: app,
             missingMessage: "Album filter page should show at least the first 3 albums"
         )
@@ -626,7 +664,7 @@ private extension AppStoreScreenshotUITests {
         try openPersonFilterFromSummary(app)
         try tapFirstCards(
             prefix: "personFilter.person.",
-            count: 4,
+            count: ScreenshotSelection.personCardCount,
             in: app,
             missingMessage: "People filter page should show at least the first 4 people"
         )
@@ -639,7 +677,7 @@ private extension AppStoreScreenshotUITests {
             try tapCard(
                 identifier: albumCardIdentifier(id: album.id),
                 in: app,
-                timeout: 12,
+                timeout: WaitTiming.screenTransitionTimeoutSeconds,
                 missingMessage: "Album filter page should find \(album.name)"
             )
         }
@@ -649,7 +687,7 @@ private extension AppStoreScreenshotUITests {
         for person in briefPersonSelections {
             try waitOrThrow(
                 exactCardQuery(identifier: personCardIdentifier(id: person.id), in: app).firstMatch,
-                timeout: 10,
+                timeout: WaitTiming.navigationTimeoutSeconds,
                 "People filter page should show the person named in the brief: \(person.name)"
             )
         }
@@ -658,7 +696,9 @@ private extension AppStoreScreenshotUITests {
     @MainActor
     func openAlbumFilterFromSummary(_ app: XCUIApplication) throws {
         let albumButton = app.buttons["filterSummary.album.button"]
-        try waitOrThrow(albumButton, timeout: 12, "Filter summary should show the album entry")
+        try waitOrThrow(
+            albumButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the album entry")
         tapElement(albumButton)
         try waitForFilterCards(
             prefix: "albumFilter.album.", in: app, message: "Album filter page should show album cards")
@@ -667,7 +707,9 @@ private extension AppStoreScreenshotUITests {
     @MainActor
     func openPersonFilterFromSummary(_ app: XCUIApplication) throws {
         let personButton = app.buttons["filterSummary.person.button"]
-        try waitOrThrow(personButton, timeout: 12, "Filter summary should show the people entry")
+        try waitOrThrow(
+            personButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the people entry")
         tapElement(personButton)
         try waitForFilterCards(
             prefix: "personFilter.person.", in: app, message: "People filter page should show person cards")
@@ -706,7 +748,7 @@ private extension AppStoreScreenshotUITests {
             try tapCard(
                 identifier: identifier,
                 in: app,
-                timeout: 8,
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds,
                 missingMessage: "\(missingMessage): card \(index + 1) is missing"
             )
         }
@@ -723,7 +765,7 @@ private extension AppStoreScreenshotUITests {
                 return
             }
             app.swipeUp()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.transitionPollSeconds))
         }
 
         guard card.exists else {
@@ -740,7 +782,7 @@ private extension AppStoreScreenshotUITests {
 
     func waitForFilterCards(prefix: String, in app: XCUIApplication, message: String) throws {
         let firstCard = cardQuery(prefix: prefix, in: app).firstMatch
-        try waitOrThrow(firstCard, timeout: 12, message)
+        try waitOrThrow(firstCard, timeout: WaitTiming.screenTransitionTimeoutSeconds, message)
     }
 
     func cardQuery(prefix: String, in app: XCUIApplication) -> XCUIElementQuery {
@@ -768,13 +810,13 @@ private extension AppStoreScreenshotUITests {
 
     @MainActor
     func launchIntoFilterSummary(
-        disablePlaybackEntryHint: Bool = true,
-        seedFilterSelection: Bool = false,
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldSeedFilterSelection: Bool = false,
         filterSelectionJSON: String? = nil
     ) throws -> XCUIApplication {
         let app = makeBaseLaunchApp(
-            disablePlaybackEntryHint: disablePlaybackEntryHint,
-            seedFilterSelection: seedFilterSelection,
+            shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+            shouldSeedFilterSelection: shouldSeedFilterSelection,
             filterSelectionJSON: filterSelectionJSON
         )
         try injectRealTestServer(into: app)
@@ -786,14 +828,16 @@ private extension AppStoreScreenshotUITests {
     }
 
     @MainActor
-    func launchIntoSlideShow(disablePlaybackEntryHint: Bool) throws -> XCUIApplication {
+    func launchIntoSlideShow(shouldDisablePlaybackEntryHint: Bool) throws -> XCUIApplication {
         let app = try launchIntoFilterSummary(
-            disablePlaybackEntryHint: disablePlaybackEntryHint,
-            seedFilterSelection: true
+            shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint,
+            shouldSeedFilterSelection: true
         )
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
-        try waitOrThrow(startPlaybackButton, timeout: 12, "Filter summary should show the Start playback button")
+        try waitOrThrow(
+            startPlaybackButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the Start playback button")
         guard startPlaybackButton.isEnabled else {
             throw ScreenshotError.message("Start playback button is disabled; there may be no filter criteria.")
         }
@@ -803,8 +847,8 @@ private extension AppStoreScreenshotUITests {
     }
 
     func makeBaseLaunchApp(
-        disablePlaybackEntryHint: Bool = true,
-        seedFilterSelection: Bool = false,
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldSeedFilterSelection: Bool = false,
         filterSelectionJSON: String? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
@@ -815,14 +859,14 @@ private extension AppStoreScreenshotUITests {
         app.launchEnvironment["UI_TEST_COLOR_SCHEME"] = "light"
         app.launchEnvironment["UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
-        if seedFilterSelection || filterSelectionJSON != nil {
+        if shouldSeedFilterSelection || filterSelectionJSON != nil {
             app.launchEnvironment["UI_TEST_SEED_FILTER_SELECTION"] = "1"
         }
         if let filterSelectionJSON {
             app.launchEnvironment["UI_TEST_FILTER_SELECTION_JSON"] = filterSelectionJSON
         }
 
-        if disablePlaybackEntryHint {
+        if shouldDisablePlaybackEntryHint {
             app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         }
 
@@ -844,32 +888,36 @@ private extension AppStoreScreenshotUITests {
     @MainActor
     func startFilteredFlowFromModeSelection(_ app: XCUIApplication) throws {
         try waitOrThrow(
-            app.buttons["mode.filtered.button"], timeout: 12, "Mode selection should show the filtered playback option")
+            app.buttons["mode.filtered.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the filtered playback option")
         tapElement(app.buttons["mode.filtered.button"])
 
         let continueButton = app.buttons["mode.continue.button"]
-        try waitOrThrow(continueButton, timeout: 12, "Mode selection should show the Continue button")
+        try waitOrThrow(
+            continueButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the Continue button")
         guard continueButton.isEnabled else {
             throw ScreenshotError.message("Continue button is disabled after choosing filtered playback.")
         }
         tapElement(continueButton)
 
         try waitOrThrow(
-            app.buttons["filterSummary.startPlayback.button"], timeout: 15, "Should reach the filter summary")
+            app.buttons["filterSummary.startPlayback.button"], timeout: WaitTiming.connectionTimeoutSeconds,
+            "Should reach the filter summary")
     }
 
     @MainActor
     func waitForPlaybackPageReady(_ app: XCUIApplication) throws {
         try waitOrThrow(
-            app.buttons["slideshow.control.settings.button"], timeout: 25,
+            app.buttons["slideshow.control.settings.button"], timeout: WaitTiming.playbackEntryTimeoutSeconds,
             "Playback page should show the settings button")
         try waitOrThrow(
-            app.buttons["slideshow.control.playPause.button"], timeout: 12,
+            app.buttons["slideshow.control.playPause.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
             "Playback page should show the play/pause button")
 
         // Wait briefly after entering playback to avoid capturing EXIF before it settles.
 
-        RunLoop.current.run(until: Date().addingTimeInterval(1.2))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.hintAnimationSettleSeconds))
     }
 }
 
@@ -1055,9 +1103,14 @@ private extension AppStoreScreenshotUITests {
     @MainActor
     func openSettingsFromSlideShow(_ app: XCUIApplication) throws {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        try waitOrThrow(settingsButton, timeout: 15, "Playback page should show the settings button")
+        try waitOrThrow(
+            settingsButton, timeout: WaitTiming.connectionTimeoutSeconds,
+            "Playback page should show the settings button")
         tapElement(settingsButton)
-        try waitUntilOrThrow(timeout: 12, "Opening settings from playback should show the settings list") {
+        try waitUntilOrThrow(
+            timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Opening settings from playback should show the settings list"
+        ) {
             app.buttons["settings.item.playback"].exists || app.otherElements["settings.item.playback"].exists
                 || app.staticTexts["settings.item.playback"].exists
                 || app.buttons["settings.item.accessProtection"].exists
@@ -1086,7 +1139,7 @@ private extension AppStoreScreenshotUITests {
             } else {
                 app.swipeDown()
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.identityPollSeconds))
         }
 
         throw ScreenshotError.message("Settings entry not found: \(sectionID)")
@@ -1103,7 +1156,9 @@ private extension AppStoreScreenshotUITests {
 
         for candidate in candidates where candidate.exists {
             tapElement(candidate)
-            try waitOrThrow(expectedPageAfterBack, timeout: 8, "Tapping Back should return to the expected page")
+            try waitOrThrow(
+                expectedPageAfterBack, timeout: WaitTiming.controlAppearanceTimeoutSeconds,
+                "Tapping Back should return to the expected page")
             return
         }
 
@@ -1116,7 +1171,7 @@ private extension AppStoreScreenshotUITests {
         } else {
             element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.identityPollSeconds))
     }
 
     func waitOrThrow(_ element: XCUIElement, timeout: TimeInterval, _ message: String) throws {
@@ -1129,7 +1184,7 @@ private extension AppStoreScreenshotUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         guard condition() else {
             throw ScreenshotError.message(message)
@@ -1278,7 +1333,7 @@ final class AppStoreScreenshotTVOSUITests: XCTestCase {
             "This App Store screenshot test only runs on a tvOS simulator."
         )
         try XCTSkipIf(
-            !appStoreScreenshotRunEnabled(),
+            !isAppStoreScreenshotRunEnabled(),
             "App Store screenshot tests are excluded from the regular UI regression by default. Evidence plans select this suite but set only IMMICHSLIDES_EVIDENCE, which this gate ignores; set APP_STORE_SCREENSHOT_RUN=1 to run them."
         )
     }
@@ -1442,25 +1497,25 @@ private extension AppStoreScreenshotTVOSUITests {
     func capturePlayback(outputRoot: URL, slotDirectory: URL) throws {
         let app = try launchIntoFilterSummary(
             filterSelectionJSON: playbackAlbumSelectionJSON,
-            prepareFilterSummaryVisuals: false,
-            disablePlaybackEntryHint: false
+            shouldPrepareFilterSummaryVisuals: false,
+            shouldDisablePlaybackEntryHint: false
         )
         try focusStartPlaybackButton(in: app)
         XCUIRemote.shared.press(.select)
 
         try waitOrThrow(
             app.buttons["slideshow.control.settings.button"],
-            timeout: 25,
+            timeout: WaitTiming.playbackEntryTimeoutSeconds,
             "tvOS playback page should show the settings button"
         )
         try waitOrThrow(
             app.buttons["slideshow.control.playPause.button"],
-            timeout: 12,
+            timeout: WaitTiming.screenTransitionTimeoutSeconds,
             "tvOS playback page should show the play/pause button"
         )
         try waitOrThrow(
             app.staticTexts["slideshow.entryHint.title"],
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             "tvOS playback screenshot must show the settings hint bubble"
         )
         try waitOrThrow(
@@ -1485,9 +1540,11 @@ private extension AppStoreScreenshotTVOSUITests {
         let app = try launchIntoModeSelection()
 
         try waitOrThrow(
-            app.buttons["mode.random.button"], timeout: 12, "Mode selection should show the random playback option")
+            app.buttons["mode.random.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the random playback option")
         try waitOrThrow(
-            app.buttons["mode.filtered.button"], timeout: 12, "Mode selection should show the filtered playback option")
+            app.buttons["mode.filtered.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the filtered playback option")
         waitForFocusVisualSettle()
 
         capture(app: app, slot: .playbackMode, outputRoot: outputRoot, slotDirectory: slotDirectory)
@@ -1499,16 +1556,21 @@ private extension AppStoreScreenshotTVOSUITests {
         let app = try launchIntoFilterSummary(filterSelectionJSON: briefCombinedFilterSelectionJSON)
 
         try waitOrThrow(
-            app.buttons["filterSummary.album.button"], timeout: 12, "Filter summary should show the album entry")
+            app.buttons["filterSummary.album.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the album entry")
         try waitOrThrow(
-            app.buttons["filterSummary.person.button"], timeout: 12, "Filter summary should show the people entry")
+            app.buttons["filterSummary.person.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the people entry")
         try waitOrThrow(
-            app.staticTexts["filterSummary.album.ready"], timeout: 15,
+            app.staticTexts["filterSummary.album.ready"], timeout: WaitTiming.connectionTimeoutSeconds,
             "Filter summary album stage should finish loading")
         try waitOrThrow(
-            app.staticTexts["filterSummary.people.ready"], timeout: 15,
+            app.staticTexts["filterSummary.people.ready"], timeout: WaitTiming.connectionTimeoutSeconds,
             "Filter summary people stage should finish loading")
-        try waitUntilOrThrow(timeout: 8, "Filter summary should enable Start playback after filters are seeded") {
+        try waitUntilOrThrow(
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
+            "Filter summary should enable Start playback after filters are seeded"
+        ) {
             app.buttons["filterSummary.startPlayback.button"].isEnabled
         }
         waitForFocusVisualSettle(seconds: 1.2)
@@ -1521,12 +1583,13 @@ private extension AppStoreScreenshotTVOSUITests {
     func capturePeopleFilter(outputRoot: URL, slotDirectory: URL) throws {
         let app = try launchIntoFilterSummary(
             filterSelectionJSON: briefPeopleFilterSelectionJSON,
-            prepareFilterSummaryVisuals: false
+            shouldPrepareFilterSummaryVisuals: false
         )
 
         try openPersonFilterFromSummary(app)
         try waitOrThrow(
-            app.buttons["personFilter.back.button"], timeout: 12, "People filter page should show the Back button")
+            app.buttons["personFilter.back.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "People filter page should show the Back button")
         try waitForBriefPeopleCardsForScreenshot(app)
         waitForFocusVisualSettle()
 
@@ -1544,12 +1607,13 @@ private extension AppStoreScreenshotTVOSUITests {
     func captureAlbumFilter(outputRoot: URL, slotDirectory: URL) throws {
         let app = try launchIntoFilterSummary(
             filterSelectionJSON: briefAlbumFilterSelectionJSON,
-            prepareFilterSummaryVisuals: false
+            shouldPrepareFilterSummaryVisuals: false
         )
 
         try openAlbumFilterFromSummary(app)
         try waitOrThrow(
-            app.buttons["albumFilter.back.button"], timeout: 12, "Album filter page should show the Back button")
+            app.buttons["albumFilter.back.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Album filter page should show the Back button")
         try waitForBriefAlbumCardsForScreenshot(app)
         waitForFocusVisualSettle()
 
@@ -1577,13 +1641,20 @@ private extension AppStoreScreenshotTVOSUITests {
         XCUIRemote.shared.press(.select)
 
         let pinInputButton = app.buttons["settings.pin.input.enable"]
-        try waitOrThrow(pinInputButton, timeout: 12, "Access protection page should show the set-PIN entry")
-        try waitForFocus(pinInputButton, timeout: 8, "Access protection page should default focus to the set-PIN entry")
+        try waitOrThrow(
+            pinInputButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Access protection page should show the set-PIN entry")
+        try waitForFocus(
+            pinInputButton, timeout: WaitTiming.controlAppearanceTimeoutSeconds,
+            "Access protection page should default focus to the set-PIN entry")
         XCUIRemote.shared.press(.select)
 
         try waitOrThrow(
-            app.buttons["pinEntry.close.button"], timeout: 8, "Choosing set PIN should show the PIN overlay")
-        try waitOrThrow(app.buttons["pinEntry.digit.1.button"], timeout: 8, "PIN overlay should show the number pad")
+            app.buttons["pinEntry.close.button"], timeout: WaitTiming.controlAppearanceTimeoutSeconds,
+            "Choosing set PIN should show the PIN overlay")
+        try waitOrThrow(
+            app.buttons["pinEntry.digit.1.button"], timeout: WaitTiming.controlAppearanceTimeoutSeconds,
+            "PIN overlay should show the number pad")
         waitForFocusVisualSettle()
 
         capture(app: app, slot: .pinProtection, outputRoot: outputRoot, slotDirectory: slotDirectory)
@@ -1600,18 +1671,19 @@ private extension AppStoreScreenshotTVOSUITests {
 
         let serverURLField = app.textFields["firstboot.serverURL.field"]
         try waitOrThrow(
-            serverURLField, timeout: 15, "A fresh install should open the tvOS first-launch server setup page")
+            serverURLField, timeout: WaitTiming.connectionTimeoutSeconds,
+            "A fresh install should open the tvOS first-launch server setup page")
         let displayedURL = (serverURLField.value as? String) ?? ""
         guard displayedURL.contains(appStoreDemoServerURL) else {
             throw TVOSScreenshotError.message("tvOS first-launch page should prefill the screenshot demo URL.")
         }
 
         try waitOrThrow(
-            app.secureTextFields["firstboot.apiKey.field"], timeout: 8,
+            app.secureTextFields["firstboot.apiKey.field"], timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             "tvOS first-launch page should show the secure API Key field")
         try waitOrThrow(
             app.descendants(matching: .any)["firstboot.form.card"],
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             "tvOS first-launch page should show the server setup form"
         )
 
@@ -1648,16 +1720,16 @@ private extension AppStoreScreenshotTVOSUITests {
     @MainActor
     func launchIntoFilterSummary(
         filterSelectionJSON: String,
-        prepareFilterSummaryVisuals: Bool = true,
-        disablePlaybackEntryHint: Bool = true
+        shouldPrepareFilterSummaryVisuals: Bool = true,
+        shouldDisablePlaybackEntryHint: Bool = true
     ) throws -> XCUIApplication {
         let app = makeBaseLaunchApp(
             filterSelectionJSON: filterSelectionJSON,
-            disablePlaybackEntryHint: disablePlaybackEntryHint
+            shouldDisablePlaybackEntryHint: shouldDisablePlaybackEntryHint
         )
         try injectRealTestServer(into: app)
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        if prepareFilterSummaryVisuals {
+        if shouldPrepareFilterSummaryVisuals {
             app.launchEnvironment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] = "1"
         }
         app.launch()
@@ -1670,19 +1742,19 @@ private extension AppStoreScreenshotTVOSUITests {
     func launchIntoSlideShow(filterSelectionJSON: String) throws -> XCUIApplication {
         let app = try launchIntoFilterSummary(
             filterSelectionJSON: filterSelectionJSON,
-            prepareFilterSummaryVisuals: false
+            shouldPrepareFilterSummaryVisuals: false
         )
         try focusStartPlaybackButton(in: app)
         XCUIRemote.shared.press(.select)
         try waitOrThrow(
-            app.buttons["slideshow.control.settings.button"], timeout: 25,
+            app.buttons["slideshow.control.settings.button"], timeout: WaitTiming.playbackEntryTimeoutSeconds,
             "Starting playback should open the tvOS playback page")
         return app
     }
 
     func makeBaseLaunchApp(
         filterSelectionJSON: String? = nil,
-        disablePlaybackEntryHint: Bool = true
+        shouldDisablePlaybackEntryHint: Bool = true
     ) -> XCUIApplication {
         let app = XCUIApplication()
 
@@ -1692,7 +1764,7 @@ private extension AppStoreScreenshotTVOSUITests {
         app.launchEnvironment["UI_TEST_COLOR_SCHEME"] = "light"
         app.launchEnvironment["UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
-        if disablePlaybackEntryHint {
+        if shouldDisablePlaybackEntryHint {
             app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         }
 
@@ -1717,13 +1789,17 @@ private extension AppStoreScreenshotTVOSUITests {
     @MainActor
     func startFilteredFlowFromModeSelection(_ app: XCUIApplication) throws {
         let filteredButton = app.buttons["mode.filtered.button"]
-        try waitOrThrow(filteredButton, timeout: 12, "Mode selection should show the filtered playback option")
+        try waitOrThrow(
+            filteredButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the filtered playback option")
         XCUIRemote.shared.press(.right)
         waitForFocusVisualSettle(seconds: 0.25)
         XCUIRemote.shared.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
-        try waitOrThrow(continueButton, timeout: 12, "Mode selection should show the Continue button")
+        try waitOrThrow(
+            continueButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the Continue button")
         guard continueButton.isEnabled else {
             throw TVOSScreenshotError.message("Continue button is disabled after choosing filtered playback.")
         }
@@ -1732,7 +1808,8 @@ private extension AppStoreScreenshotTVOSUITests {
         XCUIRemote.shared.press(.select)
 
         try waitOrThrow(
-            app.buttons["filterSummary.startPlayback.button"], timeout: 15, "Should reach the tvOS filter summary")
+            app.buttons["filterSummary.startPlayback.button"], timeout: WaitTiming.connectionTimeoutSeconds,
+            "Should reach the tvOS filter summary")
     }
 }
 
@@ -1740,20 +1817,27 @@ private extension AppStoreScreenshotTVOSUITests {
     @MainActor
     func openAlbumFilterFromSummary(_ app: XCUIApplication) throws {
         let albumButton = app.buttons["filterSummary.album.button"]
-        try waitOrThrow(albumButton, timeout: 12, "Filter summary should show the album entry")
+        try waitOrThrow(
+            albumButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the album entry")
         try focusFilterSummaryAlbumButton(in: app)
         XCUIRemote.shared.press(.select)
-        try waitOrThrow(app.buttons["albumFilter.back.button"], timeout: 12, "Should reach the tvOS album filter page")
+        try waitOrThrow(
+            app.buttons["albumFilter.back.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Should reach the tvOS album filter page")
     }
 
     @MainActor
     func openPersonFilterFromSummary(_ app: XCUIApplication) throws {
         let peopleButton = app.buttons["filterSummary.person.button"]
-        try waitOrThrow(peopleButton, timeout: 12, "Filter summary should show the people entry")
+        try waitOrThrow(
+            peopleButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the people entry")
         try focusFilterSummaryPeopleButton(in: app)
         XCUIRemote.shared.press(.select)
         try waitOrThrow(
-            app.buttons["personFilter.back.button"], timeout: 12, "Should reach the tvOS people filter page")
+            app.buttons["personFilter.back.button"], timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Should reach the tvOS people filter page")
     }
 
     @MainActor
@@ -1781,13 +1865,17 @@ private extension AppStoreScreenshotTVOSUITests {
         try focusFilterSummaryAlbumButton(in: app)
         XCUIRemote.shared.press(.right)
         waitForFocusVisualSettle(seconds: 0.25)
-        try waitForFocus(peopleButton, timeout: 3, "Filter summary should be able to move focus to the people entry")
+        try waitForFocus(
+            peopleButton, timeout: WaitTiming.shortInteractionTimeoutSeconds,
+            "Filter summary should be able to move focus to the people entry")
     }
 
     @MainActor
     func focusStartPlaybackButton(in app: XCUIApplication) throws {
         let startButton = app.buttons["filterSummary.startPlayback.button"]
-        try waitOrThrow(startButton, timeout: 12, "Filter summary should show the Start playback button")
+        try waitOrThrow(
+            startButton, timeout: WaitTiming.screenTransitionTimeoutSeconds,
+            "Filter summary should show the Start playback button")
 
         for _ in 0..<10 {
             if isFocused(startButton) { return }
@@ -1795,7 +1883,9 @@ private extension AppStoreScreenshotTVOSUITests {
             waitForFocusVisualSettle(seconds: 0.15)
         }
 
-        try waitForFocus(startButton, timeout: 3, "Filter summary should be able to move focus to Start playback")
+        try waitForFocus(
+            startButton, timeout: WaitTiming.shortInteractionTimeoutSeconds,
+            "Filter summary should be able to move focus to Start playback")
     }
 
     func albumCardIdentifier(id: String) -> String {
@@ -1816,7 +1906,7 @@ private extension AppStoreScreenshotTVOSUITests {
         for album in briefAlbumSelections {
             try waitOrThrow(
                 exactElement(identifier: albumCardIdentifier(id: album.id), in: app),
-                timeout: 12,
+                timeout: WaitTiming.screenTransitionTimeoutSeconds,
                 "tvOS album filter page should show the album named in the brief: \(album.name)"
             )
         }
@@ -1826,7 +1916,7 @@ private extension AppStoreScreenshotTVOSUITests {
         for person in briefPersonSelections {
             try waitOrThrow(
                 exactElement(identifier: personCardIdentifier(id: person.id), in: app),
-                timeout: 12,
+                timeout: WaitTiming.screenTransitionTimeoutSeconds,
                 "tvOS people filter page should show the person named in the brief: \(person.name)"
             )
         }
@@ -1837,7 +1927,9 @@ private extension AppStoreScreenshotTVOSUITests {
     @MainActor
     func openSettingsFromSlideShow(_ app: XCUIApplication) throws {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        try waitOrThrow(settingsButton, timeout: 15, "Playback page should show the settings button")
+        try waitOrThrow(
+            settingsButton, timeout: WaitTiming.connectionTimeoutSeconds,
+            "Playback page should show the settings button")
 
         // Press Left repeatedly to bring focus back to the leftmost settings button.
 
@@ -1848,9 +1940,12 @@ private extension AppStoreScreenshotTVOSUITests {
         }
 
         try waitForFocus(
-            settingsButton, timeout: 5, "Focus should return to the settings button before opening settings")
+            settingsButton, timeout: WaitTiming.elementAppearanceTimeoutSeconds,
+            "Focus should return to the settings button before opening settings")
         XCUIRemote.shared.press(.select)
-        try waitUntilOrThrow(timeout: 10, "Pressing the settings button should open settings home") {
+        try waitUntilOrThrow(
+            timeout: WaitTiming.navigationTimeoutSeconds, "Pressing the settings button should open settings home"
+        ) {
             app.buttons["settings.item.playback"].exists || app.otherElements["settings.item.playback"].exists
                 || app.staticTexts["settings.item.playback"].exists
         }
@@ -1866,7 +1961,7 @@ private extension AppStoreScreenshotTVOSUITests {
         let playbackItem = try waitForSettingsControl(
             app: app,
             identifier: "settings.item.playback",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Settings home should show the playback settings entry"
         )
 
@@ -1876,7 +1971,8 @@ private extension AppStoreScreenshotTVOSUITests {
             waitForFocusVisualSettle(seconds: 0.12)
         }
         try waitForFocus(
-            playbackItem, timeout: 6, "Settings home should be able to settle focus on the playback settings entry")
+            playbackItem, timeout: WaitTiming.settingsChangeTimeoutSeconds,
+            "Settings home should be able to settle focus on the playback settings entry")
 
         for _ in 0..<downStepsFromPlayback {
             XCUIRemote.shared.press(.down)
@@ -1886,10 +1982,10 @@ private extension AppStoreScreenshotTVOSUITests {
         let target = try waitForSettingsControl(
             app: app,
             identifier: identifier,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: failureMessage
         )
-        try waitForFocus(target, timeout: 6, failureMessage)
+        try waitForFocus(target, timeout: WaitTiming.settingsChangeTimeoutSeconds, failureMessage)
     }
 
     func settingsControlCandidates(app: XCUIApplication, identifier: String) -> [XCUIElement] {
@@ -1913,7 +2009,7 @@ private extension AppStoreScreenshotTVOSUITests {
             if let element = settingsControlCandidates(app: app, identifier: identifier).first(where: \.exists) {
                 return element
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
 
         if let element = settingsControlCandidates(app: app, identifier: identifier).first(where: \.exists) {
@@ -2082,7 +2178,7 @@ private extension AppStoreScreenshotTVOSUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         guard condition() else {
             throw TVOSScreenshotError.message(message)
@@ -2099,7 +2195,7 @@ private extension AppStoreScreenshotTVOSUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if isFocused(element) { return }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         guard isFocused(element) else {
             throw TVOSScreenshotError.message(message)

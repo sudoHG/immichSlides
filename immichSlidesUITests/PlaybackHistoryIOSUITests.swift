@@ -1,5 +1,12 @@
 import XCTest
 
+private enum Calibration {
+    static let pauseSampleCount: Int = 4
+    static let pauseSampleIntervalSeconds: TimeInterval = 0.75
+    static let observableMotionProgress: Double = 0.001
+    static let zeroProgressTolerance: Double = 0.000_1
+}
+
 #if os(iOS)
 final class PlaybackHistoryIOSUITests: XCTestCase {
     private var manualLifecycleRuntimeEvidenceRows: [[String: Any]] = []
@@ -196,7 +203,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
     func testDiagnosticSmartFillInitiallyPausedThreeSecondsFreezesRenderedFrames() throws {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(
             mode: .smartFill,
-            forceAutoplayOff: true
+            shouldForceAutoplayOff: true
         )
         defer {
             attachManualLifecycleRuntimeEvidence(mode: .smartFill)
@@ -284,14 +291,14 @@ private extension PlaybackHistoryIOSUITests {
 
     func launchConfiguredManualLifecycleAppAtModeSelection(
         mode: ManualLifecycleMode,
-        forceAutoplayOff: Bool = false
+        shouldForceAutoplayOff: Bool = false
     ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        if forceAutoplayOff {
+        if shouldForceAutoplayOff {
             app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
         }
         // The filter summary picks the first album and person on the server; a replay list replaces that pool.
@@ -336,7 +343,9 @@ private extension PlaybackHistoryIOSUITests {
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "initial-stable", probe: initial)
         XCTAssertTrue(
             waitUntil(timeout: 8) {
-                self.presentationProbe(app: app)?.rawProgress.contains(where: { $0 > 0.001 }) == true
+                self.presentationProbe(app: app)?.rawProgress.contains(where: {
+                    $0 > Calibration.observableMotionProgress
+                }) == true
             }, "The current autoplay scene must already show observable motion before the pause")
         let movingInitial = try waitForPresentationProbe(app: app, timeout: 3)
         appendManualLifecycleRuntimeEvidence(
@@ -359,7 +368,7 @@ private extension PlaybackHistoryIOSUITests {
         let afterNextIdentity = try waitForSceneIdentityChange(app: app, mode: mode, from: initialIdentity)
         let staticAfterNext = try waitForStablePresentationProbe(app: app, timeout: 4)
         XCTAssertTrue(
-            staticAfterNext.rawProgress.allSatisfy { abs($0) < 0.000_1 },
+            staticAfterNext.rawProgress.allSatisfy { abs($0) < Calibration.zeroProgressTolerance },
             "The new scene from a manual next while paused must stay still at p=0")
         appendManualLifecycleRuntimeEvidence(
             app: app,
@@ -373,7 +382,7 @@ private extension PlaybackHistoryIOSUITests {
         let afterPreviousIdentity = try waitForSceneIdentityChange(app: app, mode: mode, from: afterNextIdentity)
         let staticAfterPrevious = try waitForStablePresentationProbe(app: app, timeout: 4)
         XCTAssertTrue(
-            staticAfterPrevious.rawProgress.allSatisfy { abs($0) < 0.000_1 },
+            staticAfterPrevious.rawProgress.allSatisfy { abs($0) < Calibration.zeroProgressTolerance },
             "The scene from a manual previous while paused must stay still at p=0")
         appendManualLifecycleRuntimeEvidence(
             app: app,
@@ -387,7 +396,9 @@ private extension PlaybackHistoryIOSUITests {
         XCTAssertTrue(waitUntil(timeout: 3) { playPause.value as? String == "pause" })
         XCTAssertTrue(
             waitUntil(timeout: 4) {
-                self.presentationProbe(app: app)?.rawProgress.contains(where: { $0 > 0.001 }) == true
+                self.presentationProbe(app: app)?.rawProgress.contains(where: {
+                    $0 > Calibration.observableMotionProgress
+                }) == true
             }, "Play must make the current still scene start moving from p=0 immediately")
         let resumed = try waitForPresentationProbe(app: app, timeout: 3)
         appendManualLifecycleRuntimeEvidence(
@@ -418,7 +429,7 @@ private extension PlaybackHistoryIOSUITests {
         RunLoop.current.run(until: Date().addingTimeInterval(4.2))
         let afterFiveSeconds = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: 5)
         XCTAssertTrue(
-            afterFiveSeconds.rawProgress.contains(where: { $0 > 0.001 }),
+            afterFiveSeconds.rawProgress.contains(where: { $0 > Calibration.observableMotionProgress }),
             "Normal 5-second autoplay must keep visible motion within the scene"
         )
         appendManualLifecycleRuntimeEvidence(
@@ -746,8 +757,8 @@ private extension PlaybackHistoryIOSUITests {
         initialPixelsAttachment.lifetime = .keepAlways
         add(initialPixelsAttachment)
 
-        for sample in 1...4 {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.75))
+        for sample in 1...Calibration.pauseSampleCount {
+            RunLoop.current.run(until: Date().addingTimeInterval(Calibration.pauseSampleIntervalSeconds))
             let probe = try waitForPausedFrameSynchronizedPresentationProbe(app: app, timeout: 2)
             let slots = frozenStateOfSmartFillSlots(app: app)
             let pixels = app.windows.firstMatch.screenshot().pngRepresentation

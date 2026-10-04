@@ -2,6 +2,18 @@ import CoreGraphics
 import ImageIO
 import XCTest
 
+private enum Calibration {
+    static let minimumEnabledBrightPixelCount: Int = 100
+    static let hiddenPixelReductionFactor: Int = 4
+    static let overlayLeftFraction: CGFloat = 0.28
+    static let overlayTopFraction: CGFloat = 0.015
+    static let overlayWidthFraction: CGFloat = 0.72
+    static let overlayHeightFraction: CGFloat = 0.195
+    static let bytesPerPixel: Int = 4
+    static let bitsPerComponent: Int = 8
+    static let brightChannelThreshold: UInt8 = 210
+}
+
 // E2E-P2-01: EXIF must follow the current photo's metadata (full vs empty) and remain available on a SmartFill
 // multi-photo frame.
 final class ExifToggleUITests: XCTestCase {
@@ -43,7 +55,7 @@ final class ExifToggleUITests: XCTestCase {
     private func runExifFlow(_ driver: some PlaybackDriver, input: StrictE2EInput) throws {
         let evidence = Evidence()
         driver.launchToPlayback(input: input)
-        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(singlePhoto: true), .showExif(true)])
+        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: true), .showExif(true)])
         driver.pause()
 
         let fullMark = try driver.advance(toAnyOf: Self.fullMetadataMarks)
@@ -71,7 +83,7 @@ final class ExifToggleUITests: XCTestCase {
         let emptyMark = try driver.advance(toAnyOf: Self.emptyMetadataMarks)
         try captureExifState("exif-empty", mark: emptyMark, isExifEnabled: true, driver: driver, evidence: evidence)
 
-        driver.applyPlaybackSettings([.displayMode(singlePhoto: false)])
+        driver.applyPlaybackSettings([.displayMode(isSinglePhoto: false)])
         try driver.advanceToMultiPhotoScene()
         try evidence.capture("exif-smartfill-multi", from: driver.app) { _ in driver.isShowingMultiPhotoScene() }
         // AX on a multi-photo scene may still hold the previous photo's EXIF text; whether the info card is shown is
@@ -107,9 +119,9 @@ private enum ExifOverlayImage {
     static func isHidden(comparedWith enabledPNG: Data, in disabledPNG: Data) -> Bool {
         guard let enabled = brightPixelCount(enabledPNG),
             let disabled = brightPixelCount(disabledPNG),
-            enabled > 100
+            enabled > Calibration.minimumEnabledBrightPixelCount
         else { return false }
-        return disabled * 4 < enabled
+        return disabled * Calibration.hiddenPixelReductionFactor < enabled
     }
 
     private static func brightPixelCount(_ png: Data) -> Int? {
@@ -117,13 +129,13 @@ private enum ExifOverlayImage {
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else { return nil }
         let region = CGRect(
-            x: CGFloat(image.width) * 0.28,
-            y: CGFloat(image.height) * 0.015,
-            width: CGFloat(image.width) * 0.72,
-            height: CGFloat(image.height) * 0.195
+            x: CGFloat(image.width) * Calibration.overlayLeftFraction,
+            y: CGFloat(image.height) * Calibration.overlayTopFraction,
+            width: CGFloat(image.width) * Calibration.overlayWidthFraction,
+            height: CGFloat(image.height) * Calibration.overlayHeightFraction
         ).integral
         guard let crop = image.cropping(to: region) else { return nil }
-        let bytesPerRow = crop.width * 4
+        let bytesPerRow = crop.width * Calibration.bytesPerPixel
         var pixels = [UInt8](repeating: 0, count: bytesPerRow * crop.height)
         return pixels.withUnsafeMutableBytes { buffer -> Int? in
             guard
@@ -131,7 +143,7 @@ private enum ExifOverlayImage {
                     data: buffer.baseAddress,
                     width: crop.width,
                     height: crop.height,
-                    bitsPerComponent: 8,
+                    bitsPerComponent: Calibration.bitsPerComponent,
                     bytesPerRow: bytesPerRow,
                     space: CGColorSpaceCreateDeviceRGB(),
                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
@@ -139,8 +151,11 @@ private enum ExifOverlayImage {
             else { return nil }
             context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
             let bytes = buffer.bindMemory(to: UInt8.self)
-            return stride(from: 0, to: bytes.count, by: 4).reduce(0) { count, index in
-                count + (bytes[index] > 210 && bytes[index + 1] > 210 && bytes[index + 2] > 210 ? 1 : 0)
+            return stride(from: 0, to: bytes.count, by: Calibration.bytesPerPixel).reduce(0) { count, index in
+                count
+                    + (bytes[index] > Calibration.brightChannelThreshold
+                        && bytes[index + 1] > Calibration.brightChannelThreshold
+                        && bytes[index + 2] > Calibration.brightChannelThreshold ? 1 : 0)
             }
         }
     }

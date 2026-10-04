@@ -1,6 +1,16 @@
 import CryptoKit
 import XCTest
 
+private enum Calibration {
+    static let intervalSearchAttemptLimit: Int = 14
+    static let sliderNudgeAttemptLimit: Int = 12
+    static let sliderSearchTolerance: Double = 0.004
+    static let sliderNudgeStep: CGFloat = 0.025
+    static let sliderLowerBound: CGFloat = 0.02
+    static let sliderUpperBound: CGFloat = 0.98
+    static let alternateIntervalSeconds: Int = 20
+}
+
 #if os(iOS)
 final class AccessLifecycleIOSUITests: XCTestCase {
     private let controlHideSeconds: TimeInterval = 9
@@ -51,7 +61,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
 
         let settingsAtBackground = try captureSettingsAtBackground(app: app)
         try AccessLifecycleContract.assertAutoPlayEnabledAtBackground(
-            settingsAtBackground.autoPlayEnabled
+            settingsAtBackground.isAutoPlayEnabled
         )
         let backgroundWaitSeconds =
             TimeInterval(settingsAtBackground.intervalSeconds)
@@ -256,7 +266,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
         try assertNarrowEntryHasNoPin(app: app)
-        let beforeRestart = try readPlaybackSettings(app: app, allowPinUnlock: false)
+        let beforeRestart = try readPlaybackSettings(app: app, shouldAllowPinUnlock: false)
         app.terminate()
         try relaunchStrictE2EApp(app)
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
@@ -268,7 +278,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             waitForPlaybackControls(app: app, timeout: 25), "Should return to the playback page after relaunch.")
         openSettingsFromSlideshow(app: app)
         try assertNarrowEntryHasNoPin(app: app)
-        let afterRestart = try readPlaybackSettings(app: app, allowPinUnlock: false)
+        let afterRestart = try readPlaybackSettings(app: app, shouldAllowPinUnlock: false)
         _ = try captureRequiredPNG(app: app, name: "settings-after-restart")
         try AccessLifecycleContract.assertNarrowPathDidNotUnlockPin(didEnterPin: false)
         try AccessLifecycleContract.assertNarrowSettingsPersist(
@@ -309,7 +319,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
         try completeFirstBootToPlayback(app: app, input: input)
-        let interval = try configureTimingPlaybackSettings(app: app, autoPlayEnabled: true)
+        let interval = try configureTimingPlaybackSettings(app: app, isAutoPlayEnabled: true)
         XCTAssertEqual(
             interval, AccessLifecycleContract.requestedIntervalSeconds,
             "The iOS slider must be able to reach 12 seconds.")
@@ -343,7 +353,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
         try completeFirstBootToPlayback(app: app, input: input)
-        let interval = try configureTimingPlaybackSettings(app: app, autoPlayEnabled: true)
+        let interval = try configureTimingPlaybackSettings(app: app, isAutoPlayEnabled: true)
         XCTAssertEqual(
             interval, AccessLifecycleContract.requestedIntervalSeconds,
             "The iOS slider must be able to reach 12 seconds.")
@@ -364,9 +374,9 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         requests.append("playback.background")
         RunLoop.current.run(until: Date().addingTimeInterval(waitSeconds))
-        let homeLeftAppRunning = app.state != .notRunning
+        let didHomeLeaveAppRunning = app.state != .notRunning
         XCTAssertTrue(
-            homeLeftAppRunning, "The system terminated the process after Home; this does not count as a return.")
+            didHomeLeaveAppRunning, "The system terminated the process after Home; this does not count as a return.")
         app.activate()
         requests.append("playback.foreground")
         _ = app.wait(for: .runningForeground, timeout: 10)
@@ -374,15 +384,15 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             app.state, .notRunning,
             "The process must still exist after activate; a relaunch must not count as a return.")
         let processAfter = try applicationProcessID(app)
-        let processRebuilt = processAfter != processBefore || homeLeftAppRunning == false
+        let didRebuildProcess = processAfter != processBefore || didHomeLeaveAppRunning == false
         try AccessLifecycleContract.assertSameProcess(
             beforeIdentifier: processBefore,
             afterIdentifier: processAfter
         )
         try AccessLifecycleContract.assertSystemPauseActivation(
             activation: AccessLifecycleContract.allowedSystemPauseActivation,
-            didRebuildProcess: processRebuilt,
-            didHomeLeaveAppRunning: homeLeftAppRunning
+            didRebuildProcess: didRebuildProcess,
+            didHomeLeaveAppRunning: didHomeLeaveAppRunning
         )
         try assertNarrowEntryHasNoPin(app: app)
         let identityStarted = Date()
@@ -401,8 +411,8 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                 "suite": "background-return",
                 "interval_actual": interval,
                 "wait_seconds": waitSeconds,
-                "home_left_app_running": homeLeftAppRunning,
-                "process_rebuilt": processRebuilt,
+                "home_left_app_running": didHomeLeaveAppRunning,
+                "process_rebuilt": didRebuildProcess,
                 "process_identifier_before": Int(processBefore),
                 "process_identifier_after": Int(processAfter),
                 "mark_before": before.mark,
@@ -459,7 +469,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                 let button = app.buttons[label]
                 if button.exists {
                     button.tap()
-                    if waitUntil(timeout: 2, condition: { !self.systemSavePasswordPromptVisible(app: app) }) {
+                    if waitUntil(timeout: 2, condition: { !self.isSystemSavePasswordPromptVisible(app: app) }) {
                         return
                     }
                 }
@@ -469,7 +479,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func systemSavePasswordPromptVisible(app: XCUIApplication) -> Bool {
+    private func isSystemSavePasswordPromptVisible(app: XCUIApplication) -> Bool {
         // ui-label-lookup: The Save Password sheet is owned by iOS.
         app.sheets["保存密码？"].exists
             // ui-label-lookup: The Save Password prompt belongs to iOS.
@@ -581,15 +591,15 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     private func enablePasswordFromSettingsUI(app: XCUIApplication, pin: String) throws {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
-        let accessReady = waitUntil(timeout: 12) {
+        let isAccessReady = waitUntil(timeout: 12) {
             self.dismissSystemSavePromptIfPresent(app: app, timeout: 0)
             return self.firstExistingSettingsItem(
                 app: app,
                 identifier: "settings.item.accessProtection"
-            ) != nil && !self.systemSavePasswordPromptVisible(app: app)
+            ) != nil && !self.isSystemSavePasswordPromptVisible(app: app)
         }
         XCTAssertTrue(
-            accessReady,
+            isAccessReady,
             "The system 'Save Password?' prompt must go away after tapping 'Not Now', and Access Protection must be tappable."
         )
         let holdUntil = Date().addingTimeInterval(2)
@@ -601,7 +611,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             firstExistingSettingsItem(
                 app: app,
                 identifier: "settings.item.accessProtection"
-            ) != nil && !systemSavePasswordPromptVisible(app: app),
+            ) != nil && !isSystemSavePasswordPromptVisible(app: app),
             "After a steady wait, Access Protection must still be tappable and the Save Password prompt must be gone."
         )
         openSettingsSection(app: app, sectionID: "settings.item.accessProtection")
@@ -983,17 +993,17 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     }
 
     private struct ObservedPlaybackSettings {
-        let autoPlayEnabled: Bool
+        let isAutoPlayEnabled: Bool
         let intervalSeconds: Int
-        let showExif: Bool
+        let shouldShowExif: Bool
         let displayMode: String
 
         var dictionary: [String: Any] {
             [
                 "source": "real_settings_ui",
-                "autoPlayEnabled": autoPlayEnabled,
+                "autoPlayEnabled": isAutoPlayEnabled,
                 "intervalSeconds": intervalSeconds,
-                "showExif": showExif,
+                "showExif": shouldShowExif,
                 "displayMode": displayMode
             ]
         }
@@ -1008,7 +1018,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             requests.append("settings.pin.unlock")
         }
         let settings = try readObservedPlaybackSettings(app: app)
-        try AccessLifecycleContract.assertAutoPlayEnabledAtBackground(settings.autoPlayEnabled)
+        try AccessLifecycleContract.assertAutoPlayEnabledAtBackground(settings.isAutoPlayEnabled)
         _ = try captureRequiredPNG(app: app, name: "settings-at-background")
         returnToSlideshowFromSettings(app: app)
         XCTAssertTrue(
@@ -1020,13 +1030,13 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     @MainActor
     private func readPlaybackSettings(
         app: XCUIApplication,
-        allowPinUnlock: Bool = true
+        shouldAllowPinUnlock: Bool = true
     ) throws -> [String: Any] {
-        let observed = try readObservedPlaybackSettings(app: app, allowPinUnlock: allowPinUnlock)
+        let observed = try readObservedPlaybackSettings(app: app, shouldAllowPinUnlock: shouldAllowPinUnlock)
         return [
-            "autoPlayEnabled": observed.autoPlayEnabled,
+            "autoPlayEnabled": observed.isAutoPlayEnabled,
             "intervalSeconds": observed.intervalSeconds,
-            "showExif": observed.showExif,
+            "showExif": observed.shouldShowExif,
             "displayMode": observed.displayMode
         ]
     }
@@ -1034,10 +1044,10 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     @MainActor
     private func readObservedPlaybackSettings(
         app: XCUIApplication,
-        allowPinUnlock: Bool = true
+        shouldAllowPinUnlock: Bool = true
     ) throws -> ObservedPlaybackSettings {
         if app.buttons["pinEntry.close.button"].exists {
-            if allowPinUnlock == false {
+            if shouldAllowPinUnlock == false {
                 throw AccessLifecycleContract.AssertionError.message(
                     "A password sheet appeared while reading settings; the narrow entry must fail")
             }
@@ -1056,9 +1066,9 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         let mode =
             display.buttons["settings.playback.displayMode.smartFill.option"].isSelected ? "smartFill" : "singlePhoto"
         return ObservedPlaybackSettings(
-            autoPlayEnabled: isToggleOn(autoPlay),
+            isAutoPlayEnabled: isToggleOn(autoPlay),
             intervalSeconds: interval,
-            showExif: isToggleOn(exif),
+            shouldShowExif: isToggleOn(exif),
             displayMode: mode
         )
     }
@@ -1075,7 +1085,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             (Double(targetSeconds) - intervalMinimumSeconds)
             / (intervalMaximumSeconds - intervalMinimumSeconds)
         slider.adjust(toNormalizedSliderPosition: position)
-        for _ in 0..<14 {
+        for _ in 0..<Calibration.intervalSearchAttemptLimit {
             if intervalLabelExists(app: app, label: targetLabel) {
                 try AccessLifecycleContract.assertIOSIntervalReachedRequested(
                     observed: targetSeconds,
@@ -1089,7 +1099,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             } else {
                 low = max(low, position)
             }
-            if high - low < 0.004 { break }
+            if high - low < Calibration.sliderSearchTolerance { break }
             position = (low + high) / 2
             slider.adjust(toNormalizedSliderPosition: position)
         }
@@ -1124,13 +1134,15 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         targetSeconds: Int
     ) throws {
         let targetLabel = "\(targetSeconds) 秒"
-        for _ in 0..<12 {
+        for _ in 0..<Calibration.sliderNudgeAttemptLimit {
             if intervalLabelExists(app: app, label: targetLabel) { return }
             guard let current = readIntervalSeconds(app: app) else { return }
             if current == targetSeconds && intervalLabelExists(app: app, label: targetLabel) { return }
-            let delta: CGFloat = current < targetSeconds ? 0.025 : -0.025
+            let delta: CGFloat = current < targetSeconds ? Calibration.sliderNudgeStep : -Calibration.sliderNudgeStep
             let start = slider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            let end = slider.coordinate(withNormalizedOffset: CGVector(dx: min(max(0.5 + delta, 0.02), 0.98), dy: 0.5))
+            let end = slider.coordinate(
+                withNormalizedOffset: CGVector(
+                    dx: min(max(0.5 + delta, Calibration.sliderLowerBound), Calibration.sliderUpperBound), dy: 0.5))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
     }
@@ -1364,7 +1376,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         let ready = waitUntil(timeout: 8) {
             self.dismissSystemSavePromptIfPresent(app: app, timeout: 0)
             return pinInputButton.exists && pinInputButton.isHittable
-                && !self.systemSavePasswordPromptVisible(app: app)
+                && !self.isSystemSavePasswordPromptVisible(app: app)
         }
         XCTAssertTrue(ready, "PIN input entry not found.")
         tapElement(pinInputButton)
@@ -1525,11 +1537,11 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             if let candidate = firstExistingSettingsItem(
                 app: app,
                 identifier: sectionID
-            ), !systemSavePasswordPromptVisible(app: app) {
+            ), !isSystemSavePasswordPromptVisible(app: app) {
                 tapElement(candidate)
                 return
             }
-            if systemSavePasswordPromptVisible(app: app)
+            if isSystemSavePasswordPromptVisible(app: app)
                 || settingsControl(app: app, identifier: sectionID).exists
             {
                 RunLoop.current.run(until: Date().addingTimeInterval(0.3))
@@ -1593,7 +1605,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "The first-boot page must show the API Key field.")
         replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
-            waitUntil(timeout: 3) { self.secureFieldHasEnteredValue(apiKeyField) },
+            waitUntil(timeout: 3) { self.hasSecureFieldEnteredValue(apiKeyField) },
             "The API Key must be entered into the secure field.")
         commitFocusedInputIfNeeded(app: app)
     }
@@ -1670,7 +1682,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func secureFieldHasEnteredValue(_ field: XCUIElement) -> Bool {
+    private func hasSecureFieldEnteredValue(_ field: XCUIElement) -> Bool {
         let value = field.value as? String ?? ""
         return !value.isEmpty && !value.contains("请输入") && !value.localizedCaseInsensitiveContains("api key")
     }
@@ -1753,7 +1765,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     private func confirmPlayPauseState(
         app: XCUIApplication,
         expected: String,
-        tapIfNeeded: Bool,
+        shouldTapIfNeeded: Bool,
         message: String
     ) {
         revealPlaybackControls(app: app)
@@ -1777,7 +1789,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                 isTreatedAsRevealed: true
             )
         )
-        if tapIfNeeded && playPauseState(visible) != expected {
+        if shouldTapIfNeeded && playPauseState(visible) != expected {
             tapElement(visible)
         }
         if playPauseButton(app).exists == false {
@@ -1826,7 +1838,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
         try assertNarrowEntryHasNoPin(app: app)
-        return try readPlaybackSettings(app: app, allowPinUnlock: false)
+        return try readPlaybackSettings(app: app, shouldAllowPinUnlock: false)
     }
 
     @MainActor
@@ -1837,17 +1849,17 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
         XCTAssertTrue(autoPlay.waitForExistence(timeout: 12), "Playback settings must provide the autoplay toggle.")
-        let initialAutoPlay = initial["autoPlayEnabled"] as? Bool ?? isToggleOn(autoPlay)
+        let isInitiallyAutoPlayEnabled = initial["autoPlayEnabled"] as? Bool ?? isToggleOn(autoPlay)
         if isToggleOn(autoPlay) == false {
             tapElement(autoPlay)
             XCTAssertTrue(
                 waitUntil(timeout: 4) { self.isToggleOn(autoPlay) },
                 "Autoplay must be turned on before changing the interval.")
         }
-        let initialInterval = initial["intervalSeconds"] as? Int ?? 5
+        let initialInterval = initial["intervalSeconds"] as? Int ?? Int(intervalMinimumSeconds)
         let intervalTarget =
             initialInterval == AccessLifecycleContract.requestedIntervalSeconds
-            ? 20
+            ? Calibration.alternateIntervalSeconds
             : AccessLifecycleContract.requestedIntervalSeconds
         let observedInterval = try setIntervalFromUI(app: app, targetSeconds: intervalTarget)
         requests.append("settings.save.interval")
@@ -1855,12 +1867,12 @@ final class AccessLifecycleIOSUITests: XCTestCase {
 
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
         XCTAssertTrue(exif.waitForExistence(timeout: 8), "Playback settings must provide the EXIF toggle.")
-        let initialExif = initial["showExif"] as? Bool ?? isToggleOn(exif)
-        if isToggleOn(exif) == initialExif {
+        let isInitiallyExifEnabled = initial["showExif"] as? Bool ?? isToggleOn(exif)
+        if isToggleOn(exif) == isInitiallyExifEnabled {
             tapElement(exif)
         }
         XCTAssertTrue(
-            waitUntil(timeout: 4) { self.isToggleOn(exif) != initialExif },
+            waitUntil(timeout: 4) { self.isToggleOn(exif) != isInitiallyExifEnabled },
             "EXIF must be switched to the opposite value through the real settings."
         )
         requests.append("settings.save.exif")
@@ -1878,22 +1890,22 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         tapElement(targetButton)
         requests.append("settings.save.display_mode")
 
-        let desiredAutoPlay = !initialAutoPlay
-        if isToggleOn(autoPlay) != desiredAutoPlay {
+        let shouldEnableAutoPlay = !isInitiallyAutoPlayEnabled
+        if isToggleOn(autoPlay) != shouldEnableAutoPlay {
             tapElement(autoPlay)
             XCTAssertTrue(
-                waitUntil(timeout: 4) { self.isToggleOn(autoPlay) == desiredAutoPlay },
+                waitUntil(timeout: 4) { self.isToggleOn(autoPlay) == shouldEnableAutoPlay },
                 "Autoplay must be switched to the opposite value through the real settings."
             )
         }
         requests.append("settings.save.autoplay")
-        return try readPlaybackSettings(app: app, allowPinUnlock: false)
+        return try readPlaybackSettings(app: app, shouldAllowPinUnlock: false)
     }
 
     @MainActor
     private func configureTimingPlaybackSettings(
         app: XCUIApplication,
-        autoPlayEnabled: Bool
+        isAutoPlayEnabled: Bool
     ) throws -> Int {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
@@ -1901,10 +1913,10 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
         XCTAssertTrue(autoPlay.waitForExistence(timeout: 12), "Playback settings must provide the autoplay toggle.")
-        if isToggleOn(autoPlay) != autoPlayEnabled {
+        if isToggleOn(autoPlay) != isAutoPlayEnabled {
             tapElement(autoPlay)
             XCTAssertTrue(
-                waitUntil(timeout: 4) { self.isToggleOn(autoPlay) == autoPlayEnabled },
+                waitUntil(timeout: 4) { self.isToggleOn(autoPlay) == isAutoPlayEnabled },
                 "Autoplay must be turned on through the real settings."
             )
             requests.append("settings.save.autoplay")
@@ -1939,14 +1951,14 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         confirmPlayPauseState(
             app: app,
             expected: "pause",
-            tapIfNeeded: true,
+            shouldTapIfNeeded: true,
             message: "Must be playing before the mid-interval timing."
         )
         RunLoop.current.run(until: Date().addingTimeInterval(interval / 2))
         confirmPlayPauseState(
             app: app,
             expected: "play",
-            tapIfNeeded: true,
+            shouldTapIfNeeded: true,
             message: "Must be paused after the midpoint."
         )
         requests.append("playback.pause")
@@ -2018,7 +2030,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         let requestElapsed: TimeInterval
         let returnElapsed: TimeInterval
         let png: Data
-        let controlBarVisible: Bool
+        let isControlBarVisible: Bool
     }
 
     private struct ContinueWatchFrame {
@@ -2030,7 +2042,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         let earlyMark: String
         let earlyElapsed: TimeInterval
         let startVerdict: AccessLifecycleContract.FirstTransitionStartVerdict
-        let officialStartSigned: Bool
+        let isOfficialStartSigned: Bool
         let confirmedMark: String
         let confirmedElapsed: TimeInterval
         let pressReturnedElapsed: TimeInterval
@@ -2045,7 +2057,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         ) -> [[String: Any]] {
             var startItem: [String: Any] = [
                 "name": "first_transition_start",
-                "official_signed": officialStartSigned
+                "official_signed": isOfficialStartSigned
             ]
             switch startVerdict {
             case .detected(let elapsed, let mark, let status):
@@ -2250,7 +2262,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                 requestElapsed: requestElapsed,
                 returnElapsed: returnElapsed,
                 png: png,
-                controlBarVisible: playPauseButton(app).exists
+                isControlBarVisible: playPauseButton(app).exists
             )
         }
 
@@ -2263,7 +2275,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                 status: identity.status.rawValue,
                 mark: continueWatchMark(identity),
                 meanLuma: identity.meanLuma,
-                isControlBarVisible: raw.controlBarVisible
+                isControlBarVisible: raw.isControlBarVisible
             )
             let frame = ContinueWatchFrame(sample: sample, png: raw.png)
             frames.append(frame)
@@ -2367,7 +2379,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             },
             intervalSeconds: interval
         )
-        let officialSigned: Bool
+        let isOfficialSigned: Bool
         var ipadTimingEvidence: AccessLifecycleContract.IPadPauseTimingEvidence?
         if isIPad {
             guard let baselineLuma = baselineLuma else {
@@ -2381,9 +2393,9 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                 intervalSeconds: interval,
                 pressReturnedElapsed: pressReturnedElapsed
             )
-            officialSigned = true
+            isOfficialSigned = true
         } else {
-            officialSigned = try AccessLifecycleContract.officialStartSigned(
+            isOfficialSigned = try AccessLifecycleContract.officialStartSigned(
                 for: startVerdict, continueMark: continueMark, intervalSeconds: interval
             )
         }
@@ -2399,7 +2411,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             earlyMark: earlyMark,
             earlyElapsed: earlyElapsed,
             startVerdict: startVerdict,
-            officialStartSigned: officialSigned,
+            isOfficialStartSigned: isOfficialSigned,
             confirmedMark: confirmed.sample.mark,
             confirmedElapsed: confirmed.sample.requestElapsed,
             pressReturnedElapsed: pressReturnedElapsed,
@@ -2446,7 +2458,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                         requestElapsed: requestElapsed,
                         returnElapsed: returnElapsed,
                         png: png,
-                        controlBarVisible: playPauseButton(app).exists
+                        isControlBarVisible: playPauseButton(app).exists
                     )
                 )
             }
@@ -2459,7 +2471,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                     status: identity.status.rawValue,
                     mark: continueWatchMark(identity),
                     meanLuma: identity.meanLuma,
-                    isControlBarVisible: raw.controlBarVisible
+                    isControlBarVisible: raw.isControlBarVisible
                 )
                 samples.append(sample)
                 guard

@@ -11,22 +11,22 @@ final class PlaybackRequestLifecycleDiagnosticsUITests: XCTestCase {
 
     @MainActor
     func testSmartFillWarmNext60RequestLifecycleDiagnostics() throws {
-        try runDiagnosticsFlow(mode: .smartfill, action: .next, actionCount: 60)
+        try runDiagnosticsFlow(mode: .smartFill, action: .next, actionCount: 60)
     }
 
     @MainActor
     func testSingleWarmNext60RequestLifecycleDiagnostics() throws {
-        try runDiagnosticsFlow(mode: .single, action: .next, actionCount: 60)
+        try runDiagnosticsFlow(mode: .singlePhoto, action: .next, actionCount: 60)
     }
 
     @MainActor
     func testSmartFillWarmPrevious30RequestLifecycleDiagnostics() throws {
-        try runDiagnosticsFlow(mode: .smartfill, action: .previous, actionCount: 30, warmupNextCount: 35)
+        try runDiagnosticsFlow(mode: .smartFill, action: .previous, actionCount: 30, warmupNextCount: 35)
     }
 
     @MainActor
     func testSingleWarmPrevious30RequestLifecycleDiagnostics() throws {
-        try runDiagnosticsFlow(mode: .single, action: .previous, actionCount: 30, warmupNextCount: 35)
+        try runDiagnosticsFlow(mode: .singlePhoto, action: .previous, actionCount: 30, warmupNextCount: 35)
     }
 
     @MainActor
@@ -37,8 +37,8 @@ final class PlaybackRequestLifecycleDiagnosticsUITests: XCTestCase {
 
 private extension PlaybackRequestLifecycleDiagnosticsUITests {
     enum PlaybackMode: String {
-        case smartfill
-        case single
+        case smartFill = "smartfill"
+        case singlePhoto = "single"
     }
 
     enum PlaybackAction: String {
@@ -215,7 +215,7 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
         if baselineMode == "legacy-priority-upgrade" {
             app.launchEnvironment["IMMICHSLIDES_PLAYBACK_REQUEST_LIFECYCLE_LEGACY_PRIORITY_UPGRADE"] = "1"
         }
-        if mode == .single {
+        if mode == .singlePhoto {
             app.launchEnvironment["IMMICHSLIDES_DISABLE_SMART_FILL"] = "1"
         }
         app.launch()
@@ -241,7 +241,7 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
             to: flowDirectory.appending(path: "command.txt")
         )
 
-        let app = try launchConfiguredApp(mode: .single, evidenceDirectory: flowDirectory)
+        let app = try launchConfiguredApp(mode: .singlePhoto, evidenceDirectory: flowDirectory)
         defer { app.terminate() }
 
         let settledAssetId = waitForCurrentAssetID(app: app, timeout: 30) ?? "missing"
@@ -447,13 +447,13 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
 
     func testName(mode: PlaybackMode, action: PlaybackAction, actionCount: Int) -> String {
         switch (mode, action, actionCount) {
-        case (.smartfill, .next, 60):
+        case (.smartFill, .next, 60):
             return "testSmartFillWarmNext60RequestLifecycleDiagnostics"
-        case (.single, .next, 60):
+        case (.singlePhoto, .next, 60):
             return "testSingleWarmNext60RequestLifecycleDiagnostics"
-        case (.smartfill, .previous, 30):
+        case (.smartFill, .previous, 30):
             return "testSmartFillWarmPrevious30RequestLifecycleDiagnostics"
-        case (.single, .previous, 30):
+        case (.singlePhoto, .previous, 30):
             return "testSingleWarmPrevious30RequestLifecycleDiagnostics"
         default:
             return "unknown"

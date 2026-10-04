@@ -1,5 +1,16 @@
 import XCTest
 
+private enum WaitTiming {
+    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
+    static let navigationTimeoutSeconds: TimeInterval = 10
+    static let pollIntervalSeconds: TimeInterval = 0.1
+    static let remotePressSettleSeconds: TimeInterval = 0.12
+    static let sceneStableExtraSeconds: TimeInterval = 1
+    static let screenTransitionTimeoutSeconds: TimeInterval = 12
+    static let settingsChangeTimeoutSeconds: TimeInterval = 6
+    static let shortFocusSettleSeconds: TimeInterval = 0.15
+}
+
 #if os(tvOS)
 final class PlaybackSettingsTVOSUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -16,13 +27,13 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let autoPlayLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.autoPlay.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening Playback Settings, the 'Autoplay' entry should appear"
         )
 
         waitForFocusableElementToGainFocus(
             autoPlayLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening Playback Settings, default focus should land on the 'Autoplay' entry first"
         )
 
@@ -36,9 +47,9 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
     func testTVOSRecoveryMessageLocalizationEnglishSnapshot() throws {
         let config = try requireTestServerConfig()
         let app = launchApp(
-            resetState: true,
+            shouldResetState: true,
             colorScheme: "dark",
-            forceEnglishLocalization: true
+            shouldForceEnglishLocalization: true
         )
 
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
@@ -53,7 +64,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 
         // Take the runtime screenshot before asserting so a failure still keeps the evidence.
 
-        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+        RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.sceneStableExtraSeconds))
         attachScreenshot(app: app, name: "tvos-slideshow-recovery-message-english")
 
         // Look it up by accessibilityIdentifier first; do not use the text under test as the locator.
@@ -73,12 +84,12 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let autoPlayLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.autoPlay.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening Playback Settings, the 'Autoplay' entry should appear"
         )
         waitForFocusableElementToGainFocus(
             autoPlayLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "The Autoplay entry should take the default focus on the Playback Settings page"
         )
 
@@ -87,26 +98,26 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let onButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.autoPlay.on.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the Autoplay subpage, the 'Turn On Autoplay' button should be visible"
         )
         let offButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.autoPlay.off.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the Autoplay subpage, the 'Turn Off Autoplay' button should be visible"
         )
 
         waitForFocusableElementToGainFocus(
             onButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After entering the Autoplay subpage, default focus should land on the first item"
         )
 
         XCUIRemote.shared.press(.down)
         waitForFocusableElementToGainFocus(
             offButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "One move down on the Autoplay subpage should focus 'Turn Off Autoplay'"
         )
 
@@ -116,7 +127,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             // The option button value is the localized "selected/not selected" text, not the English word "selected".
 
             expectedFragment: "已选中",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Pressing Select on 'Turn Off Autoplay' should switch to the off state"
         )
 
@@ -140,12 +151,12 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let intervalButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.interval.5.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the Autoplay Interval subpage, the interval options should be shown"
         )
         waitForFocusableElementToGainFocus(
             intervalButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After entering the interval subpage, default focus should land on the first item"
         )
 
@@ -169,26 +180,26 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let randomButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.mode.random.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the Default Playback Mode subpage, 'Random Playback' should be shown"
         )
         let filteredButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.mode.filtered.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the Default Playback Mode subpage, 'Filtered Playback' should be shown"
         )
 
         waitForFocusableElementToGainFocus(
             randomButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Entering the Default Playback Mode subpage should put default focus on the first item"
         )
 
         XCUIRemote.shared.press(.down)
         waitForFocusableElementToGainFocus(
             filteredButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "One move down on the Default Playback Mode subpage should focus 'Filtered Playback'"
         )
 
@@ -212,33 +223,33 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let smartFillButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.displayMode.smartFill.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the Display Mode subpage, the 'Smart Fill' option should be shown"
         )
         let singlePhotoButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.displayMode.singlePhoto.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the Display Mode subpage, the 'Single Photo Mode' option should be shown"
         )
 
         waitForFocusableElementToGainFocus(
             smartFillButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After entering the Display Mode subpage, default focus should land on 'Smart Fill' first"
         )
 
         XCUIRemote.shared.press(.down)
         waitForFocusableElementToGainFocus(
             singlePhotoButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "One move down on the Display Mode subpage should focus 'Single Photo Mode'"
         )
         XCUIRemote.shared.press(.select)
         waitForElementValueToContain(
             singlePhotoButton,
             expectedFragment: "已选中",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Pressing Select on 'Single Photo Mode' should mark it as selected"
         )
 
@@ -274,7 +285,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let albumEntry = waitForSettingsControl(
             app: app,
             identifier: "filter.editor.album.entry",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "The filter editor main page should show the 'Albums' entry"
         )
 
@@ -282,13 +293,13 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 
         waitForFocusableElementToGainFocus(
             albumEntry,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Entering the filter editor main page should put default focus on the 'Albums' entry first"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitUntil(timeout: 10) {
+            waitUntil(timeout: WaitTiming.navigationTimeoutSeconds) {
                 app.buttons["albumFilter.back.button"].exists || app.buttons["albumFilter.selectAll.button"].exists
                     || app.buttons["albumFilter.clear.button"].exists
             },
@@ -311,13 +322,13 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
         waitForFocusableElementToGainFocus(
             personEntry,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "On the filter editor main page, the 'People' entry should be able to take focus"
         )
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitUntil(timeout: 10) {
+            waitUntil(timeout: WaitTiming.navigationTimeoutSeconds) {
                 app.buttons["personFilter.back.button"].exists || app.buttons["personFilter.selectAll.button"].exists
                     || app.buttons["personFilter.clear.button"].exists
             },
@@ -345,10 +356,10 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             waitForSettingsControl(
                 app: app,
                 identifier: peopleIdentifier,
-                timeout: 8,
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds,
                 failureMessage: "The filter editor main page should show the 'People' entry"
             ),
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Before toggling starts, the 'People' entry should already hold focus steadily"
         )
 
@@ -399,12 +410,12 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let exifLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.showExif.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the Display Items subpage, the 'EXIF Info' entry should be shown"
         )
         waitForFocusableElementToGainFocus(
             exifLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Entering the Display Items subpage should put default focus on the 'EXIF Info' entry first"
         )
 
@@ -413,12 +424,12 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let exifOnButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.showExif.on.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the EXIF subpage, the option to show EXIF should be shown"
         )
         waitForFocusableElementToGainFocus(
             exifOnButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After entering the EXIF subpage, default focus should land on the first item"
         )
 
@@ -428,7 +439,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 
     @MainActor
     func testTVOSPlaybackSettingsDisplayDebugPathCanOpen() throws {
-        let app = try openPlaybackSettingsFromSlideShow(enableDebugSettingsEntry: true)
+        let app = try openPlaybackSettingsFromSlideShow(shouldEnableDebugSettingsEntry: true)
 
         _ = moveFocusToSettingsControl(
             app: app,
@@ -451,12 +462,12 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let debugOnButton = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.showDebug.on.button",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After opening the Debug Panel subpage, the option to show the debug panel should be shown"
         )
         waitForFocusableElementToGainFocus(
             debugOnButton,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "After entering the Debug Panel subpage, default focus should land on the first item"
         )
 
@@ -466,7 +477,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 
     @MainActor
     func testTVOSPlaybackSettingsDisplayDebugEntryHiddenWhenDisabled() throws {
-        let app = try openPlaybackSettingsFromSlideShow(enableDebugSettingsEntry: false)
+        let app = try openPlaybackSettingsFromSlideShow(shouldEnableDebugSettingsEntry: false)
 
         _ = moveFocusToSettingsControl(
             app: app,
@@ -480,12 +491,12 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         let exifLink = waitForSettingsControl(
             app: app,
             identifier: "settings.playback.showExif.link",
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "With the debug entry off, Display Items should still keep at least the EXIF entry"
         )
         waitForFocusableElementToGainFocus(
             exifLink,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "In Display Items, default focus should still settle on the first item, the EXIF entry"
         )
 
@@ -508,28 +519,28 @@ private extension PlaybackSettingsTVOSUITests {
     }
 
     func launchApp(
-        resetState: Bool,
-        seedFilterSelection: Bool = false,
+        shouldResetState: Bool,
+        shouldSeedFilterSelection: Bool = false,
         colorScheme: String? = nil,
-        disablePlaybackEntryHint: Bool = true,
-        forceEnglishLocalization: Bool = false,
-        enableDebugSettingsEntry: Bool? = nil
+        shouldDisablePlaybackEntryHint: Bool = true,
+        shouldForceEnglishLocalization: Bool = false,
+        shouldEnableDebugSettingsEntry: Bool? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
 
-        if resetState {
+        if shouldResetState {
             app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         }
-        if seedFilterSelection {
+        if shouldSeedFilterSelection {
             app.launchEnvironment["UI_TEST_SEED_FILTER_SELECTION"] = "1"
         }
         if let colorScheme {
             app.launchEnvironment["UI_TEST_COLOR_SCHEME"] = colorScheme
         }
-        if disablePlaybackEntryHint {
+        if shouldDisablePlaybackEntryHint {
             app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         }
-        if forceEnglishLocalization {
+        if shouldForceEnglishLocalization {
             // Pin the English locale with launchArguments instead of relying only on xcodebuild -testLanguage.
 
             app.launchArguments += [
@@ -537,10 +548,10 @@ private extension PlaybackSettingsTVOSUITests {
                 "-AppleLocale", "en_US"
             ]
         }
-        if let enableDebugSettingsEntry {
+        if let shouldEnableDebugSettingsEntry {
             // Toggle the debug entry through the launch environment, without depending on the local env.xcconfig.
 
-            app.launchEnvironment["UI_TEST_ENABLE_DEBUG_SETTINGS_ENTRY"] = enableDebugSettingsEntry ? "1" : "0"
+            app.launchEnvironment["UI_TEST_ENABLE_DEBUG_SETTINGS_ENTRY"] = shouldEnableDebugSettingsEntry ? "1" : "0"
         }
 
         return app
@@ -549,15 +560,15 @@ private extension PlaybackSettingsTVOSUITests {
     @MainActor
     func launchIntoFilterSummary(
         colorScheme: String = "dark",
-        enableDebugSettingsEntry: Bool? = nil
+        shouldEnableDebugSettingsEntry: Bool? = nil
     ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = launchApp(
-            resetState: true,
-            seedFilterSelection: true,
+            shouldResetState: true,
+            shouldSeedFilterSelection: true,
             colorScheme: colorScheme,
-            disablePlaybackEntryHint: true,
-            enableDebugSettingsEntry: enableDebugSettingsEntry
+            shouldDisablePlaybackEntryHint: true,
+            shouldEnableDebugSettingsEntry: shouldEnableDebugSettingsEntry
         )
 
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
@@ -576,10 +587,10 @@ private extension PlaybackSettingsTVOSUITests {
         startFilteredFlowFromModeSelection(app: app)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(timeout: 10),
+            app.buttons["filterSummary.album.button"].waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
             "The filter summary page should show the album entry")
         XCTAssertTrue(
-            app.buttons["filterSummary.person.button"].waitForExistence(timeout: 10),
+            app.buttons["filterSummary.person.button"].waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
             "The filter summary page should show the people entry")
         return app
     }
@@ -587,7 +598,7 @@ private extension PlaybackSettingsTVOSUITests {
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
         let modeFilteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            modeFilteredButton.waitForExistence(timeout: 8),
+            modeFilteredButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The mode selection page should show the 'Filtered Playback' entry")
 
         // Filtered Playback is the second card: press Right, then Select.
@@ -597,7 +608,7 @@ private extension PlaybackSettingsTVOSUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 8),
+            continueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "After entering the filtered playback flow, the Continue button should be visible")
         XCTAssertTrue(
             continueButton.isEnabled,
@@ -607,28 +618,29 @@ private extension PlaybackSettingsTVOSUITests {
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.startPlayback.button"].waitForExistence(timeout: 12),
+            app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+                timeout: WaitTiming.screenTransitionTimeoutSeconds),
             "After entering the filter summary page, the 'Start Playback' button should be visible")
     }
 
     @MainActor
     func launchIntoSlideShow(
         colorScheme: String = "dark",
-        enableDebugSettingsEntry: Bool? = nil
+        shouldEnableDebugSettingsEntry: Bool? = nil
     ) throws -> XCUIApplication {
         let app = try launchIntoFilterSummary(
             colorScheme: colorScheme,
-            enableDebugSettingsEntry: enableDebugSettingsEntry
+            shouldEnableDebugSettingsEntry: shouldEnableDebugSettingsEntry
         )
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(timeout: 8),
+            startPlaybackButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The filter summary page should show the 'Start Playback' button")
 
         if startPlaybackButton.hasFocus == false {
             for _ in 0..<8 {
                 XCUIRemote.shared.press(.down)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+                RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
                 if startPlaybackButton.hasFocus {
                     break
                 }
@@ -651,21 +663,21 @@ private extension PlaybackSettingsTVOSUITests {
     @MainActor
     func openPlaybackSettingsFromSlideShow(
         colorScheme: String = "dark",
-        enableDebugSettingsEntry: Bool? = nil
+        shouldEnableDebugSettingsEntry: Bool? = nil
     ) throws -> XCUIApplication {
         let app = try launchIntoSlideShow(
             colorScheme: colorScheme,
-            enableDebugSettingsEntry: enableDebugSettingsEntry
+            shouldEnableDebugSettingsEntry: shouldEnableDebugSettingsEntry
         )
         openSettingsFromSlideShow(app: app)
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: 8),
+            playbackItem.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "The settings main page should show the 'Playback Settings' entry")
         waitForFocusableElementToGainFocus(
             playbackItem,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "Entering the settings main page should put default focus on 'Playback Settings' first"
         )
 
@@ -675,7 +687,7 @@ private extension PlaybackSettingsTVOSUITests {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.playback.autoPlay.link",
-                timeout: 8
+                timeout: WaitTiming.controlAppearanceTimeoutSeconds
             ),
             "Selecting 'Playback Settings' should open the playback settings subpage"
         )
@@ -696,7 +708,7 @@ private extension PlaybackSettingsTVOSUITests {
 
         XCUIRemote.shared.press(.select)
 
-        let didOpenEditor = waitUntil(timeout: 10) {
+        let didOpenEditor = waitUntil(timeout: WaitTiming.navigationTimeoutSeconds) {
             app.buttons["filter.editor.album.entry"].exists && app.buttons["filter.editor.person.entry"].exists
                 && app.staticTexts["filterEditor.page.title"].exists
         }
@@ -736,7 +748,7 @@ private extension PlaybackSettingsTVOSUITests {
 
         XCUIRemote.shared.press(.select)
 
-        let didPresentEditor = waitUntil(timeout: 10) {
+        let didPresentEditor = waitUntil(timeout: WaitTiming.navigationTimeoutSeconds) {
             app.buttons["filter.editor.album.entry"].exists && app.buttons["filter.editor.person.entry"].exists
                 && app.staticTexts["filterEditor.page.title"].exists
         }
@@ -764,7 +776,7 @@ private extension PlaybackSettingsTVOSUITests {
         )
         waitForFocusableElementToGainFocus(
             doneButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "On the filter editor main page, the 'Done' button should be able to take focus",
             file: file,
             line: line
@@ -776,25 +788,27 @@ private extension PlaybackSettingsTVOSUITests {
     @MainActor
     func openSettingsFromSlideShow(app: XCUIApplication) {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 10), "The slideshow should show the settings button")
+        XCTAssertTrue(
+            settingsButton.waitForExistence(timeout: WaitTiming.navigationTimeoutSeconds),
+            "The slideshow should show the settings button")
 
         // Bring focus back to the leftmost settings button before pressing Select.
 
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
             XCUIRemote.shared.press(.left)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
 
         waitForFocusableElementToGainFocus(
             settingsButton,
-            timeout: 6,
+            timeout: WaitTiming.settingsChangeTimeoutSeconds,
             failureMessage: "Before opening settings, focus should settle on the control bar's left settings button"
         )
 
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitForAnySettingsSurface(app: app, timeout: 8),
+            waitForAnySettingsSurface(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Pressing Select on the settings button should open the settings page")
     }
 
@@ -810,7 +824,7 @@ private extension PlaybackSettingsTVOSUITests {
         let target = waitForSettingsControl(
             app: app,
             identifier: identifier,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: failureMessage,
             file: file,
             line: line
@@ -843,7 +857,7 @@ private extension PlaybackSettingsTVOSUITests {
         let target = waitForSettingsControl(
             app: app,
             identifier: identifier,
-            timeout: 8,
+            timeout: WaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: failureMessage,
             file: file,
             line: line
@@ -938,7 +952,7 @@ private extension PlaybackSettingsTVOSUITests {
             {
                 return true
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.shortFocusSettleSeconds))
         }
         return false
     }
@@ -961,7 +975,7 @@ private extension PlaybackSettingsTVOSUITests {
             if settingsControlCandidates(app: app, identifier: identifier).contains(where: \.exists) {
                 return true
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
 
         return settingsControlCandidates(app: app, identifier: identifier).contains(where: \.exists)
@@ -980,7 +994,7 @@ private extension PlaybackSettingsTVOSUITests {
             if let matchedElement = settingsControlCandidates(app: app, identifier: identifier).first(where: \.exists) {
                 return matchedElement
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
 
         XCTFail(failureMessage, file: file, line: line)
@@ -1000,7 +1014,7 @@ private extension PlaybackSettingsTVOSUITests {
             if isElementFocused(element) {
                 return
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
 
         XCTFail(failureMessage, file: file, line: line)
@@ -1031,7 +1045,7 @@ private extension PlaybackSettingsTVOSUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.pollIntervalSeconds))
         }
         return condition()
     }
@@ -1045,7 +1059,7 @@ private extension PlaybackSettingsTVOSUITests {
     ) {
         let readinessLabel = app.staticTexts[identifier]
         XCTAssertTrue(
-            readinessLabel.waitForExistence(timeout: 12),
+            readinessLabel.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
             "A readable UI test readiness marker should be exposed: \(identifier)",
             file: file,
             line: line
