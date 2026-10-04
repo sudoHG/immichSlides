@@ -123,6 +123,12 @@ These are exactly the problems tests exist to catch.
 ## 5. Size and duplication
 
 - When a test file grows past about 800 lines, move shared steps into `TestSupport/`.
+- A large suite or XCTest class can also be split into `<Type>+<Concern>.swift` extensions in its
+  existing target. Keep its suite/class name, test methods, traits and platform guards unchanged so
+  test-plan and runner selectors still identify the same tests.
+- Python `test_*.py` modules remain discovery entry points. Moved methods live in non-discovered
+  `*_test_*_cases.py` mixins and shared fixtures in `*_test_fixtures.py`; the original classes inherit
+  those methods so discovered test IDs and counts stay unchanged.
 - Flows that are the same on iOS and tvOS live in shared helpers. Platform files contain only the differences.
 
 ## 6. Checklist before submitting
