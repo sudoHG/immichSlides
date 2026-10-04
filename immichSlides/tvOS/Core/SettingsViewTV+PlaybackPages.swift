@@ -382,7 +382,7 @@ extension SettingsViewTV {
                             playbackExifSettingsView
                         }
 
-                        if PlatformCompat.playbackDebugPanelEnabled {
+                        if PlatformCompat.isPlaybackDebugPanelEnabled {
                             playbackSettingsLink(
                                 title: "Debug Panel",
                                 value: playbackDebugSummary,
@@ -578,7 +578,7 @@ extension SettingsViewTV {
             playbackSettings.showExif
             ? String(localized: "EXIF On")
             : String(localized: "EXIF Off")
-        guard PlatformCompat.playbackDebugPanelEnabled else { return exifLabel }
+        guard PlatformCompat.isPlaybackDebugPanelEnabled else { return exifLabel }
         let debugLabel =
             playbackSettings.showDebugOverlay
             ? String(localized: "Debug On")

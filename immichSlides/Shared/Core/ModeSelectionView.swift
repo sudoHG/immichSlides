@@ -10,7 +10,7 @@ import SwiftUI
 struct ModeSelectionView: View {
     @State var selectedMode: SlideMode?
     private let previewFocusedModeOverride: SlideMode?
-    var onboardingOnly: Bool = false
+    var isOnboardingOnly: Bool = false
     var onOnboardingDone: ((SlideMode) -> Void)? = nil
 
     @StateObject private var filterVM = FilterViewModel()
@@ -18,12 +18,12 @@ struct ModeSelectionView: View {
 
     init(
         selectedMode: SlideMode? = nil,
-        onboardingOnly: Bool = false,
+        isOnboardingOnly: Bool = false,
         onOnboardingDone: ((SlideMode) -> Void)? = nil,
         previewFocusedModeOverride: SlideMode? = nil
     ) {
         _selectedMode = State(initialValue: selectedMode)
-        self.onboardingOnly = onboardingOnly
+        self.isOnboardingOnly = isOnboardingOnly
         self.onOnboardingDone = onOnboardingDone
         self.previewFocusedModeOverride = previewFocusedModeOverride
     }
@@ -34,14 +34,14 @@ struct ModeSelectionView: View {
             ModeSelectionViewTV(
                 selectedMode: $selectedMode,
                 previewFocusedModeOverride: previewFocusedModeOverride,
-                showsOnboardingProgress: onboardingOnly,
+                showsOnboardingProgress: isOnboardingOnly,
                 onSelectMode: selectMode,
                 onContinue: onContinueTapped
             )
             #else
             ModeSelectionViewIOS(
                 selectedMode: $selectedMode,
-                showsOnboardingProgress: onboardingOnly,
+                showsOnboardingProgress: isOnboardingOnly,
                 onSelectMode: selectMode,
                 onContinue: onContinueTapped
             )
@@ -49,7 +49,7 @@ struct ModeSelectionView: View {
         }
         // Preselect random when entering from onboarding, saving the user one step.
         .onAppear {
-            if onboardingOnly, selectedMode == nil {
+            if isOnboardingOnly, selectedMode == nil {
                 selectedMode = .random
             }
         }
@@ -63,7 +63,7 @@ struct ModeSelectionView: View {
             Task { await randomVM.firstPreload() }
         case .filtered:
             selectedMode = .filtered
-            filterVM.preloadCovers(coverLimit: 20, shouldReset: true)
+            filterVM.preloadCovers(coverLimit: FilterCoverPreloadLimits.coverCount, shouldReset: true)
         }
     }
 

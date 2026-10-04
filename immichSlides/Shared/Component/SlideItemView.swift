@@ -8,6 +8,11 @@
 import SwiftUI
 import SDWebImageSwiftUI
 
+private enum SlideItemAnimationHash {
+    static let seed: UInt64 = 1_469_598_103_934_665_603
+    static let multiplier: UInt64 = 1_099_511_628_211
+}
+
 struct SlideItemView: View {
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject var downloadManager: AssetsDownloadManager
@@ -38,7 +43,7 @@ struct SlideItemView: View {
         let backgroundOffsetY = (safeAreaInsets.bottom - safeAreaInsets.top) / 2
 
         let observedFullsizeState = downloadManager.assetStates[asset.id] ?? .notStarted
-        let fullsizeState = Self.shouldForceLoadingForUITests ? .downloading : observedFullsizeState
+        let fullsizeState = Self.shouldForceLoadingForTesting ? .downloading : observedFullsizeState
         let previewState = downloadManager.assetPreviewStates[asset.id] ?? .notStarted
         let singlePhotoTransform =
             motionContext.map { context in
@@ -86,7 +91,7 @@ struct SlideItemView: View {
                         .resizable()
                         .scaledToFill()
                         .frame(width: fullWidth, height: fullHeight)
-                        .blur(radius: 50)
+                        .blur(radius: SinglePhotoBackdropMetrics.blurRadiusPoints)
                         .clipped()
                         .onAppear {
                             #if DEBUG
@@ -229,15 +234,15 @@ struct SlideItemView: View {
     }
 
     private static func animationDirection(sceneId: String, assetId: String) -> SceneAnimationDirection {
-        var hash: UInt64 = 1_469_598_103_934_665_603
+        var hash: UInt64 = SlideItemAnimationHash.seed
         for byte in "\(sceneId)|\(assetId)".utf8 {
             hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
+            hash &*= SlideItemAnimationHash.multiplier
         }
         return hash.isMultiple(of: 2) ? .zoomIn : .zoomOut
     }
 
-    private static var shouldForceLoadingForUITests: Bool {
+    private static var shouldForceLoadingForTesting: Bool {
         #if DEBUG
         // Only DEBUG UI tests force the loading state; Release never reads this switch.
 

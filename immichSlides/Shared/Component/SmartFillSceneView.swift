@@ -17,7 +17,7 @@ struct SmartFillSceneView: View {
     let navigationToken: UUID
     let rendererAttemptID: UUID?
     let motionContext: MotionRuntimeContext?
-    var motionProbeControlBarVisible: Bool = false
+    var isMotionProbeControlBarVisible: Bool = false
     let onRendererDecoded: (SceneRendererIdentity) -> Void
     let onRendererFailed: (SceneRendererIdentity) -> Void
 
@@ -77,7 +77,7 @@ struct SmartFillSceneView: View {
                     motionContext: motionContext,
                     sceneType: scene.smartFillReadback?.sceneType,
                     manifestSlotRefs: scene.diagnosticSlotReferences(separator: "|"),
-                    motionProbeControlBarVisible: motionProbeControlBarVisible,
+                    isMotionProbeControlBarVisible: isMotionProbeControlBarVisible,
                     rendererIdentity: SceneRendererIdentity(
                         generation: navigationToken,
                         attemptID: rendererAttemptID,
@@ -135,7 +135,7 @@ private struct SmartFillSlotImageView: View {
     let motionContext: MotionRuntimeContext?
     let sceneType: PlaybackSmartFillSceneType?
     let manifestSlotRefs: String
-    let motionProbeControlBarVisible: Bool
+    let isMotionProbeControlBarVisible: Bool
     let rendererIdentity: SceneRendererIdentity
     let onRendererDecoded: (SceneRendererIdentity) -> Void
     let onRendererFailed: (SceneRendererIdentity) -> Void
@@ -350,8 +350,8 @@ private struct SmartFillSlotImageView: View {
             "renderRole=\(renderLayerRole.smartFillMotionProbeValue)",
             "manifestSceneType=\(sceneType?.rawValue ?? "legacy")",
             "manifestSlotRefs=\(manifestSlotRefs)",
-            "controlBarVisible=\(motionProbeControlBarVisible ? "true" : "false")",
-            "appOverlayPollution=\(motionProbeControlBarVisible ? "controlBar" : "none")",
+            "controlBarVisible=\(isMotionProbeControlBarVisible ? "true" : "false")",
+            "appOverlayPollution=\(isMotionProbeControlBarVisible ? "controlBar" : "none")",
             "acceptedMotionScope=\(sceneType.isAcceptedSmartFillMotionProbeScene ? "true" : "false")",
             "singleFilledScope=\(sceneType.smartFillSingleFilledScopeProbeValue)",
             "visualFrameSource=slotPresentationFrame",

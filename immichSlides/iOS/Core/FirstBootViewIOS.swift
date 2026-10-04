@@ -77,7 +77,7 @@ struct FirstBootViewIOS: View {
                 isConnectionVerified: isConnectionVerified,
                 onTestConnection: onTestConnection,
                 onSave: onSave,
-                showsDebugFillConfigButton: true
+                shouldShowDebugFillConfigButton: true
             )
 
             if let localNetworkPermissionHint {

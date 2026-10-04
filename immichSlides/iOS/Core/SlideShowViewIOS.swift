@@ -486,7 +486,7 @@ struct SlideShowViewIOS: View {
                         .accessibilityLabel(viewModel.playbackHistoryLedgerDiagnosticsSummaryJSON)
                 }
                 #endif
-                if PlatformCompat.playbackDebugPanelEnabled && showDebugOverlay {
+                if PlatformCompat.isPlaybackDebugPanelEnabled && showDebugOverlay {
                     DebugOverlayView(
                         viewModel: viewModel,
                         downloadManager: viewModel.downloadManager,
@@ -510,7 +510,7 @@ struct SlideShowViewIOS: View {
                             onNext: onNext,
                             onPlayPause: onPlayPause,
                             onSettings: onSettings,
-                            showsEntryHintBubble: showPlaybackEntryHint,
+                            shouldShowEntryHintBubble: showPlaybackEntryHint,
                             entryHintContent: playbackEntryHintContent,
                             onEntryHintTap: dismissPlaybackEntryHintIfNeeded
                         )
@@ -591,7 +591,7 @@ struct SlideShowViewIOS: View {
             }
         }
         .task(id: visionAuditTriggerKey) {
-            guard PlatformCompat.playbackDebugPanelEnabled, showDebugOverlay, viewModel.shouldRunDebugVisionFaceAudit
+            guard PlatformCompat.isPlaybackDebugPanelEnabled, showDebugOverlay, viewModel.shouldRunDebugVisionFaceAudit
             else {
                 // Shuffle playback can open the debug panel but does not run the Vision probe.
 
@@ -1232,7 +1232,7 @@ struct SlideShowViewIOS: View {
                                     platform: smartFillMotionPlatform,
                                     isReduceMotionEnabled: accessibilityReduceMotion
                                 ),
-                                motionProbeControlBarVisible: showControlBar,
+                                isMotionProbeControlBarVisible: showControlBar,
                                 onRendererDecoded: viewModel.rendererDecoded,
                                 onRendererFailed: viewModel.rendererFailed
                             )
@@ -1243,7 +1243,7 @@ struct SlideShowViewIOS: View {
                             .modifier(
                                 SceneVisibleFrameReporterModifier(
                                     candidate: visibleFrameCandidate,
-                                    onIncomingBecameVisible: viewModel.incomingBecameVisible
+                                    onSceneBecameVisible: viewModel.incomingBecameVisible
                                 )
                             )
                         }
@@ -1455,7 +1455,7 @@ struct SlideShowViewIOS: View {
         let settings = PlaybackSettingsStore().load() ?? PlaybackSettings()
         showExif = settings.showExif
 
-        showDebugOverlay = PlatformCompat.playbackDebugPanelEnabled && settings.showDebugOverlay
+        showDebugOverlay = PlatformCompat.isPlaybackDebugPanelEnabled && settings.showDebugOverlay
 
         switch settings.defaultPlaybackMode {
         case .random:

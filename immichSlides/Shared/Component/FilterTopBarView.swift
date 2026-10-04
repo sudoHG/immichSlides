@@ -21,9 +21,9 @@ struct FilterTopBarView: View {
     var backButtonAccessibilityID: String? = nil
     var selectAllButtonAccessibilityID: String? = nil
     var clearButtonAccessibilityID: String? = nil
-    var helperSummary: String? = nil
-    var helperItems: [FilterTopBarCommandHint] = []
-    var helperAccessibilityID: String? = nil
+    var commandHintSummary: String? = nil
+    var commandHints: [FilterTopBarCommandHint] = []
+    var commandHintAccessibilityID: String? = nil
 
     private var sideWidth: CGFloat {
         // Widen the tvOS sides to 320 so Select All / Clear do not wrap.
@@ -59,31 +59,31 @@ struct FilterTopBarView: View {
         layout.isTV ? 96 : 0
     }
 
-    private var showsHelperRow: Bool {
+    private var shouldShowCommandHintRow: Bool {
         guard layout.isTV else { return false }
-        let hasSummary = helperSummary?.isEmpty == false
-        let hasItems = helperItems.isEmpty == false
+        let hasSummary = commandHintSummary?.isEmpty == false
+        let hasItems = commandHints.isEmpty == false
         return hasSummary || hasItems
     }
 
-    private var helperRowSpacing: CGFloat {
+    private var commandHintRowSpacing: CGFloat {
         layout.isTV ? 10 : 0
     }
 
-    private var helperChipSpacing: CGFloat {
+    private var commandHintChipSpacing: CGFloat {
         layout.isTV ? 10 : 8
     }
 
     // Avoid pure white on the light glass bar so the helper row keeps enough contrast.
 
-    private var helperDividerColor: Color {
+    private var commandHintDividerColor: Color {
         if colorScheme == .light {
             return Color.black.opacity(0.14)
         }
         return Color.white.opacity(0.10)
     }
 
-    private var helperSummaryColor: Color {
+    private var commandHintSummaryColor: Color {
         if colorScheme == .light {
             return Color.black.opacity(0.64)
         }
@@ -98,26 +98,26 @@ struct FilterTopBarView: View {
     }
 
     /// iPhone uses icon buttons to save width; iPad keeps text buttons.
-    private var usesIconActionButtons: Bool {
+    private var shouldUseIconActionButtons: Bool {
         layout.isPhone
     }
 
-    private var usesCompactPhoneIconButtons: Bool {
+    private var shouldUseCompactPhoneIconButtons: Bool {
         // In iPhone portrait, draw custom round buttons so the system glass does not spread over the title.
 
         layout.isPhonePortrait
     }
 
     var body: some View {
-        VStack(spacing: showsHelperRow ? helperRowSpacing : 0) {
+        VStack(spacing: shouldShowCommandHintRow ? commandHintRowSpacing : 0) {
             HStack(spacing: 12) {
                 leftRegion
                 centerRegion
                 rightRegion
             }
 
-            if showsHelperRow {
-                helperRegion
+            if shouldShowCommandHintRow {
+                commandHintRegion
             }
         }
         .padding(.horizontal, horizontalPadding)
@@ -135,7 +135,7 @@ struct FilterTopBarView: View {
                     .font(.system(size: layout.isPhonePortrait ? 15 : 18, weight: .semibold))
                     .frame(width: backButtonSize, height: backButtonSize)
             }
-            .modifier(TopBarActionButtonStyleModifier(usesCompactPhoneStyle: usesCompactPhoneIconButtons))
+            .modifier(TopBarActionButtonStyleModifier(shouldUseCompactPhoneStyle: shouldUseCompactPhoneIconButtons))
             .accessibilityLabel(Text(LocalizedStringKey("Back")))
             .accessibilityIdentifier(backButtonAccessibilityID ?? "")
             Spacer(minLength: 0)
@@ -184,7 +184,7 @@ struct FilterTopBarView: View {
     @ViewBuilder
     private func actionButton(systemIcon: String, text: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            if usesIconActionButtons {
+            if shouldUseIconActionButtons {
                 Image(systemName: systemIcon)
                     .font(.system(size: layout.isCompactHeight ? 13 : 15, weight: .semibold))
                     .frame(
@@ -203,41 +203,41 @@ struct FilterTopBarView: View {
                     .padding(.horizontal, 14)
             }
         }
-        .modifier(TopBarActionButtonStyleModifier(usesCompactPhoneStyle: usesCompactPhoneIconButtons))
+        .modifier(TopBarActionButtonStyleModifier(shouldUseCompactPhoneStyle: shouldUseCompactPhoneIconButtons))
     }
 
-    private var helperRegion: some View {
+    private var commandHintRegion: some View {
         VStack(alignment: .leading, spacing: 10) {
             Rectangle()
-                .fill(helperDividerColor)
+                .fill(commandHintDividerColor)
                 .frame(height: 1)
 
             HStack(alignment: .center, spacing: 16) {
-                if let helperSummary, helperSummary.isEmpty == false {
-                    Text(LocalizedStringKey(helperSummary))
+                if let commandHintSummary, commandHintSummary.isEmpty == false {
+                    Text(LocalizedStringKey(commandHintSummary))
 
                         .font(.system(size: layout.isTV ? 19 : 15, weight: .medium, design: .rounded))
-                        .foregroundStyle(helperSummaryColor)
+                        .foregroundStyle(commandHintSummaryColor)
                         .lineLimit(1)
                         .minimumScaleFactor(layout.isTV ? 0.84 : 0.88)
                 }
 
                 Spacer(minLength: 0)
 
-                if helperItems.isEmpty == false {
-                    HStack(spacing: helperChipSpacing) {
-                        ForEach(helperItems) { item in
-                            helperChip(item)
+                if commandHints.isEmpty == false {
+                    HStack(spacing: commandHintChipSpacing) {
+                        ForEach(commandHints) { item in
+                            commandHintChip(item)
                         }
                     }
                 }
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(helperAccessibilityID ?? "")
+        .accessibilityIdentifier(commandHintAccessibilityID ?? "")
     }
 
-    private func helperChip(_ item: FilterTopBarCommandHint) -> some View {
+    private func commandHintChip(_ item: FilterTopBarCommandHint) -> some View {
         HStack(spacing: 10) {
             ZStack {
                 Circle()
@@ -332,11 +332,11 @@ private struct FilterTopBarBackgroundModifier: ViewModifier {
 }
 
 private struct TopBarActionButtonStyleModifier: ViewModifier {
-    let usesCompactPhoneStyle: Bool
+    let shouldUseCompactPhoneStyle: Bool
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if usesCompactPhoneStyle {
+        if shouldUseCompactPhoneStyle {
             content
                 .buttonStyle(.plain)
                 .frame(width: 42, height: 42)

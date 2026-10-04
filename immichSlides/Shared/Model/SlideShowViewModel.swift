@@ -368,7 +368,7 @@ class SlideShowViewModel: ObservableObject {
         return scenePresentationPrerenderBarrier.activeRendererAttemptID
     }
     var isSmartFillPresentationModeActive: Bool {
-        playbackDisplayMode == .smartFill && !PlatformCompat.forceSinglePhotoPlaybackForDebug
+        playbackDisplayMode == .smartFill && !PlatformCompat.shouldForceSinglePhotoPlaybackForTesting
     }
     func updateSmartFillMotionReduceMotionEnabled(_ isEnabled: Bool) {
         executeScenePresentationEffects(
@@ -405,7 +405,8 @@ class SlideShowViewModel: ObservableObject {
             platform: platform,
             isReduceMotionEnabled: isReduceMotionEnabled
         )
-        let isSinglePhoto = playbackDisplayMode == .singlePhoto || PlatformCompat.forceSinglePhotoPlaybackForDebug
+        let isSinglePhoto =
+            playbackDisplayMode == .singlePhoto || PlatformCompat.shouldForceSinglePhotoPlaybackForTesting
         let canRenderFrozenTransform =
             isReduceMotionEnabled && layer.isMotionEnabled
             && (isSinglePhoto
@@ -1859,7 +1860,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     private var isSmartFillPlanningEnabled: Bool {
-        playbackDisplayMode == .smartFill && !PlatformCompat.forceSinglePhotoPlaybackForDebug
+        playbackDisplayMode == .smartFill && !PlatformCompat.shouldForceSinglePhotoPlaybackForTesting
     }
 
     private func makeSmartFillScenePlan(

@@ -344,7 +344,7 @@ struct SlideShowViewTV: View {
                         safeAreaInsets: geometry.safeAreaInsets
                     )
                 }
-                if PlatformCompat.playbackDebugPanelEnabled && showDebugOverlay {
+                if PlatformCompat.isPlaybackDebugPanelEnabled && showDebugOverlay {
                     DebugOverlayView(
                         viewModel: viewModel,
                         downloadManager: viewModel.downloadManager,
@@ -559,7 +559,7 @@ struct SlideShowViewTV: View {
             resetAutoHideTimer()
         }
         .task(id: visionAuditTriggerKey) {
-            guard PlatformCompat.playbackDebugPanelEnabled, showDebugOverlay, viewModel.shouldRunDebugVisionFaceAudit
+            guard PlatformCompat.isPlaybackDebugPanelEnabled, showDebugOverlay, viewModel.shouldRunDebugVisionFaceAudit
             else {
                 // Random playback can open the debug panel; the Vision probe only runs in soloOnly.
 
@@ -1087,7 +1087,7 @@ struct SlideShowViewTV: View {
                                     platform: .tvOS,
                                     isReduceMotionEnabled: accessibilityReduceMotion
                                 ),
-                                motionProbeControlBarVisible: showControlBar,
+                                isMotionProbeControlBarVisible: showControlBar,
                                 onRendererDecoded: viewModel.rendererDecoded,
                                 onRendererFailed: viewModel.rendererFailed
                             )
@@ -1099,7 +1099,7 @@ struct SlideShowViewTV: View {
                             .modifier(
                                 SceneVisibleFrameReporterModifier(
                                     candidate: visibleFrameCandidate,
-                                    onIncomingBecameVisible: viewModel.incomingBecameVisible
+                                    onSceneBecameVisible: viewModel.incomingBecameVisible
                                 )
                             )
                         }
@@ -1276,7 +1276,7 @@ struct SlideShowViewTV: View {
         let settings = PlaybackSettingsStore().load() ?? PlaybackSettings()
         showExif = settings.showExif
 
-        showDebugOverlay = PlatformCompat.playbackDebugPanelEnabled && settings.showDebugOverlay
+        showDebugOverlay = PlatformCompat.isPlaybackDebugPanelEnabled && settings.showDebugOverlay
 
         switch settings.defaultPlaybackMode {
         case .random:

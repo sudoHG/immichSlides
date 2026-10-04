@@ -9,6 +9,16 @@ import UIKit
 import CoreImage
 import SDWebImage
 
+enum SinglePhotoBackdropMetrics {
+    static let blurRadiusPoints: CGFloat = 50
+}
+
+private enum ExifSamplingDimensions {
+    static let minimumDisplayDimensionPoints: CGFloat = 1
+    static let minimumSourceDimensionPixels: CGFloat = 1
+    static let minimumSampleDimensionPixels: CGFloat = 1
+}
+
 // Screen geometry used for EXIF sampling; not GeometryProxy, so the analyzer does not depend on view objects.
 
 struct ExifDisplayedBackdropContext: Equatable {
@@ -19,8 +29,10 @@ struct ExifDisplayedBackdropContext: Equatable {
     // While the frame is still .zero there is not enough to sample, so the screen-space algorithm cannot run.
 
     var isValid: Bool {
-        surfaceSize.width > 1 && surfaceSize.height > 1 && exifFrameInSurfaceSpace.width > 1
-            && exifFrameInSurfaceSpace.height > 1
+        surfaceSize.width > ExifSamplingDimensions.minimumDisplayDimensionPoints
+            && surfaceSize.height > ExifSamplingDimensions.minimumDisplayDimensionPoints
+            && exifFrameInSurfaceSpace.width > ExifSamplingDimensions.minimumDisplayDimensionPoints
+            && exifFrameInSurfaceSpace.height > ExifSamplingDimensions.minimumDisplayDimensionPoints
     }
 
     // The blurred background layer covers the Safe Area, so the scaledToFill size must include the insets.
@@ -158,8 +170,16 @@ enum ExifForegroundAnalyzer {
 
     private static let displayedPanelRegion = CGRect(x: 0, y: 0, width: 1, height: 1)
 
+    private static let coreTextBlendWeight: CGFloat = 0.78
+    private static let panelBlendWeight: CGFloat = 0.22
+    private static let compactBadgeMedianThreshold: CGFloat = 0.56
+    private static let compactBadgeCoreUpperQuartileThreshold: CGFloat = 0.70
+    private static let compactBadgePanelUpperQuartileThreshold: CGFloat = 0.68
+    private static let redLuminanceCoefficient: CGFloat = 0.2126
+    private static let greenLuminanceCoefficient: CGFloat = 0.7152
+    private static let blueLuminanceCoefficient: CGFloat = 0.0722
     private static let darkTextThreshold: CGFloat = 0.53
-    private static let backgroundBlurRadius: CGFloat = 50
+    private static let backgroundBlurRadius: CGFloat = SinglePhotoBackdropMetrics.blurRadiusPoints
     private static let blurSamplingPadding: CGFloat = 80
     // The real text color does not assume the material layer brightens things noticeably.
 
@@ -324,7 +344,9 @@ enum ExifForegroundAnalyzer {
         let backdropBounds = CGRect(origin: .zero, size: backdropContext.backdropSize)
         let panelRect = backdropContext.exifFrameInBackdropSpace.intersection(backdropBounds)
 
-        guard !panelRect.isNull, panelRect.width > 1, panelRect.height > 1 else {
+        guard !panelRect.isNull, panelRect.width > ExifSamplingDimensions.minimumDisplayDimensionPoints,
+            panelRect.height > ExifSamplingDimensions.minimumDisplayDimensionPoints
+        else {
             return nil
         }
 
@@ -390,7 +412,9 @@ enum ExifForegroundAnalyzer {
         let backdropBounds = CGRect(origin: .zero, size: backdropContext.backdropSize)
         let panelRect = backdropContext.exifFrameInBackdropSpace.intersection(backdropBounds)
 
-        guard !panelRect.isNull, panelRect.width > 1, panelRect.height > 1 else {
+        guard !panelRect.isNull, panelRect.width > ExifSamplingDimensions.minimumDisplayDimensionPoints,
+            panelRect.height > ExifSamplingDimensions.minimumDisplayDimensionPoints
+        else {
             return nil
         }
 
@@ -463,7 +487,9 @@ enum ExifForegroundAnalyzer {
         let backdropBounds = CGRect(origin: .zero, size: backdropContext.backdropSize)
         let panelRect = backdropContext.exifFrameInBackdropSpace.intersection(backdropBounds)
 
-        guard !panelRect.isNull, panelRect.width > 1, panelRect.height > 1 else {
+        guard !panelRect.isNull, panelRect.width > ExifSamplingDimensions.minimumDisplayDimensionPoints,
+            panelRect.height > ExifSamplingDimensions.minimumDisplayDimensionPoints
+        else {
             return nil
         }
 
@@ -536,8 +562,8 @@ enum ExifForegroundAnalyzer {
                 ))
 
         guard !sourceCropRectInTopLeftSpace.isNull,
-            sourceCropRectInTopLeftSpace.width > 1,
-            sourceCropRectInTopLeftSpace.height > 1
+            sourceCropRectInTopLeftSpace.width > ExifSamplingDimensions.minimumSourceDimensionPixels,
+            sourceCropRectInTopLeftSpace.height > ExifSamplingDimensions.minimumSourceDimensionPixels
         else {
             return nil
         }
@@ -700,7 +726,9 @@ enum ExifForegroundAnalyzer {
     ) -> SampledLuminanceGrid? {
         let sampleRect = ciImage.extent
 
-        guard sampleRect.width > 1, sampleRect.height > 1 else {
+        guard sampleRect.width > ExifSamplingDimensions.minimumSampleDimensionPixels,
+            sampleRect.height > ExifSamplingDimensions.minimumSampleDimensionPixels
+        else {
             return nil
         }
 
@@ -758,8 +786,9 @@ enum ExifForegroundAnalyzer {
         // White text by default; switch to black only when it is bright overall and uniform enough, so a midtone
         // background is not switched early by a local bright patch.
 
-        let blendedAverage = (metrics.coreText.average * 0.78) + (metrics.panel.average * 0.22)
-        let blendedMedian = (metrics.coreText.median * 0.78) + (metrics.panel.median * 0.22)
+        let blendedAverage =
+            (metrics.coreText.average * coreTextBlendWeight) + (metrics.panel.average * panelBlendWeight)
+        let blendedMedian = (metrics.coreText.median * coreTextBlendWeight) + (metrics.panel.median * panelBlendWeight)
         let brightnessFloor = min(metrics.coreText.lowerQuartile, metrics.panel.lowerQuartile)
         let brightnessSpread = max(metrics.coreText.spread, metrics.panel.spread)
 
@@ -773,8 +802,9 @@ enum ExifForegroundAnalyzer {
             blendedAverage >= darkTextExtremeMeanThreshold && brightnessFloor >= darkTextExtremeFloorThreshold
 
         let isBrightCompactBadge =
-            metrics.isCompactPanel && metrics.coreText.median >= 0.56 && metrics.coreText.upperQuartile >= 0.70
-            && metrics.panel.upperQuartile >= 0.68
+            metrics.isCompactPanel && metrics.coreText.median >= compactBadgeMedianThreshold
+            && metrics.coreText.upperQuartile >= compactBadgeCoreUpperQuartileThreshold
+            && metrics.panel.upperQuartile >= compactBadgePanelUpperQuartileThreshold
 
         return (isBrightCompactBadge || isExtremelyBright || (isClearlyBright && isUniformEnough))
             ? .darkText
@@ -813,7 +843,9 @@ enum ExifForegroundAnalyzer {
             height: imageRect.height * normalizedRegion.height
         ).intersection(imageRect)
 
-        guard !sampleRect.isNull, sampleRect.width > 1, sampleRect.height > 1 else {
+        guard !sampleRect.isNull, sampleRect.width > ExifSamplingDimensions.minimumSampleDimensionPixels,
+            sampleRect.height > ExifSamplingDimensions.minimumSampleDimensionPixels
+        else {
             return nil
         }
 
@@ -837,7 +869,9 @@ enum ExifForegroundAnalyzer {
             height: extent.height * normalizedRegion.height
         ).intersection(extent)
 
-        guard !sampleRect.isNull, sampleRect.width > 1, sampleRect.height > 1 else {
+        guard !sampleRect.isNull, sampleRect.width > ExifSamplingDimensions.minimumSampleDimensionPixels,
+            sampleRect.height > ExifSamplingDimensions.minimumSampleDimensionPixels
+        else {
             return nil
         }
 
@@ -894,7 +928,7 @@ enum ExifForegroundAnalyzer {
         green: CGFloat,
         blue: CGFloat
     ) -> CGFloat {
-        (0.2126 * red) + (0.7152 * green) + (0.0722 * blue)
+        (redLuminanceCoefficient * red) + (greenLuminanceCoefficient * green) + (blueLuminanceCoefficient * blue)
     }
 
     private static func adjustedLuminance(
@@ -914,10 +948,10 @@ private struct AspectFillMapping {
     let visibleSourceRect: CGRect
 
     init?(sourceSize: CGSize, backdropSize: CGSize) {
-        guard sourceSize.width > 1,
-            sourceSize.height > 1,
-            backdropSize.width > 1,
-            backdropSize.height > 1
+        guard sourceSize.width > ExifSamplingDimensions.minimumSourceDimensionPixels,
+            sourceSize.height > ExifSamplingDimensions.minimumSourceDimensionPixels,
+            backdropSize.width > ExifSamplingDimensions.minimumDisplayDimensionPoints,
+            backdropSize.height > ExifSamplingDimensions.minimumDisplayDimensionPoints
         else {
             return nil
         }

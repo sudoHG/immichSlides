@@ -47,6 +47,10 @@ enum ExifForegroundTone: Equatable {
     }
 }
 
+private enum ExifInfoMetrics {
+    static let textShadowRadiusPoints: CGFloat = 10
+}
+
 struct ExifInfoView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     var asset: Asset
@@ -108,9 +112,9 @@ struct ExifInfoView: View {
 
                 }
             }
-            if let dataTimeOriginal = exifInfo.dateTimeOriginal {
+            if let dateTimeOriginal = exifInfo.dateTimeOriginal {
 
-                let date = String(dataTimeOriginal.prefix(10))
+                let date = String(dateTimeOriginal.prefix(10))
                 exifRow(iconName: "calendar") {
                     Text("\(date)")
                 }
@@ -160,7 +164,7 @@ struct ExifInfoView: View {
 
                     .foregroundStyle(foregroundTone.textColor)
 
-                    .shadow(color: foregroundTone.shadowColor, radius: 10)
+                    .shadow(color: foregroundTone.shadowColor, radius: ExifInfoMetrics.textShadowRadiusPoints)
                     .glassEffect(.clear, in: .rect(cornerRadius: cornerRadius))
             )
         } else {
@@ -171,7 +175,7 @@ struct ExifInfoView: View {
 
                     .foregroundStyle(foregroundTone.textColor)
 
-                    .shadow(color: foregroundTone.shadowColor, radius: 10)
+                    .shadow(color: foregroundTone.shadowColor, radius: ExifInfoMetrics.textShadowRadiusPoints)
                     .background(.ultraThinMaterial)
                     .cornerRadius(cornerRadius)
 

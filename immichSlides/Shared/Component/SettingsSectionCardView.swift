@@ -1,5 +1,15 @@
 import SwiftUI
 
+private enum SettingsSectionMetrics {
+    static let spacingPoints: CGFloat = 14
+    static let borderOpacity: Double = 0.06
+    static let borderWidthPoints: CGFloat = 1
+    static let shadowOpacity: Double = 0.06
+    static let shadowRadiusPoints: CGFloat = 12
+    static let shadowOffsetXPoints: CGFloat = 0
+    static let shadowOffsetYPoints: CGFloat = 6
+}
+
 /// Settings section card; keeps corner radius, border, shadow and padding in one place.
 struct SettingsSectionCardView<Content: View>: View {
     let innerHorizontalInset: CGFloat
@@ -23,7 +33,7 @@ struct SettingsSectionCardView<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: SettingsSectionMetrics.spacingPoints) {
             content
         }
         .padding(.horizontal, innerHorizontalInset)
@@ -35,9 +45,16 @@ struct SettingsSectionCardView<Content: View>: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                .stroke(
+                    Color.black.opacity(SettingsSectionMetrics.borderOpacity),
+                    lineWidth: SettingsSectionMetrics.borderWidthPoints)
         )
-        .shadow(color: .black.opacity(0.06), radius: 12, x: 0, y: 6)
+        .shadow(
+            color: .black.opacity(SettingsSectionMetrics.shadowOpacity),
+            radius: SettingsSectionMetrics.shadowRadiusPoints,
+            x: SettingsSectionMetrics.shadowOffsetXPoints,
+            y: SettingsSectionMetrics.shadowOffsetYPoints
+        )
         .padding(.horizontal, outerHorizontalInset)
     }
 }

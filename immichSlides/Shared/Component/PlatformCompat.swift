@@ -6,6 +6,16 @@ import UIKit
 /// Collects platform color/style branches, so shared views do not touch iOS-only APIs directly.
 
 enum PlatformCompat {
+    /// Preserve the raw Debug flag comparison; Release never bootstraps a local test server.
+    static var shouldBootstrapDebugServerForTesting: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["UI_TEST_RESET_STATE"] != "1"
+            && (Bundle.main.object(forInfoDictionaryKey: "ENABLE_DEBUG_AUTO_SERVER") as? String) == "1"
+        #else
+        return false
+        #endif
+    }
+
     /// XCTest and UI-test launch flags never change Release behavior.
     static var isRunningXCTest: Bool {
         #if DEBUG
@@ -102,7 +112,7 @@ enum PlatformCompat {
 
     /// Always false in Release; runtime environment variables take priority over the Debug Info.plist.
 
-    static func debugFeatureEnabled(
+    static func isDebugFeatureEnabled(
         infoPlistKey: String,
         runtimeOverrideKey: String? = nil
     ) -> Bool {
@@ -128,8 +138,8 @@ enum PlatformCompat {
     /// The settings entry and playback page rendering share one gate, so old persisted state cannot still show the
     /// panel after the entry is hidden.
 
-    static var playbackDebugPanelEnabled: Bool {
-        debugFeatureEnabled(
+    static var isPlaybackDebugPanelEnabled: Bool {
+        isDebugFeatureEnabled(
             infoPlistKey: "ENABLE_DEBUG_SETTINGS_ENTRY",
             runtimeOverrideKey: "UI_TEST_ENABLE_DEBUG_SETTINGS_ENTRY"
         )
@@ -138,8 +148,8 @@ enum PlatformCompat {
     /// Not a real user setting and not persisted; it only lets acceptance testing reach the single-photo path from
     /// env.xcconfig.
 
-    static var forceSinglePhotoPlaybackForDebug: Bool {
-        debugFeatureEnabled(
+    static var shouldForceSinglePhotoPlaybackForTesting: Bool {
+        isDebugFeatureEnabled(
             infoPlistKey: "ENABLE_DEBUG_FORCE_SINGLE_PHOTO_PLAYBACK",
             runtimeOverrideKey: "IMMICHSLIDES_DISABLE_SMART_FILL"
         )
@@ -216,11 +226,11 @@ enum PlatformCompat {
         return Color.black.opacity(0.12)
         #endif
     }
-    static func setIdleTimerDisabled(_ disabled: Bool) {
+    static func setIdleTimerDisabled(_ isDisabled: Bool) {
         #if os(iOS) || os(tvOS)
         // Disable auto-sleep on the playback page; applies to both iOS and tvOS.
 
-        UIApplication.shared.isIdleTimerDisabled = disabled
+        UIApplication.shared.isIdleTimerDisabled = isDisabled
         #endif
     }
 }
@@ -247,9 +257,9 @@ extension View {
 
     /// tvOS has no statusBar(hidden:); this keeps shared views compiling.
     @ViewBuilder
-    func appStatusBarHidden(_ hidden: Bool) -> some View {
+    func appStatusBarHidden(_ isHidden: Bool) -> some View {
         #if os(iOS)
-        self.statusBar(hidden: hidden)
+        self.statusBar(hidden: isHidden)
         #else
         self
         #endif
@@ -289,9 +299,9 @@ extension View {
     /// When we draw focus ourselves, turn off the system default highlight plate so no extra white glow wraps it.
 
     @ViewBuilder
-    func appTVDisableDefaultFocusEffect(_ disabled: Bool = true) -> some View {
+    func appTVDisableDefaultFocusEffect(_ isDisabled: Bool = true) -> some View {
         #if os(tvOS)
-        self.focusEffectDisabled(disabled)
+        self.focusEffectDisabled(isDisabled)
         #else
         self
         #endif

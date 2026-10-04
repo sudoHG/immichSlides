@@ -12,13 +12,13 @@ import UIKit
 #endif
 
 @MainActor
-final class SettingsPromptState: ObservableObject {
+final class SettingsPromptStore: ObservableObject {
     // Prompts shared across detail pages use an ObservableObject, because after an iPhone push the parent's
     // @State alert would not receive them.
 
-    @Published var showFilterModeBlockedAlert = false
-    @Published var pendingSwitchToFilteredAfterConfig = false
-    @Published var showClearDiskCacheAlert = false
+    @Published var shouldShowFilterModeBlockedAlert = false
+    @Published var shouldSwitchToFilteredAfterConfig = false
+    @Published var shouldShowClearDiskCacheAlert = false
 }
 
 struct SettingsView: View {
@@ -36,9 +36,9 @@ struct SettingsView: View {
     // Not observed on purpose: see "Settings ignore download activity" in docs/ARCHITECTURE.md.
     let downloadManager = AssetsDownloadManager.shared
     @StateObject var filterVM = FilterViewModel()
-    @StateObject var promptState = SettingsPromptState()
+    @StateObject var promptState = SettingsPromptStore()
 
-    @State var showFullScreenFilterEditor = false
+    @State var shouldShowFullScreenFilterEditor = false
 
     @State var enablePin = ""
     @State var enablePinConfirm = ""
@@ -48,7 +48,7 @@ struct SettingsView: View {
     @State var newPinConfirm = ""
     @State var accessProtectionStatusMessage = ""
     @State var accessProtectionErrorMessage = ""
-    @State var showAccessPinInputSheet = false
+    @State var shouldShowAccessPinInputSheet = false
     @State var activePinInputTarget: AccessPinInputTarget?
     // Open-source licenses subpage: on iPhone this is the presented state, on iPad it is an open request.
 
@@ -79,8 +79,8 @@ struct SettingsView: View {
             }
             .onChange(of: filterVM.selection.isEmpty) { _, isEmpty in
 
-                if promptState.pendingSwitchToFilteredAfterConfig && !isEmpty {
-                    promptState.pendingSwitchToFilteredAfterConfig = false
+                if promptState.shouldSwitchToFilteredAfterConfig && !isEmpty {
+                    promptState.shouldSwitchToFilteredAfterConfig = false
                     playbackVM.settings.defaultPlaybackMode = .filtered
                     return
                 }
@@ -102,7 +102,7 @@ struct SettingsView: View {
 
                 filterVM.resetForServerConfigurationChange()
             }
-            .sheet(isPresented: $showAccessPinInputSheet) {
+            .sheet(isPresented: $shouldShowAccessPinInputSheet) {
                 PinEntrySheetView(
                     title: pinInputTitle,
                     message: String(localized: "Please enter a 6-digit PIN."),
@@ -115,22 +115,22 @@ struct SettingsView: View {
                 )
             }
             .fullScreenCover(
-                isPresented: $showFullScreenFilterEditor,
+                isPresented: $shouldShowFullScreenFilterEditor,
                 onDismiss: { enforcePlaybackModeInvariant() }
             ) {
                 NavigationStack {
                     FilterView(
                         viewModel: filterVM,
-                        showsStartPlaybackButton: false,
+                        shouldShowStartPlaybackButton: false,
                         onDismissRequested: {
-                            showFullScreenFilterEditor = false
+                            shouldShowFullScreenFilterEditor = false
                         }
                     )
                     #if !os(tvOS)
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button("Done") {
-                                showFullScreenFilterEditor = false
+                                shouldShowFullScreenFilterEditor = false
                             }
                             .accessibilityIdentifier("filter.editor.done.button")
                         }
@@ -227,15 +227,15 @@ struct SettingsView: View {
 
     var filterModeBlockedAlertBinding: Binding<Bool> {
         Binding(
-            get: { promptState.showFilterModeBlockedAlert },
-            set: { promptState.showFilterModeBlockedAlert = $0 }
+            get: { promptState.shouldShowFilterModeBlockedAlert },
+            set: { promptState.shouldShowFilterModeBlockedAlert = $0 }
         )
     }
 
     var clearDiskCacheAlertBinding: Binding<Bool> {
         Binding(
-            get: { promptState.showClearDiskCacheAlert },
-            set: { promptState.showClearDiskCacheAlert = $0 }
+            get: { promptState.shouldShowClearDiskCacheAlert },
+            set: { promptState.shouldShowClearDiskCacheAlert = $0 }
         )
     }
 }

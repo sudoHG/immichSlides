@@ -273,7 +273,7 @@ struct PlaybackSettingsViewModelTests {
         #expect(restoredSettings.settings.displayMode == .singlePhoto)
         #expect(restoredSlideShow.isAutoPlay == false)
         #expect(restoredSlideShow.autoPlayInterval == 12)
-        if !PlatformCompat.forceSinglePhotoPlaybackForDebug {
+        if !PlatformCompat.shouldForceSinglePhotoPlaybackForTesting {
             #expect(restoredSlideShow.isSmartFillPresentationModeActive == false)
         }
     }
@@ -338,7 +338,7 @@ struct PlaybackSettingsViewModelTests {
 
         #expect(existingSlideShow.isAutoPlay)
         #expect(existingSlideShow.autoPlayInterval == 5)
-        if !PlatformCompat.forceSinglePhotoPlaybackForDebug {
+        if !PlatformCompat.shouldForceSinglePhotoPlaybackForTesting {
             #expect(existingSlideShow.isSmartFillPresentationModeActive)
         }
 
@@ -351,7 +351,7 @@ struct PlaybackSettingsViewModelTests {
         #expect(rereadSlideShow.autoPlayInterval == 12)
         #expect(loaded?.showExif == false)
         #expect(loaded?.displayMode == .singlePhoto)
-        if !PlatformCompat.forceSinglePhotoPlaybackForDebug {
+        if !PlatformCompat.shouldForceSinglePhotoPlaybackForTesting {
             #expect(rereadSlideShow.isSmartFillPresentationModeActive == false)
         }
     }
@@ -385,7 +385,7 @@ struct PlaybackSettingsViewModelTests {
         #expect(existingSlideShow.autoPlayInterval == 12)
         #expect(loaded?.showExif == false)
         #expect(loaded?.displayMode == .singlePhoto)
-        if !PlatformCompat.forceSinglePhotoPlaybackForDebug {
+        if !PlatformCompat.shouldForceSinglePhotoPlaybackForTesting {
             #expect(existingSlideShow.isSmartFillPresentationModeActive == false)
         }
     }
