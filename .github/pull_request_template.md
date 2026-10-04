@@ -43,7 +43,7 @@ Failures that already existed before this change:
 
 ## Checklist
 
-- [ ] Tests written or updated first for logic changes ([docs/TESTING.md](https://github.com/sudoHG/immichSlides/blob/main/docs/TESTING.md))
+- [ ] Tests only where [docs/TESTING.md section 0](https://github.com/sudoHG/immichSlides/blob/main/docs/TESTING.md#0-when-to-write-a-test) calls for them, written first; each new test names the failure it guards against
 - [ ] iOS and tvOS both build; platform code is in the platform directories
 - [ ] No new third-party dependency (or it was agreed in the linked issue)
 - [ ] No secrets, `env.xcconfig`, `.xcresult` bundles or private data committed

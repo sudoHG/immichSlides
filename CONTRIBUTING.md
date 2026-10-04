@@ -57,7 +57,7 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 
 Follow [docs/TESTING.md](docs/TESTING.md). In short:
 
-- Write or update the test first when you change logic or state flow. If that is not possible, say why in the PR.
+- Write a test only when [section 0](docs/TESTING.md#0-when-to-write-a-test) calls for one, and then write it first. If that is not possible, say why in the PR. Name the failure each new test guards against.
 - Unit tests use Swift Testing with an English behavior sentence as the name, for example `` @Test func `empty selection cannot start filtered playback`() ``. UI tests use `test` plus `UpperCamelCase` behavior.
 - Every test needs an assertion that can fail, every wait needs a deadline, and skips are only for an environment that cannot run the test (for example no server configured).
 - Do not put ticket numbers, process codes or non-English text in test names.
