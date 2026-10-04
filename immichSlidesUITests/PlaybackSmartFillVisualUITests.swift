@@ -596,6 +596,19 @@ private enum SmartFillRuntimeEvidenceSupport {
         "assetRef-\(stableHash(slotRef).prefix(12))"
     }
 
+    static func assertRedactedSeedSummary(_ fields: [String: String]) {
+        guard fields["progressFrameStatus"] == "available" else { return }
+        let summary = fields["seedInputSummary"] ?? ""
+        XCTAssertFalse(summary.isEmpty)
+        for key in ["sceneId", "slotId", "assetId"] {
+            let value = fields[key] ?? ""
+            XCTAssertFalse(value.isEmpty)
+            XCTAssertNotNil(value.range(of: "^[0-9a-f]{16}$", options: .regularExpression))
+            XCTAssertTrue(
+                summary.contains("\(key)=\(value)|"), "Seed diagnostics must correlate with the frame identity")
+        }
+    }
+
     static func strictExpectedCurrentAssetRefs(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String]? {
@@ -3530,6 +3543,7 @@ private extension PlaybackSmartFillVisualUITests {
     }
 
     func writeMotionFrameEvidence(_ rows: [MotionFrameEvidenceRow], scenario: String) {
+        rows.forEach { SmartFillRuntimeEvidenceSupport.assertRedactedSeedSummary($0.fields) }
         guard let directory = motionEvidenceDirectory() else { return }
         let baseName = sanitizedEvidenceFileName("smartfill-\(scenario)-\(deviceTag())-motion-frames")
         let dictionaries = rows.map(motionFrameDictionary)
@@ -5385,6 +5399,7 @@ private extension PlaybackSmartFillTVOSVisualUITests {
     }
 
     func writeMotionFrameEvidence(_ rows: [MotionFrameEvidenceRow], scenario: String) {
+        rows.forEach { SmartFillRuntimeEvidenceSupport.assertRedactedSeedSummary($0.fields) }
         guard let directory = motionEvidenceDirectory() else { return }
         let baseName = sanitizedEvidenceFileName("smartfill-\(scenario)-appletv-motion-frames")
         let dictionaries = rows.map(motionFrameDictionary)
@@ -5402,6 +5417,17 @@ private extension PlaybackSmartFillTVOSVisualUITests {
         scenario: String,
         sampleDuration: TimeInterval
     ) {
+        for row in rows {
+            let refs = row.manifestSlotRefs.split(separator: ",")
+            XCTAssertFalse(refs.isEmpty)
+            XCTAssertTrue(refs.allSatisfy { $0.range(of: "^asset-[0-9a-f]{16}$", options: .regularExpression) != nil })
+            if let motionRow = motionRows.first(where: {
+                $0.sampleIndex == row.sampleIndex
+                    && $0.fields["sceneId"] == row.productTransitionFields["sceneId"]
+            }) {
+                XCTAssertEqual(row.manifestSlotRefs, motionRow.manifestSlotRefs)
+            }
+        }
         guard let directory = motionEvidenceDirectory() else { return }
         let dictionaries = rows.map(productSceneSequenceDictionary)
         let transitionDictionaries = dictionaries.filter { dictionary in

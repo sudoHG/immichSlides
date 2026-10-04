@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import CryptoKit
 
 enum MotionTransformResolver {
     nonisolated static func resolve(
@@ -175,13 +176,18 @@ enum MotionTransformResolver {
                 "seedContractVersion=ambient-v1-scene-slot-asset-crop-raw-focal-rect",
                 "seedHashIncludesSceneId=true",
                 "seedFocalKeySource=\(focalKeySource)",
-                "sceneId=\(identity.sceneId)",
-                "slotId=\(identity.slotId)",
-                "assetId=\(identity.assetId)",
+                "sceneId=\(diagnosticIdentityToken(identity.sceneId))",
+                "slotId=\(diagnosticIdentityToken(identity.slotId))",
+                "assetId=\(diagnosticIdentityToken(identity.assetId))",
                 "cropRect=\(input.cropRectInSource.x),\(input.cropRectInSource.y),\(input.cropRectInSource.width),\(input.cropRectInSource.height)",
                 "focalKey=\(focalKey)"
             ].joined(separator: "|")
         )
+    }
+
+    nonisolated static func diagnosticIdentityToken(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).prefix(8)
+            .map { String(format: "%02x", $0) }.joined()
     }
 
 }

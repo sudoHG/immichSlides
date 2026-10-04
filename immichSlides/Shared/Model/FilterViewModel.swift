@@ -8,8 +8,10 @@
 import Foundation
 import Combine
 import SDWebImage
+import OSLog
 
 class FilterViewModel: ObservableObject {
+    private nonisolated static let logger = Logger(subsystem: "immichSlides", category: "FilterViewModel")
     @Published var albums: [Album] = []
     @Published var people: [People] = []
     // Cover URLs are computed live from the byID dictionaries, so they cannot be @Published.
@@ -147,7 +149,9 @@ class FilterViewModel: ObservableObject {
                                     id: thumbID, size: .thumbnail)
                                 return (albumID, url)
                             } catch {
-                                print("Failed to load album cover, id: \(albumID)", error)
+                                Self.logger.error(
+                                    "Failed to load album cover, id: \(albumID, privacy: .private), error: \(String(describing: error), privacy: .private)"
+                                )
                                 return (albumID, nil)
                             }
                         }
@@ -230,7 +234,9 @@ class FilterViewModel: ObservableObject {
                                 let url = try await ImmichAPIService.shared.getPeopleThumbnailURL(id: peopleID)
                                 return (peopleID, url)
                             } catch {
-                                print("Failed to fetch person thumbnail, id:", person.id, error)
+                                Self.logger.error(
+                                    "Failed to fetch person thumbnail, id: \(person.id, privacy: .private), error: \(String(describing: error), privacy: .private)"
+                                )
                                 return (peopleID, nil)
                             }
                         }
@@ -418,7 +424,9 @@ class FilterViewModel: ObservableObject {
         } catch {
             if error is CancellationError { return }
             if let urlError = error as? URLError, urlError.code == .cancelled { return }
-            print("Failed to load person asset count, id: \(id), error: \(error)")
+            Self.logger.error(
+                "Failed to load person asset count, id: \(id, privacy: .private), error: \(String(describing: error), privacy: .private)"
+            )
         }
     }
 

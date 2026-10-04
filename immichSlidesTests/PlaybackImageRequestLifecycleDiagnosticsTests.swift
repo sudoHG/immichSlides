@@ -88,6 +88,15 @@ struct PlaybackImageRequestLifecycleDiagnosticsTests {
         #expect(FileManager.default.fileExists(atPath: eventsURL.path))
         #expect(!FileManager.default.fileExists(atPath: summaryURL.path))
 
+        let eventText = try String(contentsOf: eventsURL, encoding: .utf8)
+        let event = try #require(
+            JSONSerialization.jsonObject(with: Data(eventText.utf8)) as? [String: Any])
+        #expect(event["assetId"] as? String == PlaybackImageRequestLifecycleDiagnostics.redactedHash("asset-a"))
+        #expect(event["sceneId"] as? String == PlaybackImageRequestLifecycleDiagnostics.redactedHash("scene-a"))
+        #expect(!eventText.contains("asset-a"))
+        #expect(!eventText.contains("scene-a"))
+        #expect(event["requestId"] as? String == "request")
+
         diagnostics.flushPlaybackImageRequestLifecycleEvidence()
 
         #expect(FileManager.default.fileExists(atPath: summaryURL.path))

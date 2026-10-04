@@ -727,10 +727,10 @@ struct SlideShowViewIOS: View {
             return nil
         }
         let sceneFields = [
-            "sceneId=\(scene.id)",
+            "sceneId=\(MotionTransformResolver.diagnosticIdentityToken(scene.id))",
             "sceneType=\(smartFillProductSceneTypeProbeValue(for: scene))",
             "slotCount=\(scene.photoSlots.count)",
-            "slotRefs=\(scene.photoSlots.map(\.asset.id).joined(separator: "|"))"
+            "slotRefs=\(scene.diagnosticSlotReferences(separator: "|"))"
         ]
         let transitionFields = smartFillTraceFields(from: smartFillProductTransitionProbeLabel())
             .filter { $0 != "eventType=productTransition" }
