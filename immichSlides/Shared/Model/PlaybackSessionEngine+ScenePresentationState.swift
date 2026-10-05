@@ -846,7 +846,6 @@ extension PlaybackSessionEngine {
                 shouldResumeMotion: suspensionReasons.isEmpty,
                 at: time
             )
-            // Outgoing layers sit below incoming ones, so the held photo is drawn on top of what fades out.
             let restore: ManualPendingPresentationRestore
             if let seenTargetLayer, let transitionTarget, seenTargetLayer.identity == transitionTarget.identity {
                 restore = capture.resolved(
@@ -1186,18 +1185,17 @@ extension PlaybackSessionEngine {
         /// empty frame. The next photo fades in with the short manual pacing instead and then holds still, as it does
         /// for manual navigation while paused.
         private mutating func fadeInNextPhotoIfPausedInFadeGap(at time: TimeInterval) -> [ScenePresentationEffect]? {
+            let pacing = ScenePresentationPacingPolicy.manualReady
             guard suspensionReasons == [.userPaused],
                 underlyingPhase == .transition,
                 transitionKind == .readyPhoto,
                 !layerTimeline.hasVisibleLayers(at: time),
                 let pendingTarget,
-                layerTimeline.hasReadyIncoming(pendingTarget.identity)
+                layerTimeline.startPausedIncoming(pendingTarget.identity, pacing: pacing, at: time)
             else {
                 return nil
             }
             beginManualNavigationWhilePaused()
-            let pacing = ScenePresentationPacingPolicy.manualReady
-            layerTimeline.startPausedIncoming(pendingTarget.identity, pacing: pacing, at: time)
             return scheduleWakeUp(
                 generation: pendingTarget.identity.generation,
                 purpose: .transitionCompletion,
@@ -1509,10 +1507,6 @@ extension PlaybackSessionEngine {
             }
         }
 
-        func hasReadyIncoming(_ identity: ScenePresentationIdentity) -> Bool {
-            layers.contains { $0.identity == identity && $0.role == .incoming && $0.isPresentationReady }
-        }
-
         func frozen(at time: TimeInterval) -> Self {
             var copy = self
             copy.freezeLayerFadeSamples(at: time)
@@ -1562,6 +1556,7 @@ extension PlaybackSessionEngine {
                 let opacity = layer.opacity(at: time)
                 let isHeld = layer.identity == heldIdentity
                 guard isHeld || opacity > 0 else { continue }
+                // Outgoing layers sit below incoming ones, so the held photo is drawn on top of what fades out.
                 layer.role = isHeld ? .incoming : .outgoing
                 layer.isRaisedForHold = isHeld
                 layer.opacityAtFadeStart = opacity
@@ -1594,17 +1589,16 @@ extension PlaybackSessionEngine {
             }
             // Fades that end together can leave rounding residue (about 1e-16) on a photo that has faded out.
             layers.removeAll { $0.role == .outgoing && $0.opacity(at: time) <= Self.fadedOutOpacity }
-
         }
 
         mutating func startPausedIncoming(
             _ identity: ScenePresentationIdentity, pacing: ScenePresentationPacingPolicy, at time: TimeInterval
-        ) {
+        ) -> Bool {
             guard
                 let index = layers.firstIndex(where: {
                     $0.identity == identity && $0.role == .incoming && $0.isPresentationReady
                 })
-            else { return }
+            else { return false }
             // The faded-out photo stays as an invisible outgoing layer, so EXIF keeps it until the next photo shows.
             layers[index].opacityAtFadeStart = 0
             layers[index].fadeStartTime = time + pacing.incomingDelay
@@ -1612,7 +1606,7 @@ extension PlaybackSessionEngine {
             layers[index].suspendedFadeDelay = nil
             layers[index].motionClock = SceneActiveTimeClock(accumulatedActiveTime: 0, activeAnchorTime: nil)
             layers[index].isMotionEnabled = false
-
+            return true
         }
 
         func remainingIncomingFadeDuration(for identity: ScenePresentationIdentity, at time: TimeInterval)
@@ -1824,14 +1818,12 @@ extension PlaybackSessionEngine {
                 guard isEnabled, layers[index].isMotionEnabled else { continue }
                 // A seen photo keeps its current sample and only freezes active time; new layers are still created per
                 // isReduceMotionEnabled.
-
                 layers[index].motionClock.suspend(at: time)
                 layers[index].isMotionFrozenByReduceMotion = true
             }
         }
 
         /// An incoming that is not yet visible has no user-visible sample, so it must use identity like a future fade.
-
         private static func isUnseenDelayedIncoming(
             _ layer: ScenePresentationLayerState,
             at time: TimeInterval
@@ -1840,6 +1832,7 @@ extension PlaybackSessionEngine {
             return layer.fadeStartTime.map { $0 > time } == true || layer.suspendedFadeDelay != nil
         }
 
+        /// Pausing must save each layer's opacity progress so far and any incoming delay that has not started yet.
         mutating func freezeLayerFadeSamples(
             at time: TimeInterval
         ) {
@@ -1864,7 +1857,6 @@ extension PlaybackSessionEngine {
                 case .incoming:
                     // A second freeze must keep the previous opacity speed; it must not shorten the already-shortened
                     // remaining duration again by the absolute opacity.
-
                     let remainingAmplitude = 1 - originalOpacity
                     guard remainingAmplitude > 0 else {
                         layers[index].fadeDuration = 0
