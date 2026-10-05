@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import immichSlides
@@ -181,6 +182,37 @@ extension SlideShowViewModelStartupTests {
         #expect(vm.scene(at: targetIndex)?.primaryAssetId == "asset-36")
         await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-36")
+
+        // Resuming against the trimmed pool would lose the first new candidate when oldCount exceeds capacity.
+        vm.maxAssetCount = 40
+        vm.markCurrentSmartFillPoolConsumedForTesting(candidateCursorIndex: 0)
+        loadMoreContinuation = nil
+        let trimmingLoadMoreTask = Task { await vm.loadMoreAssets() }
+        let didSuspendTrimmingRefill = await waitUntil { loadMoreContinuation != nil }
+        try #require(didSuspendTrimmingRefill)
+        vm.requestNextScene()
+        #expect(vm.pendingSmartFillCursorResumeAfterLoadMoreAssetCountForTesting == 60)
+        let nextAssets = (60..<65).map { makeAsset(id: "asset-\($0)", width: 6000, height: 4000) }
+        markReady(nextAssets, in: vm.downloadManager)
+        var publishedPoolCounts: [Int] = []
+        var cursorAtPoolPublication: [Int] = []
+        let observation = vm.$assets.dropFirst().sink { pool in
+            publishedPoolCounts.append(pool.count)
+            cursorAtPoolPublication.append(vm.smartFillCandidateCursorIndexForTesting)
+        }
+        loadMoreContinuation?.resume(returning: nextAssets)
+        await trimmingLoadMoreTask.value
+        observation.cancel()
+
+        #expect(publishedPoolCounts == [65, 40])
+        #expect(cursorAtPoolPublication == [0, 60])
+        #expect(vm.assets.map(\.id) == (25..<65).map { "asset-\($0)" })
+        #expect(vm.smartFillCandidateCursorIndexForTesting == 35)
+        #expect(vm.pendingSmartFillCursorResumeAfterLoadMoreAssetCountForTesting == nil)
+        #expect(vm.smartFillDisplayedAssetIds == Set((25..<60).map { "asset-\($0)" }))
+        #expect(Set(vm.downloadManager.assetStates.keys) == Set((25..<65).map { "asset-\($0)" }))
+        vm.requestNextScene()
+        #expect(vm.scene(at: vm.targetIndex)?.primaryAssetId == "asset-60")
     }
 
     @Test

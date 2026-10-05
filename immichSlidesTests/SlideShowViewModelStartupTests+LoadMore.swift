@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import immichSlides
@@ -197,6 +198,9 @@ extension SlideShowViewModelStartupTests {
             ]
         }
         vm.replacePlaybackAssetsForTesting((0..<5).map { makeAsset(id: "asset-\($0)") })
+        vm.qaPlaybackSequenceEvidenceEnabledForTesting = true
+        var emittedLines: [String] = []
+        vm.qaPlaybackSequenceOSLogEmitterForTesting = { emittedLines.append($0) }
 
         await vm.loadMoreAssets()
 
@@ -211,6 +215,75 @@ extension SlideShowViewModelStartupTests {
                 "asset-6",
                 "asset-7"
             ])
+        #expect(
+            emittedLines == [
+                "qa_playback_sequence_event eventType=loadMoreBegin oldCount=5",
+                "qa_playback_sequence_event eventType=loadMoreResult oldCount=5 finalCount=8 unseenCount=3 returnedCount=6"
+            ])
+
+        // Empty refills still trim an oversized pool and publish a zero-removal trim at capacity.
+        vm.maxAssetCount = 6
+        vm.loadMoreAssetsHookForTesting = { _ in [] }
+        vm.candidateCursorIndex = 6
+        vm.pendingCandidateCursorIndexAfterCommit = 7
+        vm.smartFillDisplayedAssetIds = ["asset-0", "asset-5", "asset-7"]
+        vm.pendingSmartFillDisplayedAssetIdsAfterCommit = ["asset-1", "asset-6"]
+        markReady(vm.assets, in: vm.downloadManager)
+        vm.downloadManager.assetThumbnailStates = vm.downloadManager.assetStates
+        let cacheURLs = Dictionary(
+            uniqueKeysWithValues: vm.assets.map { asset in
+                (asset.id, URL(fileURLWithPath: "/pool-refill/\(asset.id)"))
+            })
+        vm.downloadManager.assetURLs = cacheURLs
+        vm.downloadManager.assetPreviewURLs = cacheURLs
+        vm.downloadManager.assetThumbnailURLs = cacheURLs
+        let retainedIDs = (2..<8).map { "asset-\($0)" }
+        let currentAssetID = vm.safeCurrentScene?.primaryAssetId
+
+        for oldCount in [8, 6] {
+            var order: [String] = []
+            var cachedIDsAtPoolPublication: [Set<String>] = []
+            vm.qaPlaybackSequenceOSLogEmitterForTesting = { order.append($0) }
+            let observations = [
+                vm.$isLoadingMore.dropFirst().sink { order.append("loading:\($0)") },
+                vm.$assets.dropFirst().sink { pool in
+                    order.append("assets:\(pool.count)")
+                    cachedIDsAtPoolPublication.append(Set(vm.downloadManager.assetStates.keys))
+                },
+                vm.$emptyPlaybackMessage.dropFirst().sink { message in
+                    order.append("empty:\(message ?? "nil")")
+                },
+                vm.$currentIndex.dropFirst().sink { _ in
+                    order.append("readback:\(vm.candidateCursorIndex)")
+                }
+            ]
+            let cachedIDsBeforeRefill = Set(vm.downloadManager.assetStates.keys)
+
+            await vm.loadMoreAssets()
+
+            observations.forEach { $0.cancel() }
+            #expect(
+                order == [
+                    "loading:true",
+                    "qa_playback_sequence_event eventType=loadMoreBegin oldCount=\(oldCount)",
+                    "assets:\(oldCount)", "empty:nil", "assets:6", "readback:4", "loading:false",
+                    "qa_playback_sequence_event eventType=loadMoreResult oldCount=\(oldCount) finalCount=6 unseenCount=0 returnedCount=0",
+                    "loading:false"
+                ])
+            #expect(cachedIDsAtPoolPublication == [cachedIDsBeforeRefill, Set(retainedIDs)])
+            #expect(vm.assets.map(\.id) == retainedIDs)
+            #expect(Set(vm.downloadManager.assetStates.keys) == Set(retainedIDs))
+            #expect(Set(vm.downloadManager.assetPreviewStates.keys) == Set(retainedIDs))
+            #expect(Set(vm.downloadManager.assetThumbnailStates.keys) == Set(retainedIDs))
+            #expect(Set(vm.downloadManager.assetURLs.keys) == Set(retainedIDs))
+            #expect(Set(vm.downloadManager.assetPreviewURLs.keys) == Set(retainedIDs))
+            #expect(Set(vm.downloadManager.assetThumbnailURLs.keys) == Set(retainedIDs))
+            #expect(vm.candidateCursorIndex == 4)
+            #expect(vm.pendingCandidateCursorIndexAfterCommit == 5)
+            #expect(vm.smartFillDisplayedAssetIds == ["asset-5", "asset-7"])
+            #expect(vm.pendingSmartFillDisplayedAssetIdsAfterCommit == ["asset-6"])
+            #expect(vm.safeCurrentScene?.primaryAssetId == currentAssetID)
+        }
     }
 
     @Test
@@ -278,6 +351,12 @@ extension SlideShowViewModelStartupTests {
         #expect(emittedLines.contains { $0.contains("eventType=loadMoreSaturated") })
         #expect(emittedLines.joined(separator: "\n").contains("person-a") == false)
         #expect(emittedLines.joined(separator: "\n").contains("asset-1") == false)
+        #expect(
+            emittedLines == [
+                "qa_playback_sequence_event eventType=loadMoreBegin oldCount=4",
+                "qa_playback_sequence_event eventType=loadMoreSaturated oldCount=4 unseenCount=0 returnedCount=2",
+                "qa_playback_sequence_event eventType=loadMoreResult oldCount=4 finalCount=4 unseenCount=0 returnedCount=2"
+            ])
     }
 
     @Test
