@@ -18,6 +18,7 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(request.rawAssetSnapshots.first?.assetId == "asset-1")
         #expect(request.rawAssetSnapshots.first?.reference == nil)
         #expect(request.rawAssetSnapshots.first?.sourceImageSummary == nil)
+        #expect(request.rawAssetSnapshots.map(\.assetId) == (1..<6).map { "asset-\($0)" })
         #expect(request.protectionFingerprint == request.protectionSnapshot.smartFillReplanFingerprint)
     }
 
@@ -39,6 +40,62 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.applyPreparedSmartFillPlanResultForTesting(resultA, request: requestA) == .stale)
         #expect(vm.applyPreparedSmartFillPlanResultForTesting(resultB, request: requestB) == .applied)
         #expect(vm.preparedSmartFillNextAssetIdsForTesting == resultB.selectedAssetIds)
+
+        let changedProtection = PlaybackProtectionSnapshot(regions: [
+            try #require(
+                PlaybackProtectionRegion.controlBar(
+                    rect: PlaybackProtectionRect(x: 0, y: 0.8, width: 1, height: 0.2),
+                    activeConditionSummary: "visible=true"))
+        ])
+        let changes: [(String, (SlideShowViewModel) -> Void)] = [
+            (
+                "source",
+                { model in
+                    let assets = model.assets
+                    model.preparePlaybackSourceForPresentation(
+                        to: .filtered(FilterSelection(albumIds: ["album-other"])))
+                    model.replacePlaybackAssetsForTesting(assets)
+                }
+            ),
+            ("cursor", { $0.requestNextScene() }),
+            (
+                "surface",
+                { model in
+                    model.updateSmartFillSurfaceForTesting(
+                        PlaybackSmartFillSurface(
+                            pixelSize: PlaybackPlanningPixelSize(width: 1170, height: 2532),
+                            profile: .iPhone, orientation: .portrait))
+                }
+            ),
+            (
+                "protection",
+                { model in
+                    model.updateSmartFillSurface(
+                        PlaybackSmartFillSurface(
+                            pixelSize: self.iPadLandscapePlanningPixelSize, profile: .iPad, orientation: .landscape),
+                        protectionSnapshot: changedProtection)
+                }
+            ),
+            (
+                "display mode",
+                { model in
+                    model.applyPlaybackSettings(PlaybackSettings(autoPlayEnabled: false, displayMode: .singlePhoto))
+                }
+            )
+        ]
+        for (name, change) in changes {
+            let model = makeSmartFillViewModel()
+            let oldRequest = try #require(model.capturePreparedSmartFillPlanRequestForTesting(startingAt: 1))
+            let oldResult = try #require(SmartFillPreparedPlanBuilder.makeResult(for: oldRequest))
+            change(model)
+            let preparedAssetIdsBeforeDelivery = model.preparedSmartFillNextAssetIdsForTesting
+            let preparedSourceCursorBeforeDelivery = model.preparedSmartFillNextSourceCursorForTesting
+            #expect(
+                model.applyPreparedSmartFillPlanResultForTesting(oldResult, request: oldRequest) == .stale,
+                "\(name) must reject the old proposal")
+            #expect(model.preparedSmartFillNextAssetIdsForTesting == preparedAssetIdsBeforeDelivery)
+            #expect(model.preparedSmartFillNextSourceCursorForTesting == preparedSourceCursorBeforeDelivery)
+        }
 
         let waiting = makeSmartFillViewModel()
         waiting.isAutoPlay = true

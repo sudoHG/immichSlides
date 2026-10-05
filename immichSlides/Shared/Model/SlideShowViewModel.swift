@@ -105,7 +105,6 @@ class SlideShowViewModel: ObservableObject {
     private static let maximumPlaybackPoolAssetCount: Int = 200
     private static let autoplayRenderWindowRadius: Int = 1
     private static let manualRenderWindowRadius: Int = 2
-    static let identifierDigestPrefixBytes: Int = 8
     static let refillRemainingFractionDivisor: Int = 5
     private static let surfaceActivationDelayNanoseconds: UInt64 = 250_000_000
     private static let diagnosticHistoryLookbackCount: Int = 8
@@ -172,10 +171,7 @@ class SlideShowViewModel: ObservableObject {
     let runtimeEvidenceRecorder = PlaybackRuntimeEvidenceRecorder()
     var smartFillSurface: PlaybackSmartFillSurface? { candidateProgression.surface }
     var smartFillProtectionSnapshot: PlaybackProtectionSnapshot { candidateProgression.protectionSnapshot }
-    var smartFillReplanFingerprint: String?
     var smartFillSurfaceActivationTask: Task<Void, Never>?
-    var smartFillPreparedRingRefreshTask: Task<Void, Never>?
-    var smartFillPreparedRingRefreshGeneration: UUID?
     struct ScenePresentationWakeUpKey: Equatable {
         let generation: UUID
         let deadline: TimeInterval
@@ -187,11 +183,6 @@ class SlideShowViewModel: ObservableObject {
     var pendingAutomaticScenePlanningRequest: ScenePresentationPlanningRequest?
     @Published var scenePresentationRevision = UUID()
     var smartFillMotionPreparedSlotPreloadTasks: [UUID: Task<Void, Never>] = [:]
-    struct SmartFillMotionLookaheadPreparedPlan {
-        let request: SmartFillPreparedPlanRequest
-        let result: SmartFillPreparedPlanResult
-    }
-    var smartFillMotionLookaheadPreparedPlan: SmartFillMotionLookaheadPreparedPlan?
     #if DEBUG
     var smartFillCandidateSummaryBuildCountForTestingStorage: Int = 0
     var smartFillMainActorPlannerCallCountsForTesting: [SmartFillMainActorPlannerCallSite: Int] = [:]
@@ -354,12 +345,12 @@ class SlideShowViewModel: ObservableObject {
         } else {
             fields["currentPreparedSourceCursor"] = "none"
         }
-        if let lookaheadSourceCursor = smartFillMotionLookaheadPreparedPlan?.request.candidateCursor {
+        if let lookaheadSourceCursor = candidateProgression.lookaheadDiagnosticSnapshotForTesting?.sourceCursor {
             fields["lookaheadCachedSourceCursor"] = String(lookaheadSourceCursor)
         } else {
             fields["lookaheadCachedSourceCursor"] = "none"
         }
-        if let selectedCount = smartFillMotionLookaheadPreparedPlan?.result.selectedAssetIds.count {
+        if let selectedCount = candidateProgression.lookaheadDiagnosticSnapshotForTesting?.selectedCount {
             fields["lookaheadCachedSelectedCount"] = String(selectedCount)
         } else {
             fields["lookaheadCachedSelectedCount"] = "none"
@@ -634,30 +625,14 @@ class SlideShowViewModel: ObservableObject {
         _ surface: PlaybackSmartFillSurface,
         protectionSnapshot: PlaybackProtectionSnapshot
     ) {
-        let replanFingerprint = smartFillReplanFingerprint(
-            surface: surface,
-            protectionSnapshot: protectionSnapshot
-        )
-        if smartFillReplanFingerprint == replanFingerprint {
+        guard candidateProgression.updatePlanningContext(surface: surface, protectionSnapshot: protectionSnapshot)
+        else {
             return
         }
-        smartFillReplanFingerprint = replanFingerprint
-        cancelSmartFillPreparedRingRefreshTask()
-        candidateProgression.updatePlanningContext(surface: surface, protectionSnapshot: protectionSnapshot)
         playbackSessionEngine.updateFutureProtectionSnapshot(protectionSnapshot)
         syncPlaybackReadbackFromEngine()
         scheduleSmartFillInitialSceneActivationIfNeeded()
         refreshPreparedSmartFillSceneRingIfPossible()
-    }
-
-    func smartFillReplanFingerprint(
-        surface: PlaybackSmartFillSurface,
-        protectionSnapshot: PlaybackProtectionSnapshot
-    ) -> String {
-        [
-            surface.internalSurfaceFingerprint,
-            protectionSnapshot.smartFillReplanFingerprint
-        ].joined(separator: "||")
     }
 
     #if DEBUG
@@ -1723,7 +1698,7 @@ extension SlideShowViewModel {
         scenePresentationPrerenderBarrier = ScenePresentationPrerenderBarrier()
         smartFillMotionPreparedSlotPreloadTasks.values.forEach { $0.cancel() }
         smartFillMotionPreparedSlotPreloadTasks = [:]
-        smartFillMotionLookaheadPreparedPlan = nil
+        candidateProgression.clearLookaheadProposal()
         runtimeEvidenceRecorder.resetScenePresentation()
         publishScenePresentationChange()
     }

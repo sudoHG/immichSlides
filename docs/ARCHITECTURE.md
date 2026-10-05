@@ -62,7 +62,7 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 | `FilterViewModel`, `FilterSelectionStore` | `Shared/Model/` | Album and people lists for the filter screens; persist the user's `FilterSelection`. |
 | `PlaybackPoolResolver` | `Shared/Model/PlaybackPoolResolver.swift` | Turns a `FilterSelection` into a list of `Asset`s (the playback pool). Splits a request budget across album and person rules, deduplicates, and keeps a recently played cooling list. |
 | `PlaybackPoolLoader` | `Shared/Model/SlideShowViewModel.swift` (file-private type) | Privately owns the playback source, integer source generation, ordered pool, initial-load identities and refill request ownership. Acquires uncommitted results, validates supplied session values, and directs synchronous loading publications without storing duplicate loading flags. |
-| `PlaybackCandidateProgression` | `Shared/Model/PlaybackCandidateProgression.swift` | Privately owns the candidate cursor, pending cursor, displayed and reserved asset IDs, refill-resume marker, surface and protection snapshot for single photo and SmartFill planning. Receives pool values and synchronous selection/acceptance commands; never owns the engine or publishes state. |
+| `PlaybackCandidateProgression` | `Shared/Model/PlaybackCandidateProgression.swift` | Privately owns candidate traversal and reservations, the refill-resume marker, surface/protection context and replan fingerprint, prepared-refresh generation/task, lookahead computation tasks and unstamped proposals. Receives pool/source values and selection/acceptance commands; returns planning completions and eligible proposals without owning the engine or publishing state. |
 | `SoloVisionPoolFilter`, `VisionFaceAuditService` | `Shared/Model/` | For solo-only person rules, re-checks candidates on device with Vision and keeps photos with exactly one face. |
 | `PlaybackSmartFillPlanner` | `Shared/Model/PlaybackSmartFillPlanner.swift` | Pure, synchronous planner. From candidate summaries, surface size and protection snapshot, chooses a single, double or triple layout with crop rects, or a fallback with a reason. No network, cache or SwiftUI. |
 | `SmartFillPreparedPlanBuilder` | `Shared/Model/PlaybackSmartFillTypes.swift` | Runs the planner on a captured `SmartFillPreparedPlanRequest` off the main actor and returns a `SmartFillPreparedPlanResult`. Both prepared and synchronous planning use the pure `nonisolated` `PlaybackSmartFillSceneReadback.fromPlannerResult` conversion. |
@@ -174,6 +174,30 @@ Lookahead stays unstamped in planning storage until its source cursor matches th
 cursor and freshness checks pass; the engine stamps/installs it and alone consumes it on navigation.
 Planning code neither inspects presentation policy nor initiates navigation.
 
+`PlaybackCandidateProgression` owns preparation alongside the cursor, exclusions and surface/protection
+context that already determine its input. The facade supplies a `PreparationInput` value containing the
+ordered pool, source name/generation, planning eligibility and candidate-window size. Request capture,
+pool fingerprints, both freshness predicates, result-to-scene conversion and lookahead cursor/request
+construction stay within that collaborator. The pure `SmartFillPreparedPlanBuilder` remains detached
+and `nonisolated`; its request seed, ordinal and raw candidate order are unchanged.
+
+The collaborator delivers immutable `PreparedCompletion` values. The facade supplies current input to
+`prepareDelivery`, then installs the returned proposal through the engine, preloads its slots, starts
+lookahead computation and forwards the last executed demand, synchronously in that order. A lookahead
+completion is stored only after its broader freshness check, may preload images immediately, and is
+removed from planning storage when its cursor becomes eligible for transfer; normal freshness is
+checked again before installation. The engine retains all session stamping, target indices, ring
+consumption and navigation-token invalidation. Preparation never stores a start-time navigation tag.
+
+Refresh cancellation clears only the owned refresh task/generation; identity-checked cleanup cannot
+clear a newer refresh started during completion. Lookahead tasks have private per-task handles and
+remove only their own handle on completion. A refresh does not cancel speculative lookahead that may
+still become eligible. Presentation reset clears the cached proposal at its existing point; in-flight
+lookahead still goes through the existing freshness checks on delivery. Releasing the collaborator
+cancels its remaining lookahead computations. Prepared/lookahead image-preload tasks and their eligibility,
+size, priority and call order remain in the facade for the later effect-executor extraction. The
+diagnostic readback exposes only cached cursor/count values, not proposal or task storage.
+
 `ScenePresentationState.outstandingPlanningRequest` is private reducer state. The facade's
 `pendingAutomaticScenePlanningRequest` transports the last executed automatic demand at delivery,
 independently of proposal computation lifetime. User-paused commands do not replace this copy or the
@@ -186,12 +210,12 @@ reducer demand but can leave the facade field stale; the reducer rejects that ol
 dropped while user-paused is not buffered or reissued on resume: a consumed stable wake-up can leave
 autoplay waiting indefinitely, a pre-existing pause/resume gap preserved by this refactor. Candidate
 progression still advances at transition acceptance; reducer and retained history still advance at
-the renderer visible tick. The executor, task storage, barrier and session owner remain in the facade.
+the renderer visible tick. The executor, image-task storage, barrier and session owner remain in the facade.
 
 ## 4. Concurrency and state rules
 
 - **Default isolation is `MainActor`.** The app target sets `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so types are main-actor unless marked otherwise. View models, stores and `AssetsDownloadManager` run on the main actor. Pure logic that must run elsewhere is marked `nonisolated` and `Sendable` (the SmartFill planner and its types, protection snapshots, motion types, lifecycle contracts).
-- **Planning runs detached.** SmartFill ring refresh and lookahead planning capture an immutable `SmartFillPreparedPlanRequest` on the main actor, then run `SmartFillPreparedPlanBuilder.makeResult` in `Task.detached(priority: .utility)`. The result is applied only if it is still fresh: request id, source cursor, asset pool identity and `playbackSourceGeneration` must all still match (`isPreparedSmartFillPlanResultFresh`). Otherwise it is dropped.
+- **Planning runs detached.** `PlaybackCandidateProgression` captures an immutable `SmartFillPreparedPlanRequest` on the main actor, then runs `SmartFillPreparedPlanBuilder.makeResult` in `Task.detached(priority: .utility)` for both refresh and lookahead. The collaborator owns these computation tasks. Delivery checks request/result identity, the ordered pool, source generation, surface, layout policy, protection and display-mode eligibility; ring transfer also checks the current candidate cursor. Stale results never install a proposal or satisfy navigation demand.
 - **Generation guards.** Every async result carries the identity it was started for, and stale results are ignored instead of written back:
   - switching the playback source increments the loader's generation exactly once; the facade exposes `playbackSourceGeneration` as a read-only projection for the unchanged SmartFill seed and freshness checks, while the loader validates initial and refill identities before applying results
   - scene presentation targets carry a `ScenePresentationIdentity` (generation + scene id); effect tasks are stored per generation in `scenePresentationEffectTasks`
