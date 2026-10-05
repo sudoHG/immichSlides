@@ -258,7 +258,7 @@ struct ScenePresentationReducerTests {
 
         let restoreEffects = engine.reduceScenePresentation(.cancelUnseenManualPendingPresentation, at: 6.2)
         let restoredPlans = restoreEffects.contains { effect in
-            guard case let .plan(request) = effect else { return false }
+            guard case let .restartPreparation(request) = effect else { return false }
             return request.identity == automaticPending.identity && request.source == .automatic
         }
         let restoredDownloads = restoreEffects.contains { effect in

@@ -39,6 +39,19 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.applyPreparedSmartFillPlanResultForTesting(resultA, request: requestA) == .stale)
         #expect(vm.applyPreparedSmartFillPlanResultForTesting(resultB, request: requestB) == .applied)
         #expect(vm.preparedSmartFillNextAssetIdsForTesting == resultB.selectedAssetIds)
+
+        let waiting = makeSmartFillViewModel()
+        waiting.isAutoPlay = true
+        markReady(waiting.assets, in: waiting.downloadManager)
+        waiting.clearPreparedSmartFillRingForTesting()
+        let lookaheadRequest = try #require(waiting.capturePreparedSmartFillPlanRequestForTesting(startingAt: 1))
+        let lookaheadResult = try #require(SmartFillPreparedPlanBuilder.makeResult(for: lookaheadRequest))
+        _ = waiting.fireScheduledScenePresentationWakeUpForTesting()
+        #expect(waiting.currentIndex == 0)
+        // Lookahead uses this same delivery entry without a start-time navigation tag.
+        #expect(
+            waiting.applyPreparedSmartFillPlanResultForTesting(lookaheadResult, request: lookaheadRequest) == .applied)
+        #expect(waiting.safeCurrentScene?.primaryAssetId == "asset-1")
     }
 
     @Test
@@ -153,6 +166,7 @@ extension SlideShowViewModelNavigationSemanticsTests {
     @Test
     func
         `SmartFill autoplay skips the tick on a prepared miss instead of falling back to the MainActor planner synchronously`()
+        async
     {
         let vm = makeSmartFillViewModel()
         vm.isAutoPlay = true
@@ -168,6 +182,17 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.targetTransitionToken == originalToken)
         #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-0"])
         #expect(vm.smartFillCandidateSummaryBuildCountForTesting == 0)
+
+        // A fresh proposal still installs if the user pauses while the prepared miss is computing.
+        vm.toggleAutoPlayFromUserInteraction()
+        let didDeliverWhilePaused = await waitUntilForTesting {
+            vm.preparedSmartFillNextAssetIdsForTesting != nil
+        }
+        #expect(didDeliverWhilePaused)
+        #expect(vm.preparedSmartFillNextAssetIdsForTesting == ["asset-1"])
+        #expect(vm.currentIndex == 0)
+        #expect(vm.targetIndex == 0)
+        #expect(vm.targetTransitionToken == originalToken)
     }
 
     @Test
@@ -219,14 +244,18 @@ extension SlideShowViewModelNavigationSemanticsTests {
             vm.scene(for: layer)?.primaryAssetId == "asset-1"
         }
         #expect(failedLayer != nil)
+        vm.clearPreparedSmartFillRingForTesting()
         if let failedLayer {
             failSceneRendererThroughRetryBudget(layer: failedLayer, viewModel: vm)
         }
+        vm.suspendScenePresentationForBackground()
 
         let didRequestNextTarget = await waitUntilForTesting {
             vm.safeCurrentScene?.primaryAssetId == "asset-2"
         }
         #expect(didRequestNextTarget)
+        vm.resumeScenePresentationFromBackground()
+        #expect(vm.safeCurrentScene?.primaryAssetId == "asset-2")
         #expect(vm.scenePresentationContractProbeLabel(for: vm.sceneRenderSnapshot).contains("historyCount=1"))
         #expect(vm.smartFillCandidateSummaryBuildCountForTesting == 0)
         #expect(vm.smartFillMainActorPlannerCallCountForTesting(.requestScene) == 0)

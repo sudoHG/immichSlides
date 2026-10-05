@@ -52,7 +52,7 @@ struct PlaybackSessionEngineAutoPlayRetryTests {
             )
         }
 
-        #expect(terminalEffects == [.plan(request)])
+        #expect(terminalEffects == [.plan(.init(tag: 1, target: request, purpose: .replaceExhaustedTarget))])
         #expect(engine.scenePresentationState.attemptSummary.totalAttemptCount == 4)
         #expect(engine.scenePresentationState.attemptSummary.failedAttemptCount == 4)
         #expect(engine.scenePresentationState.attemptSummary.pendingAttemptCount == 0)
@@ -98,8 +98,9 @@ struct PlaybackSessionEngineAutoPlayRetryTests {
         #expect(
             !terminalEffects.contains(
                 .plan(
-                    .init(identity: target.identity, source: .manualNext)
-                )))
+                    .init(
+                        tag: 1, target: .init(identity: target.identity, source: .manualNext),
+                        purpose: .replaceExhaustedTarget))))
     }
 
     private func makeTarget(

@@ -303,7 +303,7 @@ extension PlaybackSessionEngineTests {
 
         let effects = engine.cancelUnseenManualPendingScenePresentation(at: 6.2)
         let didRestartPlan = effects.contains { effect in
-            guard case let .plan(request) = effect else { return false }
+            guard case let .restartPreparation(request) = effect else { return false }
             return request.identity == automatic.identity && request.source == .automatic
         }
         let didRestartDownload = effects.contains { effect in
