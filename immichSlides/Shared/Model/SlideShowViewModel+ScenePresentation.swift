@@ -54,8 +54,7 @@ extension SlideShowViewModel {
         let isAutomaticStableDeadline =
             requestSource == .automatic && playbackSessionEngine.scenePresentationState.underlyingPhase == .stablePhoto
         let appendsNewTailScene = transition.targetIndex >= playbackSessionEngine.scenes.count
-        let candidateCursorIndexAfterCommit = pendingCandidateCursorIndexAfterCommit
-        let displayedAssetIdsAfterCommit = pendingSmartFillDisplayedAssetIdsAfterCommit
+        let pendingCandidateAcceptance = candidateProgression.capturePendingAcceptance()
         guard
             let started = playbackSessionEngine.beginScenePresentation(
                 for: transition,
@@ -70,14 +69,8 @@ extension SlideShowViewModel {
             return
         }
         recordScenePublishTiming(for: transition)
-        if let displayedAssetIdsAfterCommit {
-            smartFillDisplayedAssetIds = displayedAssetIdsAfterCommit
-        }
-        if appendsNewTailScene, let candidateCursorIndexAfterCommit {
-            applyCandidateCursorIndexAfterCommit(candidateCursorIndexAfterCommit)
-        }
-        pendingCandidateCursorIndexAfterCommit = nil
-        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
+        candidateProgression.accept(
+            pendingCandidateAcceptance, appendsNewTailScene: appendsNewTailScene, assetCount: assets.count)
         if !applySmartFillMotionLookaheadPreparedPlanIfReady() {
             refreshPreparedSmartFillSceneRingIfPossible()
         }
@@ -196,7 +189,7 @@ extension SlideShowViewModel {
                         )
                         guard !Task.isCancelled else { return }
                         _ = await self.preloadSmartFillCandidateWindowIfNeeded(
-                            startingAt: self.candidateCursorIndex
+                            startingAt: self.candidateProgression.cursorIndexForReadback
                         )
                         guard !Task.isCancelled else { return }
                         await self.preloadPlaybackWindowAfterTransitionIfReady()
@@ -489,7 +482,7 @@ extension SlideShowViewModel {
         logQAPlaybackSequenceEventIfNeeded(
             .loadMoreDecision(
                 assetCount: assets.count,
-                candidateCursorIndex: candidateCursorIndex,
+                candidateCursorIndex: candidateProgression.cursorIndexForReadback,
                 candidateProgressIndexForLoadMore: loadMoreProgressIndex,
                 soloOnly: isSoloOnlyPlaybackSource,
                 isLoadingMore: isLoadingMore,

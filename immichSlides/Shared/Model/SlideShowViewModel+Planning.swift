@@ -66,31 +66,7 @@ extension SlideShowViewModel {
         }
         guard !photoSlots.isEmpty else { return nil }
 
-        let initialReadback = PlaybackSmartFillSceneReadback(
-            version: "smart-fill-scene-v2",
-            sceneType: plannerResult.sceneType,
-            layoutPolicyId: plannerResult.layoutPolicyId,
-            surfaceKey: plannerResult.surfaceKey,
-            layoutVariant: plannerResult.layoutVariant,
-            ratioPreset: plannerResult.ratioPreset,
-            slotRoles: plannerResult.slots.map(\.role),
-            fallbackReason: plannerResult.fallbackReason,
-            fallbackCategory: plannerResult.fallbackCategory,
-            candidateWindowUsed: plannerResult.candidateWindowUsed,
-            evaluationCount: plannerResult.evaluationCount,
-            rotationStartLayoutVariant: plannerResult.rotationStartLayoutVariant,
-            rotationStartRatioPreset: plannerResult.rotationStartRatioPreset,
-            acceptedLayoutVariant: plannerResult.acceptedLayoutVariant,
-            acceptedRatioPreset: plannerResult.acceptedRatioPreset,
-            rotationKeyHashPrefix: plannerResult.rotationKeyHashPrefix,
-            rejectedLayoutReasonTopList: plannerResult.rejectedLayoutReasonTopList,
-            reasonCodes: plannerResult.reasonCodes
-        )
-        #if DEBUG
-        let readback = initialReadback.recordingQADebugSummary(plannerResult.qaDebugSummary)
-        #else
-        let readback = initialReadback
-        #endif
+        let readback = PlaybackSmartFillSceneReadback.fromPlannerResult(plannerResult)
         let prototypeScene = PlaybackScene(
             id: "scene-smartfill-\(photoSlots.first?.asset.id ?? "empty")",
             photoSlots: photoSlots,
@@ -139,25 +115,15 @@ extension SlideShowViewModel {
         }
 
         let displayedAssetIdsAfterCommit = smartFillDisplayedAssetIdsForPlanning.union(cursorEffect.displayedAssetIds)
-        pendingCandidateCursorIndexAfterCommit = cursorIndex(
-            afterAdvancingFrom: cursorEffect.sourceCursor,
-            by: cursorEffect.nextCandidateCursorOffset,
-            excludingDisplayedAssetIds: displayedAssetIdsAfterCommit
+        candidateProgression.reserveSelection(
+            in: assets, startingAt: cursorEffect.sourceCursor, advancingBy: cursorEffect.nextCandidateCursorOffset,
+            displayedAssetIdsAfterCommit: displayedAssetIdsAfterCommit
         )
-        pendingSmartFillDisplayedAssetIdsAfterCommit = displayedAssetIdsAfterCommit
         return transition
     }
 
     func currentPreparedSmartFillSourceCursor() -> Int? {
-        guard !assets.isEmpty else { return nil }
-        let startIndex =
-            candidateCursorIndex >= 0 && candidateCursorIndex < assets.count
-            ? candidateCursorIndex
-            : 0
-        return nextCandidateCursorIndex(
-            startingAt: startIndex,
-            excludingDisplayedAssetIds: smartFillDisplayedAssetIds
-        )
+        candidateProgression.preparedSourceCursor(in: assets)
     }
 
     func cancelSmartFillPreparedRingRefreshTask() {
@@ -483,7 +449,9 @@ extension SlideShowViewModel {
             return nil
         }
 
-        let displayedAssetIds = displayedAssetIdsForExclusion ?? smartFillDisplayedAssetIds
+        let displayedAssetIds =
+            displayedAssetIdsForExclusion
+            ?? candidateProgression.exclusionsForPlanning(includesPendingReservation: false)
         let rawSnapshots = smartFillCandidateAssets(
             startingAt: startIndex,
             displayedAssetIdsForExclusion: displayedAssetIds
@@ -585,36 +553,11 @@ extension SlideShowViewModel {
         excludingDisplayedAssets: Bool = true,
         displayedAssetIdsForExclusion: Set<String>? = nil
     ) -> [Asset] {
-        guard !assets.isEmpty,
-            startIndex >= 0,
-            startIndex < assets.count
-        else {
-            return []
-        }
-
-        let uniqueAssetCount = Set(assets.map(\.id)).count
-        let maxCandidateCount = min(smartFillCandidateWindowCount, uniqueAssetCount)
-        let displayedAssetIds = displayedAssetIdsForExclusion ?? smartFillDisplayedAssetIds
-        let shouldSkipDisplayedAssets = excludingDisplayedAssets && displayedAssetIds.count < uniqueAssetCount
-        var candidateAssets: [Asset] = []
-        var candidateAssetIds: Set<String> = []
-
-        for offset in 0..<assets.count {
-            let candidate = assets[(startIndex + offset) % assets.count]
-            guard candidateAssetIds.insert(candidate.id).inserted else {
-                continue
-            }
-            if shouldSkipDisplayedAssets,
-                displayedAssetIds.contains(candidate.id)
-            {
-                continue
-            }
-            candidateAssets.append(candidate)
-            if candidateAssets.count >= maxCandidateCount {
-                break
-            }
-        }
-        return candidateAssets
+        candidateProgression.candidateAssets(
+            in: assets, startingAt: startIndex, windowCount: smartFillCandidateWindowCount,
+            excludingDisplayedAssets: excludingDisplayedAssets,
+            displayedAssetIdsForExclusion: displayedAssetIdsForExclusion
+        )
     }
 
     private func smartFillCandidateSummary(for asset: Asset) -> PlaybackSmartFillCandidateSummary {

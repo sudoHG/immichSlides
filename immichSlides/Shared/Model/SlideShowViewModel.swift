@@ -167,15 +167,11 @@ class SlideShowViewModel: ObservableObject {
     var playbackSessionEngine = PlaybackSessionEngine()
     var playbackHistoryLedger = PlaybackHistoryLedger()
     var pendingPlaybackHistoryLedgerCommits: [UUID: PlaybackHistoryLedgerPendingCommit] = [:]
-    var candidateCursorIndex: Int = 0
-    var pendingCandidateCursorIndexAfterCommit: Int?
-    var smartFillDisplayedAssetIds: Set<String> = []
-    var pendingSmartFillDisplayedAssetIdsAfterCommit: Set<String>?
-    var pendingSmartFillCursorResumeAfterLoadMoreAssetCount: Int?
+    let candidateProgression = PlaybackCandidateProgression()
     var playbackDisplayMode: PlaybackDisplayMode = .smartFill
     let runtimeEvidenceRecorder = PlaybackRuntimeEvidenceRecorder()
-    var smartFillSurface: PlaybackSmartFillSurface?
-    var smartFillProtectionSnapshot: PlaybackProtectionSnapshot = .empty
+    var smartFillSurface: PlaybackSmartFillSurface? { candidateProgression.surface }
+    var smartFillProtectionSnapshot: PlaybackProtectionSnapshot { candidateProgression.protectionSnapshot }
     var smartFillReplanFingerprint: String?
     var smartFillSurfaceActivationTask: Task<Void, Never>?
     var smartFillPreparedRingRefreshTask: Task<Void, Never>?
@@ -213,7 +209,7 @@ class SlideShowViewModel: ObservableObject {
     }
     #if DEBUG
     var smartFillCandidateCursorIndexForTesting: Int {
-        candidateCursorIndex
+        candidateProgression.cursorIndexForReadback
     }
 
     var pendingPlaybackHistoryLedgerCommitCountForTesting: Int {
@@ -228,15 +224,11 @@ class SlideShowViewModel: ObservableObject {
     var scenePresentationBarrierAttemptCountForTesting = 0
 
     var pendingSmartFillCursorResumeAfterLoadMoreAssetCountForTesting: Int? {
-        pendingSmartFillCursorResumeAfterLoadMoreAssetCount
+        candidateProgression.pendingResumeAssetCountForReadback
     }
 
     func markCurrentSmartFillPoolConsumedForTesting(candidateCursorIndex: Int = 0) {
-        smartFillDisplayedAssetIds = Set(assets.map(\.id))
-        self.candidateCursorIndex = min(max(0, candidateCursorIndex), max(0, assets.count - 1))
-        pendingCandidateCursorIndexAfterCommit = nil
-        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
-        pendingSmartFillCursorResumeAfterLoadMoreAssetCount = nil
+        candidateProgression.markPoolConsumedForTesting(assets: assets, candidateCursorIndex: candidateCursorIndex)
     }
     #endif
     func scene(at index: Int) -> PlaybackScene? {
@@ -651,8 +643,7 @@ class SlideShowViewModel: ObservableObject {
         }
         smartFillReplanFingerprint = replanFingerprint
         cancelSmartFillPreparedRingRefreshTask()
-        smartFillSurface = surface
-        smartFillProtectionSnapshot = protectionSnapshot
+        candidateProgression.updatePlanningContext(surface: surface, protectionSnapshot: protectionSnapshot)
         playbackSessionEngine.updateFutureProtectionSnapshot(protectionSnapshot)
         syncPlaybackReadbackFromEngine()
         scheduleSmartFillInitialSceneActivationIfNeeded()
@@ -808,80 +799,40 @@ class SlideShowViewModel: ObservableObject {
         pendingPlaybackHistoryLedgerCommits = [:]
     }
 
-    func applyCandidateCursorIndexAfterCommit(_ index: Int) {
-        guard !assets.isEmpty else {
-            candidateCursorIndex = 0
-            return
-        }
-        candidateCursorIndex = min(max(0, index), assets.count - 1)
+    private func adjustCandidateCursorAfterRemovingPrefix(_ removeCount: Int) {
+        candidateProgression.adjustAfterRemovingPrefix(removeCount, remainingAssets: assets)
     }
 
-    func adjustCandidateCursorAfterRemovingPrefix(_ removeCount: Int) {
-        guard removeCount > 0 else { return }
-        candidateCursorIndex = max(0, candidateCursorIndex - removeCount)
-        if let pendingIndex = pendingCandidateCursorIndexAfterCommit {
-            pendingCandidateCursorIndexAfterCommit = max(0, pendingIndex - removeCount)
-        }
-        if !assets.isEmpty {
-            pruneSmartFillDisplayedAssetIdsToCurrentAssets()
-            candidateCursorIndex = min(candidateCursorIndex, assets.count - 1)
-            if let pendingIndex = pendingCandidateCursorIndexAfterCommit {
-                pendingCandidateCursorIndexAfterCommit = min(pendingIndex, assets.count - 1)
+    func adjustSmartFillCursorAfterAppendingLoadMore(oldCount: Int, appendedCount: Int) {
+        guard isSmartFillPlanningEnabled, isSoloOnlyPlaybackSource else { return }
+        switch candidateProgression.resumeAfterAppendingLoadMore(
+            oldCount: oldCount, appendedCount: appendedCount, assetCount: assets.count
+        ) {
+        case .unchanged:
+            return
+        case .cleared:
+            logPendingSmartFillCursorResumeCleared(reason: "noUnseenAssets")
+        case .resumed:
+            if let fingerprint = makePreparedSmartFillSceneFingerprint() {
+                playbackSessionEngine.invalidatePreparedSceneRing(ifNeededFor: fingerprint)
             }
-        } else {
-            smartFillDisplayedAssetIds = []
-            pendingSmartFillDisplayedAssetIdsAfterCommit = nil
+            refreshPreparedSmartFillSceneRingIfPossible()
         }
-    }
-
-    func adjustSmartFillCursorAfterAppendingLoadMore(
-        oldCount: Int,
-        appendedCount: Int
-    ) {
-        guard isSmartFillPlanningEnabled,
-            isSoloOnlyPlaybackSource,
-            pendingSmartFillCursorResumeAfterLoadMoreAssetCount != nil,
-            oldCount > 0
-        else {
-            return
-        }
-
-        guard appendedCount > 0,
-            oldCount < assets.count
-        else {
-            clearPendingSmartFillCursorResumeAfterLoadMore(reason: "noUnseenAssets")
-            return
-        }
-
-        pendingSmartFillCursorResumeAfterLoadMoreAssetCount = nil
-        candidateCursorIndex = min(max(0, oldCount), assets.count - 1)
-        pendingCandidateCursorIndexAfterCommit = nil
-        if let fingerprint = makePreparedSmartFillSceneFingerprint() {
-            playbackSessionEngine.invalidatePreparedSceneRing(ifNeededFor: fingerprint)
-        }
-        refreshPreparedSmartFillSceneRingIfPossible()
     }
 
     func clearPendingSmartFillCursorResumeAfterLoadMore(reason: String) {
-        guard pendingSmartFillCursorResumeAfterLoadMoreAssetCount != nil else { return }
-        pendingSmartFillCursorResumeAfterLoadMoreAssetCount = nil
+        guard candidateProgression.clearPendingLoadMoreResume() else { return }
+        logPendingSmartFillCursorResumeCleared(reason: reason)
+    }
+
+    private func logPendingSmartFillCursorResumeCleared(reason: String) {
         logger.notice(
-            "smartfill loadMore hold marker cleared reason=\(reason, privacy: .public) assetCount=\(self.assets.count, privacy: .public) candidateCursorIndex=\(self.candidateCursorIndex, privacy: .public)"
+            "smartfill loadMore hold marker cleared reason=\(reason, privacy: .public) assetCount=\(self.assets.count, privacy: .public) candidateCursorIndex=\(self.candidateProgression.cursorIndexForReadback, privacy: .public)"
         )
     }
 
-    private func pruneSmartFillDisplayedAssetIdsToCurrentAssets() {
-        let currentAssetIds = Set(assets.map(\.id))
-        smartFillDisplayedAssetIds.formIntersection(currentAssetIds)
-        if let pendingAssetIds = pendingSmartFillDisplayedAssetIdsAfterCommit {
-            pendingSmartFillDisplayedAssetIdsAfterCommit = pendingAssetIds.intersection(currentAssetIds)
-        }
-    }
-
     var candidateProgressIndexForLoadMore: Int {
-        guard !assets.isEmpty else { return 0 }
-        let lastCommittedCandidateIndex = candidateCursorIndex == 0 ? assets.count - 1 : candidateCursorIndex - 1
-        return min(max(0, lastCommittedCandidateIndex), assets.count - 1)
+        candidateProgression.progressIndexForLoadMore(assetCount: assets.count)
     }
 
     static func emptyPlaybackMessage(
@@ -1086,14 +1037,11 @@ class SlideShowViewModel: ObservableObject {
         playbackHistoryLedger.replaceCurrent(with: playbackSessionEngine.currentScene ?? currentScene)
 
         cancelSmartFillPreparedRingRefreshTask()
-        pendingCandidateCursorIndexAfterCommit = nil
-        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
+        candidateProgression.cancelPendingSelection()
         runtimeEvidenceRecorder.resetActionTimings()
-        smartFillDisplayedAssetIds = displayedAssetIdsAfterRebuild
-        candidateCursorIndex = cursorIndex(
-            afterAdvancingFrom: anchorIndex,
-            by: replacementPlan.nextCandidateCursorOffset,
-            excludingDisplayedAssetIds: smartFillDisplayedAssetIds
+        candidateProgression.replaceCurrentSelection(
+            in: assets, startingAt: anchorIndex, advancingBy: replacementPlan.nextCandidateCursorOffset,
+            displayedAssetIdsAfterRebuild: displayedAssetIdsAfterRebuild
         )
         playbackSessionEngine.invalidate(reason: .poolReloaded)
         syncPlaybackReadbackFromEngine()
@@ -1384,8 +1332,7 @@ class SlideShowViewModel: ObservableObject {
             return false
         }
 
-        smartFillDisplayedAssetIds = initialSmartFillPlan.displayedAssetIds
-        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
+        candidateProgression.recordInitialSelection(initialSmartFillPlan.displayedAssetIds)
         resetCandidateCursor(nextCandidateCursorOffset: initialSmartFillPlan.nextCandidateCursorOffset)
         playbackSessionEngine.reset(
             with: assets,
@@ -1743,14 +1690,13 @@ extension SlideShowViewModel {
         cancelSmartFillPreparedRingRefreshTask()
         resetScenePresentationRuntime()
         poolLoader.replaceAssets(newAssets, update: applyPlaybackPoolUpdate)
-        smartFillDisplayedAssetIds = []
-        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
+        candidateProgression.recordInitialSelection([])
         runtimeEvidenceRecorder.resetActionTimings()
         let initialSmartFillPlan = makeSmartFillScenePlan(
             startingAt: 0,
             callSite: .initialPlanning
         )
-        smartFillDisplayedAssetIds = initialSmartFillPlan?.displayedAssetIds ?? []
+        candidateProgression.recordInitialSelection(initialSmartFillPlan?.displayedAssetIds ?? [])
         resetCandidateCursor(nextCandidateCursorOffset: initialSmartFillPlan?.nextCandidateCursorOffset ?? 1)
         playbackSessionEngine.reset(
             with: newAssets,

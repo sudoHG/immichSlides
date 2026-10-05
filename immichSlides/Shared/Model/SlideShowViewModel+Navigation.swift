@@ -8,8 +8,7 @@ extension SlideShowViewModel {
     func requestPreviousScene() {
         guard !playbackSessionEngine.scenes.isEmpty else { return }
         let actionTimestamp = playbackManifestTimestamp()
-        pendingCandidateCursorIndexAfterCommit = nil
-        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
+        candidateProgression.cancelPendingSelection()
         if canCancelUnseenPendingScenePresentation,
             playbackSessionEngine.canCancelUnseenManualPendingScenePresentation
         {
@@ -130,26 +129,21 @@ extension SlideShowViewModel {
             let transition = playbackSessionEngine.requestNext(scene: smartFillPlan.scene, source: transactionSource)
             pendingPlaybackHistoryLedgerCommits[transition.transaction.id] = .appendTail
             recordActionTimestamp(actionTimestamp, for: transition)
-            pendingCandidateCursorIndexAfterCommit = cursorIndex(
-                afterAdvancingFrom: candidateIndex,
-                by: smartFillPlan.nextCandidateCursorOffset,
-                excludingDisplayedAssetIds: displayedAssetIdsAfterCommit
+            candidateProgression.reserveSelection(
+                in: assets, startingAt: candidateIndex, advancingBy: smartFillPlan.nextCandidateCursorOffset,
+                displayedAssetIdsAfterCommit: displayedAssetIdsAfterCommit
             )
-            pendingSmartFillDisplayedAssetIdsAfterCommit = displayedAssetIdsAfterCommit
         } else {
             let transition = playbackSessionEngine.requestNext(
                 candidate: assets[candidateIndex], source: transactionSource)
             pendingPlaybackHistoryLedgerCommits[transition.transaction.id] = .appendTail
             recordActionTimestamp(actionTimestamp, for: transition)
             let displayedAssetIdsAfterCommit = displayedAssetIdsForPlanning.union([assets[candidateIndex].id])
-            pendingCandidateCursorIndexAfterCommit =
-                shouldAdvanceCandidateCursorOnCommit
-                ? cursorIndex(after: candidateIndex, excludingDisplayedAssetIds: displayedAssetIdsAfterCommit)
-                : nil
-            pendingSmartFillDisplayedAssetIdsAfterCommit =
-                shouldAdvanceCandidateCursorOnCommit
-                ? displayedAssetIdsAfterCommit
-                : nil
+            candidateProgression.reserveSelection(
+                in: assets, startingAt: candidateIndex, advancingBy: 1,
+                displayedAssetIdsAfterCommit: displayedAssetIdsAfterCommit,
+                advancesCursor: shouldAdvanceCandidateCursorOnCommit
+            )
         }
         syncPlaybackReadbackFromEngine()
     }
@@ -159,62 +153,16 @@ extension SlideShowViewModel {
     }
 
     var smartFillDisplayedAssetIdsForPlanning: Set<String> {
-        guard smartFillSurface != nil, isSmartFillPlanningEnabled else {
-            return smartFillDisplayedAssetIds
-        }
-        return pendingSmartFillDisplayedAssetIdsAfterCommit ?? smartFillDisplayedAssetIds
+        candidateProgression.exclusionsForPlanning(
+            includesPendingReservation: smartFillSurface != nil && isSmartFillPlanningEnabled)
     }
 
     func resetCandidateCursor(nextCandidateCursorOffset: Int = 1) {
-        candidateCursorIndex =
-            assets.isEmpty
-            ? 0
-            : cursorIndex(
-                afterAdvancingFrom: 0,
-                by: max(0, nextCandidateCursorOffset),
-                excludingDisplayedAssetIds: smartFillDisplayedAssetIds
-            )
-        pendingCandidateCursorIndexAfterCommit = nil
-        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
-        pendingSmartFillCursorResumeAfterLoadMoreAssetCount = nil
+        candidateProgression.resetCursor(in: assets, nextCandidateCursorOffset: nextCandidateCursorOffset)
     }
 
     func normalizedCandidateCursorIndex() -> Int {
-        guard !assets.isEmpty else {
-            preconditionFailure("normalizedCandidateCursorIndex requires non-empty assets")
-        }
-        if candidateCursorIndex >= 0 && candidateCursorIndex < assets.count {
-            let normalizedIndex = nextCandidateCursorIndex(
-                startingAt: candidateCursorIndex,
-                excludingDisplayedAssetIds: smartFillDisplayedAssetIds
-            )
-            candidateCursorIndex = normalizedIndex
-            return normalizedIndex
-        }
-        candidateCursorIndex = 0
-        let normalizedIndex = nextCandidateCursorIndex(
-            startingAt: 0,
-            excludingDisplayedAssetIds: smartFillDisplayedAssetIds
-        )
-        candidateCursorIndex = normalizedIndex
-        return normalizedIndex
-    }
-
-    func cursorIndex(
-        after assetIndex: Int,
-        excludingDisplayedAssetIds displayedAssetIds: Set<String>
-    ) -> Int {
-        cursorIndex(
-            afterAdvancingFrom: assetIndex,
-            by: 1,
-            excludingDisplayedAssetIds: displayedAssetIds
-        )
-    }
-
-    func cursorIndex(afterAdvancingFrom assetIndex: Int, by consumedCount: Int) -> Int {
-        guard !assets.isEmpty else { return 0 }
-        let safeStartIndex = min(max(0, assetIndex), assets.count - 1)
-        return (safeStartIndex + max(0, consumedCount)) % assets.count
+        candidateProgression.normalizedCursorIndex(in: assets)
     }
 
     func cursorIndex(
@@ -222,12 +170,9 @@ extension SlideShowViewModel {
         by consumedCount: Int,
         excludingDisplayedAssetIds displayedAssetIds: Set<String>
     ) -> Int {
-        guard !assets.isEmpty else { return 0 }
-        let unfilteredIndex = cursorIndex(afterAdvancingFrom: assetIndex, by: consumedCount)
-        return nextCandidateCursorIndex(
-            startingAt: unfilteredIndex,
-            excludingDisplayedAssetIds: displayedAssetIds
-        )
+        candidateProgression.cursorIndex(
+            in: assets, afterAdvancingFrom: assetIndex, by: consumedCount,
+            excludingDisplayedAssetIds: displayedAssetIds)
     }
 
     func shouldHoldSmartFillAdvanceForSoloOnlyLoadMore(
@@ -244,45 +189,23 @@ extension SlideShowViewModel {
             return false
         }
 
-        let currentAssetIds = Set(assets.map(\.id))
-        let displayedAssetIds = smartFillDisplayedAssetIdsForPlanning.intersection(currentAssetIds)
-        let hasUndisplayedCandidate = currentAssetIds.contains(where: { !displayedAssetIds.contains($0) })
-        guard !hasUndisplayedCandidate else {
-            return false
-        }
-
-        let shouldStartLoadMore = !isLoadingMore && pendingSmartFillCursorResumeAfterLoadMoreAssetCount == nil
-        // When SmartFill has used up the soloOnly pool, skip this beat and continue from new assets after the refill
-        // appends.
-
-        pendingSmartFillCursorResumeAfterLoadMoreAssetCount = assets.count
+        // An exhausted solo-only pool holds this beat until the refill appends new candidates.
+        guard
+            let hold = candidateProgression.holdForLoadMoreIfConsumed(
+                assets: assets, includesPendingReservation: smartFillSurface != nil && isSmartFillPlanningEnabled,
+                isLoadingMore: isLoadingMore
+            )
+        else { return false }
         logger.notice(
-            "smartfill advance held for soloOnly loadMore reason=\(reason, privacy: .public) assetCount=\(self.assets.count, privacy: .public) candidateCursorIndex=\(self.candidateCursorIndex, privacy: .public) startIndex=\(startIndex, privacy: .public) displayedAssetCount=\(displayedAssetIds.count, privacy: .public) isLoadingMore=\(self.isLoadingMore ? "true" : "false", privacy: .public)"
+            "smartfill advance held for soloOnly loadMore reason=\(reason, privacy: .public) assetCount=\(self.assets.count, privacy: .public) candidateCursorIndex=\(self.candidateProgression.cursorIndexForReadback, privacy: .public) startIndex=\(startIndex, privacy: .public) displayedAssetCount=\(hold.displayedAssetCount, privacy: .public) isLoadingMore=\(self.isLoadingMore ? "true" : "false", privacy: .public)"
         )
-        if shouldStartLoadMore {
+        if hold.shouldStartLoadMore {
             Task { @MainActor [weak self] in
                 guard let self, self.isSoloOnlyPlaybackSource, !self.isLoadingMore else { return }
                 await self.loadMoreAssets()
             }
         }
         return true
-    }
-
-    func nextCandidateCursorIndex(
-        startingAt startIndex: Int,
-        excludingDisplayedAssetIds displayedAssetIds: Set<String>
-    ) -> Int {
-        guard !assets.isEmpty else { return 0 }
-        let safeStartIndex = min(max(0, startIndex), assets.count - 1)
-        guard !displayedAssetIds.isEmpty else { return safeStartIndex }
-
-        for offset in 0..<assets.count {
-            let candidateIndex = (safeStartIndex + offset) % assets.count
-            if !displayedAssetIds.contains(assets[candidateIndex].id) {
-                return candidateIndex
-            }
-        }
-        return safeStartIndex
     }
 
     var isSmartFillPlanningEnabled: Bool {
