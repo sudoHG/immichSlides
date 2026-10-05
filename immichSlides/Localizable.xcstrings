@@ -1906,13 +1906,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "緩存命中"
+            "value" : "快取命中"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "緩存命中"
+            "value" : "快取命中"
           }
         }
       }
@@ -3299,13 +3299,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "確認清理磁碟緩存"
+            "value" : "確認清理磁碟快取"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "確認清理磁碟緩存"
+            "value" : "確認清理磁碟快取"
           }
         }
       }
@@ -4093,13 +4093,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "目前配置待驗證，請測試連接"
+            "value" : "目前配置待驗證，請測試連線"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "目前配置待驗證，請測試連接"
+            "value" : "目前配置待驗證，請測試連線"
           }
         }
       }
@@ -4452,36 +4452,36 @@
         }
       }
     },
-    "Disk cache and state cleared" : {
+    "Disk cache cleared" : {
       "localizations" : {
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Caché de disco y estado borrados"
+            "value" : "Caché de disco borrado"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ディスクキャッシュと状態がクリアされました"
+            "value" : "ディスクキャッシュがクリアされました"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已清理磁盘缓存与状态字典"
+            "value" : "已清理磁盘缓存"
           }
         },
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已清理磁碟快取與狀態字典"
+            "value" : "已清理磁碟快取"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已清理磁碟快取與狀態字典"
+            "value" : "已清理磁碟快取"
           }
         }
       }
@@ -5107,7 +5107,7 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請輸入 Immich 伺服器地址"
+            "value" : "請輸入 Immich 伺服器位址"
           }
         },
         "zh-Hant-TW" : {
@@ -5143,13 +5143,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "配置位址和 API Key，用於連接你的相簿服務。"
+            "value" : "配置位址和 API Key，用於連線你的相簿服務。"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "配置位址和 API Key，用於連接你的相簿服務。"
+            "value" : "配置位址和 API Key，用於連線你的相簿服務。"
           }
         }
       }
@@ -5795,13 +5795,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "取地址"
+            "value" : "取位址"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "取地址"
+            "value" : "取位址"
           }
         }
       }
@@ -6471,13 +6471,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "如果這是家裡或辦公室裡的 Immich 伺服器，裝置首次連接時可能會要求「本地網絡」權限，請點選「允許」。"
+            "value" : "如果這是家裡或辦公室裡的 Immich 伺服器，裝置首次連線時可能會要求「本地網絡」權限，請點選「允許」。"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "如果這是家裡或辦公室裡的 Immich 伺服器，裝置首次連接時可能會要求「本地網路」權限，請點選「允許」。"
+            "value" : "如果這是家裡或辦公室裡的 Immich 伺服器，裝置首次連線時可能會要求「本地網路」權限，請點選「允許」。"
           }
         }
       }
@@ -7288,19 +7288,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "immich 中还没有相册"
+            "value" : "Immich 中还没有相册"
           }
         },
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "immich 中還沒有相簿"
+            "value" : "Immich 中還沒有相簿"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "immich 中還沒有相簿"
+            "value" : "Immich 中還沒有相簿"
           }
         }
       }
@@ -7324,19 +7324,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "immich中还没有相册哦～快去添加一些试试吧！"
+            "value" : "Immich 中还没有相册哦～快去添加一些试试吧！"
           }
         },
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "immich中還沒有相簿哦～快去添加一些試試吧！"
+            "value" : "Immich 中還沒有相簿哦～快去添加一些試試吧！"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "immich中還沒有相簿哦～快去添加一些試試吧！"
+            "value" : "Immich 中還沒有相簿哦～快去添加一些試試吧！"
           }
         }
       }
@@ -7452,7 +7452,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Aún no hay gente en Immich"
+            "value" : "Aún no hay personas en Immich"
           }
         },
         "ja" : {
@@ -7464,19 +7464,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "immich 中还没有人物"
+            "value" : "Immich 中还没有人物"
           }
         },
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "immich 中還沒有人物"
+            "value" : "Immich 中還沒有人物"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "immich 中還沒有人物"
+            "value" : "Immich 中還沒有人物"
           }
         }
       }
@@ -8991,6 +8991,40 @@
         }
       }
     },
+    "Please check the server URL and API key, make sure Immich is reachable, and try again." : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comprueba la URL del servidor y la API Key, asegúrate de que Immich esté accesible e inténtalo de nuevo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "サーバー URL と API Key を確認し、Immich サーバーに接続できることを確認して再試行してください。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请检查服务器地址和 API Key，确保 Immich 服务器可访问后重试。"
+          }
+        },
+        "zh-Hant-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請檢查伺服器位址和 API Key，確保 Immich 伺服器連線正常後重試。"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請檢查伺服器位址和 API Key，確認 Immich 伺服器連線正常後重試。"
+          }
+        }
+      }
+    },
     "Please enter a 6-digit PIN." : {
       "localizations" : {
         "es" : {
@@ -9497,13 +9531,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "倉庫地址"
+            "value" : "倉庫位址"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "倉庫地址"
+            "value" : "倉庫位址"
           }
         }
       }
@@ -9602,13 +9636,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重置訪問保護"
+            "value" : "重置存取保護"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重置訪問保護"
+            "value" : "重置存取保護"
           }
         }
       }
@@ -10193,7 +10227,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "gente"
+            "value" : "Personas"
           }
         },
         "ja" : {
@@ -10696,7 +10730,7 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "伺服器地址"
+            "value" : "伺服器位址"
           }
         },
         "zh-Hant-TW" : {
@@ -12133,13 +12167,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在測試連接..."
+            "value" : "正在測試連線..."
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在測試連接..."
+            "value" : "正在測試連線..."
           }
         }
       }
@@ -12167,13 +12201,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在測試伺服器連接"
+            "value" : "正在測試伺服器連線"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在測試伺服器連接"
+            "value" : "正在測試伺服器連線"
           }
         }
       }
@@ -12589,38 +12623,38 @@
         }
       }
     },
-    "This will clear the disk cache and also clear related state dictionaries in the download manager." : {
+    "This will clear the cached photos and temporary data." : {
       "comment" : "A message displayed in an alert that confirms the user wants to clear the disk cache.",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Esto borrará el caché del disco y también borrará los diccionarios de estado relacionados en el administrador de descargas."
+            "value" : "Esto borrará las fotos en caché y los datos temporales."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "これにより、ディスク キャッシュがクリアされ、ダウンロード マネージャー内の関連する状態辞書もクリアされます。"
+            "value" : "キャッシュされた写真と一時データを削除します。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将清理磁盘缓存，并同步清理下载管理器中的相关状态字典。"
+            "value" : "将清理已缓存的照片。"
           }
         },
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "將清理磁碟緩存，並同步清理下載管理器中的相關狀態字典。"
+            "value" : "將清理已快取的相片。"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "將清理磁碟緩存，並同步清理下載管理器中的相關狀態字典。"
+            "value" : "將清理已快取的相片。"
           }
         }
       }
@@ -12752,13 +12786,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "關閉訪問保護"
+            "value" : "關閉存取保護"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "關閉訪問保護"
+            "value" : "關閉存取保護"
           }
         }
       }
@@ -13482,13 +13516,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "地址失敗"
+            "value" : "位址失敗"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "地址失敗"
+            "value" : "位址失敗"
           }
         }
       }
@@ -13516,13 +13550,13 @@
         "zh-Hant-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "地址OK"
+            "value" : "位址OK"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "地址OK"
+            "value" : "位址OK"
           }
         }
       }

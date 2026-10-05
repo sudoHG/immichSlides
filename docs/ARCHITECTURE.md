@@ -11,6 +11,7 @@ immichSlides is a SwiftUI slideshow client for [Immich](https://immich.app) serv
 The root flow is `ContentView` with `AppFlowStateMachine` and `AppRoute` (`firstBoot`, `modeSelection`, `filterSummary`, `slideshow`).
 
 1. **First boot / server config.** No saved server → `FirstBootView` hosts `ServerConfigFormView`. `ImmichServer.testConnection` probes the server; a successful save writes the API key to the Keychain first, then the URL (`ImmichServer.save`).
+   `SettingsServerViewModel` appends localized URL, API key and reachability guidance after connection-test errors, including input validation errors. Save errors retain their existing messages.
 2. **Mode selection.** `ModeSelectionView` offers `SlideMode.random` (go straight to playback) or `SlideMode.filtered` (go to the filter summary).
 3. **Filter summary.** `FilterSummaryView` shows the current `FilterSelection` and leads to `AlbumFilterView` / `PersonFilterView`. "Start" calls `SlideShowViewModel.preparePlaybackSourceForPresentation(to: .filtered(selection))` and switches to the slideshow route without waiting for the pool.
 4. **Slideshow.** `SlideShowView` forwards to `SlideShowViewIOS` or `SlideShowViewTV`, both driven by the shared `SlideShowViewModel`. On a cold launch with a saved server the app goes straight here, using the saved default mode (`ContentView.initialPlaybackSourceForColdLaunch`).

@@ -440,6 +440,12 @@ final class SettingsServerViewModel: ObservableObject {
     ) {
         errorAlertTitle = titleOverride ?? context.title
         errorMessage = message
+        if case .connectionTest = context {
+            errorMessage +=
+                "\n\n"
+                + String(
+                    localized: "Please check the server URL and API key, make sure Immich is reachable, and try again.")
+        }
         shouldShowErrorAlert = true
     }
 }

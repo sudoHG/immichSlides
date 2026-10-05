@@ -134,9 +134,9 @@ extension FilterSummaryTVOSVisualUITests {
         )
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-            alert.staticTexts["服务器地址必须以 http 或 https 开头"].exists
+            alert.staticTexts["服务器地址必须以 http 或 https 开头\n\n请检查服务器地址和 API Key，确保 Immich 服务器可访问后重试。"].exists
                 // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-                || alert.staticTexts["服务器地址格式无效"].exists,
+                || alert.staticTexts["服务器地址格式无效\n\n请检查服务器地址和 API Key，确保 Immich 服务器可访问后重试。"].exists,
             "A prefilled invalid URL should trigger the local server URL validation error"
         )
     }

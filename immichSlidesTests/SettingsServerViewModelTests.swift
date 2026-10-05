@@ -18,7 +18,14 @@ struct SettingsServerViewModelTests {
 
         #expect(viewModel.shouldShowErrorAlert)
         #expect(viewModel.errorAlertTitle == String(localized: "Connection test failed"))
-        #expect(viewModel.errorMessage == String(localized: "Server URL must start with http or https"))
+        #expect(
+            viewModel.errorMessage
+                == String(localized: "Server URL must start with http or https") + "\n\n"
+                + String(
+                    localized:
+                        "Please check the server URL and API key, make sure Immich is reachable, and try again."
+                )
+        )
     }
 
     @Test
@@ -111,7 +118,13 @@ struct SettingsServerViewModelTests {
         #expect(viewModel.shouldShowErrorAlert)
         #expect(viewModel.errorAlertTitle == "API Key 权限不足")
         #expect(
-            viewModel.errorMessage == "缺少 asset.read，immichSlides 无法读取照片列表。请在 Immich 的 API Key 权限中启用 asset.read 后重试。")
+            viewModel.errorMessage
+                == "缺少 asset.read，immichSlides 无法读取照片列表。请在 Immich 的 API Key 权限中启用 asset.read 后重试。" + "\n\n"
+                + String(
+                    localized:
+                        "Please check the server URL and API key, make sure Immich is reachable, and try again."
+                )
+        )
     }
 
     @Test

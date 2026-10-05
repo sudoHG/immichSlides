@@ -41,8 +41,7 @@ private struct ClearDiskCacheAlertHost<Content: View>: View {
                     onConfirm()
                 }
             } message: {
-                Text(
-                    "This will clear the disk cache and also clear related state dictionaries in the download manager.")
+                Text("This will clear the cached photos and temporary data.")
             }
     }
 }
