@@ -81,7 +81,7 @@ final class PlaybackRuntimeEvidenceRecorder {
 
     func recordPlaybackSequence(
         _ input: PlaybackSequenceDebugRecordInput,
-        writesFile: Bool
+        writesFile: @autoclosure () -> Bool
     ) -> PlaybackSequenceDebugRecordResult? {
         ensureQAPlaybackSequenceRecorder(writesFile: writesFile)
         return qaPlaybackSequenceRecorder?.record(input)
@@ -89,15 +89,16 @@ final class PlaybackRuntimeEvidenceRecorder {
 
     func recordPlaybackSequenceEvent(
         _ event: PlaybackSequenceDebugEventInput,
-        writesFile: Bool
+        writesFile: @autoclosure () -> Bool
     ) -> PlaybackSequenceDebugEventResult? {
         ensureQAPlaybackSequenceRecorder(writesFile: writesFile)
         return qaPlaybackSequenceRecorder?.recordEvent(event)
     }
 
-    private func ensureQAPlaybackSequenceRecorder(writesFile: Bool) {
+    // The file-write switch is read only when the recorder is first created, as before the extraction.
+    private func ensureQAPlaybackSequenceRecorder(writesFile: () -> Bool) {
         if qaPlaybackSequenceRecorder == nil {
-            qaPlaybackSequenceRecorder = PlaybackSequenceDebugRecorder(isEnabled: true, writesFile: writesFile)
+            qaPlaybackSequenceRecorder = PlaybackSequenceDebugRecorder(isEnabled: true, writesFile: writesFile())
         }
     }
     #endif
