@@ -116,7 +116,7 @@ struct AssetsDownloadManagerBoundaryTests {
     @Test
     func `makeKeepIds returns an empty set for an invalid current index`() {
         let viewModel = SlideShowViewModel(source: .random)
-        viewModel.assets = [makeAsset(id: "asset-a")]
+        viewModel.overwritePlaybackPoolWithoutResetForTesting([makeAsset(id: "asset-a")])
 
         let keepIds = viewModel.makeKeepIds(currentIndex: 5)
 

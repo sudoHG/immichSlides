@@ -116,7 +116,7 @@ struct SlideShowViewModelStartupTests {
     func `a stale load-more task cannot append into a newer filtered playback result`() async throws {
         let vm = SlideShowViewModel(source: .random)
         resetDownloadManagerState(vm.downloadManager)
-        vm.assets = [makeAsset(id: "old-random")]
+        vm.overwritePlaybackPoolWithoutResetForTesting([makeAsset(id: "old-random")])
 
         var randomContinuation: CheckedContinuation<[Asset], any Error>?
 
@@ -351,11 +351,11 @@ struct SlideShowViewModelStartupTests {
     func `after a manual next, currentIndex and targetIndex point to the same scene`() async {
         let vm = SlideShowViewModel(source: .random)
         resetDownloadManagerState(vm.downloadManager)
-        vm.assets = [
+        vm.overwritePlaybackPoolWithoutResetForTesting([
             makeAsset(id: "asset-a"),
             makeAsset(id: "asset-b"),
             makeAsset(id: "asset-c")
-        ]
+        ])
         vm.replacePlaybackAssetsForTesting(vm.assets)
         vm.requestNextScene()
         let transitionToken = vm.targetTransitionToken

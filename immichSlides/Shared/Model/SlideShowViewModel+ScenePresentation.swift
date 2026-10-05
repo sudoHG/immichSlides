@@ -5,45 +5,6 @@ import CoreGraphics
 import OSLog
 
 extension SlideShowViewModel {
-    func applyPlaybackAssets(
-        _ newAssets: [Asset],
-        invalidationReason: PlaybackSessionInvalidationReason
-    ) {
-        smartFillSurfaceActivationTask?.cancel()
-        smartFillSurfaceActivationTask = nil
-        cancelSmartFillPreparedRingRefreshTask()
-        resetScenePresentationRuntime()
-        assets = newAssets
-        smartFillDisplayedAssetIds = []
-        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
-        runtimeEvidenceRecorder.resetActionTimings()
-        let initialSmartFillPlan = makeSmartFillScenePlan(
-            startingAt: 0,
-            callSite: .initialPlanning
-        )
-        smartFillDisplayedAssetIds = initialSmartFillPlan?.displayedAssetIds ?? []
-        resetCandidateCursor(nextCandidateCursorOffset: initialSmartFillPlan?.nextCandidateCursorOffset ?? 1)
-        playbackSessionEngine.reset(
-            with: newAssets,
-            initialScene: initialSmartFillPlan?.scene,
-            reason: invalidationReason
-        )
-        playbackHistoryLedger.reset(with: nil)
-        pendingPlaybackHistoryLedgerCommits = [:]
-        if initialSmartFillPlan != nil {
-            recordSmartFillStartupRuntimePhase("firstScenePublished")
-        }
-        syncPlaybackReadbackFromEngine()
-        refreshPreparedSmartFillSceneRingIfPossible()
-    }
-
-    func assetsUnseenInCurrentPool(_ incomingAssets: [Asset]) -> [Asset] {
-        var seenAssetIds = Set(assets.map(\.id))
-        return incomingAssets.filter { asset in
-            seenAssetIds.insert(asset.id).inserted
-        }
-    }
-
     func syncPlaybackReadbackFromEngine() {
         // If autoplay is off at startup, send that to the reducer first, so layers created or made Ready later inherit
         // the paused clock.
@@ -122,21 +83,6 @@ extension SlideShowViewModel {
         }
         beginScenePresentationBarrier(identity: started.identity, scene: transition.scene)
         executeScenePresentationEffects(started.effects)
-    }
-
-    private func resetScenePresentationRuntime() {
-        scenePresentationWakeUpTask?.cancel()
-        scenePresentationWakeUpTask = nil
-        scenePresentationWakeUpKey = nil
-        scenePresentationEffectTasks.values.forEach { $0.cancel() }
-        scenePresentationEffectTasks = [:]
-        pendingAutomaticScenePlanGeneration = nil
-        scenePresentationPrerenderBarrier = ScenePresentationPrerenderBarrier()
-        smartFillMotionPreparedSlotPreloadTasks.values.forEach { $0.cancel() }
-        smartFillMotionPreparedSlotPreloadTasks = [:]
-        smartFillMotionLookaheadPreparedPlan = nil
-        runtimeEvidenceRecorder.resetScenePresentation()
-        publishScenePresentationChange()
     }
 
     func scenePresentationTimestamp() -> TimeInterval {

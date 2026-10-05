@@ -798,7 +798,7 @@ struct SlideShowViewTV: View {
 
         if viewModel.assets.isEmpty {
             viewModel.replacePlaybackAssetsForTesting(Asset.previewAssets)
-            viewModel.isLoading = false
+            viewModel.setPlaybackLoadingForTesting(false)
         }
 
         guard viewModel.assets.count >= 2 else { return }

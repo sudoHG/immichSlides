@@ -33,7 +33,7 @@ extension SlideShowViewModel {
 
         let didApplyAssets = await loadAssets()
         guard didApplyAssets,
-            let initialLoadIdentity = lastAppliedInitialLoadIdentity,
+            let initialLoadIdentity = appliedInitialLoadIdentity,
             isCurrentPlaybackLoad(initialLoadIdentity)
         else {
             logger.notice(
