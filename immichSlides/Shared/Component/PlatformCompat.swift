@@ -33,13 +33,11 @@ enum PlatformCompat {
     }
 
     static var shouldPrepareFilterSummaryForTesting: Bool {
-        shouldExposeUITestProbes
-            && ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] == "1"
+        ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] == "1"
     }
 
     static var shouldPrepareFilterEditorForTesting: Bool {
-        shouldExposeUITestProbes
-            && ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS"] == "1"
+        ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS"] == "1"
     }
 
     static var shouldExposeScenePresentationContractProbeForTesting: Bool {
