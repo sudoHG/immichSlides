@@ -80,34 +80,10 @@ extension SlideShowViewTV {
     }
 
     func refreshPlaybackRelatedSettings() {
-        // Sync autoplay settings each time playback opens, so the long-lived ViewModel doesn't use stale values.
-        viewModel.refreshAutoPlaySettingsFromStore()
-        let settings = PlaybackSettingsStore().load() ?? PlaybackSettings()
-        isExifVisible = settings.showExif
-
-        isDebugOverlayVisible = PlatformCompat.isPlaybackDebugPanelEnabled && settings.showDebugOverlay
-
-        switch settings.defaultPlaybackMode {
-        case .random:
-            guard settings.defaultPlaybackMode != viewModel.currentPlaybackMode else { return }
-            Task {
-                await viewModel.switchPlaybackSource(to: .random)
-            }
-        case .filtered:
-            let selection = FilterSelectionStore().load() ?? FilterSelection()
-            // Don't switch to filtered playback without a usable filter, to avoid empty playback.
-            guard !selection.isEmpty else { return }
-
-            // If the selection changes during filtered playback, reload right away instead of waiting for a restart.
-
-            let modeChanged = settings.defaultPlaybackMode != viewModel.currentPlaybackMode
-            let filteredSelectionChanged = viewModel.shouldReloadFilteredSource(for: selection)
-            guard modeChanged || filteredSelectionChanged else { return }
-
-            Task {
-                await viewModel.switchPlaybackSource(to: .filtered(selection))
-            }
-        }
+        viewModel.refreshPlaybackRelatedSettings(
+            applyExifVisibility: { isExifVisible = $0 },
+            applyDebugOverlayVisibility: { isDebugOverlayVisible = $0 }
+        )
     }
 }
 #endif
