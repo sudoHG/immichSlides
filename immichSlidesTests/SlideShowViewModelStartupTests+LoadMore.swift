@@ -10,7 +10,7 @@ extension SlideShowViewModelStartupTests {
         ],
         [(false, false), (false, true), (true, false), (true, true)]
     )
-    func `stale load-more completion preserves the current requests loading state`(
+    func `stale load-more completion keeps the newer request loading`(
         source: PlaybackSource,
         completion: (staleFails: Bool, cancelsCurrent: Bool)
     ) async throws {
