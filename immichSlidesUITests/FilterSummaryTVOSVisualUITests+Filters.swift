@@ -253,7 +253,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertTrue(
             // ui-label-lookup: This lookup asserts the displayed empty album copy.
             waitForElementWithLabelExists(
-                app: app, label: "immich中还没有相册哦～快去添加一些试试吧！",
+                app: app, label: "Immich 中还没有相册哦～快去添加一些试试吧！",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Empty album page should show the empty-state text, confirming the no-albums branch was reached"
         )
@@ -279,7 +279,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertTrue(
             // ui-label-lookup: This lookup asserts the displayed empty people copy.
             waitForElementWithLabelExists(
-                app: app, label: "immich 中还没有人物",
+                app: app, label: "Immich 中还没有人物",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Empty person page should show the empty-state text, confirming the no-people branch was reached"
         )

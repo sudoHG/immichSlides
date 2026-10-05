@@ -242,7 +242,7 @@ extension immichSlidesUITests {
         let confirmAlertTitles = [
             "确认清理磁盘缓存",
             "Confirm Disk Cache Clear",
-            "確認清理磁碟緩存",
+            "確認清理磁碟快取",
             "ディスクキャッシュクリアの確認",
             "Confirmar limpieza de caché"
         ]

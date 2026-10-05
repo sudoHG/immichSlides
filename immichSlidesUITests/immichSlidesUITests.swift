@@ -293,7 +293,7 @@ final class immichSlidesUITests: XCTestCase {
             albumBackButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Empty album page should show a back button")
         // ui-label-lookup: Verify the displayed empty-album message itself.
-        XCTAssertTrue(app.staticTexts["immich 中还没有相册"].exists, "Empty album page should show the empty-state message")
+        XCTAssertTrue(app.staticTexts["Immich 中还没有相册"].exists, "Empty album page should show the empty-state message")
         attachScreenshot(app: app, name: "empty-album-filter-has-back-button")
         tapElement(albumBackButton)
 
@@ -308,7 +308,7 @@ final class immichSlidesUITests: XCTestCase {
             personBackButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Empty people page should show a back button")
         // ui-label-lookup: Verify the displayed empty-people message itself.
-        XCTAssertTrue(app.staticTexts["immich 中还没有人物"].exists, "Empty people page should show the empty-state message")
+        XCTAssertTrue(app.staticTexts["Immich 中还没有人物"].exists, "Empty people page should show the empty-state message")
         attachScreenshot(app: app, name: "empty-person-filter-has-back-button")
         tapElement(personBackButton)
 
