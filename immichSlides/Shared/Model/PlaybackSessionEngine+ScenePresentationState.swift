@@ -24,58 +24,8 @@ extension PlaybackSessionEngine {
         case loading
     }
 
-    private struct ScenePresentationLayerState: Equatable, Sendable {
-        let identity: ScenePresentationIdentity
-        var role: ScenePresentationLayerRole
-        var opacityAtFadeStart: Double
-        var fadeStartTime: TimeInterval?
-        var fadeDuration: TimeInterval
-        var suspendedFadeDelay: TimeInterval?
-        var motionClock: SceneActiveTimeClock
-        var isMotionEnabled: Bool
-        /// A seen photo keeps its current sample when Reduce Motion is on; turning the setting off later must not
-        /// restart it on a background/foreground return.
-
-        var isMotionFrozenByReduceMotion: Bool
-        var isPresentationReady: Bool
-        /// Raised back to full opacity out of a transition that a manual press interrupted.
-        var isRaisedForHold = false
-
-        func opacity(at time: TimeInterval) -> Double {
-            guard let fadeStartTime, fadeDuration > 0 else {
-                return min(1, max(0, opacityAtFadeStart))
-            }
-
-            let elapsed = max(0, time - fadeStartTime)
-            switch role {
-            case .outgoing:
-                return min(1, max(0, opacityAtFadeStart * (1 - elapsed / fadeDuration)))
-            case .incoming:
-                return min(1, max(0, opacityAtFadeStart + (1 - opacityAtFadeStart) * elapsed / fadeDuration))
-            case .stable:
-                return min(1, max(0, opacityAtFadeStart))
-            }
-        }
-
-        func renderLayer(at time: TimeInterval) -> SceneRenderLayer {
-            SceneRenderLayer(
-                identity: identity,
-                role: role,
-                opacity: opacity(at: time),
-                motionActiveTime: motionClock.activeTime(at: time),
-                isMotionEnabled: isMotionEnabled,
-                fadeStartTime: fadeStartTime,
-                fadeDuration: fadeDuration,
-                isPresentationReady: isPresentationReady
-            )
-        }
-    }
-
     /// The only presentation owner on the product path; callers can only send events and run the returned effects.
     struct ScenePresentationState: Equatable, Sendable {
-        /// Opacity at or below which a fading-out layer counts as gone; far below anything a display can show.
-        private static let fadedOutOpacity = 0.000_001
-
         private(set) var underlyingPhase: ScenePresentationPhase
         private(set) var currentTarget: ScenePresentationTarget?
         private(set) var pendingTarget: ScenePresentationTarget?
@@ -87,7 +37,7 @@ extension PlaybackSessionEngine {
         private(set) var nextConfiguredInterval: TimeInterval
         private(set) var diagnostics: [String]
 
-        private var layers: [ScenePresentationLayerState]
+        private var layerTimeline: ScenePresentationLayerTimeline
         private var stableVisibleClock: SceneActiveTimeClock?
         private(set) var graceDeadline: TimeInterval?
         private var isTransitionCompletionPending = false
@@ -108,7 +58,7 @@ extension PlaybackSessionEngine {
             let currentTarget: ScenePresentationTarget?
             let pendingTarget: ScenePresentationTarget?
             let targetReadiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness]
-            var layers: [ScenePresentationLayerState]
+            var layerTimeline: ScenePresentationLayerTimeline
             let stableVisibleClock: SceneActiveTimeClock?
             let graceDeadline: TimeInterval?
             let isTransitionCompletionPending: Bool
@@ -132,7 +82,7 @@ extension PlaybackSessionEngine {
                     currentTarget: currentTarget,
                     pendingTarget: pendingTarget,
                     targetReadiness: targetReadiness,
-                    layers: [],
+                    layerTimeline: ScenePresentationLayerTimeline(),
                     stableVisibleClock: nil,
                     graceDeadline: nil,
                     isTransitionCompletionPending: false,
@@ -168,7 +118,7 @@ extension PlaybackSessionEngine {
             self.isReduceMotionEnabled = isReduceMotionEnabled
             self.nextConfiguredInterval = SceneLifecycleContract.normalizedInterval(nextConfiguredInterval)
             diagnostics = []
-            layers = []
+            layerTimeline = ScenePresentationLayerTimeline()
             stableVisibleClock = nil
             graceDeadline = nil
             transitionKind = nil
@@ -313,10 +263,7 @@ extension PlaybackSessionEngine {
 
             case let .incomingBecameVisible(identity):
                 guard
-                    layers.contains(where: {
-                        $0.identity == identity && ($0.role == .incoming || $0.role == .stable)
-                            && $0.isPresentationReady && $0.opacity(at: time) > 0
-                    })
+                    layerTimeline.canBecomeVisible(identity, at: time)
                 else {
                     return reject("incoming-not-visible")
                 }
@@ -348,7 +295,7 @@ extension PlaybackSessionEngine {
                 return [.loadMore(generation: generation)]
 
             case .sourceExhausted:
-                let noVisibleLayers = !layers.contains { $0.opacity(at: time) > 0 }
+                let noVisibleLayers = !layerTimeline.hasVisibleLayers(at: time)
                 let allKnownTargetsFailed =
                     !targetReadiness.isEmpty && targetReadiness.values.allSatisfy { $0 == .failed }
                 guard noVisibleLayers,
@@ -386,7 +333,7 @@ extension PlaybackSessionEngine {
         }
 
         func renderSnapshot(at time: TimeInterval) -> SceneRenderSnapshot {
-            let renderLayers = layers.map { $0.renderLayer(at: time) }
+            let renderLayers = layerTimeline.renderLayers(at: time)
             return SceneRenderSnapshot(
                 phase: phase,
                 underlyingPhase: underlyingPhase,
@@ -412,9 +359,9 @@ extension PlaybackSessionEngine {
             let canNavigateManuallyWhilePaused = source.isManual && suspensionReasons == [.userPaused]
             let previousTarget = pendingTarget
             var cancellationEffects: [ScenePresentationEffect] = []
-            let hadPresentedLayer = layers.contains { $0.opacity(at: time) > 0 }
+            let hadPresentedLayer = layerTimeline.hasVisibleLayers(at: time)
             // A photo that just faded out of an automatic transition can still be brought back for a manual hold.
-            let canHoldPresentation = hadPresentedLayer || (source.isManual && layers.contains { $0.role == .outgoing })
+            let canHoldPresentation = hadPresentedLayer || (source.isManual && layerTimeline.hasOutgoingLayers)
             // Replacing a held manual target keeps the first capture: Previous must return to the last seen scene.
             let isReplacingHeldManualTarget = hasUnseenManualPendingPresentation
             let manualPendingRestore =
@@ -426,7 +373,7 @@ extension PlaybackSessionEngine {
             }
             // A hold keeps its short fades running: freezing them would leave a photo half faded behind the held one.
             if !(isReplacingHeldManualTarget && underlyingPhase == .grace) {
-                materializeLayers(at: time)
+                layerTimeline.materializeLayers(at: time)
             }
             if let previousTarget, previousTarget.identity != target.identity {
                 let cancellationSource = latestAttemptSource(for: previousTarget.identity) ?? source
@@ -454,7 +401,7 @@ extension PlaybackSessionEngine {
                     } ?? []
                 scheduledWakeUp = nil
                 suspendedWakeUp = nil
-                layers.removeAll { $0.identity != target.identity }
+                layerTimeline.keepOnly(target.identity)
                 transitionKind = nil
                 underlyingPhase = .loading
                 pendingTarget = target
@@ -477,12 +424,8 @@ extension PlaybackSessionEngine {
         private func captureManualPendingPresentationRestore(
             at time: TimeInterval
         ) -> ManualPendingPresentationRestore {
-            let visibleLayers = layers.filter { $0.opacity(at: time) > 0 }
-            var restoredLayers = layers
-            freezeLayerFadeSamples(&restoredLayers, at: time)
-            for index in restoredLayers.indices {
-                restoredLayers[index].motionClock.suspend(at: time)
-            }
+            let shouldKeepHeldPhotoLive = layerTimeline.hasOnlyStableVisibleLayers(at: time)
+            let restoredTimeline = layerTimeline.frozen(at: time)
             var restoredStableVisibleClock = stableVisibleClock
             restoredStableVisibleClock?.suspend(at: time)
             let wakeUp =
@@ -498,7 +441,7 @@ extension PlaybackSessionEngine {
                 currentTarget: currentTarget,
                 pendingTarget: pendingTarget,
                 targetReadiness: targetReadiness,
-                layers: restoredLayers,
+                layerTimeline: restoredTimeline,
                 stableVisibleClock: restoredStableVisibleClock,
                 graceDeadline: graceDeadline,
                 isTransitionCompletionPending: isTransitionCompletionPending,
@@ -506,7 +449,7 @@ extension PlaybackSessionEngine {
                 wakeUp: wakeUp,
                 isManualNavigationWhilePaused: isManualNavigationWhilePaused,
                 isCurrentSceneManualStatic: isCurrentSceneManualStatic,
-                shouldKeepHeldPhotoLive: !visibleLayers.isEmpty && visibleLayers.allSatisfy { $0.role == .stable }
+                shouldKeepHeldPhotoLive: shouldKeepHeldPhotoLive
             )
         }
 
@@ -534,10 +477,9 @@ extension PlaybackSessionEngine {
                     at: time
                 )
             }
-            layers = restore.layers
-            Self.reconcileReduceMotion(
+            layerTimeline = restore.layerTimeline
+            layerTimeline.reconcileReduceMotion(
                 isReduceMotionEnabled,
-                in: &layers,
                 at: time,
                 canResumeUnseenMotion: false
             )
@@ -557,22 +499,20 @@ extension PlaybackSessionEngine {
                 && (underlyingPhase == .transition || underlyingPhase == .incomingFromLoading)
             if resumesRestoredPresentation {
                 stableVisibleClock?.resume(at: time)
-                for index in layers.indices
-                where layers[index].isMotionEnabled && !layers[index].isMotionFrozenByReduceMotion
-                    && !isReduceMotionEnabled
-                {
-                    let defersIncomingMotionUntilFade =
-                        underlyingPhase == .transition && layers[index].role == .incoming
-                        && layers[index].suspendedFadeDelay != nil
-                    guard !defersIncomingMotionUntilFade else { continue }
-                    layers[index].motionClock.resume(at: time)
-                }
+                layerTimeline.resumeMotion(
+                    at: time,
+                    isReduceMotionEnabled: isReduceMotionEnabled,
+                    defersIncomingMotionUntilFade: underlyingPhase == .transition,
+                    enablesMotion: false
+                )
             }
             // A pause/background restore brings back the frozen fade, so cancelling an unseen pending target must not
             // rewrite the fade start; a manual short crossfade that was just triggered continues from the same sample.
 
             if resumesRestoredPresentation || resumesRestoredManualFadeWhilePaused {
-                resumeLayerFades(at: time, shouldResumeMotion: resumesRestoredPresentation)
+                layerTimeline.resumeLayerFades(
+                    at: time, shouldResumeMotion: resumesRestoredPresentation,
+                    isReduceMotionEnabled: isReduceMotionEnabled)
             }
 
             var effects: [ScenePresentationEffect] = [
@@ -616,15 +556,15 @@ extension PlaybackSessionEngine {
             source cancelledSource: ScenePresentationRequestSource,
             at time: TimeInterval
         ) -> [ScenePresentationEffect] {
-            layers.removeAll { $0.identity == cancelledTarget.identity }
-            if let restartedTarget = restore.pendingTarget,
-                restore.targetReadiness[restartedTarget.identity] == .pending
-            {
-                // A target that goes back to loading decodes again behind the held photo, from a fresh hidden layer.
-                layers.removeAll { $0.identity == restartedTarget.identity && $0.role == .outgoing }
+            let restartingIdentity = restore.pendingTarget.flatMap { target in
+                restore.targetReadiness[target.identity] == .pending ? target.identity : nil
             }
-            let liveIdentities = Set(layers.map(\.identity))
-            layers += restore.layers.filter { $0.opacity(at: time) <= 0 && !liveIdentities.contains($0.identity) }
+            layerTimeline.continueHeldLayers(
+                from: restore.layerTimeline,
+                cancelling: cancelledTarget.identity,
+                restarting: restartingIdentity,
+                at: time
+            )
             graceDeadline = restore.graceDeadline
             isTransitionCompletionPending = restore.isTransitionCompletionPending
             transitionKind = restore.transitionKind
@@ -648,10 +588,7 @@ extension PlaybackSessionEngine {
             }
             if underlyingPhase == .transition, let pendingTarget {
                 // The raised picture finishes its short fades, then the interrupted target settles as usual.
-                let remaining =
-                    layers.compactMap { layer in
-                        layer.fadeStartTime.map { max(0, $0 + layer.fadeDuration - time) }
-                    }.max() ?? 0
+                let remaining = layerTimeline.remainingFadeDuration(at: time)
                 effects += scheduleWakeUp(
                     generation: pendingTarget.identity.generation,
                     purpose: .transitionCompletion,
@@ -800,7 +737,7 @@ extension PlaybackSessionEngine {
                 source.isManual
                 ? ScenePresentationPacingPolicy.manualReady
                 : ScenePresentationPacingPolicy.automatic
-            convertVisibleLayersToOutgoing(pacing: pacing, at: time)
+            layerTimeline.convertVisibleLayersToOutgoing(pacing: pacing, at: time)
             pendingTarget = target
             targetReadiness[target.identity] = .ready
             currentTarget = target
@@ -831,7 +768,7 @@ extension PlaybackSessionEngine {
             if source.isManual {
                 return holdPresentationForManualTarget(target, manualPendingRestore: manualPendingRestore, at: time)
             }
-            convertVisibleLayersToOutgoing(pacing: ScenePresentationPacingPolicy.automatic, at: time)
+            layerTimeline.convertVisibleLayersToOutgoing(pacing: ScenePresentationPacingPolicy.automatic, at: time)
             installHiddenLayerIfNeeded(target: target, at: time)
             pendingTarget = target
             currentTarget = target
@@ -866,12 +803,12 @@ extension PlaybackSessionEngine {
                 let raised = raiseInterruptedTransition(manualPendingRestore, at: time)
             {
                 // A frame caught mid-transition may be dim: bring a photo the user has seen back up instead.
-                layers = raised.layers
+                layerTimeline = raised.timeline
                 manualPendingPresentationRestore = raised.restore
                 stableVisibleClock = nil
             } else {
                 // A settled or already raised photo keeps its own clocks; never-shown layers of replaced targets leave.
-                layers.removeAll { $0.identity != target.identity && $0.opacity(at: time) <= 0 }
+                layerTimeline.discardHiddenLayers(except: target.identity, at: time)
             }
             installHiddenLayerIfNeeded(target: target, at: time)
             pendingTarget = target
@@ -889,39 +826,26 @@ extension PlaybackSessionEngine {
         private func raiseInterruptedTransition(
             _ capture: ManualPendingPresentationRestore,
             at time: TimeInterval
-        ) -> (layers: [ScenePresentationLayerState], restore: ManualPendingPresentationRestore)? {
+        ) -> (timeline: ScenePresentationLayerTimeline, restore: ManualPendingPresentationRestore)? {
             let transitionTarget = capture.pendingTarget ?? capture.currentTarget
-            let visibleLayers = capture.layers.filter { $0.opacity(at: time) > 0 }
+            let capturedLayers = capture.layerTimeline.renderLayers(at: time)
+            let visibleLayers = capturedLayers.filter { $0.opacity > 0 }
             let seenTargetLayer = transitionTarget.flatMap { target in
                 history.contains(target.identity) ? visibleLayers.first { $0.identity == target.identity } : nil
             }
             guard
                 let heldIdentity = seenTargetLayer?.identity
-                    ?? (visibleLayers.last { $0.role == .outgoing } ?? capture.layers.last { $0.role == .outgoing })?
+                    ?? (visibleLayers.last { $0.role == .outgoing } ?? capturedLayers.last { $0.role == .outgoing })?
                     .identity
             else {
                 return nil
             }
-            let pacing = ScenePresentationPacingPolicy.manualReady
-            var raisedLayers: [ScenePresentationLayerState] = []
-            for var layer in capture.layers {
-                let opacity = layer.opacity(at: time)
-                let isHeld = layer.identity == heldIdentity
-                guard isHeld || opacity > 0 else { continue }
-                layer.role = isHeld ? .incoming : .outgoing
-                layer.isRaisedForHold = isHeld
-                layer.opacityAtFadeStart = opacity
-                layer.fadeStartTime = time
-                layer.fadeDuration =
-                    isHeld ? pacing.incomingFadeDuration * (1 - opacity) : pacing.outgoingFadeDuration * opacity
-                layer.suspendedFadeDelay = nil
-                layer.isPresentationReady = isHeld || layer.isPresentationReady
-                // The capture suspended every clock; only a photo that was actually moving picks its motion up again.
-                if suspensionReasons.isEmpty, layer.isMotionEnabled, !layer.isMotionFrozenByReduceMotion {
-                    layer.motionClock.resume(at: time)
-                }
-                raisedLayers.append(layer)
-            }
+            let raisedTimeline = capture.layerTimeline.raisedForHold(
+                identity: heldIdentity,
+                pacing: .manualReady,
+                shouldResumeMotion: suspensionReasons.isEmpty,
+                at: time
+            )
             // Outgoing layers sit below incoming ones, so the held photo is drawn on top of what fades out.
             let restore: ManualPendingPresentationRestore
             if let seenTargetLayer, let transitionTarget, seenTargetLayer.identity == transitionTarget.identity {
@@ -954,7 +878,7 @@ extension PlaybackSessionEngine {
                     }
                 )
             }
-            return (raisedLayers, restore)
+            return (raisedTimeline, restore)
         }
 
         private mutating func beginIncomingFromLoading(
@@ -967,7 +891,7 @@ extension PlaybackSessionEngine {
                 source.isManual
                 ? ScenePresentationPacingPolicy.manualReady
                 : ScenePresentationPacingPolicy.automaticIncoming
-            materializeLayers(at: time)
+            layerTimeline.materializeLayers(at: time)
             currentTarget = target
             pendingTarget = target
             targetReadiness[target.identity] = .ready
@@ -989,66 +913,8 @@ extension PlaybackSessionEngine {
             )
         }
 
-        private mutating func installHiddenLayerIfNeeded(
-            target: ScenePresentationTarget,
-            at time: TimeInterval
-        ) {
-            guard !layers.contains(where: { $0.identity == target.identity }) else { return }
-            layers.append(
-                ScenePresentationLayerState(
-                    identity: target.identity,
-                    role: .incoming,
-                    opacityAtFadeStart: 0,
-                    fadeStartTime: nil,
-                    fadeDuration: SceneLifecycleContract.incomingFadeDuration,
-                    suspendedFadeDelay: nil,
-                    motionClock: shouldFreezeNewLayersForCurrentSuspension
-                        ? SceneActiveTimeClock(accumulatedActiveTime: 0, activeAnchorTime: nil)
-                        : SceneActiveTimeClock(startedAt: time),
-                    isMotionEnabled: !isReduceMotionEnabled && !isManualNavigationWhilePaused
-                        && !shouldFreezeNewLayersForCurrentSuspension,
-                    isMotionFrozenByReduceMotion: false,
-                    isPresentationReady: false
-                ))
-        }
-
-        private mutating func promoteHiddenLayer(
-            target: ScenePresentationTarget,
-            fadeStartTime: TimeInterval,
-            fadeDuration: TimeInterval,
-            at time: TimeInterval
-        ) {
-            installHiddenLayerIfNeeded(target: target, at: fadeStartTime)
-            for index in layers.indices where layers[index].identity == target.identity {
-                layers[index].role = .incoming
-                layers[index].opacityAtFadeStart = 0
-                layers[index].fadeDuration = fadeDuration
-                if shouldFreezeNewLayersForCurrentSuspension {
-                    layers[index].fadeStartTime = nil
-                    layers[index].suspendedFadeDelay = max(0, fadeStartTime - time)
-                    layers[index].motionClock = SceneActiveTimeClock(
-                        accumulatedActiveTime: 0,
-                        activeAnchorTime: nil
-                    )
-                } else {
-                    layers[index].fadeStartTime = fadeStartTime
-                    layers[index].suspendedFadeDelay = nil
-                    layers[index].motionClock =
-                        isManualNavigationWhilePaused
-                        ? SceneActiveTimeClock(accumulatedActiveTime: 0, activeAnchorTime: nil)
-                        : SceneActiveTimeClock(startedAt: fadeStartTime)
-                }
-                layers[index].isMotionEnabled =
-                    !isReduceMotionEnabled && !isManualNavigationWhilePaused
-                    && !shouldFreezeNewLayersForCurrentSuspension
-                // A new presentation does not inherit the previous scene's Reduce Motion freeze.
-                layers[index].isMotionFrozenByReduceMotion = false
-                layers[index].isPresentationReady = true
-            }
-        }
-
         private mutating func completeTransition(at time: TimeInterval) -> [ScenePresentationEffect] {
-            materializeLayers(at: time)
+            layerTimeline.materializeLayers(at: time)
             switch underlyingPhase {
             case .transition:
                 guard let pendingTarget else {
@@ -1059,7 +925,7 @@ extension PlaybackSessionEngine {
                 case .readyPhoto:
                     return settleIncoming(target: pendingTarget, at: time)
                 case .loading:
-                    layers.removeAll { $0.role == .outgoing }
+                    layerTimeline.removeOutgoingLayers()
                     if targetReadiness[pendingTarget.identity] == .ready {
                         return beginIncomingFromLoading(
                             target: pendingTarget,
@@ -1090,17 +956,7 @@ extension PlaybackSessionEngine {
             target: ScenePresentationTarget,
             at time: TimeInterval
         ) -> [ScenePresentationEffect] {
-            layers = layers.map { layer in
-                guard layer.identity == target.identity else { return layer }
-                var settled = layer
-                settled.role = .stable
-                settled.opacityAtFadeStart = 1
-                settled.fadeStartTime = nil
-                settled.fadeDuration = 0
-                return settled
-            }
-            // Fades that end together can leave rounding residue (about 1e-16) on a photo that has faded out.
-            layers.removeAll { $0.role == .outgoing && $0.opacity(at: time) <= Self.fadedOutOpacity }
+            layerTimeline.settleIncoming(target.identity, at: time)
             let settlesAsManualStaticScene = isManualNavigationWhilePaused
             let startsStableClockFrozen = settlesAsManualStaticScene || shouldFreezeNewLayersForCurrentSuspension
             let settledTarget =
@@ -1165,7 +1021,7 @@ extension PlaybackSessionEngine {
                 // the old scene's remaining grace.
 
                 if let pendingTarget {
-                    if suspensionReasons.isEmpty, let raiseEnd = raisedHeldPhotoEnd(at: time) {
+                    if suspensionReasons.isEmpty, let raiseEnd = layerTimeline.raisedHeldPhotoEnd(at: time) {
                         // A crossfade from a photo still coming back up would start dim; it starts once it is up.
                         return scheduleWakeUp(
                             generation: pendingTarget.identity.generation,
@@ -1283,45 +1139,6 @@ extension PlaybackSessionEngine {
             })?.source
         }
 
-        private mutating func convertVisibleLayersToOutgoing(
-            pacing: ScenePresentationPacingPolicy,
-            at time: TimeInterval
-        ) {
-            materializeLayers(at: time)
-            layers = layers.compactMap { layer in
-                let opacity = layer.opacity(at: time)
-                guard opacity > 0 else { return nil }
-                var outgoing = layer
-                outgoing.role = .outgoing
-                outgoing.opacityAtFadeStart = opacity
-                outgoing.fadeStartTime = time
-                outgoing.fadeDuration = pacing.outgoingFadeDuration
-                outgoing.suspendedFadeDelay = nil
-                return outgoing
-            }
-        }
-
-        private mutating func materializeLayers(at time: TimeInterval) {
-            layers = layers.compactMap { layer in
-                let opacity = layer.opacity(at: time)
-                guard opacity > 0 || layer.role != .outgoing else { return nil }
-                var materialized = layer
-                materialized.opacityAtFadeStart = opacity
-                materialized.fadeStartTime = nil
-                materialized.suspendedFadeDelay = nil
-                if layer.role == .incoming,
-                    layer.isPresentationReady,
-                    opacity < 1
-                {
-                    materialized.fadeStartTime = time
-                    materialized.opacityAtFadeStart = opacity
-                    materialized.fadeDuration = max(
-                        0, layer.fadeDuration - max(0, time - (layer.fadeStartTime ?? time)))
-                }
-                return materialized
-            }
-        }
-
         private mutating func suspend(
             reason: ScenePresentationSuspensionReason,
             at time: TimeInterval
@@ -1334,18 +1151,16 @@ extension PlaybackSessionEngine {
                 return effects
             }
             stableVisibleClock?.suspend(at: time)
-            for index in layers.indices {
-                layers[index].motionClock.suspend(at: time)
-            }
-            if raisedHeldPhotoEnd(at: time) != nil {
+            layerTimeline.suspendMotion(at: time)
+            if layerTimeline.raisedHeldPhotoEnd(at: time) != nil {
                 // A photo being raised for a manual hold, or kept up after Previous cancelled that hold, finishes its
                 // short fade during a user pause, like manual navigation. Nobody sees the background, so there it ends
                 // at once rather than coming back dim.
                 if reason == .background {
-                    finishRaisingHeldPhoto()
+                    layerTimeline.finishRaisingHeldPhoto()
                 }
             } else {
-                freezeLayerFades(at: time)
+                layerTimeline.freezeLayerFadeSamples(at: time)
             }
             var effects: [ScenePresentationEffect] = []
             if let wakeUp = scheduledWakeUp {
@@ -1367,26 +1182,6 @@ extension PlaybackSessionEngine {
             return effects
         }
 
-        /// When the photo raised out of an interrupted transition reaches full opacity, or nil once it has.
-        private func raisedHeldPhotoEnd(at time: TimeInterval) -> TimeInterval? {
-            layers.compactMap { layer in
-                guard layer.isRaisedForHold, layer.role == .incoming, layer.opacity(at: time) < 1,
-                    let fadeStartTime = layer.fadeStartTime
-                else { return nil }
-                return fadeStartTime + layer.fadeDuration
-            }.max()
-        }
-
-        private mutating func finishRaisingHeldPhoto() {
-            layers.removeAll { $0.role == .outgoing }
-            for index in layers.indices where layers[index].isRaisedForHold && layers[index].role == .incoming {
-                layers[index].opacityAtFadeStart = 1
-                layers[index].fadeStartTime = nil
-                layers[index].fadeDuration = 0
-                layers[index].suspendedFadeDelay = nil
-            }
-        }
-
         /// The automatic fade-out ends before the delayed fade-in starts, so a user pause in that gap would freeze an
         /// empty frame. The next photo fades in with the short manual pacing instead and then holds still, as it does
         /// for manual navigation while paused.
@@ -1394,23 +1189,15 @@ extension PlaybackSessionEngine {
             guard suspensionReasons == [.userPaused],
                 underlyingPhase == .transition,
                 transitionKind == .readyPhoto,
-                !layers.contains(where: { $0.opacity(at: time) > 0 }),
+                !layerTimeline.hasVisibleLayers(at: time),
                 let pendingTarget,
-                let incomingIndex = layers.firstIndex(where: {
-                    $0.identity == pendingTarget.identity && $0.role == .incoming && $0.isPresentationReady
-                })
+                layerTimeline.hasReadyIncoming(pendingTarget.identity)
             else {
                 return nil
             }
             beginManualNavigationWhilePaused()
             let pacing = ScenePresentationPacingPolicy.manualReady
-            // The faded-out photo stays as an invisible outgoing layer, so EXIF keeps it until the next photo shows.
-            layers[incomingIndex].opacityAtFadeStart = 0
-            layers[incomingIndex].fadeStartTime = time + pacing.incomingDelay
-            layers[incomingIndex].fadeDuration = pacing.incomingFadeDuration
-            layers[incomingIndex].suspendedFadeDelay = nil
-            layers[incomingIndex].motionClock = SceneActiveTimeClock(accumulatedActiveTime: 0, activeAnchorTime: nil)
-            layers[incomingIndex].isMotionEnabled = false
+            layerTimeline.startPausedIncoming(pendingTarget.identity, pacing: pacing, at: time)
             return scheduleWakeUp(
                 generation: pendingTarget.identity.generation,
                 purpose: .transitionCompletion,
@@ -1468,7 +1255,9 @@ extension PlaybackSessionEngine {
                 updateCurrentTargetForResumedManualIncoming(at: time)
                 isManualNavigationWhilePaused = false
             }
-            resumeLayerFades(at: time, shouldResumeMotion: shouldResumeAutomaticPlayback)
+            layerTimeline.resumeLayerFades(
+                at: time, shouldResumeMotion: shouldResumeAutomaticPlayback,
+                isReduceMotionEnabled: isReduceMotionEnabled)
             if isTransitionCompletionPending {
                 isTransitionCompletionPending = false
                 suspendedWakeUp = nil
@@ -1495,7 +1284,7 @@ extension PlaybackSessionEngine {
                     // Ready starts its photo transition at once.
 
                     suspendedWakeUp = nil
-                    if suspensionReasons.isEmpty, let raiseEnd = raisedHeldPhotoEnd(at: time) {
+                    if suspensionReasons.isEmpty, let raiseEnd = layerTimeline.raisedHeldPhotoEnd(at: time) {
                         // Play during a raise waits for the raised photo, as a target that is ready while playing does.
                         return scheduleWakeUp(
                             generation: pendingTarget.identity.generation,
@@ -1536,13 +1325,304 @@ extension PlaybackSessionEngine {
         private mutating func updateCurrentTargetForResumedManualIncoming(at time: TimeInterval) {
             guard let currentTarget,
                 underlyingPhase == .transition || underlyingPhase == .incomingFromLoading,
-                let index = layers.firstIndex(where: {
-                    $0.identity == currentTarget.identity && $0.role == .incoming && $0.isPresentationReady
-                })
+                let remainingFade = layerTimeline.remainingIncomingFadeDuration(for: currentTarget.identity, at: time)
             else {
                 return
             }
 
+            let adjustedTarget = currentTarget.replacingVisibleIncomingFadeDuration(remainingFade)
+            self.currentTarget = adjustedTarget
+            if pendingTarget?.identity == adjustedTarget.identity {
+                pendingTarget = adjustedTarget
+            }
+        }
+
+        private mutating func updateReduceMotion(_ isEnabled: Bool, at time: TimeInterval) {
+            guard isEnabled != isReduceMotionEnabled else { return }
+            isReduceMotionEnabled = isEnabled
+            if isEnabled || !isManualNavigationWhilePaused {
+                layerTimeline.reconcileReduceMotion(
+                    isEnabled,
+                    at: time,
+                    canResumeUnseenMotion: !isEnabled && suspensionReasons.isEmpty
+                )
+            }
+
+            // The capture behind a held manual target must follow the toggle too, or cancelling restores a stale freeze.
+
+            if var restore = manualPendingPresentationRestore {
+                restore.layerTimeline.reconcileReduceMotion(
+                    isEnabled,
+                    at: time,
+                    canResumeUnseenMotion: false
+                )
+                manualPendingPresentationRestore = restore
+            }
+        }
+
+        private mutating func reject(_ diagnostic: String) -> [ScenePresentationEffect] {
+            diagnostics.append(diagnostic)
+            return []
+        }
+
+        private mutating func scheduleWakeUp(
+            generation: UUID,
+            purpose: ScenePresentationWakeUpPurpose,
+            deadline: TimeInterval,
+            at time: TimeInterval
+        ) -> [ScenePresentationEffect] {
+            if shouldFreezeNewLayersForCurrentSuspension {
+                scheduledWakeUp = nil
+                suspendedWakeUp = ScenePresentationSuspendedWakeUp(
+                    generation: generation,
+                    purpose: purpose,
+                    remaining: max(0, deadline - time)
+                )
+                return []
+            }
+            scheduledWakeUp = ScenePresentationScheduledWakeUp(
+                generation: generation,
+                purpose: purpose,
+                deadline: deadline
+            )
+            suspendedWakeUp = nil
+            return [.scheduleWakeUp(generation: generation, deadline: deadline)]
+        }
+        private mutating func resumeManualStaticMotion(
+            currentTarget: ScenePresentationTarget,
+            time: TimeInterval
+        ) {
+            isCurrentSceneManualStatic = false
+            stableVisibleClock?.resume(at: time)
+            layerTimeline.resumeManualStaticMotion(
+                currentTarget.identity, at: time, isReduceMotionEnabled: isReduceMotionEnabled
+            )
+        }
+
+        private mutating func resumeAutomaticLayerMotion(
+            time: TimeInterval
+        ) {
+            stableVisibleClock?.resume(at: time)
+            layerTimeline.resumeMotion(
+                at: time,
+                isReduceMotionEnabled: isReduceMotionEnabled,
+                defersIncomingMotionUntilFade: underlyingPhase == .transition,
+                enablesMotion: true
+            )
+        }
+
+        private mutating func installHiddenLayerIfNeeded(target: ScenePresentationTarget, at time: TimeInterval) {
+            layerTimeline.installHiddenLayerIfNeeded(
+                target: target, at: time,
+                shouldFreezeNewLayersForCurrentSuspension: shouldFreezeNewLayersForCurrentSuspension,
+                isReduceMotionEnabled: isReduceMotionEnabled,
+                isManualNavigationWhilePaused: isManualNavigationWhilePaused
+            )
+        }
+
+        private mutating func promoteHiddenLayer(
+            target: ScenePresentationTarget, fadeStartTime: TimeInterval, fadeDuration: TimeInterval,
+            at time: TimeInterval
+        ) {
+            layerTimeline.promoteHiddenLayer(
+                target: target, fadeStartTime: fadeStartTime, fadeDuration: fadeDuration, at: time,
+                shouldFreezeNewLayersForCurrentSuspension: shouldFreezeNewLayersForCurrentSuspension,
+                isReduceMotionEnabled: isReduceMotionEnabled,
+                isManualNavigationWhilePaused: isManualNavigationWhilePaused
+            )
+        }
+
+    }
+
+    /// Value-only layer storage and sampling; the reducer supplies every lifecycle decision.
+    private struct ScenePresentationLayerTimeline: Equatable, Sendable {
+        /// Opacity at or below which a fading-out layer counts as gone; far below anything a display can show.
+        private static let fadedOutOpacity = 0.000_001
+        private var layers: [ScenePresentationLayerState] = []
+
+        private struct ScenePresentationLayerState: Equatable, Sendable {
+            let identity: ScenePresentationIdentity
+            var role: ScenePresentationLayerRole
+            var opacityAtFadeStart: Double
+            var fadeStartTime: TimeInterval?
+            var fadeDuration: TimeInterval
+            var suspendedFadeDelay: TimeInterval?
+            var motionClock: SceneActiveTimeClock
+            var isMotionEnabled: Bool
+            /// A seen photo keeps its current sample when Reduce Motion is on; turning the setting off later must not
+            /// restart it on a background/foreground return.
+
+            var isMotionFrozenByReduceMotion: Bool
+            var isPresentationReady: Bool
+            /// Raised back to full opacity out of a transition that a manual press interrupted.
+            var isRaisedForHold = false
+
+            func opacity(at time: TimeInterval) -> Double {
+                guard let fadeStartTime, fadeDuration > 0 else {
+                    return min(1, max(0, opacityAtFadeStart))
+                }
+
+                let elapsed = max(0, time - fadeStartTime)
+                switch role {
+                case .outgoing:
+                    return min(1, max(0, opacityAtFadeStart * (1 - elapsed / fadeDuration)))
+                case .incoming:
+                    return min(1, max(0, opacityAtFadeStart + (1 - opacityAtFadeStart) * elapsed / fadeDuration))
+                case .stable:
+                    return min(1, max(0, opacityAtFadeStart))
+                }
+            }
+
+            func renderLayer(at time: TimeInterval) -> SceneRenderLayer {
+                SceneRenderLayer(
+                    identity: identity,
+                    role: role,
+                    opacity: opacity(at: time),
+                    motionActiveTime: motionClock.activeTime(at: time),
+                    isMotionEnabled: isMotionEnabled,
+                    fadeStartTime: fadeStartTime,
+                    fadeDuration: fadeDuration,
+                    isPresentationReady: isPresentationReady
+                )
+            }
+        }
+
+        func renderLayers(at time: TimeInterval) -> [SceneRenderLayer] {
+            layers.map { $0.renderLayer(at: time) }
+        }
+
+        func hasVisibleLayers(at time: TimeInterval) -> Bool {
+            layers.contains { $0.opacity(at: time) > 0 }
+        }
+
+        var hasOutgoingLayers: Bool { layers.contains { $0.role == .outgoing } }
+
+        func hasOnlyStableVisibleLayers(at time: TimeInterval) -> Bool {
+            let visible = layers.filter { $0.opacity(at: time) > 0 }
+            return !visible.isEmpty && visible.allSatisfy { $0.role == .stable }
+        }
+
+        func canBecomeVisible(_ identity: ScenePresentationIdentity, at time: TimeInterval) -> Bool {
+            layers.contains {
+                $0.identity == identity && ($0.role == .incoming || $0.role == .stable)
+                    && $0.isPresentationReady && $0.opacity(at: time) > 0
+            }
+        }
+
+        func hasReadyIncoming(_ identity: ScenePresentationIdentity) -> Bool {
+            layers.contains { $0.identity == identity && $0.role == .incoming && $0.isPresentationReady }
+        }
+
+        func frozen(at time: TimeInterval) -> Self {
+            var copy = self
+            copy.freezeLayerFadeSamples(at: time)
+            copy.suspendMotion(at: time)
+            return copy
+        }
+
+        mutating func suspendMotion(at time: TimeInterval) {
+            for index in layers.indices { layers[index].motionClock.suspend(at: time) }
+        }
+
+        mutating func keepOnly(_ identity: ScenePresentationIdentity) {
+            layers.removeAll { $0.identity != identity }
+        }
+
+        mutating func removeOutgoingLayers() { layers.removeAll { $0.role == .outgoing } }
+
+        mutating func discardHiddenLayers(except identity: ScenePresentationIdentity, at time: TimeInterval) {
+            layers.removeAll { $0.identity != identity && $0.opacity(at: time) <= 0 }
+        }
+
+        mutating func continueHeldLayers(
+            from captured: Self, cancelling cancelledIdentity: ScenePresentationIdentity,
+            restarting restartingIdentity: ScenePresentationIdentity?, at time: TimeInterval
+        ) {
+            layers.removeAll { $0.identity == cancelledIdentity }
+            if let restartingIdentity {
+                // A restarted target decodes again behind the held photo, from a fresh hidden layer.
+                layers.removeAll { $0.identity == restartingIdentity && $0.role == .outgoing }
+            }
+            let liveIdentities = Set(layers.map(\.identity))
+            layers += captured.layers.filter { $0.opacity(at: time) <= 0 && !liveIdentities.contains($0.identity) }
+        }
+
+        func remainingFadeDuration(at time: TimeInterval) -> TimeInterval {
+            layers.compactMap { layer in
+                layer.fadeStartTime.map { max(0, $0 + layer.fadeDuration - time) }
+            }.max() ?? 0
+        }
+
+        func raisedForHold(
+            identity heldIdentity: ScenePresentationIdentity, pacing: ScenePresentationPacingPolicy,
+            shouldResumeMotion: Bool, at time: TimeInterval
+        ) -> Self {
+            var raisedLayers: [ScenePresentationLayerState] = []
+            for var layer in layers {
+                let opacity = layer.opacity(at: time)
+                let isHeld = layer.identity == heldIdentity
+                guard isHeld || opacity > 0 else { continue }
+                layer.role = isHeld ? .incoming : .outgoing
+                layer.isRaisedForHold = isHeld
+                layer.opacityAtFadeStart = opacity
+                layer.fadeStartTime = time
+                layer.fadeDuration =
+                    isHeld ? pacing.incomingFadeDuration * (1 - opacity) : pacing.outgoingFadeDuration * opacity
+                layer.suspendedFadeDelay = nil
+                layer.isPresentationReady = isHeld || layer.isPresentationReady
+                // The capture suspended every clock; only a photo that was actually moving picks its motion up again.
+                if shouldResumeMotion, layer.isMotionEnabled, !layer.isMotionFrozenByReduceMotion {
+                    layer.motionClock.resume(at: time)
+                }
+                raisedLayers.append(layer)
+            }
+
+            var raised = Self()
+            raised.layers = raisedLayers
+            return raised
+        }
+
+        mutating func settleIncoming(_ identity: ScenePresentationIdentity, at time: TimeInterval) {
+            layers = layers.map { layer in
+                guard layer.identity == identity else { return layer }
+                var settled = layer
+                settled.role = .stable
+                settled.opacityAtFadeStart = 1
+                settled.fadeStartTime = nil
+                settled.fadeDuration = 0
+                return settled
+            }
+            // Fades that end together can leave rounding residue (about 1e-16) on a photo that has faded out.
+            layers.removeAll { $0.role == .outgoing && $0.opacity(at: time) <= Self.fadedOutOpacity }
+
+        }
+
+        mutating func startPausedIncoming(
+            _ identity: ScenePresentationIdentity, pacing: ScenePresentationPacingPolicy, at time: TimeInterval
+        ) {
+            guard
+                let index = layers.firstIndex(where: {
+                    $0.identity == identity && $0.role == .incoming && $0.isPresentationReady
+                })
+            else { return }
+            // The faded-out photo stays as an invisible outgoing layer, so EXIF keeps it until the next photo shows.
+            layers[index].opacityAtFadeStart = 0
+            layers[index].fadeStartTime = time + pacing.incomingDelay
+            layers[index].fadeDuration = pacing.incomingFadeDuration
+            layers[index].suspendedFadeDelay = nil
+            layers[index].motionClock = SceneActiveTimeClock(accumulatedActiveTime: 0, activeAnchorTime: nil)
+            layers[index].isMotionEnabled = false
+
+        }
+
+        func remainingIncomingFadeDuration(for identity: ScenePresentationIdentity, at time: TimeInterval)
+            -> TimeInterval?
+        {
+            guard
+                let index = layers.firstIndex(where: {
+                    $0.identity == identity && $0.role == .incoming && $0.isPresentationReady
+                })
+            else { return nil }
             let layer = layers[index]
             let remainingFade: TimeInterval
             if let delay = layer.suspendedFadeDelay {
@@ -1557,71 +1637,196 @@ extension PlaybackSessionEngine {
                 remainingFade = 0
             }
 
-            let adjustedTarget = currentTarget.replacingVisibleIncomingFadeDuration(remainingFade)
-            self.currentTarget = adjustedTarget
-            if pendingTarget?.identity == adjustedTarget.identity {
-                pendingTarget = adjustedTarget
+            return remainingFade
+        }
+
+        mutating func resumeManualStaticMotion(
+            _ identity: ScenePresentationIdentity, at time: TimeInterval, isReduceMotionEnabled: Bool
+        ) {
+            for index in layers.indices where layers[index].identity == identity {
+                if !isReduceMotionEnabled, !layers[index].isMotionFrozenByReduceMotion {
+                    layers[index].isMotionEnabled = true
+                    layers[index].motionClock.resume(at: time)
+                }
             }
         }
 
-        private mutating func updateReduceMotion(_ isEnabled: Bool, at time: TimeInterval) {
-            guard isEnabled != isReduceMotionEnabled else { return }
-            isReduceMotionEnabled = isEnabled
-            if isEnabled || !isManualNavigationWhilePaused {
-                Self.reconcileReduceMotion(
-                    isEnabled,
-                    in: &layers,
-                    at: time,
-                    canResumeUnseenMotion: !isEnabled && suspensionReasons.isEmpty
-                )
+        mutating func resumeMotion(
+            at time: TimeInterval, isReduceMotionEnabled: Bool,
+            defersIncomingMotionUntilFade: Bool, enablesMotion: Bool
+        ) {
+            for index in layers.indices where !layers[index].isMotionFrozenByReduceMotion {
+                guard enablesMotion || layers[index].isMotionEnabled else { continue }
+                // An incoming in a transition waits for its fade; the first scene may move immediately.
+                let defersMotion =
+                    defersIncomingMotionUntilFade && layers[index].role == .incoming
+                    && layers[index].suspendedFadeDelay != nil
+                guard !defersMotion, !isReduceMotionEnabled else { continue }
+                if enablesMotion { layers[index].isMotionEnabled = true }
+                layers[index].motionClock.resume(at: time)
             }
+        }
 
-            // The capture behind a held manual target must follow the toggle too, or cancelling restores a stale freeze.
+        mutating func installHiddenLayerIfNeeded(
+            target: ScenePresentationTarget,
+            at time: TimeInterval,
+            shouldFreezeNewLayersForCurrentSuspension: Bool,
+            isReduceMotionEnabled: Bool,
+            isManualNavigationWhilePaused: Bool
+        ) {
+            guard !layers.contains(where: { $0.identity == target.identity }) else { return }
+            layers.append(
+                ScenePresentationLayerState(
+                    identity: target.identity,
+                    role: .incoming,
+                    opacityAtFadeStart: 0,
+                    fadeStartTime: nil,
+                    fadeDuration: SceneLifecycleContract.incomingFadeDuration,
+                    suspendedFadeDelay: nil,
+                    motionClock: shouldFreezeNewLayersForCurrentSuspension
+                        ? SceneActiveTimeClock(accumulatedActiveTime: 0, activeAnchorTime: nil)
+                        : SceneActiveTimeClock(startedAt: time),
+                    isMotionEnabled: !isReduceMotionEnabled && !isManualNavigationWhilePaused
+                        && !shouldFreezeNewLayersForCurrentSuspension,
+                    isMotionFrozenByReduceMotion: false,
+                    isPresentationReady: false
+                ))
+        }
 
-            if var restore = manualPendingPresentationRestore {
-                Self.reconcileReduceMotion(
-                    isEnabled,
-                    in: &restore.layers,
-                    at: time,
-                    canResumeUnseenMotion: false
-                )
-                manualPendingPresentationRestore = restore
+        mutating func promoteHiddenLayer(
+            target: ScenePresentationTarget,
+            fadeStartTime: TimeInterval,
+            fadeDuration: TimeInterval,
+            at time: TimeInterval,
+            shouldFreezeNewLayersForCurrentSuspension: Bool,
+            isReduceMotionEnabled: Bool,
+            isManualNavigationWhilePaused: Bool
+        ) {
+            installHiddenLayerIfNeeded(
+                target: target, at: fadeStartTime,
+                shouldFreezeNewLayersForCurrentSuspension: shouldFreezeNewLayersForCurrentSuspension,
+                isReduceMotionEnabled: isReduceMotionEnabled,
+                isManualNavigationWhilePaused: isManualNavigationWhilePaused
+            )
+            for index in layers.indices where layers[index].identity == target.identity {
+                layers[index].role = .incoming
+                layers[index].opacityAtFadeStart = 0
+                layers[index].fadeDuration = fadeDuration
+                if shouldFreezeNewLayersForCurrentSuspension {
+                    layers[index].fadeStartTime = nil
+                    layers[index].suspendedFadeDelay = max(0, fadeStartTime - time)
+                    layers[index].motionClock = SceneActiveTimeClock(
+                        accumulatedActiveTime: 0,
+                        activeAnchorTime: nil
+                    )
+                } else {
+                    layers[index].fadeStartTime = fadeStartTime
+                    layers[index].suspendedFadeDelay = nil
+                    layers[index].motionClock =
+                        isManualNavigationWhilePaused
+                        ? SceneActiveTimeClock(accumulatedActiveTime: 0, activeAnchorTime: nil)
+                        : SceneActiveTimeClock(startedAt: fadeStartTime)
+                }
+                layers[index].isMotionEnabled =
+                    !isReduceMotionEnabled && !isManualNavigationWhilePaused
+                    && !shouldFreezeNewLayersForCurrentSuspension
+                // A new presentation does not inherit the previous scene's Reduce Motion freeze.
+                layers[index].isMotionFrozenByReduceMotion = false
+                layers[index].isPresentationReady = true
+            }
+        }
+
+        mutating func convertVisibleLayersToOutgoing(
+            pacing: ScenePresentationPacingPolicy,
+            at time: TimeInterval
+        ) {
+            materializeLayers(at: time)
+            layers = layers.compactMap { layer in
+                let opacity = layer.opacity(at: time)
+                guard opacity > 0 else { return nil }
+                var outgoing = layer
+                outgoing.role = .outgoing
+                outgoing.opacityAtFadeStart = opacity
+                outgoing.fadeStartTime = time
+                outgoing.fadeDuration = pacing.outgoingFadeDuration
+                outgoing.suspendedFadeDelay = nil
+                return outgoing
+            }
+        }
+
+        mutating func materializeLayers(at time: TimeInterval) {
+            layers = layers.compactMap { layer in
+                let opacity = layer.opacity(at: time)
+                guard opacity > 0 || layer.role != .outgoing else { return nil }
+                var materialized = layer
+                materialized.opacityAtFadeStart = opacity
+                materialized.fadeStartTime = nil
+                materialized.suspendedFadeDelay = nil
+                if layer.role == .incoming,
+                    layer.isPresentationReady,
+                    opacity < 1
+                {
+                    materialized.fadeStartTime = time
+                    materialized.opacityAtFadeStart = opacity
+                    materialized.fadeDuration = max(
+                        0, layer.fadeDuration - max(0, time - (layer.fadeStartTime ?? time)))
+                }
+                return materialized
+            }
+        }
+
+        /// When the photo raised out of an interrupted transition reaches full opacity, or nil once it has.
+        func raisedHeldPhotoEnd(at time: TimeInterval) -> TimeInterval? {
+            layers.compactMap { layer in
+                guard layer.isRaisedForHold, layer.role == .incoming, layer.opacity(at: time) < 1,
+                    let fadeStartTime = layer.fadeStartTime
+                else { return nil }
+                return fadeStartTime + layer.fadeDuration
+            }.max()
+        }
+
+        mutating func finishRaisingHeldPhoto() {
+            layers.removeAll { $0.role == .outgoing }
+            for index in layers.indices where layers[index].isRaisedForHold && layers[index].role == .incoming {
+                layers[index].opacityAtFadeStart = 1
+                layers[index].fadeStartTime = nil
+                layers[index].fadeDuration = 0
+                layers[index].suspendedFadeDelay = nil
             }
         }
 
         /// An unseen incoming follows the latest Reduce Motion setting; once a seen photo is frozen it stays frozen,
         /// and turning the setting off does not restart it.
 
-        private static func reconcileReduceMotion(
+        mutating func reconcileReduceMotion(
             _ isEnabled: Bool,
-            in layerStates: inout [ScenePresentationLayerState],
             at time: TimeInterval,
             canResumeUnseenMotion: Bool
         ) {
-            for index in layerStates.indices {
-                if isUnseenDelayedIncoming(layerStates[index], at: time) {
+            for index in layers.indices {
+                if Self.isUnseenDelayedIncoming(layers[index], at: time) {
                     if isEnabled {
-                        layerStates[index].motionClock.suspend(at: time)
-                        layerStates[index].isMotionEnabled = false
-                        layerStates[index].isMotionFrozenByReduceMotion = true
+                        layers[index].motionClock.suspend(at: time)
+                        layers[index].isMotionEnabled = false
+                        layers[index].isMotionFrozenByReduceMotion = true
                     } else {
-                        layerStates[index].isMotionFrozenByReduceMotion = false
-                        layerStates[index].isMotionEnabled = true
+                        layers[index].isMotionFrozenByReduceMotion = false
+                        layers[index].isMotionEnabled = true
                         if canResumeUnseenMotion,
-                            let fadeStart = layerStates[index].fadeStartTime
+                            let fadeStart = layers[index].fadeStartTime
                         {
-                            layerStates[index].motionClock.resume(at: fadeStart)
+                            layers[index].motionClock.resume(at: fadeStart)
                         }
                     }
                     continue
                 }
 
-                guard isEnabled, layerStates[index].isMotionEnabled else { continue }
+                guard isEnabled, layers[index].isMotionEnabled else { continue }
                 // A seen photo keeps its current sample and only freezes active time; new layers are still created per
                 // isReduceMotionEnabled.
 
-                layerStates[index].motionClock.suspend(at: time)
-                layerStates[index].isMotionFrozenByReduceMotion = true
+                layers[index].motionClock.suspend(at: time)
+                layers[index].isMotionFrozenByReduceMotion = true
             }
         }
 
@@ -1635,43 +1840,37 @@ extension PlaybackSessionEngine {
             return layer.fadeStartTime.map { $0 > time } == true || layer.suspendedFadeDelay != nil
         }
 
-        /// Pausing must save each layer's opacity progress so far and any incoming delay that has not started yet.
-        private mutating func freezeLayerFades(at time: TimeInterval) {
-            freezeLayerFadeSamples(&layers, at: time)
-        }
-
-        private func freezeLayerFadeSamples(
-            _ layerStates: inout [ScenePresentationLayerState],
+        mutating func freezeLayerFadeSamples(
             at time: TimeInterval
         ) {
-            for index in layerStates.indices {
-                guard let fadeStart = layerStates[index].fadeStartTime else { continue }
-                let originalOpacity = layerStates[index].opacityAtFadeStart
-                let originalDuration = layerStates[index].fadeDuration
+            for index in layers.indices {
+                guard let fadeStart = layers[index].fadeStartTime else { continue }
+                let originalOpacity = layers[index].opacityAtFadeStart
+                let originalDuration = layers[index].fadeDuration
                 if time < fadeStart {
-                    layerStates[index].suspendedFadeDelay = fadeStart - time
-                    layerStates[index].fadeStartTime = nil
+                    layers[index].suspendedFadeDelay = fadeStart - time
+                    layers[index].fadeStartTime = nil
                     continue
                 }
 
-                let opacity = layerStates[index].opacity(at: time)
-                layerStates[index].opacityAtFadeStart = opacity
-                layerStates[index].fadeStartTime = nil
-                layerStates[index].suspendedFadeDelay = nil
-                switch layerStates[index].role {
+                let opacity = layers[index].opacity(at: time)
+                layers[index].opacityAtFadeStart = opacity
+                layers[index].fadeStartTime = nil
+                layers[index].suspendedFadeDelay = nil
+                switch layers[index].role {
                 case .outgoing:
                     guard originalOpacity > 0 else { continue }
-                    layerStates[index].fadeDuration = max(0, originalDuration * opacity / originalOpacity)
+                    layers[index].fadeDuration = max(0, originalDuration * opacity / originalOpacity)
                 case .incoming:
                     // A second freeze must keep the previous opacity speed; it must not shorten the already-shortened
                     // remaining duration again by the absolute opacity.
 
                     let remainingAmplitude = 1 - originalOpacity
                     guard remainingAmplitude > 0 else {
-                        layerStates[index].fadeDuration = 0
+                        layers[index].fadeDuration = 0
                         continue
                     }
-                    layerStates[index].fadeDuration = max(
+                    layers[index].fadeDuration = max(
                         0,
                         originalDuration * (1 - opacity) / remainingAmplitude
                     )
@@ -1682,9 +1881,10 @@ extension PlaybackSessionEngine {
         }
 
         /// Resume only rebuilds frozen fades; it does not make up for the paused time.
-        private mutating func resumeLayerFades(
+        mutating func resumeLayerFades(
             at time: TimeInterval,
-            shouldResumeMotion: Bool
+            shouldResumeMotion: Bool,
+            isReduceMotionEnabled: Bool
         ) {
             for index in layers.indices {
                 let delay = layers[index].suspendedFadeDelay
@@ -1724,66 +1924,5 @@ extension PlaybackSessionEngine {
                 }
             }
         }
-
-        private mutating func reject(_ diagnostic: String) -> [ScenePresentationEffect] {
-            diagnostics.append(diagnostic)
-            return []
-        }
-
-        private mutating func scheduleWakeUp(
-            generation: UUID,
-            purpose: ScenePresentationWakeUpPurpose,
-            deadline: TimeInterval,
-            at time: TimeInterval
-        ) -> [ScenePresentationEffect] {
-            if shouldFreezeNewLayersForCurrentSuspension {
-                scheduledWakeUp = nil
-                suspendedWakeUp = ScenePresentationSuspendedWakeUp(
-                    generation: generation,
-                    purpose: purpose,
-                    remaining: max(0, deadline - time)
-                )
-                return []
-            }
-            scheduledWakeUp = ScenePresentationScheduledWakeUp(
-                generation: generation,
-                purpose: purpose,
-                deadline: deadline
-            )
-            suspendedWakeUp = nil
-            return [.scheduleWakeUp(generation: generation, deadline: deadline)]
-        }
-        private mutating func resumeManualStaticMotion(
-            currentTarget: ScenePresentationTarget,
-            time: TimeInterval
-        ) {
-            isCurrentSceneManualStatic = false
-            stableVisibleClock?.resume(at: time)
-            for index in layers.indices where layers[index].identity == currentTarget.identity {
-                if !isReduceMotionEnabled, !layers[index].isMotionFrozenByReduceMotion {
-                    layers[index].isMotionEnabled = true
-                    layers[index].motionClock.resume(at: time)
-                }
-            }
-        }
-
-        private mutating func resumeAutomaticLayerMotion(
-            time: TimeInterval
-        ) {
-            stableVisibleClock?.resume(at: time)
-            for index in layers.indices where !layers[index].isMotionFrozenByReduceMotion {
-                // With a visible transition in progress, an incoming that has not started must wait for its
-                // original delay; the first scene has no old layer, so motion can restart at once.
-
-                let defersIncomingMotionUntilFade =
-                    underlyingPhase == .transition && layers[index].role == .incoming
-                    && layers[index].suspendedFadeDelay != nil
-                guard !defersIncomingMotionUntilFade else { continue }
-                guard !isReduceMotionEnabled else { continue }
-                layers[index].isMotionEnabled = true
-                layers[index].motionClock.resume(at: time)
-            }
-        }
-
     }
 }

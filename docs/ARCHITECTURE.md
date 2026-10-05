@@ -45,7 +45,7 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
   - source generation, ordered candidates and loading status: `PlaybackPoolLoader`
   - candidate traversal, selection reservations and planning context: `PlaybackCandidateProgression`
   - how photos are grouped and cropped on one screen: `PlaybackSmartFillPlanner` / `PlaybackSmartFillLayoutPolicy`
-  - when scenes change, fade, pause or retry: the reducer in `PlaybackSessionEngine+ScenePresentationState.swift`; its presentation values remain in `ScenePresentationTypes.swift`
+  - when scenes change, fade, pause or retry: the reducer in `PlaybackSessionEngine+ScenePresentationState.swift`; its private layer timeline owns fade and motion samples, and its presentation values remain in `ScenePresentationTypes.swift`
   - motion inside a scene: `SceneAnimationProfile`, `MotionTransformResolver` and related `Motion*` types
   - wiring it together: `SlideShowViewModel`
 
@@ -68,7 +68,8 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 | `SmartFillPreparedPlanBuilder` | `Shared/Model/PlaybackSmartFillTypes.swift` | Runs the planner on a captured `SmartFillPreparedPlanRequest` off the main actor and returns a `SmartFillPreparedPlanResult`. Both prepared and synchronous planning use the pure `nonisolated` `PlaybackSmartFillSceneReadback.fromPlannerResult` conversion. |
 | `PlaybackScene`, `PhotoSlot` | `Shared/Model/PlaybackScene.swift` | What one screen shows: slots (asset + planning snapshot), fallback reason, protection snapshot, SmartFill readback. |
 | `PlaybackSessionEngine` | `Shared/Model/PlaybackSessionEngine.swift` | Pure state for one playback session: scene list, current index, pending transition, prepared scene ring, and the `ScenePresentationState`. |
-| `ScenePresentationState` (reducer) | `Shared/Model/PlaybackSessionEngine+ScenePresentationState.swift` | The only owner of what is on screen: phases, targets, readiness, fades, pause and background suspension, Reduce Motion, visible history. Takes `ScenePresentationEvent`s and returns `ScenePresentationEffect`s. |
+| `ScenePresentationState` (reducer) | `Shared/Model/PlaybackSessionEngine+ScenePresentationState.swift` | The only presentation policy owner: phases, targets, readiness, hold/transition decisions, pause and background suspension, Reduce Motion, visible history and deadlines. Takes `ScenePresentationEvent`s and returns `ScenePresentationEffect`s. |
+| `ScenePresentationLayerTimeline` (private value) | Same reducer file | Owns the ordered layers, opacity/fade sampling, layer motion clocks, freeze/resume mechanics and immutable render-layer snapshots. Executes synchronous reducer decisions without owning phases, targets, suspension reasons or effects. |
 | `ScenePresentationEffect` | `Shared/Model/ScenePresentationEffect.swift` | Commands the reducer emits (`plan`, `download`, `retry`, `loadMore`, `scheduleWakeUp`, `cancelWakeUp`, `cancel`, …). Planning carries an explicit purpose and demand tag. Plain values, no tasks. |
 | `ScenePresentationPrerenderBarrier` | `Shared/Model/ScenePresentationPrerenderBarrier.swift` | Tracks when every renderer of a hidden incoming scene has decoded. Decoded does not mean seen. |
 | `SceneVisibleFrameReporter` | `Shared/Component/SceneVisibleFrameReporter.swift` | Reports a scene as visible only on the display tick after its render transaction completes. That report is what commits history. |
@@ -94,6 +95,8 @@ The iOS and tvOS slideshow views keep their property wrappers in the primary dec
 `SlideShowViewModel+SettingsApplication.swift` owns the settings refresh run on slideshow entry and on `UserDefaults.didChangeNotification`. The platform EXIF adapters supply synchronous visibility setters. The refresh applies the view model's playback settings, reads the presentation settings, updates EXIF then debug-overlay visibility, decides whether the source changed, and schedules an asynchronous source switch only when needed. Cold-launch source selection stays in `ContentView.initialPlaybackSourceForColdLaunch()`. This extension has no stored state and joins both platforms through the app's synchronized `Shared/` folder.
 
 Playback QA strings, overlay download metrics, ViewModel injection hooks and diagnostic Vision state compile only in Debug. Their numeric runtime timing records, ordinary download logs and the Vision service used by solo-person filtering remain available in Release. UI-test preparation, hint suppression, reset and contract-probe switches are owned by `PlatformCompat`; focus marker exposure uses `shouldExposeUITestProbes` without changing tvOS focus routing. Release settings-resume suites launch through the real UI with no `UI_TEST_*` overrides.
+
+The reducer's `ScenePresentationLayerTimeline` is co-located with it so the value type and its layer storage stay private. The reducer chooses when to hold, transition, settle, suspend or resume, and passes the timing and motion conditions into synchronous timeline operations. It also keeps the stable-visible clock that determines automatic deadlines; each layer's independent motion clock belongs to the timeline. Manual restoration carries a value copy of the timeline alongside its existing reducer fields. Attempt accounting, restoration policy, event/effect order and the frozen planning interface stay in the reducer.
 
 ### Data flow: "play the next scene"
 
