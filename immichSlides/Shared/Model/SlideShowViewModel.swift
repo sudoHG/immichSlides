@@ -620,6 +620,7 @@ class SlideShowViewModel: ObservableObject {
     var firstPreloadTask: Task<Void, Never>? = nil
 
     var playbackSourceGeneration: Int = 0
+    var loadMoreLoadingRequestID: UUID?
     struct PlaybackLoadIdentity {
         let generation: Int
         let sourceName: String

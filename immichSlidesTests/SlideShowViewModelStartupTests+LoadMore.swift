@@ -3,6 +3,112 @@ import Testing
 @testable import immichSlides
 
 extension SlideShowViewModelStartupTests {
+    @Test(
+        arguments: [
+            PlaybackSource.random,
+            .filtered(FilterSelection(albumIds: ["album-a"], personFilters: []))
+        ],
+        [(false, false), (false, true), (true, false), (true, true)]
+    )
+    func `stale load-more completion keeps the newer request loading`(
+        source: PlaybackSource,
+        completion: (staleFails: Bool, cancelsCurrent: Bool)
+    ) async throws {
+        struct LoadMoreTestError: Error {}
+        let vm = SlideShowViewModel(source: source)
+        resetDownloadManagerState(vm.downloadManager)
+        vm.maxAssetCount = 200
+        vm.scenePresentationTimestampProviderForTesting = { 0 }
+        vm.indexChangePhotoLoadHookForTesting = { _, _ in }
+        vm.backgroundPreloadHookForTesting = { _, _, _ in }
+        vm.replacePlaybackAssetsForTesting([makeAsset(id: "old-pool")])
+
+        var continuationA: CheckedContinuation<[Asset], any Error>?
+        var continuationB: CheckedContinuation<[Asset], any Error>?
+        var loadMoreCallCount = 0
+        vm.loadMoreAssetsHookForTesting = { _ in
+            loadMoreCallCount += 1
+            switch loadMoreCallCount {
+            case 1:
+                return try await withCheckedThrowingContinuation { continuationA = $0 }
+            case 2:
+                return try await withCheckedThrowingContinuation { continuationB = $0 }
+            default:
+                Issue.record("A pending refill must prevent another refill from starting")
+                return []
+            }
+        }
+        defer {
+            vm.loadMoreAssetsHookForTesting = { _ in throw CancellationError() }
+            continuationA?.resume(throwing: CancellationError())
+            continuationB?.resume(throwing: CancellationError())
+        }
+
+        var didFinishA = false
+        let requestA = Task {
+            await vm.loadMoreAssets()
+            didFinishA = true
+        }
+        defer { requestA.cancel() }
+        let didSuspendA = await waitUntil { continuationA != nil }
+        try #require(didSuspendA)
+        #expect(vm.isLoadingMore)
+
+        vm.preparePlaybackSourceForPresentation(to: source)
+        let currentAssets = (0..<5).map { makeAsset(id: "current-\($0)") }
+        markReady(currentAssets, in: vm.downloadManager)
+        vm.replacePlaybackAssetsForTesting(currentAssets)
+        completeCurrentScenePresentation(vm)
+        for index in 1...4 {
+            vm.requestNextScene()
+            await vm.synchronizePlaybackReadbackForTesting(
+                token: vm.targetTransitionToken, targetIndex: vm.targetIndex
+            )
+            if index < 4 { completeCurrentScenePresentation(vm) }
+        }
+
+        var didFinishB = false
+        let requestB = Task {
+            await vm.loadMoreAssets()
+            didFinishB = true
+        }
+        defer { requestB.cancel() }
+        let didSuspendB = await waitUntil { continuationB != nil }
+        try #require(didSuspendB)
+        #expect(continuationA != nil)
+        #expect(vm.isLoadingMore)
+
+        if completion.staleFails {
+            continuationA?.resume(throwing: LoadMoreTestError())
+        } else {
+            continuationA?.resume(returning: [makeAsset(id: "stale-more")])
+        }
+        continuationA = nil
+        let didCompleteA = await waitUntil { didFinishA }
+        try #require(didCompleteA)
+        #expect(vm.isLoadingMore)
+        #expect(!didFinishB)
+        #expect(vm.assets.map(\.id) == currentAssets.map(\.id))
+
+        // Visibility at the refill threshold must not admit a third request while B is pending.
+        completeCurrentScenePresentation(vm)
+        #expect(vm.safeCurrentScene?.primaryAssetId == "current-4")
+        if completion.cancelsCurrent {
+            requestB.cancel()
+            continuationB?.resume(throwing: CancellationError())
+        } else {
+            continuationB?.resume(returning: [makeAsset(id: "current-more")])
+        }
+        continuationB = nil
+        let didCompleteB = await waitUntil { didFinishB }
+        try #require(didCompleteB)
+
+        #expect(!vm.isLoadingMore)
+        #expect(loadMoreCallCount == 2)
+        let expectedAssetIDs = currentAssets.map(\.id) + (completion.cancelsCurrent ? [] : ["current-more"])
+        #expect(vm.assets.map(\.id) == expectedAssetIDs)
+    }
+
     @Test
     func `retained history capped at 20 still advances the candidate cursor and triggers load more`() async {
         let vm = SlideShowViewModel(source: .random)
