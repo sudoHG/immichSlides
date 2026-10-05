@@ -27,6 +27,9 @@ from git_privacy_gate_test_fixtures import (
     unittest,
 )
 
+PINNED_CHECKOUT = "11d5960a326750d5838078e36cf38b85af677262 # v4.4.0"
+
+
 class RepositoryPrivacyContractTestsCases:
     def test_trusted_workflow_executes_only_base_scanner(self) -> None:
         workflow = TRUSTED_WORKFLOW.read_text(encoding="utf-8")
@@ -38,7 +41,8 @@ class RepositoryPrivacyContractTestsCases:
             if line.strip().startswith("types:")
         )
         self.assertIn("edited", trigger_line)
-        self.assertEqual(workflow.count("uses: actions/checkout@v4"), 1)
+        self.assertEqual(workflow.count("uses: actions/checkout@"), 1)
+        self.assertIn(f"uses: actions/checkout@{PINNED_CHECKOUT}", workflow)
         self.assertIn(
             "ref: ${{ github.event.pull_request.base.sha }}",
             workflow,
@@ -156,6 +160,8 @@ class RepositoryPrivacyContractTestsCases:
         self.assertIn("pull_request:", workflow)
         self.assertIn("name: privacy-preflight-bootstrap", workflow)
         self.assertNotIn("name: privacy-preflight-trusted", workflow)
+        self.assertEqual(workflow.count("uses: actions/checkout@"), 1)
+        self.assertIn(f"uses: actions/checkout@{PINNED_CHECKOUT}", workflow)
 
 
     def test_playback_transition_evidence_uses_private_directory_resolver(self) -> None:
