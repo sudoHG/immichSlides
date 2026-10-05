@@ -14,6 +14,83 @@ import Testing
 @Suite(.sharedRuntimeIsolation)
 struct SlideShowViewModelAutoPlayIdentityTests {
 
+    enum WakeUpChange: CaseIterable, Equatable {
+        case unchanged, replacement, matchingCancel, reset
+    }
+
+    @Test(arguments: WakeUpChange.allCases)
+    func `scheduled wake ups deliver only the current tagged event after duplicate replacement cancel or reset`(
+        _ change: WakeUpChange
+    ) async throws {
+        let clock = VirtualClock()
+        clock.now = 1
+        let sleeper = ControllableWakeUpSleeper()
+        var events: [PlaybackSessionEngine.ScenePresentationEvent] = []
+        var deliveryTimes: [TimeInterval] = []
+        let scheduler = ScenePresentationWakeUpScheduler(
+            now: { clock.now },
+            sleep: { await sleeper.sleep(nanoseconds: $0) },
+            deliver: { event, timestamp in
+                events.append(event)
+                deliveryTimes.append(timestamp)
+            }
+        )
+        defer {
+            scheduler.reset()
+            sleeper.finishAll()
+        }
+        let generation = UUID()
+        // An exactly representable sub-nanosecond fraction must round up to one nanosecond.
+        let fraction = 3.0 / 4_294_967_296.0
+        let originalDeadline = 1 + fraction
+        var expectedDeadline = originalDeadline
+        var expectedDelays: [UInt64] = [1]
+        scheduler.schedule(generation: generation, deadline: originalDeadline)
+        scheduler.schedule(generation: generation, deadline: originalDeadline)
+        clock.now = 2
+        try await waitForWakeUp { sleeper.delays.count == 1 }
+        scheduler.cancel(generation: UUID())
+
+        switch change {
+        case .unchanged:
+            break
+        case .replacement:
+            expectedDeadline = 3 + fraction
+            expectedDelays.append(1_000_000_001)
+            scheduler.schedule(generation: generation, deadline: expectedDeadline)
+        case .matchingCancel, .reset:
+            if change == .matchingCancel {
+                scheduler.cancel(generation: generation)
+            } else {
+                scheduler.reset()
+            }
+            // Reusing the same key must still reject the cancelled task's late completion.
+            expectedDelays.append(0)
+            scheduler.schedule(generation: generation, deadline: originalDeadline)
+        }
+
+        if expectedDelays.count == 2 {
+            try await waitForWakeUp { sleeper.delays.count == 2 }
+            sleeper.finish(0)
+            try await waitForWakeUp { sleeper.completed.contains(0) }
+            #expect(events.isEmpty)
+        }
+        clock.now = 42.5
+        sleeper.finish(expectedDelays.count - 1)
+        try await waitForWakeUp { sleeper.completed.count == expectedDelays.count && events.count == 1 }
+        #expect(sleeper.delays == expectedDelays)
+        #expect(events == [.wakeUp(generation: generation, deadline: expectedDeadline)])
+        #expect(deliveryTimes == [42.5])
+    }
+
+    private func waitForWakeUp(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(condition())
+    }
+
     @Test
     func `autoplay switches the current identity to the next scene once the deadline passes`() {
         let clock = VirtualClock()
@@ -172,4 +249,28 @@ struct SlideShowViewModelAutoPlayIdentityTests {
 
 private final class VirtualClock {
     var now: TimeInterval = 0
+}
+
+@MainActor
+private final class ControllableWakeUpSleeper {
+    private(set) var delays: [UInt64] = []
+    private(set) var completed: Set<Int> = []
+    private var continuations: [Int: CheckedContinuation<Void, Never>] = [:]
+
+    func sleep(nanoseconds: UInt64) async {
+        let index = delays.count
+        delays.append(nanoseconds)
+        // Ignore cancellation so the real scheduler must reject stale completions itself.
+        await withCheckedContinuation { continuations[index] = $0 }
+        completed.insert(index)
+    }
+
+    func finish(_ index: Int) {
+        continuations.removeValue(forKey: index)?.resume()
+    }
+
+    func finishAll() {
+        continuations.values.forEach { $0.resume() }
+        continuations.removeAll()
+    }
 }

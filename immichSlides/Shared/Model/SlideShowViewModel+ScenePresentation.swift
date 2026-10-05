@@ -209,10 +209,7 @@ extension SlideShowViewModel {
                 scheduleScenePresentationWakeUp(generation: generation, deadline: deadline)
 
             case let .cancelWakeUp(generation):
-                guard scenePresentationWakeUpKey?.generation == generation else { continue }
-                scenePresentationWakeUpTask?.cancel()
-                scenePresentationWakeUpTask = nil
-                scenePresentationWakeUpKey = nil
+                scenePresentationWakeUpScheduler.cancel(generation: generation)
 
             case let .cancel(request):
                 scenePresentationEffectTasks[request.identity.generation]?.cancel()
@@ -249,51 +246,21 @@ extension SlideShowViewModel {
         generation: UUID,
         deadline: TimeInterval
     ) {
-        let key = ScenePresentationWakeUpKey(generation: generation, deadline: deadline)
-        guard scenePresentationWakeUpKey != key else { return }
-        scenePresentationWakeUpTask?.cancel()
-        scenePresentationWakeUpKey = key
         #if DEBUG
         guard scenePresentationTimestampProviderForTesting == nil else {
-            scenePresentationWakeUpTask = nil
+            scenePresentationWakeUpScheduler.scheduleWithoutSleepingForTesting(
+                generation: generation, deadline: deadline)
             return
         }
         #endif
-        let delay = max(0, deadline - scenePresentationTimestamp())
-        scenePresentationWakeUpTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(
-                nanoseconds: UInt64((delay * 1_000_000_000).rounded(.up))
-            )
-            guard let self,
-                !Task.isCancelled,
-                self.scenePresentationWakeUpKey == key
-            else {
-                return
-            }
-            self.scenePresentationWakeUpTask = nil
-            self.scenePresentationWakeUpKey = nil
-            let effects = self.playbackSessionEngine.reduceScenePresentation(
-                .wakeUp(generation: generation, deadline: deadline),
-                at: self.scenePresentationTimestamp()
-            )
-            self.executeScenePresentationEffects(effects)
-        }
+        scenePresentationWakeUpScheduler.schedule(generation: generation, deadline: deadline)
     }
 
     #if DEBUG
     /// Tests only fire the wake-up the owner already scheduled; no separate autoplay clock is created.
     @discardableResult
     func fireScheduledScenePresentationWakeUpForTesting() -> TimeInterval? {
-        guard let key = scenePresentationWakeUpKey else { return nil }
-        scenePresentationWakeUpTask?.cancel()
-        scenePresentationWakeUpTask = nil
-        scenePresentationWakeUpKey = nil
-        let effects = playbackSessionEngine.reduceScenePresentation(
-            .wakeUp(generation: key.generation, deadline: key.deadline),
-            at: key.deadline
-        )
-        executeScenePresentationEffects(effects)
-        return key.deadline
+        scenePresentationWakeUpScheduler.fireScheduledWakeUpForTesting()
     }
     #endif
 
