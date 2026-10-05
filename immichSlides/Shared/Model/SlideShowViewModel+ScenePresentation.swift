@@ -130,48 +130,28 @@ extension SlideShowViewModel {
         playbackSettingsStore.save(settings)
     }
 
-    func executeScenePresentationEffects(_ effects: [ScenePresentationEffect]) {
+    func executeScenePresentationEffects(_ effects: [ScenePresentationEffect], shouldPublishChanges: Bool = true) {
         for effect in effects {
             switch effect {
             case let .plan(request):
-                let presentationState = playbackSessionEngine.scenePresentationState
-                let isStableDeadlinePlan =
-                    presentationState.underlyingPhase == .stablePhoto
-                    && presentationState.currentTarget?.identity == request.identity
-                let isExhaustedAutomaticTargetPlan =
-                    presentationState.pendingTarget?.identity == request.identity
-                    && presentationState.targetReadiness[request.identity] == .failed
-                let isRestoredGracePendingPlan =
-                    presentationState.underlyingPhase == .grace
-                    && presentationState.pendingTarget?.identity == request.identity
-                    && presentationState.targetReadiness[request.identity] == .pending
-                if isRestoredGracePendingPlan {
-                    // A manual hold has just begun this target's barrier; only a target a cancel brought back needs a new one.
-                    let barrierIsActive =
-                        scenePresentationPrerenderBarrier.activeScene
-                        == ScenePresentationLayerIdentity(
-                            generation: request.identity.generation,
-                            sceneID: request.identity.sceneID,
-                            layerID: "scene-root"
-                        )
-                    if !barrierIsActive, let scene = playbackSessionEngine.scene(for: request.identity) {
-                        restartScenePresentationBarrier(identity: request.identity, scene: scene)
-                    }
-                    continue
+                switch request.purpose {
+                case .nextAutomaticTarget, .replaceExhaustedTarget:
+                    guard isAutoPlay else { continue }
+                    pendingAutomaticScenePlanningRequest = request
+                    requestAutomaticSceneTarget()
                 }
-                guard isAutoPlay,
-                    request.source == .automatic,
-                    isStableDeadlinePlan || isExhaustedAutomaticTargetPlan
-                else {
-                    continue
-                }
-                pendingAutomaticScenePlanGeneration = request.identity.generation
-                planAutomaticSceneEffect()
-                let updatedState = playbackSessionEngine.scenePresentationState
-                if updatedState.currentTarget?.identity != request.identity
-                    && updatedState.pendingTarget?.identity != request.identity
-                {
-                    pendingAutomaticScenePlanGeneration = nil
+
+            case let .restartPreparation(request):
+                // Normal acceptance already began the barrier; a restored target needs a new one.
+                let barrierIsActive =
+                    scenePresentationPrerenderBarrier.activeScene
+                    == ScenePresentationLayerIdentity(
+                        generation: request.identity.generation,
+                        sceneID: request.identity.sceneID,
+                        layerID: "scene-root"
+                    )
+                if !barrierIsActive, let scene = playbackSessionEngine.scene(for: request.identity) {
+                    restartScenePresentationBarrier(identity: request.identity, scene: scene)
                 }
 
             case let .download(request):
@@ -237,8 +217,8 @@ extension SlideShowViewModel {
             case let .cancel(request):
                 scenePresentationEffectTasks[request.identity.generation]?.cancel()
                 scenePresentationEffectTasks[request.identity.generation] = nil
-                if pendingAutomaticScenePlanGeneration == request.identity.generation {
-                    pendingAutomaticScenePlanGeneration = nil
+                if pendingAutomaticScenePlanningRequest?.target.identity == request.identity {
+                    pendingAutomaticScenePlanningRequest = nil
                 }
                 releaseScenePresentationBarrier(for: request.identity)
 
@@ -251,7 +231,18 @@ extension SlideShowViewModel {
                 }
             }
         }
-        publishScenePresentationChange()
+        if shouldPublishChanges {
+            publishScenePresentationChange()
+        }
+    }
+
+    /// Proposal delivery happens first; rejecting demand must not undo preparation or its image preloads.
+    func preparedScenePlanningDidComplete(_ request: ScenePresentationPlanningRequest?) {
+        guard let request, playbackSessionEngine.pendingTransition == nil else { return }
+        let effects = playbackSessionEngine.reduceScenePresentation(
+            .effectResult(.planningCompleted(request)), at: scenePresentationTimestamp())
+        // The original completion published only through navigation, not an extra executor publication.
+        executeScenePresentationEffects(effects, shouldPublishChanges: false)
     }
 
     private func scheduleScenePresentationWakeUp(

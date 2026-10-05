@@ -69,7 +69,7 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 | `PlaybackScene`, `PhotoSlot` | `Shared/Model/PlaybackScene.swift` | What one screen shows: slots (asset + planning snapshot), fallback reason, protection snapshot, SmartFill readback. |
 | `PlaybackSessionEngine` | `Shared/Model/PlaybackSessionEngine.swift` | Pure state for one playback session: scene list, current index, pending transition, prepared scene ring, and the `ScenePresentationState`. |
 | `ScenePresentationState` (reducer) | `Shared/Model/PlaybackSessionEngine+ScenePresentationState.swift` | The only owner of what is on screen: phases, targets, readiness, fades, pause and background suspension, Reduce Motion, visible history. Takes `ScenePresentationEvent`s and returns `ScenePresentationEffect`s. |
-| `ScenePresentationEffect` | `Shared/Model/ScenePresentationEffect.swift` | Commands the reducer emits (`plan`, `download`, `retry`, `loadMore`, `scheduleWakeUp`, `cancelWakeUp`, `cancel`, …). Plain values, no tasks. |
+| `ScenePresentationEffect` | `Shared/Model/ScenePresentationEffect.swift` | Commands the reducer emits (`plan`, `download`, `retry`, `loadMore`, `scheduleWakeUp`, `cancelWakeUp`, `cancel`, …). Planning carries an explicit purpose and demand tag. Plain values, no tasks. |
 | `ScenePresentationPrerenderBarrier` | `Shared/Model/ScenePresentationPrerenderBarrier.swift` | Tracks when every renderer of a hidden incoming scene has decoded. Decoded does not mean seen. |
 | `SceneVisibleFrameReporter` | `Shared/Component/SceneVisibleFrameReporter.swift` | Reports a scene as visible only on the display tick after its render transaction completes. That report is what commits history. |
 | `SlideShowViewModel` | `Shared/Model/SlideShowViewModel.swift` | `@MainActor` coordinator for playback. Delegates pool loading and candidate progression, plans scenes, runs reducer effects, starts downloads, keeps `PlaybackHistoryLedger` (previous / redo / next), and publishes render state to the platform views. |
@@ -111,6 +111,75 @@ Playback QA strings, overlay download metrics, ViewModel injection hooks and dia
 6. **Visible.** `SceneVisibleFrameReporterModifier` calls `onSceneBecameVisible` for eligible stable or incoming scene roots; platform views forward it to `SlideShowViewModel.incomingBecameVisible`. The reducer appends the identity to its history, and the view model commits the scene to `PlaybackHistoryLedger` and asks for more pool assets if the pool is running low (`loadMore`). Candidate progression already advanced at successful transition acceptance.
 
 Platform views only forward system events (scene phase, Reduce Motion, remote/touch input) to the view model and draw the `SceneRenderSnapshot` they get back. They hold no playback state machine of their own.
+
+### Frozen planning event/effect interface
+
+The reducer owns demand and validates its lifetime. The facade executes navigation and barriers;
+planning computes and delivers proposals. Later extractions of planning, scheduling, effect execution,
+session ownership and reducer internals preserve this value interface:
+
+- `ScenePresentationEffect.plan(ScenePresentationPlanningRequest)` carries an immutable `tag: UInt64`,
+  `target: ScenePresentationEffectRequest` (the full presentation identity and source), and
+  `purpose: ScenePresentationPlanningPurpose`. The reducer increments its sequence before each new
+  command (first tag: 1); retries reuse that tag. Identical event sequences produce identical effects.
+  A command emitted during user pause is skipped by the executor and does not replace the reducer's
+  outstanding demand; both reducer and facade retain the previously executed demand, if any.
+  Reset replaces reducer state and the navigation generation, so a restarted sequence cannot accept
+  a completion from the old session. The tag is neither a navigation token nor a proposal fingerprint.
+- `ScenePresentationEvent.effectResult(.planningCompleted(request))` carries the facade's last executed
+  automatic demand at proposal delivery time. The reducer may reissue `.plan(request)` unchanged.
+  Admission requires an exact outstanding-request match, its target still being current or pending,
+  and either a stable current presentation or a failed pending target. User pause rejects completion;
+  background suspension alone does not, matching the facade's existing `isAutoPlay` admission gate.
+  Purpose records why demand was issued, rather than imposing a stricter completion policy: a stable
+  photo's demand can still complete after an intervening manual target fails or is cancelled back to
+  that photo. Cancelling a pending target through replacement or manual restoration retires matching
+  demand through explicit `retirePlanningDemand(for:)` calls outside attempt bookkeeping; registering
+  a different pending target does not retire demand retained by the current photo. Stale completion
+  returns no effects and does not append diagnostics.
+- `ScenePresentationEffect.restartPreparation(ScenePresentationEffectRequest)` is a separate barrier
+  command for an existing target. It allocates no planning tag, creates no navigation demand and has
+  no planning completion. It may run while paused.
+- Other effect and event payloads are unchanged, including renderer-ready/failed identities, retry
+  attempt numbers, manual direction, load-more generations and generation/deadline wake-up pairs.
+
+| Planning purpose | Reducer decision | Executor command |
+|---|---|---|
+| `nextAutomaticTarget` | The stable deadline needs a new automatic target. | Ask the facade to request the next scene, using redo, the prepared ring, or the existing single-photo path. A SmartFill miss refreshes preparation without synchronous fallback planning. |
+| `replaceExhaustedTarget` | The automatic target exhausted retries. | Ask the facade for a new automatic target through the same navigation path. |
+
+Purposes are commands, not hints for the executor to reinterpret from presentation phases or readiness.
+Startup and ordinary pending targets already have their barrier, so `restartPreparation` is
+idempotent; a restored grace target rebuilds the cancelled barrier before its download command runs.
+The facade retains the existing autoplay admission guard and executes the effect array synchronously
+in order. Prepared completion dispatch does not add a publication beyond the existing navigation
+publications. No new task, actor hop or deferred dispatch is introduced by this protocol.
+
+Prepared proposal delivery is independent of demand. Every fresh install, including lookahead begun
+before demand existed, reads the facade's last executed automatic demand at delivery time. Freshness
+is checked before installing the session-stamped ring, then prepared and lookahead image preloads run in their existing
+order, and only then is a tagged completion sent. This lets the first eligible proposal satisfy waiting
+demand without waiting for another refresh to install and stamp the same next scene. A rejected or
+paused demand leaves the fresh proposal installed. Speculative delivery with no transported demand only
+prepares the ring. If `pendingTransition != nil`, the facade drops the completion before it reaches the
+reducer, retaining the installed proposal and the existing transition admission order.
+Lookahead stays unstamped in planning storage until its source cursor matches the current prepared
+cursor and freshness checks pass; the engine stamps/installs it and alone consumes it on navigation.
+Planning code neither inspects presentation policy nor initiates navigation.
+
+`ScenePresentationState.outstandingPlanningRequest` is private reducer state. The facade's
+`pendingAutomaticScenePlanningRequest` transports the last executed automatic demand at delivery,
+independently of proposal computation lifetime. User-paused commands do not replace this copy or the
+reducer's outstanding request: if an automatic grace target exhausts retries while paused, a proposal
+arriving after Play can still satisfy the original photo's demand before grace expires. Resume itself
+only restores the wake-up; after grace expires, the original photo is no longer current or pending,
+so its completion is rejected. Matching cancellation and `resetScenePresentationRuntime()` clear
+it; transition acceptance does not. Engine reset/invalidation (including display-mode rebuild) resets
+reducer demand but can leave the facade field stale; the reducer rejects that old request. A completion
+dropped while user-paused is not buffered or reissued on resume: a consumed stable wake-up can leave
+autoplay waiting indefinitely, a pre-existing pause/resume gap preserved by this refactor. Candidate
+progression still advances at transition acceptance; reducer and retained history still advance at
+the renderer visible tick. The executor, task storage, barrier and session owner remain in the facade.
 
 ## 4. Concurrency and state rules
 

@@ -211,33 +211,7 @@ extension SlideShowViewModel {
         )
         preloadSmartFillMotionPreparedSlotsIfNeeded(scene: plan.scene)
         preloadSmartFillMotionLookaheadSlotsIfNeeded(result: result, request: request)
-        let presentationState = playbackSessionEngine.scenePresentationState
-        let pendingPlanGenerationIsActive =
-            pendingAutomaticScenePlanGeneration.map { generation in
-                presentationState.currentTarget?.identity.generation == generation
-                    || presentationState.pendingTarget?.identity.generation == generation
-            } ?? false
-        let canResumeStableDeadlinePlan = presentationState.underlyingPhase == .stablePhoto
-        let canResumeExhaustedTargetPlan =
-            presentationState.pendingTarget.map {
-                presentationState.targetReadiness[$0.identity] == .failed
-            } ?? false
-        if isAutoPlay,
-            pendingPlanGenerationIsActive,
-            canResumeStableDeadlinePlan || canResumeExhaustedTargetPlan,
-            playbackSessionEngine.pendingTransition == nil
-        {
-            planAutomaticSceneEffect()
-            let updatedState = playbackSessionEngine.scenePresentationState
-            let pendingGenerationStillActive =
-                pendingAutomaticScenePlanGeneration.map { generation in
-                    updatedState.currentTarget?.identity.generation == generation
-                        || updatedState.pendingTarget?.identity.generation == generation
-                } ?? false
-            if !pendingGenerationStillActive {
-                pendingAutomaticScenePlanGeneration = nil
-            }
-        }
+        preparedScenePlanningDidComplete(pendingAutomaticScenePlanningRequest)
         return .applied
     }
 

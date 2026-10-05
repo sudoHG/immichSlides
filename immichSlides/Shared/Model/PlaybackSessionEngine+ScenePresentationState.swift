@@ -94,6 +94,8 @@ extension PlaybackSessionEngine {
         private var transitionKind: ScenePresentationTransitionKind?
         private var scheduledWakeUp: ScenePresentationScheduledWakeUp?
         private var suspendedWakeUp: ScenePresentationSuspendedWakeUp?
+        private var outstandingPlanningRequest: ScenePresentationPlanningRequest?
+        private var planningRequestSequence: UInt64 = 0
         /// Short manual crossfade window while paused; does not restart in-scene motion.
         private var isManualNavigationWhilePaused = false
         /// After manual navigation while paused, keep in-scene motion progress at 0 until the user resumes autoplay.
@@ -223,7 +225,7 @@ extension PlaybackSessionEngine {
                 }
                 underlyingPhase = .loading
                 return [
-                    .plan(effectRequest(for: target, source: .automatic)),
+                    .restartPreparation(effectRequest(for: target, source: .automatic)),
                     .download(effectRequest(for: target, source: .automatic))
                 ]
 
@@ -302,7 +304,7 @@ extension PlaybackSessionEngine {
                     else {
                         return reject("stable-wake-not-stable")
                     }
-                    return [.plan(effectRequest(for: currentTarget, source: .automatic))]
+                    return [planningEffect(for: currentTarget, purpose: .nextAutomaticTarget)]
                 case .graceDeadline:
                     return reduce(.graceExpired, at: time)
                 case .transitionCompletion:
@@ -359,6 +361,11 @@ extension PlaybackSessionEngine {
 
             case let .effectResult(result):
                 switch result {
+                case let .planningCompleted(request):
+                    guard isPlanningRequestApplicable(request) else {
+                        return []
+                    }
+                    return [.plan(request)]
                 case let .ready(identity):
                     return receiveReady(identity: identity, at: time)
                 case let .failed(identity):
@@ -426,6 +433,7 @@ extension PlaybackSessionEngine {
                 cancellationEffects.append(
                     .cancel(effectRequest(for: previousTarget, source: cancellationSource))
                 )
+                retirePlanningDemand(for: previousTarget.identity)
                 cancelAttempt(identity: previousTarget.identity)
             }
             register(target: target, readiness: readiness, source: source, at: time)
@@ -512,6 +520,7 @@ extension PlaybackSessionEngine {
                 return reject("cancel-unseen-manual-pending-invalid")
             }
             let cancelledSource = latestAttemptSource(for: cancelledTarget.identity) ?? .manualPrevious
+            retirePlanningDemand(for: cancelledTarget.identity)
             cancelAttempt(identity: cancelledTarget.identity)
 
             underlyingPhase = restore.underlyingPhase
@@ -750,7 +759,36 @@ extension PlaybackSessionEngine {
             source: ScenePresentationRequestSource
         ) -> [ScenePresentationEffect] {
             let request = effectRequest(for: target, source: source)
-            return [.plan(request), .download(request)]
+            return [.restartPreparation(request), .download(request)]
+        }
+
+        private mutating func planningEffect(
+            for target: ScenePresentationTarget,
+            purpose: ScenePresentationPlanningPurpose
+        ) -> ScenePresentationEffect {
+            planningRequestSequence += 1
+            let request = ScenePresentationPlanningRequest(
+                tag: planningRequestSequence, target: effectRequest(for: target, source: .automatic), purpose: purpose)
+            // The executor skips user-paused commands, so keep its previously executed demand applicable.
+            if !suspensionReasons.contains(.userPaused) {
+                outstandingPlanningRequest = request
+            }
+            return .plan(request)
+        }
+
+        private mutating func retirePlanningDemand(for identity: ScenePresentationIdentity) {
+            if outstandingPlanningRequest?.target.identity == identity {
+                outstandingPlanningRequest = nil
+            }
+        }
+
+        private func isPlanningRequestApplicable(_ request: ScenePresentationPlanningRequest) -> Bool {
+            guard outstandingPlanningRequest == request, !suspensionReasons.contains(.userPaused),
+                currentTarget?.identity == request.target.identity || pendingTarget?.identity == request.target.identity
+            else { return false }
+            // Preserve admission when a manual target fails while the original demand's photo is still current.
+            return underlyingPhase == .stablePhoto
+                || pendingTarget.map { targetReadiness[$0.identity] == .failed } == true
         }
 
         private mutating func beginTransition(
@@ -1207,7 +1245,7 @@ extension PlaybackSessionEngine {
 
             updateLatestAttempt(identity: identity, outcome: .exhausted)
             if source == .automatic {
-                return [.plan(request)]
+                return [planningEffect(for: pendingTarget, purpose: .replaceExhaustedTarget)]
             }
             return [.requestManualDirection(source)]
         }

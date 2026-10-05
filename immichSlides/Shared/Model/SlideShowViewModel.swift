@@ -184,7 +184,7 @@ class SlideShowViewModel: ObservableObject {
     var scenePresentationWakeUpTask: Task<Void, Never>?
     var scenePresentationWakeUpKey: ScenePresentationWakeUpKey?
     var scenePresentationEffectTasks: [UUID: Task<Void, Never>] = [:]
-    var pendingAutomaticScenePlanGeneration: UUID?
+    var pendingAutomaticScenePlanningRequest: ScenePresentationPlanningRequest?
     @Published var scenePresentationRevision = UUID()
     var smartFillMotionPreparedSlotPreloadTasks: [UUID: Task<Void, Never>] = [:]
     struct SmartFillMotionLookaheadPreparedPlan {
@@ -1437,8 +1437,8 @@ class SlideShowViewModel: ObservableObject {
         visionFaceAuditState = .idle
     }
     #endif
-    /// `.plan` only prepares and publishes the new target; Ready is decided by the renderer barrier.
-    func planAutomaticSceneEffect() {
+    /// Executes a reducer-authorized new-target command; readiness belongs to the renderer barrier.
+    func requestAutomaticSceneTarget() {
         guard isAutoPlay, !assets.isEmpty else { return }
         requestNextScene(isManual: false)
     }
@@ -1719,7 +1719,7 @@ extension SlideShowViewModel {
         scenePresentationWakeUpKey = nil
         scenePresentationEffectTasks.values.forEach { $0.cancel() }
         scenePresentationEffectTasks = [:]
-        pendingAutomaticScenePlanGeneration = nil
+        pendingAutomaticScenePlanningRequest = nil
         scenePresentationPrerenderBarrier = ScenePresentationPrerenderBarrier()
         smartFillMotionPreparedSlotPreloadTasks.values.forEach { $0.cancel() }
         smartFillMotionPreparedSlotPreloadTasks = [:]
