@@ -310,9 +310,12 @@ struct SlideShowViewIOS: View {
                     .accessibilityHidden(true)
 
                 Group {
+                    // The slideshow background is always black, so status text uses dark-appearance colors
+                    // to stay readable when the system is in light mode.
                     if viewModel.isLoading {
 
                         SlidePlaybackLoadingView()
+                            .environment(\.colorScheme, .dark)
                     } else if viewModel.assets.isEmpty {
                         // An empty pool shows the reason given by the ViewModel; the View does not guess.
 
@@ -320,6 +323,7 @@ struct SlideShowViewIOS: View {
                             .accessibilityIdentifier("slideshow.emptyState.message")
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
+                            .environment(\.colorScheme, .dark)
 
                     } else {
 
