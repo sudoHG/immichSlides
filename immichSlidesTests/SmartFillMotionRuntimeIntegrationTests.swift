@@ -588,6 +588,15 @@ struct SmartFillMotionRuntimeIntegrationTests {
         #expect(didPrewarmLookahead)
         #expect(preloadedAssetIds.first == result.selectedAssetIds)
         #expect(preloadedAssetIds.dropFirst().contains { !$0.isEmpty })
+        let lookaheadAssetIds = try #require(preloadedAssetIds.dropFirst().first)
+        #expect(vm.preparedSmartFillNextAssetIdsForTesting == result.selectedAssetIds)
+
+        vm.requestNextScene()
+
+        // Promotion is synchronous with acceptance, before a new background refresh can finish.
+        #expect(vm.safeCurrentScene?.assetIds == result.selectedAssetIds)
+        #expect(vm.preparedSmartFillNextAssetIdsForTesting == lookaheadAssetIds)
+        #expect(vm.preparedSmartFillNextSourceCursorForTesting == vm.currentPreparedSmartFillSourceCursorForTesting)
     }
 
     private func makeFrameInput(

@@ -1,8 +1,15 @@
 import Foundation
+import CryptoKit
 
-/// Synchronous candidate traversal and reservations for both single photo and SmartFill playback.
+/// Candidate traversal, reservations and prepared planning for single photo and SmartFill playback.
 @MainActor
 final class PlaybackCandidateProgression {
+    private static let identifierDigestPrefixBytes = 8
+    private var replanFingerprint: String?
+    private var preparedRefreshTask: Task<Void, Never>?
+    private var preparedRefreshGeneration: UUID?
+    private var lookaheadTasks: [UUID: Task<Void, Never>] = [:]
+    private var lookaheadProposal: PreparedCompletion?
     private var candidateCursorIndex = 0
     private var pendingCandidateCursorIndexAfterCommit: Int?
     private var displayedAssetIds: Set<String> = []
@@ -34,9 +41,22 @@ final class PlaybackCandidateProgression {
     func updatePlanningContext(
         surface: PlaybackSmartFillSurface,
         protectionSnapshot: PlaybackProtectionSnapshot
-    ) {
+    ) -> Bool {
+        let fingerprint = [
+            surface.internalSurfaceFingerprint,
+            protectionSnapshot.smartFillReplanFingerprint
+        ].joined(separator: "||")
+        guard replanFingerprint != fingerprint else { return false }
+        replanFingerprint = fingerprint
+        cancelPreparedRefresh()
         planningSurface = surface
         planningProtectionSnapshot = protectionSnapshot
+        return true
+    }
+
+    deinit {
+        preparedRefreshTask?.cancel()
+        lookaheadTasks.values.forEach { $0.cancel() }
     }
 
     func exclusionsForPlanning(includesPendingReservation: Bool) -> Set<String> {
@@ -240,4 +260,356 @@ final class PlaybackCandidateProgression {
         pendingCursorResumeAfterLoadMoreAssetCount = nil
     }
     #endif
+}
+
+extension PlaybackCandidateProgression {
+    struct PreparationInput {
+        let assets: [Asset]
+        let sourceGeneration: Int
+        let sourceName: String
+        let isEnabled: Bool
+        let candidateWindowCount: Int
+    }
+
+    struct PreparedCompletion {
+        let request: SmartFillPreparedPlanRequest
+        let result: SmartFillPreparedPlanResult
+    }
+
+    struct PreparedProposal {
+        let scene: PlaybackScene
+        let fingerprint: PlaybackPreparedSceneFingerprint
+        let cursorEffect: PlaybackPreparedSceneCursorEffect
+    }
+
+    enum PreparedDelivery {
+        case stale
+        case invalid
+        case proposal(PreparedProposal)
+    }
+
+    var lookaheadDiagnosticSnapshot: (sourceCursor: Int, selectedCount: Int)? {
+        lookaheadProposal.map { ($0.request.candidateCursor, $0.result.selectedAssetIds.count) }
+    }
+
+    func cancelPreparedRefresh() {
+        preparedRefreshTask?.cancel()
+        preparedRefreshTask = nil
+        preparedRefreshGeneration = nil
+    }
+
+    private func clearPreparedRefreshIfCurrent(_ generation: UUID) {
+        guard preparedRefreshGeneration == generation else { return }
+        preparedRefreshTask = nil
+        preparedRefreshGeneration = nil
+    }
+
+    func refreshPreparedPlan(
+        request: SmartFillPreparedPlanRequest,
+        completion: @escaping @MainActor (PreparedCompletion) -> Void
+    ) {
+        let generation = UUID()
+        preparedRefreshGeneration = generation
+        let planningTask = Task.detached(priority: .utility) {
+            SmartFillPreparedPlanBuilder.makeResult(for: request)
+        }
+        preparedRefreshTask = Task { @MainActor in
+            let result = await withTaskCancellationHandler {
+                await planningTask.value
+            } onCancel: {
+                planningTask.cancel()
+            }
+            guard !Task.isCancelled, let result else {
+                self.clearPreparedRefreshIfCurrent(generation)
+                return
+            }
+            if self.preparedRefreshGeneration == generation {
+                completion(PreparedCompletion(request: request, result: result))
+            }
+            self.clearPreparedRefreshIfCurrent(generation)
+        }
+    }
+
+    func prepareDelivery(
+        _ completion: PreparedCompletion, in input: PreparationInput
+    ) -> PreparedDelivery {
+        let request = completion.request
+        let result = completion.result
+        guard isPreparedResultFresh(result, request: request, in: input) else { return .stale }
+        guard let scene = scene(from: result, assets: input.assets) else { return .invalid }
+        guard let fingerprint = preparedFingerprint(in: input) else { return .stale }
+        return .proposal(
+            PreparedProposal(
+                scene: scene,
+                fingerprint: fingerprint,
+                cursorEffect: PlaybackPreparedSceneCursorEffect(
+                    sourceCursor: result.sourceCursor,
+                    nextCandidateCursorOffset: result.nextCandidateCursorOffset,
+                    displayedAssetIds: result.displayedAssetIds
+                )
+            )
+        )
+    }
+
+    func prepareLookahead(
+        after completion: PreparedCompletion,
+        in input: PreparationInput,
+        completion receive: @escaping @MainActor (PreparedCompletion) -> Void
+    ) {
+        let result = completion.result
+        let request = completion.request
+        guard result.requestId == request.requestId,
+            result.sourceCursor == request.candidateCursor,
+            result.assetPoolIdentity == request.assetPoolIdentity,
+            result.playbackSourceGeneration == request.playbackSourceGeneration
+        else { return }
+        let displayedAssetIdsAfterPreparedScene = request.displayedAssetIds.union(result.displayedAssetIds)
+        let nextCursor = cursorIndex(
+            in: input.assets,
+            afterAdvancingFrom: result.sourceCursor,
+            by: result.nextCandidateCursorOffset,
+            excludingDisplayedAssetIds: displayedAssetIdsAfterPreparedScene
+        )
+        guard
+            let lookaheadRequest = capturePreparedRequest(
+                in: input,
+                startingAt: nextCursor,
+                displayedAssetIdsForExclusion: displayedAssetIdsAfterPreparedScene,
+                sceneOrdinal: nextCursor
+            )
+        else { return }
+        let planningTask = Task.detached(priority: .utility) {
+            SmartFillPreparedPlanBuilder.makeResult(for: lookaheadRequest)
+        }
+        let taskId = UUID()
+        lookaheadTasks[taskId] = Task { @MainActor [weak self] in
+            let result = await withTaskCancellationHandler {
+                await planningTask.value
+            } onCancel: {
+                planningTask.cancel()
+            }
+            guard let self else { return }
+            defer { self.lookaheadTasks[taskId] = nil }
+            guard !Task.isCancelled, let result else { return }
+            receive(PreparedCompletion(request: lookaheadRequest, result: result))
+        }
+    }
+
+    func storeLookaheadIfFresh(
+        _ completion: PreparedCompletion, in input: PreparationInput
+    ) -> PlaybackScene? {
+        guard isLookaheadResultFresh(completion.result, request: completion.request, in: input),
+            let scene = scene(from: completion.result, assets: input.assets)
+        else { return nil }
+        lookaheadProposal = completion
+        return scene
+    }
+
+    func takeLookaheadIfReady(in input: PreparationInput) -> PreparedCompletion? {
+        guard let proposal = lookaheadProposal,
+            proposal.request.candidateCursor == preparedSourceCursor(in: input.assets)
+        else { return nil }
+        lookaheadProposal = nil
+        return proposal
+    }
+
+    func clearLookaheadProposal() {
+        lookaheadProposal = nil
+    }
+
+    private func isLookaheadResultFresh(
+        _ result: SmartFillPreparedPlanResult,
+        request: SmartFillPreparedPlanRequest,
+        in input: PreparationInput
+    ) -> Bool {
+        result.requestId == request.requestId && result.sourceCursor == request.candidateCursor
+            && result.assetPoolIdentity == request.assetPoolIdentity
+            && result.playbackSourceGeneration == request.playbackSourceGeneration
+            && request.playbackSourceGeneration == input.sourceGeneration
+            && request.assetPoolIdentity == assetPoolIdentity(in: input)
+            && request.protectionFingerprint == request.protectionSnapshot.smartFillReplanFingerprint
+            && request.protectionFingerprint == planningProtectionSnapshot.smartFillReplanFingerprint
+            && request.preparedFingerprint == preparedFingerprint(in: input)
+            && request.surface == planningSurface
+            && request.layoutPolicyId == PlaybackSmartFillLayoutPolicy.policy(for: request.surface).layoutPolicyId
+            && !input.assets.isEmpty && input.isEnabled
+    }
+
+    private func isPreparedResultFresh(
+        _ result: SmartFillPreparedPlanResult,
+        request: SmartFillPreparedPlanRequest,
+        in input: PreparationInput
+    ) -> Bool {
+        guard result.requestId == request.requestId,
+            result.sourceCursor == request.candidateCursor,
+            result.assetPoolIdentity == request.assetPoolIdentity,
+            result.playbackSourceGeneration == request.playbackSourceGeneration,
+            request.playbackSourceGeneration == input.sourceGeneration,
+            request.assetPoolIdentity == assetPoolIdentity(in: input),
+            request.protectionFingerprint == request.protectionSnapshot.smartFillReplanFingerprint,
+            request.protectionFingerprint == planningProtectionSnapshot.smartFillReplanFingerprint,
+            request.preparedFingerprint == preparedFingerprint(in: input),
+            request.surface == planningSurface,
+            request.layoutPolicyId == PlaybackSmartFillLayoutPolicy.policy(for: request.surface).layoutPolicyId,
+            !input.assets.isEmpty,
+            request.candidateCursor == normalizedCursorIndex(in: input.assets),
+            input.isEnabled
+        else {
+            return false
+        }
+        return true
+    }
+
+    private func scene(from result: SmartFillPreparedPlanResult, assets: [Asset]) -> PlaybackScene? {
+        guard result.slots.count == result.selectedAssetIds.count else { return nil }
+
+        var assetsById: [String: Asset] = [:]
+        for asset in assets where assetsById[asset.id] == nil {
+            assetsById[asset.id] = asset
+        }
+        let photoSlots = zip(result.slots, result.selectedAssetIds).compactMap { slot, assetId -> PhotoSlot? in
+            guard let asset = assetsById[assetId] else { return nil }
+            return PhotoSlot(
+                id: "slot-\(slot.role.rawValue)-\(slot.candidateReference)",
+                asset: asset,
+                planning: PlaybackPlanningSnapshot.smartFill(
+                    slot: slot,
+                    plannerResult: result.plannerResult,
+                    focalSummary: smartFillFocalSummary(for: asset)
+                )
+            )
+        }
+        guard photoSlots.count == result.slots.count, !photoSlots.isEmpty else {
+            return nil
+        }
+
+        let scene = PlaybackScene(
+            id: "scene-smartfill-\(photoSlots.first?.asset.id ?? "empty")",
+            photoSlots: photoSlots,
+            smartFillReadback: result.readback
+        )
+        return scene
+    }
+
+    func capturePreparedRequest(
+        in input: PreparationInput,
+        startingAt startIndex: Int,
+        displayedAssetIdsForExclusion: Set<String>? = nil,
+        sceneOrdinal: Int? = nil
+    ) -> SmartFillPreparedPlanRequest? {
+        guard let planningSurface,
+            let fingerprint = preparedFingerprint(in: input),
+            input.isEnabled,
+            !input.assets.isEmpty,
+            startIndex >= 0,
+            startIndex < input.assets.count
+        else {
+            return nil
+        }
+
+        let displayedAssetIds =
+            displayedAssetIdsForExclusion
+            ?? exclusionsForPlanning(includesPendingReservation: false)
+        let rawSnapshots = candidateAssets(
+            in: input.assets,
+            startingAt: startIndex,
+            windowCount: input.candidateWindowCount,
+            displayedAssetIdsForExclusion: displayedAssetIds
+        ).map { asset in
+            smartFillRawAssetSnapshot(for: asset)
+        }
+        guard !rawSnapshots.isEmpty else { return nil }
+        let policy = PlaybackSmartFillLayoutPolicy.policy(for: planningSurface)
+        return SmartFillPreparedPlanRequest(
+            requestId: UUID(),
+            surface: planningSurface,
+            layoutPolicyId: policy.layoutPolicyId,
+            protectionSnapshot: planningProtectionSnapshot,
+            protectionFingerprint: planningProtectionSnapshot.smartFillReplanFingerprint,
+            candidateCursor: startIndex,
+            displayedAssetIds: displayedAssetIds,
+            assetPoolIdentity: fingerprint.assetPoolIdentity,
+            playbackSourceGeneration: input.sourceGeneration,
+            playbackSessionSeed: "generation-\(input.sourceGeneration)",
+            sceneOrdinal: sceneOrdinal ?? startIndex,
+            preparedFingerprint: fingerprint,
+            rawAssetSnapshots: rawSnapshots
+        )
+    }
+
+    private func smartFillRawAssetSnapshot(for asset: Asset) -> SmartFillPlanningRawAssetSnapshot {
+        SmartFillPlanningRawAssetSnapshot(
+            assetId: asset.id,
+            width: asset.width,
+            height: asset.height,
+            exifImageWidth: asset.exifInfo?.exifImageWidth,
+            exifImageHeight: asset.exifInfo?.exifImageHeight,
+            orientation: asset.exifInfo?.orientation,
+            thumbhash: asset.thumbhash,
+            rawFaces: (asset.people ?? []).flatMap { person in
+                (person.faces ?? []).map { face in
+                    SmartFillPlanningRawFaceSnapshot(
+                        boundingBoxX1: face.boundingBoxX1,
+                        boundingBoxX2: face.boundingBoxX2,
+                        boundingBoxY1: face.boundingBoxY1,
+                        boundingBoxY2: face.boundingBoxY2,
+                        imageWidth: face.imageWidth,
+                        imageHeight: face.imageHeight,
+                        sourceType: face.sourceType
+                    )
+                }
+            }
+        )
+    }
+
+    func preparedFingerprint(in input: PreparationInput) -> PlaybackPreparedSceneFingerprint? {
+        guard let planningSurface else { return nil }
+        return PlaybackPreparedSceneFingerprint(
+            deviceProfile: planningSurface.profile.rawValue,
+            orientation: planningSurface.orientation.rawValue,
+            pointWidth: Double(planningSurface.pixelSize.width),
+            pointHeight: Double(planningSurface.pixelSize.height),
+            safeAreaClass: planningSurface.safeAreaClass,
+            controlBarClass: "soft-overlay",
+            exifOverlayClass: "metadata-overlay",
+            assetPoolIdentity: assetPoolIdentity(in: input),
+            playbackSourceIdentity: "\(input.sourceName)-\(input.sourceGeneration)"
+        )
+    }
+
+    private func assetPoolIdentity(in input: PreparationInput) -> String {
+        let raw = input.assets.map(\.id).joined(separator: "|")
+        let digest = SHA256.hash(data: Data(raw.utf8))
+        let hashText = digest.prefix(Self.identifierDigestPrefixBytes).map { String(format: "%02x", $0) }.joined()
+        return "count-\(input.assets.count)-\(hashText)"
+    }
+
+    private func smartFillFocalSummary(for asset: Asset) -> PlaybackPlanningFocalSummary? {
+        let faceRects = FaceBoxGeometry.validate(
+            faces: FaceBoxGeometry.collectFaces(from: asset.people),
+            asset: asset
+        ).compactMap { result -> PlaybackPlanningRect? in
+            guard case let .usable(normalizedRect, _) = result else { return nil }
+            return PlaybackPlanningRect(
+                x: Double(normalizedRect.origin.x),
+                y: Double(normalizedRect.origin.y),
+                width: Double(normalizedRect.width),
+                height: Double(normalizedRect.height)
+            )
+        }
+        return Self.smartFillFocalSummary(faceRects: faceRects, subjectRects: faceRects)
+    }
+
+    nonisolated static func smartFillFocalSummary(
+        faceRects: [PlaybackPlanningRect],
+        subjectRects: [PlaybackPlanningRect]
+    ) -> PlaybackPlanningFocalSummary? {
+        if let face = faceRects.first {
+            return PlaybackPlanningFocalSummary(source: .face, rectInSource: face)
+        }
+        if let subject = subjectRects.first {
+            return PlaybackPlanningFocalSummary(source: .subject, rectInSource: subject)
+        }
+        return nil
+    }
 }
