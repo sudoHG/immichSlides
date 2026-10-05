@@ -70,6 +70,7 @@ DEBUG_ONLY_MARKERS = (
     "replacePlaybackAssetsForTesting",
     "markPoolConsumedForTesting",
     "pendingResumeAssetCountForTesting",
+    "lookaheadDiagnosticSnapshotForTesting",
     "overwritePlaybackPoolWithoutResetForTesting",
     "setPlaybackLoadingForTesting",
     "setPlaybackLoadingMoreForTesting",

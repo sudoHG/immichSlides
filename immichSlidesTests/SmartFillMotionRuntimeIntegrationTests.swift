@@ -589,6 +589,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
         #expect(preloadedAssetIds.first == result.selectedAssetIds)
         #expect(preloadedAssetIds.dropFirst().contains { !$0.isEmpty })
         let lookaheadAssetIds = try #require(preloadedAssetIds.dropFirst().first)
+        #expect(Set(lookaheadAssetIds).isDisjoint(with: result.selectedAssetIds))
         #expect(vm.preparedSmartFillNextAssetIdsForTesting == result.selectedAssetIds)
 
         vm.requestNextScene()

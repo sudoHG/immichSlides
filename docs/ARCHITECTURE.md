@@ -194,7 +194,7 @@ clear a newer refresh started during completion. Lookahead tasks have private pe
 remove only their own handle on completion. A refresh does not cancel speculative lookahead that may
 still become eligible. Presentation reset clears the cached proposal at its existing point; in-flight
 lookahead still goes through the existing freshness checks on delivery. Releasing the collaborator
-cancels its remaining computation tasks. Prepared/lookahead image-preload tasks and their eligibility,
+cancels its remaining lookahead computations. Prepared/lookahead image-preload tasks and their eligibility,
 size, priority and call order remain in the facade for the later effect-executor extraction. The
 diagnostic readback exposes only cached cursor/count values, not proposal or task storage.
 

@@ -5,7 +5,7 @@ import CoreGraphics
 /// Candidate traversal, reservations and prepared planning for single photo and SmartFill playback.
 @MainActor
 final class PlaybackCandidateProgression {
-    private static let identifierDigestPrefixBytes = 8
+    static let identifierDigestPrefixBytes = 8
     private var replanFingerprint: String?
     private var preparedRefreshTask: Task<Void, Never>?
     private var preparedRefreshGeneration: UUID?
@@ -207,7 +207,7 @@ final class PlaybackCandidateProgression {
         return min(max(0, lastCommittedIndex), assetCount - 1)
     }
 
-    func cursorIndex(
+    private func cursorIndex(
         in assets: [Asset], afterAdvancingFrom assetIndex: Int, by consumedCount: Int,
         excludingDisplayedAssetIds exclusions: Set<String>
     ) -> Int {
@@ -254,6 +254,10 @@ final class PlaybackCandidateProgression {
     #if DEBUG
     var pendingResumeAssetCountForTesting: Int? { pendingCursorResumeAfterLoadMoreAssetCount }
 
+    var lookaheadDiagnosticSnapshotForTesting: (sourceCursor: Int, selectedCount: Int)? {
+        lookaheadProposal.map { ($0.request.candidateCursor, $0.result.selectedAssetIds.count) }
+    }
+
     func markPoolConsumedForTesting(assets: [Asset], candidateCursorIndex: Int) {
         displayedAssetIds = Set(assets.map(\.id))
         self.candidateCursorIndex = min(max(0, candidateCursorIndex), max(0, assets.count - 1))
@@ -289,10 +293,6 @@ extension PlaybackCandidateProgression {
         case proposal(PreparedProposal)
     }
 
-    var lookaheadDiagnosticSnapshot: (sourceCursor: Int, selectedCount: Int)? {
-        lookaheadProposal.map { ($0.request.candidateCursor, $0.result.selectedAssetIds.count) }
-    }
-
     func cancelPreparedRefresh() {
         preparedRefreshTask?.cancel()
         preparedRefreshTask = nil
@@ -309,6 +309,7 @@ extension PlaybackCandidateProgression {
         request: SmartFillPreparedPlanRequest,
         completion: @escaping @MainActor (PreparedCompletion) -> Void
     ) {
+        cancelPreparedRefresh()
         let generation = UUID()
         preparedRefreshGeneration = generation
         let planningTask = Task.detached(priority: .utility) {
@@ -353,12 +354,12 @@ extension PlaybackCandidateProgression {
     }
 
     func prepareLookahead(
-        after completion: PreparedCompletion,
+        after preparedCompletion: PreparedCompletion,
         in input: PreparationInput,
-        completion receive: @escaping @MainActor (PreparedCompletion) -> Void
+        onCompletion receive: @escaping @MainActor (PreparedCompletion) -> Void
     ) {
-        let result = completion.result
-        let request = completion.request
+        let result = preparedCompletion.result
+        let request = preparedCompletion.request
         guard result.requestId == request.requestId,
             result.sourceCursor == request.candidateCursor,
             result.assetPoolIdentity == request.assetPoolIdentity,
@@ -493,10 +494,17 @@ extension PlaybackCandidateProgression {
     }
 
     func capturePreparedRequest(
+        in input: PreparationInput, startingAt startIndex: Int
+    ) -> SmartFillPreparedPlanRequest? {
+        capturePreparedRequest(
+            in: input, startingAt: startIndex, displayedAssetIdsForExclusion: nil, sceneOrdinal: nil)
+    }
+
+    private func capturePreparedRequest(
         in input: PreparationInput,
         startingAt startIndex: Int,
-        displayedAssetIdsForExclusion: Set<String>? = nil,
-        sceneOrdinal: Int? = nil
+        displayedAssetIdsForExclusion: Set<String>?,
+        sceneOrdinal: Int?
     ) -> SmartFillPreparedPlanRequest? {
         guard let planningSurface,
             let fingerprint = preparedFingerprint(in: input),

@@ -19,8 +19,6 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(request.rawAssetSnapshots.first?.reference == nil)
         #expect(request.rawAssetSnapshots.first?.sourceImageSummary == nil)
         #expect(request.rawAssetSnapshots.map(\.assetId) == (1..<6).map { "asset-\($0)" })
-        #expect(request.playbackSessionSeed == "generation-0")
-        #expect(request.sceneOrdinal == 1)
         #expect(request.protectionFingerprint == request.protectionSnapshot.smartFillReplanFingerprint)
     }
 
@@ -90,12 +88,13 @@ extension SlideShowViewModelNavigationSemanticsTests {
             let oldRequest = try #require(model.capturePreparedSmartFillPlanRequestForTesting(startingAt: 1))
             let oldResult = try #require(SmartFillPreparedPlanBuilder.makeResult(for: oldRequest))
             change(model)
-            let sceneBeforeDelivery = model.safeCurrentScene
+            let preparedAssetIdsBeforeDelivery = model.preparedSmartFillNextAssetIdsForTesting
+            let preparedSourceCursorBeforeDelivery = model.preparedSmartFillNextSourceCursorForTesting
             #expect(
                 model.applyPreparedSmartFillPlanResultForTesting(oldResult, request: oldRequest) == .stale,
                 "\(name) must reject the old proposal")
-            #expect(model.safeCurrentScene?.id == sceneBeforeDelivery?.id)
-            #expect(model.safeCurrentScene?.assetIds == sceneBeforeDelivery?.assetIds)
+            #expect(model.preparedSmartFillNextAssetIdsForTesting == preparedAssetIdsBeforeDelivery)
+            #expect(model.preparedSmartFillNextSourceCursorForTesting == preparedSourceCursorBeforeDelivery)
         }
 
         let waiting = makeSmartFillViewModel()

@@ -105,7 +105,6 @@ class SlideShowViewModel: ObservableObject {
     private static let maximumPlaybackPoolAssetCount: Int = 200
     private static let autoplayRenderWindowRadius: Int = 1
     private static let manualRenderWindowRadius: Int = 2
-    static let identifierDigestPrefixBytes: Int = 8
     static let refillRemainingFractionDivisor: Int = 5
     private static let surfaceActivationDelayNanoseconds: UInt64 = 250_000_000
     private static let diagnosticHistoryLookbackCount: Int = 8
@@ -346,12 +345,12 @@ class SlideShowViewModel: ObservableObject {
         } else {
             fields["currentPreparedSourceCursor"] = "none"
         }
-        if let lookaheadSourceCursor = candidateProgression.lookaheadDiagnosticSnapshot?.sourceCursor {
+        if let lookaheadSourceCursor = candidateProgression.lookaheadDiagnosticSnapshotForTesting?.sourceCursor {
             fields["lookaheadCachedSourceCursor"] = String(lookaheadSourceCursor)
         } else {
             fields["lookaheadCachedSourceCursor"] = "none"
         }
-        if let selectedCount = candidateProgression.lookaheadDiagnosticSnapshot?.selectedCount {
+        if let selectedCount = candidateProgression.lookaheadDiagnosticSnapshotForTesting?.selectedCount {
             fields["lookaheadCachedSelectedCount"] = String(selectedCount)
         } else {
             fields["lookaheadCachedSelectedCount"] = "none"

@@ -323,7 +323,8 @@ extension SlideShowViewModel {
 
     private func smartFillCandidateReference(for rawId: String) -> String {
         let digest = SHA256.hash(data: Data(rawId.utf8))
-        let hashText = digest.prefix(Self.identifierDigestPrefixBytes).map { String(format: "%02x", $0) }.joined()
+        let hashText = digest.prefix(PlaybackCandidateProgression.identifierDigestPrefixBytes)
+            .map { String(format: "%02x", $0) }.joined()
         return "asset_\(hashText)"
     }
 

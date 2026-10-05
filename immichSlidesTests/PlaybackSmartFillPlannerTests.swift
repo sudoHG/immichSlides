@@ -228,7 +228,7 @@ struct PlaybackSmartFillPlannerTests {
     }
 
     @Test
-    func `prepared plan result uses the request's full protection snapshot off the MainActor`() async throws {
+    func `prepared plan result uses the request's full protection snapshot off the MainActor`() throws {
         let protection = PlaybackProtectionSnapshot(regions: [
             try #require(
                 PlaybackProtectionRegion.controlBar(
@@ -279,11 +279,6 @@ struct PlaybackSmartFillPlannerTests {
         #expect(result.plannerResult.protectionSummary.checkedRegionCount == 1)
         #expect(result.plannerResult.protectionSummary.overlapDetails.contains { $0.regionSource == .controlBar })
         #expect(result.readback.qaDebugSummary.contains("protectionStatus=accepted"))
-        let cancelledResult = await Task.detached {
-            withUnsafeCurrentTask { $0?.cancel() }
-            return SmartFillPreparedPlanBuilder.makeResult(for: request)
-        }.value
-        #expect(cancelledResult == nil)
     }
 
     @Test

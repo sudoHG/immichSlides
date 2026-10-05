@@ -169,16 +169,6 @@ extension SlideShowViewModel {
         candidateProgression.normalizedCursorIndex(in: assets)
     }
 
-    func cursorIndex(
-        afterAdvancingFrom assetIndex: Int,
-        by consumedCount: Int,
-        excludingDisplayedAssetIds displayedAssetIds: Set<String>
-    ) -> Int {
-        candidateProgression.cursorIndex(
-            in: assets, afterAdvancingFrom: assetIndex, by: consumedCount,
-            excludingDisplayedAssetIds: displayedAssetIds)
-    }
-
     func shouldHoldSmartFillAdvanceForSoloOnlyLoadMore(
         startingAt startIndex: Int,
         reason: String
