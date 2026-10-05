@@ -29,7 +29,7 @@ struct ImmichSlidesApp: App {
 
         forcedDynamicTypeSize = Self.uiTestDynamicTypeSize(from: env["UI_TEST_DYNAMIC_TYPE_SIZE"])
 
-        if ProcessInfo.processInfo.environment["UI_TEST_RESET_STATE"] == "1" {
+        if PlatformCompat.shouldResetStateForTesting {
             ImmichServer.clearSavedConfiguration()
             FilterSelectionStore().clear()
             PlaybackSettingsStore().clear()

@@ -28,6 +28,24 @@ enum PlatformCompat {
     }
 
     #if DEBUG
+    static var shouldResetStateForTesting: Bool {
+        ProcessInfo.processInfo.environment["UI_TEST_RESET_STATE"] == "1"
+    }
+
+    static var shouldPrepareFilterSummaryForTesting: Bool {
+        shouldExposeUITestProbes
+            && ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] == "1"
+    }
+
+    static var shouldPrepareFilterEditorForTesting: Bool {
+        shouldExposeUITestProbes
+            && ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS"] == "1"
+    }
+
+    static var shouldExposeScenePresentationContractProbeForTesting: Bool {
+        ProcessInfo.processInfo.environment["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"] == "1"
+    }
+
     static var shouldShowExifSamplingDebugOverlay: Bool {
         ProcessInfo.processInfo.environment["UI_TEST_SHOW_EXIF_SAMPLING_DEBUG"] == "1"
     }
@@ -49,6 +67,22 @@ enum PlatformCompat {
         return (serverURL, apiKey)
     }
     #endif
+
+    static var shouldDisablePlaybackEntryHintForTesting: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] == "1"
+        #else
+        return false
+        #endif
+    }
+
+    static var shouldSuppressDebugFillAPIKeyButtonForTesting: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON"] == "1"
+        #else
+        return false
+        #endif
+    }
 
     static var isDebugBuild: Bool {
         #if DEBUG

@@ -1,10 +1,12 @@
 import SwiftUI
 
+#if DEBUG
 private enum VisualAuditPreparation {
     static let coverLimitCount: Int = 20
     static let maximumRetryCount: Int = 40
     static let pollIntervalNanoseconds: UInt64 = 250_000_000
 }
+#endif
 
 struct FilterViewIOS: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -42,17 +44,22 @@ struct FilterViewIOS: View {
         viewModel.selection.isEmpty == false
     }
 
+    #if DEBUG
     private var shouldExposeUITestReadinessMarkers: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS"] == "1"
+        PlatformCompat.shouldPrepareFilterEditorForTesting
     }
+    #endif
 
+    #if DEBUG
     private var isAlbumVisualAuditReady: Bool {
         let hasMatchedAlbumSelection = viewModel.selection.albumIds.contains { selectedID in
             viewModel.albums.contains { $0.id == selectedID }
         }
         return hasMatchedAlbumSelection && viewModel.albumCoverURLs.isEmpty == false
     }
+    #endif
 
+    #if DEBUG
     private var isPeopleVisualAuditReady: Bool {
         let selectedIDs = viewModel.selection.personFilters.map(\.personId)
         let hasMatchedPeopleSelection = selectedIDs.contains { selectedID in
@@ -65,10 +72,13 @@ struct FilterViewIOS: View {
             }
         return hasMatchedPeopleSelection && viewModel.peopleCoverURLs.isEmpty == false && hasLoadedStatsForSelection
     }
+    #endif
 
+    #if DEBUG
     private var isFilterEditorVisualAuditReady: Bool {
         isAlbumVisualAuditReady && isPeopleVisualAuditReady
     }
+    #endif
 
     var body: some View {
         OnboardingPageScaffoldViewIOS(metrics: onboardingMetrics) { _ in
@@ -78,15 +88,19 @@ struct FilterViewIOS: View {
                 bottomSection
             }
         }
+        #if DEBUG
         .overlay(alignment: .topLeading) {
             if shouldExposeUITestReadinessMarkers {
                 uiTestReadinessMarkers
             }
         }
+        #endif
+        #if DEBUG
         .task {
             guard shouldExposeUITestReadinessMarkers else { return }
             await prepareVisualAuditSelectionsForUITestsIfNeeded()
         }
+        #endif
     }
 
     private var pageHeader: some View {
@@ -180,6 +194,7 @@ struct FilterViewIOS: View {
         }
     }
 
+    #if DEBUG
     private var uiTestReadinessMarkers: some View {
         VStack(alignment: .leading, spacing: 1) {
             // localization-audit: ui-test-probe
@@ -198,7 +213,9 @@ struct FilterViewIOS: View {
         .clipped()
         .allowsHitTesting(false)
     }
+    #endif
 
+    #if DEBUG
     private func prepareVisualAuditSelectionsForUITestsIfNeeded() async {
         // UI tests only: fill in album and person selections for screenshots without changing the real filter rules.
 
@@ -234,6 +251,7 @@ struct FilterViewIOS: View {
             try? await Task.sleep(nanoseconds: VisualAuditPreparation.pollIntervalNanoseconds)
         }
     }
+    #endif
 
     private func startFilteredPlayback() {
         onStartPlaybackRequested?(viewModel.selection)

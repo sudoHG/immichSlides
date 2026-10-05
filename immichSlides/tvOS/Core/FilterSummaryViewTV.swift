@@ -9,10 +9,12 @@ import SwiftUI
 
 // FocusedValue reports the system's actual focus, since it isn't always in sync with @FocusState.
 
+#if DEBUG
 private enum VisualAuditPreparation {
     static let maximumRetryCount: Int = 40
     static let pollIntervalNanoseconds: UInt64 = 250_000_000
 }
+#endif
 
 private enum StageAtmosphereMetrics {
     static let primaryGlowSizePoints: CGFloat = 720
@@ -84,9 +86,11 @@ struct FilterSummaryViewTV: View {
     @FocusState private var focusedTarget: FocusTarget?
     @Namespace private var focusNamespace
 
+    #if DEBUG
     private var shouldExposeUITestReadinessMarkers: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] == "1"
+        PlatformCompat.shouldPrepareFilterSummaryForTesting
     }
+    #endif
 
     private var resolvedStageViewModel: FilterSummaryTVStageViewModel {
         stageViewModel ?? runtimeStageViewModel
@@ -128,6 +132,7 @@ struct FilterSummaryViewTV: View {
         return "\(albumPart)|\(peoplePart)"
     }
 
+    #if DEBUG
     private var isAlbumVisualAuditReady: Bool {
         let hasMatchedAlbumSelection = viewModel.selection.albumIds.contains { selectedID in
             viewModel.albums.contains { $0.id == selectedID }
@@ -135,7 +140,9 @@ struct FilterSummaryViewTV: View {
         return hasMatchedAlbumSelection && viewModel.albumCoverURLs.isEmpty == false
             && resolvedStageViewModel.isAlbumStageReady
     }
+    #endif
 
+    #if DEBUG
     private var isPeopleVisualAuditReady: Bool {
         let selectedIDs = viewModel.selection.personFilters.map(\.personId)
         let hasMatchedPeopleSelection = selectedIDs.contains { selectedID in
@@ -149,6 +156,7 @@ struct FilterSummaryViewTV: View {
         return hasMatchedPeopleSelection && viewModel.peopleCoverURLs.isEmpty == false && hasLoadedStatsForSelection
             && resolvedStageViewModel.isPeopleStageReady
     }
+    #endif
 
     private var stageTitle: String {
         String(localized: "Set Photo Range")
@@ -302,11 +310,13 @@ struct FilterSummaryViewTV: View {
 
                 bottomChrome(in: geometry.size)
             }
+            #if DEBUG
             .overlay(alignment: .topLeading) {
                 if shouldExposeUITestReadinessMarkers {
                     uiTestReadinessMarkers
                 }
             }
+            #endif
             .ignoresSafeArea()
         }
         .tvOnboardingProgressOverlay(
@@ -321,9 +331,11 @@ struct FilterSummaryViewTV: View {
         }
         .task {
             await resolvedStageViewModel.prepare(viewModel: viewModel)
+            #if DEBUG
             if shouldExposeUITestReadinessMarkers {
                 await prepareVisualAuditSelectionsForUITestsIfNeeded()
             }
+            #endif
             initializeFocusIfNeeded()
         }
         .onChange(of: selectionReloadToken) { _, _ in
@@ -429,6 +441,7 @@ struct FilterSummaryViewTV: View {
 
     // For visual audits, the page exposes a ready marker, so the test side doesn't have to wait blindly.
 
+    #if DEBUG
     private func prepareVisualAuditSelectionsForUITestsIfNeeded() async {
         for _ in 0..<VisualAuditPreparation.maximumRetryCount {
             if isAlbumVisualAuditReady && isPeopleVisualAuditReady {
@@ -466,6 +479,7 @@ struct FilterSummaryViewTV: View {
             try? await Task.sleep(nanoseconds: VisualAuditPreparation.pollIntervalNanoseconds)
         }
     }
+    #endif
 
     private var backgroundAtmosphere: some View {
         ZStack {
@@ -785,6 +799,7 @@ struct FilterSummaryViewTV: View {
         }
     }
 
+    #if DEBUG
     private var uiTestReadinessMarkers: some View {
         VStack(alignment: .leading, spacing: 1) {
             // localization-audit: ui-test-probe
@@ -800,6 +815,7 @@ struct FilterSummaryViewTV: View {
         .clipped()
         .allowsHitTesting(false)
     }
+    #endif
 
     private var stageCornerRadius: CGFloat { 0 }
     private var dockHeight: CGFloat { 286 }

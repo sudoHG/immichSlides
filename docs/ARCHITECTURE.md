@@ -80,6 +80,8 @@ Large implementations use adjacent `TypeName+Topic.swift` extensions. `SlideShow
 
 The iOS and tvOS slideshow views keep their property wrappers in the primary declarations and place diagnostics, rendering and EXIF methods in platform-filtered extensions. tvOS settings server/cache, About/licenses and bundled privacy pages have separate extension files; their focus state remains owned by `SettingsViewTV`.
 
+Playback QA strings, overlay download metrics, ViewModel injection hooks and diagnostic Vision state compile only in Debug. Their numeric runtime timing records, ordinary download logs and the Vision service used by solo-person filtering remain available in Release. UI-test preparation, hint suppression, reset and contract-probe switches are owned by `PlatformCompat`; focus marker exposure uses `shouldExposeUITestProbes` without changing tvOS focus routing. Release settings-resume suites launch through the real UI with no `UI_TEST_*` overrides.
+
 ### Data flow: "play the next scene"
 
 1. **Deadline.** When a scene becomes stable, the reducer emits `scheduleWakeUp`. `SlideShowViewModel.executeScenePresentationEffects` sleeps until the deadline and sends `.wakeUp` back. The reducer answers with a `.plan` effect.

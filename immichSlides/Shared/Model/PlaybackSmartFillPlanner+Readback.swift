@@ -1,10 +1,13 @@
 import Foundation
 
+#if DEBUG
 private extension String {
     nonisolated var nilIfEmpty: String? {
         isEmpty ? nil : self
     }
 }
+
+#endif
 
 extension PlaybackSmartFillPlanner {
     nonisolated static func appendStaticPolicyRejects(
@@ -120,6 +123,7 @@ extension PlaybackSmartFillPlanner {
         return codes
     }
 
+    #if DEBUG
     nonisolated static func qaSummary(
         input: PlaybackSmartFillPlannerInput,
         sceneType: PlaybackSmartFillSceneType,
@@ -213,6 +217,7 @@ extension PlaybackSmartFillPlanner {
             "systemSafeAreaSoftWarning:\(detail.systemSafeAreaSoftWarning ? "true" : "false")"
         ].joined(separator: "|")
     }
+    #endif
 
     nonisolated static func role(for index: Int) -> PlaybackSmartFillSlotRole {
         switch index {
@@ -364,6 +369,7 @@ extension PlaybackSmartFillPlanner {
         )
     }
 
+    #if DEBUG
     nonisolated static func format(_ value: Double) -> String {
         String(format: "%.3f", value)
     }
@@ -372,4 +378,5 @@ extension PlaybackSmartFillPlanner {
         guard let value else { return "none" }
         return format(value)
     }
+    #endif
 }

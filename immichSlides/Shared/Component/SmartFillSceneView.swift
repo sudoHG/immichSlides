@@ -76,7 +76,6 @@ struct SmartFillSceneView: View {
                     navigationToken: navigationToken,
                     motionContext: motionContext,
                     sceneType: scene.smartFillReadback?.sceneType,
-                    manifestSlotRefs: scene.diagnosticSlotReferences(separator: "|"),
                     isMotionProbeControlBarVisible: isMotionProbeControlBarVisible,
                     rendererIdentity: SceneRendererIdentity(
                         generation: navigationToken,
@@ -88,6 +87,9 @@ struct SmartFillSceneView: View {
                     onRendererDecoded: onRendererDecoded,
                     onRendererFailed: onRendererFailed
                 )
+                #if DEBUG
+                .recordingManifestSlotRefsForDiagnostics(scene.diagnosticSlotReferences(separator: "|"))
+                #endif
                 .frame(width: frame.width, height: frame.height)
                 .clipped()
                 .position(x: frame.midX, y: frame.midY)
@@ -134,7 +136,9 @@ private struct SmartFillSlotImageView: View {
     let navigationToken: UUID
     let motionContext: MotionRuntimeContext?
     let sceneType: PlaybackSmartFillSceneType?
-    let manifestSlotRefs: String
+    #if DEBUG
+    var manifestSlotRefs: String = ""
+    #endif
     let isMotionProbeControlBarVisible: Bool
     let rendererIdentity: SceneRendererIdentity
     let onRendererDecoded: (SceneRendererIdentity) -> Void
@@ -143,6 +147,12 @@ private struct SmartFillSlotImageView: View {
     #if DEBUG
     @State private var slotLifecycleRequestId: String?
     @State private var rendererImageConsumptionState = SmartFillRendererImageConsumptionState()
+
+    func recordingManifestSlotRefsForDiagnostics(_ references: String) -> Self {
+        var copy = self
+        copy.manifestSlotRefs = references
+        return copy
+    }
     #endif
 
     var body: some View {
@@ -335,6 +345,7 @@ private struct SmartFillSlotImageView: View {
         #endif
     }
 
+    #if DEBUG
     private func motionFrameProbeLabel(
         resolvedFrame: SmartFillMotionRenderedSlotFrame,
         presentationSampleTime: TimeInterval
@@ -430,6 +441,7 @@ private struct SmartFillSlotImageView: View {
         }
         return fields.joined(separator: ";")
     }
+    #endif
 
     @ViewBuilder
     private func loadingPlaceholder() -> some View {

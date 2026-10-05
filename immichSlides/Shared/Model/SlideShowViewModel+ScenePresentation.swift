@@ -143,7 +143,10 @@ extension SlideShowViewModel {
     }
 
     func scenePresentationTimestamp() -> TimeInterval {
-        scenePresentationTimestampProviderForTesting?() ?? ProcessInfo.processInfo.systemUptime
+        #if DEBUG
+        if let scenePresentationTimestampProviderForTesting { return scenePresentationTimestampProviderForTesting() }
+        #endif
+        return ProcessInfo.processInfo.systemUptime
     }
 
     func publishScenePresentationChange() {
@@ -323,10 +326,12 @@ extension SlideShowViewModel {
         guard scenePresentationWakeUpKey != key else { return }
         scenePresentationWakeUpTask?.cancel()
         scenePresentationWakeUpKey = key
+        #if DEBUG
         guard scenePresentationTimestampProviderForTesting == nil else {
             scenePresentationWakeUpTask = nil
             return
         }
+        #endif
         let delay = max(0, deadline - scenePresentationTimestamp())
         scenePresentationWakeUpTask = Task { @MainActor [weak self] in
             try? await Task.sleep(

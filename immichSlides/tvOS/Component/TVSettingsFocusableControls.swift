@@ -519,7 +519,7 @@ struct TVSettingsFocusableControl<Label: View>: View {
     }
 
     private var shouldExposeUITestFocusMarker: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_RESET_STATE"] == "1"
+        PlatformCompat.shouldExposeUITestProbes
     }
 
     private var accessibilityValueText: Text {

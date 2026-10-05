@@ -15,8 +15,10 @@ enum PlaybackSmartFillPlanner {
     nonisolated static let fnvOffsetBasis: UInt64 = 14695981039346656037
     nonisolated static let fnvPrime: UInt64 = 1099511628211
     private nonisolated static let defaultTopRejectedReasonCount: Int = 5
+    #if DEBUG
     private nonisolated static let maximumRejectedLayoutSummaryCount: Int = 36
     private nonisolated static let maximumRejectedLayoutSummariesPerBucket: Int = 3
+    #endif
 
     nonisolated static func plan(_ input: PlaybackSmartFillPlannerInput) -> PlaybackSmartFillPlannerResult {
         var state = PlannerState()
@@ -174,8 +176,10 @@ enum PlaybackSmartFillPlanner {
     struct PlannerState: Sendable {
         var rejectReasons: [PlaybackSmartFillPlannerRejectReason] = []
         var rejectCounts: [PlaybackSmartFillPlannerRejectReason: Int] = [:]
+        #if DEBUG
         var rejectedLayoutDiagnostics: [String] = []
         var rejectedLayoutDiagnosticBucketCounts: [String: Int] = [:]
+        #endif
         var evaluationCount: Int = 0
         var candidateWindowUsed: Int = 1
         var isEvaluationBudgetExhausted = false
@@ -212,6 +216,7 @@ enum PlaybackSmartFillPlanner {
                 .map(\.key)
         }
 
+        #if DEBUG
         nonisolated mutating func recordRejectedLayoutDiagnostic(
             reason: PlaybackSmartFillPlannerRejectReason,
             candidate: PlaybackSmartFillCandidateSummary,
@@ -268,6 +273,7 @@ enum PlaybackSmartFillPlanner {
                     "minimumSecondaryArea:\(PlaybackSmartFillPlanner.format(policy.minimumSecondaryArea))"
                 ].joined(separator: "|"))
         }
+        #endif
     }
 }
 
@@ -281,6 +287,7 @@ extension PlaybackPlanningRect {
         x < other.x + other.width && x + width > other.x && y < other.y + other.height && y + height > other.y
     }
 
+    #if DEBUG
     nonisolated var smartFillPlannerLabel: String {
         "x\(formatted(x))y\(formatted(y))w\(formatted(width))h\(formatted(height))"
     }
@@ -288,6 +295,7 @@ extension PlaybackPlanningRect {
     private nonisolated func formatted(_ value: Double) -> String {
         String(format: "%.3f", value)
     }
+    #endif
 }
 
 extension PlaybackProtectionRect {

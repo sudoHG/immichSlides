@@ -6,7 +6,10 @@ import OSLog
 
 extension SlideShowViewModel {
     func playbackManifestTimestamp() -> TimeInterval {
-        playbackManifestTimestampProviderForTesting?() ?? Date().timeIntervalSince1970
+        #if DEBUG
+        if let playbackManifestTimestampProviderForTesting { return playbackManifestTimestampProviderForTesting() }
+        #endif
+        return Date().timeIntervalSince1970
     }
 
     func resetSmartFillStartupRuntimeEvidence() {
@@ -94,6 +97,7 @@ extension SlideShowViewModel {
         }
     }
 
+    #if DEBUG
     func smartFillRuntimeSummaryField(_ key: String, in summary: String) -> String? {
         for part in summary.split(separator: ";") {
             guard let equalIndex = part.firstIndex(of: "="),
@@ -105,15 +109,19 @@ extension SlideShowViewModel {
         }
         return nil
     }
+    #endif
 
     func recordSmartFillFirstImageDisplayed(assetId: String) {
         downloadManager.recordFirstImageDisplayed(assetId: assetId, size: .fullsize)
     }
 
+    #if DEBUG
     func recordSmartFillFirstImageDisplayedForTesting(assetId: String) {
         recordSmartFillFirstImageDisplayed(assetId: assetId)
     }
+    #endif
 
+    #if DEBUG
     func smartFillStartupRuntimeSummaryParts(
         scene: PlaybackScene,
         slotReadiness: String?
@@ -292,6 +300,7 @@ extension SlideShowViewModel {
         String(format: "%.3f", value)
     }
 
+    #endif
     func recordActionTimestamp(
         _ timestamp: TimeInterval,
         for transition: PlaybackSessionTransition

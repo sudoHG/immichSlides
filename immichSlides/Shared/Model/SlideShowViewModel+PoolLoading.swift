@@ -39,9 +39,11 @@ extension SlideShowViewModel {
 
     // The debug probe only checks the photo on screen, and only in soloOnly; random playback does not show Vision n=x.
 
+    #if DEBUG
     var shouldRunDebugVisionFaceAudit: Bool {
         isSoloOnlyPlaybackSource
     }
+    #endif
 
     // Pool refill rules gathered into a static method that unit tests can call.
 
@@ -87,7 +89,9 @@ extension SlideShowViewModel {
         isLoadingMore = false
         clearEmptyPlaybackMessage()
         clearAutoPlayRecoveryMessage()
+        #if DEBUG
         clearVisionFaceAuditState()
+        #endif
         didFirstPreload = false
         firstPreloadTask?.cancel()
         firstPreloadTask = nil
@@ -191,12 +195,18 @@ extension SlideShowViewModel {
             do {
 
                 let loadedAssets: [Asset]
+                #if DEBUG
                 if let loadAssetsHookForTesting {
                     loadedAssets = try await loadAssetsHookForTesting(loadSource)
                 } else {
                     loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
                         size: Self.standardPlaybackFetchAssetCount)
                 }
+                #else
+                loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
+                    size: Self.standardPlaybackFetchAssetCount)
+
+                #endif
                 guard isCurrentPlaybackLoad(loadIdentity) else {
                     logger.notice(
                         "load assets ignored stale result source=random generation=\(loadGeneration, privacy: .public) currentGeneration=\(self.playbackSourceGeneration, privacy: .public)"
@@ -243,6 +253,7 @@ extension SlideShowViewModel {
             do {
                 let loadedAssets: [Asset]
                 let emptyReason: PlaybackPoolEmptyReason?
+                #if DEBUG
                 if let loadAssetsHookForTesting {
                     loadedAssets = try await loadAssetsHookForTesting(loadSource)
                     emptyReason = loadedAssets.isEmpty ? .noMatchingAssets : nil
@@ -254,6 +265,15 @@ extension SlideShowViewModel {
                     loadedAssets = resolution.assets
                     emptyReason = resolution.emptyReason
                 }
+                #else
+                let resolution = try await resolver.resolveDetailed(
+                    selection: selection,
+                    targetCount: targetCount
+                )
+                loadedAssets = resolution.assets
+                emptyReason = resolution.emptyReason
+
+                #endif
                 guard isCurrentPlaybackLoad(loadIdentity) else {
                     logger.notice(
                         "load assets ignored stale result source=filtered generation=\(loadGeneration, privacy: .public) currentGeneration=\(self.playbackSourceGeneration, privacy: .public)"
@@ -318,10 +338,12 @@ extension SlideShowViewModel {
     }
 
     func loadIndexChangePhoto(assetId: String, size: ThumbnailSize) async {
+        #if DEBUG
         if let indexChangePhotoLoadHookForTesting {
             await indexChangePhotoLoadHookForTesting(assetId, size)
             return
         }
+        #endif
         await downloadManager.loadPhoto(assetId: assetId, size: size, priority: .high)
     }
 
@@ -365,12 +387,18 @@ extension SlideShowViewModel {
         do {
 
             let loadedAssets: [Asset]
+            #if DEBUG
             if let loadMoreAssetsHookForTesting {
                 loadedAssets = try await loadMoreAssetsHookForTesting(loadSource)
             } else {
                 loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
                     size: Self.standardPlaybackFetchAssetCount)
             }
+            #else
+            loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
+                size: Self.standardPlaybackFetchAssetCount)
+
+            #endif
             guard isCurrentPlaybackPoolLoad(loadIdentity) else {
                 logger.notice(
                     "load more ignored stale result source=random generation=\(loadGeneration, privacy: .public) currentGeneration=\(self.playbackSourceGeneration, privacy: .public)"
@@ -480,6 +508,7 @@ extension SlideShowViewModel {
             #if DEBUG
             let strictSoloDebugEvents: [PlaybackSequenceDebugEventInput]
             #endif
+            #if DEBUG
             if let loadMoreAssetsHookForTesting {
                 loadedAssets = try await loadMoreAssetsHookForTesting(loadSource)
                 #if DEBUG
@@ -506,6 +535,13 @@ extension SlideShowViewModel {
                 strictSoloDebugEvents = resolver.strictSoloDebugEventsForTesting
                 #endif
             }
+            #else
+            loadedAssets = try await resolver.resolve(
+                selection: selection,
+                targetCount: targetCount,
+                excludingAssetIds: excludedAssetIds
+            )
+            #endif
             guard isCurrentPlaybackPoolLoad(loadIdentity) else {
                 logger.notice(
                     "load more ignored stale result source=filtered generation=\(loadGeneration, privacy: .public) currentGeneration=\(self.playbackSourceGeneration, privacy: .public)"

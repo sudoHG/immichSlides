@@ -66,7 +66,7 @@ extension SlideShowViewModel {
         }
         guard !photoSlots.isEmpty else { return nil }
 
-        let readback = PlaybackSmartFillSceneReadback(
+        let initialReadback = PlaybackSmartFillSceneReadback(
             version: "smart-fill-scene-v2",
             sceneType: plannerResult.sceneType,
             layoutPolicyId: plannerResult.layoutPolicyId,
@@ -84,9 +84,13 @@ extension SlideShowViewModel {
             acceptedRatioPreset: plannerResult.acceptedRatioPreset,
             rotationKeyHashPrefix: plannerResult.rotationKeyHashPrefix,
             rejectedLayoutReasonTopList: plannerResult.rejectedLayoutReasonTopList,
-            reasonCodes: plannerResult.reasonCodes,
-            qaDebugSummary: plannerResult.qaDebugSummary
+            reasonCodes: plannerResult.reasonCodes
         )
+        #if DEBUG
+        let readback = initialReadback.recordingQADebugSummary(plannerResult.qaDebugSummary)
+        #else
+        let readback = initialReadback
+        #endif
         let prototypeScene = PlaybackScene(
             id: "scene-smartfill-\(photoSlots.first?.asset.id ?? "empty")",
             photoSlots: photoSlots,
@@ -381,10 +385,12 @@ extension SlideShowViewModel {
         }
         guard !assetIds.isEmpty else { return }
 
+        #if DEBUG
         if let smartFillMotionPreparedSlotPreloadHookForTesting {
             smartFillMotionPreparedSlotPreloadHookForTesting(assetIds)
             return
         }
+        #endif
 
         let taskId = UUID()
         smartFillMotionPreparedSlotPreloadTasks[taskId] = Task { @MainActor [weak self] in

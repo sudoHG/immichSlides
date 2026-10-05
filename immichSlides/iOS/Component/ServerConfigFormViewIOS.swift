@@ -52,7 +52,7 @@ struct ServerConfigFormViewIOS: View {
     // UI tests can hide the debug autofill with an environment variable; real users are not affected.
 
     private var isDebugFillConfigButtonSuppressedByUITest: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON"] == "1"
+        PlatformCompat.shouldSuppressDebugFillAPIKeyButtonForTesting
     }
 
     private var debugServerConfigFromInfoPlist: ImmichServer? {

@@ -262,14 +262,18 @@ struct PlaybackProtectionRegion: Equatable, Sendable {
 struct PlaybackProtectionSnapshot: Equatable, Sendable {
     let version: String
     let regions: [PlaybackProtectionRegion]
+    #if DEBUG
     let qaDebugSummary: String
+    #endif
 
     nonisolated static let empty = PlaybackProtectionSnapshot(regions: [])
 
     nonisolated init(regions: [PlaybackProtectionRegion]) {
         self.version = "screen-protection-v1"
         self.regions = regions
+        #if DEBUG
         self.qaDebugSummary = Self.makeQADebugSummary(regions: regions)
+        #endif
     }
 
     nonisolated var smartFillReplanFingerprint: String {
@@ -378,6 +382,7 @@ struct PlaybackProtectionSnapshot: Equatable, Sendable {
         }
     }
 
+    #if DEBUG
     private nonisolated static func makeQADebugSummary(regions: [PlaybackProtectionRegion]) -> String {
         let hardCount = regions.filter { $0.priority == .hard }.count
         let standardCount = regions.filter { $0.priority == .standard }.count
@@ -394,7 +399,6 @@ struct PlaybackProtectionSnapshot: Equatable, Sendable {
             "sources=\(sources.isEmpty ? "none" : sources)"
         ].joined(separator: ";")
     }
-
     private nonisolated static func uniqueSources(in regions: [PlaybackProtectionRegion]) -> [PlaybackProtectionSource]
     {
         var seen: [PlaybackProtectionSource] = []
@@ -403,4 +407,5 @@ struct PlaybackProtectionSnapshot: Equatable, Sendable {
         }
         return seen
     }
+    #endif
 }

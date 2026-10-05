@@ -100,7 +100,7 @@ extension SlideShowViewTV {
                     Text("The slideshow failed to load. Go back, then reopen the slideshow.")
                 }
                 #if DEBUG
-                if ProcessInfo.processInfo.environment["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"] == "1" {
+                if PlatformCompat.shouldExposeScenePresentationContractProbeForTesting {
                     // The contract probe reuses the product's displayed-frame
                     // snapshot instead of creating its own clock.
                     Color.clear

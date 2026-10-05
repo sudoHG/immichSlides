@@ -249,7 +249,7 @@ enum SmartFillPreparedPlanBuilder {
         guard !Task.isCancelled else { return nil }
         guard !plannerResult.slots.isEmpty else { return nil }
 
-        let readback = PlaybackSmartFillSceneReadback(
+        let initialReadback = PlaybackSmartFillSceneReadback(
             version: "smart-fill-scene-v2",
             sceneType: plannerResult.sceneType,
             layoutPolicyId: plannerResult.layoutPolicyId,
@@ -267,9 +267,13 @@ enum SmartFillPreparedPlanBuilder {
             acceptedRatioPreset: plannerResult.acceptedRatioPreset,
             rotationKeyHashPrefix: plannerResult.rotationKeyHashPrefix,
             rejectedLayoutReasonTopList: plannerResult.rejectedLayoutReasonTopList,
-            reasonCodes: plannerResult.reasonCodes,
-            qaDebugSummary: plannerResult.qaDebugSummary
+            reasonCodes: plannerResult.reasonCodes
         )
+        #if DEBUG
+        let readback = initialReadback.recordingQADebugSummary(plannerResult.qaDebugSummary)
+        #else
+        let readback = initialReadback
+        #endif
         let selectedRefs = plannerResult.slots.map(\.candidateReference)
         let selectedAssetIds = selectedRefs.compactMap { selectedRef in
             zip(candidates, request.rawAssetSnapshots).first { candidate, _ in
@@ -713,7 +717,9 @@ struct PlaybackSmartFillPlannerResult: Equatable, Sendable {
     let acceptedRatioPreset: String
     let rotationKeyHashPrefix: String
     let reasonCodes: [String]
-    let qaDebugSummary: String
+    #if DEBUG
+    private(set) var qaDebugSummary: String = ""
+    #endif
     let acceptedSceneSearchTier: PlaybackSmartFillAcceptedSceneSearchTier
     let currentAssetDisposition: PlaybackSmartFillCurrentAssetDisposition
     let currentAssetAbsentReason: PlaybackSmartFillCurrentAssetAbsentReason
@@ -727,6 +733,80 @@ struct PlaybackSmartFillPlannerResult: Equatable, Sendable {
     let slotRoles: [PlaybackSmartFillSlotRole]
     let slotRefs: [String]
 
+    nonisolated init(
+        sceneType: PlaybackSmartFillSceneType,
+        layoutPolicyId: String,
+        surfaceKey: String = "unknown-surface",
+        layoutVariant: PlaybackSmartFillLayoutVariant = .single,
+        ratioPreset: String = "full",
+        slots: [PlaybackSmartFillSlot],
+        fallbackReason: PlaybackSmartFillFallbackReason?,
+        fallbackCategory: PlaybackSmartFillFallbackCategory = .none,
+        rejectReasonsTried: [PlaybackSmartFillPlannerRejectReason],
+        rejectedLayoutReasonTopList: [PlaybackSmartFillPlannerRejectReason] = [],
+        qualityDecision: PlaybackPlanningQualityDecision,
+        faceProtectionSummary: PlaybackSmartFillFaceProtectionStatus,
+        protectionSummary: PlaybackSmartFillProtectionSummary,
+        readabilitySummary: PlaybackSmartFillReadabilitySummary,
+        candidateWindowUsed: Int = 1,
+        evaluationCount: Int = 0,
+        rotationStartLayoutVariant: PlaybackSmartFillLayoutVariant = .single,
+        rotationStartRatioPreset: String = "full",
+        acceptedLayoutVariant: PlaybackSmartFillLayoutVariant = .single,
+        acceptedRatioPreset: String = "full",
+        rotationKeyHashPrefix: String = "none",
+        reasonCodes: [String],
+        acceptedSceneSearchTier: PlaybackSmartFillAcceptedSceneSearchTier? = nil,
+        currentAssetDisposition: PlaybackSmartFillCurrentAssetDisposition,
+        currentAssetAbsentReason: PlaybackSmartFillCurrentAssetAbsentReason,
+        currentAssetSlotAreaRatio: Double? = nil,
+        currentAssetCropRetention: Double? = nil,
+        currentAssetProtectedRegionCoverage: Double? = nil,
+        currentAssetFaceProtectionPassed: Bool,
+        currentAssetSubjectProtectionPassed: Bool,
+        currentAssetVisibleQualityClass: PlaybackSmartFillVisibleQualityClass,
+        ledgerSceneAssets: [String]? = nil,
+        slotRoles: [PlaybackSmartFillSlotRole]? = nil,
+        slotRefs: [String]? = nil
+    ) {
+        self.sceneType = sceneType
+        self.layoutPolicyId = layoutPolicyId
+        self.surfaceKey = surfaceKey
+        self.layoutVariant = layoutVariant
+        self.ratioPreset = ratioPreset
+        self.slots = slots
+        self.fallbackReason = fallbackReason
+        self.fallbackCategory = fallbackCategory
+        self.rejectReasonsTried = rejectReasonsTried
+        self.rejectedLayoutReasonTopList = rejectedLayoutReasonTopList
+        self.qualityDecision = qualityDecision
+        self.faceProtectionSummary = faceProtectionSummary
+        self.protectionSummary = protectionSummary
+        self.readabilitySummary = readabilitySummary
+        self.candidateWindowUsed = candidateWindowUsed
+        self.evaluationCount = evaluationCount
+        self.rotationStartLayoutVariant = rotationStartLayoutVariant
+        self.rotationStartRatioPreset = rotationStartRatioPreset
+        self.acceptedLayoutVariant = acceptedLayoutVariant
+        self.acceptedRatioPreset = acceptedRatioPreset
+        self.rotationKeyHashPrefix = rotationKeyHashPrefix
+        self.reasonCodes = reasonCodes
+        self.acceptedSceneSearchTier =
+            acceptedSceneSearchTier ?? PlaybackSmartFillAcceptedSceneSearchTier(sceneType: sceneType)
+        self.currentAssetDisposition = currentAssetDisposition
+        self.currentAssetAbsentReason = currentAssetAbsentReason
+        self.currentAssetSlotAreaRatio = currentAssetSlotAreaRatio
+        self.currentAssetCropRetention = currentAssetCropRetention
+        self.currentAssetProtectedRegionCoverage = currentAssetProtectedRegionCoverage
+        self.currentAssetFaceProtectionPassed = currentAssetFaceProtectionPassed
+        self.currentAssetSubjectProtectionPassed = currentAssetSubjectProtectionPassed
+        self.currentAssetVisibleQualityClass = currentAssetVisibleQualityClass
+        self.ledgerSceneAssets = ledgerSceneAssets ?? slots.map(\.candidateReference)
+        self.slotRoles = slotRoles ?? slots.map(\.role)
+        self.slotRefs = slotRefs ?? slots.map(\.candidateReference)
+    }
+
+    #if DEBUG
     nonisolated init(
         sceneType: PlaybackSmartFillSceneType,
         layoutPolicyId: String,
@@ -764,43 +844,51 @@ struct PlaybackSmartFillPlannerResult: Equatable, Sendable {
         slotRoles: [PlaybackSmartFillSlotRole]? = nil,
         slotRefs: [String]? = nil
     ) {
-        self.sceneType = sceneType
-        self.layoutPolicyId = layoutPolicyId
-        self.surfaceKey = surfaceKey
-        self.layoutVariant = layoutVariant
-        self.ratioPreset = ratioPreset
-        self.slots = slots
-        self.fallbackReason = fallbackReason
-        self.fallbackCategory = fallbackCategory
-        self.rejectReasonsTried = rejectReasonsTried
-        self.rejectedLayoutReasonTopList = rejectedLayoutReasonTopList
-        self.qualityDecision = qualityDecision
-        self.faceProtectionSummary = faceProtectionSummary
-        self.protectionSummary = protectionSummary
-        self.readabilitySummary = readabilitySummary
-        self.candidateWindowUsed = candidateWindowUsed
-        self.evaluationCount = evaluationCount
-        self.rotationStartLayoutVariant = rotationStartLayoutVariant
-        self.rotationStartRatioPreset = rotationStartRatioPreset
-        self.acceptedLayoutVariant = acceptedLayoutVariant
-        self.acceptedRatioPreset = acceptedRatioPreset
-        self.rotationKeyHashPrefix = rotationKeyHashPrefix
-        self.reasonCodes = reasonCodes
+        self.init(
+            sceneType: sceneType,
+            layoutPolicyId: layoutPolicyId,
+            surfaceKey: surfaceKey,
+            layoutVariant: layoutVariant,
+            ratioPreset: ratioPreset,
+            slots: slots,
+            fallbackReason: fallbackReason,
+            fallbackCategory: fallbackCategory,
+            rejectReasonsTried: rejectReasonsTried,
+            rejectedLayoutReasonTopList: rejectedLayoutReasonTopList,
+            qualityDecision: qualityDecision,
+            faceProtectionSummary: faceProtectionSummary,
+            protectionSummary: protectionSummary,
+            readabilitySummary: readabilitySummary,
+            candidateWindowUsed: candidateWindowUsed,
+            evaluationCount: evaluationCount,
+            rotationStartLayoutVariant: rotationStartLayoutVariant,
+            rotationStartRatioPreset: rotationStartRatioPreset,
+            acceptedLayoutVariant: acceptedLayoutVariant,
+            acceptedRatioPreset: acceptedRatioPreset,
+            rotationKeyHashPrefix: rotationKeyHashPrefix,
+            reasonCodes: reasonCodes,
+            acceptedSceneSearchTier: acceptedSceneSearchTier,
+            currentAssetDisposition: currentAssetDisposition,
+            currentAssetAbsentReason: currentAssetAbsentReason,
+            currentAssetSlotAreaRatio: currentAssetSlotAreaRatio,
+            currentAssetCropRetention: currentAssetCropRetention,
+            currentAssetProtectedRegionCoverage: currentAssetProtectedRegionCoverage,
+            currentAssetFaceProtectionPassed: currentAssetFaceProtectionPassed,
+            currentAssetSubjectProtectionPassed: currentAssetSubjectProtectionPassed,
+            currentAssetVisibleQualityClass: currentAssetVisibleQualityClass,
+            ledgerSceneAssets: ledgerSceneAssets,
+            slotRoles: slotRoles,
+            slotRefs: slotRefs
+        )
         self.qaDebugSummary = qaDebugSummary
-        self.acceptedSceneSearchTier =
-            acceptedSceneSearchTier ?? PlaybackSmartFillAcceptedSceneSearchTier(sceneType: sceneType)
-        self.currentAssetDisposition = currentAssetDisposition
-        self.currentAssetAbsentReason = currentAssetAbsentReason
-        self.currentAssetSlotAreaRatio = currentAssetSlotAreaRatio
-        self.currentAssetCropRetention = currentAssetCropRetention
-        self.currentAssetProtectedRegionCoverage = currentAssetProtectedRegionCoverage
-        self.currentAssetFaceProtectionPassed = currentAssetFaceProtectionPassed
-        self.currentAssetSubjectProtectionPassed = currentAssetSubjectProtectionPassed
-        self.currentAssetVisibleQualityClass = currentAssetVisibleQualityClass
-        self.ledgerSceneAssets = ledgerSceneAssets ?? slots.map(\.candidateReference)
-        self.slotRoles = slotRoles ?? slots.map(\.role)
-        self.slotRefs = slotRefs ?? slots.map(\.candidateReference)
     }
+
+    nonisolated func recordingQADebugSummary(_ summary: String) -> Self {
+        var copy = self
+        copy.qaDebugSummary = summary
+        return copy
+    }
+    #endif
 }
 
 struct PlaybackSmartFillSceneReadback: Equatable, Sendable {
@@ -825,8 +913,57 @@ struct PlaybackSmartFillSceneReadback: Equatable, Sendable {
     let actionTimestamp: TimeInterval?
     let scenePublishTimestamp: TimeInterval?
     let actionToSceneLatencyMilliseconds: Double?
-    let qaDebugSummary: String
+    #if DEBUG
+    private(set) var qaDebugSummary: String = ""
+    #endif
 
+    nonisolated init(
+        version: String,
+        sceneType: PlaybackSmartFillSceneType,
+        layoutPolicyId: String,
+        surfaceKey: String = "unknown-surface",
+        layoutVariant: PlaybackSmartFillLayoutVariant = .single,
+        ratioPreset: String = "full",
+        slotRoles: [PlaybackSmartFillSlotRole],
+        fallbackReason: PlaybackSmartFillFallbackReason?,
+        fallbackCategory: PlaybackSmartFillFallbackCategory = .none,
+        candidateWindowUsed: Int = 1,
+        evaluationCount: Int = 0,
+        rotationStartLayoutVariant: PlaybackSmartFillLayoutVariant = .single,
+        rotationStartRatioPreset: String = "full",
+        acceptedLayoutVariant: PlaybackSmartFillLayoutVariant = .single,
+        acceptedRatioPreset: String = "full",
+        rotationKeyHashPrefix: String = "none",
+        rejectedLayoutReasonTopList: [PlaybackSmartFillPlannerRejectReason] = [],
+        reasonCodes: [String],
+        actionTimestamp: TimeInterval? = nil,
+        scenePublishTimestamp: TimeInterval? = nil,
+        actionToSceneLatencyMilliseconds: Double? = nil
+    ) {
+        self.version = version
+        self.sceneType = sceneType
+        self.layoutPolicyId = layoutPolicyId
+        self.surfaceKey = surfaceKey
+        self.layoutVariant = layoutVariant
+        self.ratioPreset = ratioPreset
+        self.slotRoles = slotRoles
+        self.fallbackReason = fallbackReason
+        self.fallbackCategory = fallbackCategory
+        self.candidateWindowUsed = candidateWindowUsed
+        self.evaluationCount = evaluationCount
+        self.rotationStartLayoutVariant = rotationStartLayoutVariant
+        self.rotationStartRatioPreset = rotationStartRatioPreset
+        self.acceptedLayoutVariant = acceptedLayoutVariant
+        self.acceptedRatioPreset = acceptedRatioPreset
+        self.rotationKeyHashPrefix = rotationKeyHashPrefix
+        self.rejectedLayoutReasonTopList = rejectedLayoutReasonTopList
+        self.reasonCodes = reasonCodes
+        self.actionTimestamp = actionTimestamp
+        self.scenePublishTimestamp = scenePublishTimestamp
+        self.actionToSceneLatencyMilliseconds = actionToSceneLatencyMilliseconds
+    }
+
+    #if DEBUG
     nonisolated init(
         version: String,
         sceneType: PlaybackSmartFillSceneType,
@@ -851,36 +988,7 @@ struct PlaybackSmartFillSceneReadback: Equatable, Sendable {
         actionToSceneLatencyMilliseconds: Double? = nil,
         qaDebugSummary: String
     ) {
-        self.version = version
-        self.sceneType = sceneType
-        self.layoutPolicyId = layoutPolicyId
-        self.surfaceKey = surfaceKey
-        self.layoutVariant = layoutVariant
-        self.ratioPreset = ratioPreset
-        self.slotRoles = slotRoles
-        self.fallbackReason = fallbackReason
-        self.fallbackCategory = fallbackCategory
-        self.candidateWindowUsed = candidateWindowUsed
-        self.evaluationCount = evaluationCount
-        self.rotationStartLayoutVariant = rotationStartLayoutVariant
-        self.rotationStartRatioPreset = rotationStartRatioPreset
-        self.acceptedLayoutVariant = acceptedLayoutVariant
-        self.acceptedRatioPreset = acceptedRatioPreset
-        self.rotationKeyHashPrefix = rotationKeyHashPrefix
-        self.rejectedLayoutReasonTopList = rejectedLayoutReasonTopList
-        self.reasonCodes = reasonCodes
-        self.actionTimestamp = actionTimestamp
-        self.scenePublishTimestamp = scenePublishTimestamp
-        self.actionToSceneLatencyMilliseconds = actionToSceneLatencyMilliseconds
-        self.qaDebugSummary = qaDebugSummary
-    }
-
-    nonisolated func recordingPublishTiming(
-        actionTimestamp: TimeInterval,
-        scenePublishTimestamp: TimeInterval
-    ) -> PlaybackSmartFillSceneReadback {
-        let latencyMilliseconds = max(0, (scenePublishTimestamp - actionTimestamp) * 1000)
-        return PlaybackSmartFillSceneReadback(
+        self.init(
             version: version,
             sceneType: sceneType,
             layoutPolicyId: layoutPolicyId,
@@ -901,15 +1009,59 @@ struct PlaybackSmartFillSceneReadback: Equatable, Sendable {
             reasonCodes: reasonCodes,
             actionTimestamp: actionTimestamp,
             scenePublishTimestamp: scenePublishTimestamp,
-            actionToSceneLatencyMilliseconds: latencyMilliseconds,
-            qaDebugSummary: qaSummaryRecordingPublishTiming(
+            actionToSceneLatencyMilliseconds: actionToSceneLatencyMilliseconds
+        )
+        self.qaDebugSummary = qaDebugSummary
+    }
+
+    nonisolated func recordingQADebugSummary(_ summary: String) -> Self {
+        var copy = self
+        copy.qaDebugSummary = summary
+        return copy
+    }
+    #endif
+
+    nonisolated func recordingPublishTiming(
+        actionTimestamp: TimeInterval,
+        scenePublishTimestamp: TimeInterval
+    ) -> PlaybackSmartFillSceneReadback {
+        let latencyMilliseconds = max(0, (scenePublishTimestamp - actionTimestamp) * 1000)
+        let readback = PlaybackSmartFillSceneReadback(
+            version: version,
+            sceneType: sceneType,
+            layoutPolicyId: layoutPolicyId,
+            surfaceKey: surfaceKey,
+            layoutVariant: layoutVariant,
+            ratioPreset: ratioPreset,
+            slotRoles: slotRoles,
+            fallbackReason: fallbackReason,
+            fallbackCategory: fallbackCategory,
+            candidateWindowUsed: candidateWindowUsed,
+            evaluationCount: evaluationCount,
+            rotationStartLayoutVariant: rotationStartLayoutVariant,
+            rotationStartRatioPreset: rotationStartRatioPreset,
+            acceptedLayoutVariant: acceptedLayoutVariant,
+            acceptedRatioPreset: acceptedRatioPreset,
+            rotationKeyHashPrefix: rotationKeyHashPrefix,
+            rejectedLayoutReasonTopList: rejectedLayoutReasonTopList,
+            reasonCodes: reasonCodes,
+            actionTimestamp: actionTimestamp,
+            scenePublishTimestamp: scenePublishTimestamp,
+            actionToSceneLatencyMilliseconds: latencyMilliseconds
+        )
+        #if DEBUG
+        return readback.recordingQADebugSummary(
+            qaSummaryRecordingPublishTiming(
                 actionTimestamp: actionTimestamp,
                 scenePublishTimestamp: scenePublishTimestamp,
                 latencyMilliseconds: latencyMilliseconds
-            )
-        )
+            ))
+        #else
+        return readback
+        #endif
     }
 
+    #if DEBUG
     private nonisolated func qaSummaryRecordingPublishTiming(
         actionTimestamp: TimeInterval,
         scenePublishTimestamp: TimeInterval,
@@ -938,4 +1090,5 @@ struct PlaybackSmartFillSceneReadback: Equatable, Sendable {
     private nonisolated static func format(_ value: Double) -> String {
         String(format: "%.3f", value)
     }
+    #endif
 }
