@@ -166,9 +166,8 @@ extension SlideShowViewModelStartupTests {
         markReady(appendedAssets, in: vm.downloadManager)
         loadMoreContinuation?.resume(returning: appendedAssets)
         await loadMoreTask.value
-        for _ in 0..<1_000 where vm.isLoadingMore {
-            await Task.yield()
-        }
+        let didFinishLoadingMore = await waitUntil { !vm.isLoadingMore }
+        #expect(didFinishLoadingMore, "load more did not finish before the deadline")
         #expect(vm.isLoadingMore == false)
         #expect(vm.assets.count == 60)
         #if DEBUG
@@ -449,9 +448,8 @@ extension SlideShowViewModelStartupTests {
         let targetIndex = vm.targetIndex
 
         await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
-        for _ in 0..<1_000 where requestedLoads.isEmpty {
-            await Task.yield()
-        }
+        let didRequestLoad = await waitUntil { !requestedLoads.isEmpty }
+        #expect(didRequestLoad, "no photo load was requested before the deadline")
 
         #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-1"])
         #expect(Set(requestedLoads) == Set(["asset-1:fullsize"]))
@@ -538,9 +536,8 @@ extension SlideShowViewModelStartupTests {
         }
 
         await vm.prepareInitialAssets()
-        for _ in 0..<1_000 where initialSceneRequests.count < 2 {
-            await Task.yield()
-        }
+        let didRequestInitialScene = await waitUntil { initialSceneRequests.count >= 2 }
+        #expect(didRequestInitialScene, "initial scene photo requests did not arrive before the deadline")
 
         #expect(vm.safeCurrentScene?.smartFillReadback?.sceneType == .double)
         #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-0", "asset-1"])
@@ -592,9 +589,8 @@ extension SlideShowViewModelStartupTests {
         let token = vm.targetTransitionToken
         let targetIndex = vm.targetIndex
         await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
-        for _ in 0..<1_000 where candidateWindowRequests.isEmpty {
-            await Task.yield()
-        }
+        let didRequestCandidateWindow = await waitUntil { !candidateWindowRequests.isEmpty }
+        #expect(didRequestCandidateWindow, "candidate window prewarming did not start before the deadline")
 
         #expect(!candidateWindowRequests.isEmpty)
         #expect(candidateWindowRequests.allSatisfy { !$0.hasPrefix("asset-0:") && !$0.hasPrefix("asset-1:") })
@@ -638,7 +634,8 @@ extension SlideShowViewModelStartupTests {
 
         vm.requestNextScene()
         await vm.synchronizePlaybackReadbackForTesting(token: vm.targetTransitionToken, targetIndex: vm.targetIndex)
-        for _ in 0..<1_000 where transitionWindowPreloads.isEmpty { await Task.yield() }
+        let didPreloadTransitionWindow = await waitUntil { !transitionWindowPreloads.isEmpty }
+        #expect(didPreloadTransitionWindow, "transition window preload did not start before the deadline")
 
         #expect(transitionWindowPreloads.count == 1)
         #expect(transitionWindowPreloads.first?.index == 1)
@@ -676,14 +673,11 @@ extension SlideShowViewModelStartupTests {
                 orientation: .portrait
             )
         )
-        for _ in 0..<initialSceneRequestPollCount {
-            if vm.safeCurrentScene?.smartFillReadback?.sceneType == .double,
-                Set(initialSceneRequests) == Set(["asset-0", "asset-1"])
-            {
-                break
-            }
-            try? await Task.sleep(nanoseconds: initialSceneRequestPollIntervalNanoseconds)
+        let didRebuildInitialScene = await waitUntil(pollInterval: initialSceneRequestPollInterval) {
+            vm.safeCurrentScene?.smartFillReadback?.sceneType == .double
+                && Set(initialSceneRequests) == Set(["asset-0", "asset-1"])
         }
+        #expect(didRebuildInitialScene, "initial scene was not rebuilt before the deadline")
 
         #expect(vm.safeCurrentScene?.smartFillReadback?.sceneType == .double)
         #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-0", "asset-1"])

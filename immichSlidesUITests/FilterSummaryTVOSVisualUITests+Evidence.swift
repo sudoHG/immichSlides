@@ -206,8 +206,23 @@ extension FilterSummaryTVOSVisualUITests {
     }
 
     func saveRuntimeScreenshot(_ screenshot: XCUIScreenshot, name: String) {
-
-        let directory = URL(fileURLWithPath: "/private/tmp/immichSlides_Screenshots")
+        // Optional PNG export for manual review; the XCTAttachment is always kept. Screenshots can show private
+        // photos, so the directory must be set explicitly, outside Git, and is created with owner-only permissions.
+        let environment = ProcessInfo.processInfo.environment
+        let directory: URL
+        do {
+            guard
+                let resolved = try PrivateEvidenceDirectory.resolve(
+                    rootPath: environment["IMMICHSLIDES_SCREENSHOT_EXPORT_DIR"]
+                        ?? environment["TEST_RUNNER_IMMICHSLIDES_SCREENSHOT_EXPORT_DIR"],
+                    components: []
+                )
+            else { return }
+            directory = resolved
+        } catch {
+            XCTFail("Cannot prepare runtime screenshot export directory: \(error.localizedDescription)")
+            return
+        }
         let safeName = name.replacingOccurrences(
             of: "[^A-Za-z0-9._-]",
             with: "-",
@@ -216,8 +231,8 @@ extension FilterSummaryTVOSVisualUITests {
         let fileURL = directory.appendingPathComponent("\(safeName).png")
 
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try screenshot.pngRepresentation.write(to: fileURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         } catch {
             XCTFail("Failed to write runtime screenshot: \(fileURL.path), error: \(error.localizedDescription)")
         }

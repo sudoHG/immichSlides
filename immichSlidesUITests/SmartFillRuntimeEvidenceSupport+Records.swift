@@ -220,14 +220,12 @@ extension SmartFillRuntimeEvidenceSupport {
 
     static func makeHarnessSummary(
         startupRunId: String,
-        appLaunchStartMs: Double,
-        testServerConfigInjectedMs: Double,
         firstManifestObservedMs: Double,
         firstNonLoadingScreenshotCapturedMs: Double
     ) -> [String: Any] {
+        // Offsets from the start of scene collection in the harness, not from app launch.
         let timestamps = [
-            "appLaunchStart": appLaunchStartMs,
-            "testServerConfigInjected": testServerConfigInjectedMs,
+            "collectionStart": 0,
             "firstManifestObserved": firstManifestObservedMs,
             "firstNonLoadingScreenshotCaptured": firstNonLoadingScreenshotCapturedMs
         ]
@@ -236,13 +234,11 @@ extension SmartFillRuntimeEvidenceSupport {
             "startupClockSource": "xctest-harness",
             "harnessPhaseTimestampsMs": timestamps,
             "harnessPhaseDurationsMs": [
-                "testServerConfigInjected": max(0, testServerConfigInjectedMs - appLaunchStartMs),
-                "firstManifestObserved": max(0, firstManifestObservedMs - appLaunchStartMs),
-                "firstNonLoadingScreenshotCaptured": max(0, firstNonLoadingScreenshotCapturedMs - appLaunchStartMs)
+                "firstManifestObserved": max(0, firstManifestObservedMs),
+                "firstNonLoadingScreenshotCaptured": max(0, firstNonLoadingScreenshotCapturedMs)
             ],
-            "harnessLaunchToFirstManifestObservedMs": max(0, firstManifestObservedMs - appLaunchStartMs),
-            "harnessLaunchToFirstNonLoadingScreenshotMs": max(
-                0, firstNonLoadingScreenshotCapturedMs - appLaunchStartMs),
+            "harnessCollectionToFirstManifestObservedMs": max(0, firstManifestObservedMs),
+            "harnessCollectionToFirstNonLoadingScreenshotMs": max(0, firstNonLoadingScreenshotCapturedMs),
             "crossClockSummaryPolicy": "summary-only-cross-clock-observed"
         ]
     }

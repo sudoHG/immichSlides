@@ -207,7 +207,11 @@ Run serially within a checkout because the runner manages temporary test configu
 
 Result bundles normally go in the directory passed to `--evidence-dir`. The `p2-*` suites instead write them under `Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"`, with a separate temporary subdirectory per run and a root created with permissions `0o700`. On macOS this is inside the per-user temporary directory. After a successful run and cleanup, the runner deletes the private bundle and records its disposal in `result-bundle-disposal.json` in the evidence directory. Retained bundles from failed runs or cleanup are recorded in `result-bundle-quarantine.json` there; keep them private.
 
-`ScenePresentationContractUITests` writes `<displayMode>-contract-evidence.json` and `<displayMode>-trace.txt` to the directory in `TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR`. Set it through the environment of `xcodebuild` to a directory outside the repository; on iOS the tests skip when it is unset, on tvOS it is optional. No runner script sets it.
+`ScenePresentationContractUITests` writes `<displayMode>-contract-evidence.json` and `<displayMode>-trace.txt` to the directory in `TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR`. Set it through the environment of `xcodebuild` to a directory outside the repository; on iOS the tests skip when it is unset, on tvOS it is optional. No runner script sets it. The directory is created with owner-only permissions (`0o700`) and the run refuses a path inside a Git worktree. The evidence uses schema `scene-presentation-contract-evidence-v3`: product SHA, device name, runtime identifier and video path are omitted when the run cannot observe them, never filled with a placeholder.
+
+### Filter summary runtime screenshots
+
+The Filter Summary visual UI tests save runtime screenshots only when `IMMICHSLIDES_SCREENSHOT_EXPORT_DIR` or `TEST_RUNNER_IMMICHSLIDES_SCREENSHOT_EXPORT_DIR` is set; otherwise they save nothing. Use a directory outside any Git worktree. It is created with owner-only permissions (`0o700`), each PNG is written with `0o600`, and a path that cannot be prepared fails the test. The screenshots can show real library photos: keep them private and delete them after review.
 
 ### Optional SmartFill evidence inputs
 

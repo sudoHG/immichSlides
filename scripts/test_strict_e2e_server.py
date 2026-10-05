@@ -131,6 +131,42 @@ class RunningServer:
             return response.status, dict(response.headers), response.read()
 
 
+LOG_WAIT_DEADLINE_SECONDS = 10.0
+LOG_POLL_INTERVAL_SECONDS = 0.005
+
+
+def wait_for_request_started(log_stream: io.StringIO, *, asset_id: str, size: str) -> None:
+    """Block until the server logged the start of this request, or fail at a deadline."""
+    deadline = time.monotonic() + LOG_WAIT_DEADLINE_SECONDS
+    while not any(
+        line.startswith("request_started ")
+        and f"size={size} " in line
+        and line.endswith(f"fixture_asset_id={asset_id}")
+        for line in log_stream.getvalue().splitlines()
+    ):
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"Server never logged the start of {asset_id} {size} before the deadline.")
+        time.sleep(LOG_POLL_INTERVAL_SECONDS)
+
+
+def logged_request_events(log: str, *, size: str) -> list[tuple[str, str, int]]:
+    """Return (kind, fixture asset id, server elapsed ms) in log order for one image size."""
+    events: list[tuple[str, str, int]] = []
+    for line in log.splitlines():
+        if f"size={size}" not in line.split() or "fixture_asset_id=" not in line:
+            continue
+        if line.startswith("request_started "):
+            kind = "started"
+        elif line.startswith("request "):
+            kind = "completed"
+        else:
+            continue
+        asset_id = line.split("fixture_asset_id=", 1)[1].split()[0]
+        elapsed = int(line.split("elapsed_ms=", 1)[1].split()[0])
+        events.append((kind, asset_id, elapsed))
+    return events
+
+
 class StrictE2EServerContractTests(unittest.TestCase):
     def raw_post(self, server: RunningServer, headers: bytes, body: bytes = b"", *, truncate: bool = False) -> bytes:
         with socket.create_connection(server.server.server_address, timeout=2) as connection:
@@ -568,43 +604,68 @@ class StrictE2EServerContractTests(unittest.TestCase):
         self.assertLess(lines.index(started[0]), lines.index(completed[0]))
 
     def test_out_of_order_does_not_delay_thumbnail(self) -> None:
-        with RunningServer(scenario="out-of-order") as server:
-            started = time.monotonic()
-            status, _, body = server.request("/assets/asset-a-1/thumbnail?size=thumbnail")
-            elapsed = time.monotonic() - started
+        log_stream = io.StringIO()
+        with RunningServer(scenario="out-of-order", log_stream=log_stream) as server:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                delayed_preview = executor.submit(
+                    server.request, "/assets/asset-a-1/thumbnail?size=preview", timeout=10
+                )
+                wait_for_request_started(log_stream, asset_id="asset-a-1", size="preview")
+                status, _, body = server.request("/assets/asset-a-1/thumbnail?size=thumbnail")
+                self.assertFalse(
+                    delayed_preview.done(),
+                    "The thumbnail must be served while the delayed preview is still held back.",
+                )
+                delayed_preview.result(timeout=10)
         self.assertEqual(status, 200)
         self.assertEqual(body[:8], b"\x89PNG\r\n\x1a\n")
-        self.assertLess(elapsed, 0.15)
+        log_lines = log_stream.getvalue().splitlines()
+        thumbnail_done = next(
+            index
+            for index, line in enumerate(log_lines)
+            if line.startswith("request ") and "size=thumbnail" in line
+        )
+        preview_done = next(
+            index
+            for index, line in enumerate(log_lines)
+            if line.startswith("request ") and "size=preview" in line
+        )
+        self.assertLess(thumbnail_done, preview_done)
 
     def test_out_of_order_delays_preview_and_fullsize_repeatably(self) -> None:
         for size in ("preview", "fullsize"):
             with self.subTest(size=size):
-                first = self._out_of_order_completion(size)
-                second = self._out_of_order_completion(size)
-                for old_status, new_status, new_lag, late_gap in (first, second):
-                    self.assertEqual((old_status, new_status), (200, 200))
-                    self.assertLess(new_lag, 0.15)
-                    self.assertGreater(late_gap, 0.1)
-                    self.assertGreater(
-                        late_gap + new_lag,
-                        TVOS_CONTINUE_TO_SECOND_SELECT_MS / 1000,
-                    )
+                for _ in range(2):
+                    self._assert_out_of_order_completion(size)
 
-    def _out_of_order_completion(self, size: str) -> tuple[int, int, float, float]:
-        with RunningServer(scenario="out-of-order") as server:
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                started = time.monotonic()
+    def _assert_out_of_order_completion(self, size: str) -> None:
+        log_stream = io.StringIO()
+        with RunningServer(scenario="out-of-order", log_stream=log_stream) as server:
+            with ThreadPoolExecutor(max_workers=1) as executor:
                 old_request = executor.submit(
-                    server.request,
-                    f"/assets/asset-a-1/thumbnail?size={size}",
-                    timeout=4,
+                    server.request, f"/assets/asset-a-1/thumbnail?size={size}", timeout=10
                 )
-                time.sleep(0.03)
+                wait_for_request_started(log_stream, asset_id="asset-a-1", size=size)
                 new_status, _, _ = server.request(f"/assets/asset-a-2/thumbnail?size={size}")
-                new_completed = time.monotonic()
-                old_status, _, _ = old_request.result(timeout=5)
-                old_completed = time.monotonic()
-        return old_status, new_status, new_completed - started, old_completed - new_completed
+                self.assertFalse(
+                    old_request.done(),
+                    "The newer request must finish while the older one is still held back.",
+                )
+                old_status, _, _ = old_request.result(timeout=10)
+        self.assertEqual((old_status, new_status), (200, 200))
+        events = logged_request_events(log_stream.getvalue(), size=size)
+        self.assertEqual(
+            [(kind, asset_id) for kind, asset_id, _ in events],
+            [
+                ("started", "asset-a-1"),
+                ("started", "asset-a-2"),
+                ("completed", "asset-a-2"),
+                ("completed", "asset-a-1"),
+            ],
+        )
+        old_started, _, new_completed, old_completed = (elapsed for _, _, elapsed in events)
+        self.assertGreater(old_completed - old_started, TVOS_CONTINUE_TO_SECOND_SELECT_MS)
+        self.assertGreater(old_completed - new_completed, 100)
 
 
 if __name__ == "__main__":

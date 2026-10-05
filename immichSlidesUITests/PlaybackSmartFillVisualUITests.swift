@@ -56,8 +56,8 @@ enum SmartFillRuntimeEvidenceSupport {
     static let harnessOnlyJSONFields = [
         "harnessPhaseTimestampsMs",
         "harnessPhaseDurationsMs",
-        "harnessLaunchToFirstManifestObservedMs",
-        "harnessLaunchToFirstNonLoadingScreenshotMs",
+        "harnessCollectionToFirstManifestObservedMs",
+        "harnessCollectionToFirstNonLoadingScreenshotMs",
         "crossClockSummaryPolicy",
         "firstNonLoadingScreenshotCaptured"
     ]
@@ -169,8 +169,8 @@ enum SmartFillRuntimeEvidenceSupport {
         "startupClockSource",
         "harnessPhaseTimestampsMs",
         "harnessPhaseDurationsMs",
-        "harnessLaunchToFirstManifestObservedMs",
-        "harnessLaunchToFirstNonLoadingScreenshotMs",
+        "harnessCollectionToFirstManifestObservedMs",
+        "harnessCollectionToFirstNonLoadingScreenshotMs",
         "crossClockSummaryPolicy"
     ]
     static let requiredSummaryFields = [

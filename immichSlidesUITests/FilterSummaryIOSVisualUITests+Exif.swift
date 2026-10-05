@@ -165,7 +165,7 @@ extension FilterSummaryIOSVisualUITests {
 
             XCTAssertTrue(
                 advanceToNextDistinctDiagnosticSlide(app: app),
-                "After tapping next, the current photo should change, so the same photo is not captured twice"
+                "After tapping next, the current photo should change (and expose an asset id or date label to observe it), so the same photo is not captured twice"
             )
         }
     }
@@ -207,9 +207,8 @@ extension FilterSummaryIOSVisualUITests {
                     return true
                 }
             } else {
-                RunLoop.current.run(
-                    until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.screenSettleSeconds))
-                return true
+                // Without an asset id or date label no change can be observed, so this cannot report success.
+                return false
             }
         }
 

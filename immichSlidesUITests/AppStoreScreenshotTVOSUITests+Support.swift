@@ -673,7 +673,7 @@ extension AppStoreScreenshotTVOSUITests {
         let header = """
             # immichSlides App Store Screenshot Manifest
 
-            | file | slot | locale | actual_language | actual_locale | platform_group | device_name | runtime | pixel_size | theme | ui_language_verified | status | notes |
+            | file | slot | locale | actual_language | actual_locale | platform_group | device_model | runtime | pixel_size | theme | ui_language_verified | status | notes |
             | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
             """
@@ -736,7 +736,7 @@ extension AppStoreScreenshotTVOSUITests {
             .replacingOccurrences(of: "|", with: "\\|")
             .replacingOccurrences(of: "\n", with: " ")
         let row = """
-            | \(relativeFilePath) | \(slot.rawValue) - \(slot.title) | \(localeDirectory) | \(actualLanguage) | \(actualLocale) | \(platformGroup) | \(UIDevice.current.name) | \(ProcessInfo.processInfo.operatingSystemVersionString) | \(pixelSize) | \(appearance) | no | \(status) | \(escapedNotes) |
+            | \(relativeFilePath) | \(slot.rawValue) - \(slot.title) | \(localeDirectory) | \(actualLanguage) | \(actualLocale) | \(platformGroup) | \(UIDevice.current.model) | \(ProcessInfo.processInfo.operatingSystemVersionString) | \(pixelSize) | \(appearance) | no | \(status) | \(escapedNotes) |
 
             """
 

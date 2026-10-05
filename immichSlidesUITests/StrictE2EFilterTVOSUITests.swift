@@ -224,7 +224,8 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try isolateAndSelectEmptyAlbum(app: app, emptyAlbumID: "album-a-empty", neighborID: "album-a-target")
         let editorStart = app.buttons["filterSummary.startPlayback.button"]
         let didObserveStart = editorStart.exists
-        let isStartEnabledAfterEmpty = didObserveStart && editorStart.isEnabled
+        // The Settings filter editor does not present Start Playback; record that explicitly, never as a disabled button.
+        let startEnabledAfterEmpty: Any = didObserveStart ? editorStart.isEnabled : "not_applicable_settings_editor"
         try returnToSlideshowFromSettings(app: app)
         let emptyLabel = app.staticTexts["slideshow.emptyState.message"]
         // ui-label-lookup: Preserve the Simplified Chinese empty-result copy check after identifier lookup.
@@ -237,7 +238,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "album_id": "album-a-empty",
-                "start_enabled": isStartEnabledAfterEmpty,
+                "start_enabled": startEnabledAfterEmpty,
                 "start_button_observed": didObserveStart,
                 "empty_copy": emptyLabel.label,
                 "identity_source": "public_fixture_photo_mark",

@@ -328,6 +328,7 @@ struct DebugOverlayView: View {
         case .running:
             return "Vision running"
         case .finished(let result):
+            // localization-audit: debug-overlay-english-only
             return LocalizedText.format(
                 "Vision n=%lld %@ %lldms",
                 Int64(result.faceCount),
@@ -335,6 +336,7 @@ struct DebugOverlayView: View {
                 Int64(result.elapsedMilliseconds)
             )
         case .failed(let reason):
+            // localization-audit: debug-overlay-english-only
             return LocalizedText.format("Vision err %@", reason)
         }
     }

@@ -189,7 +189,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         returnFromAlbumFilter(app: app)
         let editorStart = app.buttons["filterSummary.startPlayback.button"]
         let didObserveStart = editorStart.exists
-        let isStartEnabledAfterEmpty = didObserveStart && editorStart.isEnabled
+        // The Settings filter editor does not present Start Playback; record that explicitly, never as a disabled button.
+        let startEnabledAfterEmpty: Any = didObserveStart ? editorStart.isEnabled : "not_applicable_settings_editor"
         attachStrictE2EScreenshot(app: app, name: "album-empty-selected-\(currentDeviceTag())")
         finishFilterEditor(app: app)
         returnToSlideshowFromSettings(app: app)
@@ -202,7 +203,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "album_id": emptyAlbumID,
-                "start_enabled": isStartEnabledAfterEmpty,
+                "start_enabled": startEnabledAfterEmpty,
                 "start_button_observed": didObserveStart,
                 "empty_copy": emptyLabel.label,
                 "identity_source": "public_fixture_photo_mark",
