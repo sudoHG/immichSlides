@@ -107,6 +107,7 @@ Platform views only forward system events (scene phase, Reduce Motion, remote/to
   - switching the playback source increments `playbackSourceGeneration`; pool loads check `isCurrentPlaybackLoad` / `isCurrentPlaybackPoolLoad`
   - scene presentation targets carry a `ScenePresentationIdentity` (generation + scene id); effect tasks are stored per generation in `scenePresentationEffectTasks`
   - the reducer rejects stale wake-ups and `loadMore` requests
+- **Load-more loading ownership.** `SlideShowViewModel` records a separate request ID whenever a random or filtered refill sets `isLoadingMore`. Only that request may clear the flag, including on cancellation; resetting the source releases its ownership. This cleanup ID does not participate in result validation: existing source-generation and session checks still decide which assets can be appended, and scene advances within the session remain valid.
 - **Cancellation.**
   - Starting a new effect for a generation cancels the old task for it, and `.cancel` effects cancel explicitly.
   - Detached planning is wrapped in `withTaskCancellationHandler`, so cancelling the owning task also cancels the planner task. The builder checks `Task.isCancelled` between steps.

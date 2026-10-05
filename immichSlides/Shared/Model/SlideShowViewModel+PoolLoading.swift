@@ -86,6 +86,7 @@ extension SlideShowViewModel {
         // Reset the index and first preload on a source change, so leftovers from the old mode are not reused.
         applyPlaybackAssets([], invalidationReason: .sourceChanged)
         isLoading = true
+        loadMoreLoadingRequestID = nil
         isLoadingMore = false
         clearEmptyPlaybackMessage()
         clearAutoPlayRecoveryMessage()
@@ -175,6 +176,12 @@ extension SlideShowViewModel {
             return "cancelled"
         }
         return "failure"
+    }
+
+    private func finishLoadingMore(requestID: UUID) {
+        // Cleanup ownership is independent of result freshness, including task cancellation.
+        guard loadMoreLoadingRequestID == requestID else { return }
+        isLoadingMore = false
     }
 
     @discardableResult
@@ -369,8 +376,10 @@ extension SlideShowViewModel {
         loadIdentity: PlaybackPoolLoadIdentity
     ) async {
 
+        let requestID = UUID()
+        loadMoreLoadingRequestID = requestID
         isLoadingMore = true
-        defer { isLoadingMore = false }
+        defer { finishLoadingMore(requestID: requestID) }
         let oldCount = assets.count
         logger.info(
             "load more begin source=random oldCount=\(oldCount, privacy: .public)"
@@ -439,7 +448,7 @@ extension SlideShowViewModel {
                     "load more trim adjusted source=random removeCount=\(removeCount, privacy: .public) currentIndexBeforeTrim=\(currentIndexBeforeTrim, privacy: .public) currentIndexAfterTrim=\(self.currentIndex, privacy: .public) currentAssetIdBeforeTrim=\(currentAssetIdBeforeTrim, privacy: .private) currentAssetIdAfterTrim=\(self.assetIdLogValue(at: self.currentIndex), privacy: .private) targetIndexBeforeTrim=\(targetIndexBeforeTrim, privacy: .public) targetIndexAfterTrim=\(self.targetIndex, privacy: .public) targetAssetIdBeforeTrim=\(targetAssetIdBeforeTrim, privacy: .private) targetAssetIdAfterTrim=\(self.assetIdLogValue(at: self.targetIndex), privacy: .private)"
                 )
             }
-            isLoadingMore = false
+            finishLoadingMore(requestID: requestID)
             #if DEBUG
             logQAPlaybackSequenceEventIfNeeded(
                 .loadMoreResult(
@@ -476,7 +485,7 @@ extension SlideShowViewModel {
             logger.error(
                 "load more failed source=random oldCount=\(oldCount, privacy: .public) error=\(message, privacy: .private)"
             )
-            isLoadingMore = false
+            finishLoadingMore(requestID: requestID)
         }
     }
 
@@ -486,8 +495,10 @@ extension SlideShowViewModel {
         loadIdentity: PlaybackPoolLoadIdentity,
         selection: FilterSelection
     ) async {
+        let requestID = UUID()
+        loadMoreLoadingRequestID = requestID
         isLoadingMore = true
-        defer { isLoadingMore = false }
+        defer { finishLoadingMore(requestID: requestID) }
         let oldCount = assets.count
         let targetCount = resolveTargetCount(for: selection, phase: .loadMore)
         let excludedAssetIds = Set(assets.map(\.id))
@@ -606,7 +617,7 @@ extension SlideShowViewModel {
                     "load more trim adjusted source=filtered removeCount=\(removeCount, privacy: .public) currentIndexBeforeTrim=\(currentIndexBeforeTrim, privacy: .public) currentIndexAfterTrim=\(self.currentIndex, privacy: .public) currentAssetIdBeforeTrim=\(currentAssetIdBeforeTrim, privacy: .private) currentAssetIdAfterTrim=\(self.assetIdLogValue(at: self.currentIndex), privacy: .private) targetIndexBeforeTrim=\(targetIndexBeforeTrim, privacy: .public) targetIndexAfterTrim=\(self.targetIndex, privacy: .public) targetAssetIdBeforeTrim=\(targetAssetIdBeforeTrim, privacy: .private) targetAssetIdAfterTrim=\(self.assetIdLogValue(at: self.targetIndex), privacy: .private)"
                 )
             }
-            isLoadingMore = false
+            finishLoadingMore(requestID: requestID)
             #if DEBUG
             logQAPlaybackSequenceEventIfNeeded(
                 .loadMoreResult(
@@ -643,7 +654,7 @@ extension SlideShowViewModel {
                 "load more failed source=filtered oldCount=\(oldCount, privacy: .public) targetCount=\(targetCount, privacy: .public) error=\(message, privacy: .private)"
             )
             clearPendingSmartFillCursorResumeAfterLoadMore(reason: loadMoreErrorKind(error))
-            isLoadingMore = false
+            finishLoadingMore(requestID: requestID)
         }
     }
 
