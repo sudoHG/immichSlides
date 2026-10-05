@@ -891,8 +891,8 @@ struct SlideShowViewModelSelectionRefreshTests {
         )
         let vm = SlideShowViewModel(source: .random)
         vm.replacePlaybackAssetsForTesting([makeAsset(id: "old-asset")])
-        vm.isLoading = false
-        vm.isLoadingMore = true
+        vm.setPlaybackLoadingForTesting(false)
+        vm.setPlaybackLoadingMoreForTesting(true)
 
         vm.preparePlaybackSourceForPresentation(to: .filtered(selection))
 

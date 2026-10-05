@@ -103,9 +103,6 @@ enum SmartFillMainActorPlannerCallSite: String, CaseIterable, Sendable {
 @MainActor
 class SlideShowViewModel: ObservableObject {
     private static let maximumPlaybackPoolAssetCount: Int = 200
-    static let standardPlaybackFetchAssetCount: Int = 100
-    private static let initialSoloOnlyPoolAssetCount: Int = 12
-    private static let soloOnlyRefillAssetCount: Int = 24
     private static let autoplayRenderWindowRadius: Int = 1
     private static let manualRenderWindowRadius: Int = 2
     static let identifierDigestPrefixBytes: Int = 8
@@ -113,18 +110,13 @@ class SlideShowViewModel: ObservableObject {
     private static let surfaceActivationDelayNanoseconds: UInt64 = 250_000_000
     private static let diagnosticHistoryLookbackCount: Int = 8
 
-    enum ResolvePhase {
-        case initial
-        case loadMore
-    }
-
     struct SmartFillScenePlan {
         let scene: PlaybackScene
         let nextCandidateCursorOffset: Int
         let displayedAssetIds: Set<String>
     }
 
-    @Published var assets: [Asset] = []
+    @Published private(set) var assets: [Asset] = []
     // The current display position is only read back from the engine; views cannot change playback facts directly.
     @Published var currentIndex: Int = 0
     // The target position is an adapter readout of the pending transition.
@@ -132,23 +124,35 @@ class SlideShowViewModel: ObservableObject {
     // The slide-change trigger uses the transition identity, so a reused numeric index does not hide a new scene.
     @Published var targetTransitionToken: UUID = UUID()
 
-    @Published var isLoading: Bool = true
+    @Published private(set) var isLoading: Bool = true
 
-    @Published var isLoadingMore: Bool = false
+    @Published private(set) var isLoadingMore: Bool = false
 
-    @Published var emptyPlaybackMessage: String? = nil
+    @Published private(set) var emptyPlaybackMessage: String? = nil
 
-    @Published var maxAssetCount: Int = SlideShowViewModel.maximumPlaybackPoolAssetCount
+    // didSet does not run during init; any init-time assignment must also initialize the loader with that capacity.
+    @Published var maxAssetCount: Int = SlideShowViewModel.maximumPlaybackPoolAssetCount {
+        didSet { poolLoader.updateMaximumAssetCount(maxAssetCount) }
+    }
 
     @Published var isAutoPlay: Bool = true
 
     @Published var autoPlayInterval: Double = PlaybackIntervalPolicy.minimumInterval
 
-    var source: PlaybackSource
+    var source: PlaybackSource { poolLoader.currentSource }
     let playbackSettingsStore: PlaybackSettingsStore
     private var playbackSettingsChangeObserver: NSObjectProtocol?
 
-    let resolver: PlaybackPoolResolver
+    // The facade and loader share this file so no external caller can apply raw projection updates.
+    private let poolLoader: PlaybackPoolLoader
+
+    struct PlaybackLoadIdentity {
+        fileprivate let value: PlaybackPoolLoader.InitialLoadIdentity
+    }
+
+    var appliedInitialLoadIdentity: PlaybackLoadIdentity? {
+        poolLoader.appliedInitialLoadIdentity.map { PlaybackLoadIdentity(value: $0) }
+    }
 
     let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "immichSlides",
@@ -531,29 +535,22 @@ class SlideShowViewModel: ObservableObject {
     // Handle for the first preload task, to prevent duplicate loads.
     var firstPreloadTask: Task<Void, Never>? = nil
 
-    var playbackSourceGeneration: Int = 0
-    var loadMoreLoadingRequestID: UUID?
-    struct PlaybackLoadIdentity {
-        let generation: Int
-        let sourceName: String
-        let playbackSessionId: UUID
-        let sceneId: String?
-    }
-    var lastAppliedInitialLoadIdentity: PlaybackLoadIdentity?
-    struct PlaybackPoolLoadIdentity {
-        let generation: Int
-        let sourceName: String
-        let playbackSessionId: UUID
-    }
+    var playbackSourceGeneration: Int { poolLoader.sourceGeneration }
 
     @Published var didFirstPreload: Bool = false
     #if DEBUG
     // Tests can replace the first pool load to simulate a cold-start race where an old task returns late.
 
-    var loadAssetsHookForTesting: ((PlaybackSource) async throws -> [Asset])? = nil
+    var loadAssetsHookForTesting: ((PlaybackSource) async throws -> [Asset])? {
+        get { poolLoader.loadAssetsHookForTesting }
+        set { poolLoader.loadAssetsHookForTesting = newValue }
+    }
     // Tests can replace the pool refill to simulate an old loadMore returning late.
 
-    var loadMoreAssetsHookForTesting: ((PlaybackSource) async throws -> [Asset])? = nil
+    var loadMoreAssetsHookForTesting: ((PlaybackSource) async throws -> [Asset])? {
+        get { poolLoader.loadMoreAssetsHookForTesting }
+        set { poolLoader.loadMoreAssetsHookForTesting = newValue }
+    }
     // Tests can stub out the first-screen download so unit tests do not hit the network.
 
     var initialPhotoLoadHookForTesting: ((String) async -> Void)? = nil
@@ -581,8 +578,10 @@ class SlideShowViewModel: ObservableObject {
         settingsStore: PlaybackSettingsStore? = nil,
         observeSettingsChanges: Bool? = nil
     ) {
-        self.source = source
-        self.resolver = resolver ?? PlaybackPoolResolver()
+        self.poolLoader = PlaybackPoolLoader(
+            source: source, resolver: resolver ?? PlaybackPoolResolver(),
+            maximumAssetCount: Self.maximumPlaybackPoolAssetCount
+        )
         self.playbackSettingsStore = settingsStore ?? PlaybackSettingsStore()
         // Read playback settings once at creation so changes from the settings page reach playback.
         let settings = playbackSettingsStore.load() ?? PlaybackSettings()
@@ -774,6 +773,19 @@ class SlideShowViewModel: ObservableObject {
     func replacePlaybackAssetsForTesting(_ newAssets: [Asset]) {
         applyPlaybackAssets(newAssets, invalidationReason: .poolReloaded)
     }
+
+    // Raw fixture writes preserve the existing session, cursor and publication count.
+    func overwritePlaybackPoolWithoutResetForTesting(_ newAssets: [Asset]) {
+        poolLoader.replaceAssets(newAssets, update: applyPlaybackPoolUpdate)
+    }
+
+    func setPlaybackLoadingForTesting(_ value: Bool) {
+        poolLoader.setLoadingForTesting(value, update: applyPlaybackPoolUpdate)
+    }
+
+    func setPlaybackLoadingMoreForTesting(_ value: Bool) {
+        poolLoader.setLoadingMoreForTesting(value, update: applyPlaybackPoolUpdate)
+    }
     #endif
 
     func applyPlaybackHistoryLedgerCommit(
@@ -868,77 +880,50 @@ class SlideShowViewModel: ObservableObject {
         return min(max(0, lastCommittedCandidateIndex), assets.count - 1)
     }
 
-    // soloOnly starts with a small pool and refills in the background; fetching 100 up front slows startup and fills
-    // the cache.
-
-    func resolveTargetCount(
-        for selection: FilterSelection,
-        phase: ResolvePhase
-    ) -> Int {
-        let containsSoloOnly = selection.personFilters.contains { filter in
-            filter.matchMode == .soloOnly
-        }
-
-        guard containsSoloOnly else {
-            return Self.standardPlaybackFetchAssetCount
-        }
-
-        switch phase {
-        case .initial:
-            return Self.initialSoloOnlyPoolAssetCount
-        case .loadMore:
-            return Self.soloOnlyRefillAssetCount
-        }
-    }
-
     static func emptyPlaybackMessage(
         for reason: PlaybackPoolEmptyReason?,
         source: PlaybackSource
     ) -> String {
-        let resolvedReason = reason ?? .noMatchingAssets
+        PlaybackPoolLoader.emptyMessage(for: reason, source: source)
+    }
 
-        switch resolvedReason {
-        case .invalidTargetCount:
-            return String(localized: "The playback pool request size is invalid. Please try again later.")
-        case .noActiveRules:
-            return String(localized: "No filters are selected yet. Choose an album or person first.")
-        case .strictSoloVisionUnavailable:
-            return String(
-                localized:
-                    "Strict solo detection is not available right now. This device cannot complete local face detection. Try on a real device, or use normal person filtering for now."
+    // Each loader mutation publishes synchronously; append and trim remain separate emissions.
+    private func applyPlaybackPoolUpdate(_ update: PlaybackPoolLoader.Update) {
+        switch update {
+        case .assets(let newAssets):
+            assets = newAssets
+        case .loading(let value):
+            isLoading = value
+        case .loadingMore(let value):
+            isLoadingMore = value
+        case .emptyMessage(let message):
+            emptyPlaybackMessage = message
+        case .replacePool(let newAssets, let reason):
+            applyPlaybackAssets(newAssets, invalidationReason: reason)
+        case .replaceInitialPool(let newAssets, let identity):
+            applyPlaybackAssets(newAssets, invalidationReason: .poolReloaded)
+            poolLoader.recordAppliedInitialLoad(identity, context: playbackPoolSessionContext)
+        case .startupPhase(let phase):
+            recordSmartFillStartupRuntimePhase(phase)
+        case .resumeFilteredCursor(let oldCount, let appendedCount):
+            adjustSmartFillCursorAfterAppendingLoadMore(oldCount: oldCount, appendedCount: appendedCount)
+        case .clearPendingCursorResume(let reason):
+            clearPendingSmartFillCursorResumeAfterLoadMore(reason: reason)
+        case .evictCachedAssets(let assetIDs):
+            downloadManager.clearCacheFromDisk(assetIds: assetIDs)
+        case .adjustCursorAfterTrim(let removeCount):
+            adjustCandidateCursorAfterRemovingPrefix(removeCount)
+        case .syncReadback:
+            syncPlaybackReadbackFromEngine()
+        case .refillFinished(let source, let addedCount, let dedupedCount):
+            logger.info(
+                "load more end source=\(source, privacy: .public) addedCount=\(addedCount, privacy: .public) dedupedCount=\(dedupedCount, privacy: .public) finalCount=\(self.assets.count, privacy: .public) currentIndex=\(self.currentIndex, privacy: .public) currentAssetId=\(self.assetIdLogValue(at: self.currentIndex), privacy: .private)"
             )
-        case .noMatchingAssets:
-            switch source {
-            case .random:
-                return String(
-                    localized:
-                        "Immich did not return any playable photos. Check your server library or network connection.")
-            case .filtered:
-                return String(localized: "No playable photos match the current filters. Try another album or person.")
-            }
+        #if DEBUG
+        case .sequenceEvent(let event):
+            logQAPlaybackSequenceEventIfNeeded(event)
+        #endif
         }
-    }
-
-    func updateEmptyPlaybackMessage(
-        for assets: [Asset],
-        source: PlaybackSource,
-        emptyReason: PlaybackPoolEmptyReason?
-    ) {
-        guard assets.isEmpty else {
-            emptyPlaybackMessage = nil
-            return
-        }
-
-        emptyPlaybackMessage = Self.emptyPlaybackMessage(
-            for: emptyReason,
-            source: source
-        )
-    }
-
-    // Clear the old empty state when loading starts or the source changes, so the last round's error does not linger.
-
-    func clearEmptyPlaybackMessage() {
-        emptyPlaybackMessage = nil
     }
 
     // Read the assetId for logs safely, so debug logging cannot crash on an out-of-range index.
@@ -1599,19 +1584,11 @@ class SlideShowViewModel: ObservableObject {
     // Logs record only counts and mode, not the full filter, and take no part in business decisions.
 
     func logName(for source: PlaybackSource) -> String {
-        switch source {
-        case .random:
-            return "random"
-        case .filtered(let selection):
-            return "filtered(\(logSummary(for: selection)))"
-        }
+        PlaybackPoolLoader.logName(for: source)
     }
 
     func logSummary(for selection: FilterSelection) -> String {
-        let soloCount = selection.personFilters.filter { $0.matchMode == .soloOnly }.count
-        let normalCount = selection.personFilters.filter { $0.matchMode == .normal }.count
-        return
-            "albums=\(selection.albumIds.count),people=\(selection.personFilters.count),solo=\(soloCount),normal=\(normalCount),tags=\(selection.tagIds.count),rating=\(selection.rating == nil ? "nil" : "set"),favorite=\(selection.isFavorite == nil ? "nil" : "set")"
+        PlaybackPoolLoader.logSummary(for: selection)
     }
 }
 
@@ -1624,6 +1601,880 @@ private extension MotionRenderRole {
             self = .outgoing
         case .incoming:
             self = .incoming
+        }
+    }
+}
+
+extension SlideShowViewModel {
+    // Compare normalized filter snapshots; a different order is not a change. true means the filter pool must be
+    // rebuilt.
+
+    func shouldReloadFilteredSource(for latestSelection: FilterSelection) -> Bool {
+        poolLoader.shouldReloadFilteredSource(for: latestSelection)
+    }
+
+    // Whether a soloOnly person filter is present; the refill threshold must trigger earlier.
+
+    var isSoloOnlyPlaybackSource: Bool {
+        poolLoader.isSoloOnlySource
+    }
+
+    func preparePlaybackSourceForPresentation(to newSource: PlaybackSource) {
+        resetPlaybackSourceState(to: newSource)
+    }
+
+    // Switch source while running and reload the first screen right away.
+    func switchPlaybackSource(to newSource: PlaybackSource) async {
+        resetPlaybackSourceState(to: newSource)
+        await prepareInitialAssets()
+    }
+
+    private func resetPlaybackSourceState(to newSource: PlaybackSource) {
+        logger.notice(
+            "playback source reset from=\(self.logName(for: self.source), privacy: .public) to=\(self.logName(for: newSource), privacy: .public) oldAssetCount=\(self.assets.count, privacy: .public) oldCurrentIndex=\(self.currentIndex, privacy: .public)"
+        )
+        resetSmartFillStartupRuntimeEvidence()
+        poolLoader.resetSource(to: newSource, update: applyPlaybackPoolUpdate)
+        clearAutoPlayRecoveryMessage()
+        #if DEBUG
+        clearVisionFaceAuditState()
+        #endif
+        didFirstPreload = false
+        firstPreloadTask?.cancel()
+        firstPreloadTask = nil
+    }
+
+    private var playbackPoolSessionContext: PlaybackPoolLoader.SessionContext {
+        let identity = playbackSessionEngine.currentSessionIdentity
+        return PlaybackPoolLoader.SessionContext(
+            playbackSessionId: identity.playbackSessionId, sceneId: identity.sceneId)
+    }
+
+    func isCurrentPlaybackLoad(_ identity: PlaybackLoadIdentity) -> Bool {
+        poolLoader.isCurrentInitialLoad(identity.value, context: playbackPoolSessionContext)
+    }
+
+    @discardableResult
+    func loadAssets() async -> Bool {
+        clearAutoPlayRecoveryMessage()
+        poolLoader.clearEmptyMessage(update: applyPlaybackPoolUpdate)
+        let request = poolLoader.beginInitialLoad(
+            context: playbackPoolSessionContext, update: applyPlaybackPoolUpdate)
+        let result = await poolLoader.acquireInitial(request)
+        // Read the live engine identity after acquisition; same-generation engine replacement must reject old work.
+        guard
+            poolLoader.applyInitial(
+                result, context: playbackPoolSessionContext, update: applyPlaybackPoolUpdate)
+        else {
+            return false
+        }
+        syncPlaybackReadbackFromEngine()
+        return true
+    }
+
+    func loadMoreAssets() async {
+        let request = poolLoader.beginRefill(
+            context: playbackPoolSessionContext, update: applyPlaybackPoolUpdate)
+        defer { poolLoader.finishLoadingMore(request, update: applyPlaybackPoolUpdate) }
+        #if DEBUG
+        let result = await poolLoader.acquireRefill(
+            request,
+            sequenceEventSink: { [weak self] event in self?.logQAPlaybackSequenceEventIfNeeded(event) },
+            isSequenceEvidenceEnabled: isQAPlaybackSequenceEvidenceEnabled
+        )
+        #else
+        let result = await poolLoader.acquireRefill(request)
+        #endif
+        var trimReadback: PoolTrimReadback?
+        poolLoader.applyRefill(
+            result, context: playbackPoolSessionContext, update: applyPlaybackPoolUpdate,
+            observeTrim: { observation in
+                switch observation {
+                case .willTrim(let source, let removeCount):
+                    trimReadback = logPoolWillTrim(source: source, removeCount: removeCount)
+                case .didTrim(let source, let removeCount):
+                    if let trimReadback {
+                        logPoolDidTrim(source: source, removeCount: removeCount, before: trimReadback)
+                    }
+                }
+            })
+    }
+
+    private struct PoolTrimReadback {
+        let currentIndex: Int
+        let targetIndex: Int
+        let currentAssetId: String
+        let targetAssetId: String
+    }
+
+    // Trim log: an unchanged currentAssetId only means the index moved back; a true repeat is when a
+    // display asset shows up again.
+    private func logPoolWillTrim(source: String, removeCount: Int) -> PoolTrimReadback {
+        let before = PoolTrimReadback(
+            currentIndex: currentIndex, targetIndex: targetIndex,
+            currentAssetId: assetIdLogValue(at: currentIndex),
+            targetAssetId: assetIdLogValue(at: targetIndex)
+        )
+        let firstRemovedAssetId = removeCount > 0 ? (assets.first?.id ?? "nil") : "nil"
+        let lastRemovedAssetId =
+            removeCount > 0 && removeCount <= assets.count ? assets[removeCount - 1].id : "nil"
+        logger.info(
+            "load more trim source=\(source, privacy: .public) removeCount=\(removeCount, privacy: .public) beforeTrimCount=\(self.assets.count, privacy: .public) maxAssetCount=\(self.maxAssetCount, privacy: .public) currentIndexBeforeTrim=\(before.currentIndex, privacy: .public) currentAssetIdBeforeTrim=\(before.currentAssetId, privacy: .private) targetIndexBeforeTrim=\(before.targetIndex, privacy: .public) targetAssetIdBeforeTrim=\(before.targetAssetId, privacy: .private) firstRemovedAssetId=\(firstRemovedAssetId, privacy: .private) lastRemovedAssetId=\(lastRemovedAssetId, privacy: .private)"
+        )
+        return before
+    }
+
+    private func logPoolDidTrim(source: String, removeCount: Int, before: PoolTrimReadback) {
+        logger.notice(
+            "load more trim adjusted source=\(source, privacy: .public) removeCount=\(removeCount, privacy: .public) currentIndexBeforeTrim=\(before.currentIndex, privacy: .public) currentIndexAfterTrim=\(self.currentIndex, privacy: .public) currentAssetIdBeforeTrim=\(before.currentAssetId, privacy: .private) currentAssetIdAfterTrim=\(self.assetIdLogValue(at: self.currentIndex), privacy: .private) targetIndexBeforeTrim=\(before.targetIndex, privacy: .public) targetIndexAfterTrim=\(self.targetIndex, privacy: .public) targetAssetIdBeforeTrim=\(before.targetAssetId, privacy: .private) targetAssetIdAfterTrim=\(self.assetIdLogValue(at: self.targetIndex), privacy: .private)"
+        )
+    }
+
+    private func applyPlaybackAssets(
+        _ newAssets: [Asset],
+        invalidationReason: PlaybackSessionInvalidationReason
+    ) {
+        smartFillSurfaceActivationTask?.cancel()
+        smartFillSurfaceActivationTask = nil
+        cancelSmartFillPreparedRingRefreshTask()
+        resetScenePresentationRuntime()
+        poolLoader.replaceAssets(newAssets, update: applyPlaybackPoolUpdate)
+        smartFillDisplayedAssetIds = []
+        pendingSmartFillDisplayedAssetIdsAfterCommit = nil
+        runtimeEvidenceRecorder.resetActionTimings()
+        let initialSmartFillPlan = makeSmartFillScenePlan(
+            startingAt: 0,
+            callSite: .initialPlanning
+        )
+        smartFillDisplayedAssetIds = initialSmartFillPlan?.displayedAssetIds ?? []
+        resetCandidateCursor(nextCandidateCursorOffset: initialSmartFillPlan?.nextCandidateCursorOffset ?? 1)
+        playbackSessionEngine.reset(
+            with: newAssets,
+            initialScene: initialSmartFillPlan?.scene,
+            reason: invalidationReason
+        )
+        playbackHistoryLedger.reset(with: nil)
+        pendingPlaybackHistoryLedgerCommits = [:]
+        if initialSmartFillPlan != nil {
+            recordSmartFillStartupRuntimePhase("firstScenePublished")
+        }
+        syncPlaybackReadbackFromEngine()
+        refreshPreparedSmartFillSceneRingIfPossible()
+    }
+
+    private func resetScenePresentationRuntime() {
+        scenePresentationWakeUpTask?.cancel()
+        scenePresentationWakeUpTask = nil
+        scenePresentationWakeUpKey = nil
+        scenePresentationEffectTasks.values.forEach { $0.cancel() }
+        scenePresentationEffectTasks = [:]
+        pendingAutomaticScenePlanGeneration = nil
+        scenePresentationPrerenderBarrier = ScenePresentationPrerenderBarrier()
+        smartFillMotionPreparedSlotPreloadTasks.values.forEach { $0.cancel() }
+        smartFillMotionPreparedSlotPreloadTasks = [:]
+        smartFillMotionLookaheadPreparedPlan = nil
+        runtimeEvidenceRecorder.resetScenePresentation()
+        publishScenePresentationChange()
+    }
+
+}
+
+/// Owns the ordered source pool. Acquisition never commits; the facade supplies current session values on apply.
+@MainActor
+fileprivate final class PlaybackPoolLoader {
+    struct SessionContext {
+        let playbackSessionId: UUID
+        let sceneId: String?
+    }
+
+    struct InitialLoadIdentity {
+        fileprivate let generation: Int
+        fileprivate let sourceName: String
+        fileprivate let context: SessionContext
+    }
+
+    struct InitialRequest {
+        fileprivate let identity: InitialLoadIdentity
+        fileprivate let source: PlaybackSource
+        fileprivate let targetCount: Int
+    }
+
+    struct InitialResult {
+        fileprivate let request: InitialRequest
+        fileprivate let outcome: Result<PlaybackPoolResolveResult, any Error>
+    }
+
+    struct RefillRequest {
+        fileprivate let requestID: UUID
+        fileprivate let generation: Int
+        fileprivate let source: PlaybackSource
+        fileprivate let playbackSessionId: UUID
+        fileprivate let oldCount: Int
+        fileprivate let targetCount: Int
+        fileprivate let excludedAssetIds: Set<String>
+    }
+
+    struct RefillResult {
+        fileprivate let request: RefillRequest
+        fileprivate let outcome: Result<[Asset], any Error>
+        #if DEBUG
+        fileprivate var strictSoloDebugEvents: [PlaybackSequenceDebugEventInput] = []
+        #endif
+    }
+
+    enum Update {
+        case assets([Asset])
+        case loading(Bool)
+        case loadingMore(Bool)
+        case emptyMessage(String?)
+        case replacePool([Asset], PlaybackSessionInvalidationReason)
+        case replaceInitialPool([Asset], InitialLoadIdentity)
+        case startupPhase(String)
+        case resumeFilteredCursor(oldCount: Int, appendedCount: Int)
+        case clearPendingCursorResume(reason: String)
+        case evictCachedAssets([String])
+        case adjustCursorAfterTrim(Int)
+        case syncReadback
+        case refillFinished(source: String, addedCount: Int, dedupedCount: Int)
+        #if DEBUG
+        case sequenceEvent(PlaybackSequenceDebugEventInput)
+        #endif
+    }
+
+    enum TrimObservation {
+        case willTrim(source: String, removeCount: Int)
+        case didTrim(source: String, removeCount: Int)
+    }
+
+    private static let standardFetchAssetCount = 100
+    private static let initialSoloOnlyAssetCount = 12
+    private static let soloOnlyRefillAssetCount = 24
+    private var source: PlaybackSource
+    private var generation = 0
+    private var assets: [Asset] = []
+    private var maximumAssetCount: Int
+    private var loadMoreLoadingRequestID: UUID?
+    private var lastAppliedInitialLoadIdentity: InitialLoadIdentity?
+    private let resolver: PlaybackPoolResolver
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "immichSlides", category: "Playback")
+
+    #if DEBUG
+    var loadAssetsHookForTesting: ((PlaybackSource) async throws -> [Asset])?
+    var loadMoreAssetsHookForTesting: ((PlaybackSource) async throws -> [Asset])?
+    #endif
+
+    init(source: PlaybackSource, resolver: PlaybackPoolResolver, maximumAssetCount: Int) {
+        self.source = source
+        self.resolver = resolver
+        self.maximumAssetCount = maximumAssetCount
+    }
+
+    var currentSource: PlaybackSource { source }
+    var sourceGeneration: Int { generation }
+    var appliedInitialLoadIdentity: InitialLoadIdentity? { lastAppliedInitialLoadIdentity }
+
+    func updateMaximumAssetCount(_ count: Int) {
+        maximumAssetCount = count
+    }
+
+    var isSoloOnlySource: Bool {
+        guard case .filtered(let selection) = source else { return false }
+        return selection.personFilters.contains { $0.matchMode == .soloOnly }
+    }
+
+    func shouldReloadFilteredSource(for latestSelection: FilterSelection) -> Bool {
+        guard case .filtered(let currentSelection) = source else { return false }
+        return normalizedSelection(currentSelection) != normalizedSelection(latestSelection)
+    }
+
+    // Normalize filter snapshots before comparing, so array order does not trigger a false change.
+
+    private func normalizedSelection(_ selection: FilterSelection) -> FilterSelection {
+        let normalizedAlbumIDs = selection.albumIds
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted()
+
+        let normalizedPersonFilters = selection.personFilters
+            .filter { !$0.personId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { lhs, rhs in
+                if lhs.personId == rhs.personId {
+                    return lhs.matchMode.rawValue < rhs.matchMode.rawValue
+                }
+                return lhs.personId < rhs.personId
+            }
+
+        let normalizedTagIDs = selection.tagIds
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted()
+
+        return FilterSelection(
+            albumIds: normalizedAlbumIDs,
+            personFilters: normalizedPersonFilters,
+            tagIds: normalizedTagIDs,
+            rating: selection.rating,
+            isFavorite: selection.isFavorite
+        )
+    }
+
+    func recordAppliedInitialLoad(_ identity: InitialLoadIdentity, context: SessionContext) {
+        lastAppliedInitialLoadIdentity = InitialLoadIdentity(
+            generation: identity.generation, sourceName: identity.sourceName, context: context)
+    }
+
+    // Clear the old empty state when loading starts or the source changes, so the last round's error does not linger.
+    func clearEmptyMessage(update: (Update) -> Void) {
+        update(.emptyMessage(nil))
+    }
+
+    func resetSource(to newSource: PlaybackSource, update: (Update) -> Void) {
+        source = newSource
+        generation += 1
+        // Reset the index and first preload on a source change, so leftovers from the old mode are not reused.
+        update(.replacePool([], .sourceChanged))
+        setLoading(true, update: update)
+        loadMoreLoadingRequestID = nil
+        setLoadingMore(false, update: update)
+        clearEmptyMessage(update: update)
+    }
+
+    func replaceAssets(_ newAssets: [Asset], update: (Update) -> Void) {
+        assets = newAssets
+        update(.assets(assets))
+    }
+
+    #if DEBUG
+    func setLoadingForTesting(_ value: Bool, update: (Update) -> Void) {
+        setLoading(value, update: update)
+    }
+
+    func setLoadingMoreForTesting(_ value: Bool, update: (Update) -> Void) {
+        setLoadingMore(value, update: update)
+    }
+    #endif
+
+    func isCurrentInitialLoad(_ identity: InitialLoadIdentity, context: SessionContext) -> Bool {
+        identity.generation == generation
+            && identity.sourceName == Self.logName(for: source)
+            && identity.context.playbackSessionId == context.playbackSessionId
+            && identity.context.sceneId == context.sceneId
+            && !Task.isCancelled
+    }
+
+    func beginInitialLoad(context: SessionContext, update: (Update) -> Void) -> InitialRequest {
+        lastAppliedInitialLoadIdentity = nil
+        let loadSource = source
+        let identity = makeInitialLoadIdentity(
+            generation: generation, source: loadSource, context: context)
+        update(.startupPhase("assetPoolRequestStarted"))
+        switch loadSource {
+        case .random:
+            setLoading(true, update: update)
+            logger.info("load assets begin source=random targetCount=100")
+            return InitialRequest(
+                identity: identity, source: loadSource, targetCount: Self.standardFetchAssetCount)
+        case .filtered(let selection):
+            setLoading(true, update: update)
+            let targetCount = resolveTargetCount(for: selection, isInitial: true)
+            logger.info(
+                "load assets begin source=filtered targetCount=\(targetCount, privacy: .public) selection=\(Self.logSummary(for: selection), privacy: .public)"
+            )
+            return InitialRequest(identity: identity, source: loadSource, targetCount: targetCount)
+        }
+    }
+
+    func acquireInitial(_ request: InitialRequest) async -> InitialResult {
+        do {
+            let resolution: PlaybackPoolResolveResult
+            switch request.source {
+            case .random:
+                let loadedAssets: [Asset]
+                #if DEBUG
+                if let loadAssetsHookForTesting {
+                    loadedAssets = try await loadAssetsHookForTesting(request.source)
+                } else {
+                    loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
+                        size: Self.standardFetchAssetCount)
+                }
+                #else
+                loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
+                    size: Self.standardFetchAssetCount)
+                #endif
+                resolution = PlaybackPoolResolveResult(
+                    assets: loadedAssets, emptyReason: loadedAssets.isEmpty ? .noMatchingAssets : nil)
+            case .filtered(let selection):
+                #if DEBUG
+                if let loadAssetsHookForTesting {
+                    let loadedAssets = try await loadAssetsHookForTesting(request.source)
+                    resolution = PlaybackPoolResolveResult(
+                        assets: loadedAssets, emptyReason: loadedAssets.isEmpty ? .noMatchingAssets : nil)
+                } else {
+                    resolution = try await resolver.resolveDetailed(
+                        selection: selection, targetCount: request.targetCount)
+                }
+                #else
+                resolution = try await resolver.resolveDetailed(
+                    selection: selection, targetCount: request.targetCount)
+                #endif
+            }
+            return InitialResult(request: request, outcome: .success(resolution))
+        } catch {
+            return InitialResult(request: request, outcome: .failure(error))
+        }
+    }
+
+    func applyInitial(_ result: InitialResult, context: SessionContext, update: (Update) -> Void)
+        -> Bool
+    {
+        let request = result.request
+        let loadGeneration = request.identity.generation
+        let sourceKind = kindName(for: request.source)
+        switch result.outcome {
+        case .success(let resolution):
+            guard isCurrentInitialLoad(request.identity, context: context) else {
+                logger.notice(
+                    "load assets ignored stale result source=\(sourceKind, privacy: .public) generation=\(loadGeneration, privacy: .public) currentGeneration=\(self.generation, privacy: .public)"
+                )
+                return false
+            }
+            switch request.source {
+            case .random:
+                update(.startupPhase("assetPoolReady"))
+                update(.replaceInitialPool(resolution.assets, request.identity))
+                update(
+                    .emptyMessage(
+                        resolution.assets.isEmpty
+                            ? Self.emptyMessage(for: resolution.emptyReason, source: request.source) : nil))
+                setLoading(false, update: update)
+                logger.info(
+                    "load assets end source=random resultCount=\(resolution.assets.count, privacy: .public)")
+            case .filtered:
+                update(.startupPhase("assetPoolReady"))
+                update(.replaceInitialPool(resolution.assets, request.identity))
+                update(
+                    .emptyMessage(
+                        resolution.assets.isEmpty
+                            ? Self.emptyMessage(for: resolution.emptyReason, source: request.source) : nil))
+                setLoading(false, update: update)
+                logger.info(
+                    "load assets end source=filtered targetCount=\(request.targetCount, privacy: .public) resultCount=\(resolution.assets.count, privacy: .public)"
+                )
+            }
+        case .failure(let error):
+            let message = error.localizedDescription
+            guard isCurrentInitialLoad(request.identity, context: context) else {
+                logger.notice(
+                    "load assets ignored stale failure source=\(sourceKind, privacy: .public) generation=\(loadGeneration, privacy: .public) currentGeneration=\(self.generation, privacy: .public) error=\(message, privacy: .private)"
+                )
+                return false
+            }
+            switch request.source {
+            case .random:
+                logger.error("load assets failed source=random error=\(message, privacy: .private)")
+                update(
+                    .emptyMessage(
+                        String(localized: "Failed to load photos. Check your network or server settings.")))
+                setLoading(false, update: update)
+            case .filtered:
+                update(.replacePool([], .poolReloaded))
+                update(
+                    .emptyMessage(
+                        String(localized: "Failed to load photos. Check your network or server settings.")))
+                logger.error(
+                    "load assets failed source=filtered targetCount=\(request.targetCount, privacy: .public) error=\(message, privacy: .private)"
+                )
+                setLoading(false, update: update)
+            }
+        }
+        return true
+    }
+
+    // The refill remembers the generation it started with; old results must not be appended after a source change.
+    func beginRefill(context: SessionContext, update: (Update) -> Void) -> RefillRequest {
+        let loadGeneration = generation
+        let loadSource = source
+        let requestID = UUID()
+        loadMoreLoadingRequestID = requestID
+        setLoadingMore(true, update: update)
+        let oldCount = assets.count
+        switch loadSource {
+        case .random:
+            logger.info("load more begin source=random oldCount=\(oldCount, privacy: .public)")
+            #if DEBUG
+            update(
+                .sequenceEvent(
+                    .loadMoreBegin(
+                        sourceSummary: Self.logName(for: loadSource), oldCount: oldCount, targetCount: nil,
+                        excludedCount: oldCount)))
+            #endif
+            return RefillRequest(
+                requestID: requestID, generation: loadGeneration, source: loadSource,
+                playbackSessionId: context.playbackSessionId, oldCount: oldCount,
+                targetCount: Self.standardFetchAssetCount, excludedAssetIds: [])
+        case .filtered(let selection):
+            let targetCount = resolveTargetCount(for: selection, isInitial: false)
+            let excludedAssetIds = Set(assets.map(\.id))
+            logger.info(
+                "load more begin source=filtered oldCount=\(oldCount, privacy: .public) targetCount=\(targetCount, privacy: .public) selection=\(Self.logSummary(for: selection), privacy: .public)"
+            )
+            #if DEBUG
+            update(
+                .sequenceEvent(
+                    .loadMoreBegin(
+                        sourceSummary: Self.logSummary(for: selection), oldCount: oldCount,
+                        targetCount: targetCount, excludedCount: excludedAssetIds.count)))
+            #endif
+            return RefillRequest(
+                requestID: requestID, generation: loadGeneration, source: loadSource,
+                playbackSessionId: context.playbackSessionId, oldCount: oldCount, targetCount: targetCount,
+                excludedAssetIds: excludedAssetIds)
+        }
+    }
+
+    func acquireRefill(_ request: RefillRequest) async -> RefillResult {
+        switch request.source {
+        case .random:
+            return await acquireRandomRefill(request)
+        case .filtered(let selection):
+            return await acquireFilteredRefill(request, selection: selection)
+        }
+    }
+
+    #if DEBUG
+    // The resolver streams these observations during acquisition; final batch events still wait for validation.
+    func acquireRefill(
+        _ request: RefillRequest,
+        sequenceEventSink: @escaping (PlaybackSequenceDebugEventInput) -> Void,
+        isSequenceEvidenceEnabled: Bool
+    ) async -> RefillResult {
+        switch request.source {
+        case .random:
+            return await acquireRandomRefill(request)
+        case .filtered(let selection):
+            if loadMoreAssetsHookForTesting != nil {
+                return await acquireFilteredRefill(request, selection: selection)
+            }
+            let previousDebugEventSink = resolver.playbackSequenceDebugEventSink
+            if isSequenceEvidenceEnabled {
+                resolver.playbackSequenceDebugEventSink = sequenceEventSink
+            }
+            defer { resolver.playbackSequenceDebugEventSink = previousDebugEventSink }
+            return await acquireFilteredRefill(request, selection: selection)
+        }
+    }
+    #endif
+
+    private func acquireRandomRefill(_ request: RefillRequest) async -> RefillResult {
+        do {
+            let loadedAssets: [Asset]
+            #if DEBUG
+            if let loadMoreAssetsHookForTesting {
+                loadedAssets = try await loadMoreAssetsHookForTesting(request.source)
+            } else {
+                loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
+                    size: Self.standardFetchAssetCount)
+            }
+            #else
+            loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
+                size: Self.standardFetchAssetCount)
+            #endif
+            return RefillResult(request: request, outcome: .success(loadedAssets))
+        } catch {
+            return RefillResult(request: request, outcome: .failure(error))
+        }
+    }
+
+    private func acquireFilteredRefill(_ request: RefillRequest, selection: FilterSelection) async
+        -> RefillResult
+    {
+        do {
+            let loadedAssets: [Asset]
+            #if DEBUG
+            let strictSoloDebugEvents: [PlaybackSequenceDebugEventInput]
+            if let loadMoreAssetsHookForTesting {
+                loadedAssets = try await loadMoreAssetsHookForTesting(request.source)
+                strictSoloDebugEvents = []
+            } else {
+                loadedAssets = try await resolver.resolve(
+                    selection: selection, targetCount: request.targetCount,
+                    excludingAssetIds: request.excludedAssetIds)
+                strictSoloDebugEvents = resolver.strictSoloDebugEventsForTesting
+            }
+            var result = RefillResult(request: request, outcome: .success(loadedAssets))
+            result.strictSoloDebugEvents = strictSoloDebugEvents
+            return result
+            #else
+            loadedAssets = try await resolver.resolve(
+                selection: selection, targetCount: request.targetCount,
+                excludingAssetIds: request.excludedAssetIds)
+            return RefillResult(request: request, outcome: .success(loadedAssets))
+            #endif
+        } catch {
+            return RefillResult(request: request, outcome: .failure(error))
+        }
+    }
+
+    func applyRefill(
+        _ result: RefillResult, context: SessionContext,
+        update: (Update) -> Void,
+        observeTrim: (TrimObservation) -> Void
+    ) {
+        switch result.request.source {
+        case .random:
+            applyRandomRefill(
+                result, context: context, update: update, observeTrim: observeTrim)
+        case .filtered(let selection):
+            applyFilteredRefill(
+                result, selection: selection, context: context,
+                update: update, observeTrim: observeTrim)
+        }
+    }
+
+    private func applyRandomRefill(
+        _ result: RefillResult, context: SessionContext,
+        update: (Update) -> Void,
+        observeTrim: (TrimObservation) -> Void
+    ) {
+        let request = result.request
+        switch result.outcome {
+        case .success(let loadedAssets):
+            guard isCurrentRefill(request, context: context) else {
+                logger.notice(
+                    "load more ignored stale result source=random generation=\(request.generation, privacy: .public) currentGeneration=\(self.generation, privacy: .public)"
+                )
+                return
+            }
+            let unseenAssets = assetsUnseenInCurrentPool(loadedAssets)
+            assets.append(contentsOf: unseenAssets)
+            update(.assets(assets))
+            if !assets.isEmpty { update(.emptyMessage(nil)) }
+            if assets.count >= maximumAssetCount {
+                let removeCount = assets.count - maximumAssetCount
+                observeTrim(.willTrim(source: "random", removeCount: removeCount))
+                let idsToRemove = assets.prefix(removeCount).map(\.id)
+                update(.evictCachedAssets(idsToRemove))
+                assets.removeFirst(removeCount)
+                update(.assets(assets))
+                update(.adjustCursorAfterTrim(removeCount))
+                // After trimming the queue head, move the index back so currentIndex is not in the removed range.
+                update(.syncReadback)
+                observeTrim(.didTrim(source: "random", removeCount: removeCount))
+            }
+            finishLoadingMore(request, update: update)
+            #if DEBUG
+            update(
+                .sequenceEvent(
+                    .loadMoreResult(
+                        sourceSummary: Self.logName(for: request.source), oldCount: request.oldCount,
+                        targetCount: nil, returnedCount: loadedAssets.count, unseenCount: unseenAssets.count,
+                        dedupedCount: loadedAssets.count - unseenAssets.count, finalCount: assets.count)))
+            #endif
+            update(
+                .refillFinished(
+                    source: "random", addedCount: unseenAssets.count,
+                    dedupedCount: loadedAssets.count - unseenAssets.count))
+        case .failure(let error):
+            let message = error.localizedDescription
+            guard isCurrentRefill(request, context: context) else {
+                logger.notice(
+                    "load more ignored stale failure source=random generation=\(request.generation, privacy: .public) currentGeneration=\(self.generation, privacy: .public) error=\(message, privacy: .private)"
+                )
+                return
+            }
+            #if DEBUG
+            update(
+                .sequenceEvent(
+                    .loadMoreFailure(
+                        sourceSummary: Self.logName(for: request.source), oldCount: request.oldCount,
+                        targetCount: nil, errorKind: loadMoreErrorKind(error))))
+            #endif
+            logger.error(
+                "load more failed source=random oldCount=\(request.oldCount, privacy: .public) error=\(message, privacy: .private)"
+            )
+            finishLoadingMore(request, update: update)
+        }
+    }
+
+    private func applyFilteredRefill(
+        _ result: RefillResult, selection: FilterSelection, context: SessionContext,
+        update: (Update) -> Void,
+        observeTrim: (TrimObservation) -> Void
+    ) {
+        let request = result.request
+        switch result.outcome {
+        case .success(let loadedAssets):
+            guard isCurrentRefill(request, context: context) else {
+                logger.notice(
+                    "load more ignored stale result source=filtered generation=\(request.generation, privacy: .public) currentGeneration=\(self.generation, privacy: .public)"
+                )
+                return
+            }
+            #if DEBUG
+            for event in result.strictSoloDebugEvents { update(.sequenceEvent(event)) }
+            #endif
+            let unseenAssets = assetsUnseenInCurrentPool(loadedAssets)
+            if unseenAssets.isEmpty {
+                logger.notice(
+                    "load more saturated source=filtered returnedCount=\(loadedAssets.count, privacy: .public) oldCount=\(request.oldCount, privacy: .public) targetCount=\(request.targetCount, privacy: .public) selection=\(Self.logSummary(for: selection), privacy: .public)"
+                )
+                #if DEBUG
+                update(
+                    .sequenceEvent(
+                        .loadMoreSaturated(
+                            sourceSummary: Self.logSummary(for: selection), oldCount: request.oldCount,
+                            targetCount: request.targetCount, returnedCount: loadedAssets.count,
+                            unseenCount: unseenAssets.count)))
+                #endif
+            }
+            assets.append(contentsOf: unseenAssets)
+            update(.assets(assets))
+            update(.resumeFilteredCursor(oldCount: request.oldCount, appendedCount: unseenAssets.count))
+            if !assets.isEmpty { update(.emptyMessage(nil)) }
+            if assets.count >= maximumAssetCount {
+                let removeCount = assets.count - maximumAssetCount
+                observeTrim(.willTrim(source: "filtered", removeCount: removeCount))
+                let idsToRemove = assets.prefix(removeCount).map(\.id)
+                update(.evictCachedAssets(idsToRemove))
+                assets.removeFirst(removeCount)
+                update(.assets(assets))
+                update(.adjustCursorAfterTrim(removeCount))
+                // After trimming the queue head, move the index back so currentIndex is not in the removed range.
+                update(.syncReadback)
+                observeTrim(.didTrim(source: "filtered", removeCount: removeCount))
+            }
+            finishLoadingMore(request, update: update)
+            #if DEBUG
+            update(
+                .sequenceEvent(
+                    .loadMoreResult(
+                        sourceSummary: Self.logSummary(for: selection), oldCount: request.oldCount,
+                        targetCount: request.targetCount, returnedCount: loadedAssets.count,
+                        unseenCount: unseenAssets.count,
+                        dedupedCount: loadedAssets.count - unseenAssets.count, finalCount: assets.count)))
+            #endif
+            update(
+                .refillFinished(
+                    source: "filtered", addedCount: unseenAssets.count,
+                    dedupedCount: loadedAssets.count - unseenAssets.count))
+        case .failure(let error):
+            let message = error.localizedDescription
+            guard isCurrentRefill(request, context: context) else {
+                logger.notice(
+                    "load more ignored stale failure source=filtered generation=\(request.generation, privacy: .public) currentGeneration=\(self.generation, privacy: .public) error=\(message, privacy: .private)"
+                )
+                return
+            }
+            #if DEBUG
+            update(
+                .sequenceEvent(
+                    .loadMoreFailure(
+                        sourceSummary: Self.logSummary(for: selection), oldCount: request.oldCount,
+                        targetCount: request.targetCount, errorKind: loadMoreErrorKind(error))))
+            #endif
+            logger.error(
+                "load more failed source=filtered oldCount=\(request.oldCount, privacy: .public) targetCount=\(request.targetCount, privacy: .public) error=\(message, privacy: .private)"
+            )
+            update(.clearPendingCursorResume(reason: loadMoreErrorKind(error)))
+            finishLoadingMore(request, update: update)
+        }
+    }
+
+    func finishLoadingMore(_ request: RefillRequest, update: (Update) -> Void) {
+        // Cleanup ownership is independent of result freshness, including task cancellation.
+        guard loadMoreLoadingRequestID == request.requestID else { return }
+        setLoadingMore(false, update: update)
+    }
+
+    // The refill follows the session, not the current sceneId.
+    private func isCurrentRefill(_ request: RefillRequest, context: SessionContext) -> Bool {
+        request.generation == generation
+            && Self.logName(for: request.source) == Self.logName(for: source)
+            && request.playbackSessionId == context.playbackSessionId
+            && !Task.isCancelled
+    }
+
+    // If the generation does not match, drop the old task; it must not write into the new playback source.
+    private func makeInitialLoadIdentity(
+        generation: Int, source: PlaybackSource, context: SessionContext
+    ) -> InitialLoadIdentity {
+        InitialLoadIdentity(
+            generation: generation, sourceName: Self.logName(for: source), context: context)
+    }
+
+    private func assetsUnseenInCurrentPool(_ incomingAssets: [Asset]) -> [Asset] {
+        var seenAssetIds = Set(assets.map(\.id))
+        return incomingAssets.filter { seenAssetIds.insert($0.id).inserted }
+    }
+
+    private func setLoading(_ value: Bool, update: (Update) -> Void) {
+        update(.loading(value))
+    }
+
+    private func setLoadingMore(_ value: Bool, update: (Update) -> Void) {
+        update(.loadingMore(value))
+    }
+
+    private func loadMoreErrorKind(_ error: any Error) -> String {
+        if error is CancellationError {
+            return "cancelled"
+        }
+        return "failure"
+    }
+
+    private func kindName(for source: PlaybackSource) -> String {
+        switch source {
+        case .random: return "random"
+        case .filtered: return "filtered"
+        }
+    }
+
+    // soloOnly starts with a small pool and refills in the background; fetching 100 up front slows startup and fills
+    // the cache.
+    private func resolveTargetCount(for selection: FilterSelection, isInitial: Bool) -> Int {
+        guard selection.personFilters.contains(where: { $0.matchMode == .soloOnly }) else {
+            return Self.standardFetchAssetCount
+        }
+        return isInitial ? Self.initialSoloOnlyAssetCount : Self.soloOnlyRefillAssetCount
+    }
+
+    static func logName(for source: PlaybackSource) -> String {
+        switch source {
+        case .random: return "random"
+        case .filtered(let selection): return "filtered(\(logSummary(for: selection)))"
+        }
+    }
+
+    static func logSummary(for selection: FilterSelection) -> String {
+        let soloCount = selection.personFilters.filter { $0.matchMode == .soloOnly }.count
+        let normalCount = selection.personFilters.filter { $0.matchMode == .normal }.count
+        return
+            "albums=\(selection.albumIds.count),people=\(selection.personFilters.count),solo=\(soloCount),normal=\(normalCount),tags=\(selection.tagIds.count),rating=\(selection.rating == nil ? "nil" : "set"),favorite=\(selection.isFavorite == nil ? "nil" : "set")"
+    }
+
+    static func emptyMessage(for reason: PlaybackPoolEmptyReason?, source: PlaybackSource) -> String {
+        switch reason ?? .noMatchingAssets {
+        case .invalidTargetCount:
+            return String(localized: "The playback pool request size is invalid. Please try again later.")
+        case .noActiveRules:
+            return String(localized: "No filters are selected yet. Choose an album or person first.")
+        case .strictSoloVisionUnavailable:
+            return String(
+                localized:
+                    "Strict solo detection is not available right now. This device cannot complete local face detection. Try on a real device, or use normal person filtering for now."
+            )
+        case .noMatchingAssets:
+            switch source {
+            case .random:
+                return String(
+                    localized:
+                        "Immich did not return any playable photos. Check your server library or network connection."
+                )
+            case .filtered:
+                return String(
+                    localized: "No playable photos match the current filters. Try another album or person.")
+            }
         }
     }
 }

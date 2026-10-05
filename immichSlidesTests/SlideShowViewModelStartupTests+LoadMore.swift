@@ -372,7 +372,7 @@ extension SlideShowViewModelStartupTests {
             await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
         }
 
-        vm.assets = (26..<30).map { makeAsset(id: "asset-\($0)") }
+        vm.overwritePlaybackPoolWithoutResetForTesting((26..<30).map { makeAsset(id: "asset-\($0)") })
         let keepIds = vm.makeKeepIds(currentIndex: vm.currentIndex)
 
         #expect(keepIds.isSuperset(of: Set((7...26).map { "asset-\($0)" })))
