@@ -1846,8 +1846,13 @@ fileprivate final class PlaybackPoolLoader {
         case didTrim(source: String, removeCount: Int)
     }
 
-    private static let standardFetchAssetCount = 100
-    private static let initialSoloOnlyAssetCount = 12
+    private enum ResolvePhase {
+        case initial
+        case loadMore
+    }
+
+    private static let standardPlaybackFetchAssetCount = 100
+    private static let initialSoloOnlyPoolAssetCount = 12
     private static let soloOnlyRefillAssetCount = 24
     private var source: PlaybackSource
     private var generation = 0
@@ -1879,12 +1884,20 @@ fileprivate final class PlaybackPoolLoader {
     }
 
     var isSoloOnlySource: Bool {
-        guard case .filtered(let selection) = source else { return false }
-        return selection.personFilters.contains { $0.matchMode == .soloOnly }
+        guard case .filtered(let selection) = source else {
+            return false
+        }
+
+        return selection.personFilters.contains { filter in
+            filter.matchMode == .soloOnly
+        }
     }
 
     func shouldReloadFilteredSource(for latestSelection: FilterSelection) -> Bool {
-        guard case .filtered(let currentSelection) = source else { return false }
+        guard case .filtered(let currentSelection) = source else {
+            return false
+        }
+
         return normalizedSelection(currentSelection) != normalizedSelection(latestSelection)
     }
 
@@ -1974,10 +1987,10 @@ fileprivate final class PlaybackPoolLoader {
             setLoading(true, update: update)
             logger.info("load assets begin source=random targetCount=100")
             return InitialRequest(
-                identity: identity, source: loadSource, targetCount: Self.standardFetchAssetCount)
+                identity: identity, source: loadSource, targetCount: Self.standardPlaybackFetchAssetCount)
         case .filtered(let selection):
             setLoading(true, update: update)
-            let targetCount = resolveTargetCount(for: selection, isInitial: true)
+            let targetCount = resolveTargetCount(for: selection, phase: .initial)
             logger.info(
                 "load assets begin source=filtered targetCount=\(targetCount, privacy: .public) selection=\(Self.logSummary(for: selection), privacy: .public)"
             )
@@ -1996,11 +2009,11 @@ fileprivate final class PlaybackPoolLoader {
                     loadedAssets = try await loadAssetsHookForTesting(request.source)
                 } else {
                     loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
-                        size: Self.standardFetchAssetCount)
+                        size: Self.standardPlaybackFetchAssetCount)
                 }
                 #else
                 loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
-                    size: Self.standardFetchAssetCount)
+                    size: Self.standardPlaybackFetchAssetCount)
                 #endif
                 resolution = PlaybackPoolResolveResult(
                     assets: loadedAssets, emptyReason: loadedAssets.isEmpty ? .noMatchingAssets : nil)
@@ -2112,9 +2125,9 @@ fileprivate final class PlaybackPoolLoader {
             return RefillRequest(
                 requestID: requestID, generation: loadGeneration, source: loadSource,
                 playbackSessionId: context.playbackSessionId, oldCount: oldCount,
-                targetCount: Self.standardFetchAssetCount, excludedAssetIds: [])
+                targetCount: Self.standardPlaybackFetchAssetCount, excludedAssetIds: [])
         case .filtered(let selection):
-            let targetCount = resolveTargetCount(for: selection, isInitial: false)
+            let targetCount = resolveTargetCount(for: selection, phase: .loadMore)
             let excludedAssetIds = Set(assets.map(\.id))
             logger.info(
                 "load more begin source=filtered oldCount=\(oldCount, privacy: .public) targetCount=\(targetCount, privacy: .public) selection=\(Self.logSummary(for: selection), privacy: .public)"
@@ -2174,11 +2187,11 @@ fileprivate final class PlaybackPoolLoader {
                 loadedAssets = try await loadMoreAssetsHookForTesting(request.source)
             } else {
                 loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
-                    size: Self.standardFetchAssetCount)
+                    size: Self.standardPlaybackFetchAssetCount)
             }
             #else
             loadedAssets = try await ImmichAPIService.shared.getRandomAsset(
-                size: Self.standardFetchAssetCount)
+                size: Self.standardPlaybackFetchAssetCount)
             #endif
             return RefillResult(request: request, outcome: .success(loadedAssets))
         } catch {
@@ -2247,21 +2260,9 @@ fileprivate final class PlaybackPoolLoader {
                 return
             }
             let unseenAssets = assetsUnseenInCurrentPool(loadedAssets)
-            assets.append(contentsOf: unseenAssets)
-            update(.assets(assets))
-            if !assets.isEmpty { update(.emptyMessage(nil)) }
-            if assets.count >= maximumAssetCount {
-                let removeCount = assets.count - maximumAssetCount
-                observeTrim(.willTrim(source: "random", removeCount: removeCount))
-                let idsToRemove = assets.prefix(removeCount).map(\.id)
-                update(.evictCachedAssets(idsToRemove))
-                assets.removeFirst(removeCount)
-                update(.assets(assets))
-                update(.adjustCursorAfterTrim(removeCount))
-                // After trimming the queue head, move the index back so currentIndex is not in the removed range.
-                update(.syncReadback)
-                observeTrim(.didTrim(source: "random", removeCount: removeCount))
-            }
+            let refillUpdate = appendRefillAssets(
+                unseenAssets, returnedCount: loadedAssets.count, request: request,
+                update: update, observeTrim: observeTrim)
             finishLoadingMore(request, update: update)
             #if DEBUG
             update(
@@ -2271,10 +2272,7 @@ fileprivate final class PlaybackPoolLoader {
                         targetCount: nil, returnedCount: loadedAssets.count, unseenCount: unseenAssets.count,
                         dedupedCount: loadedAssets.count - unseenAssets.count, finalCount: assets.count)))
             #endif
-            update(
-                .refillFinished(
-                    source: "random", addedCount: unseenAssets.count,
-                    dedupedCount: loadedAssets.count - unseenAssets.count))
+            update(refillUpdate)
         case .failure(let error):
             let message = error.localizedDescription
             guard isCurrentRefill(request, context: context) else {
@@ -2312,7 +2310,9 @@ fileprivate final class PlaybackPoolLoader {
                 return
             }
             #if DEBUG
-            for event in result.strictSoloDebugEvents { update(.sequenceEvent(event)) }
+            for event in result.strictSoloDebugEvents {
+                update(.sequenceEvent(event))
+            }
             #endif
             let unseenAssets = assetsUnseenInCurrentPool(loadedAssets)
             if unseenAssets.isEmpty {
@@ -2328,22 +2328,9 @@ fileprivate final class PlaybackPoolLoader {
                             unseenCount: unseenAssets.count)))
                 #endif
             }
-            assets.append(contentsOf: unseenAssets)
-            update(.assets(assets))
-            update(.resumeFilteredCursor(oldCount: request.oldCount, appendedCount: unseenAssets.count))
-            if !assets.isEmpty { update(.emptyMessage(nil)) }
-            if assets.count >= maximumAssetCount {
-                let removeCount = assets.count - maximumAssetCount
-                observeTrim(.willTrim(source: "filtered", removeCount: removeCount))
-                let idsToRemove = assets.prefix(removeCount).map(\.id)
-                update(.evictCachedAssets(idsToRemove))
-                assets.removeFirst(removeCount)
-                update(.assets(assets))
-                update(.adjustCursorAfterTrim(removeCount))
-                // After trimming the queue head, move the index back so currentIndex is not in the removed range.
-                update(.syncReadback)
-                observeTrim(.didTrim(source: "filtered", removeCount: removeCount))
-            }
+            let refillUpdate = appendRefillAssets(
+                unseenAssets, returnedCount: loadedAssets.count, request: request,
+                update: update, observeTrim: observeTrim)
             finishLoadingMore(request, update: update)
             #if DEBUG
             update(
@@ -2354,10 +2341,7 @@ fileprivate final class PlaybackPoolLoader {
                         unseenCount: unseenAssets.count,
                         dedupedCount: loadedAssets.count - unseenAssets.count, finalCount: assets.count)))
             #endif
-            update(
-                .refillFinished(
-                    source: "filtered", addedCount: unseenAssets.count,
-                    dedupedCount: loadedAssets.count - unseenAssets.count))
+            update(refillUpdate)
         case .failure(let error):
             let message = error.localizedDescription
             guard isCurrentRefill(request, context: context) else {
@@ -2379,6 +2363,38 @@ fileprivate final class PlaybackPoolLoader {
             update(.clearPendingCursorResume(reason: loadMoreErrorKind(error)))
             finishLoadingMore(request, update: update)
         }
+    }
+
+    // Publish each mutation synchronously; the completion update stays after loading and evidence writes.
+    private func appendRefillAssets(
+        _ unseenAssets: [Asset], returnedCount: Int, request: RefillRequest,
+        update: (Update) -> Void,
+        observeTrim: (TrimObservation) -> Void
+    ) -> Update {
+        let sourceName = kindName(for: request.source)
+        assets.append(contentsOf: unseenAssets)
+        update(.assets(assets))
+        if case .filtered = request.source {
+            update(.resumeFilteredCursor(oldCount: request.oldCount, appendedCount: unseenAssets.count))
+        }
+        if !assets.isEmpty {
+            update(.emptyMessage(nil))
+        }
+        if assets.count >= maximumAssetCount {
+            let removeCount = assets.count - maximumAssetCount
+            observeTrim(.willTrim(source: sourceName, removeCount: removeCount))
+            let idsToRemove = assets.prefix(removeCount).map { $0.id }
+            update(.evictCachedAssets(idsToRemove))
+            assets.removeFirst(removeCount)
+            update(.assets(assets))
+            update(.adjustCursorAfterTrim(removeCount))
+            // After trimming the queue head, move the index back so currentIndex is not in the removed range.
+            update(.syncReadback)
+            observeTrim(.didTrim(source: sourceName, removeCount: removeCount))
+        }
+        return .refillFinished(
+            source: sourceName, addedCount: unseenAssets.count,
+            dedupedCount: returnedCount - unseenAssets.count)
     }
 
     func finishLoadingMore(_ request: RefillRequest, update: (Update) -> Void) {
@@ -2405,7 +2421,9 @@ fileprivate final class PlaybackPoolLoader {
 
     private func assetsUnseenInCurrentPool(_ incomingAssets: [Asset]) -> [Asset] {
         var seenAssetIds = Set(assets.map(\.id))
-        return incomingAssets.filter { seenAssetIds.insert($0.id).inserted }
+        return incomingAssets.filter { asset in
+            seenAssetIds.insert(asset.id).inserted
+        }
     }
 
     private func setLoading(_ value: Bool, update: (Update) -> Void) {
@@ -2432,17 +2450,32 @@ fileprivate final class PlaybackPoolLoader {
 
     // soloOnly starts with a small pool and refills in the background; fetching 100 up front slows startup and fills
     // the cache.
-    private func resolveTargetCount(for selection: FilterSelection, isInitial: Bool) -> Int {
-        guard selection.personFilters.contains(where: { $0.matchMode == .soloOnly }) else {
-            return Self.standardFetchAssetCount
+    private func resolveTargetCount(
+        for selection: FilterSelection,
+        phase: ResolvePhase
+    ) -> Int {
+        let containsSoloOnly = selection.personFilters.contains { filter in
+            filter.matchMode == .soloOnly
         }
-        return isInitial ? Self.initialSoloOnlyAssetCount : Self.soloOnlyRefillAssetCount
+
+        guard containsSoloOnly else {
+            return Self.standardPlaybackFetchAssetCount
+        }
+
+        switch phase {
+        case .initial:
+            return Self.initialSoloOnlyPoolAssetCount
+        case .loadMore:
+            return Self.soloOnlyRefillAssetCount
+        }
     }
 
     static func logName(for source: PlaybackSource) -> String {
         switch source {
-        case .random: return "random"
-        case .filtered(let selection): return "filtered(\(logSummary(for: selection)))"
+        case .random:
+            return "random"
+        case .filtered(let selection):
+            return "filtered(\(logSummary(for: selection)))"
         }
     }
 
@@ -2453,8 +2486,13 @@ fileprivate final class PlaybackPoolLoader {
             "albums=\(selection.albumIds.count),people=\(selection.personFilters.count),solo=\(soloCount),normal=\(normalCount),tags=\(selection.tagIds.count),rating=\(selection.rating == nil ? "nil" : "set"),favorite=\(selection.isFavorite == nil ? "nil" : "set")"
     }
 
-    static func emptyMessage(for reason: PlaybackPoolEmptyReason?, source: PlaybackSource) -> String {
-        switch reason ?? .noMatchingAssets {
+    static func emptyMessage(
+        for reason: PlaybackPoolEmptyReason?,
+        source: PlaybackSource
+    ) -> String {
+        let resolvedReason = reason ?? .noMatchingAssets
+
+        switch resolvedReason {
         case .invalidTargetCount:
             return String(localized: "The playback pool request size is invalid. Please try again later.")
         case .noActiveRules:
@@ -2469,11 +2507,9 @@ fileprivate final class PlaybackPoolLoader {
             case .random:
                 return String(
                     localized:
-                        "Immich did not return any playable photos. Check your server library or network connection."
-                )
+                        "Immich did not return any playable photos. Check your server library or network connection.")
             case .filtered:
-                return String(
-                    localized: "No playable photos match the current filters. Try another album or person.")
+                return String(localized: "No playable photos match the current filters. Try another album or person.")
             }
         }
     }
