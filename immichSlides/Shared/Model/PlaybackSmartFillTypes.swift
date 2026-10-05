@@ -249,31 +249,7 @@ enum SmartFillPreparedPlanBuilder {
         guard !Task.isCancelled else { return nil }
         guard !plannerResult.slots.isEmpty else { return nil }
 
-        let initialReadback = PlaybackSmartFillSceneReadback(
-            version: "smart-fill-scene-v2",
-            sceneType: plannerResult.sceneType,
-            layoutPolicyId: plannerResult.layoutPolicyId,
-            surfaceKey: plannerResult.surfaceKey,
-            layoutVariant: plannerResult.layoutVariant,
-            ratioPreset: plannerResult.ratioPreset,
-            slotRoles: plannerResult.slots.map(\.role),
-            fallbackReason: plannerResult.fallbackReason,
-            fallbackCategory: plannerResult.fallbackCategory,
-            candidateWindowUsed: plannerResult.candidateWindowUsed,
-            evaluationCount: plannerResult.evaluationCount,
-            rotationStartLayoutVariant: plannerResult.rotationStartLayoutVariant,
-            rotationStartRatioPreset: plannerResult.rotationStartRatioPreset,
-            acceptedLayoutVariant: plannerResult.acceptedLayoutVariant,
-            acceptedRatioPreset: plannerResult.acceptedRatioPreset,
-            rotationKeyHashPrefix: plannerResult.rotationKeyHashPrefix,
-            rejectedLayoutReasonTopList: plannerResult.rejectedLayoutReasonTopList,
-            reasonCodes: plannerResult.reasonCodes
-        )
-        #if DEBUG
-        let readback = initialReadback.recordingQADebugSummary(plannerResult.qaDebugSummary)
-        #else
-        let readback = initialReadback
-        #endif
+        let readback = PlaybackSmartFillSceneReadback.fromPlannerResult(plannerResult)
         let selectedRefs = plannerResult.slots.map(\.candidateReference)
         let selectedAssetIds = selectedRefs.compactMap { selectedRef in
             zip(candidates, request.rawAssetSnapshots).first { candidate, _ in
@@ -916,6 +892,34 @@ struct PlaybackSmartFillSceneReadback: Equatable, Sendable {
     #if DEBUG
     private(set) var qaDebugSummary: String = ""
     #endif
+
+    nonisolated static func fromPlannerResult(_ plannerResult: PlaybackSmartFillPlannerResult) -> Self {
+        let initialReadback = PlaybackSmartFillSceneReadback(
+            version: "smart-fill-scene-v2",
+            sceneType: plannerResult.sceneType,
+            layoutPolicyId: plannerResult.layoutPolicyId,
+            surfaceKey: plannerResult.surfaceKey,
+            layoutVariant: plannerResult.layoutVariant,
+            ratioPreset: plannerResult.ratioPreset,
+            slotRoles: plannerResult.slots.map(\.role),
+            fallbackReason: plannerResult.fallbackReason,
+            fallbackCategory: plannerResult.fallbackCategory,
+            candidateWindowUsed: plannerResult.candidateWindowUsed,
+            evaluationCount: plannerResult.evaluationCount,
+            rotationStartLayoutVariant: plannerResult.rotationStartLayoutVariant,
+            rotationStartRatioPreset: plannerResult.rotationStartRatioPreset,
+            acceptedLayoutVariant: plannerResult.acceptedLayoutVariant,
+            acceptedRatioPreset: plannerResult.acceptedRatioPreset,
+            rotationKeyHashPrefix: plannerResult.rotationKeyHashPrefix,
+            rejectedLayoutReasonTopList: plannerResult.rejectedLayoutReasonTopList,
+            reasonCodes: plannerResult.reasonCodes
+        )
+        #if DEBUG
+        return initialReadback.recordingQADebugSummary(plannerResult.qaDebugSummary)
+        #else
+        return initialReadback
+        #endif
+    }
 
     nonisolated init(
         version: String,
