@@ -1,3 +1,4 @@
+#if DEBUG
 import SwiftUI
 import SDWebImage
 
@@ -401,3 +402,4 @@ private extension PlaybackPlanningRect {
         String(format: "%.3f", value)
     }
 }
+#endif

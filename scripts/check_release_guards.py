@@ -32,6 +32,19 @@ DEBUG_ONLY_MARKERS = (
     "isUnitTestHost",
     "peopleAdjustedForTesting",
     "UI_TEST_FORCE_LONG_PERSON_NAMES",
+    "UI_TEST_SHOW_EXIF_SAMPLING_DEBUG",
+    "shouldShowExifSamplingDebugOverlay",
+    "exifSamplingDebugSnapshot",
+    "exifSamplingDebugOverlay",
+    "ExifSamplingDebugSnapshot",
+    "ExifForegroundAnalyzer.debugSnapshot",
+    "debugSnapshotSynchronously",
+    "legacyToneForBenchmark",
+    "displayedBackdropToneForBenchmark",
+    "displayedBackdropAverageToneForBenchmark",
+    "displayedBackdropEffectiveLuminance",
+    "DebugOverlayView",
+    "PlaybackDebugOverlaySceneSummary",
 )
 
 # Primary files and adjacent +*.swift splits that must stay free of image-cache and diagnostics concepts.
@@ -70,6 +83,7 @@ PLATFORM_COMPAT_ONLY_KEYS = (
     "UI_TEST_APP_STORE_SCREENSHOT_PREFILL_CONNECTION",
     "UI_TEST_APP_STORE_SCREENSHOT_SERVER_URL",
     "UI_TEST_APP_STORE_SCREENSHOT_API_KEY",
+    "UI_TEST_SHOW_EXIF_SAMPLING_DEBUG",
 )
 PLATFORM_COMPAT_FILE = "immichSlides/Shared/Component/PlatformCompat.swift"
 

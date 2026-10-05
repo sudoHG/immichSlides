@@ -347,6 +347,7 @@ extension SlideShowViewIOS {
             .joined(separator: "\n")
     }
 
+    #if DEBUG
     // Diagnostic overlay: the red frame marks the EXIF panel; the top-left thumbnail checks the crop mapping.
 
     @ViewBuilder
@@ -447,5 +448,6 @@ extension SlideShowViewIOS {
     private func rectDebugText(_ rect: CGRect) -> String {
         "x\(Int(rect.minX.rounded())) y\(Int(rect.minY.rounded())) w\(Int(rect.width.rounded())) h\(Int(rect.height.rounded()))"
     }
+    #endif
 }
 #endif

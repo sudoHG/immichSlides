@@ -351,6 +351,7 @@ struct SlideShowViewTV: View {
                         safeAreaInsets: geometry.safeAreaInsets
                     )
                 }
+                #if DEBUG
                 if PlatformCompat.isPlaybackDebugPanelEnabled && isDebugOverlayVisible {
                     DebugOverlayView(
                         viewModel: viewModel,
@@ -364,6 +365,7 @@ struct SlideShowViewTV: View {
                         .foregroundStyle(.clear)
                         .accessibilityIdentifier("slideshow.debugOverlay.flag")
                 }
+                #endif
                 if shouldExposeSmartFillManifestProbeForTesting,
                     let manifest = viewModel.currentSmartFillRuntimeQADebugSummary(
                         controlBarVisible: isControlBarVisible,

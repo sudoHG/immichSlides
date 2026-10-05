@@ -115,6 +115,7 @@ Platform views only forward system events (scene phase, Reduce Motion, remote/to
 - **Actors.** `SoloVisionPoolFilter` is an `actor` with a bounded LRU cache of Vision results. It is cleared when the server changes.
 - **Debug and diagnostics.** The playback sequence recorder, request lifecycle diagnostics and `UI_TEST_*` launch switches are debug-only. Production decisions must not depend on them. `scripts/check_release_guards.py` enforces this and keeps image cache and diagnostics code out of `PlaybackSessionEngine.swift`, `PlaybackSmartFillPlanner.swift` and their adjacent `<Primary>+*.swift` split files.
   `PlatformCompat` owns XCTest detection, long-person-name injection, screenshot connection prefill and the sequence recording switch. XCTest detection returns false in Release. Replay parsing, runtime evidence validation and playback readback injection are compiled only in Debug; their serialized keys stay unchanged.
+  The EXIF sampling overlay, snapshots, benchmark entry points and playback debug panel declarations and callers are compiled only in Debug. `PlatformCompat` owns the `UI_TEST_SHOW_EXIF_SAMPLING_DEBUG` switch; normal EXIF tone analysis stays available in both configurations.
 
 ## 5. Glossary
 
