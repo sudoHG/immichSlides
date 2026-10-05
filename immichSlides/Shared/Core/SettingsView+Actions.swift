@@ -71,7 +71,7 @@ extension SettingsView {
             isClearingCache = true
             await downloadManager.clearDiskCacheForSettings()
             refreshCacheSummary()
-            cacheStatusMessage = String(localized: "Disk cache and state cleared")
+            cacheStatusMessage = String(localized: "Disk cache cleared")
             isClearingCache = false
         }
     }
