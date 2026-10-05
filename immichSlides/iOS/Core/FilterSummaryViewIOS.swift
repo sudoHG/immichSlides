@@ -7,11 +7,13 @@
 
 import SwiftUI
 
+#if DEBUG
 private enum VisualAuditPreparation {
     static let coverLimitCount: Int = 20
     static let maximumRetryCount: Int = 40
     static let pollIntervalNanoseconds: UInt64 = 250_000_000
 }
+#endif
 
 struct FilterSummaryViewIOS: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -48,17 +50,22 @@ struct FilterSummaryViewIOS: View {
         viewModel.selection.isEmpty == false
     }
 
+    #if DEBUG
     private var shouldExposeUITestReadinessMarkers: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] == "1"
+        PlatformCompat.shouldPrepareFilterSummaryForTesting
     }
+    #endif
 
+    #if DEBUG
     private var isAlbumVisualAuditReady: Bool {
         let hasMatchedAlbumSelection = viewModel.selection.albumIds.contains { selectedID in
             viewModel.albums.contains { $0.id == selectedID }
         }
         return hasMatchedAlbumSelection && viewModel.albumCoverURLs.isEmpty == false
     }
+    #endif
 
+    #if DEBUG
     private var isPeopleVisualAuditReady: Bool {
         let selectedIDs = viewModel.selection.personFilters.map(\.personId)
         let hasMatchedPeopleSelection = selectedIDs.contains { selectedID in
@@ -71,10 +78,13 @@ struct FilterSummaryViewIOS: View {
             }
         return hasMatchedPeopleSelection && viewModel.peopleCoverURLs.isEmpty == false && hasLoadedStatsForSelection
     }
+    #endif
 
+    #if DEBUG
     private var isFilterSummaryVisualAuditReady: Bool {
         isAlbumVisualAuditReady && isPeopleVisualAuditReady
     }
+    #endif
 
     var body: some View {
         OnboardingPageScaffoldViewIOS(
@@ -83,15 +93,19 @@ struct FilterSummaryViewIOS: View {
         ) { _ in
             contentStack
         }
+        #if DEBUG
         .overlay(alignment: .topLeading) {
             if shouldExposeUITestReadinessMarkers {
                 uiTestReadinessMarkers
             }
         }
+        #endif
+        #if DEBUG
         .task {
             guard shouldExposeUITestReadinessMarkers else { return }
             await prepareVisualAuditSelectionsForUITestsIfNeeded()
         }
+        #endif
     }
 
     // iPhone landscape puts a tappable Start button first and leaves the extra information to other sizes.
@@ -222,6 +236,7 @@ struct FilterSummaryViewIOS: View {
         }
     }
 
+    #if DEBUG
     private var uiTestReadinessMarkers: some View {
         VStack(alignment: .leading, spacing: 1) {
             // localization-audit: ui-test-probe
@@ -240,7 +255,9 @@ struct FilterSummaryViewIOS: View {
         .clipped()
         .allowsHitTesting(false)
     }
+    #endif
 
+    #if DEBUG
     private func prepareVisualAuditSelectionsForUITestsIfNeeded() async {
         await viewModel.getCoverURLs(
             filterType: .albums, coverLimit: VisualAuditPreparation.coverLimitCount, shouldReset: true)
@@ -274,6 +291,7 @@ struct FilterSummaryViewIOS: View {
             try? await Task.sleep(nanoseconds: VisualAuditPreparation.pollIntervalNanoseconds)
         }
     }
+    #endif
 
     private var sectionSpacing: CGFloat {
         if isCompactHeight { return 14 }

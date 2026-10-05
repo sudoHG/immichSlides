@@ -95,6 +95,7 @@ struct SlideShowViewTV: View {
         visibleExifOverlayAsset?.id ?? "hidden"
     }
 
+    #if DEBUG
     private var visionAuditTriggerKey: String {
         let assetId = viewModel.safeCurrentAsset?.id ?? "no-asset"
         let auditMode = viewModel.shouldRunDebugVisionFaceAudit ? "vision-enabled" : "vision-disabled"
@@ -108,6 +109,7 @@ struct SlideShowViewTV: View {
             } ?? "no-fullsize"
         return "\(isDebugOverlayVisible)-\(auditMode)-\(assetId)-\(previewState)-\(fullsizeState)"
     }
+    #endif
 
     private func exifForegroundTriggerKey(
         surfaceSize: CGSize,
@@ -231,7 +233,7 @@ struct SlideShowViewTV: View {
     // UI tests can turn off the one-time tip so it doesn't pollute old screenshot baselines.
 
     private var isPlaybackEntryHintDisabledForUITests: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] == "1"
+        PlatformCompat.shouldDisablePlaybackEntryHintForTesting
     }
 
     private var shouldExposeExifForegroundToneProbeForTesting: Bool {
@@ -240,8 +242,7 @@ struct SlideShowViewTV: View {
 
     private var shouldExposeSmartFillManifestProbeForTesting: Bool {
         #if DEBUG
-        let env = ProcessInfo.processInfo.environment
-        return env["XCTestConfigurationFilePath"] != nil || env["UI_TEST_RESET_STATE"] == "1"
+        return PlatformCompat.shouldExposeUITestProbes
         #else
         return false
         #endif
@@ -249,8 +250,7 @@ struct SlideShowViewTV: View {
 
     var shouldExposeSmartFillMotionFrameProbeForTesting: Bool {
         #if DEBUG
-        let env = ProcessInfo.processInfo.environment
-        return env["XCTestConfigurationFilePath"] != nil || env["UI_TEST_RESET_STATE"] == "1"
+        return PlatformCompat.shouldExposeUITestProbes
         #else
         return false
         #endif
@@ -366,6 +366,7 @@ struct SlideShowViewTV: View {
                         .accessibilityIdentifier("slideshow.debugOverlay.flag")
                 }
                 #endif
+                #if DEBUG
                 if shouldExposeSmartFillManifestProbeForTesting,
                     let manifest = viewModel.currentSmartFillRuntimeQADebugSummary(
                         controlBarVisible: isControlBarVisible,
@@ -378,6 +379,7 @@ struct SlideShowViewTV: View {
                         .accessibilityIdentifier("slideshow.smartfill.currentManifest.flag")
                         .accessibilityLabel(manifest)
                 }
+                #endif
                 #if DEBUG
                 smartFillMotionFrameProbeOverlay()
                 if shouldExposePlaybackRequestLifecycleProbeForTesting {
@@ -555,7 +557,9 @@ struct SlideShowViewTV: View {
             autoHideBarTask?.cancel()
             autoHideBarTask = nil
             isPlaybackEntryHintVisible = false
+            #if DEBUG
             viewModel.clearVisionFaceAuditState()
+            #endif
         }
 
         .task {
@@ -569,17 +573,21 @@ struct SlideShowViewTV: View {
 
             resetAutoHideTimer()
         }
+        #if DEBUG
         .task(id: visionAuditTriggerKey) {
             guard PlatformCompat.isPlaybackDebugPanelEnabled, isDebugOverlayVisible,
                 viewModel.shouldRunDebugVisionFaceAudit
             else {
                 // Random playback can open the debug panel; the Vision probe only runs in soloOnly.
 
+                #if DEBUG
                 viewModel.clearVisionFaceAuditState()
+                #endif
                 return
             }
             await viewModel.refreshVisionFaceAuditForCurrentAsset()
         }
+        #endif
         .onChange(of: viewModel.isLoading) { _, _ in
             maybePresentPlaybackEntryHintIfNeeded()
         }

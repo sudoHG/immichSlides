@@ -123,7 +123,7 @@ struct ServerConfigFormViewTV: View {
     // Tests can hide the debug fill button via an environment variable, so acceptance checks see the normal user flow.
 
     private var isDebugFillAPIKeyButtonSuppressedByUITest: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON"] == "1"
+        PlatformCompat.shouldSuppressDebugFillAPIKeyButtonForTesting
     }
 
     private var canShowFillAPIKeyButton: Bool {

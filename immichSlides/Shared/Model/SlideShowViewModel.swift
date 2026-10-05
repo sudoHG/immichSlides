@@ -294,6 +294,7 @@ class SlideShowViewModel: ObservableObject {
         pendingSmartFillCursorResumeAfterLoadMoreAssetCount = nil
     }
     #endif
+    #if DEBUG
     func currentSmartFillRuntimeQADebugSummary(
         controlBarVisible: Bool,
         exifOverlayVisible: Bool
@@ -321,6 +322,7 @@ class SlideShowViewModel: ObservableObject {
         }
         return ([runtimeSummary] + startupSummaryParts).joined(separator: ";")
     }
+    #endif
     func scene(at index: Int) -> PlaybackScene? {
         if playbackSessionEngine.pendingTransition?.targetIndex == index {
             return playbackSessionEngine.pendingTransition?.scene
@@ -466,9 +468,11 @@ class SlideShowViewModel: ObservableObject {
             .identity
             .assetID
     }
+    #if DEBUG
     var visibleImageAssetIdProbeLabel: String {
         visibleImageAssetId ?? "no-asset"
     }
+    #endif
     var visibleOverlayState: PlaybackVisibleOverlayState? {
         guard let visibleScene = playbackSessionEngine.currentScene else { return nil }
         return PlaybackVisibleOverlayState(
@@ -587,10 +591,12 @@ class SlideShowViewModel: ObservableObject {
     var visibleOverlayAsset: Asset? {
         visibleOverlayScene?.primaryAsset
     }
+    #if DEBUG
     var overlayAssetIdProbeLabel: String {
         guard let overlayState = visibleOverlayState else { return "no-overlay" }
         return overlayState.ownerPrimaryAssetId ?? "no-asset"
     }
+    #endif
 
     var safeCurrentAsset: Asset? {
         safeCurrentScene?.primaryAsset
@@ -607,7 +613,9 @@ class SlideShowViewModel: ObservableObject {
     let smartFillCandidateWindowCount: Int = 36
 
     @Published private(set) var autoPlayRecoveryMessage: String? = nil
+    #if DEBUG
     var smartFillMotionPreparedSlotPreloadHookForTesting: (([String]) -> Void)? = nil
+    #endif
     // Handle for the first preload task, to prevent duplicate loads.
     var firstPreloadTask: Task<Void, Never>? = nil
 
@@ -626,6 +634,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     @Published var didFirstPreload: Bool = false
+    #if DEBUG
     // Tests can replace the first pool load to simulate a cold-start race where an old task returns late.
 
     var loadAssetsHookForTesting: ((PlaybackSource) async throws -> [Asset])? = nil
@@ -651,6 +660,7 @@ class SlideShowViewModel: ObservableObject {
 
     @Published private(set) var visionFaceAuditState: VisionFaceAuditState = .idle
     private var visionFaceAuditTask: Task<Void, Never>? = nil
+    #endif
     // Defaults to the random source and a new resolver, so the old random entry point still works.
     init(
         source: PlaybackSource = .random,
@@ -847,9 +857,11 @@ class SlideShowViewModel: ObservableObject {
     }
     #endif
 
+    #if DEBUG
     func replacePlaybackAssetsForTesting(_ newAssets: [Asset]) {
         applyPlaybackAssets(newAssets, invalidationReason: .poolReloaded)
     }
+    #endif
 
     func applyPlaybackHistoryLedgerCommit(
         _ pendingCommit: PlaybackHistoryLedgerPendingCommit?,
@@ -1340,32 +1352,35 @@ class SlideShowViewModel: ObservableObject {
     func loadInitialSceneAssetsForPlayback(_ scene: PlaybackScene) async {
         let needsPreview = sceneNeedsPreviewForPlayback(scene)
         for asset in scene.photoSlots.map(\.asset) {
+            #if DEBUG
             if let initialPhotoLoadHookForTesting {
                 await initialPhotoLoadHookForTesting(asset.id)
-            } else {
+                continue
+            }
+            #endif
+            #if DEBUG
+            recordPlaybackImageRequestLifecycleContextForDiagnostics(
+                assetId: asset.id,
+                size: .fullsize,
+                scene: scene,
+                role: .current,
+                navigationToken: targetTransitionToken
+            )
+            #endif
+            await downloadManager.loadPhoto(assetId: asset.id, size: .fullsize, priority: .high)
+            if needsPreview {
                 #if DEBUG
                 recordPlaybackImageRequestLifecycleContextForDiagnostics(
                     assetId: asset.id,
-                    size: .fullsize,
+                    size: .preview,
                     scene: scene,
                     role: .current,
                     navigationToken: targetTransitionToken
                 )
                 #endif
-                await downloadManager.loadPhoto(assetId: asset.id, size: .fullsize, priority: .high)
-                if needsPreview {
-                    #if DEBUG
-                    recordPlaybackImageRequestLifecycleContextForDiagnostics(
-                        assetId: asset.id,
-                        size: .preview,
-                        scene: scene,
-                        role: .current,
-                        navigationToken: targetTransitionToken
-                    )
-                    #endif
-                    await downloadManager.loadPhoto(assetId: asset.id, size: .preview, priority: .high)
-                }
+                await downloadManager.loadPhoto(assetId: asset.id, size: .preview, priority: .high)
             }
+
         }
     }
 
@@ -1421,6 +1436,7 @@ class SlideShowViewModel: ObservableObject {
         let assetsAtTransition = assets
         let currentIndexAtTransition = currentIndex
         let preloadCountAtTransition = preloadCount
+        #if DEBUG
         if let transitionWindowPreloadHookForTesting {
             await transitionWindowPreloadHookForTesting(
                 assetsAtTransition,
@@ -1429,6 +1445,7 @@ class SlideShowViewModel: ObservableObject {
             )
             return
         }
+        #endif
         #if DEBUG
         recordPreloadWindowLifecycleContextsForDiagnostics(
             assets: assetsAtTransition,
@@ -1528,6 +1545,7 @@ class SlideShowViewModel: ObservableObject {
 
     // Run the Vision MVP only on the current asset; do not scan the whole pool.
 
+    #if DEBUG
     func refreshVisionFaceAuditForCurrentAsset() async {
         // Cancel any unfinished face-count task first, so a slow photo does not write onto a new one.
         visionFaceAuditTask?.cancel()
@@ -1568,13 +1586,16 @@ class SlideShowViewModel: ObservableObject {
         visionFaceAuditTask = task
         await task.value
     }
+    #endif
 
     // Clear local face-count state when debugging is turned off, the source changes, or the page is left.
+    #if DEBUG
     func clearVisionFaceAuditState() {
         visionFaceAuditTask?.cancel()
         visionFaceAuditTask = nil
         visionFaceAuditState = .idle
     }
+    #endif
     /// `.plan` only prepares and publishes the new target; Ready is decided by the renderer barrier.
     func planAutomaticSceneEffect() {
         guard isAutoPlay, !assets.isEmpty else { return }
@@ -1655,6 +1676,7 @@ class SlideShowViewModel: ObservableObject {
 
     // Vision MVP tries preview before fullsize because preview is lighter.
 
+    #if DEBUG
     private func visionFaceAuditCandidateURLs(for assetId: String) -> [(ThumbnailSize, URL)] {
         var candidates: [(ThumbnailSize, URL)] = []
 
@@ -1667,6 +1689,7 @@ class SlideShowViewModel: ObservableObject {
 
         return candidates
     }
+    #endif
 
     // Logs record only counts and mode, not the full filter, and take no part in business decisions.
 

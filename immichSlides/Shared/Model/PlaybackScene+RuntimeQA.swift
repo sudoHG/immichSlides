@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 
 extension PlaybackScene {
@@ -85,3 +86,5 @@ extension PlaybackScene {
         return String(format: "%016llx", hash)
     }
 }
+
+#endif

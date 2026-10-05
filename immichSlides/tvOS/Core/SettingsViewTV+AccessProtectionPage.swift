@@ -95,8 +95,7 @@ extension SettingsViewTV {
 
     var shouldExposeAccessProtectionUITestStateProbe: Bool {
         #if DEBUG
-        let env = ProcessInfo.processInfo.environment
-        guard env["UI_TEST_RESET_STATE"] == "1" else {
+        guard PlatformCompat.shouldResetStateForTesting else {
             return false
         }
 

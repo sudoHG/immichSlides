@@ -24,6 +24,7 @@ extension PlaybackSmartFillPlanner {
                 let slotAspect = slotAspectRatio(frame: frame, surface: input.surface)
                 guard input.policy.slotAspectRatioRange.contains(slotAspect) else {
                     state.record(.slotAspectRatioOutOfRange)
+                    #if DEBUG
                     state.recordRejectedLayoutDiagnostic(
                         reason: .slotAspectRatioOutOfRange,
                         candidate: candidates[index],
@@ -33,6 +34,7 @@ extension PlaybackSmartFillPlanner {
                         surface: input.surface,
                         policy: input.policy
                     )
+                    #endif
                     return nil
                 }
             }
@@ -43,6 +45,7 @@ extension PlaybackSmartFillPlanner {
                 let reason: PlaybackSmartFillPlannerRejectReason =
                     layout.variant.isTriple ? .triplePhotoWallRejected : .auxiliaryUnreadable
                 state.record(reason)
+                #if DEBUG
                 state.recordRejectedLayoutDiagnostic(
                     reason: reason,
                     candidate: candidates[rejectedSecondaryIndex],
@@ -52,6 +55,7 @@ extension PlaybackSmartFillPlanner {
                     surface: input.surface,
                     policy: input.policy
                 )
+                #endif
                 return nil
             }
         }
@@ -74,6 +78,7 @@ extension PlaybackSmartFillPlanner {
             let cropRetention = crop.width * crop.height
             guard cropRetention >= input.policy.cropRetentionThreshold else {
                 state.record(.cropRetentionTooLow)
+                #if DEBUG
                 state.recordRejectedLayoutDiagnostic(
                     reason: .cropRetentionTooLow,
                     candidate: candidate,
@@ -84,12 +89,14 @@ extension PlaybackSmartFillPlanner {
                     policy: input.policy,
                     cropRetention: cropRetention
                 )
+                #endif
                 return nil
             }
 
             let protectionContained = protectedRects.allSatisfy { crop.contains($0, margin: 0) }
             guard protectionContained else {
                 state.record(.faceCropDestroyed)
+                #if DEBUG
                 state.recordRejectedLayoutDiagnostic(
                     reason: .faceCropDestroyed,
                     candidate: candidate,
@@ -100,6 +107,7 @@ extension PlaybackSmartFillPlanner {
                     policy: input.policy,
                     cropRetention: cropRetention
                 )
+                #endif
                 return nil
             }
 
@@ -113,6 +121,7 @@ extension PlaybackSmartFillPlanner {
                 )
             else {
                 state.record(.effectivePixelsTooLow)
+                #if DEBUG
                 state.recordRejectedLayoutDiagnostic(
                     reason: .effectivePixelsTooLow,
                     candidate: candidate,
@@ -123,6 +132,7 @@ extension PlaybackSmartFillPlanner {
                     policy: input.policy,
                     cropRetention: cropRetention
                 )
+                #endif
                 return nil
             }
 
@@ -149,6 +159,7 @@ extension PlaybackSmartFillPlanner {
         )
         guard protection.status != .rejected else {
             state.record(.protectionOverlap)
+            #if DEBUG
             if let candidate = candidates.first,
                 let frame = layout.frames.first
             {
@@ -163,6 +174,7 @@ extension PlaybackSmartFillPlanner {
                     cropRetention: slots.first?.cropRetention
                 )
             }
+            #endif
             return nil
         }
 
@@ -197,7 +209,7 @@ extension PlaybackSmartFillPlanner {
             fallbackReason: nil,
             fallbackCategory: .none
         )
-        return PlaybackSmartFillPlannerResult(
+        let plannerResult = PlaybackSmartFillPlannerResult(
             sceneType: sceneType,
             layoutPolicyId: input.policy.layoutPolicyId,
             surfaceKey: input.surface.surfaceKey,
@@ -220,7 +232,22 @@ extension PlaybackSmartFillPlanner {
             acceptedRatioPreset: layout.ratioPreset.id,
             rotationKeyHashPrefix: rotation.hashPrefix,
             reasonCodes: reasonCodes,
-            qaDebugSummary: qaSummary(
+            acceptedSceneSearchTier: PlaybackSmartFillAcceptedSceneSearchTier(sceneType: sceneType),
+            currentAssetDisposition: currentEvidence.disposition,
+            currentAssetAbsentReason: currentEvidence.absentReason,
+            currentAssetSlotAreaRatio: currentEvidence.slotAreaRatio,
+            currentAssetCropRetention: currentEvidence.cropRetention,
+            currentAssetProtectedRegionCoverage: currentEvidence.protectedRegionCoverage,
+            currentAssetFaceProtectionPassed: currentEvidence.faceProtectionPassed,
+            currentAssetSubjectProtectionPassed: currentEvidence.subjectProtectionPassed,
+            currentAssetVisibleQualityClass: currentEvidence.visibleQuality,
+            ledgerSceneAssets: currentEvidence.ledgerSceneAssets,
+            slotRoles: currentEvidence.slotRoles,
+            slotRefs: currentEvidence.slotRefs
+        )
+        #if DEBUG
+        return plannerResult.recordingQADebugSummary(
+            qaSummary(
                 input: input,
                 sceneType: sceneType,
                 layout: layout,
@@ -235,20 +262,10 @@ extension PlaybackSmartFillPlanner {
                 rejectedLayoutReasonTopList: state.topRejectedReasons(),
                 rejectedLayoutDiagnostics: state.rejectedLayoutDiagnostics,
                 currentEvidence: currentEvidence
-            ),
-            acceptedSceneSearchTier: PlaybackSmartFillAcceptedSceneSearchTier(sceneType: sceneType),
-            currentAssetDisposition: currentEvidence.disposition,
-            currentAssetAbsentReason: currentEvidence.absentReason,
-            currentAssetSlotAreaRatio: currentEvidence.slotAreaRatio,
-            currentAssetCropRetention: currentEvidence.cropRetention,
-            currentAssetProtectedRegionCoverage: currentEvidence.protectedRegionCoverage,
-            currentAssetFaceProtectionPassed: currentEvidence.faceProtectionPassed,
-            currentAssetSubjectProtectionPassed: currentEvidence.subjectProtectionPassed,
-            currentAssetVisibleQualityClass: currentEvidence.visibleQuality,
-            ledgerSceneAssets: currentEvidence.ledgerSceneAssets,
-            slotRoles: currentEvidence.slotRoles,
-            slotRefs: currentEvidence.slotRefs
-        )
+            ))
+        #else
+        return plannerResult
+        #endif
     }
 
     nonisolated static func fallbackResult(
@@ -300,7 +317,7 @@ extension PlaybackSmartFillPlanner {
             fallbackReason: fallbackReason,
             fallbackCategory: fallbackCategory
         )
-        return PlaybackSmartFillPlannerResult(
+        let plannerResult = PlaybackSmartFillPlannerResult(
             sceneType: .fallback,
             layoutPolicyId: input.policy.layoutPolicyId,
             surfaceKey: input.surface.surfaceKey,
@@ -323,7 +340,22 @@ extension PlaybackSmartFillPlanner {
             acceptedRatioPreset: "fallback",
             rotationKeyHashPrefix: rotation.hashPrefix,
             reasonCodes: reasonCodes,
-            qaDebugSummary: qaSummary(
+            acceptedSceneSearchTier: .fallback,
+            currentAssetDisposition: currentEvidence.disposition,
+            currentAssetAbsentReason: currentEvidence.absentReason,
+            currentAssetSlotAreaRatio: currentEvidence.slotAreaRatio,
+            currentAssetCropRetention: currentEvidence.cropRetention,
+            currentAssetProtectedRegionCoverage: currentEvidence.protectedRegionCoverage,
+            currentAssetFaceProtectionPassed: currentEvidence.faceProtectionPassed,
+            currentAssetSubjectProtectionPassed: currentEvidence.subjectProtectionPassed,
+            currentAssetVisibleQualityClass: currentEvidence.visibleQuality,
+            ledgerSceneAssets: currentEvidence.ledgerSceneAssets,
+            slotRoles: currentEvidence.slotRoles,
+            slotRefs: currentEvidence.slotRefs
+        )
+        #if DEBUG
+        return plannerResult.recordingQADebugSummary(
+            qaSummary(
                 input: input,
                 sceneType: .fallback,
                 layout: LayoutCandidate(
@@ -342,20 +374,10 @@ extension PlaybackSmartFillPlanner {
                 rejectedLayoutReasonTopList: state.topRejectedReasons(),
                 rejectedLayoutDiagnostics: state.rejectedLayoutDiagnostics,
                 currentEvidence: currentEvidence
-            ),
-            acceptedSceneSearchTier: .fallback,
-            currentAssetDisposition: currentEvidence.disposition,
-            currentAssetAbsentReason: currentEvidence.absentReason,
-            currentAssetSlotAreaRatio: currentEvidence.slotAreaRatio,
-            currentAssetCropRetention: currentEvidence.cropRetention,
-            currentAssetProtectedRegionCoverage: currentEvidence.protectedRegionCoverage,
-            currentAssetFaceProtectionPassed: currentEvidence.faceProtectionPassed,
-            currentAssetSubjectProtectionPassed: currentEvidence.subjectProtectionPassed,
-            currentAssetVisibleQualityClass: currentEvidence.visibleQuality,
-            ledgerSceneAssets: currentEvidence.ledgerSceneAssets,
-            slotRoles: currentEvidence.slotRoles,
-            slotRefs: currentEvidence.slotRefs
-        )
+            ))
+        #else
+        return plannerResult
+        #endif
     }
 
     private nonisolated static func makeFallbackSlot(

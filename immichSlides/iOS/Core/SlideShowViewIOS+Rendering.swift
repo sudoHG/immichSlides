@@ -172,7 +172,7 @@ extension SlideShowViewIOS {
                     Text("The slideshow failed to load. Go back, then reopen the slideshow.")
                 }
                 #if DEBUG
-                if ProcessInfo.processInfo.environment["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"] == "1" {
+                if PlatformCompat.shouldExposeScenePresentationContractProbeForTesting {
                     // The read-only probe must use the same clock as the autoplay TimelineView,
                     // so root accessibility does not report stale progress.
 

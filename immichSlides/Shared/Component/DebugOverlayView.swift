@@ -184,7 +184,7 @@ struct DebugOverlayView: View {
         let speed = downloadSpeedText(
             bytes: downloadManager.lastDownloadBytes,
             duration: downloadManager.lastDownloadDuration,
-            cacheHit: downloadManager.lastDownloadWasCacheHit
+            cacheHit: downloadManager.didLastDownloadHitCache
         )
 
         var lines = [

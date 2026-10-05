@@ -144,7 +144,7 @@ final class AccessProtectionStore {
         let env = ProcessInfo.processInfo.environment
         // launchEnvironment may be gone after a relaunch, so detect test storage via the XCTest path and the Debug
         // marker.
-        if env["UI_TEST_RESET_STATE"] == "1" || env["XCTestConfigurationFilePath"] != nil {
+        if PlatformCompat.shouldResetStateForTesting || env["XCTestConfigurationFilePath"] != nil {
             return true
         }
         return defaults.bool(forKey: uiTestPINStorageEnabledKey)

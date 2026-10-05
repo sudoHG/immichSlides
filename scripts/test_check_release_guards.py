@@ -101,6 +101,49 @@ class RuleTests(unittest.TestCase):
                          guards.check_platform_compat_only_keys(self.path, source)])
         self.assertEqual([], guards.check_platform_compat_only_keys(guards.PLATFORM_COMPAT_FILE, source))
 
+    def test_playback_injections_and_diagnostic_data_require_debug_regions(self):
+        markers = (
+            "lastDownloadDuration", "lastDownloadBytes", "didLastDownloadHitCache",
+            "currentSmartFillRuntimeQADebugSummary", "smartFillRuntimeQADebugSummary", "qaDebugSummary",
+            "recordingQADebugSummary", "smartFillQADebugSummary", "qaSummaryRecordingPublishTiming",
+            "qaSummary", "visionFaceAuditState", "visionFaceAuditTask",
+            "refreshVisionFaceAuditForCurrentAsset", "clearVisionFaceAuditState",
+            "loadAssetsHookForTesting", "loadMoreAssetsHookForTesting", "initialPhotoLoadHookForTesting",
+            "backgroundPreloadHookForTesting", "indexChangePhotoLoadHookForTesting",
+            "playbackManifestTimestampProviderForTesting", "scenePresentationTimestampProviderForTesting",
+            "transitionWindowPreloadHookForTesting", "smartFillMotionPreparedSlotPreloadHookForTesting",
+            "replacePlaybackAssetsForTesting", "forceNextPhotoRecoveryMessageForTesting",
+            "visibleImageAssetIdProbeLabel", "overlayAssetIdProbeLabel", "recordSmartFillFirstImageDisplayedForTesting",
+            "prepareVisualAuditSelectionsForUITestsIfNeeded", "uiTestReadinessMarkers",
+            "VisualAuditPreparation", "isAlbumVisualAuditReady", "isPeopleVisualAuditReady",
+            "isFilterSummaryVisualAuditReady", "isFilterEditorVisualAuditReady", "shouldExposeUITestReadinessMarkers",
+            "shouldResetStateForTesting", "visionAuditTriggerKey", "visionFaceAuditCandidateURLs", "makeQADebugSummary",
+            "rejectedLayoutDiagnostic", "recordRejectedLayoutDiagnostic", "maximumRejectedLayoutSummar",
+            "smartFillPlannerLabel", "diagnosticSlotReferences", "manifestSlotRefs",
+        )
+        for marker in markers:
+            with self.subTest(marker=marker):
+                source = f"let probe = {marker}\n"
+                self.assertTrue(guards.check_debug_only_markers(self.path, source))
+                self.assertEqual([], guards.check_debug_only_markers(
+                    self.path, f"#if DEBUG\n{source}#endif\n"))
+
+    def test_preparation_hint_and_contract_readers_require_debug_and_platform_compat(self):
+        keys = (
+            "UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS", "UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS",
+            "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT", "UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON",
+            "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE", "UI_TEST_RESET_STATE",
+        )
+        for key in keys:
+            with self.subTest(key=key):
+                source = f'let flag = environment["{key}"] == "1"\n'
+                self.assertTrue(guards.check_debug_only_markers(guards.PLATFORM_COMPAT_FILE, source))
+                self.assertEqual([], guards.check_debug_only_markers(
+                    guards.PLATFORM_COMPAT_FILE, f"#if DEBUG\n{source}#endif\n"))
+                self.assertEqual(["debug-switch"], [v.rule for v in
+                                 guards.check_platform_compat_only_keys(self.path, source)])
+                self.assertEqual([], guards.check_platform_compat_only_keys(guards.PLATFORM_COMPAT_FILE, source))
+
     def test_engine_must_not_reference_image_cache(self):
         path = "immichSlides/Shared/Model/PlaybackSessionEngine.swift"
         violations = guards.check_forbidden_symbols(path, "let cache = SDImageCache.shared\n")

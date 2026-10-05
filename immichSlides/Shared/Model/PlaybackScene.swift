@@ -140,8 +140,31 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
     let faceProtection: PlaybackPlanningFaceProtectionSummary
     let focalSummary: PlaybackPlanningFocalSummary?
     let fallbackReasons: [PlaybackPlanningFallbackReason]
-    let qaDebugSummary: String
+    #if DEBUG
+    private(set) var qaDebugSummary: String = ""
+    #endif
 
+    nonisolated init(
+        version: String,
+        sourceImage: PlaybackPlanningSourceImageSummary,
+        displayFrame: PlaybackPlanningRect,
+        cropRect: PlaybackPlanningRect,
+        qualityDecision: PlaybackPlanningQualityDecision,
+        faceProtection: PlaybackPlanningFaceProtectionSummary,
+        focalSummary: PlaybackPlanningFocalSummary? = nil,
+        fallbackReasons: [PlaybackPlanningFallbackReason]
+    ) {
+        self.version = version
+        self.sourceImage = sourceImage
+        self.displayFrame = displayFrame
+        self.cropRect = cropRect
+        self.qualityDecision = qualityDecision
+        self.faceProtection = faceProtection
+        self.focalSummary = focalSummary
+        self.fallbackReasons = fallbackReasons
+    }
+
+    #if DEBUG
     nonisolated init(
         version: String,
         sourceImage: PlaybackPlanningSourceImageSummary,
@@ -153,16 +176,25 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
         fallbackReasons: [PlaybackPlanningFallbackReason],
         qaDebugSummary: String
     ) {
-        self.version = version
-        self.sourceImage = sourceImage
-        self.displayFrame = displayFrame
-        self.cropRect = cropRect
-        self.qualityDecision = qualityDecision
-        self.faceProtection = faceProtection
-        self.focalSummary = focalSummary
-        self.fallbackReasons = fallbackReasons
+        self.init(
+            version: version,
+            sourceImage: sourceImage,
+            displayFrame: displayFrame,
+            cropRect: cropRect,
+            qualityDecision: qualityDecision,
+            faceProtection: faceProtection,
+            focalSummary: focalSummary,
+            fallbackReasons: fallbackReasons
+        )
         self.qaDebugSummary = qaDebugSummary
     }
+
+    nonisolated func recordingQADebugSummary(_ summary: String) -> Self {
+        var copy = self
+        copy.qaDebugSummary = summary
+        return copy
+    }
+    #endif
 
     static func legacyScaledToFit(for asset: Asset) -> PlaybackPlanningSnapshot {
         let sourceImage = PlaybackPlanningSourceImageSummary(
@@ -182,7 +214,7 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
             fallbackReasons.append(.missingMetadata)
         }
 
-        return PlaybackPlanningSnapshot(
+        let snapshot = PlaybackPlanningSnapshot(
             version: "legacy-scaledToFit-v1",
             sourceImage: sourceImage,
             displayFrame: .fullUnitRect,
@@ -190,12 +222,17 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
             qualityDecision: .legacyNotEvaluated,
             faceProtection: .notApplied,
             focalSummary: nil,
-            fallbackReasons: fallbackReasons,
-            qaDebugSummary: qaDebugSummary(
+            fallbackReasons: fallbackReasons
+        )
+        #if DEBUG
+        return snapshot.recordingQADebugSummary(
+            qaDebugSummary(
                 metadataSummary: hasAnyMetadata ? "asset-dimensions" : "missing",
                 fallbackReasons: fallbackReasons
-            )
-        )
+            ))
+        #else
+        return snapshot
+        #endif
     }
 
     static func smartFill(
@@ -204,7 +241,7 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
         focalSummary: PlaybackPlanningFocalSummary? = nil
     ) -> PlaybackPlanningSnapshot {
         let fallbackReasons = smartFillFallbackReasons(from: plannerResult)
-        return PlaybackPlanningSnapshot(
+        let snapshot = PlaybackPlanningSnapshot(
             version: "smart-fill-planner-v2",
             sourceImage: slot.sourceImageSummary,
             displayFrame: slot.frameInScene,
@@ -212,13 +249,18 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
             qualityDecision: plannerResult.qualityDecision,
             faceProtection: faceProtectionSummary(from: plannerResult.faceProtectionSummary),
             focalSummary: focalSummary,
-            fallbackReasons: fallbackReasons,
-            qaDebugSummary: smartFillQADebugSummary(
+            fallbackReasons: fallbackReasons
+        )
+        #if DEBUG
+        return snapshot.recordingQADebugSummary(
+            smartFillQADebugSummary(
                 slot: slot,
                 plannerResult: plannerResult,
                 fallbackReasons: fallbackReasons
-            )
-        )
+            ))
+        #else
+        return snapshot
+        #endif
     }
 
     private static func pixelSize(width: Int?, height: Int?) -> PlaybackPlanningPixelSize? {
@@ -226,6 +268,7 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
         return PlaybackPlanningPixelSize(width: width, height: height)
     }
 
+    #if DEBUG
     private static func qaDebugSummary(
         metadataSummary: String,
         fallbackReasons: [PlaybackPlanningFallbackReason]
@@ -244,6 +287,7 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
             "fallback=\(fallbackSummary)"
         ].joined(separator: ";")
     }
+    #endif
 
     private static func smartFillFallbackReasons(
         from plannerResult: PlaybackSmartFillPlannerResult
@@ -274,6 +318,7 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
         }
     }
 
+    #if DEBUG
     private static func smartFillQADebugSummary(
         slot: PlaybackSmartFillSlot,
         plannerResult: PlaybackSmartFillPlannerResult,
@@ -312,17 +357,19 @@ struct PlaybackPlanningSnapshot: Equatable, Sendable {
             "fallback=\(fallbackSummary.isEmpty ? "none" : fallbackSummary)"
         ].joined(separator: ";")
     }
-
     private static func format(_ value: Double) -> String {
         String(format: "%.3f", value)
     }
+    #endif
 }
 
+#if DEBUG
 private extension String {
     var nilIfEmpty: String? {
         isEmpty ? nil : self
     }
 }
+#endif
 
 private extension PlaybackPlanningFallbackReason {
     var summaryLabel: String {

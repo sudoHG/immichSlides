@@ -536,7 +536,7 @@ struct TVSettingsStaticFocusSection<FocusTarget: Hashable, Content: View>: View 
     }
 
     private var shouldExposeUITestFocusMarker: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_RESET_STATE"] == "1"
+        PlatformCompat.shouldExposeUITestProbes
     }
 
     private var accessibilityValueText: Text {
@@ -616,7 +616,7 @@ private struct TVSettingsFocusedChoiceButton<FocusTarget: Hashable>: View {
     }
 
     private var shouldExposeUITestFocusMarker: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_RESET_STATE"] == "1"
+        PlatformCompat.shouldExposeUITestProbes
     }
 
     private var accessibilityValueText: Text {

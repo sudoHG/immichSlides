@@ -49,7 +49,9 @@ extension SlideShowViewModel {
                 _ = rebuildInitialSmartFillSceneIfPossible(invalidationReason: .poolReloaded)
             }
         }
+        #if DEBUG
         clearVisionFaceAuditState()
+        #endif
 
         if let firstScene = scene(at: 0),
             let firstAssetId = firstScene.primaryAssetId
@@ -104,6 +106,7 @@ extension SlideShowViewModel {
             self.logger.info(
                 "initial background preload begin assetCount=\(preloadAssets.count, privacy: .public) preloadCount=\(preloadCount, privacy: .public)"
             )
+            #if DEBUG
             if let backgroundPreloadHookForTesting = self.backgroundPreloadHookForTesting {
                 await backgroundPreloadHookForTesting(preloadAssets, 0, preloadCount)
             } else {
@@ -142,6 +145,26 @@ extension SlideShowViewModel {
                     size: .preview
                 )
             }
+            #else
+            await self.downloadManager.preloadPhotos(
+                assets: preloadAssets,
+                currentIndex: 0,
+                preloadCount: preloadCount,
+                size: .fullsize
+            )
+            guard self.isCurrentPlaybackLoad(initialLoadIdentity) else {
+                self.logger.notice(
+                    "initial background preview preload skipped stale generation=\(loadGeneration, privacy: .public) currentGeneration=\(self.playbackSourceGeneration, privacy: .public)"
+                )
+                return
+            }
+            await self.downloadManager.preloadPhotos(
+                assets: preloadAssets,
+                currentIndex: 0,
+                preloadCount: preloadCount,
+                size: .preview
+            )
+            #endif
             self.logger.info(
                 "initial background preload end assetCount=\(preloadAssets.count, privacy: .public)"
             )

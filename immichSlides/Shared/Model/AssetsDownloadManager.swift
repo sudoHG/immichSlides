@@ -40,9 +40,11 @@ class AssetsDownloadManager: ObservableObject {
     @Published var assetThumbnailURLs: [String: URL] = [:]
     // Settings observes activeTaskCount; the remaining metrics are overlay-only and take no part in business logic.
     @Published private(set) var activeTaskCount: Int = 0
+    #if DEBUG
     @Published private(set) var lastDownloadDuration: TimeInterval? = nil
     @Published private(set) var lastDownloadBytes: UInt = 0
-    @Published private(set) var lastDownloadWasCacheHit: Bool = false
+    @Published private(set) var didLastDownloadHitCache: Bool = false
+    #endif
 
     // Separates the current/next photo (high) from preloading (low).
     enum DownloadPriority: Int {
@@ -601,9 +603,11 @@ class AssetsDownloadManager: ObservableObject {
                 "download cache hit assetId=\(assetId, privacy: .private) size=\(size.rawValue, privacy: .public)"
             )
 
-            lastDownloadWasCacheHit = true
+            #if DEBUG
+            didLastDownloadHitCache = true
             lastDownloadDuration = 0
             lastDownloadBytes = 0
+            #endif
 
             setState(.readyToPlay, assetId: assetId, size: size)
             recordPhotoLoadRuntimePhase(
@@ -746,9 +750,11 @@ class AssetsDownloadManager: ObservableObject {
             guard !Task.isCancelled else { return }
             let duration = Date().timeIntervalSince(startTime)
             let durationMilliseconds = Int((duration * 1000.0).rounded())
-            lastDownloadWasCacheHit = false
+            #if DEBUG
+            didLastDownloadHitCache = false
             lastDownloadDuration = duration
             lastDownloadBytes = downloadedBytes
+            #endif
 
             #if DEBUG
             let downloadSuccess = await checkImageCacheResultForDiagnostics(url: url) != .miss
@@ -757,7 +763,7 @@ class AssetsDownloadManager: ObservableObject {
             #endif
             if downloadSuccess {
                 logger.info(
-                    "download success assetId=\(assetId, privacy: .private) size=\(size.rawValue, privacy: .public) priority=\(priority.logName, privacy: .public) durationMs=\(durationMilliseconds, privacy: .public) bytes=\(self.lastDownloadBytes, privacy: .public)"
+                    "download success assetId=\(assetId, privacy: .private) size=\(size.rawValue, privacy: .public) priority=\(priority.logName, privacy: .public) durationMs=\(durationMilliseconds, privacy: .public) bytes=\(downloadedBytes, privacy: .public)"
                 )
 
                 setState(.readyToPlay, assetId: assetId, size: size)
