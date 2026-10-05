@@ -29,15 +29,14 @@ extension PlaybackSessionEngine {
         private(set) var underlyingPhase: ScenePresentationPhase
         private(set) var currentTarget: ScenePresentationTarget?
         private(set) var pendingTarget: ScenePresentationTarget?
-        private(set) var targetReadiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness]
         private(set) var history: [ScenePresentationIdentity]
-        private(set) var attemptRecords: [TargetAttemptRecord]
         private(set) var suspensionReasons: Set<ScenePresentationSuspensionReason>
         private(set) var isReduceMotionEnabled: Bool
         private(set) var nextConfiguredInterval: TimeInterval
         private(set) var diagnostics: [String]
 
         private var layerTimeline: ScenePresentationLayerTimeline
+        private var attemptLedger: ScenePresentationAttemptLedger
         private var stableVisibleClock: SceneActiveTimeClock?
         private(set) var graceDeadline: TimeInterval?
         private var isTransitionCompletionPending = false
@@ -111,14 +110,13 @@ extension PlaybackSessionEngine {
             underlyingPhase = .empty
             currentTarget = nil
             pendingTarget = nil
-            targetReadiness = [:]
             history = []
-            attemptRecords = []
             suspensionReasons = []
             self.isReduceMotionEnabled = isReduceMotionEnabled
             self.nextConfiguredInterval = SceneLifecycleContract.normalizedInterval(nextConfiguredInterval)
             diagnostics = []
             layerTimeline = ScenePresentationLayerTimeline()
+            attemptLedger = ScenePresentationAttemptLedger()
             stableVisibleClock = nil
             graceDeadline = nil
             transitionKind = nil
@@ -130,9 +128,11 @@ extension PlaybackSessionEngine {
             suspensionReasons.isEmpty ? underlyingPhase : .paused
         }
 
-        var attemptSummary: TargetAttemptSummary {
-            TargetAttemptSummary(records: attemptRecords)
-        }
+        var targetReadiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness] { attemptLedger.readiness }
+
+        var attemptRecords: [TargetAttemptRecord] { attemptLedger.records }
+
+        var attemptSummary: TargetAttemptSummary { attemptLedger.summary }
 
         var hasUnseenManualPendingPresentation: Bool {
             guard manualPendingPresentationRestore != nil,
@@ -141,7 +141,7 @@ extension PlaybackSessionEngine {
             else {
                 return false
             }
-            return latestAttemptSource(for: pendingTarget.identity)?.isManual == true
+            return attemptLedger.latestSource(for: pendingTarget.identity)?.isManual == true
         }
 
         /// When a manual pending target covers an automatic one, the caller must keep the automatic target's mapping
@@ -221,7 +221,7 @@ extension PlaybackSessionEngine {
                 if targetReadiness[pendingTarget.identity] == .ready {
                     return beginTransition(
                         to: pendingTarget,
-                        source: latestAttemptSource(for: pendingTarget.identity) ?? .automatic,
+                        source: attemptLedger.latestSource(for: pendingTarget.identity) ?? .automatic,
                         at: time
                     )
                 } else {
@@ -326,7 +326,7 @@ extension PlaybackSessionEngine {
                     }
                     return reduce(.sourceExhausted, at: time)
                 case let .cancelled(identity):
-                    cancelAttempt(identity: identity)
+                    attemptLedger.cancelAttempt(identity: identity)
                     return []
                 }
             }
@@ -376,12 +376,12 @@ extension PlaybackSessionEngine {
                 layerTimeline.materializeLayers(at: time)
             }
             if let previousTarget, previousTarget.identity != target.identity {
-                let cancellationSource = latestAttemptSource(for: previousTarget.identity) ?? source
+                let cancellationSource = attemptLedger.latestSource(for: previousTarget.identity) ?? source
                 cancellationEffects.append(
                     .cancel(effectRequest(for: previousTarget, source: cancellationSource))
                 )
                 retirePlanningDemand(for: previousTarget.identity)
-                cancelAttempt(identity: previousTarget.identity)
+                attemptLedger.cancelAttempt(identity: previousTarget.identity)
             }
             register(target: target, readiness: readiness, source: source, at: time)
 
@@ -462,13 +462,13 @@ extension PlaybackSessionEngine {
             else {
                 return reject("cancel-unseen-manual-pending-invalid")
             }
-            let cancelledSource = latestAttemptSource(for: cancelledTarget.identity) ?? .manualPrevious
-            cancelAttempt(identity: cancelledTarget.identity)
+            let cancelledSource = attemptLedger.latestSource(for: cancelledTarget.identity) ?? .manualPrevious
+            attemptLedger.cancelAttempt(identity: cancelledTarget.identity)
 
             underlyingPhase = restore.underlyingPhase
             currentTarget = restore.currentTarget
             pendingTarget = restore.pendingTarget
-            targetReadiness = restore.targetReadiness
+            attemptLedger.restoreReadiness(restore.targetReadiness)
             if restore.shouldKeepHeldPhotoLive {
                 return continueLiveHeldPhoto(
                     restore,
@@ -629,22 +629,8 @@ extension PlaybackSessionEngine {
             _ target: ScenePresentationTarget,
             at time: TimeInterval
         ) -> [ScenePresentationEffect] {
-            let source = latestAttemptSource(for: target.identity) ?? .automatic
-            let attemptNumber =
-                attemptRecords.filter {
-                    $0.generation == target.identity.generation
-                        && $0.privateIdentifier == target.identity.privateIdentifier
-                }.count + 1
-            attemptRecords.append(
-                TargetAttemptRecord(
-                    identity: target.identity,
-                    source: source,
-                    attemptNumber: attemptNumber,
-                    startedAt: time,
-                    outcome: .pending
-                )
-            )
-            targetReadiness[target.identity] = .pending
+            let source = attemptLedger.latestSource(for: target.identity) ?? .automatic
+            attemptLedger.beginPendingAttempt(identity: target.identity, source: source, at: time)
             return effectsForPendingTarget(target, source: source)
         }
 
@@ -665,21 +651,13 @@ extension PlaybackSessionEngine {
             at time: TimeInterval
         ) {
             pendingTarget = target
-            targetReadiness[target.identity] = readiness
+            attemptLedger.setReadiness(readiness, for: target.identity)
             installHiddenLayerIfNeeded(target: target, at: time)
-            let attemptNumber =
-                attemptRecords.filter {
-                    $0.generation == target.identity.generation
-                        && $0.privateIdentifier == target.identity.privateIdentifier
-                }.count + 1
-            attemptRecords.append(
-                TargetAttemptRecord(
-                    identity: target.identity,
-                    source: source,
-                    attemptNumber: attemptNumber,
-                    startedAt: time,
-                    outcome: readiness == .ready ? .ready : readiness == .failed ? .failed : .pending
-                )
+            attemptLedger.appendAttempt(
+                identity: target.identity,
+                source: source,
+                readiness: readiness,
+                at: time
             )
         }
 
@@ -739,7 +717,7 @@ extension PlaybackSessionEngine {
                 : ScenePresentationPacingPolicy.automatic
             layerTimeline.convertVisibleLayersToOutgoing(pacing: pacing, at: time)
             pendingTarget = target
-            targetReadiness[target.identity] = .ready
+            attemptLedger.setReadiness(.ready, for: target.identity)
             currentTarget = target
             promoteHiddenLayer(
                 target: target,
@@ -867,7 +845,7 @@ extension PlaybackSessionEngine {
                     targetReadiness: readiness,
                     // Only an automatic target falls back to loading after grace; a manual one is waited for.
                     wakeUp: transitionTarget.flatMap { target in
-                        latestAttemptSource(for: target.identity)?.isManual == true
+                        attemptLedger.latestSource(for: target.identity)?.isManual == true
                             ? nil
                             : ScenePresentationSuspendedWakeUp(
                                 generation: target.identity.generation,
@@ -893,7 +871,7 @@ extension PlaybackSessionEngine {
             layerTimeline.materializeLayers(at: time)
             currentTarget = target
             pendingTarget = target
-            targetReadiness[target.identity] = .ready
+            attemptLedger.setReadiness(.ready, for: target.identity)
             promoteHiddenLayer(
                 target: target,
                 fadeStartTime: time + pacing.incomingDelay,
@@ -928,7 +906,7 @@ extension PlaybackSessionEngine {
                     if targetReadiness[pendingTarget.identity] == .ready {
                         return beginIncomingFromLoading(
                             target: pendingTarget,
-                            source: latestAttemptSource(for: pendingTarget.identity) ?? .automatic,
+                            source: attemptLedger.latestSource(for: pendingTarget.identity) ?? .automatic,
                             at: time
                         )
                     }
@@ -990,8 +968,7 @@ extension PlaybackSessionEngine {
             else {
                 return reject("stale-ready")
             }
-            targetReadiness[identity] = .ready
-            updateLatestAttempt(identity: identity, outcome: .ready)
+            attemptLedger.recordReady(identity: identity)
             // With autoplay off at startup, the first scene must still become visible after Ready; only settle the
             // presentation, without resuming motion or the automatic deadline.
 
@@ -1013,7 +990,7 @@ extension PlaybackSessionEngine {
 
             guard suspensionReasons.isEmpty || (isManualNavigationWhilePaused && suspensionReasons == [.userPaused])
             else { return [] }
-            let source = latestAttemptSource(for: identity) ?? .automatic
+            let source = attemptLedger.latestSource(for: identity) ?? .automatic
             switch underlyingPhase {
             case .grace:
                 // When the target becomes Ready during grace, start the photo transition at once instead of waiting out
@@ -1058,7 +1035,7 @@ extension PlaybackSessionEngine {
             suspendedWakeUp = nil
             return beginTransition(
                 to: pendingTarget,
-                source: latestAttemptSource(for: pendingTarget.identity) ?? .manualNext,
+                source: attemptLedger.latestSource(for: pendingTarget.identity) ?? .manualNext,
                 at: time
             )
         }
@@ -1072,70 +1049,22 @@ extension PlaybackSessionEngine {
             else {
                 return reject("stale-failure")
             }
-            targetReadiness[identity] = .failed
-            updateLatestAttempt(identity: identity, outcome: .failed)
+            attemptLedger.recordFailure(identity: identity)
             guard let pendingTarget else { return [] }
 
-            let recordsForTarget = attemptRecords.filter {
-                $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
-            }
-            let failedAttemptCount = recordsForTarget.filter { $0.outcome == .failed }.count
-            let source = latestAttemptSource(for: identity) ?? .automatic
+            let failedAttemptCount = attemptLedger.failedAttemptCount(for: identity)
+            let source = attemptLedger.latestSource(for: identity) ?? .automatic
             let request = effectRequest(for: pendingTarget, source: source)
             if failedAttemptCount <= SceneLifecycleContract.retryLimit {
-                let nextAttempt = recordsForTarget.count + 1
-                attemptRecords.append(
-                    TargetAttemptRecord(
-                        identity: identity,
-                        source: source,
-                        attemptNumber: nextAttempt,
-                        startedAt: time,
-                        outcome: .pending
-                    )
-                )
-                targetReadiness[identity] = .pending
+                let nextAttempt = attemptLedger.beginPendingAttempt(identity: identity, source: source, at: time)
                 return [.retry(request, attemptNumber: nextAttempt)]
             }
 
-            updateLatestAttempt(identity: identity, outcome: .exhausted)
+            attemptLedger.recordExhaustion(identity: identity)
             if source == .automatic {
                 return [planningEffect(for: pendingTarget, purpose: .replaceExhaustedTarget)]
             }
             return [.requestManualDirection(source)]
-        }
-
-        private mutating func updateLatestAttempt(
-            identity: ScenePresentationIdentity,
-            outcome: TargetAttemptOutcome
-        ) {
-            guard
-                let index = attemptRecords.lastIndex(where: {
-                    $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
-                })
-            else {
-                return
-            }
-            attemptRecords[index].outcome = outcome
-        }
-
-        private mutating func cancelAttempt(identity: ScenePresentationIdentity) {
-            guard
-                let index = attemptRecords.lastIndex(where: {
-                    $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
-                        && $0.outcome == .pending
-                })
-            else {
-                return
-            }
-            attemptRecords[index].outcome = .cancelled
-        }
-
-        private func latestAttemptSource(
-            for identity: ScenePresentationIdentity
-        ) -> ScenePresentationRequestSource? {
-            attemptRecords.last(where: {
-                $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
-            })?.source
         }
 
         private mutating func suspend(
@@ -1293,14 +1222,14 @@ extension PlaybackSessionEngine {
                     }
                     return beginTransition(
                         to: pendingTarget,
-                        source: latestAttemptSource(for: pendingTarget.identity) ?? .automatic,
+                        source: attemptLedger.latestSource(for: pendingTarget.identity) ?? .automatic,
                         at: time
                     )
                 case .loading:
                     suspendedWakeUp = nil
                     return beginIncomingFromLoading(
                         target: pendingTarget,
-                        source: latestAttemptSource(for: pendingTarget.identity) ?? .automatic,
+                        source: attemptLedger.latestSource(for: pendingTarget.identity) ?? .automatic,
                         at: time
                     )
                 default:
@@ -1430,6 +1359,109 @@ extension PlaybackSessionEngine {
             )
         }
 
+    }
+
+    /// Attempt facts only; retry admission, replacement and planning demand remain reducer decisions.
+    private struct ScenePresentationAttemptLedger: Equatable, Sendable {
+        private(set) var readiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness] = [:]
+        private(set) var records: [TargetAttemptRecord] = []
+
+        var summary: TargetAttemptSummary { TargetAttemptSummary(records: records) }
+
+        mutating func setReadiness(
+            _ readiness: ScenePresentationTargetReadiness, for identity: ScenePresentationIdentity
+        ) {
+            self.readiness[identity] = readiness
+        }
+
+        /// Manual restoration rolls readiness back while retaining every accumulated attempt.
+        mutating func restoreReadiness(_ readiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness]) {
+            self.readiness = readiness
+        }
+
+        @discardableResult
+        mutating func appendAttempt(
+            identity: ScenePresentationIdentity,
+            source: ScenePresentationRequestSource,
+            readiness: ScenePresentationTargetReadiness,
+            at time: TimeInterval
+        ) -> Int {
+            let attemptNumber = recordsForTarget(identity).count + 1
+            records.append(
+                TargetAttemptRecord(
+                    identity: identity,
+                    source: source,
+                    attemptNumber: attemptNumber,
+                    startedAt: time,
+                    outcome: readiness == .ready ? .ready : readiness == .failed ? .failed : .pending
+                )
+            )
+            return attemptNumber
+        }
+
+        @discardableResult
+        mutating func beginPendingAttempt(
+            identity: ScenePresentationIdentity,
+            source: ScenePresentationRequestSource,
+            at time: TimeInterval
+        ) -> Int {
+            let attemptNumber = appendAttempt(identity: identity, source: source, readiness: .pending, at: time)
+            readiness[identity] = .pending
+            return attemptNumber
+        }
+
+        mutating func recordReady(identity: ScenePresentationIdentity) {
+            readiness[identity] = .ready
+            updateLatestAttempt(identity: identity, outcome: .ready)
+        }
+
+        mutating func recordFailure(identity: ScenePresentationIdentity) {
+            readiness[identity] = .failed
+            updateLatestAttempt(identity: identity, outcome: .failed)
+        }
+
+        mutating func recordExhaustion(identity: ScenePresentationIdentity) {
+            updateLatestAttempt(identity: identity, outcome: .exhausted)
+        }
+
+        mutating func cancelAttempt(identity: ScenePresentationIdentity) {
+            guard
+                let index = records.lastIndex(where: {
+                    $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
+                        && $0.outcome == .pending
+                })
+            else {
+                return
+            }
+            records[index].outcome = .cancelled
+        }
+
+        func failedAttemptCount(for identity: ScenePresentationIdentity) -> Int {
+            recordsForTarget(identity).filter { $0.outcome == .failed }.count
+        }
+
+        func latestSource(for identity: ScenePresentationIdentity) -> ScenePresentationRequestSource? {
+            records.last(where: {
+                $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
+            })?.source
+        }
+
+        private func recordsForTarget(_ identity: ScenePresentationIdentity) -> [TargetAttemptRecord] {
+            records.filter {
+                $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
+            }
+        }
+
+        private mutating func updateLatestAttempt(identity: ScenePresentationIdentity, outcome: TargetAttemptOutcome) {
+            guard
+                let index = records.lastIndex(where: {
+                    $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
+                })
+            else {
+                return
+            }
+            records[index].outcome = outcome
+        }
     }
 
     /// Value-only layer storage and sampling; the reducer supplies every lifecycle decision.
