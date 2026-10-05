@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import CoreGraphics
 
 /// Candidate traversal, reservations and prepared planning for single photo and SmartFill playback.
 @MainActor
