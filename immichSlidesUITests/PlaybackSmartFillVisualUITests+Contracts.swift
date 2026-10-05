@@ -375,8 +375,6 @@ extension PlaybackSmartFillVisualUITests {
 
         let harnessSummary = SmartFillRuntimeEvidenceSupport.makeHarnessSummary(
             startupRunId: try XCTUnwrap(record["startupRunId"] as? String),
-            appLaunchStartMs: 0,
-            testServerConfigInjectedMs: 14,
             firstManifestObservedMs: 238,
             firstNonLoadingScreenshotCapturedMs: 412
         )

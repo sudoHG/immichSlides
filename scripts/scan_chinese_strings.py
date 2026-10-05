@@ -327,11 +327,7 @@ def extract_string_hits(
                 or "Preview" in path.name
             )
             audit_exclusion = AUDIT_EXCLUSION_RE.search(audit_window)
-            diagnostic_context = (
-                bool(DIAGNOSTIC_CONTEXT_RE.search(context_window))
-                or "debug" in path.stem.lower()
-                or "diagnostic" in path.stem.lower()
-            )
+            diagnostic_context = bool(DIAGNOSTIC_CONTEXT_RE.search(context_window))
             internal_identifier_context = bool(INTERNAL_IDENTIFIER_CONTEXT_RE.search(prefix))
             in_catalog = (
                 decoded_literal in catalog_keys

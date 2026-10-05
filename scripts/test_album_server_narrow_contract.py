@@ -464,6 +464,22 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
                 evaluate_album_empty_evidence(directory)
             self.assertIn("Missing empty-album result screenshot", str(raised.exception))
 
+    def test_unrecorded_start_state_fails(self) -> None:
+        for filename in ("empty-selection.json", "empty-album.json"):
+            for unrecorded in ("missing", None, 0):
+                with self.subTest(filename=filename, unrecorded=unrecorded), tempfile.TemporaryDirectory() as raw:
+                    directory = Path(raw)
+                    _write_album_empty_pass(directory)
+                    payload = json.loads((directory / filename).read_text(encoding="utf-8"))
+                    if unrecorded == "missing":
+                        del payload["start_enabled"]
+                    else:
+                        payload["start_enabled"] = unrecorded
+                    (directory / filename).write_text(json.dumps(payload), encoding="utf-8")
+                    with self.assertRaises(AlbumServerContractError) as raised:
+                        evaluate_album_empty_evidence(directory)
+                    self.assertIn(f"{filename} start_enabled must be a recorded Boolean", str(raised.exception))
+
     def test_invented_empty_copy_fails(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)

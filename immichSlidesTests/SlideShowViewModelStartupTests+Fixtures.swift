@@ -95,11 +95,9 @@ extension SlideShowViewModelStartupTests {
         callCount: () -> Int,
         in vm: SlideShowViewModel
     ) async {
-        for _ in 0..<1_000 {
-            if callCount() >= expectedCallCount && vm.isLoadingMore == false {
-                return
-            }
-            await Task.yield()
+        let didFinish = await waitUntil { callCount() >= expectedCallCount && vm.isLoadingMore == false }
+        if !didFinish {
+            Issue.record("load more attempt \(expectedCallCount) did not finish before the deadline")
         }
     }
 

@@ -465,8 +465,6 @@ extension PlaybackSmartFillTVOSVisualUITests {
         }
         return SmartFillRuntimeEvidenceSupport.makeHarnessSummary(
             startupRunId: startupRunId,
-            appLaunchStartMs: 0,
-            testServerConfigInjectedMs: 0,
             firstManifestObservedMs: firstManifestObservedMs,
             firstNonLoadingScreenshotCapturedMs: firstNonLoadingScreenshotCapturedMs
         )

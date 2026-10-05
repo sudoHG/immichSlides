@@ -35,6 +35,31 @@ struct SlideShowViewModelLiveIntegrationTests {
         ImmichAPIService.shared.reloadServerConfiguration()
     }
 
+    /// Failures of live calls can carry the server URL (URLError); only the failure category may reach the test report.
+    private struct RedactedLiveAPIFailure: Error, CustomStringConvertible {
+        let operation: String
+        let category: String
+        var description: String {
+            "Live API call \(operation) failed (\(category)); details are withheld to keep the server address out of test output"
+        }
+    }
+
+    private nonisolated static func redactingLiveFailure<T>(
+        _ operation: String,
+        _ call: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await call()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as ImmichError {
+            let caseName = Mirror(reflecting: error).children.first?.label ?? String(describing: error)
+            throw RedactedLiveAPIFailure(operation: operation, category: "ImmichError.\(caseName)")
+        } catch {
+            throw RedactedLiveAPIFailure(operation: operation, category: String(describing: type(of: error)))
+        }
+    }
+
     private func runWithIsolatedLiveServer<T>(_ body: @escaping () async throws -> T) async rethrows -> T {
 
         try await ServerConfigurationTestIsolation.run {
@@ -64,7 +89,9 @@ struct SlideShowViewModelLiveIntegrationTests {
 
         try await runWithIsolatedLiveServer {
             let api = ImmichAPIService.shared
-            let albums = try await api.getAllAlbums(size: albumQueryLimit)
+            let albums = try await Self.redactingLiveFailure("getAllAlbums") {
+                try await api.getAllAlbums(size: albumQueryLimit)
+            }
             let albumId = try #require(albums.first?.id)
 
             let selection = FilterSelection(
@@ -300,7 +327,9 @@ struct SlideShowViewModelLiveIntegrationTests {
 
         try await runWithIsolatedLiveServer {
             let api = ImmichAPIService.shared
-            let people = try await api.getAllPeople(size: personQueryLimit)
+            let people = try await Self.redactingLiveFailure("getAllPeople") {
+                try await api.getAllPeople(size: personQueryLimit)
+            }
             let assetCountByPersonId = try await Self.assetCountsByPersonId(
                 for: people,
                 api: api
@@ -537,7 +566,9 @@ struct SlideShowViewModelLiveIntegrationTests {
         for person in people {
             let name = person.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard name.isEmpty == false, nameCounts[name] == 1 else { continue }
-            counts[person.id] = try await api.getPersonAssetsCount(id: person.id)
+            counts[person.id] = try await Self.redactingLiveFailure("getPersonAssetsCount") {
+                try await api.getPersonAssetsCount(id: person.id)
+            }
         }
         return counts
     }
@@ -547,7 +578,9 @@ struct SlideShowViewModelLiveIntegrationTests {
         api: ImmichAPIService
     ) async throws -> [Asset] {
         let ids = assets.map(\.id)
-        let loaded = try await api.getAssets(ids: ids)
+        let loaded = try await Self.redactingLiveFailure("getAssets") {
+            try await api.getAssets(ids: ids)
+        }
         #expect(loaded.map(\.id) == ids)
         return loaded
     }

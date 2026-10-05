@@ -84,7 +84,7 @@ final class ScenePresentationContractUITests: XCTestCase {
     }
 
     private struct ContractMedia: Codable {
-        let videoPath: String
+        let videoPath: String?
         let tracePath: String
         let screenshotPaths: [String]
     }
@@ -92,12 +92,11 @@ final class ScenePresentationContractUITests: XCTestCase {
     private struct ContractRecord: Codable {
         let schemaVersion: String
         let evidenceLevel: String
-        let productSHA: String
+        let productSHA: String?
         let platform: String
-        let deviceName: String
-        let runtimeIdentifier: String
+        let deviceName: String?
+        let runtimeIdentifier: String?
         let displayMode: String
-        let intervalSeconds: Double
         let testName: String
         let startedAt: String
         let finishedAt: String
@@ -181,7 +180,7 @@ final class ScenePresentationContractUITests: XCTestCase {
     @MainActor
     private func runContract(displayMode: String) throws {
         #if os(tvOS)
-        let runDirectory: URL? = optionalRunDirectory()
+        let runDirectory: URL? = try optionalRunDirectory()
         #else
         let runDirectory: URL? = try requiredRunDirectory()
         #endif
@@ -329,22 +328,20 @@ final class ScenePresentationContractUITests: XCTestCase {
         }.joined(separator: "\n")
         if let runDirectory {
             let record = ContractRecord(
-                schemaVersion: "scene-presentation-contract-evidence-v2",
+                schemaVersion: "scene-presentation-contract-evidence-v3",
                 evidenceLevel: "diagnostic_only",
-                productSHA: ProcessInfo.processInfo.environment["TEST_RUNNER_PRODUCT_SHA"]
-                    ?? String(repeating: "0", count: 40),
+                productSHA: ProcessInfo.processInfo.environment["TEST_RUNNER_PRODUCT_SHA"],
                 platform: contractPlatform,
-                deviceName: ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? "unknown",
-                runtimeIdentifier: ProcessInfo.processInfo.environment["SIMULATOR_RUNTIME_VERSION"] ?? "unknown",
+                deviceName: ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"],
+                runtimeIdentifier: ProcessInfo.processInfo.environment["SIMULATOR_RUNTIME_VERSION"],
                 displayMode: displayMode,
-                intervalSeconds: 5,
                 testName: name,
                 startedAt: ISO8601DateFormatter().string(from: startedAt),
                 finishedAt: ISO8601DateFormatter().string(from: Date()),
                 outcomes: outcomes,
                 samples: samples,
                 media: ContractMedia(
-                    videoPath: ProcessInfo.processInfo.environment["TEST_RUNNER_SCENE_PRESENTATION_VIDEO_PATH"] ?? "",
+                    videoPath: ProcessInfo.processInfo.environment["TEST_RUNNER_SCENE_PRESENTATION_VIDEO_PATH"],
                     tracePath: runDirectory.appendingPathComponent("\(displayMode)-trace.txt").path,
                     screenshotPaths: [
                         "scene-presentation-\(displayMode)-ready",
@@ -449,23 +446,19 @@ final class ScenePresentationContractUITests: XCTestCase {
     }
 
     private func requiredRunDirectory() throws -> URL {
-        guard let path = ProcessInfo.processInfo.environment["TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR"],
-            !path.isEmpty
-        else {
+        guard let directory = try optionalRunDirectory() else {
             throw XCTSkip(
                 "Runs only when TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR points to a persistent evidence directory"
             )
         }
-        return URL(fileURLWithPath: path, isDirectory: true)
+        return directory
     }
 
-    private func optionalRunDirectory() -> URL? {
-        guard let path = ProcessInfo.processInfo.environment["TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR"],
-            !path.isEmpty
-        else {
-            return nil
-        }
-        return URL(fileURLWithPath: path, isDirectory: true)
+    private func optionalRunDirectory() throws -> URL? {
+        try PrivateEvidenceDirectory.resolve(
+            rootPath: ProcessInfo.processInfo.environment["TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR"],
+            components: []
+        )
     }
 
     @MainActor

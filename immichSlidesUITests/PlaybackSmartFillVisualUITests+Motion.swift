@@ -90,8 +90,6 @@ extension PlaybackSmartFillVisualUITests {
         }
         return SmartFillRuntimeEvidenceSupport.makeHarnessSummary(
             startupRunId: startupRunId,
-            appLaunchStartMs: 0,
-            testServerConfigInjectedMs: 0,
             firstManifestObservedMs: firstManifestObservedMs,
             firstNonLoadingScreenshotCapturedMs: firstNonLoadingScreenshotCapturedMs
         )
@@ -257,7 +255,7 @@ extension PlaybackSmartFillVisualUITests {
             "schemaVersion": "product-scope-evidence-v1",
             "scenario": scenario,
             "deviceTag": deviceTag(),
-            "deviceRequirement": "any-iPhone",
+            "deviceRequirement": "any-iPhone-or-iPad",
             "configuredIntervalSeconds": smartFillMotionConfiguredIntervalSeconds(),
             "requestedSampleDurationSeconds": smartFillMotionSampleDurationSeconds(),
             "productScope": [
@@ -287,7 +285,7 @@ extension PlaybackSmartFillVisualUITests {
             "schemaVersion": "product-scene-sequence-v1",
             "scenario": scenario,
             "deviceTag": deviceTag(),
-            "deviceRequirement": "any-iPhone",
+            "deviceRequirement": "any-iPhone-or-iPad",
             "configuredIntervalSeconds": smartFillMotionConfiguredIntervalSeconds(),
             "requestedSampleDurationSeconds": smartFillMotionSampleDurationSeconds(),
             "source": "full-product-continuous",

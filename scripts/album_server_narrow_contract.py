@@ -279,6 +279,14 @@ def empty_album_is_listed(fixture_set: str) -> bool:
     return len(empty) == 1 and empty[0]["assetCount"] == 0 and empty[0]["assetIds"] == []
 
 
+def _recorded_start_enabled(payload: Mapping[str, Any], source: str) -> bool:
+    # A missing or null value means the Start button was never observed; it must not read as "disabled".
+    value = payload.get("start_enabled")
+    if not isinstance(value, bool):
+        raise AlbumServerContractError(f"{source} start_enabled must be a recorded Boolean")
+    return value
+
+
 def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a") -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     if str(manifest["fixture_set"]) != fixture_set:
@@ -291,7 +299,7 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a") ->
     assert_empty_selection_cannot_start(
         album_ids=list(empty_selection.get("album_ids") or []),
         person_filters=list(empty_selection.get("person_filters") or []),
-        start_enabled=bool(empty_selection.get("start_enabled")),
+        start_enabled=_recorded_start_enabled(empty_selection, "empty-selection.json"),
     )
     marks = [
         _classified_mark(evidence_dir, name)
@@ -323,7 +331,7 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a") ->
         "marks": marks,
         "empty_copy": copy,
         "empty_album_id": empty_payload["album_id"],
-        "start_enabled_after_empty_album": bool(empty_payload.get("start_enabled")),
+        "start_enabled_after_empty_album": _recorded_start_enabled(empty_payload, "empty-album.json"),
     }
 
 
