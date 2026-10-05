@@ -224,8 +224,8 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try isolateAndSelectEmptyAlbum(app: app, emptyAlbumID: "album-a-empty", neighborID: "album-a-target")
         let editorStart = app.buttons["filterSummary.startPlayback.button"]
         let didObserveStart = editorStart.exists
-        // An unobserved Start button is recorded as null, never as a disabled button.
-        let startEnabledAfterEmpty: Any = didObserveStart ? editorStart.isEnabled : NSNull()
+        // The Settings filter editor does not present Start Playback; record that explicitly, never as a disabled button.
+        let startEnabledAfterEmpty: Any = didObserveStart ? editorStart.isEnabled : "not_applicable_settings_editor"
         try returnToSlideshowFromSettings(app: app)
         let emptyLabel = app.staticTexts["slideshow.emptyState.message"]
         // ui-label-lookup: Preserve the Simplified Chinese empty-result copy check after identifier lookup.

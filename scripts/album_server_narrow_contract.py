@@ -36,6 +36,8 @@ class AlbumServerContractError(Exception):
 
 EMPTY_FILTERED_COPY = "当前筛选条件没有找到可播放照片，请换一组相册或人物再试。"
 ALLOWED_IDENTITY_SOURCE = "public_fixture_photo_mark"
+START_NOT_APPLICABLE_SETTINGS_EDITOR = "not_applicable_settings_editor"
+SETTINGS_FILTER_ENTRY_ID = "settings.playback.filterConfig.button"
 FORBIDDEN_IDENTITY_SOURCES = frozenset(
     {
         "probe",
@@ -287,6 +289,22 @@ def _recorded_start_enabled(payload: Mapping[str, Any], source: str) -> bool:
     return value
 
 
+def _empty_album_start_state(payload: Mapping[str, Any]) -> bool | str:
+    # The Settings filter editor never presents Start Playback, so there the producer records an explicit marker.
+    value = payload.get("start_enabled")
+    if value == START_NOT_APPLICABLE_SETTINGS_EDITOR:
+        if payload.get("entry") != SETTINGS_FILTER_ENTRY_ID:
+            raise AlbumServerContractError(
+                "empty-album.json start_enabled may be not applicable only for the Settings filter editor entry"
+            )
+        return value
+    if not isinstance(value, bool):
+        raise AlbumServerContractError(
+            "empty-album.json start_enabled must be a recorded Boolean or the Settings editor not-applicable marker"
+        )
+    return value
+
+
 def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a") -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     if str(manifest["fixture_set"]) != fixture_set:
@@ -331,7 +349,7 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a") ->
         "marks": marks,
         "empty_copy": copy,
         "empty_album_id": empty_payload["album_id"],
-        "start_enabled_after_empty_album": _recorded_start_enabled(empty_payload, "empty-album.json"),
+        "start_enabled_after_empty_album": _empty_album_start_state(empty_payload),
     }
 
 

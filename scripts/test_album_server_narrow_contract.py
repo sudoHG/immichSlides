@@ -480,6 +480,30 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
                         evaluate_album_empty_evidence(directory)
                     self.assertIn(f"{filename} start_enabled must be a recorded Boolean", str(raised.exception))
 
+    def test_settings_editor_without_start_button_records_not_applicable(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _write_album_empty_pass(directory)
+            payload = json.loads((directory / "empty-album.json").read_text(encoding="utf-8"))
+            payload["start_enabled"] = "not_applicable_settings_editor"
+            (directory / "empty-album.json").write_text(json.dumps(payload), encoding="utf-8")
+            result = evaluate_album_empty_evidence(directory)
+            self.assertEqual(result["verdict"], "PASS")
+            self.assertEqual(result["start_enabled_after_empty_album"], "not_applicable_settings_editor")
+
+    def test_not_applicable_start_state_is_rejected_outside_the_settings_editor(self) -> None:
+        for filename, entry in (("empty-album.json", "playback.start"), ("empty-selection.json", None)):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_album_empty_pass(directory)
+                payload = json.loads((directory / filename).read_text(encoding="utf-8"))
+                payload["start_enabled"] = "not_applicable_settings_editor"
+                if entry is not None:
+                    payload["entry"] = entry
+                (directory / filename).write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaises(AlbumServerContractError):
+                    evaluate_album_empty_evidence(directory)
+
     def test_invented_empty_copy_fails(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)

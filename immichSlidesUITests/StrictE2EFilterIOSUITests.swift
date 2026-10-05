@@ -189,8 +189,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         returnFromAlbumFilter(app: app)
         let editorStart = app.buttons["filterSummary.startPlayback.button"]
         let didObserveStart = editorStart.exists
-        // An unobserved Start button is recorded as null, never as a disabled button.
-        let startEnabledAfterEmpty: Any = didObserveStart ? editorStart.isEnabled : NSNull()
+        // The Settings filter editor does not present Start Playback; record that explicitly, never as a disabled button.
+        let startEnabledAfterEmpty: Any = didObserveStart ? editorStart.isEnabled : "not_applicable_settings_editor"
         attachStrictE2EScreenshot(app: app, name: "album-empty-selected-\(currentDeviceTag())")
         finishFilterEditor(app: app)
         returnToSlideshowFromSettings(app: app)
