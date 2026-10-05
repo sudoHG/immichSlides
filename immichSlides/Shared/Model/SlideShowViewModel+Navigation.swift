@@ -142,7 +142,7 @@ extension SlideShowViewModel {
             candidateProgression.reserveSelection(
                 in: assets, startingAt: candidateIndex, advancingBy: 1,
                 displayedAssetIdsAfterCommit: displayedAssetIdsAfterCommit,
-                advancesCursor: shouldAdvanceCandidateCursorOnCommit
+                reservesOnAcceptance: shouldAdvanceCandidateCursorOnCommit
             )
         }
         syncPlaybackReadbackFromEngine()
@@ -152,9 +152,13 @@ extension SlideShowViewModel {
         playbackHistoryLedger.isAtTail
     }
 
+    private var shouldIncludePendingCandidateReservation: Bool {
+        smartFillSurface != nil && isSmartFillPlanningEnabled
+    }
+
     var smartFillDisplayedAssetIdsForPlanning: Set<String> {
         candidateProgression.exclusionsForPlanning(
-            includesPendingReservation: smartFillSurface != nil && isSmartFillPlanningEnabled)
+            includesPendingReservation: shouldIncludePendingCandidateReservation)
     }
 
     func resetCandidateCursor(nextCandidateCursorOffset: Int = 1) {
@@ -192,12 +196,12 @@ extension SlideShowViewModel {
         // An exhausted solo-only pool holds this beat until the refill appends new candidates.
         guard
             let hold = candidateProgression.holdForLoadMoreIfConsumed(
-                assets: assets, includesPendingReservation: smartFillSurface != nil && isSmartFillPlanningEnabled,
+                assets: assets, includesPendingReservation: shouldIncludePendingCandidateReservation,
                 isLoadingMore: isLoadingMore
             )
         else { return false }
         logger.notice(
-            "smartfill advance held for soloOnly loadMore reason=\(reason, privacy: .public) assetCount=\(self.assets.count, privacy: .public) candidateCursorIndex=\(self.candidateProgression.cursorIndexForReadback, privacy: .public) startIndex=\(startIndex, privacy: .public) displayedAssetCount=\(hold.displayedAssetCount, privacy: .public) isLoadingMore=\(self.isLoadingMore ? "true" : "false", privacy: .public)"
+            "smartfill advance held for soloOnly loadMore reason=\(reason, privacy: .public) assetCount=\(self.assets.count, privacy: .public) candidateCursorIndex=\(self.candidateProgression.currentCursorIndex, privacy: .public) startIndex=\(startIndex, privacy: .public) displayedAssetCount=\(hold.displayedAssetCount, privacy: .public) isLoadingMore=\(self.isLoadingMore ? "true" : "false", privacy: .public)"
         )
         if hold.shouldStartLoadMore {
             Task { @MainActor [weak self] in

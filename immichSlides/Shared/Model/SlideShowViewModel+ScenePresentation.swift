@@ -189,7 +189,7 @@ extension SlideShowViewModel {
                         )
                         guard !Task.isCancelled else { return }
                         _ = await self.preloadSmartFillCandidateWindowIfNeeded(
-                            startingAt: self.candidateProgression.cursorIndexForReadback
+                            startingAt: self.candidateProgression.currentCursorIndex
                         )
                         guard !Task.isCancelled else { return }
                         await self.preloadPlaybackWindowAfterTransitionIfReady()
@@ -482,7 +482,7 @@ extension SlideShowViewModel {
         logQAPlaybackSequenceEventIfNeeded(
             .loadMoreDecision(
                 assetCount: assets.count,
-                candidateCursorIndex: candidateProgression.cursorIndexForReadback,
+                candidateCursorIndex: candidateProgression.currentCursorIndex,
                 candidateProgressIndexForLoadMore: loadMoreProgressIndex,
                 soloOnly: isSoloOnlyPlaybackSource,
                 isLoadingMore: isLoadingMore,

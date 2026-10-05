@@ -27,8 +27,7 @@ final class PlaybackCandidateProgression {
         case resumed
     }
 
-    var cursorIndexForReadback: Int { candidateCursorIndex }
-    var pendingResumeAssetCountForReadback: Int? { pendingCursorResumeAfterLoadMoreAssetCount }
+    var currentCursorIndex: Int { candidateCursorIndex }
     var surface: PlaybackSmartFillSurface? { planningSurface }
     var protectionSnapshot: PlaybackProtectionSnapshot { planningProtectionSnapshot }
 
@@ -93,15 +92,15 @@ final class PlaybackCandidateProgression {
         startingAt sourceCursor: Int,
         advancingBy offset: Int,
         displayedAssetIdsAfterCommit: Set<String>,
-        advancesCursor: Bool = true
+        reservesOnAcceptance: Bool = true
     ) {
         pendingCandidateCursorIndexAfterCommit =
-            advancesCursor
+            reservesOnAcceptance
             ? cursorIndex(
                 in: assets, afterAdvancingFrom: sourceCursor, by: offset,
                 excludingDisplayedAssetIds: displayedAssetIdsAfterCommit)
             : nil
-        pendingDisplayedAssetIdsAfterCommit = advancesCursor ? displayedAssetIdsAfterCommit : nil
+        pendingDisplayedAssetIdsAfterCommit = reservesOnAcceptance ? displayedAssetIdsAfterCommit : nil
     }
 
     func capturePendingAcceptance() -> PendingAcceptance {
@@ -232,6 +231,8 @@ final class PlaybackCandidateProgression {
     }
 
     #if DEBUG
+    var pendingResumeAssetCountForTesting: Int? { pendingCursorResumeAfterLoadMoreAssetCount }
+
     func markPoolConsumedForTesting(assets: [Asset], candidateCursorIndex: Int) {
         displayedAssetIds = Set(assets.map(\.id))
         self.candidateCursorIndex = min(max(0, candidateCursorIndex), max(0, assets.count - 1))

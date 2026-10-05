@@ -209,7 +209,7 @@ class SlideShowViewModel: ObservableObject {
     }
     #if DEBUG
     var smartFillCandidateCursorIndexForTesting: Int {
-        candidateProgression.cursorIndexForReadback
+        candidateProgression.currentCursorIndex
     }
 
     var pendingPlaybackHistoryLedgerCommitCountForTesting: Int {
@@ -224,7 +224,7 @@ class SlideShowViewModel: ObservableObject {
     var scenePresentationBarrierAttemptCountForTesting = 0
 
     var pendingSmartFillCursorResumeAfterLoadMoreAssetCountForTesting: Int? {
-        candidateProgression.pendingResumeAssetCountForReadback
+        candidateProgression.pendingResumeAssetCountForTesting
     }
 
     func markCurrentSmartFillPoolConsumedForTesting(candidateCursorIndex: Int = 0) {
@@ -827,7 +827,7 @@ class SlideShowViewModel: ObservableObject {
 
     private func logPendingSmartFillCursorResumeCleared(reason: String) {
         logger.notice(
-            "smartfill loadMore hold marker cleared reason=\(reason, privacy: .public) assetCount=\(self.assets.count, privacy: .public) candidateCursorIndex=\(self.candidateProgression.cursorIndexForReadback, privacy: .public)"
+            "smartfill loadMore hold marker cleared reason=\(reason, privacy: .public) assetCount=\(self.assets.count, privacy: .public) candidateCursorIndex=\(self.candidateProgression.currentCursorIndex, privacy: .public)"
         )
     }
 
@@ -1696,6 +1696,7 @@ extension SlideShowViewModel {
             startingAt: 0,
             callSite: .initialPlanning
         )
+        // The repeated pending-exclusion clear is intentional; planning leaves the earlier clear unchanged.
         candidateProgression.recordInitialSelection(initialSmartFillPlan?.displayedAssetIds ?? [])
         resetCandidateCursor(nextCandidateCursorOffset: initialSmartFillPlan?.nextCandidateCursorOffset ?? 1)
         playbackSessionEngine.reset(

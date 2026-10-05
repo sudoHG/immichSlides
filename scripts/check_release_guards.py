@@ -69,6 +69,7 @@ DEBUG_ONLY_MARKERS = (
     "smartFillMotionPreparedSlotPreloadHookForTesting",
     "replacePlaybackAssetsForTesting",
     "markPoolConsumedForTesting",
+    "pendingResumeAssetCountForTesting",
     "overwritePlaybackPoolWithoutResetForTesting",
     "setPlaybackLoadingForTesting",
     "setPlaybackLoadingMoreForTesting",
