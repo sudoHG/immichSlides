@@ -28,6 +28,10 @@ enum PlatformCompat {
     }
 
     #if DEBUG
+    static var shouldShowExifSamplingDebugOverlay: Bool {
+        ProcessInfo.processInfo.environment["UI_TEST_SHOW_EXIF_SAMPLING_DEBUG"] == "1"
+    }
+
     static var shouldForceLongPersonNamesForTesting: Bool {
         ProcessInfo.processInfo.environment["UI_TEST_FORCE_LONG_PERSON_NAMES"] == "1"
     }

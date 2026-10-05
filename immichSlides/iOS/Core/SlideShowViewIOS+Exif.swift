@@ -9,13 +9,17 @@ extension SlideShowViewIOS {
     ) async {
         guard let asset = visibleExifOverlayAsset else {
             exifForegroundTone = .lightText
+            #if DEBUG
             exifSamplingDebugSnapshot = nil
+            #endif
             return
         }
 
+        #if DEBUG
         if shouldShowExifSamplingDebugOverlay {
             exifSamplingDebugSnapshot = nil
         }
+        #endif
 
         let backdropContext = ExifDisplayedBackdropContext(
             surfaceSize: surfaceSize,
@@ -31,7 +35,9 @@ extension SlideShowViewIOS {
         guard backdropContext.isValid else {
 
             exifForegroundTone = .lightText
+            #if DEBUG
             exifSamplingDebugSnapshot = nil
+            #endif
             return
         }
 
@@ -44,7 +50,9 @@ extension SlideShowViewIOS {
             // Image not cached yet: do not guess the text color from empty data; rerun when the download state changes.
 
             exifForegroundTone = .lightText
+            #if DEBUG
             exifSamplingDebugSnapshot = nil
+            #endif
             return
         }
 
@@ -55,6 +63,7 @@ extension SlideShowViewIOS {
             profile: .iOS
         )
 
+        #if DEBUG
         if shouldShowExifSamplingDebugOverlay {
             exifSamplingDebugSnapshot = await ExifForegroundAnalyzer.debugSnapshot(
                 assetId: asset.id,
@@ -64,6 +73,7 @@ extension SlideShowViewIOS {
         } else {
             exifSamplingDebugSnapshot = nil
         }
+        #endif
     }
 
     func syncExifOverlayPresentation() {

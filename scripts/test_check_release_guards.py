@@ -79,6 +79,28 @@ class RuleTests(unittest.TestCase):
         source = "// qaPlaybackSequenceRecorder is only created in DEBUG builds\nlet a = 1\n"
         self.assertEqual([], guards.check_debug_only_markers(self.path, source))
 
+    def test_exif_diagnostics_and_playback_overlay_require_debug_regions(self):
+        markers = (
+            "UI_TEST_SHOW_EXIF_SAMPLING_DEBUG", "shouldShowExifSamplingDebugOverlay",
+            "exifSamplingDebugSnapshot", "exifSamplingDebugOverlay", "ExifSamplingDebugSnapshot",
+            "ExifForegroundAnalyzer.debugSnapshot", "debugSnapshotSynchronously",
+            "legacyToneForBenchmark", "displayedBackdropToneForBenchmark",
+            "displayedBackdropAverageToneForBenchmark", "displayedBackdropEffectiveLuminance",
+            "DebugOverlayView", "PlaybackDebugOverlaySceneSummary",
+        )
+        for marker in markers:
+            with self.subTest(marker=marker):
+                source = f"let diagnostic = {marker}\n"
+                self.assertTrue(guards.check_debug_only_markers(self.path, source))
+                self.assertEqual([], guards.check_debug_only_markers(
+                    self.path, f"#if DEBUG\n{source}#endif\n"))
+
+    def test_exif_diagnostic_switch_must_be_owned_by_platform_compat(self):
+        source = '#if DEBUG\nlet flag = environment["UI_TEST_SHOW_EXIF_SAMPLING_DEBUG"]\n#endif\n'
+        self.assertEqual(["debug-switch"], [v.rule for v in
+                         guards.check_platform_compat_only_keys(self.path, source)])
+        self.assertEqual([], guards.check_platform_compat_only_keys(guards.PLATFORM_COMPAT_FILE, source))
+
     def test_engine_must_not_reference_image_cache(self):
         path = "immichSlides/Shared/Model/PlaybackSessionEngine.swift"
         violations = guards.check_forbidden_symbols(path, "let cache = SDImageCache.shared\n")

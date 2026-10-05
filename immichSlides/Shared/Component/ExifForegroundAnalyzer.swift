@@ -56,12 +56,14 @@ struct ExifDisplayedBackdropContext: Equatable {
 
 // Only for sampling diagnostics; not used in real playback.
 
+#if DEBUG
 struct ExifSamplingDebugSnapshot {
     let reconstructedPanelImage: UIImage
     let panelRectInSurfaceSpace: CGRect
     let panelRectInBackdropSpace: CGRect
     let expandedPanelRectInBackdropSpace: CGRect
 }
+#endif
 
 // One analyzer shared by iOS/tvOS; platform differences are collected into a profile.
 
@@ -260,6 +262,7 @@ enum ExifForegroundAnalyzer {
         return legacyLuminance >= darkTextThreshold ? .darkText : .lightText
     }
 
+    #if DEBUG
     // Only lets the benchmark measure the old and new algorithms separately; production does not call it directly.
 
     static func legacyToneForBenchmark(from cgImage: CGImage) -> ExifForegroundTone? {
@@ -382,6 +385,7 @@ enum ExifForegroundAnalyzer {
             expandedPanelRectInBackdropSpace: expandedPanelRect
         )
     }
+    #endif
 
     private static func legacyEffectiveLuminance(of cgImage: CGImage) -> CGFloat? {
         guard
@@ -477,6 +481,7 @@ enum ExifForegroundAnalyzer {
         frame.width <= profile.compactPanelMaximumSize.width && frame.height <= profile.compactPanelMaximumSize.height
     }
 
+    #if DEBUG
     // Keeps the full previous screen-space average brightness for the benchmark only; not used in production choices.
 
     private static func displayedBackdropEffectiveLuminance(
@@ -528,6 +533,7 @@ enum ExifForegroundAnalyzer {
 
         return max(panelLuminance, coreTextLuminance)
     }
+    #endif
 
     // Rebuild the EXIF area offline from SlideItemView's fill+blur instead of capturing the whole screen, so the panel
     // and control bar are not sampled.

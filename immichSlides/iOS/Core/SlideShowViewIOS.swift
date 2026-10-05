@@ -33,7 +33,9 @@ struct SlideShowViewIOS: View {
 
     @State var exifFrameInSurfaceSpace: CGRect = .zero
 
+    #if DEBUG
     @State var exifSamplingDebugSnapshot: ExifSamplingDebugSnapshot? = nil
+    #endif
     // Keep the last EXIF-capable asset so SmartFill with or without EXIF can reuse the single-photo panel morph.
     @State var retainedExifOverlayAsset: Asset? = nil
     @State var isRenderedExifOverlayVisible: Bool = false
@@ -238,9 +240,11 @@ struct SlideShowViewIOS: View {
     // The diagnostic overlay is for UI tests and local diagnostics only;
     // normal playback never shows the red frame or the sample thumbnail.
 
+    #if DEBUG
     var shouldShowExifSamplingDebugOverlay: Bool {
-        ProcessInfo.processInfo.environment["UI_TEST_SHOW_EXIF_SAMPLING_DEBUG"] == "1"
+        PlatformCompat.shouldShowExifSamplingDebugOverlay
     }
+    #endif
 
     private var shouldExposeExifForegroundToneProbeForTesting: Bool {
         PlatformCompat.shouldExposeUITestProbes
@@ -337,6 +341,7 @@ struct SlideShowViewIOS: View {
                                         } action: { newFrame in
                                             exifFrameInSurfaceSpace = newFrame
                                         }
+                                        #if DEBUG
                                         .overlay {
                                             if shouldShowExifSamplingDebugOverlay {
 
@@ -348,6 +353,7 @@ struct SlideShowViewIOS: View {
                                                     )
                                             }
                                         }
+                                        #endif
                                         .animation(
                                             .easeInOut(duration: PlaybackTransitionContract.imageCrossfadeDuration),
                                             value: retainedExifOverlayAsset?.id)
@@ -391,12 +397,14 @@ struct SlideShowViewIOS: View {
                         safeAreaInsets: geometry.safeAreaInsets
                     )
                 }
+                #if DEBUG
                 if shouldShowExifSamplingDebugOverlay {
                     exifSamplingDebugOverlay(
                         surfaceSize: geometry.size,
                         safeAreaInsets: geometry.safeAreaInsets
                     )
                 }
+                #endif
                 if shouldExposeSmartFillManifestProbeForTesting,
                     let manifest = viewModel.currentSmartFillRuntimeQADebugSummary(
                         controlBarVisible: isControlBarVisible,
@@ -494,6 +502,7 @@ struct SlideShowViewIOS: View {
                         .accessibilityLabel(viewModel.playbackHistoryLedgerDiagnosticsSummaryJSON)
                 }
                 #endif
+                #if DEBUG
                 if PlatformCompat.isPlaybackDebugPanelEnabled && isDebugOverlayVisible {
                     DebugOverlayView(
                         viewModel: viewModel,
@@ -507,6 +516,7 @@ struct SlideShowViewIOS: View {
                         .foregroundStyle(.clear)
                         .accessibilityIdentifier("slideshow.debugOverlay.flag")
                 }
+                #endif
 
                 VStack {
                     Spacer()
