@@ -346,11 +346,11 @@ struct SlideShowViewIOS: View {
                                             if shouldShowExifSamplingDebugOverlay {
 
                                                 Rectangle()
-                                                    .fill(Color.red.opacity(0.10))
-                                                    .overlay(
-                                                        Rectangle()
-                                                            .stroke(Color.red, lineWidth: 2)
-                                                    )
+                                                .fill(Color.red.opacity(0.10))
+                                                .overlay(
+                                                    Rectangle()
+                                                        .stroke(Color.red, lineWidth: 2)
+                                                )
                                             }
                                         }
                                         #endif
