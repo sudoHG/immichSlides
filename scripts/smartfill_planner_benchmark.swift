@@ -364,7 +364,8 @@ private struct SampleStats {
         }
         let sorted = samples.sorted()
         mean = samples.reduce(0, +) / Double(samples.count)
-        median = sorted[sorted.count / 2]
+        let middle = sorted.count / 2
+        median = sorted.count.isMultiple(of: 2) ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
         let p95Rank = Int(ceil(Double(sorted.count) * 0.95)) - 1
         p95 = sorted[Swift.max(0, Swift.min(p95Rank, sorted.count - 1))]
         max = sorted[sorted.count - 1]
