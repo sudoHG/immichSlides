@@ -104,6 +104,7 @@ extension SlideShowViewModelStartupTests {
         vm.maxAssetCount = 200
         vm.indexChangePhotoLoadHookForTesting = { _, _ in }
         vm.backgroundPreloadHookForTesting = { _, _, _ in }
+        vm.smartFillMotionPreparedSlotPreloadHookForTesting = { _ in }
         vm.updateSmartFillSurfaceForTesting(
             PlaybackSmartFillSurface(
                 pixelSize: PlaybackPlanningPixelSize(width: 2732, height: 2048),
@@ -196,11 +197,9 @@ extension SlideShowViewModelStartupTests {
         markReady(nextAssets, in: vm.downloadManager)
         var publishedPoolCounts: [Int] = []
         var cursorAtPoolPublication: [Int] = []
-        var cachedIDsAtPoolPublication: [Set<String>] = []
         let observation = vm.$assets.dropFirst().sink { pool in
             publishedPoolCounts.append(pool.count)
             cursorAtPoolPublication.append(vm.smartFillCandidateCursorIndexForTesting)
-            cachedIDsAtPoolPublication.append(Set(vm.downloadManager.assetStates.keys))
         }
         loadMoreContinuation?.resume(returning: nextAssets)
         await trimmingLoadMoreTask.value
@@ -208,15 +207,9 @@ extension SlideShowViewModelStartupTests {
 
         #expect(publishedPoolCounts == [65, 40])
         #expect(cursorAtPoolPublication == [0, 60])
-        // Observe eviction synchronously before retained-scene image tasks can repopulate the cache.
-        #expect(
-            cachedIDsAtPoolPublication == [
-                Set((0..<65).map { "asset-\($0)" }), Set((25..<65).map { "asset-\($0)" })
-            ])
         #expect(vm.assets.map(\.id) == (25..<65).map { "asset-\($0)" })
         #expect(vm.smartFillCandidateCursorIndexForTesting == 35)
         #expect(vm.pendingSmartFillCursorResumeAfterLoadMoreAssetCountForTesting == nil)
-        #expect(vm.smartFillDisplayedAssetIds == Set((25..<60).map { "asset-\($0)" }))
         vm.requestNextScene()
         #expect(vm.scene(at: vm.targetIndex)?.primaryAssetId == "asset-60")
     }

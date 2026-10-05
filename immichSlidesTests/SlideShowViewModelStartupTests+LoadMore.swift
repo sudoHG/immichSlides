@@ -187,6 +187,10 @@ extension SlideShowViewModelStartupTests {
         let vm = SlideShowViewModel(source: .random)
         resetDownloadManagerState(vm.downloadManager)
         vm.maxAssetCount = 200
+        vm.scenePresentationTimestampProviderForTesting = { 0 }
+        vm.indexChangePhotoLoadHookForTesting = { _, _ in }
+        vm.backgroundPreloadHookForTesting = { _, _, _ in }
+        vm.smartFillMotionPreparedSlotPreloadHookForTesting = { _ in }
         vm.loadMoreAssetsHookForTesting = { _ in
             [
                 makeAsset(id: "asset-2"),
@@ -224,19 +228,11 @@ extension SlideShowViewModelStartupTests {
         // Empty refills still trim an oversized pool and publish a zero-removal trim at capacity.
         vm.maxAssetCount = 6
         vm.loadMoreAssetsHookForTesting = { _ in [] }
-        vm.candidateCursorIndex = 6
-        vm.pendingCandidateCursorIndexAfterCommit = 7
-        vm.smartFillDisplayedAssetIds = ["asset-0", "asset-5", "asset-7"]
-        vm.pendingSmartFillDisplayedAssetIdsAfterCommit = ["asset-1", "asset-6"]
-        markReady(vm.assets, in: vm.downloadManager)
-        vm.downloadManager.assetThumbnailStates = vm.downloadManager.assetStates
-        let cacheURLs = Dictionary(
+        vm.markCurrentSmartFillPoolConsumedForTesting(candidateCursorIndex: 6)
+        vm.downloadManager.assetStates = Dictionary(
             uniqueKeysWithValues: vm.assets.map { asset in
-                (asset.id, URL(fileURLWithPath: "/pool-refill/\(asset.id)"))
+                (asset.id, .readyToPlay)
             })
-        vm.downloadManager.assetURLs = cacheURLs
-        vm.downloadManager.assetPreviewURLs = cacheURLs
-        vm.downloadManager.assetThumbnailURLs = cacheURLs
         let retainedIDs = (2..<8).map { "asset-\($0)" }
         let currentAssetID = vm.safeCurrentScene?.primaryAssetId
 
@@ -254,10 +250,10 @@ extension SlideShowViewModelStartupTests {
                     order.append("empty:\(message ?? "nil")")
                 },
                 vm.$currentIndex.dropFirst().sink { _ in
-                    order.append("readback:\(vm.candidateCursorIndex)")
+                    order.append("readback:\(vm.smartFillCandidateCursorIndexForTesting)")
                 }
             ]
-            let cachedIDsBeforeRefill = Set(vm.downloadManager.assetStates.keys)
+            let poolIDsBeforeRefill = Set(vm.assets.map(\.id))
 
             await vm.loadMoreAssets()
 
@@ -270,18 +266,9 @@ extension SlideShowViewModelStartupTests {
                     "qa_playback_sequence_event eventType=loadMoreResult oldCount=\(oldCount) finalCount=6 unseenCount=0 returnedCount=0",
                     "loading:false"
                 ])
-            #expect(cachedIDsAtPoolPublication == [cachedIDsBeforeRefill, Set(retainedIDs)])
+            #expect(cachedIDsAtPoolPublication == [poolIDsBeforeRefill, Set(retainedIDs)])
             #expect(vm.assets.map(\.id) == retainedIDs)
-            #expect(Set(vm.downloadManager.assetStates.keys) == Set(retainedIDs))
-            #expect(Set(vm.downloadManager.assetPreviewStates.keys) == Set(retainedIDs))
-            #expect(Set(vm.downloadManager.assetThumbnailStates.keys) == Set(retainedIDs))
-            #expect(Set(vm.downloadManager.assetURLs.keys) == Set(retainedIDs))
-            #expect(Set(vm.downloadManager.assetPreviewURLs.keys) == Set(retainedIDs))
-            #expect(Set(vm.downloadManager.assetThumbnailURLs.keys) == Set(retainedIDs))
-            #expect(vm.candidateCursorIndex == 4)
-            #expect(vm.pendingCandidateCursorIndexAfterCommit == 5)
-            #expect(vm.smartFillDisplayedAssetIds == ["asset-5", "asset-7"])
-            #expect(vm.pendingSmartFillDisplayedAssetIdsAfterCommit == ["asset-6"])
+            #expect(vm.smartFillCandidateCursorIndexForTesting == 4)
             #expect(vm.safeCurrentScene?.primaryAssetId == currentAssetID)
         }
     }

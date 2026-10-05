@@ -2443,10 +2443,8 @@ fileprivate final class PlaybackPoolLoader {
 
     private func kindName(for source: PlaybackSource) -> String {
         switch source {
-        case .random:
-            return "random"
-        case .filtered:
-            return "filtered"
+        case .random: return "random"
+        case .filtered: return "filtered"
         }
     }
 
