@@ -706,6 +706,8 @@ class SlideShowViewModel: ObservableObject {
 
     struct SmartFillScenePlanComparisonForTesting: Equatable {
         let selectedAssetIds: [String]
+        let slotPlanning: [PlaybackPlanningSnapshot]
+        let readback: PlaybackSmartFillSceneReadback
         let slotRoles: [PlaybackSmartFillSlotRole]
         let layoutVariant: PlaybackSmartFillLayoutVariant
         let ratioPreset: String
@@ -723,6 +725,8 @@ class SlideShowViewModel: ObservableObject {
         }
         return SmartFillScenePlanComparisonForTesting(
             selectedAssetIds: plan.scene.assetIds,
+            slotPlanning: plan.scene.photoSlots.map(\.planning),
+            readback: readback,
             slotRoles: readback.slotRoles,
             layoutVariant: readback.layoutVariant,
             ratioPreset: readback.ratioPreset,

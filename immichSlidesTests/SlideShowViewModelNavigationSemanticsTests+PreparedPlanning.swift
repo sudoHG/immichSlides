@@ -65,6 +65,89 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(mainActorPlan.ratioPreset == preparedResult.readback.ratioPreset)
         #expect(mainActorPlan.fallbackCategory == preparedResult.readback.fallbackCategory)
         #expect(mainActorPlan.nextCandidateCursorOffset == preparedResult.nextCandidateCursorOffset)
+
+        // Fixed fixture expectations keep a shared conversion bug from making both paths agree incorrectly.
+        let expectedAssetIds = ["rich-portrait-face", "rich-tall-exif"]
+        let expectedFrames = [
+            PlaybackPlanningRect(x: 0, y: 0, width: 0.5675698379401841, height: 1),
+            PlaybackPlanningRect(x: 0.5675698379401841, y: 0, width: 0.4324301620598159, height: 1)
+        ]
+        let expectedCrops = [
+            PlaybackPlanningRect(x: 0, y: 0, width: 1, height: 0.9905837806362195),
+            PlaybackPlanningRect(x: 0, y: 0, width: 1, height: 0.990592943997374)
+        ]
+        let expectedReadback = PlaybackSmartFillSceneReadback(
+            version: "smart-fill-scene-v2",
+            sceneType: .double,
+            layoutPolicyId: "ipad-landscape-pr49-v1",
+            surfaceKey: "iPad-landscape-regular-regular-safeA",
+            layoutVariant: .leftPrimaryRightSecondary,
+            ratioPreset: "constructive-57/43",
+            slotRoles: [.primary, .secondary],
+            fallbackReason: nil,
+            fallbackCategory: .none,
+            candidateWindowUsed: 24,
+            evaluationCount: 2,
+            rotationStartLayoutVariant: .rightPrimaryLeftSecondary,
+            rotationStartRatioPreset: "65/35",
+            acceptedLayoutVariant: .leftPrimaryRightSecondary,
+            acceptedRatioPreset: "constructive-57/43",
+            rotationKeyHashPrefix: "b059ad445e9a",
+            rejectedLayoutReasonTopList: [.cropRetentionTooLow, .verticalDoubleDisallowedOnSurface],
+            reasonCodes: [
+                "scene:double", "policy:ipad-landscape-pr49-v1", "surface:iPad-landscape-regular-regular-safeA",
+                "layout:left-primary-right-secondary", "ratio:constructive-57/43", "candidateWindow:24",
+                "fallbackCategory:none", "reject:vertical-double-disallowed-on-surface", "reject:crop-retention-too-low"
+            ],
+            actionTimestamp: nil,
+            scenePublishTimestamp: nil,
+            actionToSceneLatencyMilliseconds: nil,
+            qaDebugSummary: [
+                "version=smart-fill-planner-v2", "sceneType=double",
+                "surfaceKey=iPad-landscape-regular-regular-safeA",
+                "surfaceFingerprint=iPad-landscape-regular-regular-safeA|size:85x64|aspect:27",
+                "policy=ipad-landscape-pr49-v1", "layoutVariant=left-primary-right-secondary",
+                "ratioPreset=constructive-57/43",
+                "photoCanvasId=surface:iPad-landscape-regular-regular-safeA|size:85x64|aspect:27|safeArea:safeA|hardObstruction:none|px:2732x2048|pt:2732.000x2048.000|scale:1.000|unit:0.000,0.000,1.000,1.000",
+                "photoCanvasPointSize=2732.000x2048.000", "photoCanvasPixelSize=2732x2048",
+                "canvasCoverage=1.000", "emptyCanvasRatio=0.000", "maxContinuousEmptyAxisRatio=0.000",
+                "gapPixelCount=0", "overlapPixelCount=0", "slotCount=2", "slotRoles=primary,secondary",
+                "slotRefs=asset_f3ea688f448b5754,asset_267ece7a44aba2a4",
+                "currentAssetDisposition=primary-slot", "currentAssetAbsentReason=none",
+                "currentAssetSlotAreaRatio=0.568", "currentAssetCropRetention=0.991",
+                "currentAssetProtectedRegionCoverage=1.000", "currentAssetFaceProtectionPassed=true",
+                "currentAssetSubjectProtectionPassed=true", "currentAssetVisibleQualityClass=acceptable",
+                "cropRetentionThresholdUsed=0.600", "ledgerSceneAssets=asset_f3ea688f448b5754,asset_267ece7a44aba2a4",
+                "acceptedSceneSearchTier=double", "candidateWindowRequested=72",
+                "candidateWindowExpansionTrace=24:accepted",
+                "slotFrames=x0.000y0.000w0.568h1.000,x0.568y0.000w0.432h1.000",
+                "slotCropRects=x0.000y0.000w1.000h0.991,x0.000y0.000w1.000h0.991", "cropRetention=0.991,0.991",
+                "protectionContained=true,true", "protectionStatus=accepted", "protectionHardOverlapCount=0",
+                "softOverlayOverlapWarningCount=0", "controlBarSubjectOverlapWarningCount=0",
+                "controlBarHardRejected=false",
+                "exifOverlayOverlapWarningCount=0", "exifOverlayHardRejected=false", "protectionOverlapDetails=none",
+                "fallbackCategory=none", "candidateWindowUsed=24", "evaluationCount=2",
+                "rotationStartLayoutVariant=right-primary-left-secondary", "rotationStartRatioPreset=65/35",
+                "acceptedLayoutVariant=left-primary-right-secondary", "acceptedRatioPreset=constructive-57/43",
+                "rotationKeyHashPrefix=b059ad445e9a", "fallback=none",
+                "rejects=vertical-double-disallowed-on-surface,crop-retention-too-low",
+                "rejectedLayoutReasonTopList=crop-retention-too-low,vertical-double-disallowed-on-surface",
+                "rejectedLayoutDiagnostics=reason:crop-retention-too-low|layout:single|ratio:full|role:primary|slotIndex:0|imageAspect:0.750|slotAspect:1.334|cropRetention:0.562|threshold:0.600|thresholdDelta:-0.038|secondaryArea:1.000|minimumSecondaryArea:0.180"
+            ].joined(separator: ";")
+        )
+        #expect(mainActorPlan.selectedAssetIds == expectedAssetIds)
+        #expect(preparedResult.selectedAssetIds == expectedAssetIds)
+        #expect(mainActorPlan.slotPlanning.map(\.displayFrame) == expectedFrames)
+        #expect(preparedResult.slots.map(\.frameInScene) == expectedFrames)
+        #expect(mainActorPlan.slotPlanning.map(\.cropRect) == expectedCrops)
+        #expect(preparedResult.slots.map(\.cropRectInSource) == expectedCrops)
+        #expect(mainActorPlan.readback == expectedReadback)
+        #expect(preparedResult.readback == expectedReadback)
+        #expect(mainActorPlan.nextCandidateCursorOffset == 1)
+        #expect(preparedResult.nextCandidateCursorOffset == 1)
+        #expect(preparedResult.sourceCursor == 1)
+        #expect(preparedResult.displayedAssetIds == Set(expectedAssetIds))
+        #expect(vm.smartFillCandidateCursorIndexForTesting == 1)
     }
 
     @Test
