@@ -520,7 +520,6 @@ extension PlaybackSessionEngine {
                 return reject("cancel-unseen-manual-pending-invalid")
             }
             let cancelledSource = latestAttemptSource(for: cancelledTarget.identity) ?? .manualPrevious
-            retirePlanningDemand(for: cancelledTarget.identity)
             cancelAttempt(identity: cancelledTarget.identity)
 
             underlyingPhase = restore.underlyingPhase

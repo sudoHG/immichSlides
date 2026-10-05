@@ -131,12 +131,19 @@ session ownership and reducer internals preserve this value interface:
   Admission requires an exact outstanding-request match, its target still being current or pending,
   and either a stable current presentation or a failed pending target. User pause rejects completion;
   background suspension alone does not, matching the facade's existing `isAutoPlay` admission gate.
+  This relies on an invariant: the executor's `isAutoPlay` gate and the reducer's `.userPaused`
+  suspension change together (`updateAutoPlayEnabled`, and readback sync after a reset). A caller that
+  turns autoplay off without suspending the reducer breaks demand matching.
   Purpose records why demand was issued, rather than imposing a stricter completion policy: a stable
   photo's demand can still complete after an intervening manual target fails or is cancelled back to
-  that photo. Cancelling a pending target through replacement or manual restoration retires matching
-  demand through explicit `retirePlanningDemand(for:)` calls outside attempt bookkeeping; registering
+  that photo. Replacing a pending target retires matching demand through an explicit
+  `retirePlanningDemand(for:)` call outside attempt bookkeeping (manual restoration cannot hold matching
+  demand, so it has no such call); registering
   a different pending target does not retire demand retained by the current photo. Stale completion
-  returns no effects and does not append diagnostics.
+  returns no effects and does not append diagnostics. Known theoretical difference from the previous
+  facade: an executed automatic navigation keeps the photo's old demand instead of clearing it, so a
+  stale manual-hold restore that makes that photo current again (an already inconsistent state) could
+  later accept it.
 - `ScenePresentationEffect.restartPreparation(ScenePresentationEffectRequest)` is a separate barrier
   command for an existing target. It allocates no planning tag, creates no navigation demand and has
   no planning completion. It may run while paused.

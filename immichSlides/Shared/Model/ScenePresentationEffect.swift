@@ -27,7 +27,7 @@ enum ScenePresentationPlanningPurpose: Equatable, Sendable {
     case replaceExhaustedTarget
 }
 
-/// Demand identity is independent of both the target identity and the prepared proposal's fingerprint.
+/// Demand identity is the reducer tag plus its target and purpose; it is independent of the prepared proposal's fingerprint.
 struct ScenePresentationPlanningRequest: Equatable, Sendable {
     let tag: UInt64
     let target: ScenePresentationEffectRequest
@@ -48,7 +48,7 @@ struct ScenePresentationEffectRequest: Equatable, Sendable {
     }
 }
 
-/// Execution result; the test runner uses it to build the matching reducer event.
+/// Execution result; the facade sends planning completions, and the test runner builds the other matching reducer events.
 enum ScenePresentationEffectResult: Equatable, Sendable {
     case planningCompleted(ScenePresentationPlanningRequest)
     case ready(PlaybackSessionEngine.ScenePresentationIdentity)
