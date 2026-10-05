@@ -16,7 +16,7 @@ extension SlideShowViewModel {
         assets = newAssets
         smartFillDisplayedAssetIds = []
         pendingSmartFillDisplayedAssetIdsAfterCommit = nil
-        pendingSceneActionTimestamps = [:]
+        runtimeEvidenceRecorder.resetActionTimings()
         let initialSmartFillPlan = makeSmartFillScenePlan(
             startingAt: 0,
             callSite: .initialPlanning
@@ -105,7 +105,7 @@ extension SlideShowViewModel {
             )
         else {
             pendingPlaybackHistoryLedgerCommits[transition.transaction.id] = nil
-            pendingSceneActionTimestamps[transition.transaction.id] = nil
+            runtimeEvidenceRecorder.discardActionTimestamp(for: transition.transaction.id)
             return
         }
         recordScenePublishTiming(for: transition)
@@ -135,10 +135,7 @@ extension SlideShowViewModel {
         smartFillMotionPreparedSlotPreloadTasks.values.forEach { $0.cancel() }
         smartFillMotionPreparedSlotPreloadTasks = [:]
         smartFillMotionLookaheadPreparedPlan = nil
-        scenePresentationDecodedCount = 0
-        scenePresentationReadyCount = 0
-        scenePresentationHiddenDecodeExcludedFromHistory = false
-        scenePresentationVisibleTickCommittedHistory = false
+        runtimeEvidenceRecorder.resetScenePresentation()
         publishScenePresentationChange()
     }
 
@@ -425,17 +422,20 @@ extension SlideShowViewModel {
 
     func rendererDecoded(_ identity: SceneRendererIdentity) {
         let historyCountBefore = playbackSessionEngine.scenePresentationState.history.count
-        scenePresentationDecodedCount += 1
+        runtimeEvidenceRecorder.recordRendererDecoded()
         guard case let .presentationReady(layerIdentity)? = scenePresentationPrerenderBarrier.rendererDecoded(identity)
         else {
-            scenePresentationHiddenDecodeExcludedFromHistory =
-                playbackSessionEngine.scenePresentationState.history.count == historyCountBefore
+            runtimeEvidenceRecorder.recordPresentationReadiness(
+                isReady: false,
+                historyUnchanged: playbackSessionEngine.scenePresentationState.history.count == historyCountBefore
+            )
             publishScenePresentationChange()
             return
         }
-        scenePresentationReadyCount += 1
-        scenePresentationHiddenDecodeExcludedFromHistory =
-            playbackSessionEngine.scenePresentationState.history.count == historyCountBefore
+        runtimeEvidenceRecorder.recordPresentationReadiness(
+            isReady: true,
+            historyUnchanged: playbackSessionEngine.scenePresentationState.history.count == historyCountBefore
+        )
         guard
             let presentationIdentity = playbackSessionEngine.presentationIdentity(
                 generation: layerIdentity.generation,
@@ -494,7 +494,7 @@ extension SlideShowViewModel {
             )
         )
         guard playbackSessionEngine.scenePresentationState.history.count > historyCountBefore else { return }
-        scenePresentationVisibleTickCommittedHistory = true
+        runtimeEvidenceRecorder.recordVisibleTickCommittedHistory()
         for slot in playbackSessionEngine.scene(for: identity)?.photoSlots ?? [] {
             recordSmartFillFirstImageDisplayed(assetId: slot.asset.id)
         }
@@ -550,7 +550,7 @@ extension SlideShowViewModel {
                 shouldTrigger: shouldTriggerLoadMore,
                 currentIndex: currentIndex,
                 targetIndex: targetIndex,
-                displayedAssetCount: qaPlaybackSequenceRecorder?.displayedAssetRecordCount ?? 0
+                displayedAssetCount: runtimeEvidenceRecorder.displayedAssetRecordCount
             ))
         #endif
         guard shouldTriggerLoadMore, !isLoadingMore else { return }
@@ -574,110 +574,12 @@ extension SlideShowViewModel {
             let activeTime = Self.renderedMotionActiveTime(of: layer, lifecycle: target.lifecycle)
             return SceneAnimationProfile(lifecycle: target.lifecycle).rawProgress(for: activeTime)
         }
-        #if DEBUG
-        let photoCoverage = 1 - snapshot.layers.reduce(1) { uncovered, layer in uncovered * (1 - layer.opacity) }
-        if !playbackSessionEngine.scenePresentationState.history.isEmpty,
-            photoCoverage < Self.scenePresentationProbeMinimumPhotoCoverage
-        {
-            scenePresentationLowCoverageFrameCount += 1
-        }
-        recordScenePresentationCrossfadeFrame(snapshot, progress: progressValues)
-        let lowCoverageFrameCount = scenePresentationLowCoverageFrameCount
-        let crossfadeFrameCount = scenePresentationCrossfadeFrameCount
-        let lastCrossfade =
-            scenePresentationLastCrossfade.map { crossfade in
-                let progress = [
-                    crossfade.firstOutgoingProgress, crossfade.lastOutgoingProgress,
-                    crossfade.lowestOutgoingProgress, crossfade.highestOutgoingProgress
-                ].map { String(format: "%.6f", $0) }
-                let blend = String(format: "%.6f", crossfade.peakBlendOpacity)
-                let motion = crossfade.didOutgoingProgressRewind ? "rewound" : "steady"
-                return "\(crossfade.outgoingID)>\(crossfade.incomingID)@\(progress[0])>\(progress[1])"
-                    + "@\(progress[2])>\(progress[3])@\(blend)@\(motion)"
-            } ?? "none"
-        #else
-        let lowCoverageFrameCount = 0
-        let crossfadeFrameCount = 0
-        let lastCrossfade = "none"
-        #endif
-        let roles = snapshot.layers.map { $0.role.rawValue }.joined(separator: "|")
-        let layerIDs = snapshot.layers.map(\.identity.privateIdentifier).joined(separator: "|")
-        let opacities = snapshot.layers.map { String(format: "%.6f", $0.opacity) }.joined(separator: "|")
-        let progress = progressValues.map { String(format: "%.6f", $0) }.joined(separator: "|")
-        return [
-            "schemaVersion=scene-presentation-contract-probe-v1",
-            "phase=\(snapshot.underlyingPhase.rawValue)",
-            "layerRoles=\(roles.isEmpty ? "none" : roles)",
-            "layerIDs=\(layerIDs.isEmpty ? "none" : layerIDs)",
-            "layerOpacities=\(opacities.isEmpty ? "none" : opacities)",
-            "motionRawProgress=\(progress.isEmpty ? "none" : progress)",
-            "decodedCount=\(scenePresentationDecodedCount)",
-            "presentationReadyCount=\(scenePresentationReadyCount)",
-            "historyCount=\(playbackSessionEngine.scenePresentationState.history.count)",
-            "partialSlotVisible=\(snapshot.layers.contains { $0.opacity > 0 && !$0.isPresentationReady })",
-            "loadingVisible=\(snapshot.underlyingPhase == .loading)",
-            "playbackPaused=\(snapshot.suspensionReasons.contains(.userPaused))",
-            "lowCoverageFrameCount=\(lowCoverageFrameCount)",
-            "crossfadeFrameCount=\(crossfadeFrameCount)",
-            "lastCrossfade=\(lastCrossfade)",
-            "hiddenDecodeExcludedFromHistory=\(scenePresentationHiddenDecodeExcludedFromHistory)",
-            "visibleTickCommittedHistory=\(scenePresentationVisibleTickCommittedHistory)"
-        ].joined(separator: ";")
+        return runtimeEvidenceRecorder.scenePresentationContractProbeLabel(
+            for: snapshot,
+            progressValues: progressValues,
+            historyCount: playbackSessionEngine.scenePresentationState.history.count
+        )
     }
-
-    #if DEBUG
-    /// Remembers a crossfade from one photo to another (one outgoing and one incoming layer): how the outgoing photo's
-    /// motion moved while it was drawn, and whether both photos were ever visible together.
-    private func recordScenePresentationCrossfadeFrame(
-        _ snapshot: PlaybackSessionEngine.SceneRenderSnapshot,
-        progress: [Double]
-    ) {
-        let outgoingIndices = snapshot.layers.indices.filter { snapshot.layers[$0].role == .outgoing }
-        let incomingIndices = snapshot.layers.indices.filter { snapshot.layers[$0].role == .incoming }
-        guard snapshot.underlyingPhase == .transition,
-            outgoingIndices.count == 1, incomingIndices.count == 1,
-            let outgoing = outgoingIndices.first, let incoming = incomingIndices.first
-        else {
-            return
-        }
-        scenePresentationCrossfadeFrameCount += 1
-        let outgoingID = snapshot.layers[outgoing].identity.privateIdentifier
-        let incomingID = snapshot.layers[incoming].identity.privateIdentifier
-        let outgoingOpacity = snapshot.layers[outgoing].opacity
-        let incomingOpacity = snapshot.layers[incoming].opacity
-        let blend = min(incomingOpacity, outgoingOpacity * (1 - incomingOpacity))
-        let outgoingProgress = progress[outgoing]
-        guard var crossfade = scenePresentationLastCrossfade,
-            crossfade.outgoingID == outgoingID, crossfade.incomingID == incomingID
-        else {
-            scenePresentationLastCrossfade = ScenePresentationProbeCrossfade(
-                outgoingID: outgoingID,
-                incomingID: incomingID,
-                firstOutgoingProgress: outgoingProgress,
-                lastOutgoingProgress: outgoingProgress,
-                lowestOutgoingProgress: outgoingProgress,
-                highestOutgoingProgress: outgoingProgress,
-                peakBlendOpacity: blend,
-                lastOutgoingOpacity: outgoingOpacity,
-                didOutgoingProgressRewind: false
-            )
-            return
-        }
-        crossfade.lowestOutgoingProgress = min(crossfade.lowestOutgoingProgress, outgoingProgress)
-        crossfade.highestOutgoingProgress = max(crossfade.highestOutgoingProgress, outgoingProgress)
-        crossfade.peakBlendOpacity = max(crossfade.peakBlendOpacity, blend)
-        // The outgoing photo only fades out, so only a dimmer frame is a later one; on iOS the root probe can report an
-        // earlier moment than the frame-synchronized probe did, and once faded out the photo's motion is not seen.
-        if outgoingOpacity < crossfade.lastOutgoingOpacity {
-            if outgoingProgress < crossfade.lastOutgoingProgress - Self.scenePresentationProbeProgressTolerance {
-                crossfade.didOutgoingProgressRewind = true
-            }
-            crossfade.lastOutgoingProgress = outgoingProgress
-            crossfade.lastOutgoingOpacity = outgoingOpacity
-        }
-        scenePresentationLastCrossfade = crossfade
-    }
-    #endif
 
     func motionEligibility(
         scene: PlaybackScene,

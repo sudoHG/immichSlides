@@ -23,7 +23,7 @@ extension SlideShowViewModel {
             )
             if let cancelledTransition {
                 pendingPlaybackHistoryLedgerCommits[cancelledTransition.transaction.id] = nil
-                pendingSceneActionTimestamps[cancelledTransition.transaction.id] = nil
+                runtimeEvidenceRecorder.discardActionTimestamp(for: cancelledTransition.transaction.id)
             }
             executeScenePresentationEffects(effects)
             syncPlaybackReadbackFromEngine()

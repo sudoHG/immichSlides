@@ -124,18 +124,6 @@ class SlideShowViewModel: ObservableObject {
         let displayedAssetIds: Set<String>
     }
 
-    struct SmartFillStartupRuntimeMetrics {
-        let assetPoolSizeAtFirstPlan: Int
-        let eligibleCandidateCountAtFirstPlan: Int
-        let plannerAttemptCountAtFirstPlan: Int
-        let candidateWindowUsedAtFirstPlan: Int
-        let fallbackReasonTopList: String
-        let rejectedLayoutReasonTopList: String
-        let candidateRejectReasonTopList: String
-        let lookaheadExhausted: Bool
-        let fallbackRootCauseBucket: String
-    }
-
     @Published var assets: [Asset] = []
     // The current display position is only read back from the engine; views cannot change playback facts directly.
     @Published var currentIndex: Int = 0
@@ -181,7 +169,7 @@ class SlideShowViewModel: ObservableObject {
     var pendingSmartFillDisplayedAssetIdsAfterCommit: Set<String>?
     var pendingSmartFillCursorResumeAfterLoadMoreAssetCount: Int?
     var playbackDisplayMode: PlaybackDisplayMode = .smartFill
-    var pendingSceneActionTimestamps: [UUID: TimeInterval] = [:]
+    let runtimeEvidenceRecorder = PlaybackRuntimeEvidenceRecorder()
     var smartFillSurface: PlaybackSmartFillSurface?
     var smartFillProtectionSnapshot: PlaybackProtectionSnapshot = .empty
     var smartFillReplanFingerprint: String?
@@ -198,33 +186,6 @@ class SlideShowViewModel: ObservableObject {
     var scenePresentationEffectTasks: [UUID: Task<Void, Never>] = [:]
     var pendingAutomaticScenePlanGeneration: UUID?
     @Published var scenePresentationRevision = UUID()
-    var scenePresentationDecodedCount = 0
-    var scenePresentationReadyCount = 0
-    var scenePresentationHiddenDecodeExcludedFromHistory = false
-    var scenePresentationVisibleTickCommittedHistory = false
-    #if DEBUG
-    struct ScenePresentationProbeCrossfade {
-        let outgoingID: String
-        let incomingID: String
-        let firstOutgoingProgress: Double
-        var lastOutgoingProgress: Double
-        var lowestOutgoingProgress: Double
-        var highestOutgoingProgress: Double
-        /// Largest share of the screen both photos showed at once, the outgoing one drawn below the incoming one; a
-        /// switch without a blend never gets above zero.
-        var peakBlendOpacity: Double
-        var lastOutgoingOpacity: Double
-        var didOutgoingProgressRewind: Bool
-    }
-    /// Never reset, so tests can compare them before and after an action.
-    var scenePresentationLowCoverageFrameCount = 0
-    var scenePresentationCrossfadeFrameCount = 0
-    var scenePresentationLastCrossfade: ScenePresentationProbeCrossfade?
-    /// Same threshold as `SceneTransitionDiagnostic.minimumPhotoCoverage`: below half a photo the screen reads as empty.
-    static let scenePresentationProbeMinimumPhotoCoverage = 0.5
-    /// Same tolerance as `SceneTransitionDiagnostic` uses for motion progress.
-    static let scenePresentationProbeProgressTolerance = 0.000_1
-    #endif
     var smartFillMotionPreparedSlotPreloadTasks: [UUID: Task<Void, Never>] = [:]
     struct SmartFillMotionLookaheadPreparedPlan {
         let request: SmartFillPreparedPlanRequest
@@ -235,27 +196,7 @@ class SlideShowViewModel: ObservableObject {
     var smartFillCandidateSummaryBuildCountForTestingStorage: Int = 0
     var smartFillMainActorPlannerCallCountsForTesting: [SmartFillMainActorPlannerCallSite: Int] = [:]
     #endif
-    let smartFillStartupRuntimePhaseOrder = [
-        "playbackEntryRequested",
-        "assetPoolRequestStarted",
-        "assetPoolReady",
-        "firstScenePlanningStarted",
-        "firstScenePlanned",
-        "firstScenePublished",
-        "firstSlotReady",
-        "allVisibleSlotsReady"
-    ]
-    let smartFillPhotoLoadRuntimePhaseOrder = [
-        "cacheChecked",
-        "downloadRequestStarted",
-        "downloadCompleted",
-        "decodeCompleted",
-        "firstImageDisplayed"
-    ]
-    var smartFillStartupRuntimePhaseTimestamps: [String: TimeInterval] = [:]
-    var smartFillStartupRuntimeMetrics: SmartFillStartupRuntimeMetrics?
     #if DEBUG
-    var qaPlaybackSequenceRecorder: PlaybackSequenceDebugRecorder?
     var qaPlaybackSequenceEvidenceEnabledForTesting: Bool = false
     var qaPlaybackSequenceOSLogEmitterForTesting: ((String) -> Void)? = nil
     #endif
@@ -292,35 +233,6 @@ class SlideShowViewModel: ObservableObject {
         pendingCandidateCursorIndexAfterCommit = nil
         pendingSmartFillDisplayedAssetIdsAfterCommit = nil
         pendingSmartFillCursorResumeAfterLoadMoreAssetCount = nil
-    }
-    #endif
-    #if DEBUG
-    func currentSmartFillRuntimeQADebugSummary(
-        controlBarVisible: Bool,
-        exifOverlayVisible: Bool
-    ) -> String? {
-        guard let scene = safeCurrentScene else { return nil }
-        let displayedLedgerEntry = playbackSessionEngine.displayedSceneRecords
-            .reversed()
-            .first { $0.sceneId == scene.id }
-        guard
-            let runtimeSummary = scene.smartFillRuntimeQADebugSummary(
-                downloadManager: downloadManager,
-                controlBarVisible: controlBarVisible,
-                exifOverlayVisible: exifOverlayVisible,
-                publishReason: displayedLedgerEntry?.source.rawValue ?? "initial",
-                preparedHit: displayedLedgerEntry?.preparedHit ?? false
-            )
-        else { return nil }
-        let slotReadiness = smartFillRuntimeSummaryField("slotReadiness", in: runtimeSummary)
-        let startupSummaryParts = smartFillStartupRuntimeSummaryParts(
-            scene: scene,
-            slotReadiness: slotReadiness
-        )
-        guard !startupSummaryParts.isEmpty else {
-            return runtimeSummary
-        }
-        return ([runtimeSummary] + startupSummaryParts).joined(separator: ";")
     }
     #endif
     func scene(at index: Int) -> PlaybackScene? {
@@ -1099,9 +1011,7 @@ class SlideShowViewModel: ObservableObject {
     ) {
         guard isQAPlaybackSequenceEvidenceEnabled else { return }
 
-        ensureQAPlaybackSequenceRecorder()
-
-        let result = qaPlaybackSequenceRecorder?.record(
+        let result = runtimeEvidenceRecorder.recordPlaybackSequence(
             PlaybackSequenceDebugRecordInput(
                 sceneId: displayedScene.id,
                 displayedAssetId: displayedAssetId,
@@ -1111,7 +1021,8 @@ class SlideShowViewModel: ObservableObject {
                 soloOnly: isSoloOnlyPlaybackSource,
                 displayMode: playbackDisplayMode.rawValue,
                 sourceSummary: logName(for: source)
-            )
+            ),
+            writesFile: PlatformCompat.shouldRecordPlaybackSequenceForTesting
         )
         guard let result else { return }
 
@@ -1132,8 +1043,9 @@ class SlideShowViewModel: ObservableObject {
     func logQAPlaybackSequenceEventIfNeeded(_ event: PlaybackSequenceDebugEventInput) {
         guard isQAPlaybackSequenceEvidenceEnabled else { return }
 
-        ensureQAPlaybackSequenceRecorder()
-        let result = qaPlaybackSequenceRecorder?.recordEvent(event)
+        let result = runtimeEvidenceRecorder.recordPlaybackSequenceEvent(
+            event, writesFile: PlatformCompat.shouldRecordPlaybackSequenceForTesting
+        )
         guard let result else { return }
 
         if let qaPlaybackSequenceOSLogEmitterForTesting {
@@ -1149,14 +1061,6 @@ class SlideShowViewModel: ObservableObject {
         }
     }
 
-    private func ensureQAPlaybackSequenceRecorder() {
-        if qaPlaybackSequenceRecorder == nil {
-            qaPlaybackSequenceRecorder = PlaybackSequenceDebugRecorder(
-                isEnabled: true,
-                writesFile: PlatformCompat.shouldRecordPlaybackSequenceForTesting
-            )
-        }
-    }
     #endif
 
     // On re-entering the page, refresh the autoplay toggle and interval from local settings.
@@ -1195,7 +1099,7 @@ class SlideShowViewModel: ObservableObject {
         cancelSmartFillPreparedRingRefreshTask()
         pendingCandidateCursorIndexAfterCommit = nil
         pendingSmartFillDisplayedAssetIdsAfterCommit = nil
-        pendingSceneActionTimestamps = [:]
+        runtimeEvidenceRecorder.resetActionTimings()
         smartFillDisplayedAssetIds = displayedAssetIdsAfterRebuild
         candidateCursorIndex = cursorIndex(
             afterAdvancingFrom: anchorIndex,
