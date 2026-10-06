@@ -193,42 +193,55 @@ final class ScenePresentationContractUITests: XCTestCase {
         let driver = IOSDriver(app: app)
         driver.launchToPlayback(input: input)
         let evidence = Evidence()
+        let failedAssetID = "asset-a-1"
+        let failedMark = "A1"
+        let timeout = WaitTiming.sceneReadyTimeoutSeconds
         defer { _ = try? imageResponse(input: input, mode: "normal") }
-        driver.pause()
-        activatePlaybackControl(app: app, identifier: "slideshow.control.playPause.button")
-        driver.applyPlaybackSettings([.displayMode(isSinglePhoto: true), .showExif(false)])
-        _ = try imageResponse(input: input, mode: "http", assetID: "asset-a-1")
+        // The 30-second interval keeps autoplay from advancing before the history baseline is paused.
+        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: true), .showExif(false)])
+        _ = try imageResponse(input: input, mode: "http", assetID: failedAssetID)
         // A cold launch removes memory-cache hits while preserving the real saved playback settings.
         try driver.clearDiskCache(onCachePage: {})
         app.terminate()
-        _ = try imageResponse(input: input, mode: "http", assetID: "asset-a-1")
+        // Setting the mode again zeroes the counter, so it counts only the relaunched session.
+        _ = try imageResponse(input: input, mode: "http", assetID: failedAssetID)
         try relaunchStrictE2EApp(app)
-        let recovered = try captureRecoveryIdentity("singlePhoto-recovered", app: app, evidence: evidence) {
-            $0 != "A1"
-        }
+        // The first stable photo must be the replacement; a stable failed target fails at once.
+        let recovered = try recordRecoveryStep(
+            "singlePhoto-recovered", settledOn: driver.stableMark(timeout: timeout), app: app, evidence: evidence
+        ) { $0 != failedMark }
         let response = try imageResponse(input: input)
         XCTAssertGreaterThan(
             response["failures"] as? Int ?? 0, 0, "The fixture must actually deliver a failing image response")
         driver.pause()
         activateNext(prepareNextButton(app: app))
-        let next = try captureRecoveryIdentity("singlePhoto-next", app: app, evidence: evidence) { $0 != recovered }
+        let next = try recordRecoveryStep(
+            "singlePhoto-next", settledOn: driver.stableMark(excluding: recovered, timeout: timeout), app: app,
+            evidence: evidence
+        ) { $0 != recovered }
         activatePlaybackControl(app: app, identifier: "slideshow.control.previous.button")
-        let previous = try captureRecoveryIdentity("singlePhoto-previous", app: app, evidence: evidence) {
-            $0 == recovered
-        }
+        let previous = try recordRecoveryStep(
+            "singlePhoto-previous", settledOn: driver.stableMark(excluding: next, timeout: timeout), app: app,
+            evidence: evidence
+        ) { $0 == recovered }
         activateNext(prepareNextButton(app: app))
-        let redo = try captureRecoveryIdentity("singlePhoto-redo", app: app, evidence: evidence) { $0 == next }
+        let redo = try recordRecoveryStep(
+            "singlePhoto-redo", settledOn: driver.stableMark(excluding: previous, timeout: timeout), app: app,
+            evidence: evidence
+        ) { $0 == next }
+        // Playback is already paused; pause() only reveals the control bar before Play.
         driver.pause()
         activatePlaybackControl(app: app, identifier: "slideshow.control.playPause.button")
-        let continued = try captureRecoveryIdentity("singlePhoto-continued", app: app, evidence: evidence) {
-            $0 != redo
-        }
+        let continued = try recordRecoveryStep(
+            "singlePhoto-continued", settledOn: driver.stableMark(excluding: redo, timeout: timeout), app: app,
+            evidence: evidence
+        ) { $0 != redo }
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "schema": "image-failure-recovery-v1",
                 "flows": [
                     [
-                        "display_mode": "singlePhoto", "failure_mode": "http", "failed_asset_id": "asset-a-1",
+                        "display_mode": "singlePhoto", "failure_mode": "http", "failed_asset_id": failedAssetID,
                         "failed_response_count": response["failures"] ?? 0, "recovered": recovered, "next": next,
                         "previous": previous, "redo": redo, "continued": continued
                     ]
@@ -236,35 +249,23 @@ final class ScenePresentationContractUITests: XCTestCase {
             ], name: "image-failure-recovery.json")
     }
 
+    // A step passes only if the photo stableMark settled on is the expected one, so a wrong photo fails at once.
     @MainActor
-    private func captureRecoveryIdentity(
-        _ name: String, app: XCUIApplication, evidence: Evidence, accept: (String) -> Bool
+    private func recordRecoveryStep(
+        _ name: String, settledOn mark: String?, app: XCUIApplication, evidence: Evidence, accept: (String) -> Bool
     ) throws -> String {
-        let deadline = Date().addingTimeInterval(45)
-        var previous: String?
-        while Date() < deadline {
-            let capturedAt = Date()
-            let png = app.screenshot().pngRepresentation
-            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
-            if identity.status == .match, let mark = identity.mark, accept(mark) {
-                if mark == previous {
-                    try evidence.record(name, png: png, capturedAt: capturedAt, orientation: .notApplicable)
-                    return mark
-                }
-                previous = mark
-            } else {
-                previous = nil
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        guard let mark, accept(mark) else {
+            try evidence.reject(name, png: app.screenshot().pngRepresentation)
+            throw Failure("\(name) did not settle on the required public photo; stable photo: \(mark ?? "none")")
         }
-        try evidence.reject(name, png: app.screenshot().pngRepresentation)
-        throw Failure("\(name) did not render the required public photo identity before the deadline")
+        try evidence.capture(name, from: app) { $0.status == .match && $0.mark == mark }
+        return mark
     }
 
     @MainActor
     private func activatePlaybackControl(app: XCUIApplication, identifier: String) {
         let button = app.buttons[identifier]
-        XCTAssertTrue(button.waitForExistence(timeout: 8))
+        XCTAssertTrue(button.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         tap(button)
     }
 
@@ -274,7 +275,7 @@ final class ScenePresentationContractUITests: XCTestCase {
         let url = try XCTUnwrap(URL(string: input.serverURL + "/test/image-response"))
         var request = URLRequest(url: url)
         request.setValue(input.publicKey, forHTTPHeaderField: "x-api-key")
-        request.timeoutInterval = 15
+        request.timeoutInterval = UITestSupportWaitTiming.connectionTimeoutSeconds
         if let mode {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -291,7 +292,7 @@ final class ScenePresentationContractUITests: XCTestCase {
             semaphore.signal()
         }
         task.resume()
-        guard semaphore.wait(timeout: .now() + 15) == .success else {
+        guard semaphore.wait(timeout: .now() + UITestSupportWaitTiming.connectionTimeoutSeconds) == .success else {
             task.cancel()
             throw Failure("Fixture image response control timed out")
         }

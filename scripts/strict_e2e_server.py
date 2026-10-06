@@ -385,13 +385,12 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
             self._log_request_started(size=size, fixture_asset_id=asset["id"])
             with self.server.image_response_lock:
                 control = self.server.image_response
-                mode = control["mode"] if control["asset_id"] == asset["id"] and size == "fullsize" else "normal"
-                if mode != "normal":
+                should_fail = control["mode"] == "http" and control["asset_id"] == asset["id"] and size == "fullsize"
+                if should_fail:
                     control["failures"] += 1
-            if mode != "normal":
+            if should_fail:
                 self._send(
-                    HTTPStatus.SERVICE_UNAVAILABLE if mode == "http" else HTTPStatus.OK,
-                    b"controlled image failure", "image/png",
+                    HTTPStatus.SERVICE_UNAVAILABLE, b"controlled image failure", "image/png",
                     fixture_asset_id=asset["id"], size=size,
                 )
                 return
@@ -416,7 +415,7 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
                 return
             mode, asset_id = body.get("mode"), body.get("asset_id")
             known_ids = {asset["id"] for asset in self.server.fixture["assets"]}
-            if not isinstance(mode, str) or mode not in {"normal", "http", "decode"} or (
+            if not isinstance(mode, str) or mode not in {"normal", "http"} or (
                 mode != "normal" and (not isinstance(asset_id, str) or asset_id not in known_ids)
             ):
                 self._error(HTTPStatus.BAD_REQUEST, "Invalid image response control")

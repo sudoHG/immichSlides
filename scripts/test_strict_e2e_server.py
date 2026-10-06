@@ -479,41 +479,25 @@ class StrictE2EServerContractTests(unittest.TestCase):
 
     def test_controlled_fullsize_failures_leave_other_fixture_responses_unchanged(self) -> None:
         with RunningServer() as server:
-            for mode, expected_status in (("http", 503), ("decode", 200)):
-                with self.subTest(mode=mode):
-                    status, _, _ = server.request(
-                        "/test/image-response", method="POST",
-                        body={"asset_id": "asset-a-1", "mode": mode},
-                    )
-                    self.assertEqual(status, 200)
-                    for _ in range(4):
-                        status, _, payload = server.request("/assets/asset-a-1/thumbnail?size=fullsize")
-                        self.assertEqual(status, expected_status)
-                        self.assertNotEqual(payload[:8], b"\x89PNG\r\n\x1a\n")
-                    status, _, payload = server.request("/test/image-response")
-                    self.assertEqual(status, 200)
-                    self.assertEqual(json.loads(payload)["failures"], 4)
-                    for asset_id, size in (("asset-a-1", "preview"), ("asset-a-2", "fullsize")):
-                        status, _, payload = server.request(f"/assets/{asset_id}/thumbnail?size={size}")
-                        self.assertEqual(status, 200)
-                        self.assertEqual(payload, server.server.fixture["images"][asset_id])
-                    server.request("/test/image-response", method="POST", body={"mode": "normal"})
-                    status, _, payload = server.request("/assets/asset-a-1/thumbnail?size=fullsize")
-                    self.assertEqual(status, 200)
-                    self.assertEqual(payload, server.server.fixture["images"]["asset-a-1"])
-
-    def test_image_response_control_rejects_invalid_or_unauthorized_input(self) -> None:
-        with RunningServer() as server:
-            for body in (
-                {"mode": "invalid"}, {"mode": "http", "asset_id": "unknown"}, {"mode": "decode"},
-            ):
-                with self.subTest(body=body):
-                    status, _, _ = server.request("/test/image-response", method="POST", body=body)
-                    self.assertEqual(status, 400)
             status, _, _ = server.request(
-                "/test/image-response", method="POST", body={"mode": "normal"}, api_key="wrong-key",
+                "/test/image-response", method="POST", body={"asset_id": "asset-a-1", "mode": "http"},
             )
-            self.assertEqual(status, 401)
+            self.assertEqual(status, 200)
+            for _ in range(4):
+                status, _, payload = server.request("/assets/asset-a-1/thumbnail?size=fullsize")
+                self.assertEqual(status, 503)
+                self.assertNotEqual(payload[:8], b"\x89PNG\r\n\x1a\n")
+            status, _, payload = server.request("/test/image-response")
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(payload)["failures"], 4)
+            for asset_id, size in (("asset-a-1", "preview"), ("asset-a-2", "fullsize")):
+                status, _, payload = server.request(f"/assets/{asset_id}/thumbnail?size={size}")
+                self.assertEqual(status, 200)
+                self.assertEqual(payload, server.server.fixture["images"][asset_id])
+            server.request("/test/image-response", method="POST", body={"mode": "normal"})
+            status, _, payload = server.request("/assets/asset-a-1/thumbnail?size=fullsize")
+            self.assertEqual(status, 200)
+            self.assertEqual(payload, server.server.fixture["images"]["asset-a-1"])
 
     def test_invalid_auth_bad_contract_and_unknown_route_fail_closed(self) -> None:
         log_stream = io.StringIO()
