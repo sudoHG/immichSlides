@@ -269,16 +269,20 @@ diagnostic readback exposes only cached cursor/count values, not proposal or tas
 `pendingAutomaticScenePlanningRequest` transports the last executed automatic demand at delivery,
 independently of proposal computation lifetime. User-paused commands do not replace this copy or the
 reducer's outstanding request: if an automatic grace target exhausts retries while paused, a proposal
-arriving after Play can still satisfy the original photo's demand before grace expires. Resume itself
-only restores the wake-up; after grace expires, the original photo is no longer current or pending,
-so its completion is rejected. Matching cancellation and `resetScenePresentationRuntime()` clear
+arriving after Play can still satisfy the original photo's demand before grace expires. Once automatic
+presentation resumes, the reducer restores any suspended wake-up first, then re-emits the unchanged
+outstanding demand if the same completion-admission rule still applies: its photo is current or pending,
+and presentation is stable or the pending target has failed. Reusing the request preserves the facade's
+last executed demand. Restoring the wake-up before planning lets navigation replace that wake-up in its
+existing order. After grace expires, the original photo is no longer current or pending, so neither resume
+nor completion can retry that demand. Matching cancellation and `resetScenePresentationRuntime()` clear
 it; transition acceptance does not. Engine reset/invalidation (including display-mode rebuild) resets
 reducer demand but can leave the facade field stale; the reducer rejects that old request. A completion
-dropped while user-paused is not buffered or reissued on resume: a consumed stable wake-up can leave
-autoplay waiting indefinitely, the known behavior tracked in [#65](https://github.com/sudoHG/immichSlides/issues/65). Candidate
-progression still advances at transition acceptance; reducer and retained history still advance at
-the renderer visible tick. `ScenePresentationEffectExecutor` owns image-task storage and the barrier;
-the facade delegates engine access and retained-history coordination to `PlaybackSessionOwner`.
+dropped while user-paused leaves its proposal installed; resume can consume it through the reissued demand
+without manufacturing a deadline or catching up paused time. User pause still freezes the frame and rejects
+automatic navigation until Play. Candidate progression still advances at transition acceptance; reducer and
+retained history still advance at the renderer visible tick. `ScenePresentationEffectExecutor` owns image-task storage
+and the barrier; the facade delegates engine access and retained-history coordination to `PlaybackSessionOwner`.
 
 ### Session ownership and commit boundaries
 

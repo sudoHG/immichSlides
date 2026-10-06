@@ -220,10 +220,9 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.smartFillCandidateCursorIndexForTesting == 1)
     }
 
-    @Test
-    func
-        `SmartFill autoplay skips the tick on a prepared miss instead of falling back to the MainActor planner synchronously`()
-        async
+    @Test(arguments: [0.1, 3600.0])
+    func `SmartFill autoplay resumes when its prepared miss completes during pause`(pauseDuration: TimeInterval)
+        async throws
     {
         let vm = makeSmartFillViewModel()
         vm.isAutoPlay = true
@@ -232,7 +231,9 @@ extension SlideShowViewModelNavigationSemanticsTests {
         vm.resetSmartFillCandidateSummaryBuildCountForTesting()
         let originalToken = vm.targetTransitionToken
 
-        _ = vm.fireScheduledScenePresentationWakeUpForTesting()
+        let missedDeadline = try #require(vm.fireScheduledScenePresentationWakeUpForTesting())
+        vm.scenePresentationTimestampProviderForTesting = { missedDeadline }
+        let outstandingDemand = try #require(vm.pendingAutomaticScenePlanningRequest)
 
         #expect(vm.currentIndex == 0)
         #expect(vm.targetIndex == 0)
@@ -242,6 +243,7 @@ extension SlideShowViewModelNavigationSemanticsTests {
 
         // A fresh proposal still installs if the user pauses while the prepared miss is computing.
         vm.toggleAutoPlayFromUserInteraction()
+        let pausedLayers = vm.sceneRenderSnapshot.layers
         let didDeliverWhilePaused = await waitUntilForTesting {
             vm.preparedSmartFillNextAssetIdsForTesting != nil
         }
@@ -250,6 +252,22 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.currentIndex == 0)
         #expect(vm.targetIndex == 0)
         #expect(vm.targetTransitionToken == originalToken)
+        #expect(vm.pendingAutomaticScenePlanningRequest == outstandingDemand)
+
+        vm.scenePresentationTimestampProviderForTesting = { missedDeadline + pauseDuration }
+        #expect(vm.sceneRenderSnapshot.layers == pausedLayers)
+        vm.toggleAutoPlayFromUserInteraction()
+
+        // Play must use the installed proposal; no extra wake is manufactured to make playback continue.
+        let didAdvanceAfterPlay = await waitUntilForTesting {
+            vm.safeCurrentScene?.primaryAssetId == "asset-1"
+        }
+        #expect(didAdvanceAfterPlay)
+        #expect(vm.currentIndex == 1)
+        #expect(vm.targetIndex == 1)
+        #expect(vm.targetTransitionToken != originalToken)
+        #expect(vm.pendingAutomaticScenePlanningRequest == outstandingDemand)
+        #expect(vm.smartFillCandidateSummaryBuildCountForTesting == 0)
     }
 
     @Test
