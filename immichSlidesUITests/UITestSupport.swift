@@ -314,10 +314,16 @@ protocol PlaybackDriver {
 
 extension PlaybackDriver {
     // Returns only after two consecutive frames show the same MATCH; previous skips the old screen left over
-    // from before the switch. checkEachPoll runs before every screenshot and ends the wait by throwing.
+    // from before the switch.
+    func stableMark(excluding previous: String? = nil, timeout: TimeInterval = Timing.stableIdentityTimeout) -> String?
+    {
+        stableMark(excluding: previous, timeout: timeout, checkEachPoll: {})
+    }
+
+    // checkEachPoll runs before every screenshot and ends the wait by throwing.
     func stableMark(
         excluding previous: String? = nil, timeout: TimeInterval = Timing.stableIdentityTimeout,
-        checkEachPoll: () throws -> Void = {}
+        checkEachPoll: () throws -> Void
     ) rethrows -> String? {
         let deadline = Date().addingTimeInterval(timeout)
         var last: String?
