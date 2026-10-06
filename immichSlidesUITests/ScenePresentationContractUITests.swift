@@ -224,6 +224,11 @@ final class ScenePresentationContractUITests: XCTestCase {
         let response = try imageResponse(input: input)
         XCTAssertGreaterThan(
             response["failures"] as? Int ?? 0, 0, "The fixture must actually deliver a failing image response")
+        // The control bar auto-hides about 8 s into playback, close to this point. A pause during that hide loses
+        // its button, so wait for the hide and let pause() reveal the bar again.
+        _ = Wait.until(timeout: UITestSupportWaitTiming.screenTransitionTimeoutSeconds) {
+            !app.buttons["slideshow.control.settings.button"].exists
+        }
         driver.pause()
         activateNext(prepareNextButton(app: app))
         let next = try recordRecoveryStep(
