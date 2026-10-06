@@ -106,7 +106,6 @@ class SlideShowViewModel: ObservableObject {
     private static let autoplayRenderWindowRadius: Int = 1
     private static let manualRenderWindowRadius: Int = 2
     static let refillRemainingFractionDivisor: Int = 5
-    private static let surfaceActivationDelayNanoseconds: UInt64 = 250_000_000
     private static let diagnosticHistoryLookbackCount: Int = 8
 
     struct SmartFillScenePlan {
@@ -171,8 +170,7 @@ class SlideShowViewModel: ObservableObject {
     let runtimeEvidenceRecorder = PlaybackRuntimeEvidenceRecorder()
     var smartFillSurface: PlaybackSmartFillSurface? { candidateProgression.surface }
     var smartFillProtectionSnapshot: PlaybackProtectionSnapshot { candidateProgression.protectionSnapshot }
-    var smartFillSurfaceActivationTask: Task<Void, Never>?
-    var scenePresentationPrerenderBarrier = ScenePresentationPrerenderBarrier()
+    let scenePresentationEffectExecutor = ScenePresentationEffectExecutor()
     private(set) lazy var scenePresentationWakeUpScheduler = ScenePresentationWakeUpScheduler(
         // If the facade is gone, delivery discards this fallback clock value.
         now: { [weak self] in self?.scenePresentationTimestamp() ?? ProcessInfo.processInfo.systemUptime },
@@ -183,10 +181,8 @@ class SlideShowViewModel: ObservableObject {
             )
         }
     )
-    var scenePresentationEffectTasks: [UUID: Task<Void, Never>] = [:]
     var pendingAutomaticScenePlanningRequest: ScenePresentationPlanningRequest?
     @Published var scenePresentationRevision = UUID()
-    var smartFillMotionPreparedSlotPreloadTasks: [UUID: Task<Void, Never>] = [:]
     #if DEBUG
     var smartFillCandidateSummaryBuildCountForTestingStorage: Int = 0
     var smartFillMainActorPlannerCallCountsForTesting: [SmartFillMainActorPlannerCallSite: Int] = [:]
@@ -212,11 +208,13 @@ class SlideShowViewModel: ObservableObject {
     }
 
     var activeScenePresentationBarrierForTesting: ScenePresentationLayerIdentity? {
-        scenePresentationPrerenderBarrier.activeScene
+        scenePresentationEffectExecutor.activeBarrierForTesting
     }
 
     /// Counts prerender barrier attempts, so tests can tell a kept barrier from a restarted one.
-    var scenePresentationBarrierAttemptCountForTesting = 0
+    var scenePresentationBarrierAttemptCountForTesting: Int {
+        scenePresentationEffectExecutor.barrierAttemptCountForTesting
+    }
 
     var pendingSmartFillCursorResumeAfterLoadMoreAssetCountForTesting: Int? {
         candidateProgression.pendingResumeAssetCountForTesting
@@ -259,18 +257,14 @@ class SlideShowViewModel: ObservableObject {
     func isScenePresentationBarrierComplete(
         for layer: PlaybackSessionEngine.SceneRenderLayer
     ) -> Bool {
-        scenePresentationPrerenderBarrier.activeScene == scenePresentationLayerIdentity(for: layer)
-            && scenePresentationPrerenderBarrier.isPresentationReady
+        scenePresentationEffectExecutor.isBarrierComplete(for: scenePresentationLayerIdentity(for: layer))
     }
 
     /// Pass only the active barrier's attempt to its renderer; other layers' callbacks cannot advance this barrier.
     func scenePresentationRendererAttemptID(
         for layer: PlaybackSessionEngine.SceneRenderLayer
     ) -> UUID? {
-        guard scenePresentationPrerenderBarrier.activeScene == scenePresentationLayerIdentity(for: layer) else {
-            return nil
-        }
-        return scenePresentationPrerenderBarrier.activeRendererAttemptID
+        scenePresentationEffectExecutor.rendererAttemptID(for: scenePresentationLayerIdentity(for: layer))
     }
     var isSmartFillPresentationModeActive: Bool {
         playbackDisplayMode == .smartFill && !PlatformCompat.shouldForceSinglePhotoPlaybackForTesting
@@ -519,9 +513,6 @@ class SlideShowViewModel: ObservableObject {
     #if DEBUG
     var smartFillMotionPreparedSlotPreloadHookForTesting: (([String]) -> Void)? = nil
     #endif
-    // Handle for the first preload task, to prevent duplicate loads.
-    var firstPreloadTask: Task<Void, Never>? = nil
-
     var playbackSourceGeneration: Int { poolLoader.sourceGeneration }
 
     @Published var didFirstPreload: Bool = false
@@ -1336,22 +1327,11 @@ class SlideShowViewModel: ObservableObject {
             return
         }
 
-        smartFillSurfaceActivationTask?.cancel()
-        smartFillSurfaceActivationTask = Task { @MainActor in
-            // Surface changes often come with safe area / control bar animations; delay once to avoid repeated
-            // recalculation in a short time.
-            try? await Task.sleep(nanoseconds: Self.surfaceActivationDelayNanoseconds)
-            guard !Task.isCancelled else { return }
+        scenePresentationEffectExecutor.scheduleSurfaceActivation {
             if self.rebuildInitialSmartFillSceneIfPossible(invalidationReason: .poolReloaded) {
-                let presentationState = self.playbackSessionEngine.scenePresentationState
-                if let generation = (presentationState.pendingTarget ?? presentationState.currentTarget)?.identity
-                    .generation,
-                    let effectTask = self.scenePresentationEffectTasks[generation]
-                {
-                    await effectTask.value
-                }
+                return self.currentSceneDownloadCompletion
             }
-            self.smartFillSurfaceActivationTask = nil
+            return nil
         }
     }
 
@@ -1570,8 +1550,7 @@ extension SlideShowViewModel {
         clearVisionFaceAuditState()
         #endif
         didFirstPreload = false
-        firstPreloadTask?.cancel()
-        firstPreloadTask = nil
+        scenePresentationEffectExecutor.cancelStartup()
     }
 
     private var playbackPoolSessionContext: PlaybackPoolLoader.SessionContext {
@@ -1664,8 +1643,7 @@ extension SlideShowViewModel {
         _ newAssets: [Asset],
         invalidationReason: PlaybackSessionInvalidationReason
     ) {
-        smartFillSurfaceActivationTask?.cancel()
-        smartFillSurfaceActivationTask = nil
+        scenePresentationEffectExecutor.cancelSurfaceActivation()
         cancelSmartFillPreparedRingRefreshTask()
         resetScenePresentationRuntime()
         poolLoader.replaceAssets(newAssets, update: applyPlaybackPoolUpdate)
@@ -1694,12 +1672,8 @@ extension SlideShowViewModel {
 
     private func resetScenePresentationRuntime() {
         scenePresentationWakeUpScheduler.reset()
-        scenePresentationEffectTasks.values.forEach { $0.cancel() }
-        scenePresentationEffectTasks = [:]
+        scenePresentationEffectExecutor.resetPresentation()
         pendingAutomaticScenePlanningRequest = nil
-        scenePresentationPrerenderBarrier = ScenePresentationPrerenderBarrier()
-        smartFillMotionPreparedSlotPreloadTasks.values.forEach { $0.cancel() }
-        smartFillMotionPreparedSlotPreloadTasks = [:]
         candidateProgression.clearLookaheadProposal()
         runtimeEvidenceRecorder.resetScenePresentation()
         publishScenePresentationChange()

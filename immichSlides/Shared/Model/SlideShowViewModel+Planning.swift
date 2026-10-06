@@ -228,20 +228,8 @@ extension SlideShowViewModel {
         }
         #endif
 
-        let taskId = UUID()
-        smartFillMotionPreparedSlotPreloadTasks[taskId] = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.smartFillMotionPreparedSlotPreloadTasks[taskId] = nil
-            }
-            await withTaskGroup(of: Void.self) { group in
-                for assetId in assetIds {
-                    group.addTask { @MainActor in
-                        guard !Task.isCancelled else { return }
-                        await self.downloadManager.loadPhoto(assetId: assetId, size: .fullsize, priority: .high)
-                    }
-                }
-            }
+        scenePresentationEffectExecutor.preloadPreparedSlots(assetIDs: assetIds) { [weak self] assetID in
+            await self?.downloadManager.loadPhoto(assetId: assetID, size: .fullsize, priority: .high)
         }
     }
 
