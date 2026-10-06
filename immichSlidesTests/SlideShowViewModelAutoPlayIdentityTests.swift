@@ -4,6 +4,7 @@
 //
 //  Asserts on a virtual clock that auto play switches identity, and that a foreground/background pause does
 //  not catch up on missed advances.
+//  Also exercises the real wake-up scheduler with a controllable sleeper.
 //
 
 import Foundation
@@ -29,7 +30,7 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         var deliveryTimes: [TimeInterval] = []
         let scheduler = ScenePresentationWakeUpScheduler(
             now: { clock.now },
-            sleep: { await sleeper.sleep(nanoseconds: $0) },
+            sleepForTesting: { await sleeper.sleep(nanoseconds: $0) },
             deliver: { event, timestamp in
                 events.append(event)
                 deliveryTimes.append(timestamp)
@@ -41,14 +42,14 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         }
         let generation = UUID()
         // An exactly representable sub-nanosecond fraction must round up to one nanosecond.
-        let fraction = 3.0 / 4_294_967_296.0
+        let fraction = 1.0 / 4_294_967_296.0
         let originalDeadline = 1 + fraction
         var expectedDeadline = originalDeadline
         var expectedDelays: [UInt64] = [1]
         scheduler.schedule(generation: generation, deadline: originalDeadline)
         scheduler.schedule(generation: generation, deadline: originalDeadline)
         clock.now = 2
-        try await waitForWakeUp { sleeper.delays.count == 1 }
+        try #require(await waitUntil(pollInterval: .milliseconds(1)) { sleeper.delays.count == 1 })
         scheduler.cancel(generation: UUID())
 
         switch change {
@@ -70,25 +71,20 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         }
 
         if expectedDelays.count == 2 {
-            try await waitForWakeUp { sleeper.delays.count == 2 }
+            try #require(await waitUntil(pollInterval: .milliseconds(1)) { sleeper.delays.count == 2 })
             sleeper.finish(0)
-            try await waitForWakeUp { sleeper.completed.contains(0) }
+            try #require(await waitUntil(pollInterval: .milliseconds(1)) { sleeper.completed.contains(0) })
             #expect(events.isEmpty)
         }
         clock.now = 42.5
         sleeper.finish(expectedDelays.count - 1)
-        try await waitForWakeUp { sleeper.completed.count == expectedDelays.count && events.count == 1 }
+        try #require(
+            await waitUntil(pollInterval: .milliseconds(1)) {
+                sleeper.completed.count == expectedDelays.count && events.count == 1
+            })
         #expect(sleeper.delays == expectedDelays)
         #expect(events == [.wakeUp(generation: generation, deadline: expectedDeadline)])
         #expect(deliveryTimes == [42.5])
-    }
-
-    private func waitForWakeUp(_ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(5)
-        while !condition(), ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(1))
-        }
-        try #require(condition())
     }
 
     @Test

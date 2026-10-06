@@ -174,6 +174,7 @@ class SlideShowViewModel: ObservableObject {
     var smartFillSurfaceActivationTask: Task<Void, Never>?
     var scenePresentationPrerenderBarrier = ScenePresentationPrerenderBarrier()
     private(set) lazy var scenePresentationWakeUpScheduler = ScenePresentationWakeUpScheduler(
+        // If the facade is gone, delivery discards this fallback clock value.
         now: { [weak self] in self?.scenePresentationTimestamp() ?? ProcessInfo.processInfo.systemUptime },
         deliver: { [weak self] event, timestamp in
             guard let self else { return }

@@ -104,7 +104,7 @@ The co-located private `ScenePresentationAttemptLedger` registers readiness and 
 
 ### Data flow: "play the next scene"
 
-1. **Deadline.** When a scene becomes stable, the reducer emits `scheduleWakeUp`. `SlideShowViewModel.executeScenePresentationEffects` delegates to `ScenePresentationWakeUpScheduler`, which sleeps until the deadline and returns `.wakeUp` with the current clock time. The facade synchronously sends it to the reducer, which answers with a `.plan` effect.
+1. **Deadline.** When a scene becomes stable, the reducer emits `scheduleWakeUp`. `SlideShowViewModel.executeScenePresentationEffects` delegates to `ScenePresentationWakeUpScheduler`, which sleeps until the deadline and delivers `.wakeUp` with the current clock time through the facade's callback. The facade synchronously reduces it, producing a `.plan` effect.
 2. **Choose the scene.** For `.plan`, or for a manual `requestNextScene()`, the view model does one of these:
    - replays the redo entry from `PlaybackHistoryLedger`
    - consumes the prepared next scene from the engine's `PlaybackPreparedSceneRing`

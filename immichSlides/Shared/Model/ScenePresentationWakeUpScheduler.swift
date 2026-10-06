@@ -17,11 +17,11 @@ final class ScenePresentationWakeUpScheduler {
 
     init(
         now: @escaping @MainActor () -> TimeInterval,
-        sleep: @escaping @MainActor (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
+        sleepForTesting: @escaping @MainActor (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
         deliver: @escaping @MainActor (PlaybackSessionEngine.ScenePresentationEvent, TimeInterval) -> Void
     ) {
         self.now = now
-        self.sleep = sleep
+        self.sleep = sleepForTesting
         self.deliver = deliver
     }
 
