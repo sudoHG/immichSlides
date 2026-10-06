@@ -65,6 +65,7 @@ DEBUG_ONLY_MARKERS = (
     "indexChangePhotoLoadHookForTesting",
     "playbackManifestTimestampProviderForTesting",
     "scenePresentationTimestampProviderForTesting",
+    "surfaceActivationSleepForTesting",
     "scheduleWithoutSleepingForTesting",
     "fireScheduledWakeUpForTesting",
     "fireScheduledScenePresentationWakeUpForTesting",
