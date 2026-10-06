@@ -194,7 +194,6 @@ final class ScenePresentationContractUITests: XCTestCase {
         driver.launchToPlayback(input: input)
         let evidence = Evidence()
         let failedAssetID = "asset-a-1"
-        let failedMark = "A1"
         // Only A1 carries this camera model in fixture A.
         let failedExifModel = "Fixture 1"
         let timeout = WaitTiming.sceneReadyTimeoutSeconds
@@ -208,16 +207,20 @@ final class ScenePresentationContractUITests: XCTestCase {
         // Setting the mode again zeroes the counter, so it counts only the relaunched session.
         _ = try imageResponse(input: input, mode: "http", assetID: failedAssetID)
         try relaunchStrictE2EApp(app)
-        // The first stable photo must be the replacement; a stable failed target fails at once.
-        let settled = driver.stableMark(timeout: timeout)
         // In portrait the classifier reads A1's letterboxed frame as A2, so its visible EXIF caption identifies it.
-        if Wait.until(timeout: Timing.exifSettleTimeout, { driver.visibleOverlayText().contains(failedExifModel) }) {
+        func failIfFailedTargetCaptionIsShown(within captionTimeout: TimeInterval = 0) throws {
+            guard Wait.until(timeout: captionTimeout, { driver.visibleOverlayText().contains(failedExifModel) })
+            else { return }
             try evidence.reject("singlePhoto-recovered", png: app.screenshot().pngRepresentation)
             throw Failure("singlePhoto-recovered shows the failed target's EXIF caption \(failedExifModel)")
         }
+        // The caption fails the wait for the first stable photo and the caption delay after it.
+        let settled = try driver.stableMark(timeout: timeout) { try failIfFailedTargetCaptionIsShown() }
+        try failIfFailedTargetCaptionIsShown(within: Timing.exifSettleTimeout)
+        // Any recognized photo: the caption checks above, not the pixel mark, rule out the failed target.
         let recovered = try recordRecoveryStep(
             "singlePhoto-recovered", settledOn: settled, app: app, evidence: evidence
-        ) { $0 != failedMark }
+        ) { _ in true }
         let response = try imageResponse(input: input)
         XCTAssertGreaterThan(
             response["failures"] as? Int ?? 0, 0, "The fixture must actually deliver a failing image response")
