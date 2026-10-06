@@ -25,7 +25,6 @@ class SlideShowViewModel: ObservableObject {
     private static let maximumPlaybackPoolAssetCount: Int = 200
     private static let autoplayRenderWindowRadius: Int = 1
     private static let manualRenderWindowRadius: Int = 2
-    static let refillRemainingFractionDivisor: Int = 5
     private static let diagnosticHistoryLookbackCount: Int = 8
 
     struct SmartFillScenePlan {
@@ -64,11 +63,11 @@ class SlideShowViewModel: ObservableObject {
     // The facade and loader share this file so no external caller can apply raw projection updates.
     private let poolLoader: PlaybackPoolLoader
 
-    struct PlaybackLoadIdentity {
+    private struct PlaybackLoadIdentity {
         fileprivate let value: PlaybackPoolLoader.InitialLoadIdentity
     }
 
-    var appliedInitialLoadIdentity: PlaybackLoadIdentity? {
+    private var appliedInitialLoadIdentity: PlaybackLoadIdentity? {
         poolLoader.appliedInitialLoadIdentity.map { PlaybackLoadIdentity(value: $0) }
     }
 
@@ -664,7 +663,7 @@ class SlideShowViewModel: ObservableObject {
         candidateProgression.adjustAfterRemovingPrefix(removeCount, remainingAssets: assets)
     }
 
-    func adjustSmartFillCursorAfterAppendingLoadMore(oldCount: Int, appendedCount: Int) {
+    private func adjustSmartFillCursorAfterAppendingLoadMore(oldCount: Int, appendedCount: Int) {
         guard isSmartFillPlanningEnabled, isSoloOnlyPlaybackSource else { return }
         switch candidateProgression.resumeAfterAppendingLoadMore(
             oldCount: oldCount, appendedCount: appendedCount, assetCount: assets.count
@@ -681,7 +680,7 @@ class SlideShowViewModel: ObservableObject {
         }
     }
 
-    func clearPendingSmartFillCursorResumeAfterLoadMore(reason: String) {
+    private func clearPendingSmartFillCursorResumeAfterLoadMore(reason: String) {
         guard candidateProgression.clearPendingLoadMoreResume() else { return }
         logPendingSmartFillCursorResumeCleared(reason: reason)
     }
@@ -760,7 +759,7 @@ class SlideShowViewModel: ObservableObject {
         return PlaybackScene.assetIds(in: scenes)
     }
 
-    func assetIdLogValue(at index: Int) -> String {
+    private func assetIdLogValue(at index: Int) -> String {
         assetId(at: index) ?? "nil"
     }
 
@@ -801,7 +800,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     #if DEBUG
-    var isQAPlaybackSequenceEvidenceEnabled: Bool {
+    private var isQAPlaybackSequenceEvidenceEnabled: Bool {
         qaPlaybackSequenceEvidenceEnabledForTesting
             || PlatformCompat.shouldRecordPlaybackSequenceForTesting
     }
@@ -979,7 +978,7 @@ class SlideShowViewModel: ObservableObject {
         )
     }
 
-    func recordPreloadWindowLifecycleContextsForDiagnostics(
+    private func recordPreloadWindowLifecycleContextsForDiagnostics(
         assets: [Asset],
         currentIndex: Int,
         preloadCount: Int,
@@ -1011,6 +1010,16 @@ class SlideShowViewModel: ObservableObject {
         }
     }
     #endif
+
+    private func loadIndexChangePhoto(assetId: String, size: ThumbnailSize) async {
+        #if DEBUG
+        if let indexChangePhotoLoadHookForTesting {
+            await indexChangePhotoLoadHookForTesting(assetId, size)
+            return
+        }
+        #endif
+        await downloadManager.loadPhoto(assetId: assetId, size: size, priority: .high)
+    }
 
     func loadSceneAssetsForTransition(
         _ scene: PlaybackScene,
@@ -1173,7 +1182,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     @discardableResult
-    func rebuildInitialSmartFillSceneIfPossible(
+    private func rebuildInitialSmartFillSceneIfPossible(
         invalidationReason: PlaybackSessionInvalidationReason
     ) -> Bool {
         guard
@@ -1354,7 +1363,7 @@ class SlideShowViewModel: ObservableObject {
     #endif
 
     // Clear the message after a successful recovery, so old error text does not linger.
-    func clearAutoPlayRecoveryMessage() {
+    private func clearAutoPlayRecoveryMessage() {
         autoPlayRecoveryMessage = nil
     }
 
@@ -1381,7 +1390,7 @@ class SlideShowViewModel: ObservableObject {
         PlaybackPoolLoader.logName(for: source)
     }
 
-    func logSummary(for selection: FilterSelection) -> String {
+    private func logSummary(for selection: FilterSelection) -> String {
         PlaybackPoolLoader.logSummary(for: selection)
     }
 }
@@ -1400,6 +1409,23 @@ private extension MotionRenderRole {
 }
 
 extension SlideShowViewModel {
+    var currentPlaybackMode: DefaultPlaybackMode {
+        switch source {
+        case .random:
+            return .random
+        case .filtered:
+            return .filtered
+        }
+    }
+
+    // The debug probe only checks the photo on screen, and only in soloOnly; random playback does not show Vision n=x.
+
+    #if DEBUG
+    var shouldRunDebugVisionFaceAudit: Bool {
+        isSoloOnlyPlaybackSource
+    }
+    #endif
+
     // Compare normalized filter snapshots; a different order is not a change. true means the filter pool must be
     // rebuilt.
 
@@ -1443,7 +1469,7 @@ extension SlideShowViewModel {
             playbackSessionId: identity.playbackSessionId, sceneId: identity.sceneId)
     }
 
-    func isCurrentPlaybackLoad(_ identity: PlaybackLoadIdentity) -> Bool {
+    private func isCurrentPlaybackLoad(_ identity: PlaybackLoadIdentity) -> Bool {
         poolLoader.isCurrentInitialLoad(identity.value, context: playbackPoolSessionContext)
     }
 

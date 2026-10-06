@@ -5,22 +5,7 @@ import CoreGraphics
 import OSLog
 
 extension SlideShowViewModel {
-    var currentPlaybackMode: DefaultPlaybackMode {
-        switch source {
-        case .random:
-            return .random
-        case .filtered:
-            return .filtered
-        }
-    }
-
-    // The debug probe only checks the photo on screen, and only in soloOnly; random playback does not show Vision n=x.
-
-    #if DEBUG
-    var shouldRunDebugVisionFaceAudit: Bool {
-        isSoloOnlyPlaybackSource
-    }
-    #endif
+    private static let refillRemainingFractionDivisor: Int = 5
 
     // Pool refill rules gathered into a static method that unit tests can call.
 
@@ -41,16 +26,6 @@ extension SlideShowViewModel {
         // Normal mode still refills in the last 20%.
         let defaultTriggerIndex = assetCount - (assetCount / refillRemainingFractionDivisor)
         return newIndex >= defaultTriggerIndex
-    }
-
-    func loadIndexChangePhoto(assetId: String, size: ThumbnailSize) async {
-        #if DEBUG
-        if let indexChangePhotoLoadHookForTesting {
-            await indexChangePhotoLoadHookForTesting(assetId, size)
-            return
-        }
-        #endif
-        await downloadManager.loadPhoto(assetId: assetId, size: size, priority: .high)
     }
 
     func sceneUsesSmartFillSlotReadiness(_ scene: PlaybackScene) -> Bool {
