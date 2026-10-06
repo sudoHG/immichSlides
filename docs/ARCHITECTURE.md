@@ -252,7 +252,8 @@ reducer demand but can leave the facade field stale; the reducer rejects that ol
 dropped while user-paused is not buffered or reissued on resume: a consumed stable wake-up can leave
 autoplay waiting indefinitely, a pre-existing pause/resume gap preserved by this refactor. Candidate
 progression still advances at transition acceptance; reducer and retained history still advance at
-the renderer visible tick. The executor, image-task storage, barrier and session owner remain in the facade.
+the renderer visible tick. `ScenePresentationEffectExecutor` owns image-task storage and the barrier;
+the session owner remains in the facade.
 
 ## 4. Concurrency and state rules
 
@@ -260,7 +261,7 @@ the renderer visible tick. The executor, image-task storage, barrier and session
 - **Planning runs detached.** `PlaybackCandidateProgression` captures an immutable `SmartFillPreparedPlanRequest` on the main actor, then runs `SmartFillPreparedPlanBuilder.makeResult` in `Task.detached(priority: .utility)` for both refresh and lookahead. The collaborator owns these computation tasks. Delivery checks request/result identity, the ordered pool, source generation, surface, layout policy, protection and display-mode eligibility; ring transfer also checks the current candidate cursor. Stale results never install a proposal or satisfy navigation demand.
 - **Generation guards.** Every async result carries the identity it was started for, and stale results are ignored instead of written back:
   - switching the playback source increments the loader's generation exactly once; the facade exposes `playbackSourceGeneration` as a read-only projection for the unchanged SmartFill seed and freshness checks, while the loader validates initial and refill identities before applying results
-  - scene presentation targets carry a `ScenePresentationIdentity` (generation + scene id); effect tasks are stored per generation in `scenePresentationEffectTasks`
+  - scene presentation targets carry a `ScenePresentationIdentity` (generation + scene id); effect tasks are stored per generation in the executor's private `effectTasks`
   - the reducer rejects stale wake-ups and `loadMore` requests
 - **Load-more loading ownership.** `PlaybackPoolLoader` records a separate request ID whenever a random or filtered refill sets `isLoadingMore`. Only that request or a source reset clears the flag: the facade's operation-scoped defer asks the loader to finish on every exit (success, failure, stale result, cancellation), and a source reset clears both the flag and the owner ID. Success and current failures also retain their existing earlier loading publication. This cleanup ID does not participate in result validation: existing source-generation and session checks still decide which assets can be appended, and scene advances within the session remain valid.
 - **Cancellation.**
