@@ -1,5 +1,11 @@
 import Foundation
 
+private extension PlaybackSessionEngine.TargetAttemptRecord {
+    func matches(_ identity: PlaybackSessionEngine.ScenePresentationIdentity) -> Bool {
+        generation == identity.generation && privateIdentifier == identity.privateIdentifier
+    }
+}
+
 extension PlaybackSessionEngine {
     private enum ScenePresentationWakeUpPurpose: Equatable, Sendable {
         case stableDeadline
@@ -651,9 +657,8 @@ extension PlaybackSessionEngine {
             at time: TimeInterval
         ) {
             pendingTarget = target
-            attemptLedger.setReadiness(readiness, for: target.identity)
             installHiddenLayerIfNeeded(target: target, at: time)
-            attemptLedger.appendAttempt(
+            attemptLedger.registerAttempt(
                 identity: target.identity,
                 source: source,
                 readiness: readiness,
@@ -1052,10 +1057,10 @@ extension PlaybackSessionEngine {
             attemptLedger.recordFailure(identity: identity)
             guard let pendingTarget else { return [] }
 
-            let failedAttemptCount = attemptLedger.failedAttemptCount(for: identity)
+            let failedOutcomeCount = attemptLedger.failedOutcomeCount(for: identity)
             let source = attemptLedger.latestSource(for: identity) ?? .automatic
             let request = effectRequest(for: pendingTarget, source: source)
-            if failedAttemptCount <= SceneLifecycleContract.retryLimit {
+            if failedOutcomeCount <= SceneLifecycleContract.retryLimit {
                 let nextAttempt = attemptLedger.beginPendingAttempt(identity: identity, source: source, at: time)
                 return [.retry(request, attemptNumber: nextAttempt)]
             }
@@ -1380,7 +1385,18 @@ extension PlaybackSessionEngine {
         }
 
         @discardableResult
-        mutating func appendAttempt(
+        mutating func registerAttempt(
+            identity: ScenePresentationIdentity,
+            source: ScenePresentationRequestSource,
+            readiness: ScenePresentationTargetReadiness,
+            at time: TimeInterval
+        ) -> Int {
+            let attemptNumber = appendAttempt(identity: identity, source: source, readiness: readiness, at: time)
+            self.readiness[identity] = readiness
+            return attemptNumber
+        }
+
+        private mutating func appendAttempt(
             identity: ScenePresentationIdentity,
             source: ScenePresentationRequestSource,
             readiness: ScenePresentationTargetReadiness,
@@ -1405,9 +1421,7 @@ extension PlaybackSessionEngine {
             source: ScenePresentationRequestSource,
             at time: TimeInterval
         ) -> Int {
-            let attemptNumber = appendAttempt(identity: identity, source: source, readiness: .pending, at: time)
-            readiness[identity] = .pending
-            return attemptNumber
+            registerAttempt(identity: identity, source: source, readiness: .pending, at: time)
         }
 
         mutating func recordReady(identity: ScenePresentationIdentity) {
@@ -1427,8 +1441,7 @@ extension PlaybackSessionEngine {
         mutating func cancelAttempt(identity: ScenePresentationIdentity) {
             guard
                 let index = records.lastIndex(where: {
-                    $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
-                        && $0.outcome == .pending
+                    $0.matches(identity) && $0.outcome == .pending
                 })
             else {
                 return
@@ -1436,27 +1449,21 @@ extension PlaybackSessionEngine {
             records[index].outcome = .cancelled
         }
 
-        func failedAttemptCount(for identity: ScenePresentationIdentity) -> Int {
+        func failedOutcomeCount(for identity: ScenePresentationIdentity) -> Int {
             recordsForTarget(identity).filter { $0.outcome == .failed }.count
         }
 
         func latestSource(for identity: ScenePresentationIdentity) -> ScenePresentationRequestSource? {
-            records.last(where: {
-                $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
-            })?.source
+            records.last(where: { $0.matches(identity) })?.source
         }
 
         private func recordsForTarget(_ identity: ScenePresentationIdentity) -> [TargetAttemptRecord] {
-            records.filter {
-                $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
-            }
+            records.filter { $0.matches(identity) }
         }
 
         private mutating func updateLatestAttempt(identity: ScenePresentationIdentity, outcome: TargetAttemptOutcome) {
             guard
-                let index = records.lastIndex(where: {
-                    $0.generation == identity.generation && $0.privateIdentifier == identity.privateIdentifier
-                })
+                let index = records.lastIndex(where: { $0.matches(identity) })
             else {
                 return
             }
