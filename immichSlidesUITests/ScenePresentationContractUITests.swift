@@ -195,10 +195,12 @@ final class ScenePresentationContractUITests: XCTestCase {
         let evidence = Evidence()
         let failedAssetID = "asset-a-1"
         let failedMark = "A1"
+        // Only A1 carries this camera model in fixture A.
+        let failedExifModel = "Fixture 1"
         let timeout = WaitTiming.sceneReadyTimeoutSeconds
         defer { _ = try? imageResponse(input: input, mode: "normal") }
         // The 30-second interval keeps autoplay from advancing before the history baseline is paused.
-        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: true), .showExif(false)])
+        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: true), .showExif(true)])
         _ = try imageResponse(input: input, mode: "http", assetID: failedAssetID)
         // A cold launch removes memory-cache hits while preserving the real saved playback settings.
         try driver.clearDiskCache(onCachePage: {})
@@ -207,8 +209,14 @@ final class ScenePresentationContractUITests: XCTestCase {
         _ = try imageResponse(input: input, mode: "http", assetID: failedAssetID)
         try relaunchStrictE2EApp(app)
         // The first stable photo must be the replacement; a stable failed target fails at once.
+        let settled = driver.stableMark(timeout: timeout)
+        // In portrait the classifier reads A1's letterboxed frame as A2, so its visible EXIF caption identifies it.
+        if Wait.until(timeout: Timing.exifSettleTimeout, { driver.visibleOverlayText().contains(failedExifModel) }) {
+            try evidence.reject("singlePhoto-recovered", png: app.screenshot().pngRepresentation)
+            throw Failure("singlePhoto-recovered shows the failed target's EXIF caption \(failedExifModel)")
+        }
         let recovered = try recordRecoveryStep(
-            "singlePhoto-recovered", settledOn: driver.stableMark(timeout: timeout), app: app, evidence: evidence
+            "singlePhoto-recovered", settledOn: settled, app: app, evidence: evidence
         ) { $0 != failedMark }
         let response = try imageResponse(input: input)
         XCTAssertGreaterThan(
