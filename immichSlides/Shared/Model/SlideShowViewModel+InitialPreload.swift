@@ -36,7 +36,7 @@ extension SlideShowViewModel {
             isSmartFillPlanningEnabled,
             !assets.isEmpty
         {
-            if playbackSessionEngine.currentScene?.smartFillReadback == nil {
+            if playbackSession.currentScene?.smartFillReadback == nil {
                 _ = rebuildInitialSmartFillSceneIfPossible(invalidationReason: .poolReloaded)
             }
         }
@@ -61,7 +61,7 @@ extension SlideShowViewModel {
                 )
                 return
             }
-            didFirstPreload = true
+            markFirstPreloadCompleted()
             logger.info(
                 "initial first asset load end sceneId=\(firstScene.id, privacy: .private) assetId=\(firstAssetId, privacy: .private) assetCount=\(self.assets.count, privacy: .public)"
             )

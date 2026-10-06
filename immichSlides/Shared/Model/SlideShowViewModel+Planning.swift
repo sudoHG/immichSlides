@@ -99,20 +99,13 @@ extension SlideShowViewModel {
         source: PlaybackSceneTransactionSource
     ) -> PlaybackSessionTransition? {
         let expectedSourceCursor = currentPreparedSmartFillSourceCursor()
-        guard let fingerprint = makePreparedSmartFillSceneFingerprint(),
-            playbackSessionEngine.invalidatePreparedSceneRing(ifNeededFor: fingerprint) == false,
-            let preparedCursorEffect = playbackSessionEngine.preparedSceneRing?.next?.cursorEffect,
-            preparedCursorEffect.sourceCursor == expectedSourceCursor,
-            let transition = playbackSessionEngine.consumePreparedNext(source: source),
-            let cursorEffect = transition.preparedCursorEffect
-        else {
-            if let preparedCursorEffect = playbackSessionEngine.preparedSceneRing?.next?.cursorEffect,
-                preparedCursorEffect.sourceCursor != expectedSourceCursor
-            {
-                playbackSessionEngine.clearPreparedSceneRing()
-            }
-            return nil
-        }
+        guard
+            let transition = playbackSession.consumePreparedNext(
+                fingerprint: makePreparedSmartFillSceneFingerprint(),
+                expectedSourceCursor: expectedSourceCursor,
+                source: source
+            ), let cursorEffect = transition.preparedCursorEffect
+        else { return nil }
 
         let displayedAssetIdsAfterCommit = smartFillDisplayedAssetIdsForPlanning.union(cursorEffect.displayedAssetIds)
         candidateProgression.reserveSelection(
@@ -163,17 +156,11 @@ extension SlideShowViewModel {
         case .invalid:
             return .invalid
         case .proposal(let proposal):
-            let previousScene =
-                playbackSessionEngine.currentIndex > 0
-                ? playbackSessionEngine.scenes[playbackSessionEngine.currentIndex - 1]
-                : nil
-            playbackSessionEngine.prepareSceneRing(
+            playbackSession.installPreparedNext(
                 fingerprint: proposal.fingerprint,
                 sourceCursor: proposal.cursorEffect.sourceCursor,
-                previous: previousScene,
-                current: playbackSessionEngine.currentScene,
-                next: proposal.scene,
-                nextCursorEffect: proposal.cursorEffect
+                scene: proposal.scene,
+                cursorEffect: proposal.cursorEffect
             )
             preloadSmartFillMotionPreparedSlotsIfNeeded(scene: proposal.scene)
             candidateProgression.prepareLookahead(after: completion, in: preparedPlanningInput) {

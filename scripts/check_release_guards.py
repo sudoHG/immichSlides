@@ -71,6 +71,8 @@ DEBUG_ONLY_MARKERS = (
     "transitionWindowPreloadHookForTesting",
     "smartFillMotionPreparedSlotPreloadHookForTesting",
     "replacePlaybackAssetsForTesting",
+    "pendingHistoryCommitCountForTesting",
+    "clearPreparedNextForTesting",
     "markPoolConsumedForTesting",
     "pendingResumeAssetCountForTesting",
     "lookaheadDiagnosticSnapshotForTesting",
@@ -111,6 +113,9 @@ DEBUG_ONLY_MARKERS = (
 # Primary files and adjacent +*.swift splits that must stay free of image-cache and diagnostics concepts.
 FORBIDDEN_IN_FILE = {
     "immichSlides/Shared/Model/PlaybackSessionEngine.swift": (
+        "SDWebImage", "SDImageCache", "PlaybackImageRequest", "cacheKey", "requestLifecycle",
+    ),
+    "immichSlides/Shared/Model/PlaybackSessionOwner.swift": (
         "SDWebImage", "SDImageCache", "PlaybackImageRequest", "cacheKey", "requestLifecycle",
     ),
     "immichSlides/Shared/Model/PlaybackSmartFillPlanner.swift": (

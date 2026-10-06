@@ -11,86 +11,6 @@ import CryptoKit
 import CoreGraphics
 import OSLog
 
-enum PlaybackHistoryLedgerLimits {
-    static let retainedEntryLimit = 1_000
-}
-
-struct PlaybackHistoryLedgerEntry {
-    let scene: PlaybackScene
-}
-
-struct PlaybackHistoryLedger {
-    private(set) var entries: [PlaybackHistoryLedgerEntry] = []
-    private(set) var cursor: Int?
-    let retainedEntryLimit: Int
-
-    init(retainedEntryLimit: Int = PlaybackHistoryLedgerLimits.retainedEntryLimit) {
-        self.retainedEntryLimit = max(1, retainedEntryLimit)
-    }
-
-    var isAtTail: Bool {
-        guard let cursor else { return true }
-        return cursor >= entries.count - 1
-    }
-
-    var currentTarget: (index: Int, entry: PlaybackHistoryLedgerEntry)? {
-        guard let cursor, entries.indices.contains(cursor) else { return nil }
-        return (cursor, entries[cursor])
-    }
-
-    var previousTarget: (index: Int, entry: PlaybackHistoryLedgerEntry)? {
-        guard let cursor, cursor > 0 else { return nil }
-        let index = cursor - 1
-        return (index, entries[index])
-    }
-
-    var redoTarget: (index: Int, entry: PlaybackHistoryLedgerEntry)? {
-        guard let cursor, cursor + 1 < entries.count else { return nil }
-        let index = cursor + 1
-        return (index, entries[index])
-    }
-
-    mutating func reset(with scene: PlaybackScene?) {
-        if let scene {
-            entries = [PlaybackHistoryLedgerEntry(scene: scene)]
-            cursor = 0
-        } else {
-            entries = []
-            cursor = nil
-        }
-    }
-
-    mutating func append(_ scene: PlaybackScene) {
-        entries.append(PlaybackHistoryLedgerEntry(scene: scene))
-        cursor = entries.count - 1
-        trimIfNeeded()
-    }
-
-    mutating func moveCursor(to index: Int) {
-        guard entries.indices.contains(index) else { return }
-        cursor = index
-    }
-
-    mutating func replaceCurrent(with scene: PlaybackScene) {
-        guard let cursor, entries.indices.contains(cursor) else { return }
-        entries[cursor] = PlaybackHistoryLedgerEntry(scene: scene)
-    }
-
-    private mutating func trimIfNeeded() {
-        guard entries.count > retainedEntryLimit else { return }
-        let removeCount = entries.count - retainedEntryLimit
-        entries.removeFirst(removeCount)
-        if let cursor {
-            self.cursor = max(0, cursor - removeCount)
-        }
-    }
-}
-
-enum PlaybackHistoryLedgerPendingCommit {
-    case moveCursor(Int)
-    case appendTail
-}
-
 enum SmartFillMainActorPlannerCallSite: String, CaseIterable, Sendable {
     case initialPlanning
     case manualNext
@@ -116,11 +36,11 @@ class SlideShowViewModel: ObservableObject {
 
     @Published private(set) var assets: [Asset] = []
     // The current display position is only read back from the engine; views cannot change playback facts directly.
-    @Published var currentIndex: Int = 0
+    @Published private(set) var currentIndex: Int = 0
     // The target position is an adapter readout of the pending transition.
-    @Published var targetIndex: Int = 0
+    @Published private(set) var targetIndex: Int = 0
     // The slide-change trigger uses the transition identity, so a reused numeric index does not hide a new scene.
-    @Published var targetTransitionToken: UUID = UUID()
+    @Published private(set) var targetTransitionToken: UUID = UUID()
 
     @Published private(set) var isLoading: Bool = true
 
@@ -162,9 +82,7 @@ class SlideShowViewModel: ObservableObject {
         category: "QAPlaybackSequence"
     )
     #endif
-    var playbackSessionEngine = PlaybackSessionEngine()
-    var playbackHistoryLedger = PlaybackHistoryLedger()
-    var pendingPlaybackHistoryLedgerCommits: [UUID: PlaybackHistoryLedgerPendingCommit] = [:]
+    let playbackSession = PlaybackSessionOwner()
     let candidateProgression = PlaybackCandidateProgression()
     var playbackDisplayMode: PlaybackDisplayMode = .smartFill
     let runtimeEvidenceRecorder = PlaybackRuntimeEvidenceRecorder()
@@ -177,12 +95,12 @@ class SlideShowViewModel: ObservableObject {
         deliver: { [weak self] event, timestamp in
             guard let self else { return }
             self.executeScenePresentationEffects(
-                self.playbackSessionEngine.reduceScenePresentation(event, at: timestamp)
+                self.playbackSession.reduceScenePresentation(event, at: timestamp)
             )
         }
     )
     var pendingAutomaticScenePlanningRequest: ScenePresentationPlanningRequest?
-    @Published var scenePresentationRevision = UUID()
+    @Published private(set) var scenePresentationRevision = UUID()
     #if DEBUG
     var smartFillCandidateSummaryBuildCountForTestingStorage: Int = 0
     var smartFillMainActorPlannerCallCountsForTesting: [SmartFillMainActorPlannerCallSite: Int] = [:]
@@ -196,7 +114,7 @@ class SlideShowViewModel: ObservableObject {
         isAutoPlay ? Self.autoplayRenderWindowRadius : Self.manualRenderWindowRadius
     }
     var playbackScenes: [PlaybackScene] {
-        playbackSessionEngine.scenes
+        playbackSession.scenes
     }
     #if DEBUG
     var smartFillCandidateCursorIndexForTesting: Int {
@@ -204,7 +122,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     var pendingPlaybackHistoryLedgerCommitCountForTesting: Int {
-        pendingPlaybackHistoryLedgerCommits.count
+        playbackSession.pendingHistoryCommitCountForTesting
     }
 
     var activeScenePresentationBarrierForTesting: ScenePresentationLayerIdentity? {
@@ -225,25 +143,21 @@ class SlideShowViewModel: ObservableObject {
     }
     #endif
     func scene(at index: Int) -> PlaybackScene? {
-        if playbackSessionEngine.pendingTransition?.targetIndex == index {
-            return playbackSessionEngine.pendingTransition?.scene
-        }
-        guard index >= 0, index < playbackSessionEngine.scenes.count else { return nil }
-        return playbackSessionEngine.scenes[index]
+        playbackSession.scene(at: index)
     }
     var safeCurrentScene: PlaybackScene? {
         scene(at: currentIndex)
     }
     var canRequestPreviousScene: Bool {
-        canCancelUnseenPendingScenePresentation || playbackHistoryLedger.previousTarget != nil
+        playbackSession.canRequestPreviousScene
     }
     var sceneRenderSnapshot: PlaybackSessionEngine.SceneRenderSnapshot {
-        playbackSessionEngine.sceneRenderSnapshot(at: scenePresentationTimestamp())
+        playbackSession.sceneRenderSnapshot(at: scenePresentationTimestamp())
     }
     func scene(
         for layer: PlaybackSessionEngine.SceneRenderLayer
     ) -> PlaybackScene? {
-        playbackSessionEngine.scene(for: layer.identity)
+        playbackSession.scene(for: layer.identity)
     }
     func scenePresentationLayerIdentity(
         for layer: PlaybackSessionEngine.SceneRenderLayer
@@ -271,7 +185,7 @@ class SlideShowViewModel: ObservableObject {
     }
     func updateSmartFillMotionReduceMotionEnabled(_ isEnabled: Bool) {
         executeScenePresentationEffects(
-            playbackSessionEngine.reduceScenePresentation(
+            playbackSession.reduceScenePresentation(
                 .reduceMotionChanged(isEnabled),
                 at: scenePresentationTimestamp()
             )
@@ -292,8 +206,8 @@ class SlideShowViewModel: ObservableObject {
         platform: MotionPlatform,
         isReduceMotionEnabled: Bool
     ) -> MotionRuntimeContext? {
-        guard let scene = playbackSessionEngine.scene(for: layer.identity),
-            let target = playbackSessionEngine.presentationTarget(for: layer.identity)
+        guard let scene = playbackSession.scene(for: layer.identity),
+            let target = playbackSession.presentationTarget(for: layer.identity)
         else {
             return nil
         }
@@ -328,12 +242,12 @@ class SlideShowViewModel: ObservableObject {
     #if DEBUG
     var smartFillMotionProbeDebugFieldsForTesting: [String: String] {
         var fields: [String: String] = [:]
-        if let targetIndex = playbackSessionEngine.preparedSceneRing?.next?.targetIndex {
+        if let targetIndex = playbackSession.preparedNext?.targetIndex {
             fields["preparedNextTargetIndex"] = String(targetIndex)
         } else {
             fields["preparedNextTargetIndex"] = "none"
         }
-        if let sourceCursor = playbackSessionEngine.preparedSceneRing?.next?.cursorEffect?.sourceCursor {
+        if let sourceCursor = playbackSession.preparedNext?.cursorEffect?.sourceCursor {
             fields["preparedNextSourceCursor"] = String(sourceCursor)
         } else {
             fields["preparedNextSourceCursor"] = "none"
@@ -371,7 +285,7 @@ class SlideShowViewModel: ObservableObject {
     }
     #endif
     var visibleOverlayState: PlaybackVisibleOverlayState? {
-        guard let visibleScene = playbackSessionEngine.currentScene else { return nil }
+        guard let visibleScene = playbackSession.currentScene else { return nil }
         return PlaybackVisibleOverlayState(
             ownerSceneId: visibleScene.id,
             ownerPrimaryAssetId: visibleScene.primaryAssetId
@@ -429,26 +343,15 @@ class SlideShowViewModel: ObservableObject {
     }
 
     var playbackHistoryLedgerDiagnosticsSummaryJSON: String {
-        let suffixPrimaryAssetIds = playbackHistoryLedger.entries.suffix(Self.diagnosticHistoryLookbackCount).map {
-            entry in
-            entry.scene.primaryAssetId ?? "nil"
-        }
-        let currentPrimaryAssetId: String
-        if let cursor = playbackHistoryLedger.cursor,
-            playbackHistoryLedger.entries.indices.contains(cursor)
-        {
-            currentPrimaryAssetId = playbackHistoryLedger.entries[cursor].scene.primaryAssetId ?? "nil"
-        } else {
-            currentPrimaryAssetId = "nil"
-        }
+        let history = playbackSession.historySnapshot(lookbackCount: Self.diagnosticHistoryLookbackCount)
         let object: [String: Any] = [
             "schemaVersion": "playback-history-ledger-diagnostics-v1",
-            "entryCount": playbackHistoryLedger.entries.count,
-            "cursor": playbackHistoryLedger.cursor.map { $0 as Any } ?? NSNull(),
-            "canPrevious": playbackHistoryLedger.previousTarget != nil,
-            "canRedo": playbackHistoryLedger.redoTarget != nil,
-            "currentPrimaryAssetId": currentPrimaryAssetId,
-            "suffixPrimaryAssetIds": suffixPrimaryAssetIds
+            "entryCount": history.entryCount,
+            "cursor": history.cursor.map { $0 as Any } ?? NSNull(),
+            "canPrevious": history.canPrevious,
+            "canRedo": history.canRedo,
+            "currentPrimaryAssetId": history.currentPrimaryAssetID ?? "nil",
+            "suffixPrimaryAssetIds": history.suffixPrimaryAssetIDs
         ]
         guard JSONSerialization.isValidJSONObject(object),
             let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
@@ -515,7 +418,7 @@ class SlideShowViewModel: ObservableObject {
     #endif
     var playbackSourceGeneration: Int { poolLoader.sourceGeneration }
 
-    @Published var didFirstPreload: Bool = false
+    @Published private(set) var didFirstPreload: Bool = false
     #if DEBUG
     // Tests can replace the first pool load to simulate a cold-start race where an old task returns late.
 
@@ -624,8 +527,8 @@ class SlideShowViewModel: ObservableObject {
         else {
             return
         }
-        playbackSessionEngine.updateFutureProtectionSnapshot(protectionSnapshot)
-        syncPlaybackReadbackFromEngine()
+        playbackSession.updateFutureProtectionSnapshot(protectionSnapshot)
+        syncPlaybackReadbackFromSession()
         scheduleSmartFillInitialSceneActivationIfNeeded()
         refreshPreparedSmartFillSceneRingIfPossible()
     }
@@ -697,15 +600,15 @@ class SlideShowViewModel: ObservableObject {
     }
 
     var preparedSmartFillNextAssetIdsForTesting: [String]? {
-        playbackSessionEngine.preparedSceneRing?.next?.scene.assetIds
+        playbackSession.preparedNext?.scene.assetIds
     }
 
     var preparedSmartFillNextSourceCursorForTesting: Int? {
-        playbackSessionEngine.preparedSceneRing?.next?.cursorEffect?.sourceCursor
+        playbackSession.preparedNext?.cursorEffect?.sourceCursor
     }
 
     var preparedSmartFillNextTargetIndexForTesting: Int? {
-        playbackSessionEngine.preparedSceneRing?.next?.targetIndex
+        playbackSession.preparedNext?.targetIndex
     }
 
     var currentPreparedSmartFillSourceCursorForTesting: Int? {
@@ -713,7 +616,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     var playbackSceneCountForTesting: Int {
-        playbackSessionEngine.scenes.count
+        playbackSession.scenes.count
     }
 
     func clearPreparedSmartFillRingForTesting() {
@@ -723,14 +626,8 @@ class SlideShowViewModel: ObservableObject {
         else {
             return
         }
-        playbackSessionEngine.prepareSceneRing(
-            fingerprint: fingerprint,
-            sourceCursor: normalizedCandidateCursorIndex(),
-            previous: nil,
-            current: playbackSessionEngine.currentScene,
-            next: nil,
-            nextCursorEffect: nil
-        )
+        playbackSession.clearPreparedNextForTesting(
+            fingerprint: fingerprint, sourceCursor: normalizedCandidateCursorIndex())
     }
     #endif
 
@@ -753,20 +650,18 @@ class SlideShowViewModel: ObservableObject {
     }
     #endif
 
-    func applyPlaybackHistoryLedgerCommit(
-        _ pendingCommit: PlaybackHistoryLedgerPendingCommit?,
-        committedScene: PlaybackScene?
-    ) {
-        guard let pendingCommit else { return }
-        switch pendingCommit {
-        case let .moveCursor(index):
-            playbackHistoryLedger.moveCursor(to: index)
-        case .appendTail:
-            if let committedScene {
-                playbackHistoryLedger.append(committedScene)
-            }
-        }
-        pendingPlaybackHistoryLedgerCommits = [:]
+    func publishPlaybackPosition() {
+        currentIndex = playbackSession.currentIndex
+        targetIndex = playbackSession.targetIndex
+        targetTransitionToken = playbackSession.targetTransitionToken
+    }
+
+    func publishScenePresentationChange() {
+        scenePresentationRevision = UUID()
+    }
+
+    func markFirstPreloadCompleted() {
+        didFirstPreload = true
     }
 
     private func adjustCandidateCursorAfterRemovingPrefix(_ removeCount: Int) {
@@ -784,7 +679,7 @@ class SlideShowViewModel: ObservableObject {
             logPendingSmartFillCursorResumeCleared(reason: "noUnseenAssets")
         case .resumed:
             if let fingerprint = makePreparedSmartFillSceneFingerprint() {
-                playbackSessionEngine.invalidatePreparedSceneRing(ifNeededFor: fingerprint)
+                playbackSession.invalidatePreparedSceneRing(ifNeededFor: fingerprint)
             }
             refreshPreparedSmartFillSceneRingIfPossible()
         }
@@ -839,7 +734,7 @@ class SlideShowViewModel: ObservableObject {
         case .adjustCursorAfterTrim(let removeCount):
             adjustCandidateCursorAfterRemovingPrefix(removeCount)
         case .syncReadback:
-            syncPlaybackReadbackFromEngine()
+            syncPlaybackReadbackFromSession()
         case .refillFinished(let source, let addedCount, let dedupedCount):
             logger.info(
                 "load more end source=\(source, privacy: .public) addedCount=\(addedCount, privacy: .public) dedupedCount=\(dedupedCount, privacy: .public) finalCount=\(self.assets.count, privacy: .public) currentIndex=\(self.currentIndex, privacy: .public) currentAssetId=\(self.assetIdLogValue(at: self.currentIndex), privacy: .private)"
@@ -980,7 +875,7 @@ class SlideShowViewModel: ObservableObject {
 
     func rebuildCurrentSceneForDisplayModeChange() {
         guard !assets.isEmpty,
-            let currentScene = playbackSessionEngine.currentScene,
+            let currentScene = playbackSession.currentScene,
             let anchorAssetId = visibleOverlayState?.ownerPrimaryAssetId ?? currentScene.primaryAssetId,
             let anchorIndex = assets.firstIndex(where: { $0.id == anchorAssetId })
         else {
@@ -997,14 +892,7 @@ class SlideShowViewModel: ObservableObject {
         )
         let displayedAssetIdsAfterRebuild = displayedBeforeCurrent.union(replacementPlan.displayedAssetIds)
 
-        guard
-            playbackSessionEngine.updateCurrentScene({ currentScene in
-                currentScene.replacingDisplayContent(with: replacementPlan.scene)
-            })
-        else {
-            return
-        }
-        playbackHistoryLedger.replaceCurrent(with: playbackSessionEngine.currentScene ?? currentScene)
+        guard playbackSession.replaceCurrentDisplayContent(with: replacementPlan.scene) else { return }
 
         cancelSmartFillPreparedRingRefreshTask()
         candidateProgression.cancelPendingSelection()
@@ -1013,8 +901,8 @@ class SlideShowViewModel: ObservableObject {
             in: assets, startingAt: anchorIndex, advancingBy: replacementPlan.nextCandidateCursorOffset,
             displayedAssetIdsAfterRebuild: displayedAssetIdsAfterRebuild
         )
-        playbackSessionEngine.invalidate(reason: .poolReloaded)
-        syncPlaybackReadbackFromEngine()
+        playbackSession.invalidate(reason: .poolReloaded)
+        syncPlaybackReadbackFromSession()
         refreshPreparedSmartFillSceneRingIfPossible()
     }
 
@@ -1057,9 +945,9 @@ class SlideShowViewModel: ObservableObject {
     }
 
     private func displayedAssetIdsBeforeCurrentScene() -> Set<String> {
-        let current = max(0, min(currentIndex, playbackSessionEngine.scenes.count))
+        let current = max(0, min(currentIndex, playbackSession.scenes.count))
         guard current > 0 else { return [] }
-        return Set(playbackSessionEngine.scenes.prefix(current).flatMap(\.assetIds))
+        return Set(playbackSession.scenes.prefix(current).flatMap(\.assetIds))
     }
 
     // After the settings page clears the cache and returns, force-reload the current photo; this does not rely on the
@@ -1304,12 +1192,12 @@ class SlideShowViewModel: ObservableObject {
 
         candidateProgression.recordInitialSelection(initialSmartFillPlan.displayedAssetIds)
         resetCandidateCursor(nextCandidateCursorOffset: initialSmartFillPlan.nextCandidateCursorOffset)
-        playbackSessionEngine.reset(
+        playbackSession.rebuildInitialScene(
             with: assets,
             initialScene: initialSmartFillPlan.scene,
             reason: invalidationReason
         )
-        syncPlaybackReadbackFromEngine()
+        syncPlaybackReadbackFromSession()
         refreshPreparedSmartFillSceneRingIfPossible()
         return true
     }
@@ -1322,7 +1210,7 @@ class SlideShowViewModel: ObservableObject {
         else {
             return
         }
-        let currentReadback = playbackSessionEngine.currentScene?.smartFillReadback
+        let currentReadback = playbackSession.currentScene?.smartFillReadback
         guard currentReadback == nil || currentReadback?.fallbackReason == .imageNotReady else {
             return
         }
@@ -1339,7 +1227,7 @@ class SlideShowViewModel: ObservableObject {
     func synchronizePlaybackReadbackForTesting(token: UUID, targetIndex: Int) async {
         _ = token
         _ = targetIndex
-        syncPlaybackReadbackFromEngine()
+        syncPlaybackReadbackFromSession()
     }
     #endif
 
@@ -1423,7 +1311,7 @@ class SlideShowViewModel: ObservableObject {
         }
         var keepIds = Set(assetIds(in: start...end))
         keepIds.formUnion(PlaybackScene.assetIds(in: playbackScenes))
-        if let pendingScene = playbackSessionEngine.pendingTransition?.scene {
+        if let pendingScene = playbackSession.pendingTransition?.scene {
             keepIds.formUnion(PlaybackScene.assetIds(in: [pendingScene]))
         }
         return keepIds
@@ -1554,7 +1442,7 @@ extension SlideShowViewModel {
     }
 
     private var playbackPoolSessionContext: PlaybackPoolLoader.SessionContext {
-        let identity = playbackSessionEngine.currentSessionIdentity
+        let identity = playbackSession.currentSessionIdentity
         return PlaybackPoolLoader.SessionContext(
             playbackSessionId: identity.playbackSessionId, sceneId: identity.sceneId)
     }
@@ -1577,7 +1465,7 @@ extension SlideShowViewModel {
         else {
             return false
         }
-        syncPlaybackReadbackFromEngine()
+        syncPlaybackReadbackFromSession()
         return true
     }
 
@@ -1656,17 +1544,15 @@ extension SlideShowViewModel {
         // The repeated pending-exclusion clear is intentional; planning leaves the earlier clear unchanged.
         candidateProgression.recordInitialSelection(initialSmartFillPlan?.displayedAssetIds ?? [])
         resetCandidateCursor(nextCandidateCursorOffset: initialSmartFillPlan?.nextCandidateCursorOffset ?? 1)
-        playbackSessionEngine.reset(
+        playbackSession.resetPlayback(
             with: newAssets,
             initialScene: initialSmartFillPlan?.scene,
             reason: invalidationReason
         )
-        playbackHistoryLedger.reset(with: nil)
-        pendingPlaybackHistoryLedgerCommits = [:]
         if initialSmartFillPlan != nil {
             recordSmartFillStartupRuntimePhase("firstScenePublished")
         }
-        syncPlaybackReadbackFromEngine()
+        syncPlaybackReadbackFromSession()
         refreshPreparedSmartFillSceneRingIfPossible()
     }
 

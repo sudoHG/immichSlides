@@ -147,8 +147,27 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.canRequestPreviousScene == false)
 
         vm.requestNextScene()
+        #expect(vm.smartFillCandidateCursorIndexForTesting == 2)
+        try expectHistory(vm, assetIds: ["asset-0"], cursor: 0)
+        let hiddenLayer = try #require(vm.sceneRenderSnapshot.layers.last { $0.role == .incoming })
+        #expect(hiddenLayer.opacity == 0)
+        let hiddenScene = try #require(vm.scene(for: hiddenLayer))
+        for slot in hiddenScene.photoSlots {
+            vm.rendererDecoded(
+                SceneRendererIdentity(
+                    generation: hiddenLayer.identity.generation,
+                    attemptID: vm.scenePresentationRendererAttemptID(for: hiddenLayer),
+                    sceneID: hiddenLayer.identity.sceneID,
+                    slotID: slot.id,
+                    assetID: slot.asset.id
+                )
+            )
+        }
+        try expectHistory(vm, assetIds: ["asset-0"], cursor: 0)
         await settleManualRequest()
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-1")
+        try expectHistory(vm, assetIds: ["asset-0", "asset-1"], cursor: 1)
+        vm.incomingBecameVisible(vm.scenePresentationLayerIdentity(for: hiddenLayer))
         try expectHistory(vm, assetIds: ["asset-0", "asset-1"], cursor: 1)
 
         vm.requestNextScene()
@@ -205,11 +224,15 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.sceneRenderSnapshot.phase == .grace)
         #expect(vm.visibleOverlayScene?.primaryAssetId == "asset-1")
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-2")
+        #expect(vm.smartFillCandidateCursorIndexForTesting == 3)
+        try expectHistory(vm, assetIds: ["asset-0", "asset-1"], cursor: 1)
 
         vm.requestPreviousScene()
         await vm.synchronizePlaybackReadbackForTesting(token: vm.targetTransitionToken, targetIndex: vm.targetIndex)
 
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-1")
+        #expect(vm.smartFillCandidateCursorIndexForTesting == 3)
+        try expectHistory(vm, assetIds: ["asset-0", "asset-1"], cursor: 1)
         #expect(vm.sceneRenderSnapshot.phase != .loading)
         let restoredLayer = try #require(
             vm.sceneRenderSnapshot.layers.first {

@@ -35,9 +35,7 @@ extension SlideShowViewModel {
         exifOverlayVisible: Bool
     ) -> String? {
         guard let scene = safeCurrentScene else { return nil }
-        let displayedLedgerEntry = playbackSessionEngine.displayedSceneRecords
-            .reversed()
-            .first { $0.sceneId == scene.id }
+        let displayedLedgerEntry = playbackSession.displayedRecord(for: scene.id)
         guard
             let runtimeSummary = scene.smartFillRuntimeQADebugSummary(
                 downloadManager: downloadManager,
@@ -113,7 +111,7 @@ extension SlideShowViewModel {
             return
         }
         let scenePublishTimestamp = playbackManifestTimestamp()
-        playbackSessionEngine.updateCurrentScene { scene in
+        playbackSession.annotateCurrentScene { scene in
             guard scene.id == transition.scene.id,
                 let readback = scene.smartFillReadback
             else {
