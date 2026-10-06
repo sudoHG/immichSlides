@@ -66,6 +66,7 @@
         "PrivateEvidenceDirectoryTests",
         "ReduceMotionUITests",
         "RotationUITests",
+        "ScenePresentationContractUITests/testIOSImageFailureRecovery()",
         "StrictE2EFilterIOSUITests",
         "StrictE2EFirstBatchIOSUITests",
         "StrictE2ELateImageIOSUITests",

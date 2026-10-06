@@ -233,19 +233,43 @@ class CacheClearTestsCases:
 
 
     def test_returned_frame_must_show_a_recognized_public_photo(self) -> None:
-        for label, returned, expected_mark in (
-            ("returned frame shows another public photo", IMAGES["asset-a-4"], "A4"),
-            ("returned frame is unrecognizable", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, None),
-        ):
-            with self.subTest(label=label), tempfile.TemporaryDirectory() as raw_directory:
-                evidence = build_evidence(Path(raw_directory), "p2-cache", "iphone", review=False)
-                (evidence / "cache-returned.png").write_bytes(returned)
-                if expected_mark is None:
-                    with self.assertRaises(P2ContractError):
-                        validate_raw_evidence(evidence, "p2-cache", "a")
-                else:
-                    payload = validate_raw_evidence(evidence, "p2-cache", "a")
-                    self.assertEqual(payload["cache_clear"], {"target_mark": expected_mark})
+        from PIL import Image
+
+        # A fully decodable black frame must fail identity, independently of PNG framing.
+        black = io.BytesIO()
+        Image.new("RGB", (320, 180), "black").save(black, format="PNG")
+        for suite, device, key in (("p2-cache", "iphone", "cache_clear"), ("p2-cache-smoke", "ipad", "cache_return")):
+            for label, returned, expected_mark in (
+                ("returned frame shows another public photo", IMAGES["asset-a-4"], "A4"),
+                ("returned frame is unrecognizable", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, None),
+                ("returned frame is black", black.getvalue(), None),
+                ("returned frame is missing", None, None),
+            ):
+                with self.subTest(suite=suite, label=label), tempfile.TemporaryDirectory() as raw_directory:
+                    evidence = build_evidence(Path(raw_directory), suite, device, review=False)
+                    if returned is None:
+                        (evidence / "cache-returned.png").unlink()
+                    else:
+                        (evidence / "cache-returned.png").write_bytes(returned)
+                    if expected_mark is None:
+                        with self.assertRaises(P2ContractError):
+                            validate_raw_evidence(evidence, suite, "a")
+                    else:
+                        payload = validate_raw_evidence(evidence, suite, "a")
+                        self.assertEqual(payload[key], {"target_mark": expected_mark})
+
+
+    def test_signed_returned_photo_must_match_the_recognized_photo(self) -> None:
+        for suite, device in (("p2-cache", "iphone"), ("p2-cache-smoke", "ipad")):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw_directory:
+                evidence = build_evidence(Path(raw_directory), suite, device)
+                review = _read_json(evidence / REVIEW_FILE)
+                review["artifacts"]["cache-returned.png"].update(
+                    visible_marks=["A2"], fixture_sha256={"A2": LABEL_SHA256["A2"]}
+                )
+                _write_json(evidence / REVIEW_FILE, review)
+                with self.assertRaisesRegex(P2ContractError, "manual mark sign-off"):
+                    _verify(evidence, suite, device)
 
 
     def test_legacy_before_clear_png_name_is_rejected(self) -> None:
@@ -257,6 +281,12 @@ class CacheClearTestsCases:
 
 
     def test_cache_screenshot_steps_must_keep_the_required_order(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_directory:
+            evidence = build_evidence(Path(raw_directory), "p2-cache-smoke", "ipad", review=False)
+            _move_step(evidence, "cache-returned", 0)
+            with self.assertRaisesRegex(P2ContractError, "Step order must be"):
+                validate_raw_evidence(evidence, "p2-cache-smoke", "a")
+
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = build_evidence(Path(raw_directory), "p2-cache", "iphone", review=False)
             _move_step(evidence, "cache-cleared", 0)

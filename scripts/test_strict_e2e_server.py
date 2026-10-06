@@ -477,6 +477,28 @@ class StrictE2EServerContractTests(unittest.TestCase):
             self.assertAlmostEqual((min_y + max_y) / 2, 90, delta=20)
             self.assertGreater(white_count, 500)
 
+    def test_controlled_fullsize_failures_leave_other_fixture_responses_unchanged(self) -> None:
+        with RunningServer() as server:
+            status, _, _ = server.request(
+                "/test/image-response", method="POST", body={"asset_id": "asset-a-1", "mode": "http"},
+            )
+            self.assertEqual(status, 200)
+            for _ in range(4):
+                status, _, payload = server.request("/assets/asset-a-1/thumbnail?size=fullsize")
+                self.assertEqual(status, 503)
+                self.assertNotEqual(payload[:8], b"\x89PNG\r\n\x1a\n")
+            status, _, payload = server.request("/test/image-response")
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(payload)["failures"], 4)
+            for asset_id, size in (("asset-a-1", "preview"), ("asset-a-2", "fullsize")):
+                status, _, payload = server.request(f"/assets/{asset_id}/thumbnail?size={size}")
+                self.assertEqual(status, 200)
+                self.assertEqual(payload, server.server.fixture["images"][asset_id])
+            server.request("/test/image-response", method="POST", body={"mode": "normal"})
+            status, _, payload = server.request("/assets/asset-a-1/thumbnail?size=fullsize")
+            self.assertEqual(status, 200)
+            self.assertEqual(payload, server.server.fixture["images"]["asset-a-1"])
+
     def test_invalid_auth_bad_contract_and_unknown_route_fail_closed(self) -> None:
         log_stream = io.StringIO()
         with RunningServer(log_stream=log_stream) as server:

@@ -14,6 +14,7 @@ import os
 import socket
 import struct
 import sys
+import threading
 import time
 import zlib
 from http import HTTPStatus
@@ -298,6 +299,8 @@ class StrictE2EServer(ThreadingHTTPServer):
         self.timeout_seconds = timeout_seconds
         self.contract_logger = logger
         self.started_at = time.monotonic()
+        self.image_response_lock = threading.Lock()
+        self.image_response: dict[str, Any] = {"mode": "normal", "asset_id": None, "failures": 0}
         super().__init__(server_address, StrictE2ERequestHandler)
 
 
@@ -310,6 +313,12 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, {"status": "ok", "fixture_set": self.server.fixture["name"]})
             return
         if not self._is_authorized():
+            return
+
+        if parsed.path == "/api/test/image-response":
+            with self.server.image_response_lock:
+                response = dict(self.server.image_response)
+            self._json(HTTPStatus.OK, response)
             return
 
         if parsed.path == "/api/albums":
@@ -374,6 +383,17 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
                 self._error(HTTPStatus.BAD_REQUEST, "size does not match the contract")
                 return
             self._log_request_started(size=size, fixture_asset_id=asset["id"])
+            with self.server.image_response_lock:
+                control = self.server.image_response
+                should_fail = control["mode"] == "http" and control["asset_id"] == asset["id"] and size == "fullsize"
+                if should_fail:
+                    control["failures"] += 1
+            if should_fail:
+                self._send(
+                    HTTPStatus.SERVICE_UNAVAILABLE, b"controlled image failure", "image/png",
+                    fixture_asset_id=asset["id"], size=size,
+                )
+                return
             if self.server.scenario == "out-of-order" and size in {"preview", "fullsize"}:
                 time.sleep(asset["fullsize_delay_ms"] / 1000)
             self._image(
@@ -388,6 +408,21 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if not self._is_authorized():
+            return
+        if parsed.path == "/api/test/image-response":
+            body = self._json_body()
+            if body is None:
+                return
+            mode, asset_id = body.get("mode"), body.get("asset_id")
+            known_ids = {asset["id"] for asset in self.server.fixture["assets"]}
+            if not isinstance(mode, str) or mode not in {"normal", "http"} or (
+                mode != "normal" and (not isinstance(asset_id, str) or asset_id not in known_ids)
+            ):
+                self._error(HTTPStatus.BAD_REQUEST, "Invalid image response control")
+                return
+            with self.server.image_response_lock:
+                self.server.image_response = {"mode": mode, "asset_id": asset_id, "failures": 0}
+            self._json(HTTPStatus.OK, {"mode": mode, "asset_id": asset_id, "failures": 0})
             return
         if parsed.path != "/api/search/random":
             self._error(HTTPStatus.NOT_FOUND, "Unknown route")

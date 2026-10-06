@@ -117,6 +117,7 @@ class StrictE2EP2RunnerTestsCases:
         for arguments in (
             ["--platform", "tvos", "--destination", "platform=tvOS Simulator,id=SIM", "--suite", "p2-ipad-layout"],
             ["--platform", "tvos", "--destination", "platform=tvOS Simulator,id=SIM", "--suite", "p2-rotation"],
+            ["--platform", "tvos", "--destination", "platform=tvOS Simulator,id=SIM", "--suite", "image-failure-recovery"],
             ["--platform", "ios", "--destination", "platform=iOS Simulator,id=SIM", "--suite", "p2-exif", "--scenario", "timeout"],
         ):
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as raw_directory:
@@ -360,22 +361,23 @@ class StrictE2EP2RunnerTestsCases:
 
 
     def test_p2_bundle_is_private_even_when_isolation_step_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_directory:
-            evidence = Path(raw_directory) / "evidence"
-            with mock.patch("run_strict_e2e.shutil.move", side_effect=OSError("move denied")) as move:
-                exit_code, _stdout, stderr, _mocks = self._run_p2_main(
-                    evidence,
-                    suite="p2-exif",
-                    platform="ios",
-                    model="iPhone 17 Pro",
-                    xcodebuild_exit=65,
-                    create_result_bundle=True,
-                )
-            self.assertEqual(exit_code, 65, stderr)
-            move.assert_not_called()
-            self.assertFalse((evidence / "strict-p2-exif.xcresult").exists())
-            quarantine = json.loads((evidence / "result-bundle-quarantine.json").read_text())
-            self.assertEqual(Path(quarantine["private_path"]).joinpath("raw.bin").read_bytes(), b"raw diagnostics")
+        for suite in ("p2-exif", "image-failure-recovery"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw_directory:
+                evidence = Path(raw_directory) / "evidence"
+                with mock.patch("run_strict_e2e.shutil.move", side_effect=OSError("move denied")) as move:
+                    exit_code, _stdout, stderr, _mocks = self._run_p2_main(
+                        evidence,
+                        suite=suite,
+                        platform="ios",
+                        model="iPhone 17 Pro",
+                        xcodebuild_exit=65,
+                        create_result_bundle=True,
+                    )
+                self.assertEqual(exit_code, 65, stderr)
+                move.assert_not_called()
+                self.assertFalse((evidence / result_bundle_name(suite)).exists())
+                quarantine = json.loads((evidence / "result-bundle-quarantine.json").read_text())
+                self.assertEqual(Path(quarantine["private_path"]).joinpath("raw.bin").read_bytes(), b"raw diagnostics")
 
 
     def test_p2_disposal_record_failure_preserves_private_bundle(self) -> None:

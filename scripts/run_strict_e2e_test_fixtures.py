@@ -64,6 +64,7 @@ from run_strict_e2e import (  # noqa: E402
     CASE_E2E_IDS,
     CommandError,
     FILTER_PERSON_SESSIONS,
+    IMAGE_FAILURE_RECOVERY_SUITES,
     IOS_FILTER_SUITES,
     IOS_FIRST_BATCH_SUITES,
     IOS_LATE_IMAGE_SUITES,

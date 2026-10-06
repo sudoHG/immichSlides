@@ -135,7 +135,7 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
         measureOptions.invocationOptions = [.manuallyStart, .manuallyStop]
         var measureInvocationCount = 0
         var rebuildSummary: FlowBehaviorSummary?
-        measure(metrics: [XCTCPUMetric(), XCTMemoryMetric()], options: measureOptions) {
+        measure(metrics: [XCTCPUMetric(application: app), XCTMemoryMetric(application: app)], options: measureOptions) {
             measureInvocationCount += 1
             if action == .previous && measureInvocationCount > 1 {
                 let rebuildInitialAssetId = currentAssetID(app: app) ?? "missing"

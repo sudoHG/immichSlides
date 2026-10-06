@@ -1,6 +1,6 @@
 import XCTest
 
-// E2E-P2-02. iPad only runs a cache page smoke test.
+// E2E-P2-02. iPad runs a smoke test of cache completion and the returned frame, without the disk-usage review.
 final class CacheSettingsUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -19,8 +19,7 @@ final class CacheSettingsUITests: XCTestCase {
         try runCacheClearFlow(IOSDriver(app: app), input: input)
     }
 
-    // Only proves the iPad cache page can be opened, confirmed and shows a completion message; does not count toward
-    // full P2-02 coverage.
+    // Covers cache completion and rendered return; full P2-02 still requires the disk-usage review.
     @MainActor
     func testCacheSettingsPageSmokeIPad() throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else {
@@ -31,8 +30,17 @@ final class CacheSettingsUITests: XCTestCase {
         defer { app.terminate() }
         let driver = IOSDriver(app: app)
         driver.launchToPlayback(input: input)
+        // Like the iPhone flow: a paused single photo keeps the returned frame classifiable.
+        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: true)])
+        driver.pause()
+        guard driver.stableMark() != nil else {
+            throw Failure("No recognizable public photo was shown before clearing.")
+        }
         try driver.clearDiskCache(onCachePage: {})
-        try Evidence().capture("cache-page-smoke", from: app)
+        let evidence = Evidence()
+        try evidence.capture("cache-page-smoke", from: app)
+        driver.returnToPlayback()
+        try evidence.capture("cache-returned", from: app) { $0.status == .match }
     }
     #endif
 
