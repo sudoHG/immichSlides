@@ -141,23 +141,27 @@ publication points are unchanged. It never accepts transitions or commits visibl
 keeps full renderer attempt identities and emits readiness only when every expected slot decodes;
 renderer callbacks and facade evidence sampling stay synchronous.
 
-Each started download or retry returns a `DownloadCompletion` for that operation and target identity.
-The facade retains the latest receipt and only supplies it to startup or surface activation when the
-current/pending identity still matches. `waitForDownloads()` waits for that operation, including its
-existing post-transition preloads, and does not imply renderer readiness or visibility. Startup no
+Each started download or retry stores a private `DownloadCompletion` for that operation and target
+identity in the executor. Its read-only lookup supplies the receipt to startup or surface activation
+only when the current/pending identity matches; cancel and presentation reset clear it in the executor.
+`waitForDownloads()` waits for that operation, including its existing post-transition preloads, and
+does not imply renderer readiness or visibility. Startup no
 longer looks up a generation in the effect-task dictionary. Concurrent first-preload callers join the
 owned startup task; its background preloads remain asynchronous. Source reset cancels startup work,
 while presentation reset cancels effects and prepared-slot image work without cancelling the startup
-caller that may be replacing the pool. Operation IDs prevent a cancelled operation's late cleanup from
-clearing its replacement. Surface activation retains the 250 ms delay and waits on its own returned
-download receipt. Prepared/lookahead computation remains in `PlaybackCandidateProgression`, and the
-existing eligibility and proposal-install/preload/completion order are unchanged. The executor is
+caller that may be replacing the pool. Surface activation retains the 250 ms delay and clears its handle
+unconditionally after the await; first preload likewise clears its handle unconditionally in a defer.
+The download receipt must be read in the same main-actor step that dispatched the download, without an
+intervening suspension. It therefore identifies the same task the facade previously read from its
+generation dictionary, before a later renderer callback can replace it. Prepared/lookahead computation
+remains in `PlaybackCandidateProgression`, and the existing eligibility and
+proposal-install/preload/completion order are unchanged. The executor is
 included on both platforms through the synchronized `Shared/` folder.
 
 ### Frozen planning event/effect interface
 
-The reducer owns demand and validates its lifetime. The facade executes navigation and barriers;
-planning computes and delivers proposals. Later extractions of planning, scheduling, effect execution,
+The reducer owns demand and validates its lifetime. The facade executes navigation; the effect executor runs barriers.
+Planning computes and delivers proposals. Later extractions of planning, scheduling, effect execution,
 session ownership and reducer internals preserve this value interface:
 
 - `ScenePresentationEffect.plan(ScenePresentationPlanningRequest)` carries an immutable `tag: UInt64`,

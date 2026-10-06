@@ -171,7 +171,6 @@ class SlideShowViewModel: ObservableObject {
     var smartFillSurface: PlaybackSmartFillSurface? { candidateProgression.surface }
     var smartFillProtectionSnapshot: PlaybackProtectionSnapshot { candidateProgression.protectionSnapshot }
     let scenePresentationEffectExecutor = ScenePresentationEffectExecutor()
-    var sceneDownloadCompletion: ScenePresentationEffectExecutor.DownloadCompletion?
     private(set) lazy var scenePresentationWakeUpScheduler = ScenePresentationWakeUpScheduler(
         // If the facade is gone, delivery discards this fallback clock value.
         now: { [weak self] in self?.scenePresentationTimestamp() ?? ProcessInfo.processInfo.systemUptime },
@@ -1674,7 +1673,6 @@ extension SlideShowViewModel {
     private func resetScenePresentationRuntime() {
         scenePresentationWakeUpScheduler.reset()
         scenePresentationEffectExecutor.resetPresentation()
-        sceneDownloadCompletion = nil
         pendingAutomaticScenePlanningRequest = nil
         candidateProgression.clearLookaheadProposal()
         runtimeEvidenceRecorder.resetScenePresentation()

@@ -132,35 +132,32 @@ extension SlideShowViewModel {
 
     func executeScenePresentationEffects(_ effects: [ScenePresentationEffect], shouldPublishChanges: Bool = true) {
         let images = ScenePresentationEffectExecutor.ImageLoading(
-            loadInitialScene: { [weak self] scene in
-                await self?.loadInitialSceneAssetsForPlayback(scene)
+            loadInitialScene: { scene in
+                await self.loadInitialSceneAssetsForPlayback(scene)
             },
-            loadTransitionScene: { [weak self] scene, isPrevious, navigationToken in
-                await self?.loadSceneAssetsForTransition(
+            loadTransitionScene: { scene, isPrevious, navigationToken in
+                await self.loadSceneAssetsForTransition(
                     scene, isPreviousTransition: isPrevious, navigationToken: navigationToken)
             },
-            preloadCandidateWindow: { [weak self] in
-                guard let self else { return }
+            preloadCandidateWindow: {
                 _ = await self.preloadSmartFillCandidateWindowIfNeeded(
                     startingAt: self.candidateProgression.currentCursorIndex)
             },
-            preloadPlaybackWindow: { [weak self] in
-                await self?.preloadPlaybackWindowAfterTransitionIfReady()
+            preloadPlaybackWindow: {
+                await self.preloadPlaybackWindowAfterTransitionIfReady()
             }
         )
         for effect in effects {
-            if let completion = scenePresentationEffectExecutor.execute(
+            scenePresentationEffectExecutor.execute(
                 effect,
                 scene: sceneForPresentationEffect(effect),
-                isInitialScene: { [weak self] identity in
-                    self?.playbackSessionEngine.transition(for: identity) == nil
+                isInitialScene: { identity in
+                    self.playbackSessionEngine.transition(for: identity) == nil
                 },
                 images: images,
-                loadMore: { [weak self] in await self?.loadMoreAssets() },
+                loadMore: { await self.loadMoreAssets() },
                 forward: executeScenePresentationFacadeCommand
-            ) {
-                sceneDownloadCompletion = completion
-            }
+            )
         }
         if shouldPublishChanges {
             publishScenePresentationChange()
@@ -193,9 +190,6 @@ extension SlideShowViewModel {
             if pendingAutomaticScenePlanningRequest?.target.identity == identity {
                 pendingAutomaticScenePlanningRequest = nil
             }
-            if sceneDownloadCompletion?.identity == identity {
-                sceneDownloadCompletion = nil
-            }
         case let .requestManualDirection(source):
             switch source {
             case .manualPrevious:
@@ -208,9 +202,10 @@ extension SlideShowViewModel {
 
     var currentSceneDownloadCompletion: ScenePresentationEffectExecutor.DownloadCompletion? {
         let presentationState = playbackSessionEngine.scenePresentationState
-        let identity = (presentationState.pendingTarget ?? presentationState.currentTarget)?.identity
-        guard let sceneDownloadCompletion, sceneDownloadCompletion.identity == identity else { return nil }
-        return sceneDownloadCompletion
+        guard let identity = (presentationState.pendingTarget ?? presentationState.currentTarget)?.identity else {
+            return nil
+        }
+        return scenePresentationEffectExecutor.downloadCompletion(for: identity)
     }
 
     /// Proposal delivery happens first; rejecting demand must not undo preparation or its image preloads.
