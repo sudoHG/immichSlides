@@ -16,6 +16,176 @@ struct SlideShowViewModelStartupTests {
     let initialSceneRequestPollInterval: Duration = .milliseconds(30)
     let persistedPlaybackIntervalSeconds: TimeInterval = 9
 
+    @Test(arguments: [false, true])
+    func `older startup completion keeps newer work joinable and cancellable`(isSurfaceActivation: Bool) async throws {
+        let vm = SlideShowViewModel(source: .random)
+        resetDownloadManagerState(vm.downloadManager)
+        vm.isAutoPlay = false
+        vm.initialPhotoLoadHookForTesting = { _ in }
+        vm.indexChangePhotoLoadHookForTesting = { _, _ in }
+        vm.backgroundPreloadHookForTesting = { _, _, _ in }
+
+        if !isSurfaceActivation {
+            var continuationA: CheckedContinuation<[Asset], any Error>?
+            var continuationB: CheckedContinuation<[Asset], any Error>?
+            var executionCount = 0
+            var didCancelB = false
+            vm.loadAssetsHookForTesting = { _ in
+                executionCount += 1
+                switch executionCount {
+                case 1:
+                    return try await withCheckedThrowingContinuation { continuationA = $0 }
+                case 2:
+                    let assets = try await withCheckedThrowingContinuation { continuationB = $0 }
+                    didCancelB = Task.isCancelled
+                    return assets
+                default:
+                    Issue.record("A caller must join the pending first preload")
+                    return []
+                }
+            }
+            defer {
+                vm.preparePlaybackSourceForPresentation(to: .random)
+                vm.loadAssetsHookForTesting = { _ in throw CancellationError() }
+                continuationA?.resume(throwing: CancellationError())
+                continuationB?.resume(throwing: CancellationError())
+            }
+
+            var didFinishA = false
+            let callerA = Task {
+                await vm.firstPreload()
+                didFinishA = true
+            }
+            defer { callerA.cancel() }
+            let didSuspendA = await waitUntil { continuationA != nil }
+            try #require(didSuspendA)
+
+            vm.preparePlaybackSourceForPresentation(
+                to: .filtered(FilterSelection(albumIds: ["current-album"], personFilters: [])))
+            var didFinishB = false
+            let callerB = Task {
+                await vm.firstPreload()
+                didFinishB = true
+            }
+            defer { callerB.cancel() }
+            let didSuspendB = await waitUntil { continuationB != nil }
+            try #require(didSuspendB)
+
+            continuationA?.resume(returning: [])
+            continuationA = nil
+            let didCompleteA = await waitUntil { didFinishA }
+            try #require(didCompleteA)
+
+            var didEnterC = false
+            var didFinishC = false
+            let callerC = Task {
+                didEnterC = true
+                await vm.firstPreload()
+                didFinishC = true
+            }
+            defer { callerC.cancel() }
+            let didStartC = await waitUntil { didEnterC }
+            try #require(didStartC)
+            #expect(executionCount == 2)
+            #expect(!didFinishB)
+            #expect(!didFinishC)
+
+            vm.preparePlaybackSourceForPresentation(to: .random)
+            continuationB?.resume(returning: [makeAsset(id: "cancelled-current")])
+            continuationB = nil
+            let didCompleteCurrentCallers = await waitUntil { didFinishB && didFinishC }
+            try #require(didCompleteCurrentCallers)
+            #expect(didCancelB)
+            #expect(executionCount == 2)
+            #expect(!vm.didFirstPreload)
+            #expect(vm.assets.isEmpty)
+        } else {
+            let assets = [makeAsset(id: "initial-asset", width: 1200, height: 2400)]
+            vm.replacePlaybackAssetsForTesting(assets)
+            let setupCompletion = try #require(vm.currentSceneDownloadCompletion)
+            var didFinishSetup = false
+            let setupCaller = Task {
+                await setupCompletion.waitForDownloads()
+                didFinishSetup = true
+            }
+            defer { setupCaller.cancel() }
+            let didCompleteSetup = await waitUntil { didFinishSetup }
+            try #require(didCompleteSetup)
+
+            var continuationA: CheckedContinuation<Void, Never>?
+            var continuationB: CheckedContinuation<Void, Never>?
+            var executionCount = 0
+            var completionCount = 0
+            vm.initialPhotoLoadHookForTesting = { _ in
+                executionCount += 1
+                switch executionCount {
+                case 1:
+                    await withCheckedContinuation { continuationA = $0 }
+                case 2:
+                    await withCheckedContinuation { continuationB = $0 }
+                default:
+                    Issue.record("A cancelled surface activation must not rebuild the initial scene")
+                }
+                completionCount += 1
+            }
+            defer {
+                vm.preparePlaybackSourceForPresentation(to: .random)
+                vm.initialPhotoLoadHookForTesting = { _ in }
+                continuationA?.resume()
+                continuationB?.resume()
+            }
+            vm.scenePresentationEffectExecutor.scheduleSurfaceActivation {
+                vm.replacePlaybackAssetsForTesting(assets)
+                return vm.currentSceneDownloadCompletion
+            }
+            let didSuspendA = await waitUntil { continuationA != nil }
+            try #require(didSuspendA)
+            let completionA = try #require(vm.currentSceneDownloadCompletion)
+
+            // B is pending in the existing debounce while A still waits for its download.
+            vm.scenePresentationEffectExecutor.scheduleSurfaceActivation {
+                vm.replacePlaybackAssetsForTesting(assets)
+                return vm.currentSceneDownloadCompletion
+            }
+            continuationA?.resume()
+            continuationA = nil
+            var didFinishA = false
+            let callerA = Task {
+                await completionA.waitForDownloads()
+                didFinishA = true
+            }
+            defer { callerA.cancel() }
+            let didCompleteA = await waitUntil { didFinishA }
+            try #require(didCompleteA)
+            for _ in 0..<10 { await Task.yield() }
+
+            // Pool replacement must still cancel B after the older activation completes.
+            vm.replacePlaybackAssetsForTesting(assets)
+            let didSuspendReplacement = await waitUntil { continuationB != nil }
+            try #require(didSuspendReplacement)
+            let debounceObserver = ScenePresentationEffectExecutor()
+            var didPassDebounce = false
+            debounceObserver.scheduleSurfaceActivation {
+                didPassDebounce = true
+                return nil
+            }
+            defer { debounceObserver.cancelSurfaceActivation() }
+            let didObserveDebounce = await waitUntil { didPassDebounce }
+            try #require(didObserveDebounce)
+            for _ in 0..<10 { await Task.yield() }
+            #expect(executionCount == 2)
+            #expect(completionCount == 1)
+
+            continuationB?.resume()
+            continuationB = nil
+            let didCompleteReplacement = await waitUntil { completionCount >= 2 }
+            try #require(didCompleteReplacement)
+            #expect(executionCount == 2)
+            #expect(completionCount == 2)
+            #expect(vm.safeCurrentScene?.primaryAssetId == "initial-asset")
+        }
+    }
+
     @Test
     func `cold launch uses the stored filtered source when the default mode is filtered and criteria are non-empty`() {
         let snapshot = PersistentPlaybackSnapshot.capture()

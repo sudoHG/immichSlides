@@ -169,9 +169,9 @@ does not imply renderer readiness or visibility. Startup reads this operation-sp
 the effect-task dictionary is private. Concurrent first-preload callers join the
 owned startup task; its background preloads remain asynchronous. Source reset cancels startup work,
 while presentation reset cancels effects and prepared-slot image work without cancelling the startup
-caller that may be replacing the pool. Surface activation retains the 250 ms delay and clears its handle
-unconditionally after the await; first preload likewise clears its handle unconditionally in a defer.
-An older task can therefore clear a newer task's handle, the known behavior tracked in [#72](https://github.com/sudoHG/immichSlides/issues/72).
+caller that may be replacing the pool. Surface activation retains the 250 ms delay. Surface activation
+and first preload clear their handles only when the finishing operation's ID still matches the owned
+operation, so an older completion cannot remove a newer task's cancellation or joining handle.
 The download receipt must be read in the same main-actor step that dispatched the download, without an
 intervening suspension, before a later renderer callback can replace it. Prepared/lookahead computation
 belongs to `PlaybackCandidateProgression`; proposal installation precedes image preloads and planning

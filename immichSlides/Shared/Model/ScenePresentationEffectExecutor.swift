@@ -46,8 +46,8 @@ final class ScenePresentationEffectExecutor {
     private var sceneDownloadCompletion: DownloadCompletion?
     private var barrier = ScenePresentationPrerenderBarrier()
     private var preparedSlotPreloadTasks: [UUID: Task<Void, Never>] = [:]
-    private var surfaceActivationTask: Task<Void, Never>?
-    private var firstPreloadTask: Task<Void, Never>?
+    private var surfaceActivationTask: EffectOperation?
+    private var firstPreloadTask: EffectOperation?
     private var initialBackgroundPreloadTasks: [UUID: Task<Void, Never>] = [:]
 
     #if DEBUG
@@ -59,8 +59,8 @@ final class ScenePresentationEffectExecutor {
     deinit {
         effectTasks.values.forEach { $0.task.cancel() }
         preparedSlotPreloadTasks.values.forEach { $0.cancel() }
-        surfaceActivationTask?.cancel()
-        firstPreloadTask?.cancel()
+        surfaceActivationTask?.task.cancel()
+        firstPreloadTask?.task.cancel()
         initialBackgroundPreloadTasks.values.forEach { $0.cancel() }
     }
 
@@ -230,7 +230,8 @@ final class ScenePresentationEffectExecutor {
     func scheduleSurfaceActivation(
         activate: @escaping @MainActor () -> DownloadCompletion?
     ) {
-        surfaceActivationTask?.cancel()
+        surfaceActivationTask?.task.cancel()
+        let operationID = UUID()
         let task = Task { @MainActor [weak self] in
             // Surface and control-bar animations can report several sizes in a short interval.
             try? await Task.sleep(nanoseconds: Self.surfaceActivationDelayNanoseconds)
@@ -238,13 +239,15 @@ final class ScenePresentationEffectExecutor {
             if let completion = activate() {
                 await completion.waitForDownloads()
             }
-            self.surfaceActivationTask = nil
+            if self.surfaceActivationTask?.id == operationID {
+                self.surfaceActivationTask = nil
+            }
         }
-        surfaceActivationTask = task
+        surfaceActivationTask = EffectOperation(id: operationID, task: task)
     }
 
     func cancelSurfaceActivation() {
-        surfaceActivationTask?.cancel()
+        surfaceActivationTask?.task.cancel()
         surfaceActivationTask = nil
     }
 
@@ -255,16 +258,21 @@ final class ScenePresentationEffectExecutor {
     ) async {
         if let firstPreloadTask {
             logger.info("first preload waits existing task")
-            await firstPreloadTask.value
+            await firstPreloadTask.task.value
             return
         }
         logger.info("first preload task created source=\(sourceName, privacy: .public)")
+        let operationID = UUID()
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.firstPreloadTask = nil }
+            defer {
+                if self.firstPreloadTask?.id == operationID {
+                    self.firstPreloadTask = nil
+                }
+            }
             await prepare()
         }
-        firstPreloadTask = task
+        firstPreloadTask = EffectOperation(id: operationID, task: task)
         await task.value
     }
 
@@ -278,7 +286,7 @@ final class ScenePresentationEffectExecutor {
     }
 
     func cancelStartup() {
-        firstPreloadTask?.cancel()
+        firstPreloadTask?.task.cancel()
         firstPreloadTask = nil
         initialBackgroundPreloadTasks.values.forEach { $0.cancel() }
         initialBackgroundPreloadTasks = [:]
