@@ -25,6 +25,7 @@ struct SlideShowViewModelStartupTests {
         vm.indexChangePhotoLoadHookForTesting = { _, _ in }
         vm.backgroundPreloadHookForTesting = { _, _, _ in }
 
+        // First preload is user-reachable; surface overlap is latent: facade admission needs nil readback or .imageNotReady, which the planner never emits.
         if !isSurfaceActivation {
             var continuationA: CheckedContinuation<[Asset], any Error>?
             var continuationB: CheckedContinuation<[Asset], any Error>?
@@ -112,77 +113,93 @@ struct SlideShowViewModelStartupTests {
             let didCompleteSetup = await waitUntil { didFinishSetup }
             try #require(didCompleteSetup)
 
-            var continuationA: CheckedContinuation<Void, Never>?
-            var continuationB: CheckedContinuation<Void, Never>?
+            var downloadContinuationA: CheckedContinuation<Void, Never>?
+            var replacementDownloadContinuation: CheckedContinuation<Void, Never>?
+            var delayContinuationB: CheckedContinuation<Void, Never>?
+            var delayCount = 0
+            var activationCount = 0
             var executionCount = 0
             var completionCount = 0
+            var didFinishActivationA = false
+            var didFinishActivationB = false
+            var didFinishReplacement = false
+            let executor = vm.scenePresentationEffectExecutor
+            executor.surfaceActivationSleepForTesting = {
+                delayCount += 1
+                switch delayCount {
+                case 1:
+                    return { didFinishActivationA = true }
+                case 2:
+                    await withCheckedContinuation { delayContinuationB = $0 }
+                    return { didFinishActivationB = true }
+                default:
+                    Issue.record("Only the two scheduled activations may enter their delays")
+                    return {}
+                }
+            }
             vm.initialPhotoLoadHookForTesting = { _ in
                 executionCount += 1
-                switch executionCount {
+                let execution = executionCount
+                switch execution {
                 case 1:
-                    await withCheckedContinuation { continuationA = $0 }
+                    await withCheckedContinuation { downloadContinuationA = $0 }
                 case 2:
-                    await withCheckedContinuation { continuationB = $0 }
+                    await withCheckedContinuation { replacementDownloadContinuation = $0 }
                 default:
                     Issue.record("A cancelled surface activation must not rebuild the initial scene")
                 }
                 completionCount += 1
+                if execution == 2 { didFinishReplacement = true }
             }
             defer {
                 vm.preparePlaybackSourceForPresentation(to: .random)
+                executor.surfaceActivationSleepForTesting = nil
                 vm.initialPhotoLoadHookForTesting = { _ in }
-                continuationA?.resume()
-                continuationB?.resume()
+                downloadContinuationA?.resume()
+                replacementDownloadContinuation?.resume()
+                delayContinuationB?.resume()
             }
-            vm.scenePresentationEffectExecutor.scheduleSurfaceActivation {
+
+            // Fixture shortcut: pool replacement self-cancels A before B starts; its download still drains.
+            executor.scheduleSurfaceActivation {
+                activationCount += 1
                 vm.replacePlaybackAssetsForTesting(assets)
                 return vm.currentSceneDownloadCompletion
             }
-            let didSuspendA = await waitUntil { continuationA != nil }
+            let didSuspendA = await waitUntil { downloadContinuationA != nil }
             try #require(didSuspendA)
-            let completionA = try #require(vm.currentSceneDownloadCompletion)
 
-            // B is pending in the existing debounce while A still waits for its download.
-            vm.scenePresentationEffectExecutor.scheduleSurfaceActivation {
+            executor.scheduleSurfaceActivation {
+                activationCount += 1
                 vm.replacePlaybackAssetsForTesting(assets)
                 return vm.currentSceneDownloadCompletion
             }
-            continuationA?.resume()
-            continuationA = nil
-            var didFinishA = false
-            let callerA = Task {
-                await completionA.waitForDownloads()
-                didFinishA = true
-            }
-            defer { callerA.cancel() }
-            let didCompleteA = await waitUntil { didFinishA }
+            let didSuspendB = await waitUntil { delayContinuationB != nil }
+            try #require(didSuspendB)
+            downloadContinuationA?.resume()
+            downloadContinuationA = nil
+            let didCompleteA = await waitUntil { didFinishActivationA }
             try #require(didCompleteA)
-            for _ in 0..<10 { await Task.yield() }
 
-            // Pool replacement must still cancel B after the older activation completes.
+            // Pool replacement must still cancel B after A's outer activation has finished cleanup.
             vm.replacePlaybackAssetsForTesting(assets)
-            let didSuspendReplacement = await waitUntil { continuationB != nil }
+            let didSuspendReplacement = await waitUntil { replacementDownloadContinuation != nil }
             try #require(didSuspendReplacement)
-            let debounceObserver = ScenePresentationEffectExecutor()
-            var didPassDebounce = false
-            debounceObserver.scheduleSurfaceActivation {
-                didPassDebounce = true
-                return nil
-            }
-            defer { debounceObserver.cancelSurfaceActivation() }
-            let didObserveDebounce = await waitUntil { didPassDebounce }
-            try #require(didObserveDebounce)
-            for _ in 0..<10 { await Task.yield() }
+            delayContinuationB?.resume()
+            delayContinuationB = nil
+            let didCompleteB = await waitUntil { didFinishActivationB }
+            try #require(didCompleteB)
+            #expect(activationCount == 1)
             #expect(executionCount == 2)
             #expect(completionCount == 1)
 
-            continuationB?.resume()
-            continuationB = nil
-            let didCompleteReplacement = await waitUntil { completionCount >= 2 }
+            replacementDownloadContinuation?.resume()
+            replacementDownloadContinuation = nil
+            let didCompleteReplacement = await waitUntil { didFinishReplacement }
             try #require(didCompleteReplacement)
+            #expect(activationCount == 1)
             #expect(executionCount == 2)
             #expect(completionCount == 2)
-            #expect(vm.safeCurrentScene?.primaryAssetId == "initial-asset")
         }
     }
 

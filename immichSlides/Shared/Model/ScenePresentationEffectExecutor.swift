@@ -51,6 +51,9 @@ final class ScenePresentationEffectExecutor {
     private var initialBackgroundPreloadTasks: [UUID: Task<Void, Never>] = [:]
 
     #if DEBUG
+    // The sleeper returns an observer called after the outer activation finishes cleanup.
+    var surfaceActivationSleepForTesting: (@MainActor () async -> (@MainActor () -> Void))?
+
     private(set) var barrierAttemptCountForTesting = 0
 
     var activeBarrierForTesting: ScenePresentationLayerIdentity? { barrier.activeScene }
@@ -234,7 +237,18 @@ final class ScenePresentationEffectExecutor {
         let operationID = UUID()
         let task = Task { @MainActor [weak self] in
             // Surface and control-bar animations can report several sizes in a short interval.
+            #if DEBUG
+            let didFinishActivation: (@MainActor () -> Void)?
+            if let sleep = self?.surfaceActivationSleepForTesting {
+                didFinishActivation = await sleep()
+            } else {
+                try? await Task.sleep(nanoseconds: Self.surfaceActivationDelayNanoseconds)
+                didFinishActivation = nil
+            }
+            defer { didFinishActivation?() }
+            #else
             try? await Task.sleep(nanoseconds: Self.surfaceActivationDelayNanoseconds)
+            #endif
             guard !Task.isCancelled, let self else { return }
             if let completion = activate() {
                 await completion.waitForDownloads()

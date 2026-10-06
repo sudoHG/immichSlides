@@ -172,6 +172,9 @@ while presentation reset cancels effects and prepared-slot image work without ca
 caller that may be replacing the pool. Surface activation retains the 250 ms delay. Surface activation
 and first preload clear their handles only when the finishing operation's ID still matches the owned
 operation, so an older completion cannot remove a newer task's cancellation or joining handle.
+Debug tests can replace the surface-activation sleep and receive an outer task completion observer
+through `surfaceActivationSleepForTesting`. Release builds exclude the hook; the default surface
+delay and download receipt semantics remain unchanged.
 The download receipt must be read in the same main-actor step that dispatched the download, without an
 intervening suspension, before a later renderer callback can replace it. Prepared/lookahead computation
 belongs to `PlaybackCandidateProgression`; proposal installation precedes image preloads and planning
