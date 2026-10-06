@@ -117,6 +117,7 @@ class StrictE2EP2RunnerTestsCases:
         for arguments in (
             ["--platform", "tvos", "--destination", "platform=tvOS Simulator,id=SIM", "--suite", "p2-ipad-layout"],
             ["--platform", "tvos", "--destination", "platform=tvOS Simulator,id=SIM", "--suite", "p2-rotation"],
+            ["--platform", "tvos", "--destination", "platform=tvOS Simulator,id=SIM", "--suite", "image-failure-recovery"],
             ["--platform", "ios", "--destination", "platform=iOS Simulator,id=SIM", "--suite", "p2-exif", "--scenario", "timeout"],
         ):
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as raw_directory:

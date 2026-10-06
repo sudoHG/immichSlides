@@ -469,7 +469,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     try:
         validate_suite_scenario(arguments.suite, arguments.scenario)
         validate_suite_fixture(arguments.suite, arguments.fixture_set)
-        if arguments.suite in P2_CASES or arguments.suite in LIFECYCLE_SUITES:
+        if arguments.suite in (*P2_CASES, *LIFECYCLE_SUITES, *IMAGE_FAILURE_RECOVERY_SUITES):
             resolve_suite_selector(arguments.platform, arguments.suite)
     except CommandError as error:
         print(str(error), file=stderr)

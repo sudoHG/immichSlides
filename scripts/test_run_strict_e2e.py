@@ -13,6 +13,7 @@ from run_strict_e2e_test_fixtures import (
     CommandError,
     FILTER_PERSON_SESSIONS,
     FROZEN_FIXTURE_SHA256,
+    IMAGE_FAILURE_RECOVERY_SUITES,
     IOS_FILTER_SUITES,
     IOS_FIRST_BATCH_SUITES,
     IOS_LATE_IMAGE_SUITES,
@@ -114,8 +115,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
-            P2_CASES[suite].selectors[platform] if suite in P2_CASES
-            else "immichSlidesUITests/ScenePresentationContractUITests/testIOSImageFailureRecovery"
+            P2_CASES[suite].selectors[platform] if suite in P2_CASES else IMAGE_FAILURE_RECOVERY_SUITES[suite][1]
         )
         recording_process = mock.Mock(pid=9876)
 
