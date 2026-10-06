@@ -60,6 +60,9 @@ extension SlideShowViewModelNavigationSemanticsTests {
         vm.replacePlaybackAssetsForTesting(assets)
         completeCurrentScenePresentation(vm)
         var seenScenes = [try #require(vm.safeCurrentScene)]
+        let nextSceneCount = 60
+        let previousSceneCount = 55
+        let deepestPreviousSceneIndex = nextSceneCount - previousSceneCount
 
         func expectRecipe(_ restored: PlaybackScene, matches original: PlaybackScene) {
             #expect(restored.assetIds == original.assetIds)
@@ -70,7 +73,7 @@ extension SlideShowViewModelNavigationSemanticsTests {
                     == original.smartFillReadback?.recordingPublishTiming(actionTimestamp: 0, scenePublishTimestamp: 0))
         }
 
-        for expectedIndex in 1...60 {
+        for expectedIndex in 1...nextSceneCount {
             if displayMode == .smartFill {
                 let didPrepare = await waitUntilForTesting { vm.preparedSmartFillNextAssetIdsForTesting != nil }
                 try #require(didPrepare, "The real planner must supply the next multi-slot recipe")
@@ -91,10 +94,13 @@ extension SlideShowViewModelNavigationSemanticsTests {
             seenScenes.append(scene)
         }
 
-        #expect(vm.playbackScenes.count < seenScenes.count, "Previous must cross a trimmed engine window")
+        let firstRetainedSceneIndex = seenScenes.count - vm.playbackScenes.count
+        #expect(
+            deepestPreviousSceneIndex < firstRetainedSceneIndex,
+            "The Previous traversal must cross the retained render window")
 
         var previousAssetIds: [String] = []
-        for step in 1...55 {
+        for step in 1...previousSceneCount {
             let beforeAssetId = try #require(vm.safeCurrentScene?.primaryAssetId)
 
             vm.requestPreviousScene()
@@ -105,17 +111,17 @@ extension SlideShowViewModelNavigationSemanticsTests {
 
             let afterAssetId = try #require(vm.safeCurrentScene?.primaryAssetId)
             #expect(afterAssetId != beforeAssetId, "previous #\(step) should not stay on the same photo")
-            expectRecipe(try #require(vm.safeCurrentScene), matches: seenScenes[60 - step])
+            expectRecipe(try #require(vm.safeCurrentScene), matches: seenScenes[nextSceneCount - step])
             previousAssetIds.append(afterAssetId)
         }
 
-        #expect(previousAssetIds.last == seenScenes[5].primaryAssetId)
+        #expect(previousAssetIds.last == seenScenes[deepestPreviousSceneIndex].primaryAssetId)
 
         vm.requestNextScene()
         await vm.synchronizePlaybackReadbackForTesting(token: vm.targetTransitionToken, targetIndex: vm.targetIndex)
         completeCurrentScenePresentation(vm)
 
-        expectRecipe(try #require(vm.safeCurrentScene), matches: seenScenes[6])
+        expectRecipe(try #require(vm.safeCurrentScene), matches: seenScenes[deepestPreviousSceneIndex + 1])
     }
 
     @Test
