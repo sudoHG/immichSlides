@@ -146,6 +146,13 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.safeCurrentScene?.id == firstSceneId)
         #expect(vm.canRequestPreviousScene == false)
 
+        vm.qaPlaybackSequenceEvidenceEnabledForTesting = true
+        var displayedSceneLines: [String] = []
+        vm.qaPlaybackSequenceOSLogEmitterForTesting = { line in
+            if line.hasPrefix("qa_playback_sequence ") {
+                displayedSceneLines.append(line)
+            }
+        }
         vm.requestNextScene()
         #expect(vm.smartFillCandidateCursorIndexForTesting == 2)
         try expectHistory(vm, assetIds: ["asset-0"], cursor: 0)
@@ -163,11 +170,16 @@ extension SlideShowViewModelNavigationSemanticsTests {
                 )
             )
         }
+        #expect(vm.isScenePresentationBarrierComplete(for: hiddenLayer))
+        let decodedLayer = try #require(vm.sceneRenderSnapshot.layers.first { $0.identity == hiddenLayer.identity })
+        #expect(decodedLayer.opacity == 0)
         try expectHistory(vm, assetIds: ["asset-0"], cursor: 0)
         await settleManualRequest()
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-1")
         try expectHistory(vm, assetIds: ["asset-0", "asset-1"], cursor: 1)
+        #expect(displayedSceneLines.count == 1)
         vm.incomingBecameVisible(vm.scenePresentationLayerIdentity(for: hiddenLayer))
+        #expect(displayedSceneLines.count == 1)
         try expectHistory(vm, assetIds: ["asset-0", "asset-1"], cursor: 1)
 
         vm.requestNextScene()

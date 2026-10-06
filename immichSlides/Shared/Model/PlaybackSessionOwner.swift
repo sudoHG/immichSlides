@@ -330,8 +330,18 @@ final class PlaybackSessionOwner {
         return true
     }
 
-    func annotateCurrentScene(_ transform: (PlaybackScene) -> PlaybackScene) {
-        engine.updateCurrentScene(transform)
+    func recordScenePublishTiming(
+        sceneID: String, actionTimestamp: TimeInterval, scenePublishTimestamp: TimeInterval
+    ) {
+        engine.updateCurrentScene { scene in
+            guard scene.id == sceneID, let readback = scene.smartFillReadback else { return scene }
+            return scene.replacingSmartFillReadback(
+                readback.recordingPublishTiming(
+                    actionTimestamp: actionTimestamp,
+                    scenePublishTimestamp: scenePublishTimestamp
+                )
+            )
+        }
     }
 
     @discardableResult

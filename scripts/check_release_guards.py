@@ -123,6 +123,12 @@ FORBIDDEN_IN_FILE = {
     ),
 }
 
+# Views use the playback facade; raw session commands bypass its planning and publication coordination.
+PLAYBACK_VIEW_DIRECTORIES = (
+    "immichSlides/iOS/", "immichSlides/tvOS/",
+    "immichSlides/Shared/Component/", "immichSlides/Shared/Core/",
+)
+
 # Retired performance paths that must not come back anywhere in production code.
 RETIRED_SYMBOLS = (
     "PlaybackHotImageWindowPolicy",
@@ -273,6 +279,10 @@ def check_debug_only_markers(path: str, source: str) -> list[Violation]:
 def check_forbidden_symbols(path: str, source: str) -> list[Violation]:
     code = mask_comments(source)
     found = []
+    if path.startswith(PLAYBACK_VIEW_DIRECTORIES):
+        for match in re.finditer(r"\bplaybackSession\b", code):
+            found.append(Violation(path, line_of(source, match.start()), "layer-boundary",
+                                   "views must access playback through SlideShowViewModel, not playbackSession"))
     file = Path(path)
     primary_path = file.with_name(file.stem.split("+", 1)[0] + file.suffix).as_posix()
     for symbol in FORBIDDEN_IN_FILE.get(primary_path, ()):

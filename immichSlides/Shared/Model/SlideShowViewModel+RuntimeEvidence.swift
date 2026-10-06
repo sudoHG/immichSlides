@@ -111,18 +111,10 @@ extension SlideShowViewModel {
             return
         }
         let scenePublishTimestamp = playbackManifestTimestamp()
-        playbackSession.annotateCurrentScene { scene in
-            guard scene.id == transition.scene.id,
-                let readback = scene.smartFillReadback
-            else {
-                return scene
-            }
-            return scene.replacingSmartFillReadback(
-                readback.recordingPublishTiming(
-                    actionTimestamp: actionTimestamp,
-                    scenePublishTimestamp: scenePublishTimestamp
-                )
-            )
-        }
+        playbackSession.recordScenePublishTiming(
+            sceneID: transition.scene.id,
+            actionTimestamp: actionTimestamp,
+            scenePublishTimestamp: scenePublishTimestamp
+        )
     }
 }
