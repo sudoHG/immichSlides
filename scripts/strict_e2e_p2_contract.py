@@ -455,6 +455,10 @@ def _validate_cache_clear(evidence_dir: Path, fixture_set: str) -> dict[str, Any
                 image.verify()
         except Exception as error:
             raise P2ContractError(f"Required PNG cannot be fully decoded: {name}.") from error
+    return _validate_returned_mark(evidence_dir, fixture_set)
+
+
+def _validate_returned_mark(evidence_dir: Path, fixture_set: str) -> dict[str, Any]:
     returned = _classify_mark(evidence_dir, "cache-returned.png")
     fixture_marks = {asset["label"] for asset in fixture_manifest(fixture_set)["assets"]}
     if returned not in fixture_marks:
@@ -479,11 +483,7 @@ def validate_raw_evidence(evidence_dir: Path, suite: str, fixture_set: str) -> d
     if case.cache_clear:
         payload["cache_clear"] = _validate_cache_clear(evidence_dir, fixture_set)
     if case.cache_return:
-        returned = _classify_mark(evidence_dir, "cache-returned.png")
-        fixture_marks = {asset["label"] for asset in fixture_manifest(fixture_set)["assets"]}
-        if returned not in fixture_marks:
-            raise P2ContractError(f"Public mark {returned} shown after return is not in fixture {fixture_set}.")
-        payload["cache_return"] = {"target_mark": returned}
+        payload["cache_return"] = _validate_returned_mark(evidence_dir, fixture_set)
     return payload
 
 
@@ -557,7 +557,7 @@ def evaluate_review(
                 or any(hashes[mark] != fixture_hashes.get(mark) for mark in visible)
             ):
                 raise P2ContractError(f"{name} visible marks or fixture hashes do not match the public data.")
-            if suite == "p2-cache" and name == "cache-returned.png":
+            if name == "cache-returned.png":
                 if cache_target_mark is None or visible != [cache_target_mark]:
                     raise P2ContractError("cache-returned.png manual mark sign-off does not match the machine-recognized returned photo.")
         _text(entry.get("controls"), f"{name} controls")
@@ -640,7 +640,7 @@ def verify_evidence(
         fixture_set=fixture_set,
         artifacts=raw["artifacts"],
         mark_offsets=raw.get("mark_offsets", {}),
-        cache_target_mark=raw.get("cache_clear", {}).get("target_mark"),
+        cache_target_mark=(raw.get("cache_clear") or raw.get("cache_return") or {}).get("target_mark"),
     )
     bundle = evidence_dir / f"strict-{suite}.xcresult"
     if bundle.is_dir():

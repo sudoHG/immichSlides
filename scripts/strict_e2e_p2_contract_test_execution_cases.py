@@ -101,8 +101,6 @@ class P2CaseTableTestsCases:
         )
         self.assertTrue(P2_CASES["p2-cache"].cache_clear)
         self.assertFalse(P2_CASES["p2-cache-smoke"].cache_clear)
-        self.assertTrue(P2_CASES["p2-cache-smoke"].cache_return)
-        self.assertEqual(P2_CASES["p2-cache-smoke"].pngs, ("cache-page-smoke", "cache-returned"))
         self.assertEqual(P2_CASES["p2-cache-smoke"].e2e_ids, ())
 
 

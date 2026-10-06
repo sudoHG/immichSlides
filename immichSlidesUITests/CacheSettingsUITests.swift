@@ -30,6 +30,9 @@ final class CacheSettingsUITests: XCTestCase {
         defer { app.terminate() }
         let driver = IOSDriver(app: app)
         driver.launchToPlayback(input: input)
+        // Like the iPhone flow: a paused single photo keeps the returned frame classifiable.
+        driver.applyPlaybackSettings([.displayMode(isSinglePhoto: true)])
+        driver.pause()
         try driver.clearDiskCache(onCachePage: {})
         let evidence = Evidence()
         try evidence.capture("cache-page-smoke", from: app)
