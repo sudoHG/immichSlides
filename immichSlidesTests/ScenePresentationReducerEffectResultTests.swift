@@ -104,6 +104,7 @@ struct ScenePresentationReducerEffectResultTests {
         case active, pause, background, navigation, cancellation, reset, restoration
         case pausedExhaustionBeforeGraceExpiry, pausedExhaustionAfterGraceExpiry
         case pausedExhaustedTarget
+        case pausedAfterAutomaticAdvance, pausedWithAutomaticGraceTarget
     }
 
     @Test(arguments: PlanningInterruption.allCases)
@@ -134,16 +135,35 @@ struct ScenePresentationReducerEffectResultTests {
             } else {
                 engine.reduceScenePresentation(.suspend(.userPaused), at: 6.2)
                 let resumeEffects = engine.reduceScenePresentation(.resume(.userPaused), at: 6.3)
-                #expect(!resumeEffects.contains(.plan(planningRequest)))
+                #expect(
+                    !resumeEffects.contains { effect in
+                        if case .plan = effect { return true }
+                        return false
+                    })
             }
         case .cancellation, .pausedExhaustedTarget:
             let automatic = makeTarget(sceneID: "cancelled-automatic")
             engine.reduceScenePresentation(.stableDeadlineReached(target: automatic, readiness: .pending), at: 6.1)
-            engine.reduceScenePresentation(.graceExpired, at: 10)
-            engine.reduceScenePresentation(.transitionCompleted, at: 11)
+            let transitionEffects = engine.reduceScenePresentation(.graceExpired, at: 10)
+            var failureTime: TimeInterval = 11.1
+            if interruption == .pausedExhaustedTarget {
+                let transitionDeadline = try #require(
+                    transitionEffects.compactMap { effect -> TimeInterval? in
+                        guard case let .scheduleWakeUp(generation, deadline) = effect,
+                            generation == automatic.identity.generation
+                        else { return nil }
+                        return deadline
+                    }.first)
+                engine.reduceScenePresentation(
+                    .wakeUp(generation: automatic.identity.generation, deadline: transitionDeadline),
+                    at: transitionDeadline)
+                failureTime = transitionDeadline + 0.1
+            } else {
+                engine.reduceScenePresentation(.transitionCompleted, at: 11)
+            }
             for attempt in 0..<4 {
                 let failureEffects = engine.reduceScenePresentation(
-                    .targetFailed(automatic.identity), at: 11.1 + Double(attempt) / 10)
+                    .targetFailed(automatic.identity), at: failureTime + Double(attempt) / 10)
                 if attempt == 3 {
                     planningRequest = try #require(
                         failureEffects.compactMap { effect -> ScenePresentationPlanningRequest? in
@@ -153,12 +173,14 @@ struct ScenePresentationReducerEffectResultTests {
                 }
             }
             if interruption == .pausedExhaustedTarget {
-                engine.reduceScenePresentation(.suspend(.userPaused), at: 11.5)
+                engine.reduceScenePresentation(.suspend(.userPaused), at: failureTime + 0.4)
                 #expect(
-                    engine.reduceScenePresentation(.effectResult(.planningCompleted(planningRequest)), at: 11.6)
-                        .isEmpty)
+                    engine.reduceScenePresentation(
+                        .effectResult(.planningCompleted(planningRequest)), at: failureTime + 0.5
+                    )
+                    .isEmpty)
                 let resumeEffects = engine.reduceScenePresentation(.resume(.userPaused), at: 3600)
-                #expect(resumeEffects.contains(.plan(planningRequest)))
+                #expect(resumeEffects == [.plan(planningRequest)])
                 completionTime = 3600.1
                 break
             }
@@ -171,8 +193,29 @@ struct ScenePresentationReducerEffectResultTests {
             }
             engine.reduceScenePresentation(.suspend(.userPaused), at: 12.5)
             let resumeEffects = engine.reduceScenePresentation(.resume(.userPaused), at: 12.6)
-            #expect(!resumeEffects.contains(.plan(planningRequest)))
+            #expect(
+                !resumeEffects.contains { effect in
+                    if case .plan = effect { return true }
+                    return false
+                })
             completionTime = 13
+        case .pausedAfterAutomaticAdvance:
+            let automatic = makeTarget(sceneID: "advanced-automatic")
+            engine.reduceScenePresentation(.stableDeadlineReached(target: automatic, readiness: .ready), at: 6.1)
+            engine.reduceScenePresentation(.transitionCompleted, at: 7)
+            engine.reduceScenePresentation(.suspend(.userPaused), at: 7.1)
+            let resumeEffects = engine.reduceScenePresentation(.resume(.userPaused), at: 3600)
+            #expect(
+                resumeEffects == [.scheduleWakeUp(generation: automatic.identity.generation, deadline: 3604.9)])
+            completionTime = 3600.1
+        case .pausedWithAutomaticGraceTarget:
+            let automatic = makeTarget(sceneID: "grace-automatic")
+            engine.reduceScenePresentation(.stableDeadlineReached(target: automatic, readiness: .pending), at: 6.1)
+            engine.reduceScenePresentation(.suspend(.userPaused), at: 6.2)
+            let resumeEffects = engine.reduceScenePresentation(.resume(.userPaused), at: 3600)
+            #expect(
+                resumeEffects == [.scheduleWakeUp(generation: automatic.identity.generation, deadline: 3600.9)])
+            completionTime = 3600.1
         case .pausedExhaustionBeforeGraceExpiry, .pausedExhaustionAfterGraceExpiry:
             let automatic = makeTarget(sceneID: "paused-automatic")
             engine.reduceScenePresentation(.stableDeadlineReached(target: automatic, readiness: .pending), at: 6.1)
@@ -220,6 +263,9 @@ struct ScenePresentationReducerEffectResultTests {
         if interruption == .pause {
             let resumeEffects = engine.reduceScenePresentation(.resume(.userPaused), at: 3600)
             #expect(resumeEffects == [.plan(planningRequest)])
+        } else if interruption == .background {
+            let resumeEffects = engine.reduceScenePresentation(.resume(.background), at: 7.1)
+            #expect(resumeEffects == [])
         }
     }
 

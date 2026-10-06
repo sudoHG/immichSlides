@@ -197,6 +197,7 @@ the effect executor runs image work and barriers, and planning computes and deli
   Admission requires an exact outstanding-request match, its target still being current or pending,
   and either a stable current presentation or a failed pending target. User pause rejects completion;
   background suspension alone does not, matching the facade's existing `isAutoPlay` admission gate.
+  `.resume` from user pause may reissue the outstanding `.plan(request)` unchanged under the same admission rule, after any restored wake-up.
   This relies on an invariant: the facade's `isAutoPlay` gate and the reducer's `.userPaused`
   suspension change together (`updateAutoPlayEnabled`, and readback sync after a reset). A caller that
   turns autoplay off without suspending the reducer breaks demand matching.
@@ -269,13 +270,15 @@ diagnostic readback exposes only cached cursor/count values, not proposal or tas
 `pendingAutomaticScenePlanningRequest` transports the last executed automatic demand at delivery,
 independently of proposal computation lifetime. User-paused commands do not replace this copy or the
 reducer's outstanding request: if an automatic grace target exhausts retries while paused, a proposal
-arriving after Play can still satisfy the original photo's demand before grace expires. Once automatic
-presentation resumes, the reducer restores any suspended wake-up first, then re-emits the unchanged
-outstanding demand if the same completion-admission rule still applies: its photo is current or pending,
-and presentation is stable or the pending target has failed. Reusing the request preserves the facade's
+arriving after Play can still satisfy the original photo's demand before grace expires. When
+`.resume(.userPaused)` resumes automatic presentation, the reducer restores any suspended wake-up first,
+then re-emits the unchanged outstanding demand if the same completion-admission rule still applies:
+its photo is current or pending, and presentation is stable or the pending target has failed.
+Reusing the request preserves the facade's
 last executed demand. Restoring the wake-up before planning lets navigation replace that wake-up in its
-existing order. After grace expires, the original photo is no longer current or pending, so neither resume
-nor completion can retry that demand. Matching cancellation and `resetScenePresentationRuntime()` clear
+existing order. Background resume does not reissue planning demand. After grace expires, the original
+photo is no longer current or pending, so neither resume nor completion can retry that demand.
+Matching cancellation and `resetScenePresentationRuntime()` clear
 it; transition acceptance does not. Engine reset/invalidation (including display-mode rebuild) resets
 reducer demand but can leave the facade field stale; the reducer rejects that old request. A completion
 dropped while user-paused leaves its proposal installed; resume can consume it through the reissued demand

@@ -1282,7 +1282,7 @@ extension PlaybackSessionEngine {
             }
             // Pause may drop a prepared completion after the stable wake has already been consumed.
             var planningEffects: [ScenePresentationEffect] = []
-            if let request = outstandingPlanningRequest, isPlanningRequestApplicable(request) {
+            if reason == .userPaused, let request = outstandingPlanningRequest, isPlanningRequestApplicable(request) {
                 planningEffects.append(.plan(request))
             }
             guard let suspendedWakeUp else { return planningEffects }
