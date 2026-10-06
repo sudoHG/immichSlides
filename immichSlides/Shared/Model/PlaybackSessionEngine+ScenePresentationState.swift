@@ -59,23 +59,189 @@ extension PlaybackSessionEngine {
         /// and flash Loading.
 
         private struct ManualPendingPresentationRestore: Equatable, Sendable {
-            let underlyingPhase: ScenePresentationPhase
+            private var underlyingPhase: ScenePresentationPhase
             let currentTarget: ScenePresentationTarget?
-            let pendingTarget: ScenePresentationTarget?
-            let targetReadiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness]
-            var layerTimeline: ScenePresentationLayerTimeline
-            let stableVisibleClock: SceneActiveTimeClock?
-            let graceDeadline: TimeInterval?
-            let isTransitionCompletionPending: Bool
-            let transitionKind: ScenePresentationTransitionKind?
-            let wakeUp: ScenePresentationSuspendedWakeUp?
-            let isManualNavigationWhilePaused: Bool
-            let isCurrentSceneManualStatic: Bool
+            private(set) var pendingTarget: ScenePresentationTarget?
+            private var targetReadiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness]
+            private var layerTimeline: ScenePresentationLayerTimeline
+            private var stableVisibleClock: SceneActiveTimeClock?
+            private var graceDeadline: TimeInterval?
+            private var isTransitionCompletionPending: Bool
+            private var transitionKind: ScenePresentationTransitionKind?
+            private var wakeUp: ScenePresentationSuspendedWakeUp?
+            private let isManualNavigationWhilePaused: Bool
+            private var isCurrentSceneManualStatic: Bool
             /// A settled photo stays live on screen while the manual target loads, so cancelling continues from it.
-            let shouldKeepHeldPhotoLive: Bool
+            private var shouldKeepHeldPhotoLive: Bool
+
+            init(capturing state: ScenePresentationState, at time: TimeInterval) {
+                var stableVisibleClock = state.stableVisibleClock
+                stableVisibleClock?.suspend(at: time)
+                self.init(
+                    underlyingPhase: state.underlyingPhase,
+                    currentTarget: state.currentTarget,
+                    pendingTarget: state.pendingTarget,
+                    targetReadiness: state.targetReadiness,
+                    layerTimeline: state.layerTimeline.frozen(at: time),
+                    stableVisibleClock: stableVisibleClock,
+                    graceDeadline: state.graceDeadline,
+                    isTransitionCompletionPending: state.isTransitionCompletionPending,
+                    transitionKind: state.transitionKind,
+                    wakeUp: state.scheduledWakeUp.map {
+                        ScenePresentationSuspendedWakeUp(
+                            generation: $0.generation, purpose: $0.purpose, remaining: max(0, $0.deadline - time)
+                        )
+                    } ?? state.suspendedWakeUp,
+                    isManualNavigationWhilePaused: state.isManualNavigationWhilePaused,
+                    isCurrentSceneManualStatic: state.isCurrentSceneManualStatic,
+                    shouldKeepHeldPhotoLive: state.layerTimeline.hasOnlyStableVisibleLayers(at: time)
+                )
+            }
+
+            private init(
+                underlyingPhase: ScenePresentationPhase,
+                currentTarget: ScenePresentationTarget?,
+                pendingTarget: ScenePresentationTarget?,
+                targetReadiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness],
+                layerTimeline: ScenePresentationLayerTimeline,
+                stableVisibleClock: SceneActiveTimeClock?,
+                graceDeadline: TimeInterval?,
+                isTransitionCompletionPending: Bool,
+                transitionKind: ScenePresentationTransitionKind?,
+                wakeUp: ScenePresentationSuspendedWakeUp?,
+                isManualNavigationWhilePaused: Bool,
+                isCurrentSceneManualStatic: Bool,
+                shouldKeepHeldPhotoLive: Bool
+            ) {
+                self.underlyingPhase = underlyingPhase
+                self.currentTarget = currentTarget
+                self.pendingTarget = pendingTarget
+                self.targetReadiness = targetReadiness
+                self.layerTimeline = layerTimeline
+                self.stableVisibleClock = stableVisibleClock
+                self.graceDeadline = graceDeadline
+                self.isTransitionCompletionPending = isTransitionCompletionPending
+                self.transitionKind = transitionKind
+                self.wakeUp = wakeUp
+                self.isManualNavigationWhilePaused = isManualNavigationWhilePaused
+                self.isCurrentSceneManualStatic = isCurrentSceneManualStatic
+                self.shouldKeepHeldPhotoLive = shouldKeepHeldPhotoLive
+            }
+
+            enum Continuation {
+                case liveHeldPhoto(ScenePresentationSuspendedWakeUp?)
+                case frozenPresentation(ScenePresentationSuspendedWakeUp?)
+            }
+
+            /// Apply only the rollback subset; attempts, suspension, Reduce Motion and planning demand stay live.
+            func apply(
+                to state: inout ScenePresentationState,
+                cancelling identity: ScenePresentationIdentity,
+                at time: TimeInterval
+            ) -> Continuation {
+                state.underlyingPhase = underlyingPhase
+                state.currentTarget = currentTarget
+                state.pendingTarget = pendingTarget
+                state.attemptLedger.restoreReadiness(targetReadiness)
+                if shouldKeepHeldPhotoLive {
+                    let restartingIdentity = pendingTarget.flatMap { target in
+                        targetReadiness[target.identity] == .pending ? target.identity : nil
+                    }
+                    state.layerTimeline.continueHeldLayers(
+                        from: layerTimeline, cancelling: identity, restarting: restartingIdentity, at: time
+                    )
+                    // A manual static photo that started moving during the hold is an ordinary scene again.
+                    state.isCurrentSceneManualStatic =
+                        isCurrentSceneManualStatic && !state.suspensionReasons.isEmpty
+                        && (state.stableVisibleClock?.activeTime(at: time) ?? 0) == 0
+                } else {
+                    state.layerTimeline = layerTimeline
+                    state.layerTimeline.reconcileReduceMotion(
+                        state.isReduceMotionEnabled, at: time, canResumeUnseenMotion: false
+                    )
+                    state.stableVisibleClock = stableVisibleClock
+                    state.isCurrentSceneManualStatic = isCurrentSceneManualStatic
+                }
+                state.graceDeadline = graceDeadline
+                state.isTransitionCompletionPending = isTransitionCompletionPending
+                state.transitionKind = transitionKind
+                state.scheduledWakeUp = nil
+                state.suspendedWakeUp = nil
+                state.isManualNavigationWhilePaused = isManualNavigationWhilePaused
+                state.manualPendingPresentationRestore = nil
+                return shouldKeepHeldPhotoLive ? .liveHeldPhoto(wakeUp) : .frozenPresentation(wakeUp)
+            }
+
+            mutating func reconcileReduceMotion(_ isEnabled: Bool, at time: TimeInterval) {
+                layerTimeline.reconcileReduceMotion(isEnabled, at: time, canResumeUnseenMotion: false)
+            }
+
+            /// Resolves a transition interrupted by a manual press. The photo the transition was heading to comes back up to
+            /// full opacity if the user has already seen it, otherwise the photo that was fading out does; any other visible
+            /// layer fades out behind it with the short manual pacing, so the screen never drops. Motion keeps running unless
+            /// playback is suspended. The returned restore lets Previous continue from this picture rather than the dim frame.
+            func raisedForHold(
+                history: [ScenePresentationIdentity],
+                latestSource: (ScenePresentationIdentity) -> ScenePresentationRequestSource?,
+                shouldResumeMotion: Bool,
+                at time: TimeInterval
+            ) -> (timeline: ScenePresentationLayerTimeline, restore: Self)? {
+                guard !shouldKeepHeldPhotoLive else { return nil }
+                let transitionTarget = pendingTarget ?? currentTarget
+                let capturedLayers = layerTimeline.renderLayers(at: time)
+                let visibleLayers = capturedLayers.filter { $0.opacity > 0 }
+                let seenTargetLayer = transitionTarget.flatMap { target in
+                    history.contains(target.identity) ? visibleLayers.first { $0.identity == target.identity } : nil
+                }
+                guard
+                    let heldIdentity = seenTargetLayer?.identity
+                        ?? (visibleLayers.last { $0.role == .outgoing } ?? capturedLayers.last { $0.role == .outgoing })?
+                        .identity
+                else {
+                    return nil
+                }
+                let raisedTimeline = layerTimeline.raisedForHold(
+                    identity: heldIdentity,
+                    pacing: .manualReady,
+                    shouldResumeMotion: shouldResumeMotion,
+                    at: time
+                )
+                let restore: ManualPendingPresentationRestore
+                if let seenTargetLayer, let transitionTarget, seenTargetLayer.identity == transitionTarget.identity {
+                    restore = resolved(
+                        underlyingPhase: .transition,
+                        transitionKind: .readyPhoto,
+                        pendingTarget: transitionTarget,
+                        targetReadiness: targetReadiness.merging([transitionTarget.identity: .ready]) { $1 },
+                        wakeUp: nil
+                    )
+                } else {
+                    var readiness = targetReadiness
+                    if let transitionTarget {
+                        readiness[transitionTarget.identity] = .pending
+                    }
+                    restore = resolved(
+                        underlyingPhase: .grace,
+                        transitionKind: nil,
+                        pendingTarget: transitionTarget,
+                        targetReadiness: readiness,
+                        // Only an automatic target falls back to loading after grace; a manual one is waited for.
+                        wakeUp: transitionTarget.flatMap { target in
+                            latestSource(target.identity)?.isManual == true
+                                ? nil
+                                : ScenePresentationSuspendedWakeUp(
+                                    generation: target.identity.generation,
+                                    purpose: .graceDeadline,
+                                    remaining: target.lifecycle.graceDuration
+                                )
+                        }
+                    )
+                }
+                return (raisedTimeline, restore)
+            }
 
             /// The state Previous returns to after an interrupted transition was raised: it continues from the live picture.
-            func resolved(
+            private func resolved(
                 underlyingPhase: ScenePresentationPhase,
                 transitionKind: ScenePresentationTransitionKind?,
                 pendingTarget: ScenePresentationTarget?,
@@ -372,7 +538,7 @@ extension PlaybackSessionEngine {
             let isReplacingHeldManualTarget = hasUnseenManualPendingPresentation
             let manualPendingRestore =
                 source.isManual && readiness == .pending && canHoldPresentation && !isReplacingHeldManualTarget
-                ? captureManualPendingPresentationRestore(at: time)
+                ? ManualPendingPresentationRestore(capturing: self, at: time)
                 : nil
             if canNavigateManuallyWhilePaused {
                 beginManualNavigationWhilePaused()
@@ -427,38 +593,6 @@ extension PlaybackSessionEngine {
                 + effectsForPendingTarget(target, source: source)
         }
 
-        private func captureManualPendingPresentationRestore(
-            at time: TimeInterval
-        ) -> ManualPendingPresentationRestore {
-            let shouldKeepHeldPhotoLive = layerTimeline.hasOnlyStableVisibleLayers(at: time)
-            let restoredTimeline = layerTimeline.frozen(at: time)
-            var restoredStableVisibleClock = stableVisibleClock
-            restoredStableVisibleClock?.suspend(at: time)
-            let wakeUp =
-                scheduledWakeUp.map {
-                    ScenePresentationSuspendedWakeUp(
-                        generation: $0.generation,
-                        purpose: $0.purpose,
-                        remaining: max(0, $0.deadline - time)
-                    )
-                } ?? suspendedWakeUp
-            return ManualPendingPresentationRestore(
-                underlyingPhase: underlyingPhase,
-                currentTarget: currentTarget,
-                pendingTarget: pendingTarget,
-                targetReadiness: targetReadiness,
-                layerTimeline: restoredTimeline,
-                stableVisibleClock: restoredStableVisibleClock,
-                graceDeadline: graceDeadline,
-                isTransitionCompletionPending: isTransitionCompletionPending,
-                transitionKind: transitionKind,
-                wakeUp: wakeUp,
-                isManualNavigationWhilePaused: isManualNavigationWhilePaused,
-                isCurrentSceneManualStatic: isCurrentSceneManualStatic,
-                shouldKeepHeldPhotoLive: shouldKeepHeldPhotoLive
-            )
-        }
-
         private mutating func cancelUnseenManualPendingPresentation(
             at time: TimeInterval
         ) -> [ScenePresentationEffect] {
@@ -471,33 +605,15 @@ extension PlaybackSessionEngine {
             let cancelledSource = attemptLedger.latestSource(for: cancelledTarget.identity) ?? .manualPrevious
             attemptLedger.cancelAttempt(identity: cancelledTarget.identity)
 
-            underlyingPhase = restore.underlyingPhase
-            currentTarget = restore.currentTarget
-            pendingTarget = restore.pendingTarget
-            attemptLedger.restoreReadiness(restore.targetReadiness)
-            if restore.shouldKeepHeldPhotoLive {
+            let wakeUp: ScenePresentationSuspendedWakeUp?
+            switch restore.apply(to: &self, cancelling: cancelledTarget.identity, at: time) {
+            case .liveHeldPhoto(let restoredWakeUp):
                 return continueLiveHeldPhoto(
-                    restore,
-                    cancelling: cancelledTarget,
-                    source: cancelledSource,
-                    at: time
+                    wakeUp: restoredWakeUp, cancelling: cancelledTarget, source: cancelledSource, at: time
                 )
+            case .frozenPresentation(let restoredWakeUp):
+                wakeUp = restoredWakeUp
             }
-            layerTimeline = restore.layerTimeline
-            layerTimeline.reconcileReduceMotion(
-                isReduceMotionEnabled,
-                at: time,
-                canResumeUnseenMotion: false
-            )
-            stableVisibleClock = restore.stableVisibleClock
-            graceDeadline = restore.graceDeadline
-            isTransitionCompletionPending = restore.isTransitionCompletionPending
-            transitionKind = restore.transitionKind
-            scheduledWakeUp = nil
-            suspendedWakeUp = nil
-            isManualNavigationWhilePaused = restore.isManualNavigationWhilePaused
-            isCurrentSceneManualStatic = restore.isCurrentSceneManualStatic
-            manualPendingPresentationRestore = nil
 
             let resumesRestoredPresentation = suspensionReasons.isEmpty && !isCurrentSceneManualStatic
             let resumesRestoredManualFadeWhilePaused =
@@ -524,7 +640,7 @@ extension PlaybackSessionEngine {
             var effects: [ScenePresentationEffect] = [
                 .cancel(effectRequest(for: cancelledTarget, source: cancelledSource))
             ]
-            if let restoredPendingTarget = restore.pendingTarget,
+            if let restoredPendingTarget = pendingTarget,
                 targetReadiness[restoredPendingTarget.identity] == .pending
             {
                 effects += restartRestoredPendingTarget(
@@ -532,7 +648,7 @@ extension PlaybackSessionEngine {
                     at: time
                 )
             }
-            if let wakeUp = restore.wakeUp {
+            if let wakeUp {
                 let deadline = time + wakeUp.remaining
                 if wakeUp.purpose == .graceDeadline {
                     graceDeadline = deadline
@@ -557,36 +673,15 @@ extension PlaybackSessionEngine {
 
         /// The held photo kept its own clocks on screen, so only the withheld deadline and hidden targets come back.
         private mutating func continueLiveHeldPhoto(
-            _ restore: ManualPendingPresentationRestore,
+            wakeUp: ScenePresentationSuspendedWakeUp?,
             cancelling cancelledTarget: ScenePresentationTarget,
             source cancelledSource: ScenePresentationRequestSource,
             at time: TimeInterval
         ) -> [ScenePresentationEffect] {
-            let restartingIdentity = restore.pendingTarget.flatMap { target in
-                restore.targetReadiness[target.identity] == .pending ? target.identity : nil
-            }
-            layerTimeline.continueHeldLayers(
-                from: restore.layerTimeline,
-                cancelling: cancelledTarget.identity,
-                restarting: restartingIdentity,
-                at: time
-            )
-            graceDeadline = restore.graceDeadline
-            isTransitionCompletionPending = restore.isTransitionCompletionPending
-            transitionKind = restore.transitionKind
-            scheduledWakeUp = nil
-            suspendedWakeUp = nil
-            isManualNavigationWhilePaused = restore.isManualNavigationWhilePaused
-            // A manual static photo that started moving during the hold is an ordinary scene again.
-            isCurrentSceneManualStatic =
-                restore.isCurrentSceneManualStatic && !suspensionReasons.isEmpty
-                && (stableVisibleClock?.activeTime(at: time) ?? 0) == 0
-            manualPendingPresentationRestore = nil
-
             var effects: [ScenePresentationEffect] = [
                 .cancel(effectRequest(for: cancelledTarget, source: cancelledSource))
             ]
-            if let restoredPendingTarget = restore.pendingTarget,
+            if let restoredPendingTarget = pendingTarget,
                 targetReadiness[restoredPendingTarget.identity] == .pending
             {
                 installHiddenLayerIfNeeded(target: restoredPendingTarget, at: time)
@@ -613,7 +708,7 @@ extension PlaybackSessionEngine {
                     deadline: time + remaining,
                     at: time
                 )
-            } else if let wakeUp = restore.wakeUp {
+            } else if let wakeUp {
                 let deadline = time + wakeUp.remaining
                 if wakeUp.purpose == .graceDeadline {
                     graceDeadline = deadline
@@ -782,8 +877,13 @@ extension PlaybackSessionEngine {
                 } ?? []
             scheduledWakeUp = nil
             suspendedWakeUp = nil
-            if let manualPendingRestore, !manualPendingRestore.shouldKeepHeldPhotoLive,
-                let raised = raiseInterruptedTransition(manualPendingRestore, at: time)
+            if let manualPendingRestore,
+                let raised = manualPendingRestore.raisedForHold(
+                    history: history,
+                    latestSource: { attemptLedger.latestSource(for: $0) },
+                    shouldResumeMotion: suspensionReasons.isEmpty,
+                    at: time
+                )
             {
                 // A frame caught mid-transition may be dim: bring a photo the user has seen back up instead.
                 layerTimeline = raised.timeline
@@ -800,67 +900,6 @@ extension PlaybackSessionEngine {
             transitionKind = nil
             graceDeadline = nil
             return cancellationEffects
-        }
-
-        /// Resolves a transition interrupted by a manual press. The photo the transition was heading to comes back up to
-        /// full opacity if the user has already seen it, otherwise the photo that was fading out does; any other visible
-        /// layer fades out behind it with the short manual pacing, so the screen never drops. Motion keeps running unless
-        /// playback is suspended. The returned restore lets Previous continue from this picture rather than the dim frame.
-        private func raiseInterruptedTransition(
-            _ capture: ManualPendingPresentationRestore,
-            at time: TimeInterval
-        ) -> (timeline: ScenePresentationLayerTimeline, restore: ManualPendingPresentationRestore)? {
-            let transitionTarget = capture.pendingTarget ?? capture.currentTarget
-            let capturedLayers = capture.layerTimeline.renderLayers(at: time)
-            let visibleLayers = capturedLayers.filter { $0.opacity > 0 }
-            let seenTargetLayer = transitionTarget.flatMap { target in
-                history.contains(target.identity) ? visibleLayers.first { $0.identity == target.identity } : nil
-            }
-            guard
-                let heldIdentity = seenTargetLayer?.identity
-                    ?? (visibleLayers.last { $0.role == .outgoing } ?? capturedLayers.last { $0.role == .outgoing })?
-                    .identity
-            else {
-                return nil
-            }
-            let raisedTimeline = capture.layerTimeline.raisedForHold(
-                identity: heldIdentity,
-                pacing: .manualReady,
-                shouldResumeMotion: suspensionReasons.isEmpty,
-                at: time
-            )
-            let restore: ManualPendingPresentationRestore
-            if let seenTargetLayer, let transitionTarget, seenTargetLayer.identity == transitionTarget.identity {
-                restore = capture.resolved(
-                    underlyingPhase: .transition,
-                    transitionKind: .readyPhoto,
-                    pendingTarget: transitionTarget,
-                    targetReadiness: capture.targetReadiness.merging([transitionTarget.identity: .ready]) { $1 },
-                    wakeUp: nil
-                )
-            } else {
-                var readiness = capture.targetReadiness
-                if let transitionTarget {
-                    readiness[transitionTarget.identity] = .pending
-                }
-                restore = capture.resolved(
-                    underlyingPhase: .grace,
-                    transitionKind: nil,
-                    pendingTarget: transitionTarget,
-                    targetReadiness: readiness,
-                    // Only an automatic target falls back to loading after grace; a manual one is waited for.
-                    wakeUp: transitionTarget.flatMap { target in
-                        attemptLedger.latestSource(for: target.identity)?.isManual == true
-                            ? nil
-                            : ScenePresentationSuspendedWakeUp(
-                                generation: target.identity.generation,
-                                purpose: .graceDeadline,
-                                remaining: target.lifecycle.graceDuration
-                            )
-                    }
-                )
-            }
-            return (raisedTimeline, restore)
         }
 
         private mutating func beginIncomingFromLoading(
@@ -1283,11 +1322,7 @@ extension PlaybackSessionEngine {
             // The capture behind a held manual target must follow the toggle too, or cancelling restores a stale freeze.
 
             if var restore = manualPendingPresentationRestore {
-                restore.layerTimeline.reconcileReduceMotion(
-                    isEnabled,
-                    at: time,
-                    canResumeUnseenMotion: false
-                )
+                restore.reconcileReduceMotion(isEnabled, at: time)
                 manualPendingPresentationRestore = restore
             }
         }
