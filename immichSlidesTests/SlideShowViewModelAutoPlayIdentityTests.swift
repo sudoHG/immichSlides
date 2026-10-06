@@ -4,6 +4,7 @@
 //
 //  Asserts on a virtual clock that auto play switches identity, and that a foreground/background pause does
 //  not catch up on missed advances.
+//  Also exercises the real wake-up scheduler with a controllable sleeper.
 //
 
 import Foundation
@@ -13,6 +14,78 @@ import Testing
 @MainActor
 @Suite(.sharedRuntimeIsolation)
 struct SlideShowViewModelAutoPlayIdentityTests {
+
+    enum WakeUpChange: CaseIterable, Equatable {
+        case unchanged, replacement, matchingCancel, reset
+    }
+
+    @Test(arguments: WakeUpChange.allCases)
+    func `scheduled wake ups deliver only the current tagged event after duplicate replacement cancel or reset`(
+        _ change: WakeUpChange
+    ) async throws {
+        let clock = VirtualClock()
+        clock.now = 1
+        let sleeper = ControllableWakeUpSleeper()
+        var events: [PlaybackSessionEngine.ScenePresentationEvent] = []
+        var deliveryTimes: [TimeInterval] = []
+        let scheduler = ScenePresentationWakeUpScheduler(
+            now: { clock.now },
+            sleepForTesting: { await sleeper.sleep(nanoseconds: $0) },
+            deliver: { event, timestamp in
+                events.append(event)
+                deliveryTimes.append(timestamp)
+            }
+        )
+        defer {
+            scheduler.reset()
+            sleeper.finishAll()
+        }
+        let generation = UUID()
+        // An exactly representable sub-nanosecond fraction must round up to one nanosecond.
+        let fraction = 1.0 / 4_294_967_296.0
+        let originalDeadline = 1 + fraction
+        var expectedDeadline = originalDeadline
+        var expectedDelays: [UInt64] = [1]
+        scheduler.schedule(generation: generation, deadline: originalDeadline)
+        scheduler.schedule(generation: generation, deadline: originalDeadline)
+        clock.now = 2
+        try #require(await waitUntil(pollInterval: .milliseconds(1)) { sleeper.delays.count == 1 })
+        scheduler.cancel(generation: UUID())
+
+        switch change {
+        case .unchanged:
+            break
+        case .replacement:
+            expectedDeadline = 3 + fraction
+            expectedDelays.append(1_000_000_001)
+            scheduler.schedule(generation: generation, deadline: expectedDeadline)
+        case .matchingCancel, .reset:
+            if change == .matchingCancel {
+                scheduler.cancel(generation: generation)
+            } else {
+                scheduler.reset()
+            }
+            // Reusing the same key must still reject the cancelled task's late completion.
+            expectedDelays.append(0)
+            scheduler.schedule(generation: generation, deadline: originalDeadline)
+        }
+
+        if expectedDelays.count == 2 {
+            try #require(await waitUntil(pollInterval: .milliseconds(1)) { sleeper.delays.count == 2 })
+            sleeper.finish(0)
+            try #require(await waitUntil(pollInterval: .milliseconds(1)) { sleeper.completed.contains(0) })
+            #expect(events.isEmpty)
+        }
+        clock.now = 42.5
+        sleeper.finish(expectedDelays.count - 1)
+        try #require(
+            await waitUntil(pollInterval: .milliseconds(1)) {
+                sleeper.completed.count == expectedDelays.count && events.count == 1
+            })
+        #expect(sleeper.delays == expectedDelays)
+        #expect(events == [.wakeUp(generation: generation, deadline: expectedDeadline)])
+        #expect(deliveryTimes == [42.5])
+    }
 
     @Test
     func `autoplay switches the current identity to the next scene once the deadline passes`() {
@@ -172,4 +245,28 @@ struct SlideShowViewModelAutoPlayIdentityTests {
 
 private final class VirtualClock {
     var now: TimeInterval = 0
+}
+
+@MainActor
+private final class ControllableWakeUpSleeper {
+    private(set) var delays: [UInt64] = []
+    private(set) var completed: Set<Int> = []
+    private var continuations: [Int: CheckedContinuation<Void, Never>] = [:]
+
+    func sleep(nanoseconds: UInt64) async {
+        let index = delays.count
+        delays.append(nanoseconds)
+        // Ignore cancellation so the real scheduler must reject stale completions itself.
+        await withCheckedContinuation { continuations[index] = $0 }
+        completed.insert(index)
+    }
+
+    func finish(_ index: Int) {
+        continuations.removeValue(forKey: index)?.resume()
+    }
+
+    func finishAll() {
+        continuations.values.forEach { $0.resume() }
+        continuations.removeAll()
+    }
 }

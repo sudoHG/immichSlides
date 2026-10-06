@@ -72,6 +72,7 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 | `ScenePresentationLayerTimeline` (private value) | Same reducer file | Owns the ordered layers, opacity/fade sampling, layer motion clocks, freeze/resume mechanics and immutable render-layer snapshots. Executes synchronous reducer decisions without owning phases, targets, suspension reasons or effects. |
 | `ScenePresentationAttemptLedger` (private value) | Same reducer file | Owns target readiness, ordered attempt records, attempt numbering, outcomes, failed-outcome counts, source lookup and summaries. The reducer decides whether to retry, replace an automatic target or continue a manual direction. |
 | `ScenePresentationEffect` | `Shared/Model/ScenePresentationEffect.swift` | Commands the reducer emits (`plan`, `download`, `retry`, `loadMore`, `scheduleWakeUp`, `cancelWakeUp`, `cancel`, …). Planning carries an explicit purpose and demand tag. Plain values, no tasks. |
+| `ScenePresentationWakeUpScheduler` | `Shared/Model/ScenePresentationWakeUpScheduler.swift` | Owns the private wake-up task and generation/deadline key. Executes schedule, matching cancellation and reset through an injected clock and sleeper, delivering one tagged event synchronously after the sleep. |
 | `ScenePresentationPrerenderBarrier` | `Shared/Model/ScenePresentationPrerenderBarrier.swift` | Tracks when every renderer of a hidden incoming scene has decoded. Decoded does not mean seen. |
 | `SceneVisibleFrameReporter` | `Shared/Component/SceneVisibleFrameReporter.swift` | Reports a scene as visible only on the display tick after its render transaction completes. That report is what commits history. |
 | `SlideShowViewModel` | `Shared/Model/SlideShowViewModel.swift` | `@MainActor` coordinator for playback. Delegates pool loading and candidate progression, plans scenes, runs reducer effects, starts downloads, keeps `PlaybackHistoryLedger` (previous / redo / next), and publishes render state to the platform views. |
@@ -103,7 +104,7 @@ The co-located private `ScenePresentationAttemptLedger` registers readiness and 
 
 ### Data flow: "play the next scene"
 
-1. **Deadline.** When a scene becomes stable, the reducer emits `scheduleWakeUp`. `SlideShowViewModel.executeScenePresentationEffects` sleeps until the deadline and sends `.wakeUp` back. The reducer answers with a `.plan` effect.
+1. **Deadline.** When a scene becomes stable, the reducer emits `scheduleWakeUp`. `SlideShowViewModel.executeScenePresentationEffects` delegates to `ScenePresentationWakeUpScheduler`, which sleeps until the deadline and delivers `.wakeUp` with the current clock time through the facade's callback. The facade synchronously reduces it, producing a `.plan` effect.
 2. **Choose the scene.** For `.plan`, or for a manual `requestNextScene()`, the view model does one of these:
    - replays the redo entry from `PlaybackHistoryLedger`
    - consumes the prepared next scene from the engine's `PlaybackPreparedSceneRing`
@@ -117,6 +118,17 @@ The co-located private `ScenePresentationAttemptLedger` registers readiness and 
 6. **Visible.** `SceneVisibleFrameReporterModifier` calls `onSceneBecameVisible` for eligible stable or incoming scene roots; platform views forward it to `SlideShowViewModel.incomingBecameVisible`. The reducer appends the identity to its history, and the view model commits the scene to `PlaybackHistoryLedger` and asks for more pool assets if the pool is running low (`loadMore`). Candidate progression already advanced at successful transition acceptance.
 
 Platform views only forward system events (scene phase, Reduce Motion, remote/touch input) to the view model and draw the `SceneRenderSnapshot` they get back. They hold no playback state machine of their own.
+
+The wake-up scheduler receives only generation/deadline values and injected functions; it does not hold
+the engine or decide deadlines. Duplicate keys keep the existing task. Replacement, matching generation
+cancellation and reset cancel the owned task; both task cancellation and key matching reject late
+completions, including a cancelled task whose key has since been reused. Delay is sampled synchronously
+when scheduled, clamped to zero and rounded upward to nanoseconds. Completion clears the key and task
+before sampling the current time and delivering the tagged event. The facade reduces that event and
+executes its effects in the same main-actor turn, with no added task or actor hop on publication paths.
+The scheduler cancels its remaining task on release. Existing Debug virtual-time facade tests retain
+their explicit manual wake at the deadline; the scheduler's own controllable-sleeper coverage exercises
+the real task. Both platforms include the scheduler through the synchronized `Shared/` folder.
 
 ### Frozen planning event/effect interface
 

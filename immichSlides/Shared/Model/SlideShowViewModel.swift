@@ -172,13 +172,17 @@ class SlideShowViewModel: ObservableObject {
     var smartFillSurface: PlaybackSmartFillSurface? { candidateProgression.surface }
     var smartFillProtectionSnapshot: PlaybackProtectionSnapshot { candidateProgression.protectionSnapshot }
     var smartFillSurfaceActivationTask: Task<Void, Never>?
-    struct ScenePresentationWakeUpKey: Equatable {
-        let generation: UUID
-        let deadline: TimeInterval
-    }
     var scenePresentationPrerenderBarrier = ScenePresentationPrerenderBarrier()
-    var scenePresentationWakeUpTask: Task<Void, Never>?
-    var scenePresentationWakeUpKey: ScenePresentationWakeUpKey?
+    private(set) lazy var scenePresentationWakeUpScheduler = ScenePresentationWakeUpScheduler(
+        // If the facade is gone, delivery discards this fallback clock value.
+        now: { [weak self] in self?.scenePresentationTimestamp() ?? ProcessInfo.processInfo.systemUptime },
+        deliver: { [weak self] event, timestamp in
+            guard let self else { return }
+            self.executeScenePresentationEffects(
+                self.playbackSessionEngine.reduceScenePresentation(event, at: timestamp)
+            )
+        }
+    )
     var scenePresentationEffectTasks: [UUID: Task<Void, Never>] = [:]
     var pendingAutomaticScenePlanningRequest: ScenePresentationPlanningRequest?
     @Published var scenePresentationRevision = UUID()
@@ -1689,9 +1693,7 @@ extension SlideShowViewModel {
     }
 
     private func resetScenePresentationRuntime() {
-        scenePresentationWakeUpTask?.cancel()
-        scenePresentationWakeUpTask = nil
-        scenePresentationWakeUpKey = nil
+        scenePresentationWakeUpScheduler.reset()
         scenePresentationEffectTasks.values.forEach { $0.cancel() }
         scenePresentationEffectTasks = [:]
         pendingAutomaticScenePlanningRequest = nil
