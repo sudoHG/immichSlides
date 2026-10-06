@@ -5,33 +5,31 @@ import CoreGraphics
 import OSLog
 
 extension SlideShowViewModel {
-    func syncPlaybackReadbackFromEngine() {
+    func syncPlaybackReadbackFromSession() {
         // If autoplay is off at startup, send that to the reducer first, so layers created or made Ready later inherit
         // the paused clock.
 
         if !isAutoPlay {
             executeScenePresentationEffects(
-                playbackSessionEngine.reduceScenePresentation(
+                playbackSession.reduceScenePresentation(
                     .suspend(.userPaused),
                     at: scenePresentationTimestamp()
                 )
             )
         }
-        if playbackSessionEngine.pendingTransition != nil {
+        if playbackSession.pendingTransition != nil {
             beginPendingScenePresentationIfNeeded()
-        } else if playbackSessionEngine.scenePresentationState.underlyingPhase == .empty,
-            let started = playbackSessionEngine.startScenePresentation(
+        } else if playbackSession.isPresentationEmpty,
+            let started = playbackSession.startScenePresentation(
                 configuredInterval: autoPlayInterval,
                 at: scenePresentationTimestamp()
             ),
-            let scene = playbackSessionEngine.scene(for: started.identity)
+            let scene = playbackSession.scene(for: started.identity)
         {
             scenePresentationEffectExecutor.beginBarrier(identity: started.identity, scene: scene)
             executeScenePresentationEffects(started.effects)
         }
-        currentIndex = playbackSessionEngine.currentIndex
-        targetIndex = playbackSessionEngine.pendingTransition?.targetIndex ?? playbackSessionEngine.currentIndex
-        targetTransitionToken = playbackSessionEngine.targetTransitionToken
+        publishPlaybackPosition()
         #if DEBUG
         downloadManager.markPlaybackImageRequestLifecycleLateResultsForDiagnostics(
             currentNavigationToken: targetTransitionToken
@@ -41,36 +39,21 @@ extension SlideShowViewModel {
     }
 
     private func beginPendingScenePresentationIfNeeded() {
-        guard let transition = playbackSessionEngine.pendingTransition else { return }
-        let requestSource: PlaybackSessionEngine.ScenePresentationRequestSource
-        switch transition.transaction.source {
-        case .manualNext:
-            requestSource = .manualNext
-        case .manualPrevious:
-            requestSource = .manualPrevious
-        case .autoplay:
-            requestSource = .automatic
-        }
-        let isAutomaticStableDeadline =
-            requestSource == .automatic && playbackSessionEngine.scenePresentationState.underlyingPhase == .stablePhoto
-        let appendsNewTailScene = transition.targetIndex >= playbackSessionEngine.scenes.count
+        guard let transition = playbackSession.pendingTransition else { return }
         let pendingCandidateAcceptance = candidateProgression.capturePendingAcceptance()
         guard
-            let started = playbackSessionEngine.beginScenePresentation(
+            let started = playbackSession.beginScenePresentation(
                 for: transition,
                 configuredInterval: autoPlayInterval,
-                requestSource: requestSource,
-                isAutomaticStableDeadline: isAutomaticStableDeadline,
                 at: scenePresentationTimestamp()
             )
         else {
-            pendingPlaybackHistoryLedgerCommits[transition.transaction.id] = nil
             runtimeEvidenceRecorder.discardActionTimestamp(for: transition.transaction.id)
             return
         }
         recordScenePublishTiming(for: transition)
         candidateProgression.accept(
-            pendingCandidateAcceptance, appendsNewTailScene: appendsNewTailScene, assetCount: assets.count)
+            pendingCandidateAcceptance, appendsNewTailScene: started.appendsNewTailScene, assetCount: assets.count)
         if !applySmartFillMotionLookaheadPreparedPlanIfReady() {
             refreshPreparedSmartFillSceneRingIfPossible()
         }
@@ -83,10 +66,6 @@ extension SlideShowViewModel {
         if let scenePresentationTimestampProviderForTesting { return scenePresentationTimestampProviderForTesting() }
         #endif
         return ProcessInfo.processInfo.systemUptime
-    }
-
-    func publishScenePresentationChange() {
-        scenePresentationRevision = UUID()
     }
 
     func toggleAutoPlayFromUserInteraction() {
@@ -118,7 +97,7 @@ extension SlideShowViewModel {
             ? .resume(.userPaused)
             : .suspend(.userPaused)
         executeScenePresentationEffects(
-            playbackSessionEngine.reduceScenePresentation(
+            playbackSession.reduceScenePresentation(
                 event,
                 at: scenePresentationTimestamp()
             )
@@ -152,7 +131,7 @@ extension SlideShowViewModel {
                 effect,
                 scene: sceneForPresentationEffect(effect),
                 isInitialScene: { identity in
-                    self.playbackSessionEngine.transition(for: identity) == nil
+                    self.playbackSession.isInitialPresentation(identity)
                 },
                 images: images,
                 loadMore: { await self.loadMoreAssets() },
@@ -167,7 +146,7 @@ extension SlideShowViewModel {
     private func sceneForPresentationEffect(_ effect: ScenePresentationEffect) -> PlaybackScene? {
         switch effect {
         case let .restartPreparation(request), let .download(request), let .retry(request, _):
-            return playbackSessionEngine.scene(for: request.identity)
+            return playbackSession.scene(for: request.identity)
         default:
             return nil
         }
@@ -201,17 +180,14 @@ extension SlideShowViewModel {
     }
 
     var currentSceneDownloadCompletion: ScenePresentationEffectExecutor.DownloadCompletion? {
-        let presentationState = playbackSessionEngine.scenePresentationState
-        guard let identity = (presentationState.pendingTarget ?? presentationState.currentTarget)?.identity else {
-            return nil
-        }
+        guard let identity = playbackSession.currentPresentationIdentity else { return nil }
         return scenePresentationEffectExecutor.downloadCompletion(for: identity)
     }
 
     /// Proposal delivery happens first; rejecting demand must not undo preparation or its image preloads.
     func preparedScenePlanningDidComplete(_ request: ScenePresentationPlanningRequest?) {
-        guard let request, playbackSessionEngine.pendingTransition == nil else { return }
-        let effects = playbackSessionEngine.reduceScenePresentation(
+        guard let request, playbackSession.pendingTransition == nil else { return }
+        let effects = playbackSession.reduceScenePresentation(
             .effectResult(.planningCompleted(request)), at: scenePresentationTimestamp())
         // The original completion published only through navigation, not an extra executor publication.
         executeScenePresentationEffects(effects, shouldPublishChanges: false)
@@ -240,23 +216,23 @@ extension SlideShowViewModel {
     #endif
 
     func rendererDecoded(_ identity: SceneRendererIdentity) {
-        let historyCountBefore = playbackSessionEngine.scenePresentationState.history.count
+        let historyCountBefore = playbackSession.presentationHistoryCount
         runtimeEvidenceRecorder.recordRendererDecoded()
         guard case let .presentationReady(layerIdentity)? = scenePresentationEffectExecutor.rendererDecoded(identity)
         else {
             runtimeEvidenceRecorder.recordPresentationReadiness(
                 isReady: false,
-                historyUnchanged: playbackSessionEngine.scenePresentationState.history.count == historyCountBefore
+                historyUnchanged: playbackSession.presentationHistoryCount == historyCountBefore
             )
             publishScenePresentationChange()
             return
         }
         runtimeEvidenceRecorder.recordPresentationReadiness(
             isReady: true,
-            historyUnchanged: playbackSessionEngine.scenePresentationState.history.count == historyCountBefore
+            historyUnchanged: playbackSession.presentationHistoryCount == historyCountBefore
         )
         guard
-            let presentationIdentity = playbackSessionEngine.presentationIdentity(
+            let presentationIdentity = playbackSession.presentationIdentity(
                 generation: layerIdentity.generation,
                 sceneID: layerIdentity.sceneID
             )
@@ -265,7 +241,7 @@ extension SlideShowViewModel {
             return
         }
         executeScenePresentationEffects(
-            playbackSessionEngine.reduceScenePresentation(
+            playbackSession.reduceScenePresentation(
                 .targetReady(presentationIdentity),
                 at: scenePresentationTimestamp()
             )
@@ -274,7 +250,7 @@ extension SlideShowViewModel {
 
     func rendererFailed(_ identity: SceneRendererIdentity) {
         guard scenePresentationEffectExecutor.rendererFailed(identity),
-            let presentationIdentity = playbackSessionEngine.presentationIdentity(
+            let presentationIdentity = playbackSession.presentationIdentity(
                 generation: identity.generation,
                 sceneID: identity.sceneID
             )
@@ -282,7 +258,7 @@ extension SlideShowViewModel {
             return
         }
         executeScenePresentationEffects(
-            playbackSessionEngine.reduceScenePresentation(
+            playbackSession.reduceScenePresentation(
                 .targetFailed(presentationIdentity),
                 at: scenePresentationTimestamp()
             )
@@ -291,44 +267,23 @@ extension SlideShowViewModel {
 
     func incomingBecameVisible(_ layerIdentity: ScenePresentationLayerIdentity) {
         guard
-            let identity = playbackSessionEngine.presentationIdentity(
-                generation: layerIdentity.generation,
-                sceneID: layerIdentity.sceneID
+            let commit = playbackSession.incomingBecameVisible(
+                layerIdentity, at: scenePresentationTimestamp(),
+                update: { update in
+                    switch update {
+                    case .effects(let effects):
+                        executeScenePresentationEffects(effects)
+                    case .committingScene(let scene):
+                        runtimeEvidenceRecorder.recordVisibleTickCommittedHistory()
+                        for slot in scene?.photoSlots ?? [] {
+                            recordSmartFillFirstImageDisplayed(assetId: slot.asset.id)
+                        }
+                    }
+                }
             )
-        else {
-            return
-        }
-        let historyCountBefore = playbackSessionEngine.scenePresentationState.history.count
-        let transition = playbackSessionEngine.transition(for: identity)
-        let previousLedgerIndex = playbackHistoryLedger.cursor ?? -1
-        let previousLedgerAssetId = playbackHistoryLedger.cursor.flatMap { cursor in
-            playbackHistoryLedger.entries.indices.contains(cursor)
-                ? playbackHistoryLedger.entries[cursor].scene.primaryAssetId
-                : nil
-        }
-        executeScenePresentationEffects(
-            playbackSessionEngine.reduceScenePresentation(
-                .incomingBecameVisible(identity),
-                at: scenePresentationTimestamp()
-            )
-        )
-        guard playbackSessionEngine.scenePresentationState.history.count > historyCountBefore else { return }
-        runtimeEvidenceRecorder.recordVisibleTickCommittedHistory()
-        for slot in playbackSessionEngine.scene(for: identity)?.photoSlots ?? [] {
-            recordSmartFillFirstImageDisplayed(assetId: slot.asset.id)
-        }
-        if let transition {
-            applyPlaybackHistoryLedgerCommit(
-                pendingPlaybackHistoryLedgerCommits[transition.transaction.id],
-                committedScene: playbackSessionEngine.scene(for: identity)
-            )
-        } else if playbackHistoryLedger.entries.isEmpty,
-            let scene = playbackSessionEngine.scene(for: identity)
-        {
-            playbackHistoryLedger.append(scene)
-        }
+        else { return }
         let displayReason: String
-        switch transition?.transaction.source {
+        switch commit.source {
         case .manualNext:
             displayReason = "manual"
         case .manualPrevious:
@@ -340,13 +295,13 @@ extension SlideShowViewModel {
         }
         logDisplayedAsset(
             reason: displayReason,
-            previousIndex: previousLedgerIndex,
-            previousAssetId: previousLedgerAssetId,
+            previousIndex: commit.previousIndex,
+            previousAssetId: commit.previousAssetID,
             requestedIndex: currentIndex,
             displayedIndex: currentIndex
         )
-        requestLoadMoreAfterVisibleSceneIfNeeded(generation: identity.generation)
-        scenePresentationEffectExecutor.releaseBarrier(for: identity)
+        requestLoadMoreAfterVisibleSceneIfNeeded(generation: commit.identity.generation)
+        scenePresentationEffectExecutor.releaseBarrier(for: commit.identity)
         publishScenePresentationChange()
     }
 
@@ -374,7 +329,7 @@ extension SlideShowViewModel {
         #endif
         guard shouldTriggerLoadMore, !isLoadingMore else { return }
         executeScenePresentationEffects(
-            playbackSessionEngine.reduceScenePresentation(
+            playbackSession.reduceScenePresentation(
                 .loadMoreNeeded(generation: generation),
                 at: scenePresentationTimestamp()
             )
@@ -389,14 +344,14 @@ extension SlideShowViewModel {
         for snapshot: PlaybackSessionEngine.SceneRenderSnapshot
     ) -> String {
         let progressValues = snapshot.layers.map { layer -> Double in
-            guard let target = playbackSessionEngine.presentationTarget(for: layer.identity) else { return 0 }
+            guard let target = playbackSession.presentationTarget(for: layer.identity) else { return 0 }
             let activeTime = Self.renderedMotionActiveTime(of: layer, lifecycle: target.lifecycle)
             return SceneAnimationProfile(lifecycle: target.lifecycle).rawProgress(for: activeTime)
         }
         return runtimeEvidenceRecorder.scenePresentationContractProbeLabel(
             for: snapshot,
             progressValues: progressValues,
-            historyCount: playbackSessionEngine.scenePresentationState.history.count
+            historyCount: playbackSession.presentationHistoryCount
         )
     }
 

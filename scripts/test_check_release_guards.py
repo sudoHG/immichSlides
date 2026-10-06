@@ -158,6 +158,19 @@ class RuleTests(unittest.TestCase):
         path = "immichSlides/Shared/Model/PlaybackSmartFillPlanner.swift"
         self.assertEqual([], guards.check_forbidden_symbols(path, "// no diagnostic hooks here\nlet a = 1\n"))
 
+    def test_views_cannot_bypass_the_playback_facade(self):
+        for directory in ("iOS", "tvOS", "Shared/Component", "Shared/Core"):
+            path = f"immichSlides/{directory}/Nested/Example.swift"
+            with self.subTest(path=path):
+                violations = guards.check_forbidden_symbols(
+                    path, "func next() {\n    viewModel.playbackSession.requestNext()\n}\n")
+                self.assertEqual([(path, 2, "layer-boundary")],
+                                 [(v.path, v.line, v.rule) for v in violations])
+                self.assertEqual([], guards.check_forbidden_symbols(
+                    path, "// playbackSession stays behind the facade\nlet id = identity.playbackSessionId\n"))
+        self.assertEqual([], guards.check_forbidden_symbols(
+            "immichSlides/Shared/Model/SlideShowViewModel.swift", "playbackSession.requestNext()\n"))
+
     def test_retired_symbol_is_reported_anywhere_except_diagnostics(self):
         source = "func scheduleDecodePrewarm() {}\n"
         self.assertEqual(["retired-path"], [v.rule for v in guards.check_forbidden_symbols(self.path, source)])

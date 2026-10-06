@@ -6,57 +6,26 @@ import OSLog
 
 extension SlideShowViewModel {
     func requestPreviousScene() {
-        guard !playbackSessionEngine.scenes.isEmpty else { return }
+        guard !playbackSession.scenes.isEmpty else { return }
         let actionTimestamp = playbackManifestTimestamp()
         candidateProgression.cancelPendingSelection()
-        if canCancelUnseenPendingScenePresentation,
-            playbackSessionEngine.canCancelUnseenManualPendingScenePresentation
-        {
-            // When pre-committed but not yet seen, Previous cancels the pending target and restores the seen scene;
-            // re-requesting the current ledger would flash Loading.
-
-            let cancelledTransition = playbackSessionEngine.scenePresentationState.pendingTarget
-                .flatMap { playbackSessionEngine.transition(for: $0.identity) }
-            let effects = playbackSessionEngine.cancelUnseenManualPendingScenePresentation(
-                at: scenePresentationTimestamp()
-            )
-            if let cancelledTransition {
-                pendingPlaybackHistoryLedgerCommits[cancelledTransition.transaction.id] = nil
-                runtimeEvidenceRecorder.discardActionTimestamp(for: cancelledTransition.transaction.id)
-            }
+        switch playbackSession.requestPrevious(at: scenePresentationTimestamp()) {
+        case .unchanged:
+            break
+        case .transition(let transition):
+            recordActionTimestamp(actionTimestamp, for: transition)
+        case .cancelled(let effects, let transactionID):
+            if let transactionID { runtimeEvidenceRecorder.discardActionTimestamp(for: transactionID) }
             executeScenePresentationEffects(effects)
-            syncPlaybackReadbackFromEngine()
-            return
         }
-        guard let previousTarget = playbackHistoryLedger.previousTarget else {
-            syncPlaybackReadbackFromEngine()
-            return
-        }
-        let transition = playbackSessionEngine.requestTransition(
-            to: previousTarget.entry.scene,
-            source: .manualPrevious
-        )
-        pendingPlaybackHistoryLedgerCommits[transition.transaction.id] = .moveCursor(previousTarget.index)
-        recordActionTimestamp(actionTimestamp, for: transition)
-        syncPlaybackReadbackFromEngine()
-    }
-
-    var canCancelUnseenPendingScenePresentation: Bool {
-        guard let visibleCurrentTarget = playbackHistoryLedger.currentTarget,
-            playbackSessionEngine.canCancelUnseenManualPendingScenePresentation,
-            let pendingTarget = playbackSessionEngine.scenePresentationState.pendingTarget,
-            !playbackSessionEngine.scenePresentationState.history.contains(pendingTarget.identity)
-        else {
-            return false
-        }
-        return playbackSessionEngine.currentScene?.id != visibleCurrentTarget.entry.scene.id
+        syncPlaybackReadbackFromSession()
     }
 
     /// The platform page is the only scenePhase entry point; the reducer keeps background time out of the playback
     /// clock.
     func suspendScenePresentationForBackground() {
         executeScenePresentationEffects(
-            playbackSessionEngine.reduceScenePresentation(
+            playbackSession.reduceScenePresentation(
                 .suspend(.background),
                 at: scenePresentationTimestamp()
             )
@@ -66,11 +35,11 @@ extension SlideShowViewModel {
     /// Returning to the foreground only removes the background reason; if the user is still paused, stay frozen and do
     /// not catch up on the deadline.
     func resumeScenePresentationFromBackground() {
-        guard playbackSessionEngine.scenePresentationState.suspensionReasons.contains(.background) else {
+        guard playbackSession.isSuspendedForBackground else {
             return
         }
         executeScenePresentationEffects(
-            playbackSessionEngine.reduceScenePresentation(
+            playbackSession.reduceScenePresentation(
                 .resume(.background),
                 at: scenePresentationTimestamp()
             )
@@ -85,14 +54,9 @@ extension SlideShowViewModel {
         guard !assets.isEmpty else { return }
         let actionTimestamp = playbackManifestTimestamp()
         let transactionSource: PlaybackSceneTransactionSource = isManual ? .manualNext : .autoplay
-        if let redoTarget = playbackHistoryLedger.redoTarget {
-            let transition = playbackSessionEngine.requestTransition(
-                to: redoTarget.entry.scene,
-                source: transactionSource
-            )
-            pendingPlaybackHistoryLedgerCommits[transition.transaction.id] = .moveCursor(redoTarget.index)
+        if let transition = playbackSession.requestRedo(source: transactionSource) {
             recordActionTimestamp(actionTimestamp, for: transition)
-            syncPlaybackReadbackFromEngine()
+            syncPlaybackReadbackFromSession()
             return
         }
         let candidateIndex = normalizedCandidateCursorIndex()
@@ -103,14 +67,13 @@ extension SlideShowViewModel {
                 reason: "requestNext"
             )
         else {
-            syncPlaybackReadbackFromEngine()
+            syncPlaybackReadbackFromSession()
             return
         }
         let displayedAssetIdsForPlanning = smartFillDisplayedAssetIdsForPlanning
         if shouldAdvanceCandidateCursorOnCommit,
             let preparedTransition = consumePreparedSmartFillNext(source: transactionSource)
         {
-            pendingPlaybackHistoryLedgerCommits[preparedTransition.transaction.id] = .appendTail
             recordActionTimestamp(actionTimestamp, for: preparedTransition)
         } else if shouldAdvanceCandidateCursorOnCommit,
             !isManual,
@@ -126,17 +89,15 @@ extension SlideShowViewModel {
             )
         {
             let displayedAssetIdsAfterCommit = displayedAssetIdsForPlanning.union(smartFillPlan.displayedAssetIds)
-            let transition = playbackSessionEngine.requestNext(scene: smartFillPlan.scene, source: transactionSource)
-            pendingPlaybackHistoryLedgerCommits[transition.transaction.id] = .appendTail
+            let transition = playbackSession.requestNext(scene: smartFillPlan.scene, source: transactionSource)
             recordActionTimestamp(actionTimestamp, for: transition)
             candidateProgression.reserveSelection(
                 in: assets, startingAt: candidateIndex, advancingBy: smartFillPlan.nextCandidateCursorOffset,
                 displayedAssetIdsAfterCommit: displayedAssetIdsAfterCommit
             )
         } else {
-            let transition = playbackSessionEngine.requestNext(
+            let transition = playbackSession.requestNext(
                 candidate: assets[candidateIndex], source: transactionSource)
-            pendingPlaybackHistoryLedgerCommits[transition.transaction.id] = .appendTail
             recordActionTimestamp(actionTimestamp, for: transition)
             let displayedAssetIdsAfterCommit = displayedAssetIdsForPlanning.union([assets[candidateIndex].id])
             candidateProgression.reserveSelection(
@@ -145,11 +106,11 @@ extension SlideShowViewModel {
                 reservesOnAcceptance: shouldAdvanceCandidateCursorOnCommit
             )
         }
-        syncPlaybackReadbackFromEngine()
+        syncPlaybackReadbackFromSession()
     }
 
     private var isAtRetainedHistoryTail: Bool {
-        playbackHistoryLedger.isAtTail
+        playbackSession.isAtRetainedHistoryTail
     }
 
     private var shouldIncludePendingCandidateReservation: Bool {
