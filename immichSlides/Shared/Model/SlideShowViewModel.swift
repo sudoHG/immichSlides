@@ -25,7 +25,6 @@ class SlideShowViewModel: ObservableObject {
     private static let maximumPlaybackPoolAssetCount: Int = 200
     private static let autoplayRenderWindowRadius: Int = 1
     private static let manualRenderWindowRadius: Int = 2
-    static let refillRemainingFractionDivisor: Int = 5
     private static let diagnosticHistoryLookbackCount: Int = 8
 
     struct SmartFillScenePlan {
@@ -64,11 +63,11 @@ class SlideShowViewModel: ObservableObject {
     // The facade and loader share this file so no external caller can apply raw projection updates.
     private let poolLoader: PlaybackPoolLoader
 
-    struct PlaybackLoadIdentity {
+    private struct PlaybackLoadIdentity {
         fileprivate let value: PlaybackPoolLoader.InitialLoadIdentity
     }
 
-    var appliedInitialLoadIdentity: PlaybackLoadIdentity? {
+    private var appliedInitialLoadIdentity: PlaybackLoadIdentity? {
         poolLoader.appliedInitialLoadIdentity.map { PlaybackLoadIdentity(value: $0) }
     }
 
@@ -84,7 +83,7 @@ class SlideShowViewModel: ObservableObject {
     #endif
     let playbackSession = PlaybackSessionOwner()
     let candidateProgression = PlaybackCandidateProgression()
-    var playbackDisplayMode: PlaybackDisplayMode = .smartFill
+    private(set) var playbackDisplayMode: PlaybackDisplayMode = .smartFill
     let runtimeEvidenceRecorder = PlaybackRuntimeEvidenceRecorder()
     var smartFillSurface: PlaybackSmartFillSurface? { candidateProgression.surface }
     var smartFillProtectionSnapshot: PlaybackProtectionSnapshot { candidateProgression.protectionSnapshot }
@@ -99,11 +98,11 @@ class SlideShowViewModel: ObservableObject {
             )
         }
     )
-    var pendingAutomaticScenePlanningRequest: ScenePresentationPlanningRequest?
+    private(set) var pendingAutomaticScenePlanningRequest: ScenePresentationPlanningRequest?
     @Published private(set) var scenePresentationRevision = UUID()
     #if DEBUG
-    var smartFillCandidateSummaryBuildCountForTestingStorage: Int = 0
-    var smartFillMainActorPlannerCallCountsForTesting: [SmartFillMainActorPlannerCallSite: Int] = [:]
+    private(set) var smartFillCandidateSummaryBuildCountForTestingStorage: Int = 0
+    private(set) var smartFillMainActorPlannerCallCountsForTesting: [SmartFillMainActorPlannerCallSite: Int] = [:]
     #endif
     #if DEBUG
     var qaPlaybackSequenceEvidenceEnabledForTesting: Bool = false
@@ -650,13 +649,13 @@ class SlideShowViewModel: ObservableObject {
     }
     #endif
 
-    func publishPlaybackPosition() {
+    private func publishPlaybackPosition() {
         currentIndex = playbackSession.currentIndex
         targetIndex = playbackSession.targetIndex
         targetTransitionToken = playbackSession.targetTransitionToken
     }
 
-    func publishScenePresentationChange() {
+    private func publishScenePresentationChange() {
         scenePresentationRevision = UUID()
     }
 
@@ -664,7 +663,7 @@ class SlideShowViewModel: ObservableObject {
         candidateProgression.adjustAfterRemovingPrefix(removeCount, remainingAssets: assets)
     }
 
-    func adjustSmartFillCursorAfterAppendingLoadMore(oldCount: Int, appendedCount: Int) {
+    private func adjustSmartFillCursorAfterAppendingLoadMore(oldCount: Int, appendedCount: Int) {
         guard isSmartFillPlanningEnabled, isSoloOnlyPlaybackSource else { return }
         switch candidateProgression.resumeAfterAppendingLoadMore(
             oldCount: oldCount, appendedCount: appendedCount, assetCount: assets.count
@@ -681,7 +680,7 @@ class SlideShowViewModel: ObservableObject {
         }
     }
 
-    func clearPendingSmartFillCursorResumeAfterLoadMore(reason: String) {
+    private func clearPendingSmartFillCursorResumeAfterLoadMore(reason: String) {
         guard candidateProgression.clearPendingLoadMoreResume() else { return }
         logPendingSmartFillCursorResumeCleared(reason: reason)
     }
@@ -744,7 +743,7 @@ class SlideShowViewModel: ObservableObject {
 
     // Read the assetId for logs safely, so debug logging cannot crash on an out-of-range index.
 
-    func assetId(at index: Int) -> String? {
+    private func assetId(at index: Int) -> String? {
         scene(at: index)?.primaryAssetId
     }
 
@@ -760,7 +759,7 @@ class SlideShowViewModel: ObservableObject {
         return PlaybackScene.assetIds(in: scenes)
     }
 
-    func assetIdLogValue(at index: Int) -> String {
+    private func assetIdLogValue(at index: Int) -> String {
         assetId(at: index) ?? "nil"
     }
 
@@ -801,7 +800,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     #if DEBUG
-    var isQAPlaybackSequenceEvidenceEnabled: Bool {
+    private var isQAPlaybackSequenceEvidenceEnabled: Bool {
         qaPlaybackSequenceEvidenceEnabledForTesting
             || PlatformCompat.shouldRecordPlaybackSequenceForTesting
     }
@@ -979,7 +978,7 @@ class SlideShowViewModel: ObservableObject {
         )
     }
 
-    func recordPreloadWindowLifecycleContextsForDiagnostics(
+    private func recordPreloadWindowLifecycleContextsForDiagnostics(
         assets: [Asset],
         currentIndex: Int,
         preloadCount: Int,
@@ -1011,6 +1010,16 @@ class SlideShowViewModel: ObservableObject {
         }
     }
     #endif
+
+    private func loadIndexChangePhoto(assetId: String, size: ThumbnailSize) async {
+        #if DEBUG
+        if let indexChangePhotoLoadHookForTesting {
+            await indexChangePhotoLoadHookForTesting(assetId, size)
+            return
+        }
+        #endif
+        await downloadManager.loadPhoto(assetId: assetId, size: size, priority: .high)
+    }
 
     func loadSceneAssetsForTransition(
         _ scene: PlaybackScene,
@@ -1173,7 +1182,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     @discardableResult
-    func rebuildInitialSmartFillSceneIfPossible(
+    private func rebuildInitialSmartFillSceneIfPossible(
         invalidationReason: PlaybackSessionInvalidationReason
     ) -> Bool {
         guard
@@ -1354,7 +1363,7 @@ class SlideShowViewModel: ObservableObject {
     #endif
 
     // Clear the message after a successful recovery, so old error text does not linger.
-    func clearAutoPlayRecoveryMessage() {
+    private func clearAutoPlayRecoveryMessage() {
         autoPlayRecoveryMessage = nil
     }
 
@@ -1380,10 +1389,6 @@ class SlideShowViewModel: ObservableObject {
     func logName(for source: PlaybackSource) -> String {
         PlaybackPoolLoader.logName(for: source)
     }
-
-    func logSummary(for selection: FilterSelection) -> String {
-        PlaybackPoolLoader.logSummary(for: selection)
-    }
 }
 
 private extension MotionRenderRole {
@@ -1400,6 +1405,466 @@ private extension MotionRenderRole {
 }
 
 extension SlideShowViewModel {
+    func syncPlaybackReadbackFromSession() {
+        // If autoplay is off at startup, send that to the reducer first, so layers created or made Ready later inherit
+        // the paused clock.
+
+        if !isAutoPlay {
+            executeScenePresentationEffects(
+                playbackSession.reduceScenePresentation(
+                    .suspend(.userPaused),
+                    at: scenePresentationTimestamp()
+                )
+            )
+        }
+        if playbackSession.pendingTransition != nil {
+            beginPendingScenePresentationIfNeeded()
+        } else if playbackSession.isPresentationEmpty,
+            let started = playbackSession.startScenePresentation(
+                configuredInterval: autoPlayInterval,
+                at: scenePresentationTimestamp()
+            ),
+            let scene = playbackSession.scene(for: started.identity)
+        {
+            scenePresentationEffectExecutor.beginBarrier(identity: started.identity, scene: scene)
+            executeScenePresentationEffects(started.effects)
+        }
+        publishPlaybackPosition()
+        #if DEBUG
+        downloadManager.markPlaybackImageRequestLifecycleLateResultsForDiagnostics(
+            currentNavigationToken: targetTransitionToken
+        )
+        #endif
+        publishScenePresentationChange()
+    }
+
+    private func beginPendingScenePresentationIfNeeded() {
+        guard let transition = playbackSession.pendingTransition else { return }
+        let pendingCandidateAcceptance = candidateProgression.capturePendingAcceptance()
+        guard
+            let started = playbackSession.beginScenePresentation(
+                for: transition,
+                configuredInterval: autoPlayInterval,
+                at: scenePresentationTimestamp()
+            )
+        else {
+            runtimeEvidenceRecorder.discardActionTimestamp(for: transition.transaction.id)
+            return
+        }
+        recordScenePublishTiming(for: transition)
+        candidateProgression.accept(
+            pendingCandidateAcceptance, appendsNewTailScene: started.appendsNewTailScene, assetCount: assets.count)
+        if !applySmartFillMotionLookaheadPreparedPlanIfReady() {
+            refreshPreparedSmartFillSceneRingIfPossible()
+        }
+        scenePresentationEffectExecutor.beginBarrier(identity: started.identity, scene: transition.scene)
+        executeScenePresentationEffects(started.effects)
+    }
+
+    func toggleAutoPlayFromUserInteraction() {
+        updateAutoPlayEnabled(!isAutoPlay, persistPreference: true)
+    }
+
+    func applyPlaybackSettings(_ settings: PlaybackSettings) {
+        updateAutoPlayEnabled(settings.autoPlayEnabled, persistPreference: false)
+        autoPlayInterval = PlaybackIntervalPolicy.migratedLegacyInterval(settings.intervalSeconds)
+        let previousDisplayMode = playbackDisplayMode
+        playbackDisplayMode = settings.displayMode
+        if previousDisplayMode != playbackDisplayMode {
+            rebuildCurrentSceneForDisplayModeChange()
+        }
+    }
+
+    private func updateAutoPlayEnabled(_ enabled: Bool, persistPreference: Bool) {
+        guard isAutoPlay != enabled else {
+            if persistPreference {
+                var settings = playbackSettingsStore.load() ?? PlaybackSettings()
+                settings.autoPlayEnabled = enabled
+                playbackSettingsStore.save(settings)
+            }
+            return
+        }
+        isAutoPlay = enabled
+        let event: PlaybackSessionEngine.ScenePresentationEvent =
+            enabled
+            ? .resume(.userPaused)
+            : .suspend(.userPaused)
+        executeScenePresentationEffects(
+            playbackSession.reduceScenePresentation(
+                event,
+                at: scenePresentationTimestamp()
+            )
+        )
+        publishScenePresentationChange()
+        guard persistPreference else { return }
+        var settings = playbackSettingsStore.load() ?? PlaybackSettings()
+        settings.autoPlayEnabled = enabled
+        playbackSettingsStore.save(settings)
+    }
+
+    func executeScenePresentationEffects(_ effects: [ScenePresentationEffect], shouldPublishChanges: Bool = true) {
+        let images = ScenePresentationEffectExecutor.ImageLoading(
+            loadInitialScene: { scene in
+                await self.loadInitialSceneAssetsForPlayback(scene)
+            },
+            loadTransitionScene: { scene, isPrevious, navigationToken in
+                await self.loadSceneAssetsForTransition(
+                    scene, isPreviousTransition: isPrevious, navigationToken: navigationToken)
+            },
+            preloadCandidateWindow: {
+                _ = await self.preloadSmartFillCandidateWindowIfNeeded(
+                    startingAt: self.candidateProgression.currentCursorIndex)
+            },
+            preloadPlaybackWindow: {
+                await self.preloadPlaybackWindowAfterTransitionIfReady()
+            }
+        )
+        for effect in effects {
+            scenePresentationEffectExecutor.execute(
+                effect,
+                scene: sceneForPresentationEffect(effect),
+                isInitialScene: { identity in
+                    self.playbackSession.isInitialPresentation(identity)
+                },
+                images: images,
+                loadMore: { await self.loadMoreAssets() },
+                forward: executeScenePresentationFacadeCommand
+            )
+        }
+        if shouldPublishChanges {
+            publishScenePresentationChange()
+        }
+    }
+
+    private func sceneForPresentationEffect(_ effect: ScenePresentationEffect) -> PlaybackScene? {
+        switch effect {
+        case let .restartPreparation(request), let .download(request), let .retry(request, _):
+            return playbackSession.scene(for: request.identity)
+        default:
+            return nil
+        }
+    }
+
+    private func executeScenePresentationFacadeCommand(_ command: ScenePresentationEffectExecutor.FacadeCommand) {
+        switch command {
+        case let .plan(request):
+            switch request.purpose {
+            case .nextAutomaticTarget, .replaceExhaustedTarget:
+                guard isAutoPlay else { return }
+                pendingAutomaticScenePlanningRequest = request
+                requestAutomaticSceneTarget()
+            }
+        case let .scheduleWakeUp(generation, deadline):
+            scheduleScenePresentationWakeUp(generation: generation, deadline: deadline)
+        case let .cancelWakeUp(generation):
+            scenePresentationWakeUpScheduler.cancel(generation: generation)
+        case let .cancelPlanning(identity):
+            if pendingAutomaticScenePlanningRequest?.target.identity == identity {
+                pendingAutomaticScenePlanningRequest = nil
+            }
+        case let .requestManualDirection(source):
+            switch source {
+            case .manualPrevious:
+                requestPreviousScene()
+            case .manualNext, .automatic:
+                requestNextScene()
+            }
+        }
+    }
+
+    private func scheduleScenePresentationWakeUp(
+        generation: UUID,
+        deadline: TimeInterval
+    ) {
+        #if DEBUG
+        guard scenePresentationTimestampProviderForTesting == nil else {
+            scenePresentationWakeUpScheduler.scheduleWithoutSleepingForTesting(
+                generation: generation, deadline: deadline)
+            return
+        }
+        #endif
+        scenePresentationWakeUpScheduler.schedule(generation: generation, deadline: deadline)
+    }
+
+    func rendererDecoded(_ identity: SceneRendererIdentity) {
+        let historyCountBefore = playbackSession.presentationHistoryCount
+        runtimeEvidenceRecorder.recordRendererDecoded()
+        guard case let .presentationReady(layerIdentity)? = scenePresentationEffectExecutor.rendererDecoded(identity)
+        else {
+            runtimeEvidenceRecorder.recordPresentationReadiness(
+                isReady: false,
+                historyUnchanged: playbackSession.presentationHistoryCount == historyCountBefore
+            )
+            publishScenePresentationChange()
+            return
+        }
+        runtimeEvidenceRecorder.recordPresentationReadiness(
+            isReady: true,
+            historyUnchanged: playbackSession.presentationHistoryCount == historyCountBefore
+        )
+        guard
+            let presentationIdentity = playbackSession.presentationIdentity(
+                generation: layerIdentity.generation,
+                sceneID: layerIdentity.sceneID
+            )
+        else {
+            publishScenePresentationChange()
+            return
+        }
+        executeScenePresentationEffects(
+            playbackSession.reduceScenePresentation(
+                .targetReady(presentationIdentity),
+                at: scenePresentationTimestamp()
+            )
+        )
+    }
+
+    func incomingBecameVisible(_ layerIdentity: ScenePresentationLayerIdentity) {
+        guard
+            let commit = playbackSession.incomingBecameVisible(
+                layerIdentity, at: scenePresentationTimestamp(),
+                update: { update in
+                    switch update {
+                    case .effects(let effects):
+                        executeScenePresentationEffects(effects)
+                    case .committingScene(let scene):
+                        runtimeEvidenceRecorder.recordVisibleTickCommittedHistory()
+                        for slot in scene?.photoSlots ?? [] {
+                            recordSmartFillFirstImageDisplayed(assetId: slot.asset.id)
+                        }
+                    }
+                }
+            )
+        else { return }
+        let displayReason: String
+        switch commit.source {
+        case .manualNext:
+            displayReason = "manual"
+        case .manualPrevious:
+            displayReason = "manual"
+        case .autoplay:
+            displayReason = "auto"
+        case .none:
+            displayReason = "initial"
+        }
+        logDisplayedAsset(
+            reason: displayReason,
+            previousIndex: commit.previousIndex,
+            previousAssetId: commit.previousAssetID,
+            requestedIndex: currentIndex,
+            displayedIndex: currentIndex
+        )
+        requestLoadMoreAfterVisibleSceneIfNeeded(generation: commit.identity.generation)
+        scenePresentationEffectExecutor.releaseBarrier(for: commit.identity)
+        publishScenePresentationChange()
+    }
+
+    private func requestLoadMoreAfterVisibleSceneIfNeeded(generation: UUID) {
+        let loadMoreProgressIndex = candidateProgressIndexForLoadMore
+        let shouldTriggerLoadMore = Self.shouldTriggerLoadMore(
+            assetCount: assets.count,
+            newIndex: loadMoreProgressIndex,
+            isSoloOnlyPlayback: isSoloOnlyPlaybackSource,
+            soloOnlyRemainingTriggerCount: soloOnlyLoadMoreRemainingTriggerCount
+        )
+        #if DEBUG
+        logQAPlaybackSequenceEventIfNeeded(
+            .loadMoreDecision(
+                assetCount: assets.count,
+                candidateCursorIndex: candidateProgression.currentCursorIndex,
+                candidateProgressIndexForLoadMore: loadMoreProgressIndex,
+                soloOnly: isSoloOnlyPlaybackSource,
+                isLoadingMore: isLoadingMore,
+                shouldTrigger: shouldTriggerLoadMore,
+                currentIndex: currentIndex,
+                targetIndex: targetIndex,
+                displayedAssetCount: runtimeEvidenceRecorder.displayedAssetRecordCount
+            ))
+        #endif
+        guard shouldTriggerLoadMore, !isLoadingMore else { return }
+        executeScenePresentationEffects(
+            playbackSession.reduceScenePresentation(
+                .loadMoreNeeded(generation: generation),
+                at: scenePresentationTimestamp()
+            )
+        )
+    }
+
+    func makeSmartFillScenePlan(
+        startingAt startIndex: Int,
+        excludingDisplayedAssets: Bool = true,
+        displayedAssetIdsForExclusion: Set<String>? = nil,
+        callSite: SmartFillMainActorPlannerCallSite
+    ) -> SmartFillScenePlan? {
+        guard isSmartFillPlanningEnabled,
+            let smartFillSurface,
+            !assets.isEmpty,
+            startIndex >= 0,
+            startIndex < assets.count
+        else {
+            return nil
+        }
+
+        let candidateAssets = smartFillCandidateAssets(
+            startingAt: startIndex,
+            excludingDisplayedAssets: excludingDisplayedAssets,
+            displayedAssetIdsForExclusion: displayedAssetIdsForExclusion
+        )
+        guard !candidateAssets.isEmpty else { return nil }
+
+        recordSmartFillMainActorPlannerCall(callSite)
+        let candidateSummaries = candidateAssets.map { smartFillCandidateSummary(for: $0) }
+        let policy = PlaybackSmartFillLayoutPolicy.policy(for: smartFillSurface)
+        recordSmartFillStartupRuntimePhase("firstScenePlanningStarted")
+        let plannerResult = PlaybackSmartFillPlanner.plan(
+            PlaybackSmartFillPlannerInput(
+                surface: smartFillSurface,
+                candidates: candidateSummaries,
+                protectionSnapshot: smartFillProtectionSnapshot,
+                policy: policy,
+                playbackSessionSeed: "generation-\(playbackSourceGeneration)",
+                sceneOrdinal: startIndex
+            )
+        )
+        guard !plannerResult.slots.isEmpty else { return nil }
+
+        var assetsByReference: [String: Asset] = [:]
+        for (summary, asset) in zip(candidateSummaries, candidateAssets)
+        where assetsByReference[summary.reference] == nil {
+            assetsByReference[summary.reference] = asset
+        }
+        let photoSlots = plannerResult.slots.compactMap { slot -> PhotoSlot? in
+            guard let asset = assetsByReference[slot.candidateReference] else { return nil }
+            let candidate = candidateSummaries.first { $0.reference == slot.candidateReference }
+            return PhotoSlot(
+                id: "slot-\(slot.role.rawValue)-\(slot.candidateReference)",
+                asset: asset,
+                planning: PlaybackPlanningSnapshot.smartFill(
+                    slot: slot,
+                    plannerResult: plannerResult,
+                    focalSummary: PlaybackCandidateProgression.smartFillFocalSummary(
+                        faceRects: candidate?.faceRects ?? [],
+                        subjectRects: candidate?.subjectRects ?? []
+                    )
+                )
+            )
+        }
+        guard !photoSlots.isEmpty else { return nil }
+
+        let readback = PlaybackSmartFillSceneReadback.fromPlannerResult(plannerResult)
+        let prototypeScene = PlaybackScene(
+            id: "scene-smartfill-\(photoSlots.first?.asset.id ?? "empty")",
+            photoSlots: photoSlots,
+            smartFillReadback: readback
+        )
+        recordSmartFillStartupFirstPlanMetrics(
+            assetPoolSize: assets.count,
+            eligibleCandidateCount: candidateSummaries.count,
+            plannerResult: plannerResult
+        )
+        recordSmartFillStartupRuntimePhase("firstScenePlanned")
+        return SmartFillScenePlan(
+            scene: prototypeScene,
+            nextCandidateCursorOffset: smartFillNextCandidateCursorOffset(
+                candidateSummaries: candidateSummaries,
+                plannerResult: plannerResult,
+                fallbackCount: photoSlots.count
+            ),
+            displayedAssetIds: Set(prototypeScene.assetIds)
+        )
+    }
+
+    private func recordSmartFillMainActorPlannerCall(_ callSite: SmartFillMainActorPlannerCallSite) {
+        #if DEBUG
+        smartFillMainActorPlannerCallCountsForTesting[callSite, default: 0] += 1
+        #endif
+    }
+
+    private func smartFillNextCandidateCursorOffset(
+        candidateSummaries: [PlaybackSmartFillCandidateSummary],
+        plannerResult: PlaybackSmartFillPlannerResult,
+        fallbackCount: Int
+    ) -> Int {
+        let selectedOffsets = plannerResult.slots.compactMap { slot in
+            candidateSummaries.firstIndex { $0.reference == slot.candidateReference }
+        }
+        guard !selectedOffsets.isEmpty else {
+            return max(1, fallbackCount)
+        }
+
+        // Only advance to the next unshown candidate, so photos in between are not skipped when lookahead picks a far
+        // slot.
+        let selectedOffsetSet = Set(selectedOffsets)
+        guard selectedOffsetSet.contains(0) else {
+            return 0
+        }
+        for offset in 1..<candidateSummaries.count where !selectedOffsetSet.contains(offset) {
+            return offset
+        }
+        return min(candidateSummaries.count, max(fallbackCount, selectedOffsetSet.count))
+    }
+
+    private func smartFillCandidateSummary(for asset: Asset) -> PlaybackSmartFillCandidateSummary {
+        #if DEBUG
+        smartFillCandidateSummaryBuildCountForTestingStorage += 1
+        #endif
+        let faceRects = FaceBoxGeometry.validate(
+            faces: FaceBoxGeometry.collectFaces(from: asset.people),
+            asset: asset
+        ).compactMap { result -> PlaybackPlanningRect? in
+            guard case let .usable(normalizedRect, _) = result else { return nil }
+            return PlaybackPlanningRect(
+                x: Double(normalizedRect.origin.x),
+                y: Double(normalizedRect.origin.y),
+                width: Double(normalizedRect.width),
+                height: Double(normalizedRect.height)
+            )
+        }
+
+        return PlaybackSmartFillCandidateSummary(
+            reference: smartFillCandidateReference(for: asset.id),
+            sourceImage: PlaybackPlanningSourceImageSummary(
+                assetPixelSize: PlaybackSmartFillSourceGeometry.displayPixelSize(for: asset),
+                exifPixelSize: smartFillPixelSize(
+                    width: asset.exifInfo?.exifImageWidth,
+                    height: asset.exifInfo?.exifImageHeight
+                ),
+                orientation: asset.exifInfo?.orientation == nil ? "unknown" : "available"
+            ),
+            faceRects: faceRects,
+            subjectRects: faceRects
+        )
+    }
+
+    private func smartFillCandidateReference(for rawId: String) -> String {
+        let digest = SHA256.hash(data: Data(rawId.utf8))
+        let hashText = digest.prefix(PlaybackCandidateProgression.identifierDigestPrefixBytes)
+            .map { String(format: "%02x", $0) }.joined()
+        return "asset_\(hashText)"
+    }
+
+    private func smartFillPixelSize(width: Int?, height: Int?) -> PlaybackPlanningPixelSize? {
+        guard let width, let height else { return nil }
+        return PlaybackPlanningPixelSize(width: width, height: height)
+    }
+
+    var currentPlaybackMode: DefaultPlaybackMode {
+        switch source {
+        case .random:
+            return .random
+        case .filtered:
+            return .filtered
+        }
+    }
+
+    // The debug probe only checks the photo on screen, and only in soloOnly; random playback does not show Vision n=x.
+
+    #if DEBUG
+    var shouldRunDebugVisionFaceAudit: Bool {
+        isSoloOnlyPlaybackSource
+    }
+    #endif
+
     // Compare normalized filter snapshots; a different order is not a change. true means the filter pool must be
     // rebuilt.
 
@@ -1443,7 +1908,7 @@ extension SlideShowViewModel {
             playbackSessionId: identity.playbackSessionId, sceneId: identity.sceneId)
     }
 
-    func isCurrentPlaybackLoad(_ identity: PlaybackLoadIdentity) -> Bool {
+    private func isCurrentPlaybackLoad(_ identity: PlaybackLoadIdentity) -> Bool {
         poolLoader.isCurrentInitialLoad(identity.value, context: playbackPoolSessionContext)
     }
 

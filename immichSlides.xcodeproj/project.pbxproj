@@ -84,7 +84,7 @@
 				tvOS/Core/PersonFilterViewTV.swift = (tvos, );
 				"tvOS/Core/SettingsViewTV+AccessProtectionPage.swift" = (tvos, );
 				"tvOS/Core/SettingsViewTV+PlaybackPages.swift" = (tvos, );
-				"tvOS/Core/SettingsViewTV+ServerCacheAboutPages.swift" = (tvos, );
+				"tvOS/Core/SettingsViewTV+ServerCachePages.swift" = (tvos, );
 				"tvOS/Core/SettingsViewTV+AboutPages.swift" = (tvos, );
 				"tvOS/Core/SettingsViewTV+PrivacyPage.swift" = (tvos, );
 				tvOS/Core/SettingsViewTV.swift = (tvos, );

@@ -73,12 +73,14 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 | `ScenePresentationState` (reducer) | `Shared/Model/PlaybackSessionEngine+ScenePresentationState.swift` | The only presentation policy owner: phases, targets, hold/transition decisions, retry admission and continuation, pause and background suspension, Reduce Motion, visible history and deadlines. Takes `ScenePresentationEvent`s and returns `ScenePresentationEffect`s. |
 | `ScenePresentationLayerTimeline` (private value) | Same reducer file | Owns the ordered layers, opacity/fade sampling, layer motion clocks, freeze/resume mechanics and immutable render-layer snapshots. Executes synchronous reducer decisions without owning phases, targets, suspension reasons or effects. |
 | `ScenePresentationAttemptLedger` (private value) | Same reducer file | Owns target readiness, ordered attempt records, attempt numbering, outcomes, failed-outcome counts, source lookup and summaries. The reducer decides whether to retry, replace an automatic target or continue a manual direction. |
+| `ManualPendingPresentationRestore` (private value) | Nested in the reducer, same file | Captures and restores the rollback subset for a cancelled manual hold, reconciles live-held motion and Reduce Motion, and preserves accumulated attempts and current suspension state. |
 | `ScenePresentationEffect` | `Shared/Model/ScenePresentationEffect.swift` | Commands the reducer emits (`plan`, `download`, `retry`, `loadMore`, `scheduleWakeUp`, `cancelWakeUp`, `cancel`, …). Planning carries an explicit purpose and demand tag. Plain values, no tasks. |
 | `ScenePresentationWakeUpScheduler` | `Shared/Model/ScenePresentationWakeUpScheduler.swift` | Owns the private wake-up task and generation/deadline key. Executes schedule, matching cancellation and reset through an injected clock and sleeper, delivering one tagged event synchronously after the sleep. |
 | `ScenePresentationEffectExecutor` | `Shared/Model/ScenePresentationEffectExecutor.swift` | Privately owns cancellable effect operations, the renderer barrier, prepared/lookahead image-preload tasks, surface activation delay and startup tasks. Executes reducer commands through image-loading and pool interfaces; returns an identity-tagged download completion handle and forwards navigation and wake-up commands synchronously. |
 | `ScenePresentationPrerenderBarrier` | `Shared/Model/ScenePresentationPrerenderBarrier.swift` | Tracks when every renderer of a hidden incoming scene has decoded. Decoded does not mean seen. |
 | `SceneVisibleFrameReporter` | `Shared/Component/SceneVisibleFrameReporter.swift` | Reports a scene as visible only on the display tick after its render transaction completes. That report is what commits history. |
 | `SlideShowViewModel` | `Shared/Model/SlideShowViewModel.swift` | `@MainActor` facade for playback. Delegates pool loading, candidate progression, session navigation and effect execution, supplies image-loading adapters and session values, and publishes render state to the platform views. |
+| `SlideShowViewModel` settings application | `Shared/Model/SlideShowViewModel+SettingsApplication.swift` | Shared settings/source refresh; platform adapters supply synchronous EXIF and debug-overlay visibility setters. |
 | `PlaybackRuntimeEvidenceRecorder` | `Shared/Model/PlaybackRuntimeEvidenceRecorder.swift` | Owns startup timestamps and first-plan metrics, pending action timestamps, presentation counters, Debug frame accumulation and the Debug sequence recorder. Observes supplied values and exposes immutable startup snapshots and serialized summaries; never owns the engine or changes playback. |
 | `AssetsDownloadManager` | `Shared/Model/AssetsDownloadManager.swift` | `@MainActor` singleton around SDWebImage. Loads and preloads images by `(assetId, ThumbnailSize)` with high/low priority, merges duplicate in-flight requests, tracks readiness and clears caches. `PlaybackImageCachePolicy` sets memory cache limits. |
 | `SmartFillSceneView`, `SlideItemView` | `Shared/Component/` | Render a scene. `SmartFillSceneView` lays out planner slots; it uses `SlideItemView` (single photo, legacy renderer) when a scene has no SmartFill readback, or is a fallback without a motion context. |
@@ -87,19 +89,33 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 | `SettingsPromptStore` | `Shared/Core/SettingsView.swift` | Observable prompt state shared by settings detail pages, including blocked-mode and cache-clear alerts. |
 | `PlatformCompat`, `ViewLayoutTraits` | `Shared/Component/` | Platform branches for colors, view modifiers, tvOS focus helpers and debug switches; device and size-class checks. |
 
-Large implementations use adjacent `TypeName+Topic.swift` extensions. `SlideShowViewModel` keeps its playback state, collaborator references and initializer in its primary file; scene presentation, navigation, planning and initial preload adapters live in those topic extensions. Position, transition-token, presentation-revision and first-preload publication writers stay with their `@Published private(set)` declarations in the primary file. Its file-private pool loader and synchronous mutation adapters are co-located with the stored `@Published private(set)` projections so Swift access control can keep both the loader instance and projection writer private; `applyPlaybackAssets` and `resetScenePresentationRuntime` live there too because they write the pool through that adapter. The pool-loading extension retains refill eligibility, scene readiness, `currentPlaybackMode`, the Debug Vision-probe flag and `loadIndexChangePhoto`. Its navigation and runtime evidence extensions sample the clocks that `PlaybackRuntimeEvidenceRecorder` stores; the evidence extension also samples download records and applies scene publication timing annotations from the recorder's consumed action timestamp. `PlaybackSmartFillPlanner` similarly separates search, evaluation, geometry and readback. `AssetsDownloadManager+Diagnostics.swift` holds its Debug diagnostics, while `SDWebImageAsyncBridge.swift` owns the callback bridge. `ImmichServer` separates connection probes and test configuration; its persistence and Keychain operations remain in `immichServer.swift`. Runtime manifest validation remains in `PlaybackRuntimeEvidenceManifest.swift`, and scene QA lives in `PlaybackScene+RuntimeQA.swift` with the original Debug guards.
+### Facade files and publication
 
-Evidence observations remain synchronous at their original call sites. Reading the startup summary can record missing readiness milestones, with one clock sample per newly recorded phase; reading the presentation probe accumulates Debug frame evidence from an immutable render snapshot, motion progress and history count. The existing readiness metric still allows pending or failed slots after a ready slot has been observed. Startup reset clears only startup evidence, presentation reset clears only decode/readiness counters and history flags, and action reset clears only pending action timings; sequence history and frame accumulation survive these resets. The recorder does not access the download manager, Vision auditing or the engine itself. The facade supplies startup/action timestamps; sequence output still delegates its clock sampling, redaction, JSONL limits and serialization to `PlaybackSequenceDebugRecorder`, and the facade retains the existing Debug enablement and OSLog path.
+Large implementations use adjacent `TypeName+Topic.swift` extensions. `SlideShowViewModel.swift` contains the facade's stored state, initializer, source and image-loading adapters, initial preload orchestration, synchronous planning, settings writes and publication coordination. `+Navigation`, `+Planning`, `+ScenePresentation`, `+RuntimeEvidence` and `+SettingsApplication` contain navigation, prepared planning, presentation readbacks and remaining event adapters, evidence, and settings-impact coordination; `+PlaybackReadiness` contains refill eligibility and image-readiness queries. The file-private pool loader and its private synchronous update adapter share the primary file with the published projections. Initial-load identity validation, pool-update helpers and image-load helpers used only there are private. Cross-file facade adapters remain internal; collaborator storage stays with its owner. The release guard forbids platform and shared views from accessing the session owner, candidate progression, effect executor, runtime evidence recorder or wake-up scheduler directly.
+
+Published playback facts have no internal setter: `assets`, `currentIndex`, `targetIndex`, `targetTransitionToken`, `isLoading`, `isLoadingMore`, `emptyPlaybackMessage`, `scenePresentationRevision`, `autoPlayRecoveryMessage` and `didFirstPreload` are `@Published private(set)`. Debug-only cache-persistence and Vision-audit projections also have private setters. `publishPlaybackPosition` and `publishScenePresentationChange` are private, with their calling adapters in the primary file. The display mode, last executed automatic planning request and Debug planning counters also have private setters there. `maxAssetCount`, `isAutoPlay` and `autoPlayInterval` are configuration inputs, not playback-fact readbacks. Production changes to `isAutoPlay` go through `toggleAutoPlayFromUserInteraction` or `applyPlaybackSettings`; its internal setter remains only for tests and Debug fixtures.
+
+`PlaybackSmartFillPlanner` separates search, evaluation, geometry and readback. `AssetsDownloadManager+Diagnostics.swift` holds Debug diagnostics, while `SDWebImageAsyncBridge.swift` owns the callback bridge. `ImmichServer` separates connection probes and test configuration; persistence and Keychain operations remain in `immichServer.swift`. Runtime manifest validation lives in `PlaybackRuntimeEvidenceManifest.swift`, and scene QA in `PlaybackScene+RuntimeQA.swift`, behind their Debug guards.
+
+### Runtime evidence
+
+Evidence observations are synchronous, including query-time samples. The facade's navigation and evidence adapters supply clock samples and download records; scene publication timing annotations consume immutable action timestamps from `PlaybackRuntimeEvidenceRecorder`. Reading the startup summary can record missing readiness milestones, with one clock sample per newly recorded phase; reading the presentation probe accumulates Debug frame evidence from an immutable render snapshot, motion progress and history count. The readiness metric allows pending or failed slots after a ready slot has been observed. Startup reset clears only startup evidence, presentation reset clears only decode/readiness counters and history flags, and action reset clears only pending action timings; sequence history and frame accumulation survive these resets. The recorder does not access the download manager, Vision auditing or the engine itself. Sequence output delegates clock sampling, redaction, JSONL limits and serialization to `PlaybackSequenceDebugRecorder`; the facade owns Debug enablement and the OSLog path.
+
+### Pool loading and source identity
 
 The private pool adapter in `SlideShowViewModel.swift` supplies immutable session values from `PlaybackSessionOwner` before acquisition and again before application; the loader never queries the engine or stores a live session-context copy. After applying a successful initial replacement, the facade explicitly records the applied identity with the post-reset session values at that same synchronous point. Initial results validate source generation, source summary, session ID and scene ID; refill results deliberately omit scene ID so navigation within a session does not discard them. Initial preload receives an opaque read-only identity from the facade. Random and filtered acquisition, failure handling and source-specific evidence remain separate. Their validated successful refills share the loader's private `appendRefillAssets` mutation, which returns an explicit `Update.refillFinished` for application after the existing loading and result-evidence writes.
 
 The loader owns the ordered pool, while `SlideShowViewModel.assets`, `isLoading`, `isLoadingMore` and `emptyPlaybackMessage` remain synchronous `@Published private(set)` projections. The only stored loading booleans are those facade projections; the loader owns their transitions and refill cleanup identity, and the private adapter applies every requested publication, including repeated values. Application preserves separate append and trim emissions: append, filtered-only cursor resume against the untrimmed pool, empty-message update, cache eviction, prefix removal, cursor adjustment and engine readback. Trim observations use a separate required non-escaping callback, so a generic update callback alone cannot apply a refill. Loading and evidence writes remain at their original points. No callback is deferred or moved to another task. The existing published `maxAssetCount` setting synchronizes the loader's capacity via `didSet`; its declaration documents that initialization must supply the same value to both because property observers do not run during `init`. Both types join both platforms through the synchronized `Shared/` folder; Debug fixture commands change only the corresponding pool or loading value and are covered by the release guard. `overwritePlaybackPoolWithoutResetForTesting` deliberately preserves the session and cursor, unlike the full-reset `replacePlaybackAssetsForTesting` command.
+
+### Settings and platform integration
 
 The iOS and tvOS slideshow views keep their property wrappers in the primary declarations and place diagnostics, rendering and EXIF methods in platform-filtered extensions. tvOS settings server/cache, About/licenses and bundled privacy pages have separate extension files; their focus state remains owned by `SettingsViewTV`.
 
 `SlideShowViewModel+SettingsApplication.swift` owns the settings refresh run on slideshow entry and on `UserDefaults.didChangeNotification`. The platform EXIF adapters supply synchronous visibility setters. The refresh applies the view model's playback settings, reads the presentation settings, updates EXIF then debug-overlay visibility, decides whether the source changed, and schedules an asynchronous source switch only when needed. Cold-launch source selection stays in `ContentView.initialPlaybackSourceForColdLaunch()`. This extension has no stored state and joins both platforms through the app's synchronized `Shared/` folder.
 
 Playback QA strings, overlay download metrics, ViewModel injection hooks and diagnostic Vision state compile only in Debug. Their numeric runtime timing records, ordinary download logs and the Vision service used by solo-person filtering remain available in Release. UI-test preparation, hint suppression, reset and contract-probe switches are owned by `PlatformCompat`; focus marker exposure uses `shouldExposeUITestProbes` without changing tvOS focus routing. Release settings-resume suites launch through the real UI with no `UI_TEST_*` overrides.
+
+### Presentation policy and private values
 
 The reducer's `ScenePresentationLayerTimeline` is co-located with it so the value type and its layer storage stay private. The reducer chooses when to hold, transition, settle, suspend or resume, and passes the timing and motion conditions into synchronous timeline operations. The timeline derives each layer's motion start and enablement from those supplied conditions and owns its independent motion clock. The reducer keeps the stable-visible clock for the scene-level active time reported in snapshots, also used to recompute the stable deadline after a cancelled hold. The opaque manual restoration value carries a copy of the timeline. Restoration policy stays inside the reducer type, including its nested restoration value; event/effect order and the frozen planning interface remain reducer responsibilities.
 
@@ -124,6 +140,8 @@ The reducer's private `ManualPendingPresentationRestore` owns capture, applicati
 
 Platform views only forward system events (scene phase, Reduce Motion, remote/touch input) to the view model and draw the `SceneRenderSnapshot` they get back. They hold no playback state machine of their own.
 
+### Wake-ups and effect execution
+
 The wake-up scheduler receives only generation/deadline values and injected functions; it does not hold
 the engine or decide deadlines. Duplicate keys keep the existing task. Replacement, matching generation
 cancellation and reset cancel the owned task; both task cancellation and key matching reject late
@@ -146,31 +164,31 @@ renderer callbacks and facade evidence sampling stay synchronous.
 Each started download or retry stores a private `DownloadCompletion` for that operation and target
 identity in the executor. Its read-only lookup supplies the receipt to startup or surface activation
 only when the current/pending identity matches; cancel and presentation reset clear it in the executor.
-`waitForDownloads()` waits for that operation, including its existing post-transition preloads, and
-does not imply renderer readiness or visibility. Startup no
-longer looks up a generation in the effect-task dictionary. Concurrent first-preload callers join the
+`waitForDownloads()` waits for that operation, including its post-transition preloads, and
+does not imply renderer readiness or visibility. Startup reads this operation-specific receipt;
+the effect-task dictionary is private. Concurrent first-preload callers join the
 owned startup task; its background preloads remain asynchronous. Source reset cancels startup work,
 while presentation reset cancels effects and prepared-slot image work without cancelling the startup
 caller that may be replacing the pool. Surface activation retains the 250 ms delay and clears its handle
 unconditionally after the await; first preload likewise clears its handle unconditionally in a defer.
+An older task can therefore clear a newer task's handle, the known behavior tracked in [#72](https://github.com/sudoHG/immichSlides/issues/72).
 The download receipt must be read in the same main-actor step that dispatched the download, without an
-intervening suspension. It therefore identifies the same task the facade previously read from its
-generation dictionary, before a later renderer callback can replace it. Prepared/lookahead computation
-remains in `PlaybackCandidateProgression`, and the existing eligibility and
-proposal-install/preload/completion order are unchanged. The executor is
+intervening suspension, before a later renderer callback can replace it. Prepared/lookahead computation
+belongs to `PlaybackCandidateProgression`; proposal installation precedes image preloads and planning
+completion. The executor is
 included on both platforms through the synchronized `Shared/` folder.
 
 ### Frozen planning event/effect interface
 
-The reducer owns demand and validates its lifetime. The facade executes navigation; the effect executor runs barriers.
-Planning computes and delivers proposals. Later extractions of planning, scheduling, effect execution,
-session ownership and reducer internals preserve this value interface:
+This planning interface is frozen: it is the boundary between presentation policy and its collaborators.
+The reducer owns demand and validates its lifetime. The facade coordinates session-owner navigation;
+the effect executor runs image work and barriers, and planning computes and delivers proposals:
 
 - `ScenePresentationEffect.plan(ScenePresentationPlanningRequest)` carries an immutable `tag: UInt64`,
   `target: ScenePresentationEffectRequest` (the full presentation identity and source), and
   `purpose: ScenePresentationPlanningPurpose`. The reducer increments its sequence before each new
   command (first tag: 1); retries reuse that tag. Identical event sequences produce identical effects.
-  A command emitted during user pause is skipped by the executor and does not replace the reducer's
+  A command emitted during user pause is skipped by the facade's command adapter and does not replace the reducer's
   outstanding demand; both reducer and facade retain the previously executed demand, if any.
   Reset replaces reducer state and the navigation generation, so a restarted sequence cannot accept
   a completion from the old session. The tag is neither a navigation token nor a proposal fingerprint.
@@ -179,7 +197,7 @@ session ownership and reducer internals preserve this value interface:
   Admission requires an exact outstanding-request match, its target still being current or pending,
   and either a stable current presentation or a failed pending target. User pause rejects completion;
   background suspension alone does not, matching the facade's existing `isAutoPlay` admission gate.
-  This relies on an invariant: the executor's `isAutoPlay` gate and the reducer's `.userPaused`
+  This relies on an invariant: the facade's `isAutoPlay` gate and the reducer's `.userPaused`
   suspension change together (`updateAutoPlayEnabled`, and readback sync after a reset). A caller that
   turns autoplay off without suspending the reducer breaks demand matching.
   Purpose records why demand was issued, rather than imposing a stricter completion policy: a stable
@@ -188,10 +206,9 @@ session ownership and reducer internals preserve this value interface:
   `retirePlanningDemand(for:)` call outside attempt bookkeeping (manual restoration cannot hold matching
   demand, so it has no such call); registering
   a different pending target does not retire demand retained by the current photo. Stale completion
-  returns no effects and does not append diagnostics. Known theoretical difference from the previous
-  facade: an executed automatic navigation keeps the photo's old demand instead of clearing it, so a
-  stale manual-hold restore that makes that photo current again (an already inconsistent state) could
-  later accept it.
+  returns no effects and does not append diagnostics. An executed automatic navigation retains the
+  photo's old demand. A stale manual-hold restore that makes that photo current again (an inconsistent
+  state) could later accept it; this known edge case is not a restoration or admission guarantee.
 - `ScenePresentationEffect.restartPreparation(ScenePresentationEffectRequest)` is a separate barrier
   command for an existing target. It allocates no planning tag, creates no navigation demand and has
   no planning completion. It may run while paused.
@@ -221,6 +238,8 @@ reducer, retaining the installed proposal and the existing transition admission 
 Lookahead stays unstamped in planning storage until its source cursor matches the current prepared
 cursor and freshness checks pass; the engine stamps/installs it and alone consumes it on navigation.
 Planning code neither inspects presentation policy nor initiates navigation.
+
+### Candidate progression and prepared planning
 
 `PlaybackCandidateProgression` owns preparation alongside the cursor, exclusions and surface/protection
 context that already determine its input. The facade supplies a `PreparationInput` value containing the
@@ -256,7 +275,7 @@ so its completion is rejected. Matching cancellation and `resetScenePresentation
 it; transition acceptance does not. Engine reset/invalidation (including display-mode rebuild) resets
 reducer demand but can leave the facade field stale; the reducer rejects that old request. A completion
 dropped while user-paused is not buffered or reissued on resume: a consumed stable wake-up can leave
-autoplay waiting indefinitely, a pre-existing pause/resume gap preserved by this refactor. Candidate
+autoplay waiting indefinitely, the known behavior tracked in [#65](https://github.com/sudoHG/immichSlides/issues/65). Candidate
 progression still advances at transition acceptance; reducer and retained history still advance at
 the renderer visible tick. `ScenePresentationEffectExecutor` owns image-task storage and the barrier;
 the facade delegates engine access and retained-history coordination to `PlaybackSessionOwner`.
@@ -286,10 +305,10 @@ ledger entry before invalidation. These distinct reset paths preserve existing b
 their session-identity changes. Pool acquisition and application read current identity values through
 the owner each time, so a reset without a source-generation change still rejects stale initial work.
 
-The ledger value types move alongside the owner without changing their standalone behavior. The new
-file belongs to the synchronized Shared folder and compiles on both iOS and tvOS. Its diagnostic history
-snapshot and fixture hooks remain Debug-only. The pure planner benchmark still depends only on the
-unchanged engine/planner sources and does not need the session owner.
+The ledger value types are co-located with the owner in the synchronized Shared folder and compile
+on both iOS and tvOS. Its diagnostic history snapshot and fixture hooks are Debug-only. The
+[standalone planner benchmark](TESTING.md#standalone-smartfill-planner-benchmark) depends on the
+engine/planner sources and does not need the session owner or facade extensions.
 
 ## 4. Concurrency and state rules
 
