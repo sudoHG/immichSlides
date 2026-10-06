@@ -75,25 +75,57 @@ extension PlaybackSessionEngine {
             private var shouldKeepHeldPhotoLive: Bool
 
             init(capturing state: ScenePresentationState, at time: TimeInterval) {
-                underlyingPhase = state.underlyingPhase
-                currentTarget = state.currentTarget
-                pendingTarget = state.pendingTarget
-                targetReadiness = state.targetReadiness
-                shouldKeepHeldPhotoLive = state.layerTimeline.hasOnlyStableVisibleLayers(at: time)
-                layerTimeline = state.layerTimeline.frozen(at: time)
-                stableVisibleClock = state.stableVisibleClock
+                var stableVisibleClock = state.stableVisibleClock
                 stableVisibleClock?.suspend(at: time)
-                graceDeadline = state.graceDeadline
-                isTransitionCompletionPending = state.isTransitionCompletionPending
-                transitionKind = state.transitionKind
-                wakeUp =
-                    state.scheduledWakeUp.map {
+                self.init(
+                    underlyingPhase: state.underlyingPhase,
+                    currentTarget: state.currentTarget,
+                    pendingTarget: state.pendingTarget,
+                    targetReadiness: state.targetReadiness,
+                    layerTimeline: state.layerTimeline.frozen(at: time),
+                    stableVisibleClock: stableVisibleClock,
+                    graceDeadline: state.graceDeadline,
+                    isTransitionCompletionPending: state.isTransitionCompletionPending,
+                    transitionKind: state.transitionKind,
+                    wakeUp: state.scheduledWakeUp.map {
                         ScenePresentationSuspendedWakeUp(
                             generation: $0.generation, purpose: $0.purpose, remaining: max(0, $0.deadline - time)
                         )
-                    } ?? state.suspendedWakeUp
-                isManualNavigationWhilePaused = state.isManualNavigationWhilePaused
-                isCurrentSceneManualStatic = state.isCurrentSceneManualStatic
+                    } ?? state.suspendedWakeUp,
+                    isManualNavigationWhilePaused: state.isManualNavigationWhilePaused,
+                    isCurrentSceneManualStatic: state.isCurrentSceneManualStatic,
+                    shouldKeepHeldPhotoLive: state.layerTimeline.hasOnlyStableVisibleLayers(at: time)
+                )
+            }
+
+            private init(
+                underlyingPhase: ScenePresentationPhase,
+                currentTarget: ScenePresentationTarget?,
+                pendingTarget: ScenePresentationTarget?,
+                targetReadiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness],
+                layerTimeline: ScenePresentationLayerTimeline,
+                stableVisibleClock: SceneActiveTimeClock?,
+                graceDeadline: TimeInterval?,
+                isTransitionCompletionPending: Bool,
+                transitionKind: ScenePresentationTransitionKind?,
+                wakeUp: ScenePresentationSuspendedWakeUp?,
+                isManualNavigationWhilePaused: Bool,
+                isCurrentSceneManualStatic: Bool,
+                shouldKeepHeldPhotoLive: Bool
+            ) {
+                self.underlyingPhase = underlyingPhase
+                self.currentTarget = currentTarget
+                self.pendingTarget = pendingTarget
+                self.targetReadiness = targetReadiness
+                self.layerTimeline = layerTimeline
+                self.stableVisibleClock = stableVisibleClock
+                self.graceDeadline = graceDeadline
+                self.isTransitionCompletionPending = isTransitionCompletionPending
+                self.transitionKind = transitionKind
+                self.wakeUp = wakeUp
+                self.isManualNavigationWhilePaused = isManualNavigationWhilePaused
+                self.isCurrentSceneManualStatic = isCurrentSceneManualStatic
+                self.shouldKeepHeldPhotoLive = shouldKeepHeldPhotoLive
             }
 
             enum Continuation {
@@ -150,7 +182,7 @@ extension PlaybackSessionEngine {
             /// playback is suspended. The returned restore lets Previous continue from this picture rather than the dim frame.
             func raisedForHold(
                 history: [ScenePresentationIdentity],
-                source: ScenePresentationRequestSource?,
+                latestSource: (ScenePresentationIdentity) -> ScenePresentationRequestSource?,
                 shouldResumeMotion: Bool,
                 at time: TimeInterval
             ) -> (timeline: ScenePresentationLayerTimeline, restore: Self)? {
@@ -195,7 +227,7 @@ extension PlaybackSessionEngine {
                         targetReadiness: readiness,
                         // Only an automatic target falls back to loading after grace; a manual one is waited for.
                         wakeUp: transitionTarget.flatMap { target in
-                            source?.isManual == true
+                            latestSource(target.identity)?.isManual == true
                                 ? nil
                                 : ScenePresentationSuspendedWakeUp(
                                     generation: target.identity.generation,
@@ -216,19 +248,21 @@ extension PlaybackSessionEngine {
                 targetReadiness: [ScenePresentationIdentity: ScenePresentationTargetReadiness],
                 wakeUp: ScenePresentationSuspendedWakeUp?
             ) -> Self {
-                var restored = self
-                restored.underlyingPhase = underlyingPhase
-                restored.pendingTarget = pendingTarget
-                restored.targetReadiness = targetReadiness
-                restored.layerTimeline = ScenePresentationLayerTimeline()
-                restored.stableVisibleClock = nil
-                restored.graceDeadline = nil
-                restored.isTransitionCompletionPending = false
-                restored.transitionKind = transitionKind
-                restored.wakeUp = wakeUp
-                restored.isCurrentSceneManualStatic = false
-                restored.shouldKeepHeldPhotoLive = true
-                return restored
+                Self(
+                    underlyingPhase: underlyingPhase,
+                    currentTarget: currentTarget,
+                    pendingTarget: pendingTarget,
+                    targetReadiness: targetReadiness,
+                    layerTimeline: ScenePresentationLayerTimeline(),
+                    stableVisibleClock: nil,
+                    graceDeadline: nil,
+                    isTransitionCompletionPending: false,
+                    transitionKind: transitionKind,
+                    wakeUp: wakeUp,
+                    isManualNavigationWhilePaused: isManualNavigationWhilePaused,
+                    isCurrentSceneManualStatic: false,
+                    shouldKeepHeldPhotoLive: true
+                )
             }
         }
 
@@ -846,9 +880,7 @@ extension PlaybackSessionEngine {
             if let manualPendingRestore,
                 let raised = manualPendingRestore.raisedForHold(
                     history: history,
-                    source: (manualPendingRestore.pendingTarget ?? manualPendingRestore.currentTarget).flatMap {
-                        attemptLedger.latestSource(for: $0.identity)
-                    },
+                    latestSource: { attemptLedger.latestSource(for: $0) },
                     shouldResumeMotion: suspensionReasons.isEmpty,
                     at: time
                 )
