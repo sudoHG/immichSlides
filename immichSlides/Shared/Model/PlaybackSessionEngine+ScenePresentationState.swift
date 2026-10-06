@@ -1280,14 +1280,19 @@ extension PlaybackSessionEngine {
                     break
                 }
             }
-            guard let suspendedWakeUp else { return [] }
+            // Pause may drop a prepared completion after the stable wake has already been consumed.
+            var planningEffects: [ScenePresentationEffect] = []
+            if reason == .userPaused, let request = outstandingPlanningRequest, isPlanningRequestApplicable(request) {
+                planningEffects.append(.plan(request))
+            }
+            guard let suspendedWakeUp else { return planningEffects }
             self.suspendedWakeUp = nil
             return scheduleWakeUp(
                 generation: suspendedWakeUp.generation,
                 purpose: suspendedWakeUp.purpose,
                 deadline: time + suspendedWakeUp.remaining,
                 at: time
-            )
+            ) + planningEffects
         }
 
         /// On Play, a visible manual short crossfade continues from the current sample; a hidden layer that is not

@@ -220,10 +220,15 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.smartFillCandidateCursorIndexForTesting == 1)
     }
 
-    @Test
-    func
-        `SmartFill autoplay skips the tick on a prepared miss instead of falling back to the MainActor planner synchronously`()
-        async
+    enum PreparedMissResumeTiming: CaseIterable {
+        case beforeDelivery, afterDeliveryWithLongPause
+    }
+
+    @Test(arguments: PreparedMissResumeTiming.allCases)
+    func `SmartFill autoplay resumes when Play precedes or follows its prepared miss delivery`(
+        resumeTiming: PreparedMissResumeTiming
+    )
+        async throws
     {
         let vm = makeSmartFillViewModel()
         vm.isAutoPlay = true
@@ -232,8 +237,11 @@ extension SlideShowViewModelNavigationSemanticsTests {
         vm.resetSmartFillCandidateSummaryBuildCountForTesting()
         let originalToken = vm.targetTransitionToken
 
-        _ = vm.fireScheduledScenePresentationWakeUpForTesting()
+        let missedDeadline = try #require(vm.fireScheduledScenePresentationWakeUpForTesting())
+        vm.scenePresentationTimestampProviderForTesting = { missedDeadline }
+        let outstandingDemand = try #require(vm.pendingAutomaticScenePlanningRequest)
 
+        #expect(vm.smartFillCandidateCursorIndexForTesting == 1)
         #expect(vm.currentIndex == 0)
         #expect(vm.targetIndex == 0)
         #expect(vm.targetTransitionToken == originalToken)
@@ -242,14 +250,42 @@ extension SlideShowViewModelNavigationSemanticsTests {
 
         // A fresh proposal still installs if the user pauses while the prepared miss is computing.
         vm.toggleAutoPlayFromUserInteraction()
-        let didDeliverWhilePaused = await waitUntilForTesting {
-            vm.preparedSmartFillNextAssetIdsForTesting != nil
+        let pausedLayers = vm.sceneRenderSnapshot.layers
+        switch resumeTiming {
+        case .beforeDelivery:
+            // No suspension point lets the MainActor install the proposal before Play.
+            #expect(vm.preparedSmartFillNextAssetIdsForTesting == nil)
+        case .afterDeliveryWithLongPause:
+            let didDeliverWhilePaused = await waitUntilForTesting {
+                vm.preparedSmartFillNextAssetIdsForTesting != nil
+            }
+            #expect(didDeliverWhilePaused)
+            #expect(vm.preparedSmartFillNextAssetIdsForTesting == ["asset-1"])
+            vm.scenePresentationTimestampProviderForTesting = { missedDeadline + 3600 }
         }
-        #expect(didDeliverWhilePaused)
-        #expect(vm.preparedSmartFillNextAssetIdsForTesting == ["asset-1"])
         #expect(vm.currentIndex == 0)
         #expect(vm.targetIndex == 0)
         #expect(vm.targetTransitionToken == originalToken)
+        #expect(vm.pendingAutomaticScenePlanningRequest == outstandingDemand)
+
+        #expect(vm.sceneRenderSnapshot.layers == pausedLayers)
+        vm.toggleAutoPlayFromUserInteraction()
+
+        // Only an actual proposal delivery or the proposal installed during pause can advance playback.
+        let didAdvanceAfterPlay = await waitUntilForTesting {
+            vm.safeCurrentScene?.primaryAssetId == "asset-1"
+        }
+        #expect(didAdvanceAfterPlay)
+        let didPrepareFollowingTarget = await waitUntilForTesting {
+            vm.preparedSmartFillNextAssetIdsForTesting == ["asset-2"]
+        }
+        #expect(didPrepareFollowingTarget)
+        #expect(vm.currentIndex == 1)
+        #expect(vm.targetIndex == 1)
+        #expect(vm.smartFillCandidateCursorIndexForTesting == 2)
+        #expect(vm.targetTransitionToken != originalToken)
+        #expect(vm.pendingAutomaticScenePlanningRequest == outstandingDemand)
+        #expect(vm.smartFillCandidateSummaryBuildCountForTesting == 0)
     }
 
     @Test
