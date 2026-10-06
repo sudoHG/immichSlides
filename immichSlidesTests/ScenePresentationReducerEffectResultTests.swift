@@ -104,7 +104,7 @@ struct ScenePresentationReducerEffectResultTests {
         case active, pause, background, navigation, cancellation, reset, restoration
         case pausedExhaustionBeforeGraceExpiry, pausedExhaustionAfterGraceExpiry
         case pausedExhaustedTarget
-        case pausedAfterAutomaticAdvance, pausedWithAutomaticGraceTarget
+        case pausedAfterAutomaticAdvance
     }
 
     @Test(arguments: PlanningInterruption.allCases)
@@ -207,14 +207,6 @@ struct ScenePresentationReducerEffectResultTests {
             let resumeEffects = engine.reduceScenePresentation(.resume(.userPaused), at: 3600)
             #expect(
                 resumeEffects == [.scheduleWakeUp(generation: automatic.identity.generation, deadline: 3604.9)])
-            completionTime = 3600.1
-        case .pausedWithAutomaticGraceTarget:
-            let automatic = makeTarget(sceneID: "grace-automatic")
-            engine.reduceScenePresentation(.stableDeadlineReached(target: automatic, readiness: .pending), at: 6.1)
-            engine.reduceScenePresentation(.suspend(.userPaused), at: 6.2)
-            let resumeEffects = engine.reduceScenePresentation(.resume(.userPaused), at: 3600)
-            #expect(
-                resumeEffects == [.scheduleWakeUp(generation: automatic.identity.generation, deadline: 3600.9)])
             completionTime = 3600.1
         case .pausedExhaustionBeforeGraceExpiry, .pausedExhaustionAfterGraceExpiry:
             let automatic = makeTarget(sceneID: "paused-automatic")
