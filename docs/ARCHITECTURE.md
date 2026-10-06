@@ -73,9 +73,10 @@ Target membership: the app is one Xcode target built for iOS and tvOS, using syn
 | `ScenePresentationAttemptLedger` (private value) | Same reducer file | Owns target readiness, ordered attempt records, attempt numbering, outcomes, failed-outcome counts, source lookup and summaries. The reducer decides whether to retry, replace an automatic target or continue a manual direction. |
 | `ScenePresentationEffect` | `Shared/Model/ScenePresentationEffect.swift` | Commands the reducer emits (`plan`, `download`, `retry`, `loadMore`, `scheduleWakeUp`, `cancelWakeUp`, `cancel`, …). Planning carries an explicit purpose and demand tag. Plain values, no tasks. |
 | `ScenePresentationWakeUpScheduler` | `Shared/Model/ScenePresentationWakeUpScheduler.swift` | Owns the private wake-up task and generation/deadline key. Executes schedule, matching cancellation and reset through an injected clock and sleeper, delivering one tagged event synchronously after the sleep. |
+| `ScenePresentationEffectExecutor` | `Shared/Model/ScenePresentationEffectExecutor.swift` | Privately owns cancellable effect operations, the renderer barrier, prepared/lookahead image-preload tasks, surface activation delay and startup tasks. Executes reducer commands through image-loading and pool interfaces; returns an identity-tagged download completion handle and forwards navigation and wake-up commands synchronously. |
 | `ScenePresentationPrerenderBarrier` | `Shared/Model/ScenePresentationPrerenderBarrier.swift` | Tracks when every renderer of a hidden incoming scene has decoded. Decoded does not mean seen. |
 | `SceneVisibleFrameReporter` | `Shared/Component/SceneVisibleFrameReporter.swift` | Reports a scene as visible only on the display tick after its render transaction completes. That report is what commits history. |
-| `SlideShowViewModel` | `Shared/Model/SlideShowViewModel.swift` | `@MainActor` coordinator for playback. Delegates pool loading and candidate progression, plans scenes, runs reducer effects, starts downloads, keeps `PlaybackHistoryLedger` (previous / redo / next), and publishes render state to the platform views. |
+| `SlideShowViewModel` | `Shared/Model/SlideShowViewModel.swift` | `@MainActor` facade for playback. Delegates pool loading, candidate progression and effect execution, supplies image-loading adapters and session values, keeps `PlaybackHistoryLedger` (previous / redo / next), and publishes render state to the platform views. |
 | `PlaybackRuntimeEvidenceRecorder` | `Shared/Model/PlaybackRuntimeEvidenceRecorder.swift` | Owns startup timestamps and first-plan metrics, pending action timestamps, presentation counters, Debug frame accumulation and the Debug sequence recorder. Observes supplied values and exposes immutable startup snapshots and serialized summaries; never owns the engine or changes playback. |
 | `AssetsDownloadManager` | `Shared/Model/AssetsDownloadManager.swift` | `@MainActor` singleton around SDWebImage. Loads and preloads images by `(assetId, ThumbnailSize)` with high/low priority, merges duplicate in-flight requests, tracks readiness and clears caches. `PlaybackImageCachePolicy` sets memory cache limits. |
 | `SmartFillSceneView`, `SlideItemView` | `Shared/Component/` | Render a scene. `SmartFillSceneView` lays out planner slots; it uses `SlideItemView` (single photo, legacy renderer) when a scene has no SmartFill readback, or is a fallback without a motion context. |
@@ -115,7 +116,7 @@ The reducer's private `ManualPendingPresentationRestore` owns capture, applicati
 
    The engine records a `PlaybackSessionTransition` (`requestNext` / `requestTransition`).
 3. **Start presenting.** `beginPendingScenePresentationIfNeeded` captures the pending candidate reservation, then calls `PlaybackSessionEngine.beginScenePresentation`. On successful transition acceptance, the view model records publication timing and synchronously applies the reservation through `PlaybackCandidateProgression`: displayed IDs advance, and a newly appended tail scene advances the candidate cursor. It then installs a ready lookahead proposal (`applySmartFillMotionLookaheadPreparedPlanIfReady`); otherwise, it refreshes the prepared ring in the background (`refreshPreparedSmartFillSceneRingIfPossible`). Next, it starts the renderer barrier and executes the reducer's effects (`download` and wake-ups).
-4. **Download.** The `download` effect runs a `@MainActor` task keyed by the target's generation. It calls `AssetsDownloadManager.loadPhoto` for each slot, then preloads the next candidate window and playback window.
+4. **Download.** The executor runs the `download` effect in a `@MainActor` task keyed by the target's generation. The facade's image-loading adapters call `AssetsDownloadManager.loadPhoto` for each slot, then the executor requests candidate-window and playback-window preloading in order. Whether the scene is initial is sampled when the task starts. A retry rebuilds the barrier before replacing the download and does not run window preloads.
 5. **Decode.** The platform view renders the incoming scene as a hidden layer. Each renderer reports decoded or failed through `rendererDecoded` / `rendererFailed`. When the barrier is complete, the reducer marks the target ready and starts the transition: outgoing fade, incoming delay, incoming fade. If the target is not ready at the deadline, the current photo stays up for a grace period, then a loading transition shows. Failed targets are retried up to a limit.
 6. **Visible.** `SceneVisibleFrameReporterModifier` calls `onSceneBecameVisible` for eligible stable or incoming scene roots; platform views forward it to `SlideShowViewModel.incomingBecameVisible`. The reducer appends the identity to its history, and the view model commits the scene to `PlaybackHistoryLedger` and asks for more pool assets if the pool is running low (`loadMore`). Candidate progression already advanced at successful transition acceptance.
 
@@ -131,6 +132,27 @@ executes its effects in the same main-actor turn, with no added task or actor ho
 The scheduler cancels its remaining task on release. Existing Debug virtual-time facade tests retain
 their explicit manual wake at the deadline; the scheduler's own controllable-sleeper coverage exercises
 the real task. Both platforms include the scheduler through the synchronized `Shared/` folder.
+
+The effect executor receives scenes and full presentation identities as values. Its image-loading
+adapters retain the existing per-slot size/priority order, readiness checks and diagnostic observation
+points; pool refill still goes through the facade's identity-validating loader interface. The executor
+forwards planning, navigation and scheduler commands inline, so the facade's effect-array order and
+publication points are unchanged. It never accepts transitions or commits visible history. The barrier
+keeps full renderer attempt identities and emits readiness only when every expected slot decodes;
+renderer callbacks and facade evidence sampling stay synchronous.
+
+Each started download or retry returns a `DownloadCompletion` for that operation and target identity.
+The facade retains the latest receipt and only supplies it to startup or surface activation when the
+current/pending identity still matches. `waitForDownloads()` waits for that operation, including its
+existing post-transition preloads, and does not imply renderer readiness or visibility. Startup no
+longer looks up a generation in the effect-task dictionary. Concurrent first-preload callers join the
+owned startup task; its background preloads remain asynchronous. Source reset cancels startup work,
+while presentation reset cancels effects and prepared-slot image work without cancelling the startup
+caller that may be replacing the pool. Operation IDs prevent a cancelled operation's late cleanup from
+clearing its replacement. Surface activation retains the 250 ms delay and waits on its own returned
+download receipt. Prepared/lookahead computation remains in `PlaybackCandidateProgression`, and the
+existing eligibility and proposal-install/preload/completion order are unchanged. The executor is
+included on both platforms through the synchronized `Shared/` folder.
 
 ### Frozen planning event/effect interface
 
@@ -214,8 +236,8 @@ clear a newer refresh started during completion. Lookahead tasks have private pe
 remove only their own handle on completion. A refresh does not cancel speculative lookahead that may
 still become eligible. Presentation reset clears the cached proposal at its existing point; in-flight
 lookahead still goes through the existing freshness checks on delivery. Releasing the collaborator
-cancels its remaining lookahead computations. Prepared/lookahead image-preload tasks and their eligibility,
-size, priority and call order remain in the facade for the later effect-executor extraction. The
+cancels its remaining lookahead computations. The effect executor owns prepared/lookahead image-preload
+tasks; the facade supplies their unchanged eligibility, asset order and fullsize/high-priority loader. The
 diagnostic readback exposes only cached cursor/count values, not proposal or task storage.
 
 `ScenePresentationState.outstandingPlanningRequest` is private reducer state. The facade's

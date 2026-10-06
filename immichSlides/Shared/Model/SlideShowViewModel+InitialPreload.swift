@@ -10,18 +10,9 @@ extension SlideShowViewModel {
             logger.info("first preload skipped already completed")
             return
         }
-        if let task = firstPreloadTask {
-            logger.info("first preload waits existing task")
-            await task.value
-            return
-        }
-        logger.info("first preload task created source=\(self.logName(for: self.source), privacy: .public)")
-        let task = Task {
-            defer { self.firstPreloadTask = nil }
+        await scenePresentationEffectExecutor.runFirstPreload(sourceName: logName(for: source), logger: logger) {
             await self.prepareInitialAssets()
         }
-        firstPreloadTask = task
-        await task.value
     }
 
     func prepareInitialAssets() async {
@@ -59,12 +50,8 @@ extension SlideShowViewModel {
             logger.info(
                 "initial first asset load begin sceneId=\(firstScene.id, privacy: .private) assetId=\(firstAssetId, privacy: .private) assetCount=\(self.assets.count, privacy: .public)"
             )
-            let presentationState = playbackSessionEngine.scenePresentationState
-            if let generation = (presentationState.pendingTarget ?? presentationState.currentTarget)?.identity
-                .generation,
-                let effectTask = scenePresentationEffectTasks[generation]
-            {
-                await effectTask.value
+            if let completion = currentSceneDownloadCompletion {
+                await completion.waitForDownloads()
             }
             guard isCurrentPlaybackLoad(initialLoadIdentity),
                 scene(at: 0)?.primaryAssetId == firstAssetId
@@ -96,7 +83,7 @@ extension SlideShowViewModel {
     ) {
         let preloadAssets = assets
         let preloadCount = self.preloadCount
-        Task { @MainActor in  // Preload runs in a Task so we do not stall waiting for it before returning.
+        scenePresentationEffectExecutor.startInitialBackgroundPreload {
             guard self.isCurrentPlaybackLoad(initialLoadIdentity) else {
                 self.logger.notice(
                     "initial background preload skipped stale generation=\(loadGeneration, privacy: .public) currentGeneration=\(self.playbackSourceGeneration, privacy: .public)"

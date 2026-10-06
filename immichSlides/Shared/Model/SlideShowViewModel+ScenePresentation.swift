@@ -26,7 +26,7 @@ extension SlideShowViewModel {
             ),
             let scene = playbackSessionEngine.scene(for: started.identity)
         {
-            beginScenePresentationBarrier(identity: started.identity, scene: scene)
+            scenePresentationEffectExecutor.beginBarrier(identity: started.identity, scene: scene)
             executeScenePresentationEffects(started.effects)
         }
         currentIndex = playbackSessionEngine.currentIndex
@@ -74,7 +74,7 @@ extension SlideShowViewModel {
         if !applySmartFillMotionLookaheadPreparedPlanIfReady() {
             refreshPreparedSmartFillSceneRingIfPossible()
         }
-        beginScenePresentationBarrier(identity: started.identity, scene: transition.scene)
+        scenePresentationEffectExecutor.beginBarrier(identity: started.identity, scene: transition.scene)
         executeScenePresentationEffects(started.effects)
     }
 
@@ -131,106 +131,86 @@ extension SlideShowViewModel {
     }
 
     func executeScenePresentationEffects(_ effects: [ScenePresentationEffect], shouldPublishChanges: Bool = true) {
+        let images = ScenePresentationEffectExecutor.ImageLoading(
+            loadInitialScene: { [weak self] scene in
+                await self?.loadInitialSceneAssetsForPlayback(scene)
+            },
+            loadTransitionScene: { [weak self] scene, isPrevious, navigationToken in
+                await self?.loadSceneAssetsForTransition(
+                    scene, isPreviousTransition: isPrevious, navigationToken: navigationToken)
+            },
+            preloadCandidateWindow: { [weak self] in
+                guard let self else { return }
+                _ = await self.preloadSmartFillCandidateWindowIfNeeded(
+                    startingAt: self.candidateProgression.currentCursorIndex)
+            },
+            preloadPlaybackWindow: { [weak self] in
+                await self?.preloadPlaybackWindowAfterTransitionIfReady()
+            }
+        )
         for effect in effects {
-            switch effect {
-            case let .plan(request):
-                switch request.purpose {
-                case .nextAutomaticTarget, .replaceExhaustedTarget:
-                    guard isAutoPlay else { continue }
-                    pendingAutomaticScenePlanningRequest = request
-                    requestAutomaticSceneTarget()
-                }
-
-            case let .restartPreparation(request):
-                // Normal acceptance already began the barrier; a restored target needs a new one.
-                let barrierIsActive =
-                    scenePresentationPrerenderBarrier.activeScene
-                    == ScenePresentationLayerIdentity(
-                        generation: request.identity.generation,
-                        sceneID: request.identity.sceneID,
-                        layerID: "scene-root"
-                    )
-                if !barrierIsActive, let scene = playbackSessionEngine.scene(for: request.identity) {
-                    restartScenePresentationBarrier(identity: request.identity, scene: scene)
-                }
-
-            case let .download(request):
-                guard let scene = playbackSessionEngine.scene(for: request.identity) else { continue }
-                scenePresentationEffectTasks[request.identity.generation]?.cancel()
-                let task = Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    if self.playbackSessionEngine.transition(for: request.identity) == nil {
-                        await self.loadInitialSceneAssetsForPlayback(scene)
-                    } else {
-                        await self.loadSceneAssetsForTransition(
-                            scene,
-                            isPreviousTransition: request.source == .manualPrevious,
-                            navigationToken: request.identity.generation
-                        )
-                        guard !Task.isCancelled else { return }
-                        _ = await self.preloadSmartFillCandidateWindowIfNeeded(
-                            startingAt: self.candidateProgression.currentCursorIndex
-                        )
-                        guard !Task.isCancelled else { return }
-                        await self.preloadPlaybackWindowAfterTransitionIfReady()
-                    }
-                    guard !Task.isCancelled else { return }
-                    self.scenePresentationEffectTasks[request.identity.generation] = nil
-                }
-                scenePresentationEffectTasks[request.identity.generation] = task
-
-            case let .retry(request, _):
-                guard let scene = playbackSessionEngine.scene(for: request.identity) else { continue }
-                restartScenePresentationBarrier(identity: request.identity, scene: scene)
-                scenePresentationEffectTasks[request.identity.generation]?.cancel()
-                let task = Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    await self.loadSceneAssetsForTransition(
-                        scene,
-                        isPreviousTransition: request.source == .manualPrevious,
-                        navigationToken: request.identity.generation
-                    )
-                    guard !Task.isCancelled else { return }
-                    self.scenePresentationEffectTasks[request.identity.generation] = nil
-                }
-                scenePresentationEffectTasks[request.identity.generation] = task
-
-            case let .loadMore(generation):
-                scenePresentationEffectTasks[generation]?.cancel()
-                let task = Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    await self.loadMoreAssets()
-                    guard !Task.isCancelled else { return }
-                    self.scenePresentationEffectTasks[generation] = nil
-                }
-                scenePresentationEffectTasks[generation] = task
-
-            case let .scheduleWakeUp(generation, deadline):
-                scheduleScenePresentationWakeUp(generation: generation, deadline: deadline)
-
-            case let .cancelWakeUp(generation):
-                scenePresentationWakeUpScheduler.cancel(generation: generation)
-
-            case let .cancel(request):
-                scenePresentationEffectTasks[request.identity.generation]?.cancel()
-                scenePresentationEffectTasks[request.identity.generation] = nil
-                if pendingAutomaticScenePlanningRequest?.target.identity == request.identity {
-                    pendingAutomaticScenePlanningRequest = nil
-                }
-                releaseScenePresentationBarrier(for: request.identity)
-
-            case let .requestManualDirection(source):
-                switch source {
-                case .manualPrevious:
-                    requestPreviousScene()
-                case .manualNext, .automatic:
-                    requestNextScene()
-                }
+            if let completion = scenePresentationEffectExecutor.execute(
+                effect,
+                scene: sceneForPresentationEffect(effect),
+                isInitialScene: { [weak self] identity in
+                    self?.playbackSessionEngine.transition(for: identity) == nil
+                },
+                images: images,
+                loadMore: { [weak self] in await self?.loadMoreAssets() },
+                forward: executeScenePresentationFacadeCommand
+            ) {
+                sceneDownloadCompletion = completion
             }
         }
         if shouldPublishChanges {
             publishScenePresentationChange()
         }
+    }
+
+    private func sceneForPresentationEffect(_ effect: ScenePresentationEffect) -> PlaybackScene? {
+        switch effect {
+        case let .restartPreparation(request), let .download(request), let .retry(request, _):
+            return playbackSessionEngine.scene(for: request.identity)
+        default:
+            return nil
+        }
+    }
+
+    private func executeScenePresentationFacadeCommand(_ command: ScenePresentationEffectExecutor.FacadeCommand) {
+        switch command {
+        case let .plan(request):
+            switch request.purpose {
+            case .nextAutomaticTarget, .replaceExhaustedTarget:
+                guard isAutoPlay else { return }
+                pendingAutomaticScenePlanningRequest = request
+                requestAutomaticSceneTarget()
+            }
+        case let .scheduleWakeUp(generation, deadline):
+            scheduleScenePresentationWakeUp(generation: generation, deadline: deadline)
+        case let .cancelWakeUp(generation):
+            scenePresentationWakeUpScheduler.cancel(generation: generation)
+        case let .cancelPlanning(identity):
+            if pendingAutomaticScenePlanningRequest?.target.identity == identity {
+                pendingAutomaticScenePlanningRequest = nil
+            }
+            if sceneDownloadCompletion?.identity == identity {
+                sceneDownloadCompletion = nil
+            }
+        case let .requestManualDirection(source):
+            switch source {
+            case .manualPrevious:
+                requestPreviousScene()
+            case .manualNext, .automatic:
+                requestNextScene()
+            }
+        }
+    }
+
+    var currentSceneDownloadCompletion: ScenePresentationEffectExecutor.DownloadCompletion? {
+        let presentationState = playbackSessionEngine.scenePresentationState
+        let identity = (presentationState.pendingTarget ?? presentationState.currentTarget)?.identity
+        guard let sceneDownloadCompletion, sceneDownloadCompletion.identity == identity else { return nil }
+        return sceneDownloadCompletion
     }
 
     /// Proposal delivery happens first; rejecting demand must not undo preparation or its image preloads.
@@ -264,63 +244,10 @@ extension SlideShowViewModel {
     }
     #endif
 
-    private func beginScenePresentationBarrier(
-        identity: PlaybackSessionEngine.ScenePresentationIdentity,
-        scene: PlaybackScene
-    ) {
-        let layerIdentity = ScenePresentationLayerIdentity(
-            generation: identity.generation,
-            sceneID: identity.sceneID,
-            layerID: "scene-root"
-        )
-        if let activeScene = scenePresentationPrerenderBarrier.activeScene {
-            guard activeScene != layerIdentity else { return }
-            _ = scenePresentationPrerenderBarrier.release(scene: activeScene)
-        }
-        let rendererAttemptID = UUID()
-        #if DEBUG
-        scenePresentationBarrierAttemptCountForTesting += 1
-        #endif
-        let expectedRenderers = Set(
-            scene.photoSlots.map { slot in
-                SceneRendererIdentity(
-                    generation: identity.generation,
-                    attemptID: rendererAttemptID,
-                    sceneID: identity.sceneID,
-                    slotID: slot.id,
-                    assetID: slot.asset.id
-                )
-            })
-        _ = scenePresentationPrerenderBarrier.begin(
-            scene: layerIdentity,
-            expectedRenderers: expectedRenderers
-        )
-    }
-
-    private func releaseScenePresentationBarrier(
-        for identity: PlaybackSessionEngine.ScenePresentationIdentity
-    ) {
-        _ = scenePresentationPrerenderBarrier.release(
-            scene: ScenePresentationLayerIdentity(
-                generation: identity.generation,
-                sceneID: identity.sceneID,
-                layerID: "scene-root"
-            )
-        )
-    }
-
-    private func restartScenePresentationBarrier(
-        identity: PlaybackSessionEngine.ScenePresentationIdentity,
-        scene: PlaybackScene
-    ) {
-        releaseScenePresentationBarrier(for: identity)
-        beginScenePresentationBarrier(identity: identity, scene: scene)
-    }
-
     func rendererDecoded(_ identity: SceneRendererIdentity) {
         let historyCountBefore = playbackSessionEngine.scenePresentationState.history.count
         runtimeEvidenceRecorder.recordRendererDecoded()
-        guard case let .presentationReady(layerIdentity)? = scenePresentationPrerenderBarrier.rendererDecoded(identity)
+        guard case let .presentationReady(layerIdentity)? = scenePresentationEffectExecutor.rendererDecoded(identity)
         else {
             runtimeEvidenceRecorder.recordPresentationReadiness(
                 isReady: false,
@@ -351,7 +278,7 @@ extension SlideShowViewModel {
     }
 
     func rendererFailed(_ identity: SceneRendererIdentity) {
-        guard scenePresentationPrerenderBarrier.rendererFailed(identity),
+        guard scenePresentationEffectExecutor.rendererFailed(identity),
             let presentationIdentity = playbackSessionEngine.presentationIdentity(
                 generation: identity.generation,
                 sceneID: identity.sceneID
@@ -424,7 +351,7 @@ extension SlideShowViewModel {
             displayedIndex: currentIndex
         )
         requestLoadMoreAfterVisibleSceneIfNeeded(generation: identity.generation)
-        releaseScenePresentationBarrier(for: identity)
+        scenePresentationEffectExecutor.releaseBarrier(for: identity)
         publishScenePresentationChange()
     }
 
