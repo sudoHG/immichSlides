@@ -168,12 +168,135 @@ final class ScenePresentationContractUITests: XCTestCase {
     func testIPhoneSinglePhotoSharedScenePresentationContract() throws {
         try runContract(displayMode: "singlePhoto")
     }
+
+    @MainActor
+    func testIOSImageFailureRecovery() throws {
+        try runImageFailureRecovery()
+    }
     #endif
 
     #if os(tvOS)
     @MainActor
     func testTVOSSmartFillSharedScenePresentationContract() throws {
         try runContract(displayMode: "smartFill")
+    }
+
+    #endif
+
+    #if os(iOS)
+    @MainActor
+    private func runImageFailureRecovery() throws {
+        let input = try requireStrictE2EInput()
+        let app = try launchStrictE2EApp()
+        defer { app.terminate() }
+        XCUIDevice.shared.orientation = .portrait
+        let driver = IOSDriver(app: app)
+        driver.launchToPlayback(input: input)
+        let evidence = Evidence()
+        defer { _ = try? imageResponse(input: input, mode: "normal") }
+        driver.pause()
+        activatePlaybackControl(app: app, identifier: "slideshow.control.playPause.button")
+        driver.applyPlaybackSettings([.displayMode(isSinglePhoto: true), .showExif(false)])
+        _ = try imageResponse(input: input, mode: "http", assetID: "asset-a-1")
+        // A cold launch removes memory-cache hits while preserving the real saved playback settings.
+        try driver.clearDiskCache(onCachePage: {})
+        app.terminate()
+        _ = try imageResponse(input: input, mode: "http", assetID: "asset-a-1")
+        try relaunchStrictE2EApp(app)
+        let recovered = try captureRecoveryIdentity("singlePhoto-recovered", app: app, evidence: evidence) {
+            $0 != "A1"
+        }
+        let response = try imageResponse(input: input)
+        XCTAssertGreaterThan(
+            response["failures"] as? Int ?? 0, 0, "The fixture must actually deliver a failing image response")
+        driver.pause()
+        activateNext(prepareNextButton(app: app))
+        let next = try captureRecoveryIdentity("singlePhoto-next", app: app, evidence: evidence) { $0 != recovered }
+        activatePlaybackControl(app: app, identifier: "slideshow.control.previous.button")
+        let previous = try captureRecoveryIdentity("singlePhoto-previous", app: app, evidence: evidence) {
+            $0 == recovered
+        }
+        activateNext(prepareNextButton(app: app))
+        let redo = try captureRecoveryIdentity("singlePhoto-redo", app: app, evidence: evidence) { $0 == next }
+        driver.pause()
+        activatePlaybackControl(app: app, identifier: "slideshow.control.playPause.button")
+        let continued = try captureRecoveryIdentity("singlePhoto-continued", app: app, evidence: evidence) {
+            $0 != redo
+        }
+        try StrictE2EVisualEvidence.writeRequiredJSON(
+            [
+                "schema": "image-failure-recovery-v1",
+                "flows": [
+                    [
+                        "display_mode": "singlePhoto", "failure_mode": "http", "failed_asset_id": "asset-a-1",
+                        "failed_response_count": response["failures"] ?? 0, "recovered": recovered, "next": next,
+                        "previous": previous, "redo": redo, "continued": continued
+                    ]
+                ]
+            ], name: "image-failure-recovery.json")
+    }
+
+    @MainActor
+    private func captureRecoveryIdentity(
+        _ name: String, app: XCUIApplication, evidence: Evidence, accept: (String) -> Bool
+    ) throws -> String {
+        let deadline = Date().addingTimeInterval(45)
+        var previous: String?
+        while Date() < deadline {
+            let capturedAt = Date()
+            let png = app.screenshot().pngRepresentation
+            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            if identity.status == .match, let mark = identity.mark, accept(mark) {
+                if mark == previous {
+                    try evidence.record(name, png: png, capturedAt: capturedAt, orientation: .notApplicable)
+                    return mark
+                }
+                previous = mark
+            } else {
+                previous = nil
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        try evidence.reject(name, png: app.screenshot().pngRepresentation)
+        throw Failure("\(name) did not render the required public photo identity before the deadline")
+    }
+
+    @MainActor
+    private func activatePlaybackControl(app: XCUIApplication, identifier: String) {
+        let button = app.buttons[identifier]
+        XCTAssertTrue(button.waitForExistence(timeout: 8))
+        tap(button)
+    }
+
+    private func imageResponse(input: StrictE2EInput, mode: String? = nil, assetID: String? = nil) throws -> [String:
+        Any]
+    {
+        let url = try XCTUnwrap(URL(string: input.serverURL + "/test/image-response"))
+        var request = URLRequest(url: url)
+        request.setValue(input.publicKey, forHTTPHeaderField: "x-api-key")
+        request.timeoutInterval = 15
+        if let mode {
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            var body: [String: Any] = ["mode": mode]
+            if let assetID { body["asset_id"] = assetID }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        var payload: Data?
+        var status: Int?
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+            payload = data
+            status = (response as? HTTPURLResponse)?.statusCode
+            semaphore.signal()
+        }
+        task.resume()
+        guard semaphore.wait(timeout: .now() + 15) == .success else {
+            task.cancel()
+            throw Failure("Fixture image response control timed out")
+        }
+        XCTAssertEqual(status, 200, "Fixture control must acknowledge its response mode")
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(payload)) as? [String: Any])
     }
     #endif
 

@@ -33,21 +33,48 @@ extension SlideShowViewModelNavigationSemanticsTests {
         }
     }
 
-    @Test
-    func `the playback history ledger lets previous cross the engine's retained scene window`() async throws {
+    @Test(arguments: [PlaybackDisplayMode.singlePhoto, .smartFill])
+    func `the playback history ledger lets previous cross the engine's retained scene window`(
+        displayMode: PlaybackDisplayMode
+    ) async throws {
         let vm = SlideShowViewModel(source: .random)
         resetDownloadManagerState(vm.downloadManager)
-        let assets = (0..<70).map { makeAsset(id: "asset-\($0)", width: 6000, height: 4000) }
+        var settings = PlaybackSettings()
+        settings.displayMode = displayMode
+        settings.autoPlayEnabled = false
+        vm.applyPlaybackSettings(settings)
+        if displayMode == .smartFill {
+            vm.updateSmartFillSurfaceForTesting(
+                PlaybackSmartFillSurface(
+                    pixelSize: PlaybackPlanningPixelSize(width: 1179, height: 2556),
+                    profile: .iPhone, orientation: .portrait))
+        }
+        let assets = (0..<210).map { makeAsset(id: "asset-\($0)", width: 1800, height: 2000) }
         markReady(assets, in: vm.downloadManager)
         vm.indexChangePhotoLoadHookForTesting = { assetId, size in
             markReady(assetId: assetId, size: size, in: vm.downloadManager)
         }
         vm.backgroundPreloadHookForTesting = { _, _, _ in }
+        vm.loadMoreAssetsHookForTesting = { _ in [] }
         vm.scenePresentationTimestampProviderForTesting = { 0 }
         vm.replacePlaybackAssetsForTesting(assets)
         completeCurrentScenePresentation(vm)
+        var seenScenes = [try #require(vm.safeCurrentScene)]
+
+        func expectRecipe(_ restored: PlaybackScene, matches original: PlaybackScene) {
+            #expect(restored.assetIds == original.assetIds)
+            #expect(restored.photoSlots.map(\.planning) == original.photoSlots.map(\.planning))
+            // Navigation legitimately records new publication timing; the complete planning readback must persist.
+            #expect(
+                restored.smartFillReadback?.recordingPublishTiming(actionTimestamp: 0, scenePublishTimestamp: 0)
+                    == original.smartFillReadback?.recordingPublishTiming(actionTimestamp: 0, scenePublishTimestamp: 0))
+        }
 
         for expectedIndex in 1...60 {
+            if displayMode == .smartFill {
+                let didPrepare = await waitUntilForTesting { vm.preparedSmartFillNextAssetIdsForTesting != nil }
+                try #require(didPrepare, "The real planner must supply the next multi-slot recipe")
+            }
             vm.requestNextScene()
             let token = vm.targetTransitionToken
             let targetIndex = vm.targetIndex
@@ -55,8 +82,16 @@ extension SlideShowViewModelNavigationSemanticsTests {
             await vm.synchronizePlaybackReadbackForTesting(token: token, targetIndex: targetIndex)
             completeCurrentScenePresentation(vm)
 
-            #expect(vm.safeCurrentScene?.primaryAssetId == "asset-\(expectedIndex)")
+            let scene = try #require(vm.safeCurrentScene)
+            if displayMode == .smartFill {
+                try #require(scene.photoSlots.count > 1, "SmartFill coverage must use multi-slot scenes")
+            } else {
+                #expect(scene.primaryAssetId == "asset-\(expectedIndex)")
+            }
+            seenScenes.append(scene)
         }
+
+        #expect(vm.playbackScenes.count < seenScenes.count, "Previous must cross a trimmed engine window")
 
         var previousAssetIds: [String] = []
         for step in 1...55 {
@@ -70,16 +105,17 @@ extension SlideShowViewModelNavigationSemanticsTests {
 
             let afterAssetId = try #require(vm.safeCurrentScene?.primaryAssetId)
             #expect(afterAssetId != beforeAssetId, "previous #\(step) should not stay on the same photo")
+            expectRecipe(try #require(vm.safeCurrentScene), matches: seenScenes[60 - step])
             previousAssetIds.append(afterAssetId)
         }
 
-        #expect(previousAssetIds.last == "asset-5")
+        #expect(previousAssetIds.last == seenScenes[5].primaryAssetId)
 
         vm.requestNextScene()
         await vm.synchronizePlaybackReadbackForTesting(token: vm.targetTransitionToken, targetIndex: vm.targetIndex)
         completeCurrentScenePresentation(vm)
 
-        #expect(vm.safeCurrentScene?.primaryAssetId == "asset-6")
+        expectRecipe(try #require(vm.safeCurrentScene), matches: seenScenes[6])
     }
 
     @Test

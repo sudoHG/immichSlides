@@ -113,12 +113,16 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         export_exit: int = 0,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
-        selector = P2_CASES[suite].selectors[platform]
+        selector = (
+            P2_CASES[suite].selectors[platform] if suite in P2_CASES
+            else "immichSlidesUITests/ScenePresentationContractUITests/testIOSImageFailureRecovery"
+        )
         recording_process = mock.Mock(pid=9876)
 
         def fake_run_command(command: list[str], **_: object) -> int:
             self.assertEqual([item for item in command if item.startswith("-only-testing:")], [f"-only-testing:{selector}"])
-            _write_p2_ui_outputs(evidence, suite, skip=skip)
+            if suite in P2_CASES:
+                _write_p2_ui_outputs(evidence, suite, skip=skip)
             if create_result_bundle:
                 bundle = Path(command[command.index("-resultBundlePath") + 1])
                 self.assertEqual(bundle.parent.parent, evidence.parent / "private")
@@ -147,7 +151,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             return_value=TestResultsSummary(1, 1, 0, 0, "Passed"),
         ), mock.patch(
             "run_strict_e2e.read_xcresult_facts",
-            return_value=_p2_facts(suite, platform, model, facts_device_id),
+            return_value=_p2_facts(suite, platform, model, facts_device_id) if suite in P2_CASES else {},
         ) as facts, mock.patch(
             "run_strict_e2e.start_screen_recording", return_value=(recording_process, 900.0)
         ) as start, mock.patch("run_strict_e2e.stop_screen_recording", return_value=0) as stop:

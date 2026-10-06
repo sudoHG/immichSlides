@@ -156,9 +156,13 @@ LIFECYCLE_SUITES = {
     for platform, cases in (("ios", IOS_CASES), ("tvos", TVOS_CASES))
     for case, selector in cases.items()
 }
+IMAGE_FAILURE_RECOVERY_SUITES = {
+    "image-failure-recovery": ("ios", "immichSlidesUITests/ScenePresentationContractUITests/testIOSImageFailureRecovery"),
+}
 RUNNER_SUITES = (
     "smoke",
     *LIFECYCLE_SUITES,
+    *IMAGE_FAILURE_RECOVERY_SUITES,
     *IOS_FIRST_BATCH_SUITES,
     *IOS_FILTER_SUITES,
     *TVOS_FLOW_SUITES,
@@ -172,6 +176,7 @@ FAILURE_SCENARIOS = ("auth-401", "html-200", "unreachable", "timeout")
 SUCCESS_SUITES = (
     "smoke",
     *LIFECYCLE_SUITES,
+    *IMAGE_FAILURE_RECOVERY_SUITES,
     "journey-a",
     "journey-b",
     "pause-window",
@@ -218,6 +223,7 @@ SETTINGS_RESUME_SUITES = (
 # E2E-P0-08 / E2E-P0-09: playback control state on journey-b and tvos-flow.
 # N1: tvOS first-boot save and configured cold launch.
 CASE_E2E_IDS = {
+    **{suite: ["image-failure-recovery"] for suite in IMAGE_FAILURE_RECOVERY_SUITES},
     **{suite: [f"access-lifecycle-{suite}"] for suite in LIFECYCLE_SUITES},
     "smoke": ["connection-smoke"],
     "journey-a": ["E2E-P0-01", "E2E-P0-02"],
@@ -346,7 +352,7 @@ def validate_suite_scenario(suite: str, scenario: str) -> None:
 
 
 def validate_suite_fixture(suite: str, fixture_set: str) -> None:
-    if suite in (*DISPLAY_POLICY_SUITES, *LIFECYCLE_SUITES, *FIXTURE_A_ONLY_FILTER_SUITES) and fixture_set != "a":
+    if suite in (*DISPLAY_POLICY_SUITES, *LIFECYCLE_SUITES, *FIXTURE_A_ONLY_FILTER_SUITES, *IMAGE_FAILURE_RECOVERY_SUITES) and fixture_set != "a":
         raise CommandError(f"{suite} must use public fixture A; data from different servers cannot be mixed.")
 
 

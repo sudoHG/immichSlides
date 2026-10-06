@@ -54,6 +54,7 @@ class P2Case:
     png_orientations: Mapping[str, str] = field(default_factory=dict)
     video: bool = False
     cache_clear: bool = False
+    cache_return: bool = False
     sequence: tuple[str, ...] = ()
 
     @property
@@ -81,12 +82,13 @@ P2_CASES = {
         pngs=("cache-before-confirm", "cache-cleared", "cache-returned"),
         cache_clear=True,
     ),
-    # iPad only runs a cache-page smoke test; it does not count toward P2-02's full reload coverage.
+    # iPad covers page completion and rendered return, without P2-02's disk-usage review.
     "p2-cache-smoke": P2Case(
         e2e_ids=(),
         devices=("ipad",),
         selectors={"ios": f"{UI_BUNDLE}/CacheSettingsUITests/testCacheSettingsPageSmokeIPad"},
-        pngs=("cache-page-smoke",),
+        pngs=("cache-page-smoke", "cache-returned"),
+        cache_return=True,
     ),
     "p2-reduce-motion": P2Case(
         e2e_ids=("E2E-P2-03",),
@@ -476,6 +478,12 @@ def validate_raw_evidence(evidence_dir: Path, suite: str, fixture_set: str) -> d
         records[RECORDING_TIMING_FILE] = _digest(_read_required(evidence_dir, RECORDING_TIMING_FILE))
     if case.cache_clear:
         payload["cache_clear"] = _validate_cache_clear(evidence_dir, fixture_set)
+    if case.cache_return:
+        returned = _classify_mark(evidence_dir, "cache-returned.png")
+        fixture_marks = {asset["label"] for asset in fixture_manifest(fixture_set)["assets"]}
+        if returned not in fixture_marks:
+            raise P2ContractError(f"Public mark {returned} shown after return is not in fixture {fixture_set}.")
+        payload["cache_return"] = {"target_mark": returned}
     return payload
 
 

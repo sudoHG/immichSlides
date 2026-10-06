@@ -83,6 +83,7 @@ from strict_e2e_runner_support import (
     IOS_CASES,
     TVOS_CASES,
     LIFECYCLE_SUITES,
+    IMAGE_FAILURE_RECOVERY_SUITES,
     RUNNER_SUITES,
     FAILURE_SCENARIOS,
     SUCCESS_SUITES,
@@ -123,6 +124,10 @@ from strict_e2e_runner_support import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+
+
+# First-boot interaction can place even public fixture keys in XCTest's private activity archive.
+PRIVATE_RESULT_BUNDLE_SUITES = (*P2_CASES, *IMAGE_FAILURE_RECOVERY_SUITES)
 
 
 def reserve_unreachable_server_url() -> tuple[str, socket.socket]:
@@ -228,6 +233,11 @@ def resolve_suite_selector(platform: str, suite: str) -> str:
     settings = PLATFORM_SETTINGS.get(platform)
     if settings is None:
         raise CommandError("platform must be ios or tvos.")
+    if suite in IMAGE_FAILURE_RECOVERY_SUITES:
+        required_platform, selector = IMAGE_FAILURE_RECOVERY_SUITES[suite]
+        if platform != required_platform:
+            raise CommandError(f"{suite} can only run on the {required_platform} platform.")
+        return selector
     if suite in LIFECYCLE_SUITES:
         required_platform, selector = LIFECYCLE_SUITES[suite]
         if platform != required_platform:
@@ -490,7 +500,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         owns_evidence_directory = True
         result_bundle_path = (
             prepare_private_result_bundle_path(arguments.suite)
-            if arguments.suite in P2_CASES
+            if arguments.suite in PRIVATE_RESULT_BUNDLE_SUITES
             else arguments.evidence_dir / result_bundle_name(arguments.suite)
         )
         case_manifest = {
@@ -505,7 +515,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             "human_review": "NOT_RUN",
             "result": "RUNNING",
         }
-        if arguments.suite in P2_CASES:
+        if arguments.suite in PRIVATE_RESULT_BUNDLE_SUITES:
             case_manifest["source_dirty_paths"] = read_source_dirty_paths(REPO_ROOT)
         write_case_manifest(arguments.evidence_dir, case_manifest)
 
@@ -815,7 +825,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
 
         def export_and_hold_p2_bundle() -> None:
             nonlocal private_result_bundle, official_tests_digest
-            if arguments.suite not in P2_CASES or result_bundle_path is None or not result_bundle_path.is_dir():
+            if arguments.suite not in PRIVATE_RESULT_BUNDLE_SUITES or result_bundle_path is None or not result_bundle_path.is_dir():
                 return
             private_result_bundle = result_bundle_path
             completed = subprocess.run(
@@ -967,7 +977,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 except OSError as error:
                     cleanup_failures.append(f"write_result_bundle_quarantine: {type(error).__name__}: {error}")
 
-        if arguments.suite in P2_CASES and result_bundle_path is not None and not result_bundle_path.exists():
+        if arguments.suite in PRIVATE_RESULT_BUNDLE_SUITES and result_bundle_path is not None and not result_bundle_path.exists():
             try:
                 result_bundle_path.parent.rmdir()
             except OSError:

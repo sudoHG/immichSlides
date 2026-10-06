@@ -233,6 +233,23 @@ class CacheClearTestsCases:
 
 
     def test_returned_frame_must_show_a_recognized_public_photo(self) -> None:
+        for suite, device in (("p2-cache", "iphone"), ("p2-cache-smoke", "ipad")):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw_directory:
+                evidence = build_evidence(Path(raw_directory), suite, device, review=False)
+                returned = evidence / "cache-returned.png"
+                returned.write_bytes(IMAGES["asset-a-4"])
+                payload = validate_raw_evidence(evidence, suite, "a")
+                key = "cache_clear" if suite == "p2-cache" else "cache_return"
+                self.assertEqual(payload[key], {"target_mark": "A4"})
+                # A fully decodable black frame must fail identity, independently of PNG framing.
+                from PIL import Image
+                Image.new("RGB", (320, 180), "black").save(returned)
+                with self.assertRaises(P2ContractError):
+                    validate_raw_evidence(evidence, suite, "a")
+                returned.unlink()
+                with self.assertRaises(P2ContractError):
+                    validate_raw_evidence(evidence, suite, "a")
+
         for label, returned, expected_mark in (
             ("returned frame shows another public photo", IMAGES["asset-a-4"], "A4"),
             ("returned frame is unrecognizable", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, None),
@@ -257,6 +274,12 @@ class CacheClearTestsCases:
 
 
     def test_cache_screenshot_steps_must_keep_the_required_order(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_directory:
+            evidence = build_evidence(Path(raw_directory), "p2-cache-smoke", "ipad", review=False)
+            _move_step(evidence, "cache-returned", 0)
+            with self.assertRaisesRegex(P2ContractError, "Step order must be"):
+                validate_raw_evidence(evidence, "p2-cache-smoke", "a")
+
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = build_evidence(Path(raw_directory), "p2-cache", "iphone", review=False)
             _move_step(evidence, "cache-cleared", 0)

@@ -112,6 +112,48 @@ struct SlideShowViewModelStartupTests {
         #expect(vm.shouldReloadFilteredSource(for: selection) == false)
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func `a current empty or failed initial load clears loading and recovers on a valid reload`(
+        isFiltered: Bool, shouldThrow: Bool
+    ) async {
+        let source: PlaybackSource =
+            isFiltered ? .filtered(FilterSelection(albumIds: ["album-recovery"])) : .random
+        let vm = SlideShowViewModel(source: source)
+        resetDownloadManagerState(vm.downloadManager)
+        vm.initialPhotoLoadHookForTesting = { _ in }
+        vm.backgroundPreloadHookForTesting = { _, _, _ in }
+        vm.loadAssetsHookForTesting = { _ in
+            if shouldThrow { throw URLError(.cannotConnectToHost) }
+            return []
+        }
+
+        await vm.loadAssets()
+
+        let expectedMessage: String
+        if shouldThrow {
+            expectedMessage = String(localized: "Failed to load photos. Check your network or server settings.")
+        } else if isFiltered {
+            expectedMessage = String(
+                localized: "No playable photos match the current filters. Try another album or person.")
+        } else {
+            expectedMessage = String(
+                localized: "Immich did not return any playable photos. Check your server library or network connection."
+            )
+        }
+        #expect(vm.isLoading == false)
+        #expect(vm.assets.isEmpty)
+        #expect(vm.safeCurrentScene == nil)
+        #expect(vm.emptyPlaybackMessage == expectedMessage)
+
+        vm.loadAssetsHookForTesting = { _ in [makeAsset(id: "recovered-photo")] }
+        await vm.loadAssets()
+
+        #expect(vm.isLoading == false)
+        #expect(vm.assets.map(\.id) == ["recovered-photo"])
+        #expect(vm.safeCurrentScene?.assetIds == ["recovered-photo"])
+        #expect(vm.emptyPlaybackMessage == nil)
+    }
+
     @Test
     func `a stale load-more task cannot append into a newer filtered playback result`() async throws {
         let vm = SlideShowViewModel(source: .random)
