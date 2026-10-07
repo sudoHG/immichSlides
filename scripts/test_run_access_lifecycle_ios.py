@@ -129,6 +129,7 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn(SYNTHETIC_PIN, joined)
         self.assertNotIn("UI_TEST_FORCE_PLAYBACK_DISPLAY_MODE", joined)
         self.assertNotIn("UI_TEST_SERVER_URL", joined)
+        self.assertNotIn(run_access_lifecycle_ios.PUBLIC_API_KEY, joined)
         self.assertIn("STRICT_E2E_INPUT_SERVER_URL=http://127.0.0.1:5555/api", joined)
         self.assertIn("-scheme", command)
         self.assertEqual(command[command.index("-scheme") + 1], "immichSlides-iOS")

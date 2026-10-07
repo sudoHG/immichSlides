@@ -37,6 +37,10 @@ from run_strict_e2e import (
     write_case_manifest,
     write_fixture_artifacts,
     write_sensitive_scan,
+    prepare_private_result_bundle_path,
+    export_private_result_bundle,
+    finalize_private_result_bundle,
+    PRIVATE_RESULT_BUNDLE_ROOT,
 )
 from access_lifecycle_contract import (
     AccessLifecycleContractError,
@@ -576,7 +580,7 @@ def main(
         repo_root=REPO_ROOT,
         destination=arguments.destination,
         derived_data_path=arguments.evidence_dir / "DerivedData",
-        result_bundle_path=arguments.evidence_dir / "access-lifecycle-tvos.xcresult",
+        result_bundle_path=PRIVATE_RESULT_BUNDLE_ROOT / "<run>" / "strict-access-lifecycle-tvos.xcresult",
         server_url="http://127.0.0.1:0/api",
         public_key=PUBLIC_API_KEY,
         evidence_dir=arguments.evidence_dir,
@@ -604,13 +608,15 @@ def main(
     primary_exit_code = 0
     cleanup_failures: list[str] = []
     case_manifest: dict[str, object] | None = None
+    result_bundle_path: Path | None = None
+    official_tests_digest: str | None = None
     try:
         simulator_udid = destination_udid(arguments.destination)
         write_isolated_tvos_scheme(REPO_ROOT)
         did_write_isolated_scheme = True
         prepare_evidence_directory(arguments.evidence_dir)
         owns_evidence_directory = True
-        result_bundle_path = arguments.evidence_dir / "access-lifecycle-tvos.xcresult"
+        result_bundle_path = prepare_private_result_bundle_path("access-lifecycle-tvos")
         case_manifest = {
             "source_sha": read_source_sha(REPO_ROOT),
             "platform": "tvos",
@@ -798,6 +804,20 @@ def main(
             )
         if derived_data_path.exists():
             actions.append(("remove_derived_data", lambda: shutil.rmtree(derived_data_path)))
+        def export_bundle() -> None:
+            nonlocal official_tests_digest
+            if result_bundle_path is None or not result_bundle_path.is_dir():
+                if primary_exit_code == 0:
+                    raise CommandError("Missing private result bundle.")
+                return
+            official_tests_digest = export_private_result_bundle(
+                result_bundle_path, arguments.evidence_dir, [PUBLIC_API_KEY, *synthetic_pin_values()]
+            )
+            if case_manifest is not None:
+                case_manifest["official_tests_sha256"] = official_tests_digest
+                write_case_manifest(arguments.evidence_dir, case_manifest)
+
+        actions.append(("export_and_hold_bundle", export_bundle))
         cleanup_failures.extend(run_cleanup_actions(actions))
         if owns_evidence_directory:
             try:
@@ -813,6 +833,16 @@ def main(
                 )
             except AccessLifecycleContractError as error:
                 cleanup_failures.append(f"pin_sensitive_scan: {error}")
+        if result_bundle_path is not None:
+            cleanup_failures.extend(finalize_private_result_bundle(
+                result_bundle_path, arguments.evidence_dir, official_tests_digest,
+                successful=primary_exit_code == 0 and not cleanup_failures,
+            ))
+        if owns_evidence_directory and cleanup_failures:
+            (arguments.evidence_dir / "cleanup-failures.json").write_text(
+                json.dumps({"failures": cleanup_failures}, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
 
     if cleanup_failures:
         print("Cleanup or evidence finalization failed: " + " | ".join(cleanup_failures), file=stderr)

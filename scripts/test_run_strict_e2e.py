@@ -98,6 +98,7 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
 
 
 from run_strict_e2e_test_p2_cases import StrictE2EP2RunnerTestsCases
+import run_strict_e2e as strict_runner
 
 class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
     def _run_p2_main(
@@ -110,17 +111,21 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         skip: tuple[str, ...] = (),
         facts_device_id: str = P2_UDID,
         xcodebuild_exit: int = 0,
-        create_result_bundle: bool = False,
+        create_result_bundle: bool = True,
         export_exit: int = 0,
+        failure_session: str | None = None,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
-            P2_CASES[suite].selectors[platform] if suite in P2_CASES else IMAGE_FAILURE_RECOVERY_SUITES[suite][1]
+            P2_CASES[suite].selectors[platform] if suite in P2_CASES
+            else strict_runner.resolve_suite_selector(platform, suite)
         )
         recording_process = mock.Mock(pid=9876)
 
-        def fake_run_command(command: list[str], **_: object) -> int:
-            self.assertEqual([item for item in command if item.startswith("-only-testing:")], [f"-only-testing:{selector}"])
+        def fake_run_command(command: list[str], **kwargs: object) -> int:
+            kwargs["log_path"].write_text("test run\n", encoding="utf-8")
+            if suite != "filter-person":
+                self.assertEqual([item for item in command if item.startswith("-only-testing:")], [f"-only-testing:{selector}"])
             if suite in P2_CASES:
                 _write_p2_ui_outputs(evidence, suite, skip=skip)
             if create_result_bundle:
@@ -128,6 +133,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertEqual(bundle.parent.parent, evidence.parent / "private")
                 bundle.mkdir()
                 (bundle / "raw.bin").write_bytes(b"raw diagnostics")
+            if failure_session is not None and kwargs["log_path"].name != f"xcodebuild-{failure_session}.log":
+                return 0
             return xcodebuild_exit
 
         def fake_subprocess(command: list[str], **_: object) -> subprocess.CompletedProcess[object]:
@@ -152,7 +159,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         ), mock.patch(
             "run_strict_e2e.read_xcresult_facts",
             return_value=_p2_facts(suite, platform, model, facts_device_id) if suite in P2_CASES else {},
-        ) as facts, mock.patch(
+        ) as facts, mock.patch("run_strict_e2e.require_visual_identity", return_value={}), mock.patch(
             "run_strict_e2e.start_screen_recording", return_value=(recording_process, 900.0)
         ) as start, mock.patch("run_strict_e2e.stop_screen_recording", return_value=0) as stop:
             exit_code = runner_main(
@@ -176,6 +183,48 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "stop": stop,
             "recording_process": recording_process,
         }
+
+    def test_ordinary_and_person_results_never_expose_raw_bundles(self) -> None:
+        # Raw XCTest activities may retain UI-entered credentials even in failed sessions.
+        for suite, count in (("smoke", 1), ("filter-person", 3)):
+            cases = [(0, None, count), (65, None, 1)]
+            if suite == "filter-person":
+                cases.append((65, "conflict-normal", 2))
+            for test_exit, failure_session, actual_count in cases:
+                with self.subTest(suite=suite, test_exit=test_exit, failure_session=failure_session), tempfile.TemporaryDirectory() as raw:
+                    evidence = Path(raw) / "evidence"
+                    code, _, stderr, _ = self._run_p2_main(
+                        evidence, suite=suite, platform="ios", model="iPhone",
+                        create_result_bundle=True, xcodebuild_exit=test_exit,
+                        failure_session=failure_session,
+                    )
+                    self.assertEqual(code, test_exit, stderr)
+                    self.assertEqual(list(evidence.rglob("*.xcresult")), [])
+                    self.assertEqual(json.loads((evidence / "sensitive-scan.json").read_text())["result"], "PASS")
+                    self.assertEqual(len(list(evidence.glob("official-tests*.json"))), actual_count)
+                    records = list(evidence.glob("result-bundle-*.json"))
+                    self.assertEqual(len(records), actual_count)
+                    for record in records:
+                        payload = json.loads(record.read_text())
+                        self.assertEqual(payload["result_bundle_disposed"], test_exit == 0)
+                        self.assertEqual(Path(payload["private_path"]).exists(), test_exit != 0)
+
+    def test_sensitive_official_export_is_refused_and_raw_bundle_stays_private(self) -> None:
+        for value in ("test-private-pin", WRONG_PUBLIC_API_KEY):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                evidence = root / "evidence"
+                evidence.mkdir()
+                bundle = root / "private" / "run" / "tests.xcresult"
+                bundle.mkdir(parents=True)
+                (bundle / "activities.bin").write_bytes(value.encode())
+                completed = subprocess.CompletedProcess([], 0, json.dumps({"failure": value}).encode(), b"")
+                with mock.patch("run_strict_e2e.subprocess.run", return_value=completed), self.assertRaises(CommandError):
+                    strict_runner.export_private_result_bundle(bundle, evidence, [value])
+                self.assertEqual(list(evidence.iterdir()), [])
+                self.assertEqual(strict_runner.finalize_private_result_bundle(bundle, evidence, None, successful=False), [])
+                self.assertTrue(bundle.is_dir())
+                self.assertFalse(json.loads((evidence / "result-bundle-quarantine.json").read_text())["result_bundle_disposed"])
 
 
 

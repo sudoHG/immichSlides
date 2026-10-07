@@ -28,6 +28,13 @@ from run_strict_e2e import (
     write_fixture_artifacts,
     EXAMPLE_XCCONFIG,
     TASK_XCCONFIG,
+    choose_exit_code,
+    run_cleanup_actions,
+    write_sensitive_scan,
+    prepare_private_result_bundle_path,
+    export_private_result_bundle,
+    finalize_private_result_bundle,
+    PRIVATE_RESULT_BUNDLE_ROOT,
 )
 from access_lifecycle_contract import (
     AccessLifecycleContractError,
@@ -101,7 +108,6 @@ def build_test_command(
         "-collect-test-diagnostics",
         "never",
         f"STRICT_E2E_INPUT_SERVER_URL={server_url}",
-        f"STRICT_E2E_INPUT_PUBLIC_KEY={PUBLIC_API_KEY}",
         "STRICT_E2E_INPUT_SCENARIO=normal",
         f"STRICT_E2E_EVIDENCE_DIR={evidence_dir}",
         f"STRICT_E2E_INPUT_FIXTURE_SET={fixture_set}",
@@ -217,9 +223,18 @@ def main(
     )
     arguments = parser.parse_args(argv)
 
+    did_create_config = False
+    owns_evidence_directory = False
+    service_process = None
+    private_bundle: Path | None = None
+    primary_exit_code = 0
+    cleanup_failures: list[str] = []
+    official_tests_digest: str | None = None
+    config_path = REPO_ROOT / TASK_XCCONFIG
+    example_path = REPO_ROOT / EXAMPLE_XCCONFIG
     try:
         derived_data_path = arguments.evidence_dir / "DerivedData"
-        result_bundle_path = arguments.evidence_dir / "access-lifecycle-ios.xcresult"
+        result_bundle_path = PRIVATE_RESULT_BUNDLE_ROOT / "<run>" / "strict-access-lifecycle-ios.xcresult"
         command = build_test_command(
             destination=arguments.destination,
             derived_data_path=str(derived_data_path),
@@ -239,9 +254,10 @@ def main(
         arguments.evidence_dir.mkdir(parents=True, exist_ok=True)
         if any(path.name != ".DS_Store" for path in arguments.evidence_dir.iterdir()):
             raise CommandError("Evidence directory is not empty; refusing to start to avoid overwriting or mixing evidence.")
-        config_path = REPO_ROOT / TASK_XCCONFIG
-        example_path = REPO_ROOT / EXAMPLE_XCCONFIG
+        owns_evidence_directory = True
+        private_bundle = result_bundle_path = prepare_private_result_bundle_path("access-lifecycle-ios")
         prepare_task_xcconfig(example_path, config_path)
+        did_create_config = True
         write_fixture_artifacts(arguments.evidence_dir, arguments.fixture_set)
         ready_path = arguments.evidence_dir / "service-ready.json"
         service_log_path = arguments.evidence_dir / "service.log"
@@ -266,87 +282,126 @@ def main(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        try:
-            host, port = wait_for_service(ready_path, service_process)
-            server_url = f"http://{host}:{port}/api"
-            simulator_udid = destination_udid(arguments.destination)
-            reset_log = reset_simulator_app(simulator_udid)
-            (arguments.evidence_dir / "simulator-reset.log").write_text(reset_log, encoding="utf-8")
-            command = build_test_command(
-                destination=arguments.destination,
-                derived_data_path=str(derived_data_path),
-                result_bundle_path=str(result_bundle_path),
-                server_url=server_url,
-                evidence_dir=str(arguments.evidence_dir),
-                fixture_set=arguments.fixture_set,
-            )
-            (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
-                shlex.join(command) + "\n",
-                encoding="utf-8",
-            )
-            if SYNTHETIC_PIN in shlex.join(command) or WRONG_PIN in shlex.join(command):
-                raise CommandError("PIN appears in a file name, command, log or attachment")
-            environment = make_test_environment(
-                os.environ,
-                server_url=server_url,
-                public_key=PUBLIC_API_KEY,
-                scenario="normal",
-            )
-            environment["STRICT_E2E_EVIDENCE_DIR"] = str(arguments.evidence_dir)
-            environment["STRICT_E2E_INPUT_PUBLIC_KEY"] = PUBLIC_API_KEY
-            log_path = arguments.evidence_dir / "xcodebuild.log"
-            exit_code = run_xcodebuild(
-                command,
-                cwd=REPO_ROOT,
-                environment=environment,
-                log_path=log_path,
-            )
-            summary = None
-            if result_bundle_path.exists():
-                try:
-                    summary = read_official_test_results_summary(result_bundle_path)
-                    (arguments.evidence_dir / "official-summary.json").write_text(
-                        json.dumps(
-                            {
-                                "totalTestCount": summary.total_test_count,
-                                "passedTests": summary.passed_tests,
-                                "failedTests": summary.failed_tests,
-                                "skippedTests": summary.skipped_tests,
-                                "result": summary.result,
-                            },
-                            indent=2,
-                            sort_keys=True,
-                        )
-                        + "\n",
-                        encoding="utf-8",
+        host, port = wait_for_service(ready_path, service_process)
+        server_url = f"http://{host}:{port}/api"
+        simulator_udid = destination_udid(arguments.destination)
+        reset_log = reset_simulator_app(simulator_udid)
+        (arguments.evidence_dir / "simulator-reset.log").write_text(reset_log, encoding="utf-8")
+        command = build_test_command(
+            destination=arguments.destination,
+            derived_data_path=str(derived_data_path),
+            result_bundle_path=str(result_bundle_path),
+            server_url=server_url,
+            evidence_dir=str(arguments.evidence_dir),
+            fixture_set=arguments.fixture_set,
+        )
+        (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
+            shlex.join(command) + "\n",
+            encoding="utf-8",
+        )
+        if SYNTHETIC_PIN in shlex.join(command) or WRONG_PIN in shlex.join(command):
+            raise CommandError("PIN appears in a file name, command, log or attachment")
+        environment = make_test_environment(
+            os.environ,
+            server_url=server_url,
+            public_key=PUBLIC_API_KEY,
+            scenario="normal",
+        )
+        environment["STRICT_E2E_EVIDENCE_DIR"] = str(arguments.evidence_dir)
+        environment["STRICT_E2E_INPUT_PUBLIC_KEY"] = PUBLIC_API_KEY
+        log_path = arguments.evidence_dir / "xcodebuild.log"
+        exit_code = run_xcodebuild(
+            command,
+            cwd=REPO_ROOT,
+            environment=environment,
+            log_path=log_path,
+        )
+        summary = None
+        if result_bundle_path.exists():
+            try:
+                summary = read_official_test_results_summary(result_bundle_path)
+                (arguments.evidence_dir / "official-summary.json").write_text(
+                    json.dumps(
+                        {
+                            "totalTestCount": summary.total_test_count,
+                            "passedTests": summary.passed_tests,
+                            "failedTests": summary.failed_tests,
+                            "skippedTests": summary.skipped_tests,
+                            "result": summary.result,
+                        },
+                        indent=2,
+                        sort_keys=True,
                     )
-                except Exception as error:
-                    print(str(error), file=stderr)
-            json_path = arguments.evidence_dir / "access-lifecycle.json"
-            if json_path.is_file():
-                evaluate_device_evidence(arguments.evidence_dir, device=arguments.device)
-                scan = scan_sensitive_evidence(arguments.evidence_dir, [SYNTHETIC_PIN, WRONG_PIN])
-                (arguments.evidence_dir / "sensitive-scan.json").write_text(
-                    json.dumps(scan, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+                    + "\n",
                     encoding="utf-8",
                 )
-            if exit_code != 0:
-                return exit_code
-            if summary is None:
-                raise CommandError("Missing official counts.")
-            require_official_single_pass(summary)
-            if not json_path.is_file():
-                raise AccessLifecycleContractError("A missing image must not count as a pass")
-            return 0
-        finally:
-            stop_exact_process(service_process)
-            cleanup_task_xcconfig(example_path, config_path)
+            except Exception as error:
+                print(str(error), file=stderr)
+        json_path = arguments.evidence_dir / "access-lifecycle.json"
+        if json_path.is_file():
+            evaluate_device_evidence(arguments.evidence_dir, device=arguments.device)
+        if exit_code != 0:
+            raise CommandError(f"xcodebuild access-lifecycle iOS failed with exit {exit_code}.", code=exit_code)
+        if summary is None:
+            raise CommandError("Missing official counts.")
+        require_official_single_pass(summary)
+        if not json_path.is_file():
+            raise AccessLifecycleContractError("A missing image must not count as a pass")
     except (CommandError, AccessLifecycleContractError) as error:
         print(str(error), file=stderr)
         if SYNTHETIC_PIN in str(error) or WRONG_PIN in str(error):
             print("PIN appears in a file name, command, log or attachment", file=stderr)
-            return 2
-        return getattr(error, "code", 2)
+            primary_exit_code = 2
+        else:
+            primary_exit_code = getattr(error, "code", 2)
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"Evidence or process I/O failed: {error}", file=stderr)
+        primary_exit_code = 2
+    finally:
+        actions: list[tuple[str, Callable[[], None]]] = []
+        if service_process is not None:
+            actions.append(("stop_service", lambda: stop_exact_process(service_process)))
+        if did_create_config:
+            actions.append(("cleanup_task_xcconfig", lambda: cleanup_task_xcconfig(example_path, config_path)))
+        if owns_evidence_directory and derived_data_path.exists():
+            actions.append(("remove_derived_data", lambda: shutil.rmtree(derived_data_path)))
+
+        def export_bundle() -> None:
+            nonlocal official_tests_digest
+            if private_bundle is None or not private_bundle.is_dir():
+                if primary_exit_code == 0:
+                    raise CommandError("Missing private result bundle.")
+                return
+            official_tests_digest = export_private_result_bundle(
+                private_bundle, arguments.evidence_dir, [PUBLIC_API_KEY, SYNTHETIC_PIN, WRONG_PIN]
+            )
+
+        def scan_pin_evidence() -> None:
+            scan = scan_sensitive_evidence(arguments.evidence_dir, [SYNTHETIC_PIN, WRONG_PIN])
+            (arguments.evidence_dir / "pin-sensitive-scan.json").write_text(
+                json.dumps(scan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+
+        if owns_evidence_directory:
+            actions.extend([
+                ("export_and_hold_bundle", export_bundle),
+                ("sensitive_scan", lambda: write_sensitive_scan(arguments.evidence_dir, [PUBLIC_API_KEY])),
+                ("pin_sensitive_scan", scan_pin_evidence),
+            ])
+        cleanup_failures.extend(run_cleanup_actions(actions))
+        if private_bundle is not None:
+            cleanup_failures.extend(finalize_private_result_bundle(
+                private_bundle, arguments.evidence_dir, official_tests_digest,
+                successful=primary_exit_code == 0 and not cleanup_failures,
+            ))
+        if owns_evidence_directory and cleanup_failures:
+            (arguments.evidence_dir / "cleanup-failures.json").write_text(
+                json.dumps({"failures": cleanup_failures}, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+    if cleanup_failures:
+        print("Cleanup or evidence finalization failed: " + " | ".join(cleanup_failures), file=stderr)
+    return choose_exit_code(primary_exit_code, cleanup_failures)
 
 
 if __name__ == "__main__":
