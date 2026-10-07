@@ -74,15 +74,15 @@ class StaticPopulationTests(unittest.TestCase):
         self.assertEqual(ui_identities(files, "tvos"), [])
 
     def test_swift_unit_inventory_includes_xctest_classes_beside_testing_suites(self):
-        files = {"A.swift": "@Suite struct Modern { @Test func works() {} }\n"
+        files = {"A.swift": "@Suite struct Modern { @Test func testModern() {} }\n"
                  "final class Legacy: XCTestCase { func testShared() {}\n"
                  "#if os(iOS)\nfunc testPhone() {}\n#endif\n}",
                  "B.swift": "extension Legacy { func testExtension() {} }"}
         self.assertEqual([entry["key"] for entry in swift_identities(files, "ios")],
-                         ["Legacy/testExtension", "Legacy/testPhone", "Legacy/testShared", "Modern/works"])
+                         ["Legacy/testExtension", "Legacy/testPhone", "Legacy/testShared", "Modern/testModern"])
         self.assertTrue(all(entry["kind"] == "swift" for entry in swift_identities(files, "tvos")))
         self.assertEqual([entry["key"] for entry in swift_identities(files, "tvos")],
-                         ["Legacy/testExtension", "Legacy/testShared", "Modern/works"])
+                         ["Legacy/testExtension", "Legacy/testShared", "Modern/testModern"])
 
     def test_removed_report_uses_pr_base_and_tested_tree_without_later_main(self):
         base = python_identities({"test_a": "import unittest\nclass T(unittest.TestCase):\n def test_old(self): pass"})

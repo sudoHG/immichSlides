@@ -157,16 +157,24 @@ def python_identities(files, *, discovery_pattern="test_*"):
     return ordered(identities)
 
 
-def ui_identities(files, platform):
+def xctest_identities(files, platform, *, kind):
     require(platform in {"ios", "tvos"}, "unsupported platform")
     try:
         classes, methods, errors, _strict = parse_ui_tests(files)
     except ValueError as error:
         raise ContractError(str(error)) from error
+    if kind == "swift":
+        # In a mixed unit target, a test-prefixed function outside XCTestCase may
+        # be a Swift Testing declaration or a plain helper; @Test is parsed below.
+        errors = [error for error in errors if not error.endswith("is not a member of a direct XCTestCase subclass")]
     require(not errors, "; ".join(errors))
-    return ordered(test_identity("ui", f"{owner}/{method}", platform=platform)
+    return ordered(test_identity(kind, f"{owner}/{method}", platform=platform)
                    for owner, members in methods.items() for method, platforms in members.items()
                    if platform in platforms and platform in classes[owner])
+
+
+def ui_identities(files, platform):
+    return xctest_identities(files, platform, kind="ui")
 
 
 TYPE_RE = re.compile(r"\b(struct|class|enum|extension)\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)[^{}]*\{")
@@ -227,7 +235,7 @@ def swift_identities(files, platform):
 
     # The unit target mixes Swift Testing suites and XCTestCase classes.
     # Reuse the UI parser so compiled unit methods cannot disappear from coverage.
-    found = {identity["key"]: dict(identity, kind="swift") for identity in ui_identities(files, platform)}
+    found = {identity["key"]: identity for identity in xctest_identities(files, platform, kind="swift")}
     for filename, code, scopes in parsed:
         for attribute in ATTRIBUTE_RE.finditer(code):
             position = attribute.end()
