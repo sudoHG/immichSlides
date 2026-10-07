@@ -172,8 +172,9 @@ secrets or status-writing identity. It uploads only `summary.json`, `summary.md`
 7 days for pushes. Successful Python identities are kept in JSON; the short Markdown
 shows every host check and all nonpassing Python identities.
 
-This job is informational and does not configure required statuses. Builds, unit
-jobs, expected populations, skip policy, trusted publication
+This job is informational and does not configure required statuses. The workflow also
+produces [secret-free build archives and relocation checks](CI_BUILD_ARCHIVE.md).
+Full unit jobs, expected populations, skip policy, trusted publication
 and approval enforcement are separate tickets. The workflow consumes the merged
 [pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone
 workflow-policy check as a distinct host identity. CI sets `PYTHON` to the pinned
