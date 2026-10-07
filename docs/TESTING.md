@@ -38,6 +38,12 @@ Prefer extending an existing test file. A new test file needs a reason in the pu
 
 A test must be able to fail. Anything that only produces screenshots, logs or numbers without judging them is evidence tooling. It belongs in the `Evidence` test plan.
 
+Unit test fixtures stay under `immichSlidesTests/Fixtures/`. The synchronized unit test target copies
+them into `immichSlidesTests.xctest` on both platforms. Look them up by resource name and extension
+with `Bundle(for:)` and a class declared in the unit test target, never with `#filePath` or `Bundle.main`.
+Require the resource URL so a missing fixture fails the test. The compiled tests must work without
+the source checkout; see [Relocated unit tests](#relocated-unit-tests).
+
 UI tests that need a server run against the one configured in optional `Config/env.xcconfig` and never change its data. `Config/Debug.xcconfig` includes that file only when present, so a fresh clone builds in Xcode without setup. EXIF diagnostic UI tests also read `IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID` from the environment or that file and skip when the key is unset or empty. Tests that start from the filter summary, including filtered playback, select the first album and the first person that server lists, so its first album must contain photos and it needs at least one person; without them these tests skip. Tests that need specific photos, such as the EXIF diagnostic album, skip when the server does not have them. The album card frame tests need an album cover whose shape differs from the card among the cards the album filter page loads, and the iOS tap test needs such a cover to reach into another card on screen; without them these tests skip.
 
 The `Evidence` plans are `immichSlides-Evidence-iOS.xctestplan` and `immichSlides-Evidence-tvOS.xctestplan`. The default plans skip what the Evidence plans select, plus the strict end-to-end tests that run through the `StrictE2E` plans. Every UI test the default plans leave out must be selected by the Evidence plan of its platform or run by a runner suite, and a test that needs strict-runner inputs must be run by a runner suite and stay out of the Evidence plans; `scripts/test_excluded_ui_tests_have_a_runner.py` fails otherwise. Its list of known gaps is frozen: entries can be removed, never added or swapped. When you add evidence tooling, list it in both files of its platform. Test plan filters do not apply to the unit test target, so evidence unit tests are gated with `.enabled(if: isEvidenceRun)` instead; the Evidence plans set `IMMICHSLIDES_EVIDENCE=1`. To run it, choose the Evidence plan in Xcode, or pass `-testPlan immichSlides-Evidence-iOS` to `xcodebuild`.
@@ -184,6 +190,62 @@ line numbers, so the list survives unrelated edits). The check fails on any viol
 and on any allowlist entry that no longer matches a real violation — so the list can only shrink as tests are
 renamed. Maintainers can regenerate it with `python3 scripts/check_test_conventions.py --write-allowlist`
 after reviewing the resulting diff; this is not a way to make a real violation disappear.
+
+## Relocated unit tests
+
+This verifies fixture packaging as well as independence from the build-time source path. A normal
+`xcodebuild test` run cannot prove relocation. Use a disposable clone of the intended commit, never
+rename your working checkout. The clone must have no `Config/env.xcconfig`, including dangling
+symlinks; do not copy private configuration into it. Keep the default simulator signing.
+
+Run the following in Bash, once for each platform. Set `scheme` to `immichSlides-iOS` or
+`immichSlides-tvOS`, and `destination` to an installed simulator of that platform. The scheme and
+default test plan have the same name. Use the local device-slot queue and watchdog when available;
+check at least 80 GiB free on `/System/Volumes/Data` before each Xcode invocation.
+
+```bash
+set -euo pipefail
+checkout="$PWD"
+commit="$(git rev-parse HEAD)"
+scheme=immichSlides-iOS
+destination='platform=iOS Simulator,id=<UDID>'
+relocation_root="$(mktemp -d /tmp/immichslides-relocation.XXXXXX)"
+git clone --no-local "$checkout" "$relocation_root/source"
+git -C "$relocation_root/source" checkout --detach "$commit"
+test ! -e "$relocation_root/source/Config/env.xcconfig"
+test ! -L "$relocation_root/source/Config/env.xcconfig"
+
+df -h /System/Volumes/Data
+xcodebuild build-for-testing \
+    -project "$relocation_root/source/immichSlides.xcodeproj" \
+    -scheme "$scheme" -testPlan "$scheme" -destination "$destination" \
+    -only-testing:immichSlidesTests \
+    '-skip-testing:immichSlidesTests/PlaybackRuntimeEvidenceManifestTests/externalRuntimeJSONLPassesValidator()' \
+    -derivedDataPath "$relocation_root/derived"
+
+# Preserve the complete Products directory, including its .xctestrun and symlinks.
+ditto "$relocation_root/derived/Build/Products" "$relocation_root/relocated-products"
+mv "$relocation_root/source" "$relocation_root/source-hidden"
+mv "$relocation_root/derived" "$relocation_root/derived-hidden"
+test ! -e "$relocation_root/source"
+test ! -e "$relocation_root/derived"
+xctestruns=("$relocation_root/relocated-products/"*.xctestrun)
+test "${#xctestruns[@]}" -eq 1
+
+df -h /System/Volumes/Data
+xcodebuild test-without-building -xctestrun "${xctestruns[0]}" \
+    -destination "$destination" -only-testing:immichSlidesTests \
+    '-skip-testing:immichSlidesTests/PlaybackRuntimeEvidenceManifestTests/externalRuntimeJSONLPassesValidator()' \
+    -resultBundlePath "$relocation_root/relocated.xcresult"
+xcrun xcresulttool get test-results summary --path "$relocation_root/relocated.xcresult"
+xcrun xcresulttool get test-results tests --path "$relocation_root/relocated.xcresult"
+```
+
+Both Xcode commands must exit 0. Inspect the official results: nonzero executed tests, no failures,
+and the four metadata fixture tests plus the fixture-set-A pause-hold test must pass. Report skipped
+tests and their reasons separately; exit 0 alone does not prove all tests ran. After reading the
+results and confirming no process uses the disposable directory, delete `relocation_root`, including
+the clone, products, DerivedData and result bundle. The original checkout is untouched throughout.
 
 ## Running controlled integration and end-to-end tests
 

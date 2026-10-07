@@ -9,6 +9,8 @@ import Foundation
 import Testing
 @testable import immichSlides
 
+private final class ImmichAssetMetadataBundleToken {}
+
 @MainActor
 @Suite
 struct ImmichAssetMetadataDecoderTests {
@@ -94,9 +96,10 @@ struct ImmichAssetMetadataDecoderTests {
     }
 
     private func decodeFixture(_ name: String) throws -> Asset {
-        let fixtureURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/ImmichAssetMetadata/\(name).json")
+        let fixtureURL = try #require(
+            Bundle(for: ImmichAssetMetadataBundleToken.self).url(forResource: name, withExtension: "json"),
+            "Missing bundled metadata fixture: \(name).json"
+        )
         let fixtureData = try Data(contentsOf: fixtureURL)
         return try JSONDecoder().decode(Asset.self, from: fixtureData)
     }
