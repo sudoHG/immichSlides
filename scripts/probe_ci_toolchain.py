@@ -20,16 +20,16 @@ UPSTREAM = "repos/actions/runner-images/issues"
 
 
 class GitHubAPI:
-    def __init__(self, token):
+    def __init__(self, token=None):
         self.token = token
 
     def request(self, method, path, payload=None):
+        headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
+                   "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "immichSlides-ci-probe"}
+        if self.token:
+            headers["Authorization"] = "Bearer " + self.token
         request = urllib.request.Request("https://api.github.com/" + path, method=method,
-            data=None if payload is None else json.dumps(payload).encode("utf-8"), headers={
-                "Accept": "application/vnd.github+json", "Authorization": "Bearer " + self.token,
-                "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "immichSlides-ci-probe",
-            })
+            data=None if payload is None else json.dumps(payload).encode("utf-8"), headers=headers)
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
 
@@ -172,7 +172,7 @@ def main():
         findings = inventory_findings(pins)
         if simulation == "true":
             findings.append("SIMULATION: the pinned Xcode is treated as missing; installed tools and pins were not changed.")
-        announcements = api.pages(UPSTREAM, {"state": "open", "labels": "Announcement"})
+        announcements = GitHubAPI().pages(UPSTREAM, {"state": "open", "labels": "Announcement"})
         findings.extend(removal_announcements(pins, announcements))
         run_url = f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}"
         outcome = report_findings(api, repository, pins, findings, run_url, simulated=simulation == "true")

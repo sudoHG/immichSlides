@@ -60,7 +60,8 @@ boots a simulator, installs platform resources or chooses another Xcode.
 
 `/usr/bin/python3 scripts/probe_ci_toolchain.py` reads the existing pins and compares the
 developer directory and Xcode `Contents/version.plist` version/build. It also reads open
-`Announcement` issues in the official [actions/runner-images repository](https://github.com/actions/runner-images/labels/Announcement).
+`Announcement` issues in the official [actions/runner-images repository](https://github.com/actions/runner-images/labels/Announcement)
+without authentication; the repository-scoped issue token is used only for local tracking issues.
 It matches the selected runner's checked affected-image entries and pinned Xcode removal,
 deprecation or replacement statements in the title and Breaking changes section. Explicit
 older-than cutoffs also cover a pin below the announced minimum. Announcements for other

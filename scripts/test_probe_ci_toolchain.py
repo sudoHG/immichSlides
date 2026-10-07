@@ -1,6 +1,7 @@
 """Guard inventory, announcement and issue decisions without network or credentials."""
 
 import copy
+import io
 import json
 import os
 import tempfile
@@ -52,6 +53,12 @@ class ToolchainProbeTests(unittest.TestCase):
                 (contents / "version.plist").write_bytes(plistlib.dumps({
                     "CFBundleShortVersionString": pins["xcode"]["version"], "ProductBuildVersion": build}))
                 self.assertEqual(expected, bool(probe.inventory_findings(pins)))
+
+    def test_public_announcement_reads_do_not_send_the_repository_issue_token(self):
+        with patch.object(probe.urllib.request, "urlopen", return_value=io.BytesIO(b"[]")) as opening:
+            self.assertEqual([], probe.GitHubAPI().pages(probe.UPSTREAM, {"state": "open"}))
+            request = opening.call_args.args[0]
+            self.assertIsNone(request.get_header("Authorization"))
 
     def test_present_pin_is_quiet_and_missing_or_removed_pin_creates_an_issue(self):
         for findings in [[], ["Pinned Xcode missing"], ["Announced removal: https://example.org"]]:
