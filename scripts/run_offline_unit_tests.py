@@ -249,6 +249,8 @@ def build_test_command(
     command = [
         "xcodebuild",
         "test",
+        "-disableAutomaticPackageResolution",
+        "-onlyUsePackageVersionsFromResolvedFile",
         "-project",
         project,
         "-scheme",

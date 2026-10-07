@@ -84,6 +84,8 @@ def build_test_command(
 ) -> list[str]:
     return [
         "xcodebuild",
+        "-disableAutomaticPackageResolution",
+        "-onlyUsePackageVersionsFromResolvedFile",
         "-project",
         str(REPO_ROOT / "immichSlides.xcodeproj"),
         "-scheme",

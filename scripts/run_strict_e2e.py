@@ -315,6 +315,8 @@ def build_xcodebuild_command(
     selector = only_testing or resolve_suite_selector(platform, suite)
     command = [
         "xcodebuild",
+        "-disableAutomaticPackageResolution",
+        "-onlyUsePackageVersionsFromResolvedFile",
         "-project",
         str(repo_root / "immichSlides.xcodeproj"),
         "-scheme",
