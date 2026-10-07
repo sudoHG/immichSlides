@@ -83,6 +83,8 @@ extracts at a different absolute path and calls `test-without-building` with no 
 or scheme. Four explicitly selected metadata fixture tests and the fixture-set-A
 pause-hold test must all pass with no skips. Compact proof records artifact ID, producer/consumer attempts,
 full identity, selections, official counts/test tree, source absence and disk space.
+The selectors retain Swift raw-identifier backticks. Exit 0 with no selected tests
+is rejected, and official counts/test-tree records are retained even on this failure.
 
 After removing its checkout, the hosted consumer invokes the staged entry point:
 

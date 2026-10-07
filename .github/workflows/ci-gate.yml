@@ -239,11 +239,6 @@ jobs:
             --archive-dir "$RUNNER_TEMP/archive-download" \
             --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ matrix.platform }}" \
             --output-dir "$RUNNER_TEMP/relocation-records" --min-free-gib 30
-      - name: Temporary failed-job rerun exercise after the proof
-        if: matrix.platform == 'ios' && github.run_attempt == 1
-        run: |
-          echo 'Intentional failure after successful relocation to exercise rerun failed jobs'
-          exit 1
       - name: Publish only relocation records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
