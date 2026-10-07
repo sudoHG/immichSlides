@@ -110,7 +110,7 @@ run_step() {
 
 host_output="$(mktemp -d "${TMPDIR:-/tmp}/immichslides-check-all.XXXXXX")"
 trap 'rm -rf "$host_output"' EXIT
-run_step "host checks" python3 -B scripts/run_host_checks.py --output-dir "$host_output"
+run_step "host checks" /usr/bin/python3 -B scripts/run_host_checks.py --output-dir "$host_output"
 
 if [[ $with_unit_tests -eq 1 ]]; then
     stamp="$(date +%Y%m%d-%H%M%S)"

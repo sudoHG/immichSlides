@@ -3,12 +3,13 @@
 Run the same macOS host checks as `ci-gate` from the repository root:
 
 ```bash
-python3 -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run
-python3 scripts/ci_summary.py /tmp/immichslides-host-run/summary.json
-python3 scripts/ci_summary.py --identity /tmp/immichslides-host-run/run-identity.json
+/usr/bin/python3 -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run
+/usr/bin/python3 scripts/ci_summary.py /tmp/immichslides-host-run/summary.json
+/usr/bin/python3 scripts/ci_summary.py --identity /tmp/immichslides-host-run/run-identity.json
 ```
 
-Use a Python environment with Pillow, Swift and zstd available, as described in
+Use the Xcode-bundled `/usr/bin/python3` (3.9.6 on the current toolchain), with
+Pillow, Swift and zstd available, as described in
 [CONTRIBUTING](../CONTRIBUTING.md). The output directory must be outside the repository
 and contain no previous result files. Without `--output-dir`, a new temporary directory
 is printed. Remove local outputs after reading the result.
@@ -139,7 +140,6 @@ shows every host check and all nonpassing Python identities.
 This job is informational and does not configure required statuses. Builds, unit
 jobs, pins/environment policy, expected populations, skip policy, trusted publication
 and approval enforcement are separate tickets. The initial workflow bootstraps the
-existing system Python/Pillow/zstd prerequisites; the pins ticket replaces that setup.
-The initial Python 3.14 bootstrap failed fixture startup on both local and hosted
-macOS in reverse DNS (`HTTPServer.server_bind` / `socket.getfqdn`), while the system
-Python started the same frozen fixture normally. No health timeout was changed.
+existing Xcode-bundled Python/Pillow/zstd prerequisites; the pins ticket replaces
+that setup. Invoke `/usr/bin/python3` explicitly if `python3` on PATH selects
+another interpreter.

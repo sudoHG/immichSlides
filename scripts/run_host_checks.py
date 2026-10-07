@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Shared macOS host-check entry point for CI, agents and check_all.sh."""
 
 from __future__ import annotations
