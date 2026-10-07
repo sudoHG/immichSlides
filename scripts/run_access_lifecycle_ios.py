@@ -228,6 +228,7 @@ def main(
     service_process = None
     private_bundle: Path | None = None
     primary_exit_code = 0
+    did_complete_checks = False
     cleanup_failures: list[str] = []
     official_tests_digest: str | None = None
     config_path = REPO_ROOT / TASK_XCCONFIG
@@ -316,6 +317,7 @@ def main(
             environment=environment,
             log_path=log_path,
         )
+        primary_exit_code = exit_code
         summary = None
         if result_bundle_path.exists():
             try:
@@ -347,16 +349,17 @@ def main(
         require_official_single_pass(summary)
         if not json_path.is_file():
             raise AccessLifecycleContractError("A missing image must not count as a pass")
-    except (CommandError, AccessLifecycleContractError) as error:
+        did_complete_checks = True
+    except (CommandError, AccessLifecycleContractError, json.JSONDecodeError) as error:
         print(str(error), file=stderr)
         if SYNTHETIC_PIN in str(error) or WRONG_PIN in str(error):
             print("PIN appears in a file name, command, log or attachment", file=stderr)
-            primary_exit_code = 2
+            primary_exit_code = primary_exit_code or 2
         else:
-            primary_exit_code = getattr(error, "code", 2)
+            primary_exit_code = primary_exit_code or getattr(error, "code", 2)
     except (OSError, subprocess.SubprocessError) as error:
         print(f"Evidence or process I/O failed: {error}", file=stderr)
-        primary_exit_code = 2
+        primary_exit_code = primary_exit_code or 2
     finally:
         actions: list[tuple[str, Callable[[], None]]] = []
         if service_process is not None:
@@ -392,7 +395,7 @@ def main(
         if private_bundle is not None:
             cleanup_failures.extend(finalize_private_result_bundle(
                 private_bundle, arguments.evidence_dir, official_tests_digest,
-                successful=primary_exit_code == 0 and not cleanup_failures,
+                successful=did_complete_checks and primary_exit_code == 0 and not cleanup_failures,
             ))
         if owns_evidence_directory and cleanup_failures:
             (arguments.evidence_dir / "cleanup-failures.json").write_text(

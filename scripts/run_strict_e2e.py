@@ -555,6 +555,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     service_log_b_path: Path | None = None
     derived_data_path = arguments.evidence_dir / "DerivedData"
     primary_exit_code = 0
+    did_complete_checks = False
     cleanup_failures: list[str] = []
     case_manifest: dict[str, object] | None = None
     result_bundle_path: Path | None = None
@@ -746,6 +747,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     environment=environment,
                     log_path=session_log,
                 )
+                primary_exit_code = exit_code
                 if exit_code != 0:
                     (arguments.evidence_dir / "xcodebuild.log").write_text(
                         "\n".join([*log_parts, session_log.read_text(encoding="utf-8")]),
@@ -804,6 +806,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 environment=environment,
                 log_path=arguments.evidence_dir / "xcodebuild.log",
             )
+            primary_exit_code = exit_code
             if recording_process is not None:
                 finished_recording, recording_process = recording_process, None
                 recording_exit = stop_screen_recording(finished_recording)
@@ -875,9 +878,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             case_manifest["visual_identity"] = visual_payload
             write_case_manifest(arguments.evidence_dir, case_manifest)
         print(json.dumps(summary_payload, sort_keys=True), file=stdout)
-    except (CommandError, OfflineCommandError) as error:
+        did_complete_checks = True
+    except (CommandError, OfflineCommandError, json.JSONDecodeError) as error:
         print(str(error), file=stderr)
-        primary_exit_code = error.code
+        primary_exit_code = primary_exit_code or getattr(error, "code", 2)
         if owns_evidence_directory and case_manifest is not None:
             case_manifest["result"] = "FAILED"
             case_manifest["exit_code"] = primary_exit_code
@@ -887,7 +891,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 cleanup_failures.append(f"write_case_manifest: {type(write_error).__name__}: {write_error}")
     except (OSError, subprocess.SubprocessError) as error:
         print(f"Evidence or process I/O failed: {error}", file=stderr)
-        primary_exit_code = 2
+        primary_exit_code = primary_exit_code or 2
     finally:
         lifecycle: dict[str, object] = {}
 
@@ -971,7 +975,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             except CommandError as error:
                 cleanup_failures.append(f"sensitive_scan: {error}")
 
-        successful = primary_exit_code == 0 and not cleanup_failures
+        successful = did_complete_checks and primary_exit_code == 0 and not cleanup_failures
         for bundle, suffix in private_bundles:
             cleanup_failures.extend(finalize_private_result_bundle(
                 bundle, arguments.evidence_dir, official_tests_digests.get(suffix),

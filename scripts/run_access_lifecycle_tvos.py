@@ -606,6 +606,7 @@ def main(
     service_process = None
     derived_data_path = arguments.evidence_dir / "DerivedData"
     primary_exit_code = 0
+    did_complete_checks = False
     cleanup_failures: list[str] = []
     case_manifest: dict[str, object] | None = None
     result_bundle_path: Path | None = None
@@ -716,6 +717,7 @@ def main(
             environment=environment,
             log_path=arguments.evidence_dir / "xcodebuild.log",
         )
+        primary_exit_code = exit_code
         if exit_code != 0:
             raise CommandError(f"xcodebuild access-lifecycle tvOS failed with exit code {exit_code}.", code=exit_code)
 
@@ -755,9 +757,10 @@ def main(
             "identity_source": visual["identity_source"],
         }
         write_case_manifest(arguments.evidence_dir, case_manifest)
-    except (CommandError, AccessLifecycleContractError) as error:
+        did_complete_checks = True
+    except (CommandError, AccessLifecycleContractError, json.JSONDecodeError) as error:
         print(str(error), file=stderr)
-        primary_exit_code = getattr(error, "code", 2)
+        primary_exit_code = primary_exit_code or getattr(error, "code", 2)
         if case_manifest is not None and owns_evidence_directory:
             case_manifest["result"] = "FAILED"
             case_manifest["error"] = str(error)
@@ -767,7 +770,7 @@ def main(
                 pass
     except (OSError, subprocess.SubprocessError) as error:
         print(f"Evidence or process I/O failed: {error}", file=stderr)
-        primary_exit_code = 2
+        primary_exit_code = primary_exit_code or 2
     finally:
         lifecycle: dict[str, object] = {}
 
@@ -836,7 +839,7 @@ def main(
         if result_bundle_path is not None:
             cleanup_failures.extend(finalize_private_result_bundle(
                 result_bundle_path, arguments.evidence_dir, official_tests_digest,
-                successful=primary_exit_code == 0 and not cleanup_failures,
+                successful=did_complete_checks and primary_exit_code == 0 and not cleanup_failures,
             ))
         if owns_evidence_directory and cleanup_failures:
             (arguments.evidence_dir / "cleanup-failures.json").write_text(

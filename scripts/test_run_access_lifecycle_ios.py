@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import io
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
@@ -23,7 +26,9 @@ from run_access_lifecycle_ios import (  # noqa: E402
 )
 from access_lifecycle_contract import FROZEN_FIXTURE_SHA256  # noqa: E402
 import run_access_lifecycle_ios  # noqa: E402
+import run_access_lifecycle_tvos  # noqa: E402
 import run_strict_e2e  # noqa: E402
+from run_offline_unit_tests import TestResultsSummary  # noqa: E402
 
 
 class RoutingTests(unittest.TestCase):
@@ -171,6 +176,126 @@ class RoutingTests(unittest.TestCase):
             black = Path(raw) / "black.png"
             black.write_bytes(_png_bytes(Image.new("RGB", (64, 64), (0, 0, 0))))
             self.assertEqual(scene_mark_from_png(black), "BLACK")
+
+    def test_evidence_exceptions_quarantine_raw_bundles_and_preserve_xcode_failure(self) -> None:
+        # A truncated payload or an unexpected validator error must not dispose failed-run diagnostics.
+        routes = (
+            (run_access_lifecycle_ios, "ios", None),
+            (run_access_lifecycle_tvos, "tvos", None),
+            (run_strict_e2e, "ios", "smoke"),
+            (run_strict_e2e, "ios", "filter-person"),
+        )
+        for runner, platform, suite in routes:
+            for outcome in ("success", "truncated_json", "unexpected_error"):
+                exits = (0, 65) if runner is run_access_lifecycle_ios and outcome != "success" else (0,)
+                for xcode_exit in exits:
+                    with self.subTest(runner=runner.__name__, suite=suite, outcome=outcome, exit=xcode_exit):
+                        with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+                            root = Path(raw)
+                            evidence = root / "evidence"
+                            bundles: list[Path] = []
+
+                            def fake_build(command: list[str], **kwargs: object) -> int:
+                                bundle = Path(command[command.index("-resultBundlePath") + 1])
+                                bundle.mkdir()
+                                (bundle / "raw.bin").write_bytes(b"raw XCTest diagnostics")
+                                bundles.append(bundle)
+                                kwargs["log_path"].write_text("test run\n", encoding="utf-8")
+                                (evidence / "access-lifecycle.json").write_text("{", encoding="utf-8")
+                                return xcode_exit
+
+                            def validate(*args: object, **kwargs: object) -> dict[str, str]:
+                                if outcome == "unexpected_error":
+                                    raise RuntimeError("Evidence validator interrupted")
+                                if outcome == "truncated_json":
+                                    json.loads((evidence / "access-lifecycle.json").read_text())
+                                return {
+                                    "verdict": "PASS",
+                                    "d01": "PARTIAL",
+                                    "identity_source": "public_fixture_photo_mark",
+                                }
+
+                            def fake_subprocess(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+                                output = b'{"testNodes":[]}' if command[:2] == ["xcrun", "xcresulttool"] else ""
+                                return subprocess.CompletedProcess(command, 0, output, "")
+
+                            patches = {
+                                "REPO_ROOT": root,
+                                "prepare_task_xcconfig": {},
+                                "cleanup_task_xcconfig": None,
+                                "write_fixture_artifacts": {"fixture_set": "a", "fixture_sha256": "a" * 64},
+                                "wait_for_service": ("127.0.0.1", 8888),
+                                "reset_simulator_app": "reset\n",
+                                "stop_exact_process": 0,
+                            }
+                            for name, value in patches.items():
+                                patch = (
+                                    mock.patch.object(runner, name, value) if name == "REPO_ROOT"
+                                    else mock.patch.object(runner, name, return_value=value)
+                                )
+                                stack.enter_context(patch)
+                            stack.enter_context(mock.patch.object(
+                                run_strict_e2e, "PRIVATE_RESULT_BUNDLE_ROOT", root / "private"
+                            ))
+                            stack.enter_context(mock.patch.object(
+                                runner.subprocess, "Popen", return_value=mock.Mock(pid=9876)
+                            ))
+                            stack.enter_context(mock.patch.object(runner.subprocess, "run", side_effect=fake_subprocess))
+                            for module in {runner, run_strict_e2e}:
+                                stack.enter_context(mock.patch.object(
+                                    module, "read_official_test_results_summary",
+                                    return_value=TestResultsSummary(1, 1, 0, 0, "Passed"),
+                                ))
+                            if runner is not run_access_lifecycle_tvos:
+                                build_name = "run_command" if runner is run_strict_e2e else "run_xcodebuild"
+                                stack.enter_context(mock.patch.object(runner, build_name, side_effect=fake_build))
+                            validator = "require_visual_identity" if runner is run_strict_e2e else "evaluate_device_evidence"
+                            if runner is run_strict_e2e or outcome != "truncated_json":
+                                stack.enter_context(mock.patch.object(runner, validator, side_effect=validate))
+                            if runner is run_strict_e2e:
+                                stack.enter_context(mock.patch.object(runner, "data_available_gib", return_value=200))
+                                stack.enter_context(mock.patch.object(runner, "read_source_sha", return_value="b" * 40))
+                                stack.enter_context(mock.patch.object(runner, "read_source_dirty_paths", return_value=[]))
+                            elif runner is run_access_lifecycle_tvos:
+                                stack.enter_context(mock.patch.object(runner, "write_isolated_tvos_scheme"))
+                                stack.enter_context(mock.patch.object(runner, "remove_isolated_tvos_scheme"))
+                                stack.enter_context(mock.patch.object(runner, "read_source_sha", return_value="b" * 40))
+                            arguments = [
+                                "--destination", f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id=DEST",
+                                "--evidence-dir", str(evidence),
+                            ]
+                            kwargs = {"stdout": io.StringIO(), "stderr": io.StringIO()}
+                            if runner is run_access_lifecycle_tvos:
+                                kwargs["run_xcodebuild"] = fake_build
+                            if runner is not run_access_lifecycle_ios:
+                                arguments.extend(["--platform", platform])
+                            if suite is not None:
+                                arguments.extend(["--suite", suite])
+                            if runner is not run_strict_e2e:
+                                kwargs["data_available_gib"] = lambda: 200
+                            if outcome == "unexpected_error":
+                                with self.assertRaisesRegex(RuntimeError, "Evidence validator interrupted"):
+                                    runner.main(arguments, **kwargs)
+                            else:
+                                code = runner.main(arguments, **kwargs)
+                                self.assertEqual(
+                                    code, 0 if outcome == "success" else xcode_exit or 2,
+                                    kwargs["stderr"].getvalue(),
+                                )
+                            self.assertEqual(len(bundles), 3 if suite == "filter-person" else 1)
+                            for index, bundle in enumerate(bundles):
+                                suffix = (
+                                    "-" + run_strict_e2e.FILTER_PERSON_SESSIONS[index]["name"]
+                                    if suite == "filter-person" else ""
+                                )
+                                disposal = evidence / f"result-bundle-disposal{suffix}.json"
+                                quarantine = evidence / f"result-bundle-quarantine{suffix}.json"
+                                self.assertEqual(bundle.exists(), outcome != "success")
+                                self.assertEqual(disposal.exists(), outcome == "success")
+                                self.assertEqual(quarantine.exists(), outcome != "success")
+                                receipt = json.loads((disposal if outcome == "success" else quarantine).read_text())
+                                self.assertEqual(receipt["result_bundle_disposed"], outcome == "success")
+                                self.assertEqual(receipt["private_path"], str(bundle))
 
 
 if __name__ == "__main__":
