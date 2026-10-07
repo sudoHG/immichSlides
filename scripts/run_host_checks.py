@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -29,6 +30,7 @@ HOST_CHECKS = [
     ("localization catalog", [sys.executable, "scripts/validate_localization_catalog.py"]),
     ("localization usage", [sys.executable, "scripts/scan_chinese_strings.py", "--limit", "20"]),
     ("Python test prerequisites", [sys.executable, "scripts/check_required_test_tools.py"]),
+    ("workflow policy", [sys.executable, "scripts/check_workflow_policy.py"]),
     ("python tests", [sys.executable, "-B", "scripts/run_python_tests.py"]),
 ]
 
@@ -224,7 +226,12 @@ def main():
                    "run": {"id": os.environ.get("GITHUB_RUN_ID") if is_ci else None,
                            "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")) if is_ci else 1,
                            "tier": "host", "job": "host-checks", "shard": None},
-                   "hashes": {"manifests": {}, "policies": {}}, "toolchain": toolchain(),
+                   "hashes": {
+                       "manifests": {"ci-pins": hashlib.sha256((REPO_ROOT / "scripts/ci-pins.json").read_bytes()).hexdigest()}
+                       if is_ci else {},
+                       "policies": {"workflow-policy": hashlib.sha256(
+                           (REPO_ROOT / "scripts/check_workflow_policy.py").read_bytes()).hexdigest()}},
+                   "toolchain": toolchain(),
                    "population": {"declared": [test_identity("host", name) for name, _ in HOST_CHECKS],
                                   "compiled": [test_identity("host", name) for name, _ in HOST_CHECKS],
                                   "observed": [], "deselected": [], "removed_by_pr": []},

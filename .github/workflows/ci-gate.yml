@@ -28,12 +28,14 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
-      # Pins and the managed Python environment are introduced by the sibling pins ticket.
-      - name: Prepare the existing host-test prerequisites
+      - name: Select the pinned Xcode
         run: |
-          /usr/bin/python3 -m venv "$RUNNER_TEMP/host-python"
-          "$PYTHON" -m pip install Pillow
-          command -v zstd || brew install zstd
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+
+      - name: Verify pins and create the isolated Python environment
+        run: |
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/host-python" --verify-toolchain
 
       - name: Run shared host checks and write records
         env:

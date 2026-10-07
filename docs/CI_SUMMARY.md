@@ -20,7 +20,7 @@ and contain no previous result files. Without `--output-dir`, a new temporary di
 is printed. Remove local outputs after reading the result.
 
 The entry point owns the format, test-convention, release-guard, localization-catalog,
-localization-usage, required-tool and Python checks. `check_all.sh` delegates to it and
+localization-usage, required-tool, workflow-policy and Python checks. `check_all.sh` delegates to it and
 keeps its existing optional iOS/tvOS unit-test interface. Its temporary host records
 are removed on exit; `--output-dir` holds the optional unit bundles, while DerivedData
 remains in `.derivedData/check-all-{ios,tvos}`.
@@ -70,8 +70,10 @@ it must never admit an unclassified run as non-CI-changing. Local workflow path 
 run ID are null. No approval is claimed by a producer: publisher verdicts separately
 record source and whether they rest on approval.
 
-Host checks have no manifests or policy lists yet, so both hash maps are empty.
-Later producers hash the exact bytes of each manifest/policy they consume. Versions
+Host checks hash the exact bytes of `scripts/check_workflow_policy.py` as
+`policies.workflow-policy`. CI also records the setup manifest `scripts/ci-pins.json`
+as `manifests.ci-pins`; local runs do not claim to consume its setup pins.
+Later producers hash the exact bytes of each additional manifest/policy they consume. Versions
 record actual tools, not a claim that pins were verified. Host signing is
 `not-applicable`; test-build producers use `sign-to-run-locally`.
 
@@ -105,7 +107,7 @@ so two scenarios or fixtures cannot collapse into one result. Python IDs use
 Identity equality uses the entire object, independent of JSON key order.
 
 `declared` and `compiled` contain identities. Host declaration/compilation records
-the seven check definitions; Python `compiled` records dynamic unittest discovery.
+the eight check definitions; Python `compiled` records dynamic unittest discovery.
 The host producer does **not** claim static Python enumeration. A trusted static
 declared/compiled/executed comparison belongs to the expected-population ticket.
 `removed_by_pr` contains identities for reporting only; host checks leave it empty.
@@ -150,9 +152,10 @@ secrets or status-writing identity. It uploads only `summary.json`, `summary.md`
 shows every host check and all nonpassing Python identities.
 
 This job is informational and does not configure required statuses. Builds, unit
-jobs, pins/environment policy, expected populations, skip policy, trusted publication
-and approval enforcement are separate tickets. The initial workflow bootstraps the
-existing Xcode-bundled Python/Pillow/zstd prerequisites; the pins ticket replaces
-that setup. CI sets `PYTHON` to the venv made from `/usr/bin/python3` and uses it
+jobs, expected populations, skip policy, trusted publication
+and approval enforcement are separate tickets. The workflow consumes the merged
+[pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone
+workflow-policy check as a distinct host identity. CI sets `PYTHON` to the pinned
+venv made from `/usr/bin/python3` and uses it
 for the host entry point and validators. Local runs can select the same recommended
 interpreter with `PYTHON=/usr/bin/python3` without modifying PATH.

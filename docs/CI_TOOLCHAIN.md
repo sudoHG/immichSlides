@@ -121,7 +121,7 @@ data-only handling, verify producer path/ID and provenance at runtime, and keep 
 checks before credentials are read. GitHub App creation, secrets, environments, settings,
 rulesets and approvals remain maintainer-gated; this command performs none of them.
 
-The existing privacy workflows remain unchanged. This standalone check is deliberately
-not wired into `scripts/check_all.sh` or the host-check entry point while ticket 03a is in
-flight. Whichever PR lands second must add the standalone policy command to the host-check
-sequence, using the pinned environment, and verify that integration.
+The existing privacy workflows remain unchanged. The shared host-check entry point runs
+this standalone command as its own `workflow policy` identity; `scripts/check_all.sh`
+delegates to that entry point. `ci-gate` uses this pinned environment setup and records
+the pins manifest and workflow-policy hashes in its [producer summary](CI_SUMMARY.md).

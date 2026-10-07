@@ -15,8 +15,9 @@ Runs, in order:
   4. localization catalog
   5. localization usage (user-facing literals missing from the string catalog)
   6. Python test prerequisites: Swift, zstd CLI and Pillow (missing tools fail)
-  7. Python tests with per-test result records
-  8. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
+  7. workflow policy (pinned actions, permissions, timeouts and trusted execution)
+  8. Python tests with per-test result records
+  9. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
 
 Options:
   --with-unit-tests        Also run scripts/run_offline_unit_tests.py for iOS and tvOS.

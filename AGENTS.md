@@ -64,7 +64,7 @@ These rules exist because past work "passed" while users still saw failures. The
 
 `Config/env.xcconfig` is an optional, git-ignored local test configuration. `Config/Debug.xcconfig` includes it only when present, so a fresh clone builds in Xcode without setup. If you need a local test configuration, `python3 scripts/run_offline_unit_tests.py --prepare-example-config` creates it from the example without overwriting anything. Unit tests need no real credentials or server.
 
-The Python checks require Python 3 with Pillow, Swift (included with Xcode), and the zstd CLI (`brew install zstd`). Every `check_all.sh` Python step uses `"${PYTHON:-python3}"`. Recommend `PYTHON=/usr/bin/python3` or an active venv made from that Xcode-bundled interpreter; see [CONTRIBUTING.md](CONTRIBUTING.md#setup) for installation. Python 3.14 has a known [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
+The Python checks require Python 3 with Pillow and PyYAML, Swift (included with Xcode), and the zstd CLI (`brew install zstd`). Every `check_all.sh` Python step uses `"${PYTHON:-python3}"`. Recommend `PYTHON=/usr/bin/python3` or an active venv made from that Xcode-bundled interpreter; see [CONTRIBUTING.md](CONTRIBUTING.md#setup) for installation. Python 3.14 has a known [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
 
 ```bash
 # Every fast check in one go: formatting, test conventions, release guards, localization, Python tests
