@@ -27,6 +27,33 @@ TRUSTED_WORKFLOWS = {PRIVACY_WORKFLOW, ".github/workflows/ci-probe.yml"} | set(W
 for allowed in ENVIRONMENT_WORKFLOWS.values():
     TRUSTED_WORKFLOWS.update(allowed)
 
+# New trusted interfaces require an explicit policy change and review.
+TRUSTED_REMOTE_ACTION_INPUTS = {
+    "actions/checkout": {"ref", "repository", "fetch-depth", "persist-credentials"},
+    "actions/download-artifact": {"path", "name", "pattern", "run-id", "github-token", "repository",
+                                  "artifact-ids", "merge-multiple"},
+}
+TRUSTED_READ_ONLY_COMMANDS = {("pwd",), ("git", "rev-parse", "HEAD")}
+TRUSTED_PYTHON_COMMANDS = {
+    ("/usr/bin/python3", "scripts/check_workflow_policy.py"),
+    ("/usr/bin/python3", "scripts/check_workflow_policy.py", "--root", "."),
+}
+PRIVACY_ENVIRONMENT = {
+    "PRIVACY_PR_NUMBER": "${{ github.event.pull_request.number }}",
+    "PRIVACY_HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
+    "PRIVACY_BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+}
+# Grandfather only this reviewed object-fetch block, without general shell parsing.
+PRIVACY_OBJECT_FETCH = r'''case "$PRIVACY_PR_NUMBER" in
+  *[!0-9]*|"") exit 3 ;;
+esac
+case "$PRIVACY_HEAD_SHA" in
+  *[!0-9a-f]*|"") exit 3 ;;
+esac
+git fetch --no-tags --force origin \
+  "refs/pull/${PRIVACY_PR_NUMBER}/head"
+test "$(git rev-parse FETCH_HEAD)" = "$PRIVACY_HEAD_SHA"'''
+
 
 class WorkflowLoader(yaml.SafeLoader):
     def compose_node(self, parent, index):
@@ -97,50 +124,39 @@ def artifact_path(value):
     return re.fullmatch(r"(?:/runner-temp/)?ci-artifacts(?:/[\w.-]+)*", value) is not None
 
 
-def executes_artifact(script, has_download):
+def trusted_run_allowed(script, path, events):
     if not isinstance(script, str):
-        return True
-    # Trusted workflows parse artifact data in repository scripts, never via eval or dynamic imports.
-    if re.search(r"\b(?:eval|exec|compile)\s*\(|\bnew\s+Function\b|\b(?:eval|source)\s", script):
-        return True
-    if re.search(r"\b(?:require|import)\s*\([^\n]*ci-artifacts|\bfrom\s+ci.artifacts", script):
-        return True
-    if re.search(r"\bgh\s+run\s+download\b|\bdownloadArtifact\b|/actions/artifacts/", script):
-        return True
-    if (re.search(r"\b(?:chmod|cd)\b[^\n;]*ci-artifacts", script)
-            or re.search(r"\|\s*(?:/[^\s]+/)?(?:bash|sh|zsh|python[\d.]*|node|ruby|perl|pwsh)\b", script)):
-        return True
-    if has_download and re.search(r"\bchmod\b[^\n;]*\$", script):
-        return True
+        return False
+    script = script.strip()
+    if path == PRIVACY_WORKFLOW and set(events) == {"pull_request_target"}:
+        if script in {PRIVACY_OBJECT_FETCH, "scripts/run_trusted_privacy_preflight.sh"}:
+            return True
+    # Only literal command tokens are considered; shell operators and expansion are never interpreted.
+    if any(character in script for character in "<>|;&\n\r$`\\(){}*?[]"):
+        return False
     try:
-        lexer = shlex.shlex(script, posix=True, punctuation_chars=";&|\n")
-        lexer.whitespace = " \t\r"
-        tokens = list(lexer)
+        command = tuple(shlex.split(script))
     except ValueError:
-        return True
-    interpreter = re.compile(r"(?:/[^\s]+/)?(?:bash|sh|zsh|python[\d.]*|node|ruby|perl|pwsh|source|\.)")
-    command_start = True
-    expecting_program = False
-    for token in tokens:
-        if token and all(char in ";&|\n" for char in token):
-            command_start, expecting_program = True, False
-            continue
-        if command_start:
-            if "ci-artifacts" in token or (has_download and ("$" in token or token.startswith("./"))):
-                return True
-            if token in {"env", "exec", "command", "sudo", "xargs"} or "=" in token:
-                continue
-            expecting_program = interpreter.fullmatch(token) is not None
-            command_start = False
-        elif expecting_program:
-            if has_download and token in {"-c", "-e", "-"}:
-                return True
-            if token.startswith("-"):
-                continue
-            if "ci-artifacts" in token or (has_download and "$" in token):
-                return True
-            expecting_program = False
-    return False
+        return False
+    return command in TRUSTED_READ_ONLY_COMMANDS or command in TRUSTED_PYTHON_COMMANDS
+
+
+def trusted_run_settings_allowed(settings):
+    return (isinstance(settings, dict) and set(settings) <= {"shell", "working-directory"}
+            and settings.get("shell", "bash") in ("bash", "sh")
+            and settings.get("working-directory", ".") == ".")
+
+
+def trusted_action_allowed(uses, options):
+    if not pinned_action(uses):
+        return False
+    if uses.startswith("./"):
+        parts = uses[2:].split("/")
+        return (uses.startswith("./.github/actions/") and not options
+                and all(re.fullmatch(r"[\w.-]+", part) and part.casefold() not in
+                        {"artifact", "artifacts", "ci-artifacts", "download", "downloads"} for part in parts))
+    allowed_inputs = TRUSTED_REMOTE_ACTION_INPUTS.get(uses.split("@")[0].lower())
+    return allowed_inputs is not None and set(options) <= allowed_inputs
 
 
 def check_workflow(path: str, source: str) -> list[Violation]:
@@ -186,9 +202,7 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         return violations
     if "permissions" in document and not explicit_permissions(document["permissions"]):
         flag("permissions", "permissions", "Use an explicit permission mapping, including {} for no grants")
-    trusted = path in TRUSTED_WORKFLOWS
-    has_download = any(isinstance(item.get("uses"), str) and "download-artifact" in item["uses"].lower()
-                       for _, item in walk_mappings(document))
+    trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
     for job_id, job in jobs.items():
         location = f"jobs.{job_id}"
         if not isinstance(job, dict):
@@ -212,6 +226,18 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             flag(location, "workflow-format", "Expected steps or a pinned reusable workflow")
         elif isinstance(steps, list) and any(not isinstance(step, dict) or not ("uses" in step or "run" in step) for step in steps):
             flag(location, "workflow-format", "Each step needs run or uses")
+        if trusted and isinstance(steps, list):
+            for index, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    continue
+                step_location = f"{location}.steps[{index}]"
+                if "run" in step and not trusted_run_allowed(step["run"], path, events):
+                    flag(step_location, "trusted-run", "Trusted run must be an allowlisted literal command or entry point")
+                settings = {key: step[key] for key in ("shell", "working-directory") if key in step}
+                if not trusted_run_settings_allowed(settings):
+                    flag(step_location, "trusted-run", "Trusted commands require the default workspace and a reviewed shell")
+        if trusted and any(key in job for key in ("container", "services")):
+            flag(location, "trusted-run", "Trusted jobs cannot start unreviewed containers or services")
     for location, item in walk_mappings(document):
         if "uses" in item and not pinned_action(item["uses"]):
             flag(location, "action-pin", "Remote uses must have a full commit SHA; container actions need a sha256 digest")
@@ -220,20 +246,28 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         environment = item.get("env", {})
         loader_variables = {"PATH", "BASH_ENV", "ENV", "PYTHONPATH", "PYTHONHOME", "NODE_OPTIONS",
                             "RUBYLIB", "PERL5LIB", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"}
-        if isinstance(environment, dict) and any(
-                key in loader_variables and isinstance(value, str)
-                and ("ci-artifacts" in value or (has_download and "$" in value))
-                for key, value in environment.items()):
+        if isinstance(environment, dict) and any(key in loader_variables for key in environment):
             flag(location, "artifact-execution", "Artifact data must not control executable search or interpreter startup")
+        if (not isinstance(environment, dict) or any(path != PRIVACY_WORKFLOW
+                or key not in PRIVACY_ENVIRONMENT or value != PRIVACY_ENVIRONMENT[key]
+                for key, value in environment.items())):
+            flag(location, "trusted-environment", "Trusted environment variables need an explicit reviewed binding")
+        if "defaults" in item:
+            defaults = item["defaults"]
+            if (not isinstance(defaults, dict) or set(defaults) != {"run"}
+                    or not trusted_run_settings_allowed(defaults["run"])):
+                flag(location, "trusted-run", "Trusted run defaults cannot change the shell or workspace")
         uses = item.get("uses", "")
         options = item.get("with", {})
         if not isinstance(options, dict):
             flag(location, "workflow-format", "Action inputs must be a mapping")
             continue
+        if "uses" in item and not trusted_action_allowed(uses, options):
+            flag(location, "trusted-action", "Trusted uses must be an approved pinned remote action or isolated repository-local action")
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":
             ref = options.get("ref")
             allowed_refs = {"main", "refs/heads/main", "${{ github.event.repository.default_branch }}"}
-            if path == PRIVACY_WORKFLOW:
+            if path == PRIVACY_WORKFLOW and set(events) == {"pull_request_target"}:
                 allowed_refs.update({None, "${{ github.event.pull_request.base.sha }}"})
             repository = options.get("repository")
             if (not (ref is None or isinstance(ref, str)) or ref not in allowed_refs
@@ -242,13 +276,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 flag(location, "trusted-checkout", "Trusted checkout must use this repository's default branch (privacy may use base.sha)")
         if isinstance(uses, str) and "download-artifact" in uses.lower() and not artifact_path(options.get("path")):
             flag(location, "artifact-execution", "Download artifact data only into an explicit ci-artifacts directory")
-        for script in [item.get("run"), options.get("script")]:
-            if script is None:
-                continue
-            if isinstance(script, str) and re.search(r"\bgit\s+(?:checkout|switch|reset|read-tree|restore|worktree\s+add)\b|\bgh\s+pr\s+checkout\b", script):
-                flag(location, "trusted-checkout", "Use the checked default-branch action; fetching PR Git objects is allowed")
-            if executes_artifact(script, has_download):
-                flag(location, "artifact-execution", "Trusted steps must not execute artifact content or dynamically evaluate code")
+        if "script" in options:
+            flag(location, "artifact-execution", "Trusted actions cannot execute inline scripts")
     return violations
 
 

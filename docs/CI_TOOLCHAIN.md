@@ -74,28 +74,49 @@ The rules are:
   `requested`, `in_progress` and `completed`; an omitted type means `completed`.
 - Trusted workflow paths are the privacy workflow and `ci-publish.yml`, `ci-report.yml`,
   `ci-probe.yml`, `ci-approval.yml`, `ci-approve.yml` and `ci-release.yml`. Trust comes from
-  the exact path, never the display name. Their checkout action may use `main`,
+  the exact path, never the display name. Privileged triggers also select this strict
+  policy, even if their workflow path is forbidden. Their checkout action may use `main`,
   `refs/heads/main` or `${{ github.event.repository.default_branch }}`, in the same
-  repository. Privacy may also use `${{ github.event.pull_request.base.sha }}` or its
-  event's default checkout. Indirect refs, PR head/merge SHAs and workflow-run head SHAs
-  are rejected. Inline shell checkout/switch/reset/worktree materialization is rejected;
-  fetching PR Git objects for static inspection is allowed.
+  repository. Only the privacy path triggered exclusively by `pull_request_target` may
+  use `${{ github.event.pull_request.base.sha }}` or omit its checkout ref. A same-named
+  workflow with `pull_request`, mixed triggers or another event receives no exception.
+  Indirect refs, PR head/merge SHAs and workflow-run head SHAs are rejected.
+- Trusted execution is denied by default. Each `run` must be one of the literal reviewed
+  commands: `pwd`, `git rev-parse HEAD`, or `/usr/bin/python3 scripts/check_workflow_policy.py`
+  with no arguments or `--root .`. Only the privacy path with exclusively
+  `pull_request_target` may also invoke `scripts/run_trusted_privacy_preflight.sh` or use
+  its existing object-fetch block, matched as a complete literal string. That block fetches
+  Git objects without materializing PR code; adding any command makes it unapproved.
+  Other shell syntax, redirection, pipelines, global Git options, dynamic arguments,
+  arbitrary entry points and artifact path arguments fail closed. Additional trusted
+  entry points and argument contracts require an explicit policy change and review.
+- Trusted remote actions must be both SHA-pinned and on the input allowlist:
+  `actions/checkout` (`ref`, `repository`, `fetch-depth`, `persist-credentials`) or
+  `actions/download-artifact` (`path`, `name`, `pattern`, `run-id`, `github-token`,
+  `repository`, `artifact-ids`, `merge-multiple`). Other actions, reusable workflows,
+  container actions, inline action scripts and unknown inputs are rejected. Local actions
+  must be literal paths under `.github/actions`, outside artifact/download directories,
+  without inputs. Approved downloads cannot write into that local-action directory.
 - Trusted artifact downloads must go into `ci-artifacts` or its children, optionally
-  under `${{ runner.temp }}`. They cannot overwrite checked-out scripts. Inline shell and
-  action scripts must not execute, source, evaluate or import artifact code. Reading an
-  artifact as an argument to a checked-in parser is allowed. Dynamic interpreter operands
-  and inline interpreter code after an artifact download fail closed. Inline `gh run
-  download` and artifact API downloads are rejected; use the pinned download action with
-  an isolated destination and parse data through reviewed repository scripts.
-  Artifact data cannot supply executable search paths or interpreter startup variables
-  such as `PATH`, `BASH_ENV`, `PYTHONPATH` or `NODE_OPTIONS`.
+  under `${{ runner.temp }}`. They cannot overwrite checked-out scripts or local actions.
+  Future approved entry points may read artifact data internally after review; the workflow
+  cannot choose an artifact path as an executable, action or argument.
+- Trusted command settings cannot change the working directory from the default workspace
+  or use shells other than literal `bash`/`sh`. Job containers and services are rejected.
+  Workflow/job/step environment bindings must be explicitly reviewed; currently only the
+  privacy workflow's `PRIVACY_PR_NUMBER`, `PRIVACY_HEAD_SHA` and `PRIVACY_BASE_SHA` bindings
+  to their corresponding event fields are allowed. Interpreter startup/search variables
+  such as `PATH`, `BASH_ENV`, `PYTHONPATH` and `NODE_OPTIONS` cannot be overridden.
 - `ci-publisher` may be referenced only by `ci-publish.yml`, `ci-approval.yml` and
   `ci-approve.yml`; `ci-approval` only by `ci-approval.yml`; `release` only by
   `ci-release.yml`. Protected names are matched case-insensitively, as on GitHub.
   Environment names must be literal so expressions cannot hide a protected environment.
 
-This is a static workflow guard, not a proof of arbitrary shell, action or repository
-script behavior. Reviewers must inspect trusted parser scripts and pinned actions for
+Non-trusted workflows retain the general pin, permission, timeout, trigger and protected
+environment checks; they do not receive this trusted command/action allowlist.
+
+This is a static workflow guard, not a proof of approved action or repository script
+behavior. Reviewers must inspect trusted entry points, local actions and pinned actions for
 data-only handling, verify producer path/ID and provenance at runtime, and keep event/ref
 checks before credentials are read. GitHub App creation, secrets, environments, settings,
 rulesets and approvals remain maintainer-gated; this command performs none of them.

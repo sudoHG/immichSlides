@@ -135,10 +135,13 @@ class WorkflowPolicyTests(unittest.TestCase):
             with self.subTest(command=command):
                 document = self.trusted()
                 document["jobs"]["check"]["steps"].append({"run": command})
-                self.assertIn("trusted-checkout", self.rules(document, TRUSTED))
-        document = self.trusted()
-        document["jobs"]["check"]["steps"].append({"run": 'git fetch origin "refs/pull/${PR}/head"'})
-        self.assertEqual(set(), self.rules(document, TRUSTED))
+                self.assertIn("trusted-run", self.rules(document, TRUSTED))
+        document = workflow()
+        document["on"] = {"pull_request_target": None}
+        document["jobs"]["check"]["steps"].append({"run": policy.PRIVACY_OBJECT_FETCH})
+        self.assertEqual(set(), self.rules(document, policy.PRIVACY_WORKFLOW))
+        document["jobs"]["check"]["steps"][-1]["run"] += "\ngit checkout FETCH_HEAD"
+        self.assertIn("trusted-run", self.rules(document, policy.PRIVACY_WORKFLOW))
 
     def test_trusted_artifacts_may_be_read_as_data_but_never_executed(self):
         for command in ["bash ci-artifacts/report.sh", "python3 ci-artifacts/report.py", "./ci-artifacts/run",
@@ -154,12 +157,14 @@ class WorkflowPolicyTests(unittest.TestCase):
                     {"uses": f"actions/download-artifact@{SHA}", "with": {"path": "ci-artifacts"}},
                     {"run": command},
                 ])
-                self.assertIn("artifact-execution", self.rules(document, TRUSTED))
+                self.assertIn("trusted-run", self.rules(document, TRUSTED))
         document = self.trusted()
         document["jobs"]["check"]["steps"].extend([
             {"uses": f"actions/download-artifact@{SHA}", "with": {"path": "ci-artifacts"}},
             {"run": "python3 scripts/read_summary.py --input ci-artifacts/summary.json"},
         ])
+        self.assertIn("trusted-run", self.rules(document, TRUSTED))
+        document["jobs"]["check"]["steps"][-1]["run"] = "/usr/bin/python3 scripts/check_workflow_policy.py"
         self.assertEqual(set(), self.rules(document, TRUSTED))
 
     def test_trusted_artifact_downloads_cannot_overwrite_the_checkout(self):
@@ -182,7 +187,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             with self.subTest(script=script):
                 document = self.trusted()
                 document["jobs"]["check"]["steps"].append({"run": script})
-                self.assertIn("artifact-execution", self.rules(document, TRUSTED))
+                self.assertIn("trusted-run", self.rules(document, TRUSTED))
 
     def test_protected_environments_are_bound_to_named_workflows(self):
         for environment, allowed in [("ci-publisher", TRUSTED), ("ci-approval", ".github/workflows/ci-approval.yml"),
@@ -214,6 +219,58 @@ class WorkflowPolicyTests(unittest.TestCase):
                        "on: &event pull_request\nother: *event", "on: pull_request\n---\non: push"]:
             with self.subTest(source=source):
                 self.assertIn("workflow-format", {item.rule for item in policy.check_workflow(TRUSTED, source)})
+
+    def test_reviewed_execution_and_checkout_bypasses_fail_closed(self):
+        for review, step, path, expected in [
+            ("R1", {"run": "python3 < ci-artifacts/code.py"}, TRUSTED, "trusted-run"),
+            ("R2", {"uses": "./ci-artifacts/action"}, TRUSTED, "trusted-action"),
+            ("R3", {"run": 'git -C "$GITHUB_WORKSPACE" checkout "$PR_HEAD_SHA"'}, TRUSTED, "trusted-run"),
+            ("R4", {"uses": f"actions/checkout@{SHA}"}, policy.PRIVACY_WORKFLOW, "trusted-checkout"),
+        ]:
+            with self.subTest(review=review):
+                document = workflow() if review == "R4" else self.trusted()
+                if review == "R4":
+                    document["jobs"]["check"]["steps"] = [step]
+                else:
+                    document["jobs"]["check"]["steps"].extend([
+                        {"uses": f"actions/download-artifact@{SHA}", "with": {"path": "ci-artifacts"}}, step,
+                    ])
+                self.assertIn(expected, self.rules(document, path))
+
+    def test_trusted_allowlists_reject_unreviewed_actions_arguments_and_execution_settings(self):
+        for step, expected in [
+            ({"uses": f"owner/tool@{SHA}"}, "trusted-action"),
+            ({"uses": "./.github/actions/downloads/payload"}, "trusted-action"),
+            ({"uses": f"actions/checkout@{SHA}", "with": {"ref": "main", "path": "ci-artifacts"}}, "trusted-action"),
+            ({"run": "/usr/bin/python3 scripts/check_workflow_policy.py --root ci-artifacts"}, "trusted-run"),
+            ({"run": "pwd", "working-directory": "ci-artifacts"}, "trusted-run"),
+            ({"run": "pwd", "shell": "bash --rcfile ci-artifacts/env {0}"}, "trusted-run"),
+            ({"run": "pwd", "env": {"GIT_SSH_COMMAND": "ci-artifacts/run"}}, "trusted-environment"),
+        ]:
+            with self.subTest(step=step):
+                document = self.trusted()
+                document["jobs"]["check"]["steps"].append(step)
+                self.assertIn(expected, self.rules(document, TRUSTED))
+        for override in [{"defaults": {"run": {"working-directory": "ci-artifacts"}}},
+                         {"container": "alpine"}, {"services": {"payload": {"image": "alpine"}}}]:
+            with self.subTest(override=override):
+                document = self.trusted()
+                document["jobs"]["check"].update(override)
+                self.assertIn("trusted-run", self.rules(document, TRUSTED))
+        document = self.trusted()
+        document["jobs"]["check"]["steps"].extend([
+            {"run": "git rev-parse HEAD"}, {"uses": "./.github/actions/check"},
+            {"run": "/usr/bin/python3 scripts/check_workflow_policy.py --root ."},
+        ])
+        self.assertEqual(set(), self.rules(document, TRUSTED))
+        for event in ["pull_request", ["pull_request_target", "pull_request"],
+                      {"pull_request_target": None, "workflow_dispatch": None}]:
+            for ref in [None, "${{ github.event.pull_request.base.sha }}"]:
+                with self.subTest(event=event, ref=ref):
+                    document = workflow()
+                    document["on"] = event
+                    document["jobs"]["check"]["steps"][0]["with"] = {"ref": ref}
+                    self.assertIn("trusted-checkout", self.rules(document, policy.PRIVACY_WORKFLOW))
 
 
 if __name__ == "__main__":
