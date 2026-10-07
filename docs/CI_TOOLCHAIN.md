@@ -22,6 +22,7 @@ repository root, with a new task-owned environment path outside the repository:
 ```bash
 python3 scripts/setup_ci_python.py --python /path/to/pinned/python3 --venv /tmp/immichslides-ci-python
 source /tmp/immichslides-ci-python/bin/activate
+export DEVELOPER_DIR="$(python3 -c 'import json; print(json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])')"
 python3 -B scripts/setup_ci_python.py --venv /tmp/immichslides-ci-python --check
 python3 -B scripts/check_workflow_policy.py
 python3 -B -m unittest discover -s scripts -p test_check_workflow_policy.py
