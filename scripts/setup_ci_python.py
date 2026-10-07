@@ -24,9 +24,12 @@ def load_pins(path):
     pins = json.loads(path.read_text(encoding="utf-8"))
     if pins.get("schema_version") != 1:
         raise ValueError("Unsupported CI pins schema")
-    versions = [pins["python"], pins["zstd"], *pins["python_packages"].values()]
+    versions = [pins["python"], pins["zstd"]]
     if not all(isinstance(value, str) and re.fullmatch(r"\d+\.\d+\.\d+", value) for value in versions):
-        raise ValueError("CI dependency pins must be exact three-part versions")
+        raise ValueError("Python and zstd pins must be exact three-part versions")
+    if not all(isinstance(value, str) and re.fullmatch(r"\d+\.\d+(?:\.\d+)?", value)
+               for value in pins["python_packages"].values()):
+        raise ValueError("Python package pins must be exact release versions")
     if set(pins["python_packages"]) != {"pip", "Pillow", "PyYAML"}:
         raise ValueError("Expected the complete Python dependency pins")
     return pins

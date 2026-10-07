@@ -15,7 +15,7 @@
     "ipad": "iPad Air 11-inch (M4)",
     "appletv": "Apple TV 4K (3rd generation)"
   },
-  "python": "3.14.7",
-  "python_packages": {"pip": "26.2.1", "Pillow": "12.3.0", "PyYAML": "6.0.3"},
+  "python": "3.9.6",
+  "python_packages": {"pip": "25.3", "Pillow": "11.3.0", "PyYAML": "6.0.3"},
   "zstd": "1.5.7"
 }
