@@ -366,7 +366,8 @@ while True:
         finally:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
+                # macOS can leave only an adopted zombie in the group after pipe EOF.
                 pass
             process.communicate(timeout=5)
 
