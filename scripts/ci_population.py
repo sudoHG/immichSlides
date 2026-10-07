@@ -337,12 +337,51 @@ def python_identities(files, *, discovery_pattern="test_*"):
             return (constructor or method) and all(data_expression(module, arg, before, visiting=visiting) for arg in node.args)
         return False
 
+    def signature_expression(node, *, annotation=False):
+        if node is None or isinstance(node, (ast.Constant, ast.Name)):
+            return True
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return all(signature_expression(item, annotation=annotation) for item in node.elts)
+        if isinstance(node, ast.Dict) and not annotation:
+            return all(key is not None and signature_expression(key) and signature_expression(value)
+                       for key, value in zip(node.keys, node.values))
+        if isinstance(node, ast.Starred) and not annotation:
+            return isinstance(node.value, (ast.Name, ast.Tuple, ast.List)) and signature_expression(node.value)
+        if isinstance(node, ast.UnaryOp) and not annotation:
+            return isinstance(node.operand, ast.Constant)
+        if annotation and isinstance(node, ast.Attribute):
+            return signature_expression(node.value, annotation=True)
+        if annotation and isinstance(node, ast.Subscript):
+            return signature_expression(node.value, annotation=True) and signature_expression(node.slice, annotation=True)
+        if annotation and isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            return signature_expression(node.left, annotation=True) and signature_expression(node.right, annotation=True)
+        return False
+
     def function_definition(module, node, defined):
         if node.name in {"load_tests", "__getattr__", "__dir__", "__init_subclass__", "__getattribute__", "__new__", "__class_getitem__"}:
             fail(module, node, "discovery hook is outside the allowed grammar")
         for default in node.args.defaults + node.args.kw_defaults:
-            if default is not None and any(isinstance(child, (ast.Call, ast.NamedExpr, ast.Attribute, ast.Subscript)) for child in ast.walk(default)):
-                fail(module, default, "definition defaults must not execute calls or attribute lookups")
+            if not signature_expression(default):
+                fail(module, default, "definition default is outside the allowed signature grammar")
+        deferred = any(isinstance(item, ast.ImportFrom) and item.module == "__future__"
+                       and any(alias.name == "annotations" for alias in item.names) for item in trees[module].body)
+        arguments = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
+        arguments += [arg for arg in (node.args.vararg, node.args.kwarg) if arg is not None]
+        for annotation in [arg.annotation for arg in arguments] + [node.returns]:
+            if not signature_expression(annotation, annotation=True):
+                fail(module, annotation, "annotation is outside the allowed signature grammar")
+            if annotation is not None and not deferred:
+                for child in ast.walk(annotation):
+                    if isinstance(child, ast.BinOp):
+                        fail(module, child, "type unions require deferred annotations")
+                    if isinstance(child, (ast.Attribute, ast.Subscript)):
+                        expression = child.value if isinstance(child, ast.Subscript) else child
+                        try:
+                            target = resolve(module + "." + dotted(expression))
+                        except ContractError:
+                            target = None
+                        if target is None or not non_test_terminal(target) or not stable_constructor(module, child, expression):
+                            fail(module, child, "runtime type lookup requires an unshadowed standard-library type or deferred annotations")
         for decorator in node.decorator_list:
             expression = decorator.func if isinstance(decorator, ast.Call) else decorator
             try:

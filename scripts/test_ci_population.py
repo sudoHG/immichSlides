@@ -122,7 +122,10 @@ class StaticPopulationTests(unittest.TestCase):
                        "test_hidden = helper", "test_hidden = None", "del test_hidden", "test_hidden += helper",
                        "if True:\n  del test_hidden", "if True:\n  def test_hidden(self): pass",
                        "Alias = unittest.TestCase", "helper()", "@replace\n def test_hidden(self): pass",
-                       "def helper(self, marker=replace()): pass", "VALUES = set()",
+                       "def helper(self, marker=replace()): pass", "def helper(self, marker=lambda: None): pass",
+                       "def helper(self, marker: replace()): pass", "def helper(self) -> replace(): pass",
+                       "def helper(self, marker: factory[0]): pass", "def helper(self, marker: factory | object): pass",
+                       "VALUES = set()",
                        "def classmethod(function): return function\n @classmethod\n def test_hidden(self): pass"):
             source = "import unittest\nclass Tests(unittest.TestCase):\n def helper(self): pass\n " + member
             with self.subTest(member=member), self.assertRaisesRegex(ContractError, r"test_entry\.py:\d+:"):

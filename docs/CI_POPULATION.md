@@ -66,7 +66,7 @@ non-test helpers do not make their unrelated classes discoverable. At module sco
 | --- | --- |
 | `import` / `from ... import` | Unconditional, explicit names; no star imports |
 | `class Name(Base, ...)` | Bases are names or attributes bound once before the definition and statically resolved; no decorators, metaclass keywords, subscript bases or class-name rebinding |
-| `def` / `async def` | Function bodies are not evaluated; no discovery hooks such as `load_tests`, dynamic attribute/subclass hooks or defaults that execute calls/attribute lookups |
+| `def` / `async def` | Function bodies are not evaluated; no discovery hooks such as `load_tests` or dynamic attribute/subclass hooks; signatures use the grammar below |
 | `NAME = data` / `NAME: Type = data` | One plain name, never a class, base, discovery-hook or `test*` name; only the data expressions below |
 | Docstring / `pass` | No binding or execution |
 | `if __name__ == "__main__": unittest.main()` | Exact terminal script entry point, with no arguments, extra statements or else branch; import-based discovery never executes it |
@@ -94,6 +94,13 @@ The callable-preserving decorators `classmethod`, `staticmethod`, `unittest.skip
 `skipIf`, `skipUnless` and `expectedFailure` are supported with unshadowed bindings;
 skip arguments use the data grammar. `property` is allowed for non-test methods.
 Other decorators are unsupported. Class decorators are always rejected.
+
+Signature defaults accept literals, names, literal containers, name/container
+unpacking and signed literals. Annotations accept type names, literal arguments,
+attributes, subscripts and type unions; calls, lambdas and assignment expressions
+are unsupported. Type unions require deferred annotations. Attribute/subscript type lookups require deferred annotations
+(`from __future__ import annotations`) or unshadowed standard-library bindings.
+This keeps signature evaluation from invoking an unknown factory or type hook.
 
 Package-form unittest commands initialize imports in `scripts/__init__.py`; test
 modules contain declarations rather than executable path setup. The package
