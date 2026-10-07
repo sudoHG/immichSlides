@@ -17,7 +17,13 @@ reads Python files into a module-name map; it reads no private configuration.
   keyed by the defining module/class/method used by unittest. Local classes inside
   function bodies are fixture code, not discovered tests. Unresolved local or
   third-party bases, and dynamic bases, in a test module fail closed, including
-  aliases that might otherwise erase a whole suite. Conditional classes, wildcard imports and
+  aliases that might otherwise erase a whole suite. Conditional imports or assignments
+  that can bind discovered classes or bases raise `ContractError`; harmless constant
+  configuration and function-local fixtures are not discovery bindings. Base names,
+  imported namespaces and their alias dependencies must be bound exactly once,
+  before use. Rebinding before or after a class definition, deletion, mutation and
+  forward alias bindings are explicitly rejected rather than resolved from the
+  module's final state. Conditional classes, wildcard imports and
   `load_tests` hooks in test modules also fail. Non-test helper modules may contain
   unrelated generic or factory-based classes; a discovered TestCase's MRO must
   still resolve completely. Unshadowed builtins and the explicit Python 3.9
@@ -46,9 +52,11 @@ reads Python files into a module-name map; it reads no private configuration.
   owning-class platforms, merges same-named classes across conditional branches,
   and keys tests as `Class/testMethod`. Module-qualified `XCTest.XCTestCase` is
   supported; unsupported generic XCTest classes and XCTest base aliases fail explicitly.
-- `removed_tests(base_population, tested_population)` reports the admitted PR
-  base minus the tested merge tree. Removal is informational. No later `main`
-  population participates in coverage or a verdict.
+- `removed_tests(base_population, tested_population, base_sha=admitted_base_sha)`
+  requires a record `{base_sha, identities}`, with a valid SHA matching admission
+  and unique valid identities. It reports the admitted PR base minus the tested
+  merge tree. Removal is informational; a population from later `main` is invalid
+  input and never appears as PR removals or coverage expectations.
 
 Platforms are `ios` and `tvos`, stored in the identity's `platform` dimension.
 For static UI input include both `immichSlidesUITests` and `TestSupport`; for unit
@@ -60,12 +68,16 @@ Example (from the repository root, with a trusted library on `PYTHONPATH`):
 
 ```python
 from pathlib import Path
-from ci_population import python_identities, python_sources, swift_identities
+from ci_population import python_identities, python_sources, swift_identities, ui_identities
 
 python_tests = python_identities(python_sources(Path("scripts")))
 unit_sources = {str(p): p.read_text(encoding="utf-8")
                 for p in Path("immichSlidesTests").rglob("*.swift")}
 ios_functions = swift_identities(unit_sources, "ios")
+ui_sources = {str(p): p.read_text(encoding="utf-8")
+              for root in ("immichSlidesUITests", "TestSupport")
+              for p in Path(root).rglob("*.swift")}
+ios_ui_methods = ui_identities(ui_sources, "ios")
 ```
 
 ## Expected skips and tier deselections
@@ -114,6 +126,29 @@ The initial proposed deselection list is **empty**: no tests are moved out of a
 tier before fixture coverage is measured. UI shard/fixture selections belong to
 their separate ticket, which can propose entries using this model.
 
+### Pending unit-layer exceptions
+
+Approval of the five entries and empty deselection list above covers **only the
+host layer**. The review identified a 23-site unit-layer conditional-skip backlog;
+it remains pending in [unit producer ticket #91](https://github.com/sudoHG/immichSlides/issues/91).
+Known suites and gating files are listed below; none is authorized by the host policy.
+
+| Unit source | Pending condition |
+| --- | --- |
+| `FaceBoxLiveProbeTests.swift` | Live inputs and Evidence-plan gating |
+| `PerformanceLiveIntegrationTests.swift` | Live inputs and Evidence-plan gating |
+| `PlaybackPoolResolverLiveIntegrationTests.swift` | Live membership configuration |
+| `SlideShowViewModelLiveIntegrationTests.swift` | Live playback/dedup configuration |
+| `ExifForegroundAnalyzerPerformanceIOSTests.swift` | Evidence-plan gating |
+| `PlaybackRuntimeEvidenceManifestTests+Startup.swift` | External runtime evidence JSONL |
+| `EvidenceRun.swift` | Shared Evidence-plan environment switch |
+
+The current source-tree census finds 21 `.enabled(if:)` / `.disabled(` attributes
+across six test files, plus the shared Evidence switch. Reconcile that census with
+the review's 23-site backlog in #91, enumerate compiled identities and record actual
+emitted skip reasons/owning tiers before proposing unit entries. Head-SHA approval
+is required for those entries too; host approval cannot authorize unit skips.
+
 `evaluate_population(summary, expected, policy, environment="hermetic")` returns
 `status`, all `errors`, expected skip identities, deselections, missing compiled
 and missing executed identities. Declared and compiled function populations must
@@ -132,8 +167,10 @@ Approved exceptions can produce `passed`. This explicitly replaces the previous
 rule that every skip unconditionally made the summary unverified.
 Coverage discrepancies use `coverage-failed` diagnostics with readable function
 keys and a failed status. The version 1 diagnostic array stores these separately
-by code; Markdown labels them `Coverage`, and infrastructure health accounting
-must exclude that code. Unexpected skips retain their observed reason; missing
+by code. Markdown labels `coverage-failed` as `Coverage`, `policy-proposed` as
+`Policy`, and `population-invalid` as `Population`. Infrastructure health counts
+must exclude all three codes (the shared `NON_INFRASTRUCTURE_DIAGNOSTICS` mapping
+defines this boundary). Unexpected skips retain their observed reason; missing
 compiled/executed identities are named without inventing execution rows.
 The producer writes its interruption placeholder before parsing the policy or
 static population. Invalid inputs record `population-invalid`, all host checks
@@ -148,9 +185,13 @@ build membership for the tested tree and both diff sides. PR changes use
 An allowlisted document can be unaffected only if it is not a build member and
 not CI-trusted. The bundled privacy policy, all unknown paths and every trusted
 path affect the app. CI-trusted paths are `.github/workflows/**`, `.swift-format`,
-`scripts/ci_*.py`, and the CI entry points, policy/data/pins and their tests listed
-in `scripts/ci-classification.json`. The formatting policy changes the lint verdict.
-Ordinary tests and other scripts, `AGENTS.md` and `CLAUDE.md` are not CI-trusted;
+`scripts/ci_*.py`, every script invoked by `run_host_checks.HOST_CHECKS`, and the CI
+entry points, policy/data/pins and their own tests listed in
+`scripts/ci-classification.json`. This includes test conventions, release guards,
+localization catalog/usage, Python prerequisites and workflow-policy checks, plus
+`test_conventions_allowlist.json`. The formatting policy changes the lint verdict.
+A regression requires every `HOST_CHECKS` script to be covered by `ci_trusted`.
+Ordinary product/runner tests and other scripts, `AGENTS.md` and `CLAUDE.md` are not CI-trusted;
 adding or removing an ordinary test does not itself require CI-head approval.
 Invalid relative paths fail closed. There is no comment-only classification.
 
@@ -163,6 +204,10 @@ the overall expected population; one shard cannot cover an omission in another.
 Every artifact must match the admitted run identity, job, run, attempt and workflow;
 missing, duplicate or unexpected jobs fail. Each job accounts for its compiled
 population, and the aggregate declared/compiled union must equal the tested tree.
+PR evaluation also requires independently derived `base_population={"base_sha":
+admitted_base_sha, "identities": base_identities}`. Missing, malformed, duplicate
+or mismatched base records fail validation before removal reporting; valid
+removals never affect the coverage verdict.
 
 Inputs `fork_originated`, `ci_changing` and `app_affected` are derived by the trusted
 caller, not copied from producer claims. A fork PR or CI-changing PR requires

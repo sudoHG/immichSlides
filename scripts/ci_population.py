@@ -7,7 +7,7 @@ import fnmatch
 import re
 from pathlib import Path
 
-from ci_summary import ContractError, identity_key, require, test_identity, validate_test_identity
+from ci_summary import ContractError, fields, identity_key, require, sha, test_identity, validate_test_identity
 from ui_test_inventory import blank_comments_and_strings, line_platforms, matching_brace, parse_ui_tests
 
 # Explicit Python 3.9 names keep classification independent of the host Python.
@@ -54,10 +54,18 @@ def ordered(identities):
     return sorted(found.values(), key=lambda item: (item["kind"], item["key"], identity_key(item)))
 
 
-def removed_tests(base_population, tested_population):
+def removed_tests(base_population, tested_population, *, base_sha):
     """Use the admitted PR base, never a later main population."""
+    fields(base_population, {"base_sha", "identities"}, "base population")
+    sha(base_population["base_sha"])
+    sha(base_sha)
+    require(base_population["base_sha"] == base_sha, "population differs from admitted base SHA")
+    identities = base_population["identities"]
+    require(isinstance(identities, list), "base population identities must be an array")
+    validated = ordered(identities)
+    require(len(validated) == len(identities), "duplicate base population identity")
     tested = {identity_key(item) for item in tested_population}
-    return ordered(item for item in base_population if identity_key(item) not in tested)
+    return [item for item in validated if identity_key(item) not in tested]
 
 
 def dotted(node):
@@ -74,7 +82,7 @@ def python_identities(files, *, discovery_pattern="test_*"):
     """Map importable module names to source; follow aliases, mixins and C3 MRO.
 
     The caller supplies all local modules, including non-discovered mixin modules.
-    Unsupported discovery hooks, conditional classes and unresolved bases in test
+    Unsupported discovery hooks, conditional bindings and unresolved bases in test
     modules fail closed. Unrelated helper classes need not be test-discoverable.
     Functions' bodies are never evaluated and nested fixture classes are not discovered.
     """
@@ -83,11 +91,86 @@ def python_identities(files, *, discovery_pattern="test_*"):
     def discovered(module):
         return fnmatch.fnmatchcase(module.rsplit(".", 1)[-1], discovery_pattern)
 
+    def target_names(target):
+        if isinstance(target, ast.Name):
+            return [target.id]
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return [name for element in target.elts for name in target_names(element)]
+        if isinstance(target, (ast.Attribute, ast.Subscript)):
+            return target_names(target.value)
+        return []
+
+    def assignment_targets(node):
+        return node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+
+    def validate_bindings(module, tree):
+        # Final module bindings are safe only when base dependencies are bound once,
+        # before use. Reject unsupported control flow rather than simulating Python.
+        events = {}
+        for node in tree.body:
+            dependencies = []
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                names = [alias.asname or (alias.name.split('.')[0] if isinstance(node, ast.Import) else alias.name)
+                         for alias in node.names]
+            elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                names = [node.name]
+            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+                names = [name for target in assignment_targets(node) for name in target_names(target)]
+                if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                    try:
+                        dependencies = [dotted(node.value).split('.')[0]]
+                    except ContractError:
+                        pass
+            else:
+                continue
+            for name in names:
+                events.setdefault(name, []).append((node.lineno, dependencies))
+
+        used_bases = set()
+
+        def check_base(name, before, visiting=()):
+            used_bases.add(name)
+            require(name not in visiting, f"{module}: cyclic base binding: {name}")
+            writes = events.get(name, [])
+            require(len(writes) <= 1, f"{module}: repeated base binding: {name}")
+            if writes:
+                line, dependencies = writes[0]
+                require(line < before, f"{module}: base binding occurs after use: {name}")
+                for dependency in dependencies:
+                    check_base(dependency, line, (*visiting, name))
+
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                for base in node.bases:
+                    check_base(dotted(base).split('.')[0], node.lineno)
+
+        def check_conditional(node):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                return
+            require(not isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.For, ast.NamedExpr))
+                    and not (isinstance(node, ast.With) and any(item.optional_vars for item in node.items)),
+                    f"{module}: conditional discovery binding is unsupported")
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+                targets = assignment_targets(node)
+                names = {name for target in targets for name in target_names(target)}
+                harmless = (isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Constant)
+                            and all(isinstance(target, ast.Name) for target in targets)
+                            and not names.intersection(used_bases | set(events)))
+                require(harmless, f"{module}: conditional discovery binding is unsupported")
+            for child in ast.iter_child_nodes(node):
+                check_conditional(child)
+
+        for node in tree.body:
+            if isinstance(node, (ast.If, ast.Try, ast.For, ast.While, ast.With)):
+                check_conditional(node)
+
     for module, source in files.items():
         try:
             tree = ast.parse(source, filename=module)
         except SyntaxError as error:
             raise ContractError(f"{module}: invalid Python syntax") from error
+        if discovered(module):
+            validate_bindings(module, tree)
         bindings = {}
         for node in tree.body:
             if isinstance(node, ast.Import):
@@ -118,10 +201,6 @@ def python_identities(files, *, discovery_pattern="test_*"):
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 require(node.name != "load_tests" or not discovered(module), f"{module}: load_tests is dynamic discovery")
                 bindings[node.name] = module + "." + node.name
-            elif isinstance(node, (ast.If, ast.Try, ast.For, ast.While, ast.With)):
-                # Conditional top-level definitions are not the local classes inside test bodies.
-                require(not discovered(module) or not any(isinstance(child, ast.ClassDef) for child in ast.walk(node)),
-                        f"{module}: conditional class discovery is unsupported")
         modules[module] = bindings
 
     terminals = {"unittest.TestCase", "unittest.case.TestCase", "unittest.IsolatedAsyncioTestCase",

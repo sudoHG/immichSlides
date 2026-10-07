@@ -9,7 +9,7 @@ from __future__ import annotations
 import fnmatch
 from pathlib import PurePosixPath
 
-from ci_summary import (ContractError, decode, fields, identity_key, integer, parse_identity,
+from ci_summary import (ContractError, NON_INFRASTRUCTURE_DIAGNOSTICS, decode, fields, identity_key, integer, parse_identity,
                         parse_summary, require, string, validate_test_identity)
 from ci_population import removed_tests
 
@@ -175,7 +175,7 @@ def evaluate_population(raw, expected, policy, *, environment):
             elif entry["outcome"] != "passed":
                 errors.append(f"{entry['outcome']}: {label}")
         for entry in summary["infrastructure"]:
-            category = "coverage" if entry["code"] == "coverage-failed" else "infrastructure"
+            category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure").lower()
             errors.append(f"{category} {entry['code']}: {entry['message']}")
         if summary["status"] == "failed" or (summary["status"] == "unverified" and not result["expected_skips"]):
             errors.append(f"producer status is {summary['status']}")
@@ -191,13 +191,14 @@ def job_key(job):
 
 def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, base_policy,
                   environment, candidate_policy=None, approved_head=None, fork_originated=None,
-                  ci_changing=None, app_affected=None, context="gate", base_population=(),
+                  ci_changing=None, app_affected=None, context="gate", base_population=None,
                   allowed_events=("pull_request", "push")):
     """Evaluate admitted summaries using trusted inputs; publishing belongs elsewhere.
 
     required_jobs describe tier/job/shard, run_id/attempt, supported workflow_paths
     and independently derived expected identities for each job.
     For PRs admission_identity names the admitted merge/base/head/tree, not current main.
+    base_population is a required PR record {base_sha, identities} from that base.
     No summary is used to determine classification, approval, provenance or policy.
     """
     result = {"status": "failed", "errors": [], "approval_based": False, "self_reported": fork_originated,
@@ -218,7 +219,8 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
             result["errors"].append("local evaluation cannot authorize CI changes")
         policy, candidate_selected = select_policy(base_policy, candidate_policy, admission, approved_head)
         result["approval_based"] = approved and (fork_originated or ci_changing or candidate_selected)
-        result["removed_by_pr"] = removed_tests(base_population, expected) if admission["event"] == "pull_request" else []
+        result["removed_by_pr"] = (removed_tests(base_population, expected, base_sha=admission["base_sha"])
+                                   if admission["event"] == "pull_request" else [])
         if context == "ui" and not app_affected:
             require(not ci_changing, "CI-trusted changes cannot be not applicable")
             result["status"] = "failed" if result["errors"] else "not-applicable"

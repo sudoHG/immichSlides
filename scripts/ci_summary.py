@@ -13,6 +13,8 @@ SCHEMA_VERSION = 1
 OUTCOMES = {"passed", "failed", "skipped", "flaky-passed", "crashed", "timed-out", "not-run", "needs-human-review"}
 ATTEMPT_OUTCOMES = OUTCOMES - {"flaky-passed"}
 STRICT_DIMENSIONS = {"device", "configuration", "suite", "scenario", "fixture"}
+NON_INFRASTRUCTURE_DIAGNOSTICS = {"coverage-failed": "Coverage", "policy-proposed": "Policy",
+                                  "population-invalid": "Population"}
 
 
 class ContractError(ValueError):
@@ -271,7 +273,7 @@ def render_markdown(payload):
     for entry in population["deselected"]:
         lines.append(f"| {markdown_text(entry['identity']['key'])} | deselected | — | {markdown_text(entry['reason'])}; owned by {markdown_text(entry['owning_tier'])} |")
     for entry in payload["infrastructure"]:
-        category = "Coverage" if entry["code"] == "coverage-failed" else "Infrastructure"
+        category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure")
         lines.append(f"\n{category}: {markdown_text(entry['code'])}: {markdown_text(entry['message'])}")
     return "\n".join(lines) + "\n"
 

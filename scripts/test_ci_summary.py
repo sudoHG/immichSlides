@@ -46,6 +46,14 @@ class SummaryContractTests(unittest.TestCase):
             summary["population"]["declared"][0], "failed", 0.2, message="format exited 1", exit_code=1)
         summary["status"] = "failed"
         self.assertIn("format exited 1", ci_summary.render_markdown(ci_summary.parse_summary(summary)))
+        for code, category in (("policy-proposed", "Policy"), ("population-invalid", "Population"),
+                               ("coverage-failed", "Coverage"), ("step-timeout", "Infrastructure")):
+            with self.subTest(code=code):
+                summary["infrastructure"] = [{"code": code, "message": "diagnostic detail"}]
+                markdown = ci_summary.render_markdown(summary)
+                self.assertIn(f"{category}: {code}: diagnostic detail", markdown)
+                if category != "Infrastructure":
+                    self.assertNotIn("Infrastructure:", markdown)
 
     def test_malformed_or_unknown_contracts_are_rejected(self):
         changes = [

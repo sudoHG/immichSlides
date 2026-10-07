@@ -68,7 +68,7 @@ producer data, not its provenance or a trusted verdict.
 | `hashes` | `manifests` and `policies`, each a map of logical names to lowercase SHA-256 hashes |
 | `toolchain` | `versions` (nonempty name-to-version map; unavailable versions are null), `signing_mode` |
 | `population` | `declared`, `compiled`, `observed`, `deselected`, `removed_by_pr` arrays |
-| `infrastructure` | Array of `{code, message}` diagnostics, never silently omitted; `coverage-failed` identifies coverage failures separately from infrastructure outcomes |
+| `infrastructure` | Version 1 array of `{code, message}` diagnostics, never silently omitted; codes distinguish coverage, policy and population diagnostics from infrastructure outcomes |
 | `status` | Producer execution status: `passed`, `failed`, `unverified` |
 
 Source repository/event must match the identity. CI requires a workflow path below
@@ -89,8 +89,10 @@ as `manifests.ci-pins`; local runs do not claim to consume its setup pins.
 
 Coverage discrepancies use `coverage-failed`, readable test keys and a failed
 status, while malformed static populations/policies use `population-invalid`.
-Markdown labels `coverage-failed` as `Coverage`; infrastructure health reports
-must exclude that code. Skipped observations keep their exact reason, and absent
+Markdown labels `coverage-failed` as `Coverage`, `policy-proposed` as `Policy`, and
+`population-invalid` as `Population`; infrastructure health counts must exclude
+all three codes, as defined by `NON_INFRASTRUCTURE_DIAGNOSTICS` in `ci_summary.py`.
+Other diagnostics retain the `Infrastructure` label. Skipped observations keep their exact reason, and absent
 execution is reported without adding fictitious observed rows.
 Later producers hash the exact bytes of each additional manifest/policy they consume. Versions
 record actual tools, not a claim that pins were verified. Host signing is

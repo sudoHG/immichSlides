@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import ci_summary
+from run_host_checks import HOST_CHECKS
 from ci_verdict import (classify_changes, evaluate_gate, evaluate_population, parse_policy, select_policy)
 from test_ci_summary import valid_summary
 
@@ -136,6 +137,8 @@ class AdmissionVerdictTests(unittest.TestCase):
     def verdict(self, **kwargs):
         trusted = {"fork_originated": False, "ci_changing": False, "app_affected": True,
                    "allowed_events": ("pull_request", "push", "local")}
+        if self.identity["event"] == "pull_request":
+            trusted["base_population"] = {"base_sha": self.identity["base_sha"], "identities": self.expected}
         trusted.update(kwargs)
         return evaluate_gate([self.summary], expected=self.expected, admission_identity=self.identity,
                              required_jobs=self.jobs, base_policy=policy(), environment="hermetic", **trusted)
@@ -229,7 +232,7 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.assertEqual(verdict["status"], "failed")
         self.assertTrue(any("missing compiled" in error for error in verdict["errors"]))
 
-    def test_later_main_population_never_enters_the_verdict(self):
+    def test_removal_report_requires_the_admitted_base_and_does_not_gate_coverage(self):
         self.identity = {"schema_version": 1, "event": "pull_request", "repository": "sudoHG/immichSlides",
                          "tree_sha": "b" * 40, "merge_sha": "a" * 40,
                          "base_sha": "c" * 40, "head_sha": "d" * 40, "pull_request": 1}
@@ -238,16 +241,29 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.summary["run"]["id"] = "42"
         self.jobs[0].update(run_id="42", workflow_paths=[".github/workflows/ci-gate.yml"])
         old = ci_summary.test_identity("host", "removed-on-pr")
-        admitted_base = self.expected + [old]
+        admitted_base = {"base_sha": self.identity["base_sha"], "identities": self.expected + [old]}
         before = self.verdict(base_population=admitted_base)
         added_on_main = ci_summary.test_identity("host", "new-on-main")
-        later_main = admitted_base + [added_on_main]
-        after = self.verdict(base_population=later_main)
+        later_main = {"base_sha": "e" * 40, "identities": admitted_base["identities"] + [added_on_main]}
+        rejected = self.verdict(base_population=later_main)
+        self.assertEqual(rejected["status"], "failed")
+        self.assertEqual(rejected["removed_by_pr"], [])
+        self.assertTrue(any("admitted base SHA" in error for error in rejected["errors"]))
+        after = self.verdict(base_population=admitted_base)
         self.assertEqual(after["status"], before["status"])
         self.assertEqual(after["status"], "passed")
         self.assertEqual(before["removed_by_pr"], [old])
-        self.assertEqual(after["removed_by_pr"], [added_on_main, old])
+        self.assertEqual(after["removed_by_pr"], [old])
         self.assertEqual(after["errors"], before["errors"])
+        self.assertEqual(self.verdict()["status"], "passed")
+        self.assertEqual(self.verdict()["removed_by_pr"], [])
+        for malformed in (None, admitted_base["identities"], {},
+                          dict(admitted_base, base_sha="invalid"), dict(admitted_base, identities=None),
+                          dict(admitted_base, identities=[old, old]), dict(admitted_base, identities=[{}])):
+            with self.subTest(base_population=malformed):
+                verdict = self.verdict(base_population=malformed)
+                self.assertEqual(verdict["status"], "failed")
+                self.assertEqual(verdict["removed_by_pr"], [])
 
     def test_push_requires_pushed_identity_and_manual_dispatch_is_not_gate_evidence(self):
         pushed = {"schema_version": 1, "event": "push", "repository": "sudoHG/immichSlides",
@@ -308,13 +324,20 @@ class AdmissionVerdictTests(unittest.TestCase):
                                        (["scripts/ci-pins.json"], set(), True, True),
                                        ([".github/workflows/ci-gate.yml"], set(), True, True),
                                        ([".swift-format"], set(), True, True),
+                                       (["scripts/check_test_conventions.py", "scripts/test_conventions_allowlist.json"], set(), True, True),
                                        (["AGENTS.md", "CLAUDE.md", ".github/ISSUE_TEMPLATE/bug.md"], set(), True, False),
-                                       (["scripts/run_strict_e2e.py", "scripts/test_strict_e2e_photo_identity.py",
-                                         "scripts/check_test_conventions.py"], set(), True, False),
+                                       (["scripts/run_strict_e2e.py", "scripts/test_strict_e2e_photo_identity.py"], set(), True, False),
                                        (["unknown.file"], set(), True, False)):
             with self.subTest(paths=paths):
                 classification = classify_changes(paths, allowlist, build_target_paths=members)
                 self.assertEqual((classification["app_affected"], classification["ci_changing"]), (app, ci))
+        host_paths = [part for _, command in HOST_CHECKS for part in command if part.startswith("scripts/")]
+        host_paths += ["scripts/test_check_test_conventions.py", "scripts/test_check_release_guards.py",
+                       "scripts/test_validate_localization_catalog.py", "scripts/test_scan_chinese_strings.py",
+                       "scripts/test_required_test_tools.py", "scripts/test_conventions_allowlist.json"]
+        for path in host_paths:
+            with self.subTest(host_path=path):
+                self.assertTrue(classify_changes([path], allowlist, build_target_paths=set())["ci_changing"])
         self.assertEqual(self.verdict(context="ui", app_affected=False)["status"], "not-applicable")
         for path in ("../README.md", "/README.md", "docs/../scripts/x.py"):
             with self.subTest(path=path), self.assertRaises(ci_summary.ContractError):

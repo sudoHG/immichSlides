@@ -71,6 +71,40 @@ class StaticPopulationTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(ContractError):
                 python_identities({"test_sample": source})
 
+    def test_conditional_imports_and_base_assignments_cannot_hide_test_classes(self):
+        support = "from unittest import TestCase\nclass Imported(TestCase):\n def test_hidden(self): pass\n"
+        always = "import unittest\nclass Always(unittest.TestCase):\n def test_always(self): pass\n"
+        for binding in ("if True:\n from support import Imported",
+                        "try:\n from support import Imported\nexcept ImportError:\n pass",
+                        "if True:\n import support as cases",
+                        "if True:\n Alias = support.Imported",
+                        "if True:\n Base = None\nclass Tests(Base): pass",
+                        "for Imported in support.cases:\n pass",
+                        "with context() as Imported:\n pass",
+                        "if (Alias := support.Imported):\n pass",
+                        "try:\n Base = unittest.TestCase\nexcept Exception:\n Base = object\nclass Tests(Base): pass",
+                        "if True:\n unittest.TestCase = object"):
+            with self.subTest(binding=binding), self.assertRaisesRegex(ContractError, "conditional.*binding"):
+                python_identities({"support": support, "test_entry": always + binding})
+        # Function-local fixtures and constant module configuration are not discovery bindings.
+        self.assertEqual(python_identities({"test_entry": always + "if True:\n TIMEOUT = 5\n"
+                                           "def helper():\n if True:\n  from support import Imported"}),
+                         [test_identity("python", "test_entry.Always.test_always")])
+
+    def test_rebinding_base_names_before_or_after_class_definition_is_rejected(self):
+        for source in (
+                "Base = unittest.TestCase\nclass Tests(Base): pass\nBase = object",
+                "Base = object\nBase = unittest.TestCase\nclass Tests(Base): pass",
+                "Base = unittest.TestCase\nAlias = Base\nclass Tests(Alias): pass\nBase = object",
+                "Alias = Base\nBase = unittest.TestCase\nclass Tests(Alias): pass",
+                "class Base(unittest.TestCase): pass\nclass Tests(Base): pass\nBase = object",
+                "class Tests(unittest.TestCase): pass\nunittest = replacement",
+                "Base = unittest.TestCase\nclass Tests(Base): pass\ndel Base",
+                "Base = unittest.TestCase\nclass Tests(Base): pass\nBase += other",
+                "class Tests(Base): pass\nBase = unittest.TestCase"):
+            with self.subTest(source=source), self.assertRaisesRegex(ContractError, "base binding"):
+                python_identities({"test_entry": "import unittest\n" + source})
+
     def test_swift_suites_extensions_platforms_and_parameters_keep_function_identity(self):
         files = {
             "A.swift": '@Suite(.serialized)\nstruct Tests {\n @Test(arguments: [1, 2])\n'
