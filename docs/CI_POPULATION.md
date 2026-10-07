@@ -26,6 +26,8 @@ reads Python files into a module-name map; it reads no private configuration.
   simulator conditions use the shared parser's Debug simulator model. Unknown or
   malformed conditions, ambiguous duplicate function names, unresolved extensions
   and local `@Test` declarations are errors.
+  Traditional `XCTestCase` methods in the mixed unit target are also enumerated
+  through the shared XCTest parser and recorded with kind `swift`.
 - `ui_identities(files, platform)` reuses `scripts/ui_test_inventory.py`, the
   parser also used by the existing excluded-test check. It intersects method and
   owning-class platforms and keys tests as `Class/testMethod`.

@@ -144,8 +144,11 @@ class AdmissionVerdictTests(unittest.TestCase):
 
     def test_absent_artifacts_jobs_or_mismatched_run_identity_fail_closed(self):
         self.assertEqual(self.verdict()["status"], "passed")
-        self.assertEqual(evaluate_gate([], expected=self.expected, admission_identity=self.identity,
-                                     required_jobs=self.jobs, base_policy=policy(), environment="hermetic")["status"], "failed")
+        missing = evaluate_gate([], expected=self.expected, admission_identity=self.identity,
+                                required_jobs=self.jobs, base_policy=policy(), environment="hermetic",
+                                fork_originated=False, ci_changing=False, app_affected=True)
+        self.assertEqual(missing["status"], "failed")
+        self.assertTrue(any("missing required job/artifact" in error for error in missing["errors"]))
         for mutate in (lambda s: s["run"].update(attempt=2),
                        lambda s: s["identity"].update(tree_sha="c" * 40),
                        lambda s: s["source"].update(workflow_path=".github/workflows/renamed.yml")):

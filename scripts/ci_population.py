@@ -225,7 +225,9 @@ def swift_identities(files, platform):
             raise ContractError(f"{filename}: {error}") from error
         parsed.append((filename, code, scopes))
 
-    found = {}
+    # The unit target mixes Swift Testing suites and XCTestCase classes.
+    # Reuse the UI parser so compiled unit methods cannot disappear from coverage.
+    found = {identity["key"]: dict(identity, kind="swift") for identity in ui_identities(files, platform)}
     for filename, code, scopes in parsed:
         for attribute in ATTRIBUTE_RE.finditer(code):
             position = attribute.end()
