@@ -7,6 +7,8 @@ pin is unavailable; they must not select the latest installed version as a fallb
 
 The Xcode and simulator pins match the [hosted Vision probe](https://github.com/sudoHG/immichSlides/actions/runs/37592421181).
 Python 3.14.7 is installed in that runner image's [software inventory](https://github.com/actions/runner-images/blob/xcode-27-arm64/20260928.0222/images/macos/xcode-27-arm64-Readme.md).
+The PR workflow selects that exact pin with a commit-pinned `actions/setup-python`, since
+the same runner label can serve newer images with a different default Python.
 Pillow 12.3.0 supplies Python 3.14 wheels; the earlier local Pillow 11.3.0 environment is
 not the pinned CI environment. PyYAML 6.0.3 parses workflow structure safely. Pip is also
 pinned. These dependencies are CI tools and do not ship in the app.
