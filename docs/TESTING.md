@@ -188,6 +188,12 @@ These are exactly the problems tests exist to catch.
 Run it with the other Python tests: `python3 -B -m unittest discover -s scripts -p 'test_*.py'`, or directly
 with `python3 scripts/check_test_conventions.py`.
 
+For the shared macOS CI host entry point, use `python3 -B scripts/run_host_checks.py`.
+It runs these Python tests and records each discovered identity, outcome and duration
+alongside the other host checks. `scripts/check_all.sh` delegates its host checks to
+that entry point. Commands and the versioned records are described in
+[CI_SUMMARY.md](CI_SUMMARY.md).
+
 Existing violations are tracked in `scripts/test_conventions_allowlist.json` by rule, file path and name (no
 line numbers, so the list survives unrelated edits). The check fails on any violation not in the allowlist,
 and on any allowlist entry that no longer matches a real violation — so the list can only shrink as tests are

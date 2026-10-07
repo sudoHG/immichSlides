@@ -96,38 +96,21 @@ class CheckAllTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.calls(), [])
 
-    def test_all_steps_pass_in_order_and_xcode_tests_are_reported_skipped(self):
+    def test_shared_host_checks_pass_and_xcode_tests_are_reported_skipped(self):
         result = self.run_check_all()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.calls()
-        self.assertEqual(len(calls), 7)
-        self.assertTrue(calls[0].startswith("xcrun swift-format lint --strict"))
-        self.assertIn("scripts/check_test_conventions.py", calls[1])
-        self.assertIn("scripts/check_release_guards.py", calls[2])
-        self.assertIn("scripts/validate_localization_catalog.py", calls[3])
-        self.assertIn("scripts/scan_chinese_strings.py", calls[4])
-        self.assertIn("scripts/check_required_test_tools.py", calls[5])
-        self.assertIn("-m unittest discover -s scripts", calls[6])
+        self.assertEqual(len(calls), 1)
+        self.assertIn("scripts/run_host_checks.py", calls[0])
         self.assertIn("Xcode unit tests were skipped", result.stdout)
         self.assertIn("RESULT: PASS", result.stdout)
 
-    def test_failing_step_fails_the_run_but_later_steps_still_run(self):
-        result = self.run_check_all(fail_match="check_release_guards.py")
+    def test_failing_host_checks_fail_the_run(self):
+        result = self.run_check_all(fail_match="run_host_checks.py")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("FAIL: release guards (exit 3", result.stdout)
+        self.assertIn("FAIL: host checks (exit 3", result.stdout)
         self.assertIn("RESULT: FAIL (1 step(s) failed)", result.stdout)
-        self.assertEqual(len(self.calls()), 7)
-
-    def test_missing_test_tool_fails_without_skipping_python_tests(self):
-        result = self.run_check_all(fail_match="check_required_test_tools.py")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("FAIL: Python test prerequisites", result.stdout)
-        self.assertIn("-m unittest discover -s scripts", self.calls()[-1])
-
-    def test_lint_failure_fails_the_run(self):
-        result = self.run_check_all(fail_match="swift-format lint")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("FAIL: swift-format lint", result.stdout)
+        self.assertEqual(len(self.calls()), 1)
 
     def test_unit_tests_run_for_both_platforms_with_bundles_in_output_dir(self):
         out = self.tmp / "out"
