@@ -55,7 +55,7 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 
 The informational `ci-gate` host job runs on pull requests and pushes to `main`.
 To keep its JSON and short Markdown records locally, run
-`python3 -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run`.
+`/usr/bin/python3 -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run`.
 `check_all.sh` uses the same checks and removes its temporary host records.
 See [the summary contract](docs/CI_SUMMARY.md) for validation, identity, result
 accounting and the current workflow boundary. Existing privacy checks remain required.

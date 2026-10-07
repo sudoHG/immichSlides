@@ -27,6 +27,13 @@ class CheckAllTests(unittest.TestCase):
         self.repo = self.tmp / "repo"
         (self.repo / "scripts").mkdir(parents=True)
         shutil.copy(SCRIPT, self.repo / "scripts" / "check_all.sh")
+        (self.repo / "scripts" / "run_host_checks.py").write_text("""import os, sys
+command = 'python3 scripts/run_host_checks.py ' + ' '.join(sys.argv[1:])
+with open(os.environ['STUB_LOG'], 'a') as log:
+    log.write(command + '\\n')
+match = os.environ.get('STUB_FAIL_MATCH', '')
+sys.exit(3 if match and match in command else 0)
+""")
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()
         for name in ("xcrun", "python3"):
