@@ -296,7 +296,7 @@ compiler options and execution environment identical when comparing timing resul
 | `E2E-P0-02` | First-boot setup survives a cold relaunch |
 | `E2E-P0-03` | Random or core playback is reached |
 | `E2E-P0-04` | Album filter members, empty album, or album edit-switch |
-| `E2E-P0-05` | Person filter rules, including vision solo-only |
+| `E2E-P0-05` | Person filter rules. Vision solo-only is reported `UNVERIFIED` on simulators and has no device path yet ([#80](https://github.com/sudoHG/immichSlides/issues/80)) |
 | `E2E-P0-06` | Server-switch isolation |
 | `E2E-P0-07` | A late image keeps the current scene |
 | `E2E-P0-08`, `E2E-P0-09` | Playback control state on the iOS and tvOS playback flows |
