@@ -261,9 +261,9 @@ def render_markdown(payload):
              "", f"Declared: {len(population['declared'])}; compiled/discovered: {len(population['compiled'])}; "
              f"observed: {len(population['observed'])}; deselected: {len(population['deselected'])}.", "",
              "| Check or test | Outcome | Seconds | Reason or failure |", "| --- | --- | ---: | --- |"]
-    # Successful Python identities stay in JSON; Markdown stays short.
+    # Successful Python and Swift identities stay in JSON; Markdown stays short.
     for entry in population["observed"]:
-        if entry["identity"]["kind"] == "python" and entry["outcome"] == "passed":
+        if entry["identity"]["kind"] in {"python", "swift"} and entry["outcome"] == "passed":
             continue
         message = "; ".join(detail for attempt in entry["attempts"]
                             for detail in (attempt["reason"], attempt["message"]) if detail)

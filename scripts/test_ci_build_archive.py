@@ -254,16 +254,48 @@ class BuildArchiveTests(unittest.TestCase):
         (developer.parent / "version.plist").write_bytes(plistlib.dumps({"ProductBuildVersion": "27A266a"}))
         output = self.root / "proof-failure"
         relocated = self.root / "relocated-failure"
-        with patch.object(archive, "ROOT", workspace), patch.dict(archive.os.environ, {"DEVELOPER_DIR": str(developer)}), \
+        import ci_unit_tests as units
+        with patch.object(units, "ROOT", workspace), patch.dict(archive.os.environ, {"DEVELOPER_DIR": str(developer)}), \
                 patch.object(archive, "extract_products") as extract, redirect_stderr(io.StringIO()):
-            self.assertEqual(archive.main(["proof", "--selection-path", str(selection_path), "--archive-dir", str(archive_dir),
+            self.assertEqual(units.main(["run", "--selection-path", str(selection_path), "--archive-dir", str(archive_dir),
                                            "--relocated-path", str(relocated), "--output-dir", str(output)]), 1)
             extract.assert_not_called()
             summary = json.loads((output / "summary.json").read_text())
             self.assertEqual(summary["status"], "failed")
-            self.assertEqual(summary["infrastructure"][0]["code"], "archive-identity-mismatch")
-            self.assertIn("use Re-run all jobs", summary["infrastructure"][0]["message"])
+            self.assertEqual(summary["infrastructure"][0]["code"], "unit-archive-failed")
+            self.assertIn("build identity mismatch", summary["infrastructure"][0]["message"])
             self.assertFalse(relocated.exists())
+
+
+class ArchiveUnitResultTests(unittest.TestCase):
+    def test_enumeration_errors_or_empty_unit_population_cannot_pass(self):
+        from ci_unit_tests import enumeration_keys
+        for payload in ({"errors": ["bootstrap failed"], "values": []}, {"values": []},
+                        {"values": [{"kind": "target", "name": "immichSlidesUITests"}]}):
+            with self.subTest(payload=payload), self.assertRaises(ContractError):
+                enumeration_keys(payload)
+
+    def test_compiled_missing_or_extra_execution_cannot_be_hidden_by_passing_counts(self):
+        from ci_unit_tests import compare_execution
+        for compiled, observed in (({"A/a()", "B/b()"}, {"A/a()"}), ({"A/a()"}, {"A/a()", "B/b()"})):
+            with self.subTest(compiled=compiled), self.assertRaises(ContractError):
+                compare_execution(compiled, observed)
+        compare_execution({"A/a()"}, {"A/a()"})
+
+    def test_official_failed_parameter_and_skip_reason_are_preserved(self):
+        from ci_unit_tests import result_observations
+        payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesTests", "children": [
+            {"nodeType": "Test Case", "nodeIdentifier": "A/a()", "result": "Failed", "duration": "0.25s",
+             "children": [{"nodeType": "Test Case Run", "nodeIdentifier": "A/a()/argument:2", "name": "argument:2",
+                           "result": "Failed", "duration": "0.25s"}]},
+            {"nodeType": "Test Case", "nodeIdentifier": "B/b()", "result": "Skipped", "duration": "0s"},
+        ]}]}
+        rows = result_observations(payload, "ios", {"B/b()": "No local live config"})
+        self.assertEqual([row["outcome"] for row in rows], ["failed", "failed", "skipped"])
+        self.assertEqual(rows[1]["identity"]["dimensions"]["parameter"], "A/a()/argument:2")
+        self.assertEqual(rows[2]["attempts"][0]["reason"], "No local live config")
+        with self.assertRaisesRegex(ContractError, "skip reason"):
+            result_observations(payload, "ios", {})
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import threading
 import urllib.error
 import urllib.request
 from pathlib import Path, PurePosixPath
@@ -22,22 +23,13 @@ from pathlib import Path, PurePosixPath
 from ci_summary import (ContractError, decode, fields, integer, observation, parse_identity,
                         require, sha, test_identity, write_summary)
 from run_host_checks import run_identity, source_metadata, toolchain
-from run_offline_unit_tests import (CommandError, classify_test_results, default_data_available_gib,
-                                    default_run, ensure_disk_for_xcodebuild, read_official_test_results_summary)
+from run_offline_unit_tests import (CommandError, default_data_available_gib,
+                                    default_run, ensure_disk_for_xcodebuild)
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-gate.yml"
 SCHEMES = {"ios": "immichSlides-iOS", "tvos": "immichSlides-tvOS"}
 DESTINATIONS = {"ios": "iOS Simulator", "tvos": "tvOS Simulator"}
-PROOF_SELECTORS = [
-    "immichSlidesTests/ImmichAssetMetadataDecoderTests/`" + name + "`()" for name in (
-        "complete metadata decodes asset dimensions, EXIF dimensions, orientation, and person face boxes",
-        "old JSON missing metadata keeps the new fields nil",
-        "nil, zero, unknown fields, and numeric orientation decode safely",
-        "a person missing the faces field keeps faces nil",
-    )
-] + ["immichSlidesTests/SlideShowViewModelVisibleSceneIdentityTests/"
-     "`pause hold after visible A2 and completed A3 keeps decoded size, view model ids, and overlay model on A2`()"]
 MANIFEST_FIELDS = {"schema_version", "identity", "producer", "platform", "configuration", "architectures",
                    "xcode_build", "pins_sha256", "signing_mode", "private_configuration_present",
                    "source_path", "products_path", "archive_sha256", "files"}
@@ -311,6 +303,29 @@ def write_json(path, payload):
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+class DiskMeasurement:
+    """Sample volume use; include transient simulator and Xcode growth, not just endpoints."""
+    def __init__(self):
+        self.before_gib = default_data_available_gib()
+        self.minimum_gib = self.before_gib
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self.sample, daemon=True)
+        self.thread.start()
+
+    def sample(self):
+        while not self.stopped.wait(1):
+            self.minimum_gib = min(self.minimum_gib, default_data_available_gib())
+
+    def finish(self):
+        self.stopped.set()
+        self.thread.join()
+        after = default_data_available_gib()
+        self.minimum_gib = min(self.minimum_gib, after)
+        return {"before_gib": self.before_gib, "after_gib": after,
+                "minimum_free_gib": self.minimum_gib,
+                "peak_growth_gib": max(0, self.before_gib - self.minimum_gib), "sample_interval_seconds": 1}
+
+
 def output(key, value):
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
@@ -398,6 +413,8 @@ def run_build(args):
     write_summary(summary, records)
     started = time.monotonic()
     code = 1
+    disk_measurement = None
+    measurements = {"setup_seconds": args.setup_seconds, "build_seconds": None, "pack_seconds": None}
     try:
         workspace_preflight(ROOT)
         require(not os.path.lexists(args.derived_data_path), "DerivedData path must be fresh")
@@ -405,13 +422,16 @@ def run_build(args):
         pins_sha = file_hash(pins_path)
         summary["hashes"]["manifests"]["ci-pins"] = pins_sha
         disk_before = disk_check(args.min_free_gib)
+        disk_measurement = DiskMeasurement()
         summary["toolchain"] = toolchain()
         command = ["xcodebuild", "build-for-testing", "-project", str(ROOT / "immichSlides.xcodeproj"),
                    "-scheme", SCHEMES[args.platform], "-testPlan", SCHEMES[args.platform],
                    "-configuration", "Debug", "-destination", "generic/platform=" + DESTINATIONS[args.platform],
                    "-derivedDataPath", str(args.derived_data_path.resolve()),
                    "-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile"]
+        build_started = time.monotonic()
         code = default_run(command, timeout_seconds=1800)
+        measurements["build_seconds"] = time.monotonic() - build_started
         require(code == 0, f"build-for-testing failed (exit {code})")
         workspace_preflight(ROOT)
         require(file_hash(pins_path) == pins_sha, "pins changed during build")
@@ -428,7 +448,9 @@ def run_build(args):
         archive_dir = args.output_dir / "archive"
         archive_dir.mkdir()
         archive_path = archive_dir / "build.tar.gz"
+        pack_started = time.monotonic()
         pack_products(products, archive_path)
+        measurements["pack_seconds"] = time.monotonic() - pack_started
         manifest = make_manifest(products, identity=ctx["identity"], run_id=ctx["run_id"] or "local", attempt=ctx["attempt"],
                                  platform=args.platform, architecture=architectures, xcode_build=xcode_build,
                                  source_path=ROOT, archive_sha=file_hash(archive_path), pins_sha=pins_sha, signing_mode=signature)
@@ -449,6 +471,10 @@ def run_build(args):
         code = code or 1
         record_failure(summary, step, error, code, started, "build-archive-failed")
     finally:
+        if disk_measurement:
+            measurements["disk"] = disk_measurement.finish()
+        measurements["total_seconds"] = time.monotonic() - started
+        write_json(records / "measurements.json", measurements)
         write_summary(summary, records)
     return code
 
@@ -489,83 +515,6 @@ def run_select(args):
     return code
 
 
-def run_proof(args):
-    ctx = decode(args.selection_path.read_text(encoding="utf-8"))
-    summary = record(ctx, ctx["platform"], "archive-relocation")
-    step = test_identity("host", "relocated fixture tests", platform=ctx["platform"], configuration="Debug")
-    summary["population"]["declared"] = [step]
-    summary["population"]["compiled"] = [step]
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    summary["population"]["observed"] = [observation(step, "not-run", 0, reason="relocation has not completed", exit_code=None)]
-    write_summary(summary, args.output_dir)
-    started = time.monotonic()
-    simulator = None
-    code = 1
-    try:
-        require(not (ROOT / "immichSlides.xcodeproj").exists(), "consumer tooling must not contain a source checkout")
-        manifest_path = args.archive_dir / "manifest.json"
-        manifest = decode(manifest_path.read_text(encoding="utf-8"))
-        pins_path = Path(__file__).with_name("ci-pins.json")
-        pins = json.loads(pins_path.read_text(encoding="utf-8"))
-        developer = Path(os.environ["DEVELOPER_DIR"])
-        xcode_build = plistlib.loads((developer.parent / "version.plist").read_bytes())["ProductBuildVersion"]
-        require(file_hash(pins_path) == ctx["pins_sha256"], "consumer pins changed after selection")
-        validate_manifest(manifest, ctx["identity"], ctx["run_id"], ctx["producer_attempt"], ctx["platform"],
-                          xcode_build, ctx["pins_sha256"])
-        require(not os.path.lexists(manifest["source_path"]), "build-time source checkout is present on consumer")
-        require(not Path(os.environ["GITHUB_WORKSPACE"]).joinpath("consumer-source").exists(), "consumer source checkout still present")
-        require(str((args.relocated_path / "Products").resolve()) != manifest["products_path"], "relocation path is not distinct")
-        require(not os.path.lexists(manifest["products_path"]), "build-time Products path is present on consumer")
-        extract_products(args.archive_dir / "build.tar.gz", args.relocated_path, manifest)
-        summary["hashes"]["manifests"] = {"ci-pins": ctx["pins_sha256"], "build": file_hash(manifest_path)}
-        before = disk_check(args.min_free_gib)
-        summary["toolchain"] = toolchain()
-        app = next((args.relocated_path / "Products").glob("Debug-*simulator/immichSlides.app"))
-        signature = measure_signing(app)
-        require(signature == manifest["signing_mode"], "relocated app signing mode mismatch")
-        record_signing(summary, signature)
-        devices = json.loads(checked_command(["xcrun", "simctl", "list", "devicetypes", "--json"]))["devicetypes"]
-        device_name = pins["device_types"]["iphone" if ctx["platform"] == "ios" else "appletv"]
-        device = next(item["identifier"] for item in devices if item["name"] == device_name)
-        simulator = checked_command(["xcrun", "simctl", "create", "immichSlides-archive-proof", device,
-                                     pins["simulators"][ctx["platform"]]["runtime"]])
-        xctestrun = next((args.relocated_path / "Products").glob("*.xctestrun"))
-        result_path = args.output_dir / "private.xcresult"
-        command = ["xcodebuild", "test-without-building", "-xctestrun", str(xctestrun),
-                   "-destination", f"platform={DESTINATIONS[ctx['platform']]},id={simulator}",
-                   "-parallel-testing-enabled", "NO",
-                   "-resultBundlePath", str(result_path), *["-only-testing:" + selector for selector in PROOF_SELECTORS]]
-        disk_check(args.min_free_gib)
-        code = default_run(command, timeout_seconds=900)
-        require(code == 0, f"relocated tests failed (exit {code})")
-        official = read_official_test_results_summary(result_path)
-        tests = json.loads(checked_command(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(result_path), "--compact"]))
-        proof = {"artifact_id": ctx["artifact_id"], "producer_attempt": ctx["producer_attempt"],
-                 "consumer_attempt": ctx["attempt"], "identity": ctx["identity"], "signing_mode": signature,
-                 "build_source_absent": True, "relocated_path": str(args.relocated_path),
-                 "selectors": PROOF_SELECTORS, "official_counts": official.__dict__, "official_tests": tests,
-                 "disk_before_gib": before, "disk_after_gib": default_data_available_gib()}
-        write_json(args.output_dir / "relocation-proof.json", proof)
-        print("Official relocated counts: " + json.dumps(official.__dict__), flush=True)
-        require(classify_test_results(official) == "passed" and official.total_test_count == len(PROOF_SELECTORS),
-                "relocation proof requires all five fixture tests to pass without skips")
-        print(f"Relocation PASS: artifact ID {ctx['artifact_id']}, producer attempt {ctx['producer_attempt']}, "
-              f"consumer attempt {ctx['attempt']}; {official.total_test_count} tests passed, no skips, source absent")
-        summary["status"] = "passed"
-        summary["population"]["observed"] = [observation(step, "passed", time.monotonic() - started)]
-        code = 0
-    except (OSError, ValueError, CommandError, subprocess.SubprocessError) as error:
-        code = code or 1
-        record_failure(summary, step, error, code, started, "relocation-failed")
-    finally:
-        if simulator:
-            subprocess.run(["xcrun", "simctl", "shutdown", simulator], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["xcrun", "simctl", "delete", simulator], check=True)
-        shutil.rmtree(args.output_dir / "private.xcresult", ignore_errors=True)
-        write_summary(summary, args.output_dir)
-    return code
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -577,18 +526,13 @@ def main(argv=None):
     build.add_argument("--output-dir", type=Path, required=True)
     build.add_argument("--derived-data-path", type=Path, required=True)
     build.add_argument("--min-free-gib", type=int, default=80)
+    build.add_argument("--setup-seconds", type=float)
     select = commands.add_parser("select")
     select.add_argument("--platform", choices=SCHEMES, required=True)
     select.add_argument("--artifact-id", type=int, required=True)
     select.add_argument("--producer-attempt", type=int, required=True)
     select.add_argument("--selection-path", type=Path, required=True)
     select.add_argument("--output-dir", type=Path, required=True)
-    proof = commands.add_parser("proof")
-    proof.add_argument("--selection-path", type=Path, required=True)
-    proof.add_argument("--archive-dir", type=Path, required=True)
-    proof.add_argument("--relocated-path", type=Path, required=True)
-    proof.add_argument("--output-dir", type=Path, required=True)
-    proof.add_argument("--min-free-gib", type=int, default=80)
     args = parser.parse_args(argv)
     try:
         if hasattr(args, "min_free_gib"):
@@ -598,7 +542,7 @@ def main(argv=None):
                 path = getattr(args, name).resolve()
                 require(path != ROOT and ROOT not in path.parents, "archive outputs must be outside the source checkout")
                 setattr(args, name, path)
-        return {"preflight": run_preflight, "build": run_build, "select": run_select, "proof": run_proof}[args.command](args)
+        return {"preflight": run_preflight, "build": run_build, "select": run_select}[args.command](args)
     except (OSError, ValueError, CommandError, subprocess.SubprocessError) as error:
         print(f"Build archive FAIL: {error if isinstance(error, (ContractError, CommandError)) else type(error).__name__}", file=sys.stderr)
         return 1

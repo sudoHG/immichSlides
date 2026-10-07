@@ -2,7 +2,8 @@
 
 `ci-gate` builds the default iOS and tvOS test plans once per platform, tested commit
 and producer attempt, with **Sign to Run Locally** simulator signing and both locked
-package-resolution flags. The full unit/UI consumers remain separate tickets. Host
+package-resolution flags. The [full unit consumers](CI_UNIT_TESTS.md) reuse these
+archives; UI consumers remain a separate ticket. Host
 and privacy jobs are unchanged. [`scripts/ci_build_archive.py`](../scripts/ci_build_archive.py)
 uses the existing [identity/summary contract](CI_SUMMARY.md) and [toolchain pins](CI_TOOLCHAIN.md).
 Its summaries describe host checks of archives, not a full Swift population or a
@@ -88,32 +89,16 @@ Artifact selection runs in CI with GitHub's run/event metadata and an actions-re
 These candidate records are claims, not trusted attestations. Fork code can forge
 them; the epic's later trusted publisher and approval tickets own that boundary.
 
-The relocation matrix runs on separate GitHub-hosted runners. Producers check out
-`source-build`; consumers check out `consumer-source`. After artifact selection, consumers
-copy only the entry point, its existing helpers and pins to runner temp, then remove
-their entire source checkout. Proof rejects existing build-time source/Products paths,
-extracts at a different absolute path and calls `test-without-building` with no project
-or scheme. Four explicitly selected metadata fixture tests and the fixture-set-A
-pause-hold test must all pass with no skips. Compact proof records artifact ID, producer/consumer attempts,
-full identity, selections, official counts/test tree, source absence and disk space.
-The selectors retain Swift raw-identifier backticks. Exit 0 with no selected tests
-is rejected, and official counts/test-tree records are retained even on this failure.
-The proof disables Xcode clone-process parallelism and runs on its dedicated
-simulator. This avoids an extra simulator startup while preserving the selected
-tests, their assertions and the command timeout.
-This is a temporary proof job: the [unit-test consumer (#91)](https://github.com/sudoHG/immichSlides/issues/91)
-will replace it, removing this separate job and its five hard-coded selectors.
-The full unit-test consumer will own the relocated test population instead.
-
-After removing its checkout, the hosted consumer invokes the staged entry point:
-
-```bash
-"$RUNNER_TEMP/consumer-python/bin/python3" -B "$RUNNER_TEMP/archive-tools/scripts/ci_build_archive.py" proof \
-    --selection-path "$RUNNER_TEMP/archive-selection.json" \
-    --archive-dir "$RUNNER_TEMP/archive-download" \
-    --relocated-path "$RUNNER_TEMP/consumer-relocated-ios" \
-    --output-dir "$RUNNER_TEMP/relocation-records" --min-free-gib 30
-```
+The [unit-test consumers](CI_UNIT_TESTS.md) run on separate GitHub-hosted runners.
+Producers check out `source-build`; consumers check out `consumer-source`. After
+artifact selection, consumers stage only the entry point, shared private result-bundle
+helpers and pins, then remove their entire source checkout. They reject existing
+build-time source/Products paths, extract at another absolute path, enumerate the
+complete unit bundle and run the entire unit target with `test-without-building`.
+The temporary five-selector proof job and entry point are removed. Both execution
+and its failure path retain official identities/outcomes and archive provenance
+before successful disposal or private quarantine. See CI_UNIT_TESTS for commands,
+measurements, job graph, upload rules and the separately proposed unit skip policy.
 
 **Rerun failed jobs** retains successful producer outputs. Consumers download by
 artifact ID from the same run, including earlier producer attempts, and record the
@@ -125,17 +110,17 @@ consumers use the new IDs. Previous artifacts are never overwritten.
 
 Workspace preflight and artifact selection require `--output-dir` and write the
 existing summary/identity contract on success or failure. Workflow steps share the
-job's records path; a later build/proof replaces successful preflight/selection
+job's records path; a later build/consumer replaces successful preflight/selection
 records. If either earlier step fails, its failed summary remains available to the
 always-run upload/display steps. The preflight records no private values and starts
 neither setup nor Xcode. Failures use `workspace-preflight-failed`,
 `archive-unavailable` (expired/missing artifacts, including API 404/410), or
-`archive-identity-mismatch`; proof/build errors retain their respective failure codes.
-Every failure message includes **use Re-run all jobs**. There is no silent rebuild
+`archive-identity-mismatch`; consumer/build errors retain their respective failure codes.
+Archive selection/build failures include **use Re-run all jobs**. There is no silent rebuild
 or cross-run fallback. An invalid CLI/output location or unparseable run identity
 fails before a valid record can be constructed.
 
-Passing proofs establish relocation for both platforms on the pinned toolchain.
+Full unit execution establishes relocation for both platforms on the pinned toolchain.
 If relocation later fails, the tier must not rely on reuse until fixed or the epic's
 per-consumer-build fallback is implemented with a new capacity measurement. Official
 raw results are read and disposed on the runner; only compact records are uploaded.

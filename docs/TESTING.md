@@ -326,6 +326,12 @@ output is also excluded. The iPad pause host tool does not produce XCTest bundle
 diagnostic-only. Future matrix consumers must exclude these unconverted manual/local entries
 explicitly rather than treating their outputs as scanned strict results.
 
+The CI [unit archive consumer](CI_UNIT_TESTS.md) is a separate converted entry point:
+it uses the existing private bundle export/disposal helpers, exports official results
+even on failure, scans compact records before upload and records archive provenance.
+It runs every unit identity, including the conditional Live and Evidence skips; its
+separate skip inventory is proposed for maintainer approval and is not active policy.
+
 The original motion and visibility collectors in `ScenePresentationContractUITests` write `<displayMode>-contract-evidence.json` and `<displayMode>-trace.txt` to the directory in `TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR`. Set it through the environment of `xcodebuild` to a directory outside the repository; on iOS these collectors skip when it is unset, on tvOS it is optional. No runner script sets this variable. The directory is created with owner-only permissions (`0o700`) and the run refuses a path inside a Git worktree. The evidence uses schema `scene-presentation-contract-evidence-v3`: product SHA, device name, runtime identifier and video path are omitted when the run cannot observe them, never filled with a placeholder.
 
 ### Filter summary runtime screenshots

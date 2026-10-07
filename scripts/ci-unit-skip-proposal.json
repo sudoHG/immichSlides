@@ -1,0 +1,377 @@
+{
+  "schema_version": 1,
+  "approval_state": "proposed",
+  "expected_skips": [
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/ExifForegroundAnalyzerPerformanceIOSTests/`displayed-backdrop sampling overhead is measurable against the legacy algorithm`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/FaceBoxLiveProbeTests/`random live sample produces a redacted face box geometry report`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PerformanceLiveIntegrationTests/`resolver builds a 100 asset playback pool within the time threshold`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PerformanceLiveIntegrationTests/`preparing initial assets for the first frame stays within the time threshold`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PerformanceLiveIntegrationTests/`loading more assets incrementally stays within the time threshold`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`single album rule independently verifies every asset belongs to the selected album with no duplicates`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`normal person rule independently verifies every asset's people include the selected person with no duplicates`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`solo rule returns only qualified assets when non-empty, and an empty result never counts as passing`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`when the same person is filtered as both normal and soloOnly, a non-empty result must qualify by soloOnly`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`album and person union rule requires every asset in the album or with the person, with no duplicates`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`the cooling pool blocks on too few samples and reduces overlap once the pool is large enough`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackRuntimeEvidenceManifestTests/externalRuntimeJSONLPassesValidator()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`random mode loadAssets finishes loading and returns assets`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`filtered mode loadAssets finishes loading and returns assets`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`random mode prepareInitialAssets finishes preloading the first frame`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`live qa_playback_sequence evidence is sanitized`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`live person filter qa_playback_sequence recent 20 entries have no duplicates`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live dedup was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`calling firstPreload repeatedly is idempotent`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`loadMoreAssets never shrinks the asset count`()",
+      "dimensions": {
+        "platform": "ios"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/FaceBoxLiveProbeTests/`random live sample produces a redacted face box geometry report`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PerformanceLiveIntegrationTests/`resolver builds a 100 asset playback pool within the time threshold`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PerformanceLiveIntegrationTests/`preparing initial assets for the first frame stays within the time threshold`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PerformanceLiveIntegrationTests/`loading more assets incrementally stays within the time threshold`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`single album rule independently verifies every asset belongs to the selected album with no duplicates`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`normal person rule independently verifies every asset's people include the selected person with no duplicates`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`solo rule returns only qualified assets when non-empty, and an empty result never counts as passing`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`when the same person is filtered as both normal and soloOnly, a non-empty result must qualify by soloOnly`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`album and person union rule requires every asset in the album or with the person, with no duplicates`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackPoolResolverLiveIntegrationTests/`the cooling pool blocks on too few samples and reduces overlap once the pool is large enough`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/PlaybackRuntimeEvidenceManifestTests/externalRuntimeJSONLPassesValidator()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`random mode loadAssets finishes loading and returns assets`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`filtered mode loadAssets finishes loading and returns assets`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`random mode prepareInitialAssets finishes preloading the first frame`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`live qa_playback_sequence evidence is sanitized`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`live person filter qa_playback_sequence recent 20 entries have no duplicates`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped: No local live config; a skip does not mean live dedup was verified"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`calling firstPreload repeatedly is idempotent`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    },
+    {
+      "kind": "swift",
+      "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`loadMoreAssets never shrinks the asset count`()",
+      "dimensions": {
+        "platform": "tvos"
+      },
+      "tier": "unit",
+      "environment": "hermetic",
+      "reason": "Test skipped"
+    }
+  ],
+  "deselections": []
+}
