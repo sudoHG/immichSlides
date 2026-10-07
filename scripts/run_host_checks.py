@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """Shared macOS host-check entry point for CI, agents and check_all.sh."""
 
 from __future__ import annotations
@@ -8,16 +8,19 @@ import json
 import os
 import platform
 import plistlib
+import re
 import signal
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ci_summary import ContractError, observation, parse_identity, test_identity, write_summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+GROUP_TERM_GRACE_SECONDS = 5
 HOST_CHECKS = [
     ("swift-format lint", ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--parallel",
                            "immichSlides", "immichSlidesTests", "immichSlidesUITests", "TestSupport"]),
@@ -31,15 +34,28 @@ HOST_CHECKS = [
 
 
 def git(*args):
-    return subprocess.check_output(["git", *args], cwd=REPO_ROOT, text=True, timeout=30).strip()
+    return subprocess.check_output(["git", *args], cwd=REPO_ROOT, text=True,
+                                   stderr=subprocess.DEVNULL, timeout=30).strip()
+
+
+def local_repository():
+    try:
+        remote = git("remote", "get-url", "origin").rstrip("/").removesuffix(".git")
+        parsed = urlsplit(remote)
+        if parsed.scheme in {"https", "ssh"} and parsed.hostname:
+            repository = parsed.path.lstrip("/")
+        else:
+            match = re.fullmatch(r"[^/:]+(?:@[^/:]+)?:([\w.-]+/[\w.-]+)", remote)
+            repository = match[1] if match else None
+        return repository if repository and re.fullmatch(r"[\w.-]+/[\w.-]+", repository) else None
+    except (ValueError, subprocess.SubprocessError):
+        # A local clone need not have a GitHub origin to run checks.
+        return None
 
 
 def run_identity(env):
-    repository = env.get("GITHUB_REPOSITORY")
-    if not repository:
-        remote = git("remote", "get-url", "origin").removesuffix(".git")
-        repository = remote.removeprefix("https://github.com/").removeprefix("git@github.com:")
     event = env.get("GITHUB_EVENT_NAME", "local")
+    repository = local_repository() if event == "local" else env.get("GITHUB_REPOSITORY")
     commit = git("rev-parse", "HEAD")
     identity = {"schema_version": 1, "event": event, "repository": repository,
                 "tree_sha": git("rev-parse", "HEAD^{tree}")}
@@ -61,6 +77,27 @@ def run_identity(env):
     else:
         raise ContractError("host entry point supports local, pull_request and main push only")
     return parse_identity(identity)
+
+
+def source_metadata(identity, env, requested_workflow):
+    if identity["event"] == "local":
+        if requested_workflow is not None:
+            raise ContractError("local source does not have a workflow path")
+        return None, False
+    path, separator, ref = env.get("GITHUB_WORKFLOW_REF", "").rpartition("@")
+    prefix = identity["repository"] + "/"
+    if not separator or not ref or not path.startswith(prefix):
+        raise ContractError("GITHUB_WORKFLOW_REF does not identify this repository's workflow")
+    workflow = path[len(prefix):]
+    if not workflow.startswith(".github/workflows/") or (requested_workflow and requested_workflow != workflow):
+        raise ContractError("--workflow-path does not match GITHUB_WORKFLOW_REF")
+    fork = False
+    if identity["event"] == "pull_request":
+        event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+        head_repo = event["pull_request"]["head"]["repo"]
+        # GitHub emits null when a fork was deleted; it cannot prove same-repository origin.
+        fork = head_repo is None or head_repo["full_name"] != identity["repository"]
+    return workflow, fork
 
 
 def version(command):
@@ -100,15 +137,27 @@ def clean_environment():
 def stop_group(process):
     try:
         os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=5)
     except ProcessLookupError:
-        pass
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
         process.wait()
+        return
+    deadline = time.monotonic() + GROUP_TERM_GRACE_SECONDS
+    while True:
+        process.poll()  # Reap the parent without mistaking its exit for the whole group's exit.
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            break
+        if time.monotonic() >= deadline:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            break
+        time.sleep(0.05)
+    process.wait()
 
 
-def run_steps(steps, repo_root, output_dir, *, timeout_seconds=900):
+def run_steps(steps, repo_root, *, timeout_seconds=900):
     records, infrastructure = [], []
     deadline = time.monotonic() + timeout_seconds
     for name, command in steps:
@@ -147,10 +196,13 @@ def run_steps(steps, repo_root, output_dir, *, timeout_seconds=900):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, epilog=(
+        'Invoke with "${PYTHON:-python3}"; every Python check uses that interpreter. '
+        'Recommend PYTHON=/usr/bin/python3 or a venv made from it. '
+        'Python 3.14 fixture stall: https://github.com/sudoHG/immichSlides/issues/122'))
     parser.add_argument("--output-dir", type=Path, help="Outside the repository; default is a new temporary directory")
     parser.add_argument("--timeout-seconds", type=float, default=900, help="Total host-check budget; default 900")
-    parser.add_argument("--workflow-path", help="Workflow path recorded in CI source")
+    parser.add_argument("--workflow-path", help="Optional CI path assertion, cross-checked with GITHUB_WORKFLOW_REF")
     args = parser.parse_args()
     if not 0 < args.timeout_seconds <= 1200:
         parser.error("--timeout-seconds must be in (0, 1200]")
@@ -164,14 +216,10 @@ def main():
     try:
         identity = run_identity(os.environ)
         is_ci = identity["event"] != "local"
-        if is_ci and not args.workflow_path:
-            parser.error("CI requires --workflow-path")
-        fork = False
-        if identity["event"] == "pull_request":
-            event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
-            fork = event["pull_request"]["head"]["repo"]["full_name"] != identity["repository"]
+        workflow_path, fork = source_metadata(identity, os.environ, args.workflow_path)
+        print(f"Python interpreter: {sys.executable} ({platform.python_version()})", flush=True)
         summary = {"schema_version": 1, "identity": identity,
-                   "source": {"repository": identity["repository"], "workflow_path": args.workflow_path,
+                   "source": {"repository": identity["repository"], "workflow_path": workflow_path,
                               "event": identity["event"], "fork_originated": fork, "ci_changing": None},
                    "run": {"id": os.environ.get("GITHUB_RUN_ID") if is_ci else None,
                            "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")) if is_ci else 1,
@@ -185,7 +233,7 @@ def main():
         write_summary(summary, output)
         steps = [(name, command + (["--output", str(output / "python-results.json")] if name == "python tests" else []))
                  for name, command in HOST_CHECKS]
-        records, infrastructure = run_steps(steps, REPO_ROOT, output, timeout_seconds=args.timeout_seconds)
+        records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds)
         summary["population"]["observed"] = list(records)
         summary["infrastructure"] = infrastructure
         try:
@@ -207,6 +255,10 @@ def main():
         write_summary(summary, output)
         print(f"\nRESULT: {summary['status'].upper()}\nSummary: {output / 'summary.json'}", flush=True)
         return 0 if command_passed else 1
+    except subprocess.SubprocessError as error:
+        print(f"FAIL: host-check record could not be produced: Git metadata command failed ({type(error).__name__})",
+              file=sys.stderr)
+        return 1
     except (ContractError, OSError, ValueError, KeyError) as error:
         print(f"FAIL: host-check record could not be produced: {error}", file=sys.stderr)
         return 1

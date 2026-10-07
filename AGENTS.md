@@ -64,7 +64,7 @@ These rules exist because past work "passed" while users still saw failures. The
 
 `Config/env.xcconfig` is an optional, git-ignored local test configuration. `Config/Debug.xcconfig` includes it only when present, so a fresh clone builds in Xcode without setup. If you need a local test configuration, `python3 scripts/run_offline_unit_tests.py --prepare-example-config` creates it from the example without overwriting anything. Unit tests need no real credentials or server.
 
-The Python checks require Python 3 with Pillow (`python3 -m pip install Pillow`), Swift (included with Xcode), and the zstd CLI (`brew install zstd`).
+The Python checks require Python 3 with Pillow, Swift (included with Xcode), and the zstd CLI (`brew install zstd`). Every `check_all.sh` Python step uses `"${PYTHON:-python3}"`. Recommend `PYTHON=/usr/bin/python3` or an active venv made from that Xcode-bundled interpreter; see [CONTRIBUTING.md](CONTRIBUTING.md#setup) for installation. Python 3.14 has a known [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
 
 ```bash
 # Every fast check in one go: formatting, test conventions, release guards, localization, Python tests
@@ -82,7 +82,7 @@ xcrun swift-format format --in-place --recursive immichSlides immichSlidesTests 
 scripts/install_git_privacy_hooks.sh
 ```
 
-`check_all.sh` runs these individually as well: `scripts/check_test_conventions.py`, `scripts/check_release_guards.py`, `scripts/validate_localization_catalog.py`, `scripts/scan_chinese_strings.py` and `python3 -B -m unittest discover -s scripts -p 'test_*.py'`.
+`check_all.sh` delegates its host checks to `scripts/run_host_checks.py`, including the Python suite and per-test observations. The shared commands and versioned records are described in [docs/CI_SUMMARY.md](docs/CI_SUMMARY.md).
 
 Schemes: `immichSlides` is for build, run and archive only. Run tests through `immichSlides-iOS` / `immichSlides-tvOS`. End-to-end runners and their suites are described in [docs/TESTING.md](docs/TESTING.md#running-controlled-integration-and-end-to-end-tests).
 

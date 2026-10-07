@@ -79,7 +79,8 @@ def validate_identity_v1(payload):
     require(event in variants, "unsupported identity event")
     fields(payload, common | variants[event], "identity")
     require(payload["schema_version"] == 1 and type(payload["schema_version"]) is int, "invalid identity version")
-    require(isinstance(payload["repository"], str) and re.fullmatch(r"[\w.-]+/[\w.-]+", payload["repository"]) is not None,
+    require((event == "local" and payload["repository"] is None) or
+            (isinstance(payload["repository"], str) and re.fullmatch(r"[\w.-]+/[\w.-]+", payload["repository"]) is not None),
             "invalid repository")
     for key in payload:
         if key.endswith("_sha"):

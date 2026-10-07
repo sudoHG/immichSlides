@@ -4,6 +4,11 @@ import copy
 import contextlib
 import io
 import json
+import os
+import select
+import signal
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -144,6 +149,57 @@ class SummaryContractTests(unittest.TestCase):
 
 
 class HostResultTests(unittest.TestCase):
+    def test_local_repository_metadata_accepts_remote_forms_and_missing_origin(self):
+        remotes = [
+            ("https://github.com/sudoHG/immichSlides.git/", "sudoHG/immichSlides"),
+            ("ssh://git@github.com/sudoHG/immichSlides.git", "sudoHG/immichSlides"),
+            ("git@github-work:sudoHG/immichSlides/", "sudoHG/immichSlides"),
+            ("/tmp/local-clone", None),
+            (subprocess.CalledProcessError(2, ["git", "remote", "get-url", "origin"]), None),
+        ]
+        for remote, repository in remotes:
+            with self.subTest(remote=remote):
+                def answers(*args):
+                    if args == ("remote", "get-url", "origin"):
+                        if isinstance(remote, Exception):
+                            raise remote
+                        return remote
+                    return {("rev-parse", "HEAD"): "a" * 40,
+                            ("rev-parse", "HEAD^{tree}"): "b" * 40,
+                            ("status", "--porcelain"): ""}[args]
+
+                with patch.object(run_host_checks, "git", side_effect=answers):
+                    identity = run_host_checks.run_identity({})
+                self.assertEqual(identity["repository"], repository)
+                summary = valid_summary()
+                summary["identity"] = identity
+                summary["source"]["repository"] = repository
+                ci_summary.parse_summary(summary)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("sys.argv", ["run_host_checks.py", "--output-dir", directory]), \
+                patch.object(run_host_checks, "git", side_effect=subprocess.CalledProcessError(128, ["git"])), \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(run_host_checks.main(), 1)
+        self.assertIn("Git metadata command failed", errors.getvalue())
+
+    def test_ci_source_cross_checks_workflow_reference_and_handles_deleted_forks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            event_path = Path(directory) / "event.json"
+            identity = {"event": "pull_request", "repository": "sudoHG/immichSlides"}
+            workflow = ".github/workflows/ci-gate.yml"
+            env = {"GITHUB_EVENT_PATH": str(event_path),
+                   "GITHUB_WORKFLOW_REF": f"sudoHG/immichSlides/{workflow}@refs/pull/120/merge"}
+            for repo, expected in (({"full_name": "sudoHG/immichSlides"}, False),
+                                   ({"full_name": "contributor/immichSlides"}, True), (None, True)):
+                with self.subTest(repo=repo):
+                    event_path.write_text(json.dumps({"pull_request": {"head": {"repo": repo}}}))
+                    self.assertEqual(run_host_checks.source_metadata(identity, env, workflow), (workflow, expected))
+            for reference, requested in ((env["GITHUB_WORKFLOW_REF"], ".github/workflows/copied.yml"),
+                                         ("other/repo/.github/workflows/ci-gate.yml@main", workflow),
+                                         ("", workflow)):
+                with self.subTest(reference=reference), self.assertRaises(ci_summary.ContractError):
+                    run_host_checks.source_metadata(identity, dict(env, GITHUB_WORKFLOW_REF=reference), requested)
+
     def test_pr_identity_reads_checkout_parents_instead_of_event_claims(self):
         with tempfile.TemporaryDirectory() as directory:
             event_path = Path(directory) / "event.json"
@@ -178,8 +234,9 @@ class HostResultTests(unittest.TestCase):
                 self.skipTest("missing fixture")
 
             def test_subtest_skip(self):
-                with self.subTest(case="unavailable"):
-                    self.skipTest("missing subtest fixture")
+                for fixture in ("A", "B"):
+                    with self.subTest(fixture=fixture):
+                        self.skipTest(f"missing fixture {fixture}")
 
             @unittest.expectedFailure
             def test_unexpected_success(self):
@@ -193,10 +250,38 @@ class HostResultTests(unittest.TestCase):
         self.assertEqual(outcomes["test_skip"]["attempts"][0]["reason"], "missing fixture")
         self.assertEqual(outcomes["test_unexpected_success"]["outcome"], "failed")
         self.assertEqual(outcomes["test_subtest_skip"]["outcome"], "skipped")
+        reason = outcomes["test_subtest_skip"]["attempts"][0]["reason"]
+        summary = valid_summary()
+        summary["population"]["observed"] = [outcomes["test_subtest_skip"]]
+        summary["status"] = "unverified"
+        markdown = ci_summary.render_markdown(ci_summary.parse_summary(summary))
+        for fixture in ("A", "B"):
+            self.assertIn(f"missing fixture {fixture}", reason)
+            self.assertIn(f"fixture='{fixture}'", reason)
+            self.assertIn(f"missing fixture {fixture}", markdown)
         self.assertEqual(len(payload["compiled"]), 5)
         empty, code = run_python_tests.run_suite(unittest.TestSuite(), io.StringIO())
         self.assertEqual(code, 1)
         self.assertEqual(empty["observed"], [])
+
+    def test_expected_failures_return_failure_with_their_actual_reason(self):
+        class Sample(unittest.TestCase):
+            @unittest.expectedFailure
+            def test_expected_failure(self):
+                self.fail("known failure")
+
+            @unittest.expectedFailure
+            def test_unexpected_success(self):
+                self.assertTrue(True)
+
+        for name, message in (("test_expected_failure", "expected failure"),
+                              ("test_unexpected_success", "unexpected success")):
+            with self.subTest(name=name):
+                payload, code = run_python_tests.run_suite(unittest.TestSuite([Sample(name)]), io.StringIO())
+                self.assertEqual(code, 1)
+                entry = payload["observed"][0]
+                self.assertEqual(entry["outcome"], "failed")
+                self.assertIn(message, entry["attempts"][0]["message"])
 
     def test_python_class_setup_error_names_failure_and_accounts_for_missing_tests(self):
         class Sample(unittest.TestCase):
@@ -252,13 +337,38 @@ class HostResultTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             steps = [("format", ["/bin/sh", "-c", "exit 3"]),
-                     ("slow", ["/bin/sleep", "5"]), ("last", ["/usr/bin/true"])]
+                     ("slow", ["/bin/sleep", "30"]), ("last", ["/usr/bin/true"])]
             with contextlib.redirect_stdout(io.StringIO()):
-                records, infrastructure = run_host_checks.run_steps(steps, root, root, timeout_seconds=0.1)
+                records, infrastructure = run_host_checks.run_steps(steps, root, timeout_seconds=3)
             self.assertEqual([entry["outcome"] for entry in records], ["failed", "timed-out", "not-run"])
             self.assertIn("format", records[0]["attempts"][0]["message"])
             self.assertEqual(records[0]["attempts"][0]["exit_code"], 3)
             self.assertEqual(infrastructure[0]["code"], "step-timeout")
+
+    def test_timeout_kills_a_surviving_child_after_the_parent_exits(self):
+        code = """import os, signal, time
+if os.fork() == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    print('child ready', flush=True)
+while True:
+    time.sleep(30)
+"""
+        process = subprocess.Popen([sys.executable, "-c", code], start_new_session=True,
+                                   stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertTrue(select.select([process.stdout], [], [], 10)[0], "child did not become ready")
+            self.assertEqual(process.stdout.readline().strip(), "child ready")
+            with patch.object(run_host_checks, "GROUP_TERM_GRACE_SECONDS", 0.1, create=True):
+                run_host_checks.stop_group(process)
+            # EOF requires every process holding this pipe to exit, including the child.
+            process.communicate(timeout=5)
+            self.assertEqual(process.returncode, -signal.SIGTERM)
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate(timeout=5)
 
 
 if __name__ == "__main__":

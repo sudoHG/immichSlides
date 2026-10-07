@@ -3,26 +3,32 @@
 Run the same macOS host checks as `ci-gate` from the repository root:
 
 ```bash
-/usr/bin/python3 -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run
-/usr/bin/python3 scripts/ci_summary.py /tmp/immichslides-host-run/summary.json
-/usr/bin/python3 scripts/ci_summary.py --identity /tmp/immichslides-host-run/run-identity.json
+export PYTHON=/usr/bin/python3
+"${PYTHON:-python3}" -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run
+"${PYTHON:-python3}" scripts/ci_summary.py /tmp/immichslides-host-run/summary.json
+"${PYTHON:-python3}" scripts/ci_summary.py --identity /tmp/immichslides-host-run/run-identity.json
 ```
 
 Use the Xcode-bundled `/usr/bin/python3` (3.9.6 on the current toolchain), with
 Pillow, Swift and zstd available, as described in
-[CONTRIBUTING](../CONTRIBUTING.md). The output directory must be outside the repository
+[CONTRIBUTING](../CONTRIBUTING.md#setup). `check_all.sh` selects `"${PYTHON:-python3}"`
+for every Python step; the host entry point keeps its invoking interpreter for every
+child check. An active venv or pyenv is honored when `PYTHON` is unset. Python 3.14
+has a known [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
+The output directory must be outside the repository
 and contain no previous result files. Without `--output-dir`, a new temporary directory
 is printed. Remove local outputs after reading the result.
 
 The entry point owns the format, test-convention, release-guard, localization-catalog,
 localization-usage, required-tool and Python checks. `check_all.sh` delegates to it and
 keeps its existing optional iOS/tvOS unit-test interface. Its temporary host records
-are removed on exit; `--output-dir` holds the optional unit bundles and DerivedData.
+are removed on exit; `--output-dir` holds the optional unit bundles, while DerivedData
+remains in `.derivedData/check-all-{ios,tvos}`.
 Checks continue after failures. Exit 0 preserves the legacy command verdict, including
 unittest's environment skips; it does not prove complete coverage. The summary is
 `unverified` whenever any skip or unexecuted class member is present, with every reason
 retained. Expected-skip policy (#88) replaces this interim rule. Exit 1 means a failed
-command, missing result, empty Python suite or infrastructure problem; invalid arguments
+command, expected failure, missing result, empty Python suite or infrastructure problem; invalid arguments
 exit 2. `--timeout-seconds` sets the total
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
@@ -54,7 +60,10 @@ producer data, not its provenance or a trusted verdict.
 | `status` | Producer execution status: `passed`, `failed`, `unverified` |
 
 Source repository/event must match the identity. CI requires a workflow path below
-`.github/workflows/`, a run ID and a boolean fork-origin flag. Classification is not
+`.github/workflows/`, a run ID and a boolean fork-origin flag. The producer derives
+the path from `GITHUB_WORKFLOW_REF` and cross-checks `--workflow-path` if supplied.
+A deleted PR head repository is conservatively recorded as fork-originated.
+Classification is not
 implemented by the host producer: `ci_changing: null` means **unclassified**, never
 "not CI-changing". A future trusted consumer must derive classification itself;
 it must never admit an unclassified run as non-CI-changing. Local workflow path and
@@ -69,7 +78,8 @@ record actual tools, not a claim that pins were verified. Host signing is
 ### Identity record
 
 `run-identity.json` is identical to the summary's `identity` object. Every variant
-has `schema_version: 1`, `event`, `repository` (`owner/name`), and lowercase Git
+has `schema_version: 1`, `event`, `repository` (`owner/name`, or local null when
+origin is absent or cannot be interpreted), and lowercase Git
 `tree_sha`. Version 1 Git object IDs are 40 lowercase hex characters.
 
 | Event | Additional required fields |
@@ -112,7 +122,9 @@ never retries. A failed retry retains all attempts and a nonpassing final attemp
 other entries have one matching attempt. Parameterized producers
 can use the optional `parameter` dimension for per-parameter evidence while retaining
 the function key used by static enumeration. Subtest failures in Python fail the
-parent identity. Expected failures and unexpected successes do not count as passes.
+parent identity. Every subtest skip retains its parameter identity and reason in
+the parent's attempt reason. Expected failures and unexpected successes return
+exit 1 and do not count as passes.
 
 Each deselection is `{identity, reason, owning_tier}` with nonempty reason and owner.
 The validator checks structure, not whether a skip/deselection is approved or whether
@@ -141,5 +153,6 @@ This job is informational and does not configure required statuses. Builds, unit
 jobs, pins/environment policy, expected populations, skip policy, trusted publication
 and approval enforcement are separate tickets. The initial workflow bootstraps the
 existing Xcode-bundled Python/Pillow/zstd prerequisites; the pins ticket replaces
-that setup. Invoke `/usr/bin/python3` explicitly if `python3` on PATH selects
-another interpreter.
+that setup. CI sets `PYTHON` to the venv made from `/usr/bin/python3` and uses it
+for the host entry point and validators. Local runs can select the same recommended
+interpreter with `PYTHON=/usr/bin/python3` without modifying PATH.

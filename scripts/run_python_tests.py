@@ -33,6 +33,7 @@ class RecordingResult(unittest.TextTestResult):
         self.started = time.monotonic()
         self.outcome = "not-run"
         self.reason = None
+        self.skip_reasons = []
         self.message = None
 
     def addSuccess(self, test):
@@ -68,7 +69,9 @@ class RecordingResult(unittest.TextTestResult):
             return
         if self.outcome != "failed":
             self.outcome = "skipped"
-        self.reason = reason or "No skip reason provided by unittest"
+        reason = reason or "No skip reason provided by unittest"
+        self.skip_reasons.append(reason if test is self.current else f"{test.id()}: {reason}")
+        self.reason = "; ".join(self.skip_reasons)
 
     def addExpectedFailure(self, test, err):
         super().addExpectedFailure(test, err)
@@ -96,8 +99,8 @@ def run_suite(suite, stream):
         if identity["key"] not in observed_keys:
             result.observed.append(observation(identity, "not-run", 0, exit_code=None,
                                                message="Discovered test was not executed"))
-    # Preserve unittest's existing CLI verdict; expected-skip policy is a separate consumer.
-    successful = bool(compiled) and result.wasSuccessful()
+    # Preserve environment skips, but an expected failure is still failed coverage.
+    successful = bool(compiled) and result.wasSuccessful() and not result.expectedFailures
     payload = {"compiled": compiled, "observed": result.observed, "exit_code": 0 if successful else 1}
     return payload, payload["exit_code"]
 

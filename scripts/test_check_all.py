@@ -27,13 +27,6 @@ class CheckAllTests(unittest.TestCase):
         self.repo = self.tmp / "repo"
         (self.repo / "scripts").mkdir(parents=True)
         shutil.copy(SCRIPT, self.repo / "scripts" / "check_all.sh")
-        (self.repo / "scripts" / "run_host_checks.py").write_text("""import os, sys
-command = 'python3 scripts/run_host_checks.py ' + ' '.join(sys.argv[1:])
-with open(os.environ['STUB_LOG'], 'a') as log:
-    log.write(command + '\\n')
-match = os.environ.get('STUB_FAIL_MATCH', '')
-sys.exit(3 if match and match in command else 0)
-""")
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()
         for name in ("xcrun", "python3"):
@@ -45,6 +38,7 @@ sys.exit(3 if match and match in command else 0)
         self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
         self.env["STUB_LOG"] = str(self.log)
         self.env.pop("STUB_FAIL_MATCH", None)
+        self.env.pop("PYTHON", None)
 
     def run_check_all(self, *args, fail_match=None):
         env = dict(self.env)
@@ -121,22 +115,33 @@ sys.exit(3 if match and match in command else 0)
 
     def test_unit_tests_run_for_both_platforms_with_bundles_in_output_dir(self):
         out = self.tmp / "out"
-        result = self.run_check_all(
-            "--with-unit-tests",
-            "--ios-destination", "platform=iOS Simulator,id=X",
-            "--tvos-destination", "platform=tvOS Simulator,id=Y",
-            "--output-dir", str(out),
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        runner_calls = [c for c in self.calls() if "run_offline_unit_tests.py" in c]
-        self.assertEqual(len(runner_calls), 2)
-        self.assertIn("--platform ios", runner_calls[0])
-        self.assertIn("--platform tvos", runner_calls[1])
-        resolved_out = str(out.resolve())
-        for call in runner_calls:
-            self.assertIn(f"--result-bundle-path {resolved_out}/", call)
-            self.assertNotIn("--timeout-minutes", call)
-        self.assertNotIn("Xcode unit tests were skipped", result.stdout)
+        selected = self.tmp / "venv-python"
+        selected.write_text(STUB)
+        selected.chmod(0o755)
+        for override in (None, str(selected)):
+            with self.subTest(interpreter=override):
+                self.log.unlink(missing_ok=True)
+                if override:
+                    self.env["PYTHON"] = override
+                result = self.run_check_all(
+                    "--with-unit-tests",
+                    "--ios-destination", "platform=iOS Simulator,id=X",
+                    "--tvos-destination", "platform=tvOS Simulator,id=Y",
+                    "--output-dir", str(out),
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = self.calls()
+                self.assertEqual(len(calls), 3)
+                self.assertTrue(all(call.startswith("venv-python " if override else "python3 ") for call in calls))
+                runner_calls = [c for c in calls if "run_offline_unit_tests.py" in c]
+                self.assertEqual(len(runner_calls), 2)
+                self.assertIn("--platform ios", runner_calls[0])
+                self.assertIn("--platform tvos", runner_calls[1])
+                for call in runner_calls:
+                    self.assertIn(f"--result-bundle-path {out.resolve()}/", call)
+                    self.assertIn("--derived-data-path .derivedData/check-all-", call)
+                    self.assertNotIn("--timeout-minutes", call)
+                self.assertNotIn("Xcode unit tests were skipped", result.stdout)
 
     def test_unit_test_failure_propagates(self):
         result = self.run_check_all(

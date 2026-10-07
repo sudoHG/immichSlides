@@ -10,10 +10,10 @@ Usage: scripts/check_all.sh [--with-unit-tests --ios-destination DEST --tvos-des
 
 Runs, in order:
   1. swift-format lint (strict) on immichSlides, immichSlidesTests, immichSlidesUITests, TestSupport
-  2. python3 scripts/check_test_conventions.py
-  3. python3 scripts/check_release_guards.py
-  4. python3 scripts/validate_localization_catalog.py
-  5. python3 scripts/scan_chinese_strings.py (user-facing literals missing from the string catalog)
+  2. test conventions
+  3. release guards
+  4. localization catalog
+  5. localization usage (user-facing literals missing from the string catalog)
   6. Python test prerequisites: Swift, zstd CLI and Pillow (missing tools fail)
   7. Python tests with per-test result records
   8. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
@@ -22,11 +22,15 @@ Options:
   --with-unit-tests        Also run scripts/run_offline_unit_tests.py for iOS and tvOS.
   --ios-destination DEST   xcodebuild destination for iOS, e.g. 'platform=iOS Simulator,id=<UDID>'.
   --tvos-destination DEST  xcodebuild destination for tvOS, e.g. 'platform=tvOS Simulator,id=<UDID>'.
-  --output-dir DIR         Directory for .xcresult bundles and DerivedData. Must be outside the repository.
+  --output-dir DIR         Directory for .xcresult bundles. Must be outside the repository.
   -h, --help               Show this help.
 
 Without --with-unit-tests the Xcode tests are skipped; run them before opening a pull request.
 No private configuration is needed.
+Every Python step uses "${PYTHON:-python3}", honoring an active venv or pyenv.
+Recommend PYTHON=/usr/bin/python3 or a venv created with /usr/bin/python3.
+Python 3.14 fixture stall: https://github.com/sudoHG/immichSlides/issues/122
+Optional unit-test DerivedData stays in .derivedData/check-all-{ios,tvos}.
 EOF
 }
 
@@ -82,6 +86,7 @@ elif [[ -n "$ios_destination$tvos_destination$output_dir" ]]; then
 fi
 
 cd "$REPO_ROOT"
+python="${PYTHON:-python3}"
 
 step_names=()
 step_results=()
@@ -110,19 +115,19 @@ run_step() {
 
 host_output="$(mktemp -d "${TMPDIR:-/tmp}/immichslides-check-all.XXXXXX")"
 trap 'rm -rf "$host_output"' EXIT
-run_step "host checks" /usr/bin/python3 -B scripts/run_host_checks.py --output-dir "$host_output"
+run_step "host checks" "$python" -B scripts/run_host_checks.py --output-dir "$host_output"
 
 if [[ $with_unit_tests -eq 1 ]]; then
     stamp="$(date +%Y%m%d-%H%M%S)"
-    run_step "xcode unit tests (iOS)" python3 scripts/run_offline_unit_tests.py \
+    run_step "xcode unit tests (iOS)" "$python" scripts/run_offline_unit_tests.py \
         --platform ios \
         --destination "$ios_destination" \
-        --derived-data-path "$output_dir/derived-data-ios" \
+        --derived-data-path .derivedData/check-all-ios \
         --result-bundle-path "$output_dir/check-all-ios-$stamp.xcresult"
-    run_step "xcode unit tests (tvOS)" python3 scripts/run_offline_unit_tests.py \
+    run_step "xcode unit tests (tvOS)" "$python" scripts/run_offline_unit_tests.py \
         --platform tvos \
         --destination "$tvos_destination" \
-        --derived-data-path "$output_dir/derived-data-tvos" \
+        --derived-data-path .derivedData/check-all-tvos \
         --result-bundle-path "$output_dir/check-all-tvos-$stamp.xcresult"
 fi
 

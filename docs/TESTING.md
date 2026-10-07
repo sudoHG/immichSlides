@@ -188,10 +188,14 @@ These are exactly the problems tests exist to catch.
 Run it with the other Python tests: `python3 -B -m unittest discover -s scripts -p 'test_*.py'`, or directly
 with `python3 scripts/check_test_conventions.py`.
 
-For the shared macOS CI host entry point, use `/usr/bin/python3 -B scripts/run_host_checks.py`.
+For the shared macOS CI host entry point, use `"${PYTHON:-python3}" -B scripts/run_host_checks.py`.
 It runs these Python tests and records each discovered identity, outcome and duration
 alongside the other host checks. `scripts/check_all.sh` delegates its host checks to
-that entry point. Commands and the versioned records are described in
+that entry point and uses the same interpreter for optional unit runners. Recommend
+`PYTHON=/usr/bin/python3` with a normal PATH, or an active venv made from Xcode's
+`/usr/bin/python3`; installation is described in [CONTRIBUTING](../CONTRIBUTING.md#setup).
+Python 3.14 can encounter the [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
+Commands and the versioned records are described in
 [CI_SUMMARY.md](CI_SUMMARY.md).
 
 Existing violations are tracked in `scripts/test_conventions_allowlist.json` by rule, file path and name (no
