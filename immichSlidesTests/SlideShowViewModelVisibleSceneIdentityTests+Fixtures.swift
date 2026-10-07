@@ -5,6 +5,8 @@ import Testing
 import UIKit
 @testable import immichSlides
 
+private final class VisibleSceneFixtureBundleToken {}
+
 extension SlideShowViewModelVisibleSceneIdentityTests {
     func runRealPathProbe(
         _ body: (LateLoadLocalHTTPFixture, String) async throws -> Void
@@ -447,12 +449,13 @@ extension SlideShowViewModelVisibleSceneIdentityTests {
         "8b08c717bc650543c3ebe36b3563bb7c46c6fd2e84e0a15f663cb681524233e3"
 
     func loadFixtureSetAPNGs(assetIds: [String]) throws -> [String: Data] {
-        let directory = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/StrictE2ESetA")
+        let bundle = Bundle(for: VisibleSceneFixtureBundleToken.self)
         var pngs: [String: Data] = [:]
         for assetId in assetIds {
-            let url = directory.appendingPathComponent("\(assetId).png")
+            let url = try #require(
+                bundle.url(forResource: assetId, withExtension: "png", subdirectory: "Fixtures/StrictE2ESetA"),
+                "Missing bundled scene fixture: \(assetId).png"
+            )
             pngs[assetId] = try Data(contentsOf: url)
         }
         return pngs

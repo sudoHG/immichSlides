@@ -102,6 +102,9 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		125906F82F5D4DF400188AB4 /* immichSlidesTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFolders = (
+				Fixtures,
+			);
 			path = immichSlidesTests;
 			sourceTree = "<group>";
 		};
