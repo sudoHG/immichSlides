@@ -297,7 +297,48 @@ Use `python3 scripts/run_strict_e2e.py --help` for the current suite list. Setti
 
 Run serially within a checkout because the runner manages temporary test configuration. Use a new evidence directory outside the repository for each run. The runner prepares the fixture and app state, reads official test statistics, checks result contracts and cleans up. Zero selected tests, skipped strict tests, missing evidence or an unknown image are failures. A successful contract check does not replace human visual review; inspect the current run's original screenshots. The separate [iPad host tool](../scripts/ipad-pause-host-testing.md) remains diagnostic tooling and does not replace an XCTest result.
 
-Result bundles normally go in the directory passed to `--evidence-dir`. The `p2-*` and image-failure-recovery suites instead write them under `Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"`, with a separate temporary subdirectory per run and a root created with permissions `0o700`. On macOS this is inside the per-user temporary directory. After a successful run and cleanup, the runner deletes the private bundle and records its disposal in `result-bundle-disposal.json` in the evidence directory. Retained bundles from failed runs or cleanup are recorded in `result-bundle-quarantine.json` there; keep them private.
+Every strict suite and both access-lifecycle runners write raw XCTest result bundles under
+`Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"`, outside `--evidence-dir`.
+The root and each new holding directory have owner-only permissions (`0o700`); a symlink root is
+refused. On macOS this is inside the per-user temporary directory. Raw activities can contain
+fixture keys or synthetic PIN input, so never upload these bundles.
+
+During finalization, including failed runs, the runner exports official test identities and outcomes
+with `xcrun xcresulttool get test-results tests --compact` to `official-tests.json` and retains
+`official-summary.json`. Exports containing test credentials are refused before writing.
+After export, cleanup and the unchanged sensitive scanner succeed, a successful run deletes its
+bundle and writes `result-bundle-disposal.json`, including the export's SHA-256. A failed run,
+export, scan or cleanup keeps the bundle private and records `result-bundle-quarantine.json`;
+inspect it locally and delete it after diagnosing the failure. Finalization failures cannot make
+a run pass. Unexpected evidence or validator exceptions also retain the private bundle; disposal
+requires completed checks, and an existing Xcode failure exit code takes precedence over handled
+evidence or cleanup errors. The existing P2 export and disposal contract stays unchanged.
+
+`filter-person` runs three isolated sessions (`normal`, `conflict-normal`, `nofaces`). Each has its
+own private bundle, `official-tests-<session>.json`, `official-summary-<session>.json` and disposal
+or quarantine record with the same suffix. `official-summary.json` remains the suite aggregate;
+the case manifest records each session export's hash. A later session failure preserves all
+attempted sessions, including earlier passes, without claiming the suite passed.
+
+Run the standalone access-protection flows with:
+
+```bash
+python3 scripts/run_access_lifecycle_ios.py --device iphone --destination 'platform=iOS Simulator,id=<UDID>' --evidence-dir '<outside-repo>/access-iphone'
+python3 scripts/run_access_lifecycle_ios.py --device ipad --destination 'platform=iOS Simulator,id=<UDID>' --evidence-dir '<outside-repo>/access-ipad'
+python3 scripts/run_access_lifecycle_tvos.py --platform tvos --destination 'platform=tvOS Simulator,id=<UDID>' --evidence-dir '<outside-repo>/access-tv'
+```
+
+These flows use the same bundle export/disposal mechanism and check both fixture keys and synthetic
+PINs. Their `--print-command` mode previews a private-path placeholder without allocating a bundle.
+They remain separate from the strict suite table.
+
+The offline unit runner and `check_all.sh --with-unit-tests` retain their explicitly requested
+local bundles for inspection; they are excluded from the strict evidence/upload path. They do not
+produce scanner-approved public evidence and their raw bundles must not be uploaded. The album/server
+narrow entry point only prints device commands and refuses device execution; its manual command
+output is also excluded. The iPad pause host tool does not produce XCTest bundles and remains
+diagnostic-only. Future matrix consumers must exclude these unconverted manual/local entries
+explicitly rather than treating their outputs as scanned strict results.
 
 The original motion and visibility collectors in `ScenePresentationContractUITests` write `<displayMode>-contract-evidence.json` and `<displayMode>-trace.txt` to the directory in `TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR`. Set it through the environment of `xcodebuild` to a directory outside the repository; on iOS these collectors skip when it is unset, on tvOS it is optional. No runner script sets this variable. The directory is created with owner-only permissions (`0o700`) and the run refuses a path inside a Git worktree. The evidence uses schema `scene-presentation-contract-evidence-v3`: product SHA, device name, runtime identifier and video path are omitted when the run cannot observe them, never filled with a placeholder.
 

@@ -63,3 +63,204 @@ jobs:
             ${{ runner.temp }}/host-summary/run-identity.json
           if-no-files-found: error
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+
+  build-ios:
+    name: build-ios
+    runs-on: xcode-27
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.archive.outputs.artifact-id }}
+      producer_attempt: ${{ steps.build.outputs.producer_attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: source-build
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Reject private configuration before setup
+        working-directory: source-build
+        run: |
+          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform ios \
+            --output-dir "$RUNNER_TEMP/producer-ios/records"
+      - name: Select and verify the pinned toolchain
+        working-directory: source-build
+        run: |
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/build-python" --verify-toolchain
+      - name: Build and structurally inspect the archive
+        id: build
+        working-directory: source-build
+        run: |
+          "$RUNNER_TEMP/build-python/bin/python3" -B scripts/ci_build_archive.py build --platform ios \
+            --derived-data-path "$RUNNER_TEMP/producer-derived-ios" \
+            --output-dir "$RUNNER_TEMP/producer-ios" --min-free-gib 30
+      - name: Publish the attempt-specific archive
+        id: archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/producer-ios/archive
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+      - name: Publish build records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-ios-records-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/producer-ios/records
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+      - name: Display records and remove build products
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/producer-ios/records/summary.md"; then
+            cat "$RUNNER_TEMP/producer-ios/records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          rm -rf "$RUNNER_TEMP/producer-derived-ios" "$RUNNER_TEMP/producer-ios/archive"
+
+  build-tvos:
+    name: build-tvos
+    runs-on: xcode-27
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.archive.outputs.artifact-id }}
+      producer_attempt: ${{ steps.build.outputs.producer_attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: source-build
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Reject private configuration before setup
+        working-directory: source-build
+        run: |
+          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform tvos \
+            --output-dir "$RUNNER_TEMP/producer-tvos/records"
+      - name: Select and verify the pinned toolchain
+        working-directory: source-build
+        run: |
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/build-python" --verify-toolchain
+      - name: Build and structurally inspect the archive
+        id: build
+        working-directory: source-build
+        run: |
+          "$RUNNER_TEMP/build-python/bin/python3" -B scripts/ci_build_archive.py build --platform tvos \
+            --derived-data-path "$RUNNER_TEMP/producer-derived-tvos" \
+            --output-dir "$RUNNER_TEMP/producer-tvos" --min-free-gib 30
+      - name: Publish the attempt-specific archive
+        id: archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/producer-tvos/archive
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+      - name: Publish build records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-tvos-records-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/producer-tvos/records
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+      - name: Display records and remove build products
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/producer-tvos/records/summary.md"; then
+            cat "$RUNNER_TEMP/producer-tvos/records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          rm -rf "$RUNNER_TEMP/producer-derived-tvos" "$RUNNER_TEMP/producer-tvos/archive"
+
+  archive-relocation:
+    name: archive-relocation-${{ matrix.platform }}
+    needs: [build-ios, build-tvos]
+    runs-on: xcode-27
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        platform: [ios, tvos]
+    env:
+      ARCHIVE_ID: ${{ matrix.platform == 'ios' && needs.build-ios.outputs.artifact_id || needs.build-tvos.outputs.artifact_id }}
+      PRODUCER_ATTEMPT: ${{ matrix.platform == 'ios' && needs.build-ios.outputs.producer_attempt || needs.build-tvos.outputs.producer_attempt }}
+    steps:
+      - name: Checkout consumer tooling at a different path
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: consumer-source
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Preflight and verify consumer pins
+        working-directory: consumer-source
+        run: |
+          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform '${{ matrix.platform }}' \
+            --output-dir "$RUNNER_TEMP/relocation-records"
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/consumer-python" --verify-toolchain
+      - name: Select the exact artifact ID and producer attempt
+        working-directory: consumer-source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$RUNNER_TEMP/consumer-python/bin/python3" -B scripts/ci_build_archive.py select \
+            --platform '${{ matrix.platform }}' --artifact-id "$ARCHIVE_ID" \
+            --producer-attempt "$PRODUCER_ATTEMPT" --selection-path "$RUNNER_TEMP/archive-selection.json" \
+            --output-dir "$RUNNER_TEMP/relocation-records"
+      - name: Download the selected artifact, including earlier successful attempts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ env.ARCHIVE_ID }}
+          path: ${{ runner.temp }}/archive-download
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+      - name: Keep only tooling and remove the entire source checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/archive-tools/scripts"
+          for file in ci_build_archive.py ci_summary.py run_host_checks.py run_offline_unit_tests.py ci-pins.json; do
+            cp "consumer-source/scripts/$file" "$RUNNER_TEMP/archive-tools/scripts/"
+          done
+          rm -rf "$GITHUB_WORKSPACE/consumer-source"
+          test ! -e "$GITHUB_WORKSPACE/source-build"
+          test ! -e "$GITHUB_WORKSPACE/consumer-source"
+      - name: Extract at a different absolute path and run fixture tests without building
+        run: |
+          "$RUNNER_TEMP/consumer-python/bin/python3" -B "$RUNNER_TEMP/archive-tools/scripts/ci_build_archive.py" proof \
+            --selection-path "$RUNNER_TEMP/archive-selection.json" \
+            --archive-dir "$RUNNER_TEMP/archive-download" \
+            --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ matrix.platform }}" \
+            --output-dir "$RUNNER_TEMP/relocation-records" --min-free-gib 30
+      - name: Publish only relocation records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: relocation-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/relocation-records/summary.json
+            ${{ runner.temp }}/relocation-records/summary.md
+            ${{ runner.temp }}/relocation-records/run-identity.json
+            ${{ runner.temp }}/relocation-records/relocation-proof.json
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+      - name: Display records and remove relocated products
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/relocation-records/summary.md"; then
+            cat "$RUNNER_TEMP/relocation-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          rm -rf "$RUNNER_TEMP/consumer-relocated-${{ matrix.platform }}" "$RUNNER_TEMP/archive-download"

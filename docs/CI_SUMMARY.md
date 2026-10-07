@@ -186,10 +186,11 @@ secrets or status-writing identity. It uploads only `summary.json`, `summary.md`
 7 days for pushes. Successful Python identities are kept in JSON; the short Markdown
 shows every host check and all nonpassing Python identities.
 
-This job is informational and does not configure required statuses. Static population,
-skip/deselection policy and the verdict evaluator are libraries; trusted publication
-and approval enforcement remain separate work. Builds and unit jobs are separate
-tickets. The workflow consumes the merged
+This job is informational and does not configure required statuses. The workflow also
+produces [secret-free build archives and relocation checks](CI_BUILD_ARCHIVE.md).
+Relocation checks do not prove full unit coverage. Static population, skip/deselection
+policy and the verdict evaluator are libraries; trusted publication and approval
+enforcement are separate from producer claims. The workflow consumes the merged
 [pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone
 workflow-policy check as a distinct host identity. CI sets `PYTHON` to the pinned
 venv made from `/usr/bin/python3` and uses it

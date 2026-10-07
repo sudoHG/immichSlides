@@ -127,7 +127,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 # First-boot interaction can place even public fixture keys in XCTest's private activity archive.
-PRIVATE_RESULT_BUNDLE_SUITES = (*P2_CASES, *IMAGE_FAILURE_RECOVERY_SUITES)
+PRIVATE_RESULT_BUNDLE_SUITES = RUNNER_SUITES
 
 
 def reserve_unreachable_server_url() -> tuple[str, socket.socket]:
@@ -183,8 +183,75 @@ def write_sensitive_scan(evidence_dir: Path, sensitive_values: list[str]) -> Non
 
 def prepare_private_result_bundle_path(suite: str) -> Path:
     PRIVATE_RESULT_BUNDLE_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if PRIVATE_RESULT_BUNDLE_ROOT.is_symlink():
+        raise CommandError("The private result root must not be a symlink.")
+    PRIVATE_RESULT_BUNDLE_ROOT.chmod(0o700)
     holding_dir = Path(tempfile.mkdtemp(prefix=f"{suite}-", dir=PRIVATE_RESULT_BUNDLE_ROOT))
-    return holding_dir / result_bundle_name(suite)
+    return holding_dir / f"strict-{suite}.xcresult"
+
+
+def export_private_result_bundle(
+    bundle: Path, evidence_dir: Path, sensitive_values: list[str], *, suffix: str = ""
+) -> str:
+    completed = subprocess.run(
+        ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
+        capture_output=True, check=False, timeout=60,
+    )
+    if completed.returncode != 0:
+        raise CommandError(f"Official test export failed with exit {completed.returncode}.")
+    payload = json.loads(completed.stdout)
+    if not isinstance(payload, dict):
+        raise CommandError("Official test export is not a JSON object.")
+    if logical_bytes_contain(completed.stdout, sensitive_values):
+        raise CommandError("Official test export contains test credentials; refusing to retain it.")
+    (evidence_dir / f"official-tests{suffix}.json").write_bytes(completed.stdout)
+    summary_path = evidence_dir / f"official-summary{suffix}.json"
+    if not summary_path.exists():
+        summary = read_official_test_results_summary(bundle)
+        summary_path.write_text(json.dumps({
+            "totalTestCount": summary.total_test_count, "passedTests": summary.passed_tests,
+            "failedTests": summary.failed_tests, "skippedTests": summary.skipped_tests,
+            "result": summary.result,
+        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return hashlib.sha256(completed.stdout).hexdigest()
+
+
+def finalize_private_result_bundle(
+    bundle: Path, evidence_dir: Path, digest: str | None, *, successful: bool, suffix: str = ""
+) -> list[str]:
+    failures: list[str] = []
+    disposal_path = evidence_dir / f"result-bundle-disposal{suffix}.json"
+    quarantine_path = evidence_dir / f"result-bundle-quarantine{suffix}.json"
+    if not bundle.exists():
+        try:
+            bundle.parent.rmdir()
+        except OSError:
+            pass
+        return failures
+    if successful and digest is not None:
+        try:
+            disposal_path.write_text(json.dumps({
+                "reason": "The original XCTest result bundle may contain test credentials entered through normal UI input",
+                "official_tests_command": "xcrun xcresulttool get test-results tests --compact",
+                "official_tests_sha256": digest, "private_path": str(bundle),
+                "result_bundle_disposed": True,
+            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            shutil.rmtree(bundle)
+            bundle.parent.rmdir()
+        except OSError as error:
+            failures.append(f"dispose_private_result_bundle: {type(error).__name__}: {error}")
+    if bundle.exists():
+        try:
+            disposal_path.unlink(missing_ok=True)
+        except OSError as error:
+            failures.append(f"remove_incomplete_disposal_record: {type(error).__name__}: {error}")
+        try:
+            quarantine_path.write_text(json.dumps({
+                "private_path": str(bundle), "result_bundle_disposed": False,
+            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        except OSError as error:
+            failures.append(f"write_result_bundle_quarantine: {type(error).__name__}: {error}")
+    return failures
 
 
 def run_cleanup_actions(actions: list[tuple[str, Callable[[], None]]]) -> list[str]:
@@ -488,11 +555,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     service_log_b_path: Path | None = None
     derived_data_path = arguments.evidence_dir / "DerivedData"
     primary_exit_code = 0
+    did_complete_checks = False
     cleanup_failures: list[str] = []
     case_manifest: dict[str, object] | None = None
     result_bundle_path: Path | None = None
-    private_result_bundle: Path | None = None
-    official_tests_digest: str | None = None
+    private_bundles: list[tuple[Path, str]] = []
+    official_tests_digests: dict[str, str] = {}
     try:
         ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
         if "Simulator" not in arguments.destination:
@@ -500,11 +568,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         simulator_udid = destination_udid(arguments.destination)
         prepare_evidence_directory(arguments.evidence_dir)
         owns_evidence_directory = True
-        result_bundle_path = (
-            prepare_private_result_bundle_path(arguments.suite)
-            if arguments.suite in PRIVATE_RESULT_BUNDLE_SUITES
-            else arguments.evidence_dir / result_bundle_name(arguments.suite)
-        )
+        if arguments.suite != "filter-person":
+            result_bundle_path = prepare_private_result_bundle_path(arguments.suite)
+            private_bundles.append((result_bundle_path, ""))
         case_manifest = {
             "source_sha": read_source_sha(REPO_ROOT),
             "platform": arguments.platform,
@@ -658,7 +724,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             for index, session in enumerate(FILTER_PERSON_SESSIONS):
                 if index > 0:
                     reset_logs.append(reset_simulator_app(simulator_udid))
-                session_bundle = arguments.evidence_dir / f"strict-filter-person-{session['name']}.xcresult"
+                session_bundle = prepare_private_result_bundle_path(f"filter-person-{session['name']}")
+                private_bundles.append((session_bundle, f"-{session['name']}"))
                 session_log = arguments.evidence_dir / f"xcodebuild-{session['name']}.log"
                 command = build_xcodebuild_command(
                     repo_root=REPO_ROOT,
@@ -680,6 +747,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     environment=environment,
                     log_path=session_log,
                 )
+                primary_exit_code = exit_code
                 if exit_code != 0:
                     (arguments.evidence_dir / "xcodebuild.log").write_text(
                         "\n".join([*log_parts, session_log.read_text(encoding="utf-8")]),
@@ -738,6 +806,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 environment=environment,
                 log_path=arguments.evidence_dir / "xcodebuild.log",
             )
+            primary_exit_code = exit_code
             if recording_process is not None:
                 finished_recording, recording_process = recording_process, None
                 recording_exit = stop_screen_recording(finished_recording)
@@ -809,9 +878,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             case_manifest["visual_identity"] = visual_payload
             write_case_manifest(arguments.evidence_dir, case_manifest)
         print(json.dumps(summary_payload, sort_keys=True), file=stdout)
-    except (CommandError, OfflineCommandError) as error:
+        did_complete_checks = True
+    except (CommandError, OfflineCommandError, json.JSONDecodeError) as error:
         print(str(error), file=stderr)
-        primary_exit_code = error.code
+        primary_exit_code = primary_exit_code or getattr(error, "code", 2)
         if owns_evidence_directory and case_manifest is not None:
             case_manifest["result"] = "FAILED"
             case_manifest["exit_code"] = primary_exit_code
@@ -821,50 +891,24 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 cleanup_failures.append(f"write_case_manifest: {type(write_error).__name__}: {write_error}")
     except (OSError, subprocess.SubprocessError) as error:
         print(f"Evidence or process I/O failed: {error}", file=stderr)
-        primary_exit_code = 2
+        primary_exit_code = primary_exit_code or 2
     finally:
         lifecycle: dict[str, object] = {}
 
-        def export_and_hold_p2_bundle() -> None:
-            nonlocal private_result_bundle, official_tests_digest
-            if arguments.suite not in PRIVATE_RESULT_BUNDLE_SUITES or result_bundle_path is None or not result_bundle_path.is_dir():
+        def export_and_hold_bundle(bundle: Path, suffix: str) -> None:
+            if not bundle.is_dir():
+                if primary_exit_code == 0:
+                    raise CommandError("Missing private result bundle; cannot finalize a successful run.")
                 return
-            private_result_bundle = result_bundle_path
-            completed = subprocess.run(
-                ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(result_bundle_path), "--compact"],
-                capture_output=True,
-                check=False,
-                timeout=60,
+            digest = export_private_result_bundle(
+                bundle, arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=suffix
             )
-            if completed.returncode != 0:
-                raise CommandError(f"Official test export failed with exit {completed.returncode}.")
-            payload = json.loads(completed.stdout)
-            if not isinstance(payload, dict):
-                raise CommandError("Official test export is not a JSON object.")
-            if logical_bytes_contain(completed.stdout, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY]):
-                raise CommandError("Official test export contains test credentials; refusing to retain it.")
-            exported = arguments.evidence_dir / "official-tests.json"
-            exported.write_bytes(completed.stdout)
-            official_tests_digest = hashlib.sha256(completed.stdout).hexdigest()
-            summary_path = arguments.evidence_dir / "official-summary.json"
-            if not summary_path.exists():
-                test_summary = read_official_test_results_summary(result_bundle_path)
-                summary_path.write_text(
-                    json.dumps(
-                        {
-                            "totalTestCount": test_summary.total_test_count,
-                            "passedTests": test_summary.passed_tests,
-                            "failedTests": test_summary.failed_tests,
-                            "skippedTests": test_summary.skipped_tests,
-                            "result": test_summary.result,
-                        },
-                        indent=2,
-                        sort_keys=True,
-                    ) + "\n",
-                    encoding="utf-8",
-                )
-            if case_manifest is not None and official_tests_digest is not None:
-                case_manifest["official_tests_sha256"] = official_tests_digest
+            official_tests_digests[suffix] = digest
+            if case_manifest is not None:
+                if suffix:
+                    case_manifest["official_session_tests_sha256"] = dict(official_tests_digests)
+                else:
+                    case_manifest["official_tests_sha256"] = digest
                 write_case_manifest(arguments.evidence_dir, case_manifest)
 
         def stop_recording() -> None:
@@ -910,7 +954,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             )
         if derived_data_path.exists():
             actions.append(("remove_derived_data", lambda: shutil.rmtree(derived_data_path)))
-        actions.append(("export_and_hold_p2_bundle", export_and_hold_p2_bundle))
+        for bundle, suffix in private_bundles:
+            actions.append(("export_and_hold_bundle" + suffix, lambda b=bundle, s=suffix: export_and_hold_bundle(b, s)))
         cleanup_failures.extend(run_cleanup_actions(actions))
 
         if owns_evidence_directory:
@@ -930,60 +975,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             except CommandError as error:
                 cleanup_failures.append(f"sensitive_scan: {error}")
 
-        def record_private_quarantine() -> None:
-            if private_result_bundle is None:
-                return
-            (arguments.evidence_dir / "result-bundle-quarantine.json").write_text(
-                json.dumps(
-                    {"private_path": str(private_result_bundle), "result_bundle_disposed": False},
-                    indent=2,
-                    sort_keys=True,
-                ) + "\n",
-                encoding="utf-8",
-            )
-
-        if private_result_bundle is not None:
-            if primary_exit_code == 0 and not cleanup_failures:
-                try:
-                    (arguments.evidence_dir / "result-bundle-disposal.json").write_text(
-                        json.dumps(
-                            {
-                                "reason": "The original XCTest result bundle may contain test credentials entered through normal UI input",
-                                "official_tests_command": "xcrun xcresulttool get test-results tests --compact",
-                                "official_tests_sha256": official_tests_digest,
-                                "private_path": str(private_result_bundle),
-                                "result_bundle_disposed": True,
-                            },
-                            indent=2,
-                            sort_keys=True,
-                            ensure_ascii=False,
-                        ) + "\n",
-                        encoding="utf-8",
-                    )
-                    shutil.rmtree(private_result_bundle)
-                    private_result_bundle.parent.rmdir()
-                except OSError as error:
-                    cleanup_failures.append(f"dispose_private_result_bundle: {type(error).__name__}: {error}")
-                    if private_result_bundle.exists():
-                        try:
-                            (arguments.evidence_dir / "result-bundle-disposal.json").unlink(missing_ok=True)
-                        except OSError as record_error:
-                            cleanup_failures.append(f"remove_incomplete_disposal_record: {type(record_error).__name__}: {record_error}")
-                        try:
-                            record_private_quarantine()
-                        except OSError as record_error:
-                            cleanup_failures.append(f"write_result_bundle_quarantine: {type(record_error).__name__}: {record_error}")
-            else:
-                try:
-                    record_private_quarantine()
-                except OSError as error:
-                    cleanup_failures.append(f"write_result_bundle_quarantine: {type(error).__name__}: {error}")
-
-        if arguments.suite in PRIVATE_RESULT_BUNDLE_SUITES and result_bundle_path is not None and not result_bundle_path.exists():
-            try:
-                result_bundle_path.parent.rmdir()
-            except OSError:
-                pass
+        successful = did_complete_checks and primary_exit_code == 0 and not cleanup_failures
+        for bundle, suffix in private_bundles:
+            cleanup_failures.extend(finalize_private_result_bundle(
+                bundle, arguments.evidence_dir, official_tests_digests.get(suffix),
+                successful=successful and not cleanup_failures, suffix=suffix,
+            ))
 
         if owns_evidence_directory and cleanup_failures:
             try:
