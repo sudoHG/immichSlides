@@ -114,6 +114,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         create_result_bundle: bool = True,
         export_exit: int = 0,
         failure_session: str | None = None,
+        warm: bool = False,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -142,6 +143,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 return subprocess.CompletedProcess(command, export_exit, b'{"testNodes":[]}', b"")
             return subprocess.CompletedProcess(command, 0, "", "")
 
+        def fake_test_run(source, directory, environment):
+            run = directory / "case.xctestrun"
+            run.write_bytes(b"private test inputs")
+            return run
+
         stdout, stderr = io.StringIO(), io.StringIO()
         with mock.patch("run_strict_e2e.PRIVATE_RESULT_BUNDLE_ROOT", evidence.parent / "private"), mock.patch(
             "run_strict_e2e.data_available_gib", return_value=100
@@ -161,7 +167,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             return_value=_p2_facts(suite, platform, model, facts_device_id) if suite in P2_CASES else {},
         ) as facts, mock.patch("run_strict_e2e.require_visual_identity", return_value={}), mock.patch(
             "run_strict_e2e.start_screen_recording", return_value=(recording_process, 900.0)
-        ) as start, mock.patch("run_strict_e2e.stop_screen_recording", return_value=0) as stop:
+        ) as start, mock.patch("run_strict_e2e.stop_screen_recording", return_value=0) as stop, mock.patch(
+            "strict_e2e_build.load_warm_build", return_value=({"identity": {}}, Path("warm.xctestrun"))
+        ), mock.patch("strict_e2e_build.validate_warm_products"), mock.patch(
+            "strict_e2e_build.prepare_test_run", side_effect=fake_test_run
+        ):
             exit_code = runner_main(
                 [
                     "--platform",
@@ -172,6 +182,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     str(evidence),
                     "--suite",
                     suite,
+                    *(["--test-without-building", "--derived-data-path", str(evidence.parent / "derived")] if warm else []),
                 ],
                 stdout=stdout,
                 stderr=stderr,
@@ -183,6 +194,14 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "stop": stop,
             "recording_process": recording_process,
         }
+
+    def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            evidence = root / "evidence"
+            code, _, stderr, _ = self._run_p2_main(evidence, suite="smoke", platform="ios", model="iPhone", warm=True)
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual(list((root / "private").iterdir()), [])
 
     def test_ordinary_and_person_results_never_expose_raw_bundles(self) -> None:
         # Raw XCTest activities may retain UI-entered credentials even in failed sessions.
