@@ -14,6 +14,18 @@ if [ -n "$STUB_FAIL_MATCH" ]; then
     *"$STUB_FAIL_MATCH"*) exit 3 ;;
     esac
 fi
+case "$*" in
+*scripts/run_host_checks.py*)
+    while [ "$#" -gt 1 ]; do
+        if [ "$1" = "--output-dir" ]; then
+            mkdir -p "$2"
+            printf '%s\\n' 'Fixture host table' > "$2/summary.md"
+            break
+        fi
+        shift
+    done
+    ;;
+esac
 exit 0
 """
 
@@ -38,6 +50,7 @@ class CheckAllTests(unittest.TestCase):
         self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
         self.env["STUB_LOG"] = str(self.log)
         self.env.pop("STUB_FAIL_MATCH", None)
+        self.env.pop("PYTHON", None)
 
     def run_check_all(self, *args, fail_match=None):
         env = dict(self.env)
@@ -96,57 +109,67 @@ class CheckAllTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.calls(), [])
 
-    def test_all_steps_pass_in_order_and_xcode_tests_are_reported_skipped(self):
-        result = self.run_check_all()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        calls = self.calls()
-        self.assertEqual(len(calls), 7)
-        self.assertTrue(calls[0].startswith("xcrun swift-format lint --strict"))
-        self.assertIn("scripts/check_test_conventions.py", calls[1])
-        self.assertIn("scripts/check_release_guards.py", calls[2])
-        self.assertIn("scripts/validate_localization_catalog.py", calls[3])
-        self.assertIn("scripts/scan_chinese_strings.py", calls[4])
-        self.assertIn("scripts/check_required_test_tools.py", calls[5])
-        self.assertIn("-m unittest discover -s scripts", calls[6])
-        self.assertIn("Xcode unit tests were skipped", result.stdout)
-        self.assertIn("RESULT: PASS", result.stdout)
+    def test_shared_host_checks_pass_and_xcode_tests_are_reported_skipped(self):
+        for output in (None, self.tmp / "host-output"):
+            with self.subTest(output=output):
+                self.log.unlink(missing_ok=True)
+                args = ("--output-dir", str(output)) if output else ()
+                result = self.run_check_all(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = self.calls()
+                self.assertEqual(len(calls), 1)
+                self.assertIn("scripts/run_host_checks.py", calls[0])
+                self.assertIn("Fixture host table", result.stdout)
+                self.assertIn("Xcode unit tests were skipped", result.stdout)
+                self.assertIn("RESULT: PASS", result.stdout)
+                records = Path(calls[0].split("--output-dir ", 1)[1].split()[0])
+                if output:
+                    self.assertTrue((records / "summary.md").is_file())
+                    self.assertEqual(self.run_check_all(*args).returncode, 2)
+                    self.assertEqual(len(self.calls()), 1)
+                else:
+                    self.assertIn("--no-summary-path", calls[0])
+                    self.assertNotIn("immichslides-check-all.", result.stdout)
+                    self.assertFalse(records.exists())
 
-    def test_failing_step_fails_the_run_but_later_steps_still_run(self):
-        result = self.run_check_all(fail_match="check_release_guards.py")
+    def test_failing_host_checks_fail_the_run(self):
+        result = self.run_check_all(fail_match="run_host_checks.py")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("FAIL: release guards (exit 3", result.stdout)
+        self.assertIn("FAIL: host checks (exit 3", result.stdout)
         self.assertIn("RESULT: FAIL (1 step(s) failed)", result.stdout)
-        self.assertEqual(len(self.calls()), 7)
-
-    def test_missing_test_tool_fails_without_skipping_python_tests(self):
-        result = self.run_check_all(fail_match="check_required_test_tools.py")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("FAIL: Python test prerequisites", result.stdout)
-        self.assertIn("-m unittest discover -s scripts", self.calls()[-1])
-
-    def test_lint_failure_fails_the_run(self):
-        result = self.run_check_all(fail_match="swift-format lint")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("FAIL: swift-format lint", result.stdout)
+        self.assertEqual(len(self.calls()), 1)
 
     def test_unit_tests_run_for_both_platforms_with_bundles_in_output_dir(self):
-        out = self.tmp / "out"
-        result = self.run_check_all(
-            "--with-unit-tests",
-            "--ios-destination", "platform=iOS Simulator,id=X",
-            "--tvos-destination", "platform=tvOS Simulator,id=Y",
-            "--output-dir", str(out),
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        runner_calls = [c for c in self.calls() if "run_offline_unit_tests.py" in c]
-        self.assertEqual(len(runner_calls), 2)
-        self.assertIn("--platform ios", runner_calls[0])
-        self.assertIn("--platform tvos", runner_calls[1])
-        resolved_out = str(out.resolve())
-        for call in runner_calls:
-            self.assertIn(f"--result-bundle-path {resolved_out}/", call)
-            self.assertNotIn("--timeout-minutes", call)
-        self.assertNotIn("Xcode unit tests were skipped", result.stdout)
+        selected = self.tmp / "venv-python"
+        selected.write_text(STUB)
+        selected.chmod(0o755)
+        for override in (None, str(selected)):
+            with self.subTest(interpreter=override):
+                out = self.tmp / ("overridden-output" if override else "default-output")
+                self.log.unlink(missing_ok=True)
+                if override:
+                    self.env["PYTHON"] = override
+                result = self.run_check_all(
+                    "--with-unit-tests",
+                    "--ios-destination", "platform=iOS Simulator,id=X",
+                    "--tvos-destination", "platform=tvOS Simulator,id=Y",
+                    "--output-dir", str(out),
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = self.calls()
+                self.assertEqual(len(calls), 3)
+                self.assertTrue(all(call.startswith("venv-python " if override else "python3 ") for call in calls))
+                self.assertIn(f"--output-dir {out.resolve()}/host-records", calls[0])
+                self.assertNotIn("--no-summary-path", calls[0])
+                runner_calls = [c for c in calls if "run_offline_unit_tests.py" in c]
+                self.assertEqual(len(runner_calls), 2)
+                self.assertIn("--platform ios", runner_calls[0])
+                self.assertIn("--platform tvos", runner_calls[1])
+                for call in runner_calls:
+                    self.assertIn(f"--result-bundle-path {out.resolve()}/", call)
+                    self.assertIn("--derived-data-path .derivedData/check-all-", call)
+                    self.assertNotIn("--timeout-minutes", call)
+                self.assertNotIn("Xcode unit tests were skipped", result.stdout)
 
     def test_unit_test_failure_propagates(self):
         result = self.run_check_all(

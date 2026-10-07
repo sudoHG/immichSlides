@@ -188,6 +188,14 @@ These are exactly the problems tests exist to catch.
 Run it with the other Python tests: `python3 -B -m unittest discover -s scripts -p 'test_*.py'`, or directly
 with `python3 scripts/check_test_conventions.py`.
 
+For the shared macOS CI host entry point, use `"${PYTHON:-python3}" -B scripts/run_host_checks.py`.
+It runs these Python tests and records each discovered identity, outcome and duration
+alongside the other host checks. `scripts/check_all.sh` delegates its host checks to
+that entry point and uses the same interpreter for optional unit runners.
+Prerequisites and interpreter setup are described in [CONTRIBUTING](../CONTRIBUTING.md#setup).
+Commands and the versioned records are described in
+[CI_SUMMARY.md](CI_SUMMARY.md).
+
 Existing violations are tracked in `scripts/test_conventions_allowlist.json` by rule, file path and name (no
 line numbers, so the list survives unrelated edits). The check fails on any violation not in the allowlist,
 and on any allowlist entry that no longer matches a real violation — so the list can only shrink as tests are
@@ -259,7 +267,7 @@ Strict end-to-end tests run the real app against a local public fixture server s
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-App runs need macOS, a selected Xcode installation, the platform's installed Simulator runtime, Python 3 and Pillow. Python contract tests also require Swift (included with Xcode) and the zstd CLI (`brew install zstd`). Before any build, check `df -h /System/Volumes/Data`; the runners require at least 80 GiB available by default. Use `--min-free-gib N` with a non-negative integer to change this local safety threshold, and install any required Simulator runtime through Xcode. Pick a local simulator UDID with `xcrun simctl list devices available`.
+App runs need macOS, a selected Xcode installation and the platform's installed Simulator runtime. Python prerequisites and interpreter setup are described in [CONTRIBUTING](../CONTRIBUTING.md#setup). Before any build, check `df -h /System/Volumes/Data`; the runners require at least 80 GiB available by default. Use `--min-free-gib N` with a non-negative integer to change this local safety threshold, and install any required Simulator runtime through Xcode. Pick a local simulator UDID with `xcrun simctl list devices available`.
 
 ```bash
 python3 scripts/run_strict_e2e.py --platform ios --destination 'platform=iOS Simulator,id=<UDID>' --suite journey-a --evidence-dir '<outside-repo>/first-connection'

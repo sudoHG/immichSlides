@@ -1,0 +1,65 @@
+name: ci-gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-gate-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  host-checks:
+    name: host-checks
+    runs-on: xcode-27
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the tested merge or pushed commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Select the pinned Xcode
+        run: |
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+
+      - name: Verify pins and create the isolated Python environment
+        run: |
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/host-python" --verify-toolchain
+          echo "PYTHON=$RUNNER_TEMP/host-python/bin/python3" >> "$GITHUB_ENV"
+
+      - name: Run shared host checks and write records
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          "$PYTHON" -B scripts/run_host_checks.py \
+            --output-dir "$RUNNER_TEMP/host-summary" \
+            --workflow-path .github/workflows/ci-gate.yml \
+            --timeout-seconds 900
+
+      - name: Validate and display the records
+        if: always()
+        run: |
+          "$PYTHON" scripts/ci_summary.py "$RUNNER_TEMP/host-summary/summary.json"
+          "$PYTHON" scripts/ci_summary.py --identity "$RUNNER_TEMP/host-summary/run-identity.json"
+          cat "$RUNNER_TEMP/host-summary/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload only summaries and identity
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: host-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/host-summary/summary.json
+            ${{ runner.temp }}/host-summary/summary.md
+            ${{ runner.temp }}/host-summary/run-identity.json
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}

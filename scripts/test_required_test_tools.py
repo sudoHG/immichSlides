@@ -1,4 +1,4 @@
-"""The Python suite requires Swift, zstd and Pillow; missing tools must fail, never skip coverage."""
+"""Missing suite prerequisites must fail, never skip coverage."""
 
 import contextlib
 import io
@@ -22,12 +22,13 @@ class RequiredTestToolsTests(unittest.TestCase):
             check_required_test_tools.importlib.util, "find_spec", return_value=None
         ), contextlib.redirect_stderr(output):
             self.assertEqual(check_required_test_tools.main(), 1)
-        for prerequisite in ["Swift", "zstd", "Pillow"]:
+        for prerequisite in ["Swift", "zstd", "Pillow", "PyYAML"]:
             self.assertIn(prerequisite, output.getvalue())
 
     def test_each_missing_tool_is_a_failure(self):
-        for tool in ["swift", "zstd"]:
+        for tool in ["swift", "zstd", "PIL", "yaml"]:
             with self.subTest(tool=tool), mock.patch.object(
                 check_required_test_tools.shutil, "which", side_effect=lambda name: None if name == tool else "/tool"
-            ), mock.patch.object(check_required_test_tools.importlib.util, "find_spec", return_value=object()):
+            ), mock.patch.object(check_required_test_tools.importlib.util, "find_spec",
+                                 side_effect=lambda name: None if name == tool else object()):
                 self.assertEqual(len(check_required_test_tools.missing_tools()), 1)

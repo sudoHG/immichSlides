@@ -10,8 +10,18 @@ Thanks for helping out. immichSlides is a SwiftUI photo slideshow client for [Im
 
 ## Setup
 
-- A Mac with the Xcode version the project was last upgraded with (Xcode 26.3, see `LastUpgradeCheck` in `immichSlides.xcodeproj`), the iOS and tvOS Simulator runtimes, and Python 3 with Pillow (`python3 -m pip install Pillow`), plus Swift (included with Xcode) and the zstd CLI (`brew install zstd`) for Python contract tests.
-- CI tool versions and the isolated Python setup are documented in [CI toolchain and workflow policy](docs/CI_TOOLCHAIN.md). Workflow changes must pass `python3 scripts/check_workflow_policy.py` in that environment.
+- A Mac with the Xcode version the project was last upgraded with (Xcode 26.3, see `LastUpgradeCheck` in `immichSlides.xcodeproj`), the iOS and tvOS Simulator runtimes, Python 3 with Pillow and PyYAML, Swift (included with Xcode), and the zstd CLI (`brew install zstd`) for Python contract tests.
+- CI tool versions and the isolated Python setup are documented in [CI toolchain and workflow policy](docs/CI_TOOLCHAIN.md). The host entry point runs the standalone workflow-policy check in the same environment as the other Python checks.
+- All `check_all.sh` Python steps use `"${PYTHON:-python3}"`; child host checks keep that interpreter. Set `PYTHON=/usr/bin/python3` to use the recommended Xcode-bundled Python, or activate a venv made from it and leave `PYTHON` unset. Python 3.14 can hit the [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
+
+  ```bash
+  /usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv /tmp/immichslides-python
+  source /tmp/immichslides-python/bin/activate
+  unset PYTHON
+  scripts/check_all.sh
+  # With the prerequisites already installed for Xcode Python, no PATH change is needed:
+  PYTHON=/usr/bin/python3 scripts/check_all.sh
+  ```
 - Deployment target is iOS / tvOS 18.6.
 - `Config/env.xcconfig` is an optional, git-ignored local test configuration. `Config/Debug.xcconfig` includes it only when present, so a fresh clone builds in Xcode without setup.
 - The test runners refuse to start `xcodebuild` below 80 GiB free on `/System/Volumes/Data`; pass `--min-free-gib N` with a non-negative integer to change this local safety threshold.
@@ -44,7 +54,8 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Run this before every push; it is the same set of checks a reviewer will run:
 
   ```bash
-  scripts/check_all.sh                     # swift-format lint, test conventions, release guards, localization, Python tests
+  scripts/check_all.sh                     # formatting, conventions, release guards, localization, prerequisites, workflow policy, Python tests
+  scripts/check_all.sh --output-dir '<fresh-outside-repo>' # keep the host summary and identity in host-records/
   scripts/check_all.sh --with-unit-tests \
       --ios-destination 'platform=iOS Simulator,id=<UDID>' \
       --tvos-destination 'platform=tvOS Simulator,id=<UDID>' \
@@ -53,6 +64,16 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 
 - Naming and SwiftUI conventions (View / ViewModel / Store / Service roles, `@MainActor` for UI-driving types, no network or credential access in views) are in [AGENTS.md](AGENTS.md). Code comments are written in English and explain why, not what.
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+The informational `ci-gate` host job runs on pull requests and pushes to `main`.
+To keep its JSON and short Markdown records locally, run
+`"${PYTHON:-python3}" -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run`.
+`check_all.sh` uses the same checks. `--output-dir` keeps records in `DIR/host-records`
+and optional unit bundles in `DIR`; choose a fresh directory. Without it, temporary
+host records are removed on exit. The final terminal report lists each host result
+and all nonpassing Python identities.
+See [the summary contract](docs/CI_SUMMARY.md) for validation, identity, result
+accounting and the current workflow boundary. Existing privacy checks remain required.
 
 ## Tests
 
