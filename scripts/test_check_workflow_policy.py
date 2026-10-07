@@ -144,6 +144,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         for command in ["bash ci-artifacts/report.sh", "python3 ci-artifacts/report.py", "./ci-artifacts/run",
                         "source ci-artifacts/env", "chmod +x ci-artifacts/run", "eval $(cat ci-artifacts/code)",
                         "cat ci-artifacts/code | sh", "cd ci-artifacts && ./run", "bash $PAYLOAD",
+                        "cat ci-artifacts/code | python3", "cat ci-artifacts/code | /usr/bin/ruby",
                         ". ci-artifacts/env", "echo safe\n./ci-artifacts/run", "env bash ci-artifacts/run",
                         "exec ./ci-artifacts/run", "python3 -c 'import runpy; runpy.run_path(path)'",
                         "chmod +x $PAYLOAD"]:

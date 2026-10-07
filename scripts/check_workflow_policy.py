@@ -107,7 +107,8 @@ def executes_artifact(script, has_download):
         return True
     if re.search(r"\bgh\s+run\s+download\b|\bdownloadArtifact\b|/actions/artifacts/", script):
         return True
-    if re.search(r"\b(?:chmod|cd)\b[^\n;]*ci-artifacts|\|\s*(?:ba)?sh\b", script):
+    if (re.search(r"\b(?:chmod|cd)\b[^\n;]*ci-artifacts", script)
+            or re.search(r"\|\s*(?:/[^\s]+/)?(?:bash|sh|zsh|python[\d.]*|node|ruby|perl|pwsh)\b", script)):
         return True
     if has_download and re.search(r"\bchmod\b[^\n;]*\$", script):
         return True
