@@ -125,14 +125,14 @@ class StaticPopulationTests(unittest.TestCase):
                        "def helper(self, marker=replace()): pass", "def helper(self, marker=lambda: None): pass",
                        "def helper(self, marker: replace()): pass", "def helper(self) -> replace(): pass",
                        "def helper(self, marker: factory[0]): pass", "def helper(self, marker: factory | object): pass",
-                       "VALUES = set()",
+                       "marker: replace() = None", "marker: factory[0]", "VALUES = set()",
                        "def classmethod(function): return function\n @classmethod\n def test_hidden(self): pass"):
             source = "import unittest\nclass Tests(unittest.TestCase):\n def helper(self): pass\n " + member
             with self.subTest(member=member), self.assertRaisesRegex(ContractError, r"test_entry\.py:\d+:"):
                 python_identities({"test_entry": source})
         for declaration in ("@replace\nclass Tests(unittest.TestCase): pass",
                             "class Tests(unittest.TestCase, metaclass=replace): pass",
-                            "Saved = factory()", "from support import *", "exec(source)",
+                            "Saved = factory()", "marker: replace() = None", "from support import *", "exec(source)",
                             "if True:\n TIMEOUT = 5", "unittest.TestCase.test_hidden = helper",
                             "if __name__ == '__main__':\n factory().main()",
                             "def set(): return factory()\nVALUES = set()\nfrom builtins import set"):

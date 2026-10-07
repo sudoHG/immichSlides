@@ -357,31 +357,36 @@ def python_identities(files, *, discovery_pattern="test_*"):
             return signature_expression(node.left, annotation=True) and signature_expression(node.right, annotation=True)
         return False
 
+    deferred_annotations = {module for module in strict if any(
+        isinstance(item, ast.ImportFrom) and item.module == "__future__"
+        and any(alias.name == "annotations" for alias in item.names) for item in trees[module].body)}
+
+    def validate_annotation(module, annotation):
+        if not signature_expression(annotation, annotation=True):
+            fail(module, annotation, "annotation is outside the allowed declaration grammar")
+        if annotation is not None and module not in deferred_annotations:
+            for child in ast.walk(annotation):
+                if isinstance(child, ast.BinOp):
+                    fail(module, child, "type unions require deferred annotations")
+                if isinstance(child, (ast.Attribute, ast.Subscript)):
+                    expression = child.value if isinstance(child, ast.Subscript) else child
+                    try:
+                        target = resolve(module + "." + dotted(expression))
+                    except ContractError:
+                        target = None
+                    if target is None or not non_test_terminal(target) or not stable_constructor(module, child, expression):
+                        fail(module, child, "runtime type lookup requires an unshadowed standard-library type or deferred annotations")
+
     def function_definition(module, node, defined):
         if node.name in {"load_tests", "__getattr__", "__dir__", "__init_subclass__", "__getattribute__", "__new__", "__class_getitem__"}:
             fail(module, node, "discovery hook is outside the allowed grammar")
         for default in node.args.defaults + node.args.kw_defaults:
             if not signature_expression(default):
                 fail(module, default, "definition default is outside the allowed signature grammar")
-        deferred = any(isinstance(item, ast.ImportFrom) and item.module == "__future__"
-                       and any(alias.name == "annotations" for alias in item.names) for item in trees[module].body)
         arguments = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
         arguments += [arg for arg in (node.args.vararg, node.args.kwarg) if arg is not None]
         for annotation in [arg.annotation for arg in arguments] + [node.returns]:
-            if not signature_expression(annotation, annotation=True):
-                fail(module, annotation, "annotation is outside the allowed signature grammar")
-            if annotation is not None and not deferred:
-                for child in ast.walk(annotation):
-                    if isinstance(child, ast.BinOp):
-                        fail(module, child, "type unions require deferred annotations")
-                    if isinstance(child, (ast.Attribute, ast.Subscript)):
-                        expression = child.value if isinstance(child, ast.Subscript) else child
-                        try:
-                            target = resolve(module + "." + dotted(expression))
-                        except ContractError:
-                            target = None
-                        if target is None or not non_test_terminal(target) or not stable_constructor(module, child, expression):
-                            fail(module, child, "runtime type lookup requires an unshadowed standard-library type or deferred annotations")
+            validate_annotation(module, annotation)
         for decorator in node.decorator_list:
             expression = decorator.func if isinstance(decorator, ast.Call) else decorator
             try:
@@ -459,6 +464,8 @@ def python_identities(files, *, discovery_pattern="test_*"):
                         fail(module, node, "class, base or test member cannot be rebound")
                     defined.add(node.name)
                 elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    if isinstance(node, ast.AnnAssign):
+                        validate_annotation(module, node.annotation)
                     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                     if len(targets) != 1 or not isinstance(targets[0], ast.Name):
                         fail(module, node, "only a single data name can be assigned")

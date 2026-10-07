@@ -96,7 +96,7 @@ skip arguments use the data grammar. `property` is allowed for non-test methods.
 Other decorators are unsupported. Class decorators are always rejected.
 
 Signature defaults accept literals, names, literal containers, name/container
-unpacking and signed literals. Annotations accept type names, literal arguments,
+unpacking and unary literals. Function and variable annotations accept type names, literal arguments,
 attributes, subscripts and type unions; calls, lambdas and assignment expressions
 are unsupported. Type unions require deferred annotations. Attribute/subscript type lookups require deferred annotations
 (`from __future__ import annotations`) or unshadowed standard-library bindings.
