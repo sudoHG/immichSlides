@@ -24,11 +24,15 @@ whose `host-records` does not already exist. This option also works without unit
 Without it, temporary host records are removed on exit and their path is not printed.
 Every run ends with each host outcome and all nonpassing Python identities and reasons,
 including after optional unit tests. DerivedData remains in `.derivedData/check-all-{ios,tvos}`.
-Checks continue after failures. Exit 0 preserves the legacy command verdict, including
-unittest's environment skips; it does not prove complete coverage. The summary is
-`unverified` whenever any skip or unexecuted class member is present, with every reason
-retained. Expected-skip policy (#88) replaces this interim rule. Exit 1 means a failed
-command, expected failure, missing result, empty Python suite or infrastructure problem; invalid arguments
+Checks continue after failures. Exit 0 means commands and coverage succeeded, or the
+only coverage exception matches the initial **proposed** expected-skip list. That last
+case remains `unverified` with `policy-proposed` evidence until maintainer approval;
+it never counts as a passing gate. Approved matching skips allow `passed`; an
+unexpected skip, a registered skip that runs, a missing compiled or executed identity,
+or an unapproved deselection fails. This replaces the interim "any skip is unverified"
+rule with the [expected-population and policy model](CI_POPULATION.md).
+Exit 1 means failed coverage, a failed command, expected failure, missing result,
+empty Python suite or infrastructure problem; invalid arguments
 exit 2. `--timeout-seconds` sets the total
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
@@ -79,7 +83,8 @@ run ID are null. No approval is claimed by a producer: publisher verdicts separa
 record source and whether they rest on approval.
 
 Host checks hash the exact bytes of `scripts/check_workflow_policy.py` as
-`policies.workflow-policy`. CI also records the setup manifest `scripts/ci-pins.json`
+`policies.workflow-policy` and `scripts/ci-test-policy.json` as `policies.test-policy`.
+CI also records the setup manifest `scripts/ci-pins.json`
 as `manifests.ci-pins`; local runs do not claim to consume its setup pins.
 Later producers hash the exact bytes of each additional manifest/policy they consume. Versions
 record actual tools, not a claim that pins were verified. Host signing is
@@ -118,9 +123,10 @@ so two scenarios or fixtures cannot collapse into one result. Python IDs use
 Identity equality uses the entire object, independent of JSON key order.
 
 `declared` and `compiled` contain identities. Host declaration/compilation records
-the eight check definitions; Python `compiled` records dynamic unittest discovery.
-The host producer does **not** claim static Python enumeration. A trusted static
-declared/compiled/executed comparison belongs to the expected-population ticket.
+the eight check definitions; Python declaration uses the AST and follows mixins,
+while `compiled` records dynamic unittest discovery. These are separate inputs to
+the population comparison. The [static library](CI_POPULATION.md) also enumerates
+Swift unit and UI tests from supplied source text without candidate imports.
 `removed_by_pr` contains identities for reporting only; host checks leave it empty.
 
 An observed entry contains `identity`, `outcome`, `duration_seconds` and a nonempty
@@ -172,9 +178,10 @@ secrets or status-writing identity. It uploads only `summary.json`, `summary.md`
 7 days for pushes. Successful Python identities are kept in JSON; the short Markdown
 shows every host check and all nonpassing Python identities.
 
-This job is informational and does not configure required statuses. Builds, unit
-jobs, expected populations, skip policy, trusted publication
-and approval enforcement are separate tickets. The workflow consumes the merged
+This job is informational and does not configure required statuses. Static population,
+skip/deselection policy and the verdict evaluator are libraries; trusted publication
+and approval enforcement remain separate work. Builds and unit jobs are separate
+tickets. The workflow consumes the merged
 [pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone
 workflow-policy check as a distinct host identity. CI sets `PYTHON` to the pinned
 venv made from `/usr/bin/python3` and uses it

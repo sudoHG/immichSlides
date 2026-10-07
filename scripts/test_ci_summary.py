@@ -445,7 +445,7 @@ class HostResultTests(unittest.TestCase):
                 self.assertIn(name, terminal.getvalue())
             self.assertIn(identity["key"], terminal.getvalue())
 
-    def test_host_class_skip_preserves_cli_success_and_never_labels_summary_passed(self):
+    def test_host_unexpected_class_skip_fails_instead_of_claiming_complete_coverage(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"
             identity = ci_summary.test_identity("python", "calibration.Sample.test_photo")
@@ -459,14 +459,44 @@ class HostResultTests(unittest.TestCase):
             with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
                     patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]) as identity_call, \
                     patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                    patch.object(run_host_checks, "python_identities", return_value=[identity]), \
                     patch.object(run_host_checks, "run_steps", side_effect=steps), \
                     contextlib.redirect_stdout(io.StringIO()):
                 code = run_host_checks.main()
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 1)
             identity_call.assert_called_once_with(os.environ, ci=False)
             summary = ci_summary.parse_summary((output / "summary.json").read_text())
-            self.assertEqual(summary["status"], "unverified")
+            self.assertEqual(summary["status"], "failed")
             self.assertEqual(summary["population"]["observed"][-1]["attempts"][0]["reason"], "external screenshots unavailable")
+
+    def test_host_policy_distinguishes_proposed_and_approved_expected_skips(self):
+        identity = ci_summary.test_identity("python", "calibration.Sample.test_photo")
+        for state, outcome in (("proposed", "unverified"), ("approved", "passed")):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                policy = {"schema_version": 1, "approval_state": state, "deselections": [],
+                          "expected_skips": [{"kind": "python", "key_pattern": identity["key"], "dimensions": {},
+                                              "tier": "host", "environment": "hermetic", "reason": "no fixture"}]}
+
+                def steps(*args, **kwargs):
+                    (output / "python-results.json").write_text(json.dumps({"compiled": [identity], "observed": [
+                        ci_summary.observation(identity, "skipped", 0, reason="no fixture")]}))
+                    return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                            for name, _ in run_host_checks.HOST_CHECKS], []
+
+                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                        patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                        patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                        patch.object(run_host_checks, "python_identities", return_value=[identity]), \
+                        patch.object(run_host_checks, "parse_policy", return_value=policy), \
+                        patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    code = run_host_checks.main()
+                self.assertEqual(code, 0)
+                summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                self.assertEqual(summary["status"], outcome)
+                self.assertEqual(summary["population"]["declared"][-1], identity)
+                self.assertIn("test-policy", summary["hashes"]["policies"])
 
     def test_host_failures_and_timeouts_name_the_step_and_continue(self):
         with tempfile.TemporaryDirectory() as directory:

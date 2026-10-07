@@ -21,6 +21,8 @@ from urllib.parse import urlsplit
 
 from ci_summary import (ContractError, identity_key, observation, parse_identity, parse_summary,
                         render_markdown, test_identity, validate_observation, validate_test_identity, write_summary)
+from ci_population import python_identities, python_sources
+from ci_verdict import evaluate_population, parse_policy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GROUP_TERM_GRACE_SECONDS = 5
@@ -284,6 +286,10 @@ def main():
         is_ci = identity["event"] != "local"
         workflow_path, fork = source_metadata(identity, os.environ, args.workflow_path)
         print(f"Python interpreter: {sys.executable} ({platform.python_version()})", flush=True)
+        policy_path = REPO_ROOT / "scripts/ci-test-policy.json"
+        policy = parse_policy(policy_path.read_text(encoding="utf-8"))
+        declared = [test_identity("host", name) for name, _ in HOST_CHECKS]
+        declared.extend(python_identities(python_sources(REPO_ROOT / "scripts")))
         summary = {"schema_version": 1, "identity": identity,
                    "source": {"repository": identity["repository"], "workflow_path": workflow_path,
                               "event": identity["event"], "fork_originated": fork, "ci_changing": None},
@@ -294,9 +300,10 @@ def main():
                        "manifests": {"ci-pins": hashlib.sha256((REPO_ROOT / "scripts/ci-pins.json").read_bytes()).hexdigest()}
                        if is_ci else {},
                        "policies": {"workflow-policy": hashlib.sha256(
-                           (REPO_ROOT / "scripts/check_workflow_policy.py").read_bytes()).hexdigest()}},
+                           (REPO_ROOT / "scripts/check_workflow_policy.py").read_bytes()).hexdigest(),
+                           "test-policy": hashlib.sha256(policy_path.read_bytes()).hexdigest()}},
                    "toolchain": toolchain(),
-                   "population": {"declared": [test_identity("host", name) for name, _ in HOST_CHECKS],
+                   "population": {"declared": declared,
                                   "compiled": [test_identity("host", name) for name, _ in HOST_CHECKS],
                                   "observed": [], "deselected": [], "removed_by_pr": []},
                    "infrastructure": [], "status": "unverified"}
@@ -315,18 +322,23 @@ def main():
         except (OSError, ValueError, KeyError, TypeError):
             summary["infrastructure"].append({"code": "missing-python-results", "message": "Python result identities are missing or malformed"})
         command_passed = not summary["infrastructure"] and all(entry["outcome"] == "passed" for entry in records)
-        outcomes = [entry["outcome"] for entry in summary["population"]["observed"]]
+        # Coverage is evaluated separately from command success. Candidate policy
+        # consumption here is informational; a trusted gate selects its own policy.
+        summary["status"] = "passed" if command_passed else "failed"
+        coverage = evaluate_population(summary, declared, policy, environment="hermetic")
         if not command_passed:
             summary["status"] = "failed"
-        elif all(outcome == "passed" for outcome in outcomes):
-            summary["status"] = "passed"
-        else:
+        elif policy["approval_state"] == "proposed" and evaluate_population(
+                summary, declared, dict(policy, approval_state="approved"), environment="hermetic")["status"] == "passed" and coverage["errors"]:
             summary["status"] = "unverified"
-            summary["infrastructure"].append({"code": "skip-policy-pending", "message":
-                "Coverage includes skips or unexecuted tests; expected-skip policy is introduced separately"})
+            summary["infrastructure"].append({"code": "policy-proposed", "message":
+                "Only proposed exceptions explain coverage; maintainer approval is still required"})
+        else:
+            summary["status"] = coverage["status"]
+            summary["infrastructure"].extend({"code": "population-invalid", "message": message} for message in coverage["errors"])
         write_summary(summary, output)
         print_result(summary, output, args.no_summary_path)
-        return 0 if command_passed else 1
+        return 0 if command_passed and summary["status"] != "failed" else 1
     except (subprocess.SubprocessError, ContractError, OSError, ValueError, KeyError, TypeError) as error:
         message = f"Git metadata command failed ({type(error).__name__})" if isinstance(error, subprocess.SubprocessError) else str(error)
         print(f"FAIL: host-check record could not be produced: {message}", file=sys.stderr)
