@@ -27,14 +27,9 @@ jobs:
           persist-credentials: false
 
       # Pins and the managed Python environment are introduced by the sibling pins ticket.
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.14'
-
       - name: Prepare the existing host-test prerequisites
         run: |
-          python3 -m venv "$RUNNER_TEMP/host-python"
+          /usr/bin/python3 -m venv "$RUNNER_TEMP/host-python"
           "$RUNNER_TEMP/host-python/bin/python3" -m pip install Pillow
           command -v zstd || brew install zstd
 

@@ -212,6 +212,20 @@ class HostResultTests(unittest.TestCase):
         self.assertEqual([entry["outcome"] for entry in payload["observed"]], ["failed", "not-run"])
         self.assertIn("setUpClass", payload["observed"][0]["identity"]["key"])
 
+    def test_python_class_skip_keeps_legacy_cli_verdict_and_records_unverified_members(self):
+        class Sample(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                raise unittest.SkipTest("external calibration screenshots unavailable")
+
+            def test_never_started(self):
+                self.fail("must not run")
+
+        payload, code = run_python_tests.run_suite(unittest.defaultTestLoader.loadTestsFromTestCase(Sample), io.StringIO())
+        self.assertEqual(code, 0)
+        self.assertEqual([entry["outcome"] for entry in payload["observed"]], ["skipped", "not-run"])
+        self.assertEqual(payload["observed"][0]["attempts"][0]["reason"], "external calibration screenshots unavailable")
+
     def test_host_failures_and_timeouts_name_the_step_and_continue(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
