@@ -222,6 +222,7 @@ df -h /System/Volumes/Data
 xcodebuild build-for-testing \
     -project "$relocation_root/source/immichSlides.xcodeproj" \
     -scheme "$scheme" -testPlan "$scheme" -destination "$destination" \
+    -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile \
     -only-testing:immichSlidesTests \
     '-skip-testing:immichSlidesTests/PlaybackRuntimeEvidenceManifestTests/externalRuntimeJSONLPassesValidator()' \
     -derivedDataPath "$relocation_root/derived"
