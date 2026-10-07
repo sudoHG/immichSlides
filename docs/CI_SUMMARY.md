@@ -10,7 +10,7 @@ export PYTHON=/usr/bin/python3
 ```
 
 Use the Xcode-bundled `/usr/bin/python3` (3.9.6 on the current toolchain), with
-Pillow, Swift and zstd available, as described in
+Pillow, PyYAML, Swift and zstd available, as described in
 [CONTRIBUTING](../CONTRIBUTING.md#setup). `check_all.sh` selects `"${PYTHON:-python3}"`
 for every Python step; the host entry point keeps its invoking interpreter for every
 child check. An active venv or pyenv is honored when `PYTHON` is unset. Python 3.14

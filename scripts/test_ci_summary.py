@@ -207,7 +207,8 @@ class HostResultTests(unittest.TestCase):
                 "base": {"sha": "0" * 40}, "head": {"sha": "0" * 40}}}))
             answers = {("rev-parse", "HEAD"): "a" * 40,
                        ("rev-parse", "HEAD^{tree}"): "d" * 40,
-                       ("show", "-s", "--format=%P", "a" * 40): "b" * 40 + " " + "c" * 40}
+                       ("cat-file", "commit", "a" * 40): "tree " + "d" * 40 + "\nparent " + "b" * 40 +
+                       "\nparent " + "c" * 40 + "\nauthor Contributor\n\nMerge message"}
             env = {"GITHUB_REPOSITORY": "sudoHG/immichSlides", "GITHUB_EVENT_NAME": "pull_request",
                    "GITHUB_SHA": "a" * 40, "GITHUB_EVENT_PATH": str(event_path)}
             with patch.object(run_host_checks, "git", side_effect=lambda *args: answers[args]):
@@ -217,7 +218,7 @@ class HostResultTests(unittest.TestCase):
                 with self.assertRaises(ci_summary.ContractError):
                     run_host_checks.run_identity(env)
                 env["GITHUB_SHA"] = "a" * 40
-                answers[("show", "-s", "--format=%P", "a" * 40)] = "b" * 40
+                answers[("cat-file", "commit", "a" * 40)] = "parent " + "b" * 40 + "\n\nMerge message"
                 with self.assertRaises(ci_summary.ContractError):
                     run_host_checks.run_identity(env)
 
@@ -362,6 +363,7 @@ while True:
                 run_host_checks.stop_group(process)
             # EOF requires every process holding this pipe to exit, including the child.
             process.communicate(timeout=5)
+
             self.assertEqual(process.returncode, -signal.SIGTERM)
         finally:
             try:
@@ -370,6 +372,11 @@ while True:
                 # macOS can leave only an adopted zombie in the group after pipe EOF.
                 pass
             process.communicate(timeout=5)
+
+    def test_process_group_liveness_ignores_zombies_but_keeps_live_children(self):
+        for states, alive in (("42 Z\n99 S\n", False), ("42 Z\n42 S\n", True), ("99 S\n", False)):
+            with self.subTest(states=states), patch.object(run_host_checks.subprocess, "check_output", return_value=states):
+                self.assertEqual(run_host_checks.group_has_live_members(42), alive)
 
 
 if __name__ == "__main__":

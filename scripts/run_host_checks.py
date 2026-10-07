@@ -65,7 +65,9 @@ def run_identity(env):
         require_sha = env.get("GITHUB_SHA")
         if commit != require_sha:
             raise ContractError("checkout does not match GITHUB_SHA")
-        parents = git("show", "-s", "--format=%P", commit).split()
+        # Raw headers preserve parent IDs even in the sibling workflow's shallow checkout.
+        headers = git("cat-file", "commit", commit).partition("\n\n")[0]
+        parents = [line[7:] for line in headers.splitlines() if line.startswith("parent ")]
         if len(parents) != 2:
             raise ContractError("pull request checkout must have exactly two merge parents")
         event_payload = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
@@ -136,24 +138,37 @@ def clean_environment():
             if not key.startswith(("IMMICH", "TEST_RUNNER_IMMICH", "SIMCTL_CHILD_IMMICH"))}
 
 
+def group_has_live_members(group_id):
+    # killpg(..., 0) can return EPERM for an adopted zombie on macOS.
+    states = subprocess.check_output(["ps", "-axo", "pgid=,stat="], text=True, timeout=5)
+    return any(parts[0] == str(group_id) and not parts[1].startswith("Z")
+               for line in states.splitlines() if len(parts := line.split()) == 2)
+
+
 def stop_group(process):
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         process.wait()
         return
+    except PermissionError:
+        if group_has_live_members(process.pid):
+            raise
+        process.wait()
+        return
     deadline = time.monotonic() + GROUP_TERM_GRACE_SECONDS
     while True:
         process.poll()  # Reap the parent without mistaking its exit for the whole group's exit.
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
+        if not group_has_live_members(process.pid):
             break
         if time.monotonic() >= deadline:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            except PermissionError:
+                if group_has_live_members(process.pid):
+                    raise
             break
         time.sleep(0.05)
     process.wait()

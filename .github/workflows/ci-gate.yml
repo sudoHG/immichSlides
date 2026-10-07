@@ -19,8 +19,6 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
-    env:
-      PYTHON: ${{ runner.temp }}/host-python/bin/python3
     steps:
       - name: Checkout the tested merge or pushed commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -36,6 +34,7 @@ jobs:
         run: |
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/host-python" --verify-toolchain
+          echo "PYTHON=$RUNNER_TEMP/host-python/bin/python3" >> "$GITHUB_ENV"
 
       - name: Run shared host checks and write records
         env:
