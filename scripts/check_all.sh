@@ -15,14 +15,14 @@ Runs, in order:
   4. python3 scripts/validate_localization_catalog.py
   5. python3 scripts/scan_chinese_strings.py (user-facing literals missing from the string catalog)
   6. Python test prerequisites: Swift, zstd CLI and Pillow (missing tools fail)
-  7. Python tests: python3 -B -m unittest discover -s scripts -p 'test_*.py'
+  7. Python tests with per-test result records
   8. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
 
 Options:
   --with-unit-tests        Also run scripts/run_offline_unit_tests.py for iOS and tvOS.
   --ios-destination DEST   xcodebuild destination for iOS, e.g. 'platform=iOS Simulator,id=<UDID>'.
   --tvos-destination DEST  xcodebuild destination for tvOS, e.g. 'platform=tvOS Simulator,id=<UDID>'.
-  --output-dir DIR         Directory for .xcresult bundles. Must be outside the repository.
+  --output-dir DIR         Directory for .xcresult bundles and DerivedData. Must be outside the repository.
   -h, --help               Show this help.
 
 Without --with-unit-tests the Xcode tests are skipped; run them before opening a pull request.
@@ -37,7 +37,6 @@ die_usage() {
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-SWIFT_DIRS=(immichSlides immichSlidesTests immichSlidesUITests TestSupport)
 
 with_unit_tests=0
 ios_destination=""
@@ -109,25 +108,21 @@ run_step() {
     fi
 }
 
-run_step "swift-format lint" xcrun swift-format lint --strict --recursive --parallel "${SWIFT_DIRS[@]}"
-run_step "test conventions" python3 scripts/check_test_conventions.py
-run_step "release guards" python3 scripts/check_release_guards.py
-run_step "localization catalog" python3 scripts/validate_localization_catalog.py
-run_step "localization usage" python3 scripts/scan_chinese_strings.py --limit 20
-run_step "Python test prerequisites" python3 scripts/check_required_test_tools.py
-run_step "python tests" python3 -B -m unittest discover -s scripts -p 'test_*.py'
+host_output="$(mktemp -d "${TMPDIR:-/tmp}/immichslides-check-all.XXXXXX")"
+trap 'rm -rf "$host_output"' EXIT
+run_step "host checks" python3 -B scripts/run_host_checks.py --output-dir "$host_output"
 
 if [[ $with_unit_tests -eq 1 ]]; then
     stamp="$(date +%Y%m%d-%H%M%S)"
     run_step "xcode unit tests (iOS)" python3 scripts/run_offline_unit_tests.py \
         --platform ios \
         --destination "$ios_destination" \
-        --derived-data-path .derivedData/check-all-ios \
+        --derived-data-path "$output_dir/derived-data-ios" \
         --result-bundle-path "$output_dir/check-all-ios-$stamp.xcresult"
     run_step "xcode unit tests (tvOS)" python3 scripts/run_offline_unit_tests.py \
         --platform tvos \
         --destination "$tvos_destination" \
-        --derived-data-path .derivedData/check-all-tvos \
+        --derived-data-path "$output_dir/derived-data-tvos" \
         --result-bundle-path "$output_dir/check-all-tvos-$stamp.xcresult"
 fi
 
