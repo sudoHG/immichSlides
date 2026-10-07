@@ -226,6 +226,28 @@ class HostResultTests(unittest.TestCase):
         self.assertEqual([entry["outcome"] for entry in payload["observed"]], ["skipped", "not-run"])
         self.assertEqual(payload["observed"][0]["attempts"][0]["reason"], "external calibration screenshots unavailable")
 
+    def test_host_class_skip_preserves_cli_success_and_never_labels_summary_passed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            identity = ci_summary.test_identity("python", "calibration.Sample.test_photo")
+
+            def steps(*args, **kwargs):
+                (output / "python-results.json").write_text(json.dumps({"compiled": [identity], "observed": [
+                    ci_summary.observation(identity, "skipped", 0, reason="external screenshots unavailable", exit_code=None)]}))
+                return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                        for name, _ in run_host_checks.HOST_CHECKS], []
+
+            with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                    patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                    patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                    patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = run_host_checks.main()
+            self.assertEqual(code, 0)
+            summary = ci_summary.parse_summary((output / "summary.json").read_text())
+            self.assertEqual(summary["status"], "unverified")
+            self.assertEqual(summary["population"]["observed"][-1]["attempts"][0]["reason"], "external screenshots unavailable")
+
     def test_host_failures_and_timeouts_name_the_step_and_continue(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

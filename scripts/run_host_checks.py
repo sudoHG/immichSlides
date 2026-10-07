@@ -186,7 +186,7 @@ def main():
         steps = [(name, command + (["--output", str(output / "python-results.json")] if name == "python tests" else []))
                  for name, command in HOST_CHECKS]
         records, infrastructure = run_steps(steps, REPO_ROOT, output, timeout_seconds=args.timeout_seconds)
-        summary["population"]["observed"] = records
+        summary["population"]["observed"] = list(records)
         summary["infrastructure"] = infrastructure
         try:
             python = json.loads((output / "python-results.json").read_text(encoding="utf-8"))
