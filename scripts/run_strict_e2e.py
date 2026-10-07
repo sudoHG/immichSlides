@@ -243,6 +243,9 @@ def finalize_private_result_bundle(
     if bundle.exists():
         try:
             disposal_path.unlink(missing_ok=True)
+        except OSError as error:
+            failures.append(f"remove_incomplete_disposal_record: {type(error).__name__}: {error}")
+        try:
             quarantine_path.write_text(json.dumps({
                 "private_path": str(bundle), "result_bundle_disposed": False,
             }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -972,7 +975,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         for bundle, suffix in private_bundles:
             cleanup_failures.extend(finalize_private_result_bundle(
                 bundle, arguments.evidence_dir, official_tests_digests.get(suffix),
-                successful=successful, suffix=suffix,
+                successful=successful and not cleanup_failures, suffix=suffix,
             ))
 
         if owns_evidence_directory and cleanup_failures:
