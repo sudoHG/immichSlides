@@ -30,6 +30,8 @@ def dotted(node):
         return node.id
     if isinstance(node, ast.Attribute):
         return dotted(node.value) + "." + node.attr
+    if isinstance(node, ast.Subscript):
+        return dotted(node.value)
     raise ContractError("dynamic Python class base cannot be enumerated statically")
 
 
@@ -37,10 +39,15 @@ def python_identities(files, *, discovery_pattern="test_*"):
     """Map importable module names to source; follow aliases, mixins and C3 MRO.
 
     The caller supplies all local modules, including non-discovered mixin modules.
-    Unsupported discovery hooks, conditional classes and dynamic bases fail closed.
+    Unsupported discovery hooks, conditional classes and unresolved bases in test
+    modules fail closed. Unrelated helper classes need not be test-discoverable.
     Functions' bodies are never evaluated and nested fixture classes are not discovered.
     """
     modules, classes = {}, {}
+
+    def discovered(module):
+        return fnmatch.fnmatchcase(module.rsplit(".", 1)[-1], discovery_pattern)
+
     for module, source in files.items():
         try:
             tree = ast.parse(source, filename=module)
@@ -57,25 +64,35 @@ def python_identities(files, *, discovery_pattern="test_*"):
                     parts = module.split(".")[:-node.level]
                     prefix = ".".join(parts + ([prefix] if prefix else []))
                 for alias in node.names:
-                    require(alias.name != "*", f"{module}: wildcard imports obscure discovery")
+                    require(alias.name != "*" or not discovered(module), f"{module}: wildcard imports obscure discovery")
                     bindings[alias.asname or alias.name] = prefix + "." + alias.name
             elif isinstance(node, ast.ClassDef):
                 name = module + "." + node.name
                 require(name not in classes, f"{name}: duplicate class declaration")
                 classes[name] = node
                 bindings[node.name] = name
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        try:
+                            alias = dotted(node.value)
+                        except ContractError:
+                            alias = target.id
+                        bindings[target.id] = module + "." + alias
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                require(node.name != "load_tests", f"{module}: load_tests is dynamic discovery")
+                require(node.name != "load_tests" or not discovered(module), f"{module}: load_tests is dynamic discovery")
             elif isinstance(node, (ast.If, ast.Try, ast.For, ast.While, ast.With)):
                 # Conditional top-level definitions are not the local classes inside test bodies.
-                require(not any(isinstance(child, ast.ClassDef) for child in ast.walk(node)),
+                require(not discovered(module) or not any(isinstance(child, ast.ClassDef) for child in ast.walk(node)),
                         f"{module}: conditional class discovery is unsupported")
         modules[module] = bindings
 
     terminals = {"unittest.TestCase", "unittest.case.TestCase", "unittest.IsolatedAsyncioTestCase"}
+    non_test_terminals = {"builtins.object"}
 
     def resolve(name, seen=()):
-        if name in classes or name in terminals:
+        if name in classes or name in terminals or name in non_test_terminals:
             return name
         require(name not in seen, f"cyclic Python alias: {name}")
         for module in sorted(modules, key=len, reverse=True):
@@ -83,6 +100,8 @@ def python_identities(files, *, discovery_pattern="test_*"):
                 suffix = name[len(module) + 1:]
                 first, _, rest = suffix.partition(".")
                 bound = modules[module].get(first)
+                if bound is None and suffix == "object":
+                    return "builtins.object"
                 if bound is not None:
                     target = bound + ("." + rest if rest else "")
                     if target != name:
@@ -95,7 +114,7 @@ def python_identities(files, *, discovery_pattern="test_*"):
         if name in cache:
             return cache[name]
         require(name not in visiting, f"cyclic Python inheritance: {name}")
-        if name in terminals:
+        if name in terminals or name in non_test_terminals:
             return [name]
         require(name in classes, f"unresolved Python test base: {name}")
         node = classes[name]
@@ -117,15 +136,34 @@ def python_identities(files, *, discovery_pattern="test_*"):
     def is_test_case(name, visiting=()):
         if name in terminals:
             return True
-        if name not in classes or name in visiting:
+        if name not in classes:
             return False
+        require(name not in visiting, f"cyclic Python inheritance: {name}")
         module = name.rsplit(".", 1)[0]
-        return any(is_test_case(resolve(module + "." + dotted(base)), (*visiting, name)) for base in classes[name].bases)
+        inherited = []
+        for base in classes[name].bases:
+            try:
+                target = resolve(module + "." + dotted(base))
+            except ContractError:
+                if discovered(module):
+                    raise
+                continue
+            if discovered(module):
+                require(target in classes or target in terminals or target in non_test_terminals,
+                        f"{name}: unresolved Python test base: {target}")
+            inherited.append(is_test_case(target, (*visiting, name)))
+        return any(inherited)
+
+    # Validate every class declared in a discovered module, even when its base
+    # never resolves to TestCase. Otherwise a broken alias can erase a whole suite.
+    for name in classes:
+        if discovered(name.rsplit(".", 1)[0]):
+            is_test_case(name)
 
     identities = []
     seen_classes = set()
     for module, bindings in modules.items():
-        if not fnmatch.fnmatchcase(module.rsplit(".", 1)[-1], discovery_pattern):
+        if not discovered(module):
             continue
         for bound in bindings.values():
             name = resolve(bound)
@@ -160,13 +198,9 @@ def python_identities(files, *, discovery_pattern="test_*"):
 def xctest_identities(files, platform, *, kind):
     require(platform in {"ios", "tvos"}, "unsupported platform")
     try:
-        classes, methods, errors, _strict = parse_ui_tests(files)
+        classes, methods, errors, _strict = parse_ui_tests(files, allow_non_xctest_functions=kind == "swift")
     except ValueError as error:
         raise ContractError(str(error)) from error
-    if kind == "swift":
-        # In a mixed unit target, a test-prefixed function outside XCTestCase may
-        # be a Swift Testing declaration or a plain helper; @Test is parsed below.
-        errors = [error for error in errors if not error.endswith("is not a member of a direct XCTestCase subclass")]
     require(not errors, "; ".join(errors))
     return ordered(test_identity(kind, f"{owner}/{method}", platform=platform)
                    for owner, members in methods.items() for method, platforms in members.items()

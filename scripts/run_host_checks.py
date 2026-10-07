@@ -141,9 +141,10 @@ def toolchain():
 
 
 def clean_environment():
-    # Host checks never inherit server/test-runner configuration. No private file is read.
+    # Host checks never inherit server/test-runner or external calibration inputs.
     return {key: value for key, value in os.environ.items()
-            if not key.startswith(("IMMICH", "TEST_RUNNER_IMMICH", "SIMCTL_CHILD_IMMICH"))}
+            if not key.startswith(("IMMICH", "TEST_RUNNER_IMMICH", "SIMCTL_CHILD_IMMICH"))
+            and key != "STRICT_E2E_REVIEWED_SCREENSHOTS"}
 
 
 def group_has_live_members(group_id):
@@ -287,9 +288,7 @@ def main():
         workflow_path, fork = source_metadata(identity, os.environ, args.workflow_path)
         print(f"Python interpreter: {sys.executable} ({platform.python_version()})", flush=True)
         policy_path = REPO_ROOT / "scripts/ci-test-policy.json"
-        policy = parse_policy(policy_path.read_text(encoding="utf-8"))
         declared = [test_identity("host", name) for name, _ in HOST_CHECKS]
-        declared.extend(python_identities(python_sources(REPO_ROOT / "scripts")))
         summary = {"schema_version": 1, "identity": identity,
                    "source": {"repository": identity["repository"], "workflow_path": workflow_path,
                               "event": identity["event"], "fork_originated": fork, "ci_changing": None},
@@ -300,8 +299,7 @@ def main():
                        "manifests": {"ci-pins": hashlib.sha256((REPO_ROOT / "scripts/ci-pins.json").read_bytes()).hexdigest()}
                        if is_ci else {},
                        "policies": {"workflow-policy": hashlib.sha256(
-                           (REPO_ROOT / "scripts/check_workflow_policy.py").read_bytes()).hexdigest(),
-                           "test-policy": hashlib.sha256(policy_path.read_bytes()).hexdigest()}},
+                           (REPO_ROOT / "scripts/check_workflow_policy.py").read_bytes()).hexdigest()}},
                    "toolchain": toolchain(),
                    "population": {"declared": declared,
                                   "compiled": [test_identity("host", name) for name, _ in HOST_CHECKS],
@@ -310,11 +308,24 @@ def main():
         # An interrupted producer leaves a valid, explicitly unverified record.
         write_summary(summary, output)
         initial = copy.deepcopy(summary)
+        # A broken candidate inventory or policy must not suppress the host checks
+        # or prevent their results from replacing the interruption placeholder.
+        policy = None
+        try:
+            policy_bytes = policy_path.read_bytes()
+            summary["hashes"]["policies"]["test-policy"] = hashlib.sha256(policy_bytes).hexdigest()
+            policy = parse_policy(policy_bytes.decode("utf-8"))
+        except (ContractError, OSError, ValueError, TypeError) as error:
+            summary["infrastructure"].append({"code": "population-invalid", "message": f"Test policy: {error}"})
+        try:
+            declared.extend(python_identities(python_sources(REPO_ROOT / "scripts")))
+        except (ContractError, OSError, ValueError, TypeError) as error:
+            summary["infrastructure"].append({"code": "population-invalid", "message": f"Static inventory: {error}"})
         steps = [(name, command + (["--output", str(output / "python-results.json")] if name == "python tests" else []))
                  for name, command in HOST_CHECKS]
         records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds)
         summary["population"]["observed"] = list(records)
-        summary["infrastructure"] = infrastructure
+        summary["infrastructure"].extend(infrastructure)
         try:
             python = json.loads((output / "python-results.json").read_text(encoding="utf-8"))
             summary["population"]["compiled"].extend(python["compiled"])
@@ -325,17 +336,16 @@ def main():
         # Coverage is evaluated separately from command success. Candidate policy
         # consumption here is informational; a trusted gate selects its own policy.
         summary["status"] = "passed" if command_passed else "failed"
-        coverage = evaluate_population(summary, declared, policy, environment="hermetic")
-        if not command_passed:
-            summary["status"] = "failed"
-        elif policy["approval_state"] == "proposed" and evaluate_population(
-                summary, declared, dict(policy, approval_state="approved"), environment="hermetic")["status"] == "passed" and coverage["errors"]:
-            summary["status"] = "unverified"
-            summary["infrastructure"].append({"code": "policy-proposed", "message":
-                "Only proposed exceptions explain coverage; maintainer approval is still required"})
-        else:
-            summary["status"] = coverage["status"]
-            summary["infrastructure"].extend({"code": "population-invalid", "message": message} for message in coverage["errors"])
+        if command_passed:
+            coverage = evaluate_population(summary, declared, policy, environment="hermetic")
+            if policy["approval_state"] == "proposed" and evaluate_population(
+                    summary, declared, dict(policy, approval_state="approved"), environment="hermetic")["status"] == "passed" and coverage["errors"]:
+                summary["status"] = "unverified"
+                summary["infrastructure"].append({"code": "policy-proposed", "message":
+                    "Only proposed exceptions explain coverage; maintainer approval is still required"})
+            else:
+                summary["status"] = coverage["status"]
+                summary["infrastructure"].extend({"code": "population-invalid", "message": message} for message in coverage["errors"])
         write_summary(summary, output)
         print_result(summary, output, args.no_summary_path)
         return 0 if command_passed and summary["status"] != "failed" else 1

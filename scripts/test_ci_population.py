@@ -30,8 +30,27 @@ class StaticPopulationTests(unittest.TestCase):
         }
         self.assertEqual(python_identities(files), [test_identity("python", "support.Tests.test_b")])
 
+    def test_assignment_base_aliases_cannot_silently_drop_test_classes(self):
+        files = {"support": "from unittest import TestCase\nBase = TestCase\nAlias = Base\n",
+                 "test_entry": "from support import Alias\nLocal = Alias\n"
+                               "class Tests(Local):\n def test_present(self): pass\n"}
+        self.assertEqual(python_identities(files), [test_identity("python", "test_entry.Tests.test_present")])
+
+    def test_non_test_helper_bases_do_not_obscure_discovered_tests(self):
+        files = {"helpers": "from typing import Generic, TypeVar\nfrom collections import namedtuple\n"
+                            "from external import *\nif enabled:\n class Conditional: pass\n"
+                            "VALUE = factory().value\n"
+                            "T = TypeVar('T')\nclass Box(Generic[T]): pass\n"
+                            "class Row(namedtuple('Row', 'value')): pass\n",
+                 "test_entry": "from helpers import Box, Row\nfrom unittest import TestCase\n"
+                               "class Tests(TestCase):\n def test_present(self): pass\n"}
+        self.assertEqual(python_identities(files), [test_identity("python", "test_entry.Tests.test_present")])
+
     def test_dynamic_or_unresolved_python_discovery_fails_closed(self):
         sources = [
+            "class Tests(Missing):\n def test_a(self): pass",
+            "import unittest\nBase = factory(unittest.TestCase)\nclass Tests(Base):\n def test_a(self): pass",
+            "import unittest\nBase = unittest.TestCase\nBase = factory()\nclass Tests(Base): pass",
             "import unittest\nclass Tests(Missing, unittest.TestCase):\n def test_a(self): pass",
             "import unittest\ndef load_tests(loader, tests, pattern): return tests",
             "import unittest\nif enabled:\n class Tests(unittest.TestCase):\n  def test_a(self): pass",
@@ -83,6 +102,14 @@ class StaticPopulationTests(unittest.TestCase):
         self.assertTrue(all(entry["kind"] == "swift" for entry in swift_identities(files, "tvos")))
         self.assertEqual([entry["key"] for entry in swift_identities(files, "tvos")],
                          ["Legacy/testExtension", "Legacy/testShared", "Modern/testModern"])
+
+    def test_indirect_xctest_inheritance_is_explicitly_rejected_in_both_targets(self):
+        files = {"Base.swift": "class Base: XCTestCase { func testBase() {} }",
+                 "Child.swift": "class Middle: Base {}\nclass Child: Middle { func testChild() {} }"}
+        for inventory in (swift_identities, ui_identities):
+            with self.subTest(inventory=inventory.__name__), self.assertRaisesRegex(
+                    ContractError, "indirect XCTestCase inheritance"):
+                inventory(files, "ios")
 
     def test_removed_report_uses_pr_base_and_tested_tree_without_later_main(self):
         base = python_identities({"test_a": "import unittest\nclass T(unittest.TestCase):\n def test_old(self): pass"})

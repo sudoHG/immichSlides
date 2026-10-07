@@ -11,13 +11,16 @@ them informationally from its working checkout, which is not trusted publication
 `scripts/ci_population.py` accepts source-text maps. `python_sources(directory)`
 reads Python files into a module-name map; it reads no private configuration.
 
-- `python_identities(files)` uses the AST, follows imported aliases and local
+- `python_identities(files)` uses the AST, follows imported and assignment aliases and local
   mixins, computes C3 method resolution and respects method overrides. It discovers
   classes visible in `test_*` modules, including imported TestCase subclasses,
   keyed by the defining module/class/method used by unittest. Local classes inside
-  function bodies are fixture code, not discovered tests. Conditional classes,
-  dynamic bases, wildcard imports and `load_tests` hooks fail closed instead of
-  claiming complete static coverage.
+  function bodies are fixture code, not discovered tests. Unresolved or dynamic
+  bases in any class declared in a test module fail closed, including aliases that
+  might otherwise erase a whole suite. Conditional classes, wildcard imports and
+  `load_tests` hooks in test modules also fail. Non-test helper modules may contain
+  unrelated generic or factory-based classes; a discovered TestCase's MRO must
+  still resolve completely.
 - `swift_identities(files, platform)` finds `@Test` functions in explicit or
   implicit suites, nested suites and cross-file extensions. `@Suite` attributes
   are parsed, but do not replace function identities. Keys are `Type/function`
@@ -27,7 +30,11 @@ reads Python files into a module-name map; it reads no private configuration.
   malformed conditions, ambiguous duplicate function names, unresolved extensions
   and local `@Test` declarations are errors.
   Traditional `XCTestCase` methods in the mixed unit target are also enumerated
-  through the shared XCTest parser and recorded with kind `swift`.
+  through the shared XCTest parser and recorded with kind `swift`. Indirect
+  inheritance (`Child: Base: XCTestCase`) is explicitly rejected in both XCTest
+  inventories until inherited-method enumeration is supported; it never silently
+  drops a subclass. Mixed unit functions outside XCTest are classified by the
+  parser's explicit mode, without filtering diagnostic strings.
 - `ui_identities(files, platform)` reuses `scripts/ui_test_inventory.py`, the
   parser also used by the existing excluded-test check. It intersects method and
   owning-class platforms and keys tests as `Class/testMethod`.
@@ -60,6 +67,14 @@ ios_functions = swift_identities(unit_sources, "ios")
 state or approving the initial lists is a maintainer gate; agents must not do it.
 Proposed entries never authorize passing exceptions in the verdict library.
 
+When adding a test that needs a skip or deselection, include the policy entry in
+the same PR as the test. Record its tier, environment and exact reason, and the
+other owning tier for a deselection. This is a CI-trusted policy change: the
+maintainer must approve the PR's exact head SHA before candidate exceptions can
+apply, and a later push requires fresh approval. Keep new proposals inactive
+until approved. The test must still meet [TESTING section 4](TESTING.md#4-when-a-test-may-skip);
+policy approval does not excuse a product failure or missing compilation.
+
 Expected-skip entries contain `kind`, `key_pattern`, exact `dimensions`, `tier`,
 `environment` and exact `reason`. Patterns use case-sensitive shell glob matching
 on the whole function key. Exactly one rule must match. Matching a reason alone
@@ -73,6 +88,10 @@ The initial proposed list names each of the five
 environment `hermetic`, reason `STRICT_E2E_REVIEWED_SCREENSHOTS is not set`.
 They require an external, human-reviewed calibration screenshot corpus. There is
 no class wildcard that silently registers future calibration tests.
+Host checks strip `STRICT_E2E_REVIEWED_SCREENSHOTS`, so this environment remains
+`hermetic` even when the caller has configured external captures. Run the
+[reviewed screenshot calibration](TESTING.md#optional-reviewed-screenshot-calibration-dataset)
+directly with unittest to use that corpus.
 
 Deselections contain exact `identity`, `tier`, `environment`, `reason` and
 `owning_tier`. The owner must be another tier. A deselected identity must still be
@@ -98,6 +117,9 @@ the exact proposed calibration skips retain exit 0 / `unverified` with
 `policy-proposed`; unexpected skips and missing identities return exit 1.
 Approved exceptions can produce `passed`. This explicitly replaces the previous
 rule that every skip unconditionally made the summary unverified.
+The producer writes its interruption placeholder before parsing the policy or
+static population. Invalid inputs record `population-invalid`, all host checks
+still run, and the final failed record preserves their observations.
 
 ## Classification and gate evaluation
 
@@ -107,8 +129,9 @@ build membership for the tested tree and both diff sides. PR changes use
 `base...head`; pushes use `before..after`; include old and new rename paths.
 An allowlisted document can be unaffected only if it is not a build member and
 not CI-trusted. The bundled privacy policy, all unknown paths and every trusted
-path affect the app. Workflows, scripts (including policy/data/pins), working
-rules and Swift formatting configuration are conservatively CI-trusted. Invalid
+path affect the app. `.github/workflows/**`, `scripts/**` (including CI policy,
+data and pins), and `.swift-format` are CI-trusted; the formatting policy changes
+the lint verdict. `AGENTS.md` and `CLAUDE.md` are not CI-trusted. Invalid
 relative paths fail closed. There is no comment-only classification.
 
 `evaluate_gate` consumes the required job artifacts and independent static
@@ -147,7 +170,7 @@ this change.
 ```bash
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s scripts -p 'test_ci_population.py'
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s scripts -p 'test_ci_verdict.py'
-PYTHON=/usr/bin/python3 scripts/check_all.sh --output-dir /tmp/immichslides-ci/w03c/host
+PYTHON=/usr/bin/python3 scripts/check_all.sh --output-dir '<fresh-outside-repo>'
 ```
 
 Use a fresh output directory; records are temporary and should be removed after

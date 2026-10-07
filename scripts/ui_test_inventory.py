@@ -7,6 +7,7 @@ import re
 PLATFORMS = ("ios", "tvos")
 
 CLASS_RE = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*XCTestCase\b[^{]*\{")
+CLASS_DECL_RE = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b([^{]*)\{")
 EXTENSION_RE = re.compile(r"(?:\b(private|fileprivate)\s+)?\bextension\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\{")
 # XCTest runs `func test…()` with no parameters and no return value; a backtick name counts too.
 TEST_FUNC_RE = re.compile(
@@ -328,6 +329,7 @@ def strict_function_names(parsed: list["SwiftFile"]) -> set[str]:
 
 def parse_ui_tests(
     files: dict[str, str],
+    *, allow_non_xctest_functions: bool = False,
 ) -> tuple[dict[str, set[str]], dict[str, dict[str, set[str]]], list[str], set[str]]:
     """Return (class platforms, class -> method -> platforms, errors, strict tests) across Swift files.
 
@@ -335,7 +337,9 @@ def parse_ui_tests(
 
     A test method in an extension belongs to the extended XCTestCase class. A test method that is
     not a direct member of a direct XCTestCase subclass is an error, so it cannot silently drop out
-    of the check. Declarations of one method in several `#if` branches merge their platforms.
+    of the check. Mixed unit targets may also contain Swift Testing functions or helpers.
+    Indirect XCTestCase inheritance is unsupported and always diagnosed, even with
+    no locally declared test methods. Declarations in `#if` branches merge their platforms.
     """
     parsed = [SwiftFile(name, text) for name, text in files.items()]
     classes: dict[str, set[str]] = {}
@@ -344,6 +348,20 @@ def parse_ui_tests(
         for name, platforms in swift_file.classes.items():
             classes[name] = classes.get(name, set()) | platforms
         errors.extend(swift_file.errors)
+    # Follow the supplied class graph before deciding that a function is merely
+    # a Swift Testing method or helper. Inherited XCTest methods need a separate
+    # runtime-accurate inventory model; reject these classes until it is supported.
+    descendants = set(classes)
+    declarations = [(swift_file.name, match[1], match[2].partition(":")[2].split(",")[0].strip().split("<")[0])
+                    for swift_file in parsed for match in CLASS_DECL_RE.finditer(swift_file.code)]
+    changed = True
+    while changed:
+        changed = False
+        for filename, name, base in declarations:
+            if name not in descendants and base in descendants:
+                descendants.add(name)
+                errors.append(f"{filename}: indirect XCTestCase inheritance for {name} is unsupported")
+                changed = True
     methods: dict[str, dict[str, set[str]]] = {name: {} for name in classes}
     strict_names = strict_function_names(parsed)
     strict_tests: set[str] = set()
@@ -360,5 +378,6 @@ def parse_ui_tests(
                 # Deeper means a local function or a nested helper type; private extension members
                 # are not discoverable.
                 continue
-            errors.append(f"{swift_file.name}: {name}() is not a member of a direct XCTestCase subclass")
+            if not allow_non_xctest_functions:
+                errors.append(f"{swift_file.name}: {name}() is not a member of a direct XCTestCase subclass")
     return classes, methods, errors, strict_tests

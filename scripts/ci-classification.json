@@ -1,5 +1,5 @@
 {
   "schema_version": 1,
   "app_unaffected": ["docs/**", "README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md", "CODE_OF_CONDUCT.md"],
-  "ci_trusted": ["scripts/**", ".github/**", "AGENTS.md", "CLAUDE.md", ".swift-format"]
+  "ci_trusted": ["scripts/**", ".github/workflows/**", ".swift-format"]
 }

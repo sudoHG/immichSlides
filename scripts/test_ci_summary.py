@@ -498,6 +498,39 @@ class HostResultTests(unittest.TestCase):
                 self.assertEqual(summary["population"]["declared"][-1], identity)
                 self.assertIn("test-policy", summary["hashes"]["policies"])
 
+    def test_invalid_population_or_policy_still_writes_placeholder_and_runs_all_checks(self):
+        for invalid in ("python_identities", "parse_policy"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+
+                def steps(commands, *args, **kwargs):
+                    placeholder = ci_summary.parse_summary((output / "summary.json").read_text())
+                    self.assertEqual(placeholder["status"], "unverified")
+                    self.assertEqual(placeholder["population"]["observed"], [])
+                    self.assertEqual([name for name, _ in commands], [name for name, _ in run_host_checks.HOST_CHECKS])
+                    (output / "python-results.json").write_text(json.dumps({"compiled": [], "observed": []}))
+                    return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                            for name, _ in commands], []
+
+                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                        patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                        patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                        patch.object(run_host_checks, invalid, side_effect=ci_summary.ContractError("unsupported test base")), \
+                        patch.object(run_host_checks, "run_steps", side_effect=steps) as run, \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    code = run_host_checks.main()
+                self.assertEqual(code, 1)
+                run.assert_called_once()
+                summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                self.assertEqual(summary["status"], "failed")
+                self.assertEqual(len(summary["population"]["observed"]), len(run_host_checks.HOST_CHECKS))
+                self.assertIn("population-invalid", [item["code"] for item in summary["infrastructure"]])
+
+    def test_host_environment_excludes_external_screenshot_calibration(self):
+        with patch.dict(os.environ, {"STRICT_E2E_REVIEWED_SCREENSHOTS": "/external/reviewed", "PATH": "/bin"}, clear=True):
+            self.assertNotIn("STRICT_E2E_REVIEWED_SCREENSHOTS", run_host_checks.clean_environment())
+            self.assertEqual(run_host_checks.clean_environment()["PATH"], "/bin")
+
     def test_host_failures_and_timeouts_name_the_step_and_continue(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

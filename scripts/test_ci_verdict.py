@@ -1,7 +1,9 @@
 """Guard coverage and admission decisions against accidental green verdicts."""
 
 import copy
+import json
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import ci_summary
@@ -221,11 +223,24 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.assertTrue(any("missing compiled" in error for error in verdict["errors"]))
 
     def test_later_main_population_never_enters_the_verdict(self):
-        before = self.verdict(base_population=self.expected)
+        self.identity = {"schema_version": 1, "event": "pull_request", "repository": "sudoHG/immichSlides",
+                         "tree_sha": "b" * 40, "merge_sha": "a" * 40,
+                         "base_sha": "c" * 40, "head_sha": "d" * 40, "pull_request": 1}
+        self.summary["identity"] = self.identity
+        self.summary["source"].update(event="pull_request", workflow_path=".github/workflows/ci-gate.yml")
+        self.summary["run"]["id"] = "42"
+        self.jobs[0].update(run_id="42", workflow_paths=[".github/workflows/ci-gate.yml"])
+        old = ci_summary.test_identity("host", "removed-on-pr")
+        admitted_base = self.expected + [old]
+        before = self.verdict(base_population=admitted_base)
         later_main = self.expected + [ci_summary.test_identity("host", "new-on-main")]
-        after = self.verdict(base_population=later_main)
+        self.assertNotEqual(later_main, admitted_base)
+        after = self.verdict(base_population=admitted_base)
         self.assertEqual(after["status"], before["status"])
         self.assertEqual(after["status"], "passed")
+        self.assertEqual(after["removed_by_pr"], [old])
+        self.expected = later_main
+        self.assertEqual(self.verdict(base_population=admitted_base)["status"], "failed")
 
     def test_push_requires_pushed_identity_and_manual_dispatch_is_not_gate_evidence(self):
         pushed = {"schema_version": 1, "event": "push", "repository": "sudoHG/immichSlides",
@@ -274,12 +289,15 @@ class AdmissionVerdictTests(unittest.TestCase):
             self.assertEqual(self.verdict()["status"], "failed")
 
     def test_only_verified_allowlisted_nonmembers_make_ui_not_applicable(self):
-        allowlist = {"schema_version": 1, "app_unaffected": ["docs/**", "README.md"],
-                     "ci_trusted": ["scripts/**", ".github/**"]}
+        allowlist = json.loads(Path(__file__).with_name("ci-classification.json").read_text(encoding="utf-8"))
         for paths, members, app, ci in ((["docs/README.md"], set(), False, False),
                                        (["docs/bundled.md"], {"docs/bundled.md"}, True, False),
                                        (["immichSlides/Resources/privacy.html"], set(), True, False),
                                        (["scripts/ci-policy.json"], set(), True, True),
+                                       (["scripts/ci-pins.json"], set(), True, True),
+                                       ([".github/workflows/ci-gate.yml"], set(), True, True),
+                                       ([".swift-format"], set(), True, True),
+                                       (["AGENTS.md", "CLAUDE.md", ".github/ISSUE_TEMPLATE/bug.md"], set(), True, False),
                                        (["unknown.file"], set(), True, False)):
             with self.subTest(paths=paths):
                 classification = classify_changes(paths, allowlist, build_target_paths=members)
