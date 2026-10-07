@@ -96,10 +96,9 @@ def run_suite(suite, stream):
         if identity["key"] not in observed_keys:
             result.observed.append(observation(identity, "not-run", 0, exit_code=None,
                                                message="Discovered test was not executed"))
-    # No policy authorizes Python skips at this seam. Empty/missing results fail closed.
-    passed = bool(compiled) and len(compiled) == len(result.observed) and all(
-        entry["outcome"] == "passed" for entry in result.observed)
-    payload = {"compiled": compiled, "observed": result.observed, "exit_code": 0 if passed else 1}
+    # Preserve unittest's existing CLI verdict; expected-skip policy is a separate consumer.
+    successful = bool(compiled) and result.wasSuccessful()
+    payload = {"compiled": compiled, "observed": result.observed, "exit_code": 0 if successful else 1}
     return payload, payload["exit_code"]
 
 

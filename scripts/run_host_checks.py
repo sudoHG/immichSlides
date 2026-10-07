@@ -194,11 +194,19 @@ def main():
             summary["population"]["observed"].extend(python["observed"])
         except (OSError, ValueError, KeyError, TypeError):
             summary["infrastructure"].append({"code": "missing-python-results", "message": "Python result identities are missing or malformed"})
-        summary["status"] = "passed" if not summary["infrastructure"] and all(
-            entry["outcome"] == "passed" for entry in summary["population"]["observed"]) else "failed"
+        command_passed = not summary["infrastructure"] and all(entry["outcome"] == "passed" for entry in records)
+        outcomes = [entry["outcome"] for entry in summary["population"]["observed"]]
+        if not command_passed:
+            summary["status"] = "failed"
+        elif all(outcome == "passed" for outcome in outcomes):
+            summary["status"] = "passed"
+        else:
+            summary["status"] = "unverified"
+            summary["infrastructure"].append({"code": "skip-policy-pending", "message":
+                "Coverage includes skips or missing class members; expected-skip policy is introduced separately"})
         write_summary(summary, output)
         print(f"\nRESULT: {summary['status'].upper()}\nSummary: {output / 'summary.json'}", flush=True)
-        return 0 if summary["status"] == "passed" else 1
+        return 0 if command_passed else 1
     except (ContractError, OSError, ValueError, KeyError) as error:
         print(f"FAIL: host-check record could not be produced: {error}", file=sys.stderr)
         return 1

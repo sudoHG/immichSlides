@@ -17,9 +17,12 @@ The entry point owns the format, test-convention, release-guard, localization-ca
 localization-usage, required-tool and Python checks. `check_all.sh` delegates to it and
 keeps its existing optional iOS/tvOS unit-test interface. Its temporary host records
 are removed on exit; `--output-dir` holds the optional unit bundles and DerivedData.
-Checks continue after failures. Exit 0 means every host check and discovered Python
-test passed; exit 1 means a failure, skip, missing result, empty Python suite or
-infrastructure problem; invalid arguments exit 2. `--timeout-seconds` sets the total
+Checks continue after failures. Exit 0 preserves the legacy command verdict, including
+unittest's environment skips; it does not prove complete coverage. The summary is
+`unverified` whenever any skip or unexecuted class member is present, with every reason
+retained. Expected-skip policy (#88) replaces this interim rule. Exit 1 means a failed
+command, missing result, empty Python suite or infrastructure problem; invalid arguments
+exit 2. `--timeout-seconds` sets the total
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
 
@@ -136,4 +139,7 @@ shows every host check and all nonpassing Python identities.
 This job is informational and does not configure required statuses. Builds, unit
 jobs, pins/environment policy, expected populations, skip policy, trusted publication
 and approval enforcement are separate tickets. The initial workflow bootstraps the
-existing Python/Pillow/zstd prerequisites; the pins ticket replaces that setup.
+existing system Python/Pillow/zstd prerequisites; the pins ticket replaces that setup.
+The initial Python 3.14 bootstrap failed fixture startup on both local and hosted
+macOS in reverse DNS (`HTTPServer.server_bind` / `socket.getfqdn`), while the system
+Python started the same frozen fixture normally. No health timeout was changed.
