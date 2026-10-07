@@ -14,6 +14,18 @@ if [ -n "$STUB_FAIL_MATCH" ]; then
     *"$STUB_FAIL_MATCH"*) exit 3 ;;
     esac
 fi
+case "$*" in
+*scripts/run_host_checks.py*)
+    while [ "$#" -gt 1 ]; do
+        if [ "$1" = "--output-dir" ]; then
+            mkdir -p "$2"
+            printf '%s\\n' 'Fixture host table' > "$2/summary.md"
+            break
+        fi
+        shift
+    done
+    ;;
+esac
 exit 0
 """
 
@@ -98,13 +110,27 @@ class CheckAllTests(unittest.TestCase):
         self.assertEqual(self.calls(), [])
 
     def test_shared_host_checks_pass_and_xcode_tests_are_reported_skipped(self):
-        result = self.run_check_all()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        calls = self.calls()
-        self.assertEqual(len(calls), 1)
-        self.assertIn("scripts/run_host_checks.py", calls[0])
-        self.assertIn("Xcode unit tests were skipped", result.stdout)
-        self.assertIn("RESULT: PASS", result.stdout)
+        for output in (None, self.tmp / "host-output"):
+            with self.subTest(output=output):
+                self.log.unlink(missing_ok=True)
+                args = ("--output-dir", str(output)) if output else ()
+                result = self.run_check_all(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = self.calls()
+                self.assertEqual(len(calls), 1)
+                self.assertIn("scripts/run_host_checks.py", calls[0])
+                self.assertIn("Fixture host table", result.stdout)
+                self.assertIn("Xcode unit tests were skipped", result.stdout)
+                self.assertIn("RESULT: PASS", result.stdout)
+                records = Path(calls[0].split("--output-dir ", 1)[1].split()[0])
+                if output:
+                    self.assertTrue((records / "summary.md").is_file())
+                    self.assertEqual(self.run_check_all(*args).returncode, 2)
+                    self.assertEqual(len(self.calls()), 1)
+                else:
+                    self.assertIn("--no-summary-path", calls[0])
+                    self.assertNotIn("immichslides-check-all.", result.stdout)
+                    self.assertFalse(records.exists())
 
     def test_failing_host_checks_fail_the_run(self):
         result = self.run_check_all(fail_match="run_host_checks.py")
@@ -114,12 +140,12 @@ class CheckAllTests(unittest.TestCase):
         self.assertEqual(len(self.calls()), 1)
 
     def test_unit_tests_run_for_both_platforms_with_bundles_in_output_dir(self):
-        out = self.tmp / "out"
         selected = self.tmp / "venv-python"
         selected.write_text(STUB)
         selected.chmod(0o755)
         for override in (None, str(selected)):
             with self.subTest(interpreter=override):
+                out = self.tmp / ("overridden-output" if override else "default-output")
                 self.log.unlink(missing_ok=True)
                 if override:
                     self.env["PYTHON"] = override
@@ -133,6 +159,8 @@ class CheckAllTests(unittest.TestCase):
                 calls = self.calls()
                 self.assertEqual(len(calls), 3)
                 self.assertTrue(all(call.startswith("venv-python " if override else "python3 ") for call in calls))
+                self.assertIn(f"--output-dir {out.resolve()}/host-records", calls[0])
+                self.assertNotIn("--no-summary-path", calls[0])
                 runner_calls = [c for c in calls if "run_offline_unit_tests.py" in c]
                 self.assertEqual(len(runner_calls), 2)
                 self.assertIn("--platform ios", runner_calls[0])

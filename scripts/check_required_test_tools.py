@@ -14,8 +14,9 @@ def missing_tools() -> list[str]:
     ]:
         if shutil.which(executable) is None:
             missing.append(guidance)
-    if importlib.util.find_spec("PIL") is None:
-        missing.append("Pillow: use a Python environment with Pillow installed")
+    for module, package in (("PIL", "Pillow"), ("yaml", "PyYAML")):
+        if importlib.util.find_spec(module) is None:
+            missing.append(f"{package}: use a Python environment with {package} installed")
     return missing
 
 
@@ -24,7 +25,7 @@ def main() -> int:
     if missing:
         print("Missing Python test prerequisites:\n" + "\n".join(missing), file=sys.stderr)
         return 1
-    print("Python test prerequisites available: Swift, zstd, Pillow")
+    print("Python test prerequisites available: Swift, zstd, Pillow, PyYAML")
     return 0
 
 

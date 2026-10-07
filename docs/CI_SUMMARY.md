@@ -3,27 +3,27 @@
 Run the same macOS host checks as `ci-gate` from the repository root:
 
 ```bash
-export PYTHON=/usr/bin/python3
 "${PYTHON:-python3}" -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run
 "${PYTHON:-python3}" scripts/ci_summary.py /tmp/immichslides-host-run/summary.json
 "${PYTHON:-python3}" scripts/ci_summary.py --identity /tmp/immichslides-host-run/run-identity.json
 ```
 
-Use the Xcode-bundled `/usr/bin/python3` (3.9.6 on the current toolchain), with
-Pillow, PyYAML, Swift and zstd available, as described in
+Prerequisites and interpreter setup are described in
 [CONTRIBUTING](../CONTRIBUTING.md#setup). `check_all.sh` selects `"${PYTHON:-python3}"`
 for every Python step; the host entry point keeps its invoking interpreter for every
-child check. An active venv or pyenv is honored when `PYTHON` is unset. Python 3.14
-has a known [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
+child check. An active venv or pyenv is honored when `PYTHON` is unset.
 The output directory must be outside the repository
 and contain no previous result files. Without `--output-dir`, a new temporary directory
 is printed. Remove local outputs after reading the result.
 
 The entry point owns the format, test-convention, release-guard, localization-catalog,
 localization-usage, required-tool, workflow-policy and Python checks. `check_all.sh` delegates to it and
-keeps its existing optional iOS/tvOS unit-test interface. Its temporary host records
-are removed on exit; `--output-dir` holds the optional unit bundles, while DerivedData
-remains in `.derivedData/check-all-{ios,tvos}`.
+keeps its optional iOS/tvOS unit-test interface. With `--output-dir`, it keeps records
+in `DIR/host-records` and optional unit bundles in `DIR`; use a fresh output directory
+whose `host-records` does not already exist. This option also works without unit tests.
+Without it, temporary host records are removed on exit and their path is not printed.
+Every run ends with each host outcome and all nonpassing Python identities and reasons,
+including after optional unit tests. DerivedData remains in `.derivedData/check-all-{ios,tvos}`.
 Checks continue after failures. Exit 0 preserves the legacy command verdict, including
 unittest's environment skips; it does not prove complete coverage. The summary is
 `unverified` whenever any skip or unexecuted class member is present, with every reason
@@ -33,6 +33,10 @@ exit 2. `--timeout-seconds` sets the total
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
 An interruption records remaining checks as `not-run` with "not run after interruption".
+If final record validation fails after the initial placeholder is written, the producer
+rewrites a `failed` record with `record-invalid` infrastructure evidence and retains
+individually valid, unique observations. Invalid entries cannot become passing coverage.
+Persistent filesystem failures return exit 1 and report that recovery could not write.
 
 Host checks do not compile the app, read private configuration or receive ambient
 Immich/test-runner configuration. They run the intended working files directly.
@@ -136,8 +140,12 @@ message. Every subtest skip retains its parameter identity and reason in
 the parent's attempt reason. When both occur, JSON and Markdown retain both the
 skip reasons and failure messages. A `setUpClass` or `setUpModule` `SkipTest` records
 every discovered member of that class or module as `skipped` with the fixture's
-reason, without a synthetic setup test identity. A setup error remains a failed
-fixture observation, and its unexecuted members remain `not-run`.
+reason, without a synthetic setup test identity. Cleanup skips retain a fixture-level
+identity such as `tearDownClass (module.Class)` or `tearDownModule (module)` and the
+reason; already executed member outcomes remain intact, and the summary is unverified.
+Fixture errors, including repeated cleanup errors reported under the same fixture name,
+merge into one failed observation retaining every message. A setup error leaves its
+unexecuted members `not-run`. Error details retain the first line, capped at 200 characters.
 Expected failures and unexpected successes return
 exit 1 and do not count as passes.
 
@@ -170,5 +178,9 @@ and approval enforcement are separate tickets. The workflow consumes the merged
 [pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone
 workflow-policy check as a distinct host identity. CI sets `PYTHON` to the pinned
 venv made from `/usr/bin/python3` and uses it
-for the host entry point and validators. Local runs can select the same recommended
-interpreter with `PYTHON=/usr/bin/python3` without modifying PATH.
+for the host entry point and validators. Contributor interpreter setup is described in
+[CONTRIBUTING](../CONTRIBUTING.md#setup).
+
+The generic identity schema also supports `workflow_dispatch`. Under the `ci-gate`
+consumer policy, readers must accept only `pull_request` and `push` events from its expected workflow. A structurally
+valid manual-dispatch record is not admissible as a `ci-gate` result.

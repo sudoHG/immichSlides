@@ -246,8 +246,7 @@ class HostResultTests(unittest.TestCase):
                 self.assertTrue(True)
 
             def test_fail(self):
-                with self.subTest(case="broken"):
-                    self.assertEqual(1, 2)
+                self.fail("plain failure " + "x" * 240 + "\nsecond line must not be exported")
 
             def test_skip(self):
                 self.skipTest("missing fixture")
@@ -271,6 +270,10 @@ class HostResultTests(unittest.TestCase):
         self.assertEqual(code, 1)
         outcomes = {entry["identity"]["key"].rsplit(".", 1)[-1]: entry for entry in payload["observed"]}
         self.assertEqual(outcomes["test_fail"]["outcome"], "failed")
+        message = outcomes["test_fail"]["attempts"][0]["message"]
+        self.assertIn("AssertionError: plain failure", message)
+        self.assertNotIn("second line", message)
+        self.assertLessEqual(len(message.split("AssertionError: ", 1)[1]), 200)
         self.assertEqual(outcomes["test_pass"]["outcome"], "passed")
         self.assertEqual(outcomes["test_skip"]["attempts"][0]["reason"], "missing fixture")
         self.assertEqual(outcomes["test_unexpected_success"]["outcome"], "failed")
@@ -307,20 +310,45 @@ class HostResultTests(unittest.TestCase):
         entry = payload["observed"][0]
         self.assertEqual(entry["outcome"], "failed")
         self.assertIn("expected failure", entry["attempts"][0]["message"])
+        self.assertIn("known failure", entry["attempts"][0]["message"])
 
     def test_python_class_setup_error_names_failure_and_accounts_for_missing_tests(self):
-        class Sample(unittest.TestCase):
-            @classmethod
-            def setUpClass(cls):
-                raise RuntimeError("fixture unavailable")
+        for stage in ("setup", "teardown", "cleanups"):
+            with self.subTest(stage=stage):
+                class Sample(unittest.TestCase):
+                    @classmethod
+                    def setUpClass(cls):
+                        def cleanup():
+                            raise ValueError("class cleanup broken")
+                        cls.addClassCleanup(cleanup)
+                        if stage == "setup":
+                            raise RuntimeError("fixture unavailable")
+                        if stage == "cleanups":
+                            def other_cleanup():
+                                raise RuntimeError("fixture unavailable")
+                            cls.addClassCleanup(other_cleanup)
 
-            def test_never_started(self):
-                self.fail("must not run")
+                    @classmethod
+                    def tearDownClass(cls):
+                        if stage == "teardown":
+                            raise RuntimeError("fixture unavailable")
 
-        payload, code = run_python_tests.run_suite(unittest.defaultTestLoader.loadTestsFromTestCase(Sample), io.StringIO())
-        self.assertEqual(code, 1)
-        self.assertEqual([entry["outcome"] for entry in payload["observed"]], ["failed", "not-run"])
-        self.assertIn("setUpClass", payload["observed"][0]["identity"]["key"])
+                    def test_member(self):
+                        self.assertTrue(True)
+
+                payload, code = run_python_tests.run_suite(unittest.defaultTestLoader.loadTestsFromTestCase(Sample), io.StringIO())
+                self.assertEqual(code, 1)
+                self.assertEqual([entry["outcome"] for entry in payload["observed"]],
+                                 ["failed", "not-run"] if stage == "setup" else ["passed", "failed"])
+                failure = next(entry for entry in payload["observed"] if entry["outcome"] == "failed")
+                self.assertIn("setUpClass" if stage == "setup" else "tearDownClass", failure["identity"]["key"])
+                summary = valid_summary()
+                summary["status"] = "failed"
+                summary["population"].update(compiled=payload["compiled"], observed=payload["observed"])
+                markdown = ci_summary.render_markdown(ci_summary.parse_summary(summary))
+                for message in ("RuntimeError: fixture unavailable", "ValueError: class cleanup broken"):
+                    self.assertIn(message, failure["attempts"][0]["message"])
+                    self.assertIn(message, markdown)
 
     def test_python_fixture_skip_records_every_discovered_member_with_its_reason(self):
         class Sample(unittest.TestCase):
@@ -353,6 +381,69 @@ class HostResultTests(unittest.TestCase):
                                  ["skipped"] * (2 if scope == "class" else 4))
                 for entry in payload["observed"]:
                     self.assertEqual(entry["attempts"][0]["reason"], "external calibration screenshots unavailable")
+
+        class SetupCleanupSample(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                cls.addClassCleanup(skip_fixture)
+                raise unittest.SkipTest("setup fixture unavailable")
+
+            def test_never_started(self):
+                self.fail("must not run")
+
+        payload, code = run_python_tests.run_suite(unittest.defaultTestLoader.loadTestsFromTestCase(SetupCleanupSample), io.StringIO())
+        self.assertEqual(code, 0)
+        self.assertEqual([entry["identity"] for entry in payload["observed"]], payload["compiled"])
+        reason = payload["observed"][0]["attempts"][0]["reason"]
+        self.assertIn("setup fixture unavailable", reason)
+        self.assertIn("external calibration screenshots unavailable", reason)
+
+        class CleanupSample(unittest.TestCase):
+            def test_pass(self):
+                self.assertTrue(True)
+
+        for fixture in ("tearDownClass", "tearDownModule"):
+            with self.subTest(fixture=fixture), patch.dict(sys.modules, {module.__name__: module}), \
+                    patch.object(CleanupSample, "__module__", module.__name__), \
+                    patch.object(CleanupSample, "tearDownClass", classmethod(skip_fixture) if fixture == "tearDownClass" else classmethod(lambda cls: None)), \
+                    patch.object(module, "tearDownModule", skip_fixture if fixture == "tearDownModule" else lambda: None, create=True):
+                payload, code = run_python_tests.run_suite(unittest.defaultTestLoader.loadTestsFromTestCase(CleanupSample), io.StringIO())
+                self.assertEqual(code, 0)
+                self.assertEqual([entry["outcome"] for entry in payload["observed"]], ["passed", "skipped"])
+                cleanup = payload["observed"][-1]
+                self.assertTrue(cleanup["identity"]["key"].startswith(fixture + " ("))
+                self.assertEqual(cleanup["attempts"][0]["reason"], "external calibration screenshots unavailable")
+                summary = valid_summary()
+                summary["status"] = "unverified"
+                summary["population"].update(compiled=payload["compiled"], observed=payload["observed"])
+                self.assertIn("external calibration screenshots unavailable",
+                              ci_summary.render_markdown(ci_summary.parse_summary(summary)))
+
+    def test_invalid_final_record_is_rewritten_failed_with_executed_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            identity = ci_summary.test_identity("python", "fixture.Sample.test_failure")
+            failure = ci_summary.observation(identity, "failed", 0, message="assertion broken", exit_code=None)
+
+            def steps(*args, **kwargs):
+                (output / "python-results.json").write_text(json.dumps({"compiled": [identity], "observed": [failure, failure]}))
+                return [ci_summary.observation(ci_summary.test_identity("host", name), "failed" if name == "python tests" else "passed", 0)
+                        for name, _ in run_host_checks.HOST_CHECKS], []
+
+            with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                    patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                    patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                    patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                    contextlib.redirect_stdout(io.StringIO()) as terminal, contextlib.redirect_stderr(io.StringIO()):
+                code = run_host_checks.main()
+            self.assertEqual(code, 1)
+            summary = ci_summary.parse_summary((output / "summary.json").read_text())
+            self.assertEqual(summary["status"], "failed")
+            self.assertIn("record-invalid", [item["code"] for item in summary["infrastructure"]])
+            self.assertEqual(len(summary["population"]["observed"]), len(run_host_checks.HOST_CHECKS) + 1)
+            for name, _ in run_host_checks.HOST_CHECKS:
+                self.assertIn(name, terminal.getvalue())
+            self.assertIn(identity["key"], terminal.getvalue())
 
     def test_host_class_skip_preserves_cli_success_and_never_labels_summary_passed(self):
         with tempfile.TemporaryDirectory() as directory:

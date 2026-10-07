@@ -55,6 +55,7 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 
   ```bash
   scripts/check_all.sh                     # formatting, conventions, release guards, localization, prerequisites, workflow policy, Python tests
+  scripts/check_all.sh --output-dir '<fresh-outside-repo>' # keep the host summary and identity in host-records/
   scripts/check_all.sh --with-unit-tests \
       --ios-destination 'platform=iOS Simulator,id=<UDID>' \
       --tvos-destination 'platform=tvOS Simulator,id=<UDID>' \
@@ -67,7 +68,10 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 The informational `ci-gate` host job runs on pull requests and pushes to `main`.
 To keep its JSON and short Markdown records locally, run
 `"${PYTHON:-python3}" -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run`.
-`check_all.sh` uses the same checks and removes its temporary host records.
+`check_all.sh` uses the same checks. `--output-dir` keeps records in `DIR/host-records`
+and optional unit bundles in `DIR`; choose a fresh directory. Without it, temporary
+host records are removed on exit. The final terminal report lists each host result
+and all nonpassing Python identities.
 See [the summary contract](docs/CI_SUMMARY.md) for validation, identity, result
 accounting and the current workflow boundary. Existing privacy checks remain required.
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -18,7 +19,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from ci_summary import ContractError, observation, parse_identity, test_identity, write_summary
+from ci_summary import (ContractError, identity_key, observation, parse_identity, parse_summary,
+                        render_markdown, test_identity, validate_observation, validate_test_identity, write_summary)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GROUP_TERM_GRACE_SECONDS = 5
@@ -218,14 +220,54 @@ def run_steps(steps, repo_root, *, timeout_seconds=900):
     return records, infrastructure
 
 
+def failed_record(initial, current, error):
+    # A malformed producer result must not leave the earlier empty placeholder.
+    fallback = copy.deepcopy(initial)
+    fallback["status"] = "failed"
+    for collection in ("compiled", "observed"):
+        seen = {identity_key(entry) for entry in fallback["population"][collection]}
+        for entry in current["population"][collection]:
+            try:
+                if collection == "observed":
+                    validate_observation(entry)
+                    identity = entry["identity"]
+                else:
+                    validate_test_identity(entry)
+                    identity = entry
+                token = identity_key(identity)
+            except (ContractError, TypeError, ValueError, KeyError):
+                continue
+            if token not in seen:
+                fallback["population"][collection].append(copy.deepcopy(entry))
+                seen.add(token)
+    for entry in current["infrastructure"]:
+        candidate = dict(initial, infrastructure=[entry])
+        try:
+            parse_summary(candidate)
+        except (ContractError, TypeError, ValueError, KeyError):
+            continue
+        fallback["infrastructure"].append(copy.deepcopy(entry))
+    lines = str(error).splitlines()
+    fallback["infrastructure"].append({"code": "record-invalid", "message":
+        f"{type(error).__name__}: {lines[0][:200] if lines else 'No error detail provided'}"})
+    return fallback
+
+
+def print_result(summary, output, hide_path):
+    print("\n" + render_markdown(summary), end="", flush=True)
+    print(f"\nRESULT: {summary['status'].upper()}", flush=True)
+    if not hide_path:
+        print(f"Summary: {output / 'summary.json'}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
-        'Invoke with "${PYTHON:-python3}"; every Python check uses that interpreter. '
-        'Recommend PYTHON=/usr/bin/python3 or a venv made from it. '
-        'Python 3.14 fixture stall: https://github.com/sudoHG/immichSlides/issues/122'))
+        'Invoke with "${PYTHON:-python3}"; every Python check uses that interpreter, '
+        'honoring an active venv or pyenv when PYTHON is unset.'))
     parser.add_argument("--output-dir", type=Path, help="Outside the repository; default is a new temporary directory")
     parser.add_argument("--timeout-seconds", type=float, default=900, help="Total host-check budget; default 900")
     parser.add_argument("--workflow-path", help="Enable CI identity; assert this path against GITHUB_WORKFLOW_REF. Omit for local identity, regardless of CI environment")
+    parser.add_argument("--no-summary-path", action="store_true", help="Suppress the record path in the final report")
     args = parser.parse_args()
     if not 0 < args.timeout_seconds <= 1200:
         parser.error("--timeout-seconds must be in (0, 1200]")
@@ -236,6 +278,7 @@ def main():
     for filename in ("python-results.json", "summary.json", "summary.md", "run-identity.json"):
         if (output / filename).exists():
             parser.error("--output-dir must not contain results of an earlier run")
+    initial = None
     try:
         identity = run_identity(os.environ, ci=args.workflow_path is not None)
         is_ci = identity["event"] != "local"
@@ -259,6 +302,7 @@ def main():
                    "infrastructure": [], "status": "unverified"}
         # An interrupted producer leaves a valid, explicitly unverified record.
         write_summary(summary, output)
+        initial = copy.deepcopy(summary)
         steps = [(name, command + (["--output", str(output / "python-results.json")] if name == "python tests" else []))
                  for name, command in HOST_CHECKS]
         records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds)
@@ -281,14 +325,18 @@ def main():
             summary["infrastructure"].append({"code": "skip-policy-pending", "message":
                 "Coverage includes skips or unexecuted tests; expected-skip policy is introduced separately"})
         write_summary(summary, output)
-        print(f"\nRESULT: {summary['status'].upper()}\nSummary: {output / 'summary.json'}", flush=True)
+        print_result(summary, output, args.no_summary_path)
         return 0 if command_passed else 1
-    except subprocess.SubprocessError as error:
-        print(f"FAIL: host-check record could not be produced: Git metadata command failed ({type(error).__name__})",
-              file=sys.stderr)
-        return 1
-    except (ContractError, OSError, ValueError, KeyError) as error:
-        print(f"FAIL: host-check record could not be produced: {error}", file=sys.stderr)
+    except (subprocess.SubprocessError, ContractError, OSError, ValueError, KeyError, TypeError) as error:
+        message = f"Git metadata command failed ({type(error).__name__})" if isinstance(error, subprocess.SubprocessError) else str(error)
+        print(f"FAIL: host-check record could not be produced: {message}", file=sys.stderr)
+        if initial is not None:
+            try:
+                fallback = failed_record(initial, summary, error)
+                write_summary(fallback, output)
+                print_result(fallback, output, args.no_summary_path)
+            except (ContractError, OSError, ValueError, KeyError, TypeError) as recovery_error:
+                print(f"FAIL: failed record could not be written: {recovery_error}", file=sys.stderr)
         return 1
 
 

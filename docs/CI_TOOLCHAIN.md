@@ -8,9 +8,9 @@ pin is unavailable; they must not select the latest installed version as a fallb
 The Xcode and simulator pins match the [hosted Vision probe](https://github.com/sudoHG/immichSlides/actions/runs/37592421181).
 Python 3.9.6 and Pillow 11.3.0 match the contributor verification baseline. The workflow
 uses Xcode's `/usr/bin/python3` explicitly and verifies its version; a different version
-fails rather than falling back to the Homebrew interpreter. Hosted Python 3.14 passed the
-policy tests but failed existing P2 fixture health checks; compatibility work belongs in
-a separate issue. PyYAML 6.0.3 parses workflow structure safely. Pip 25.3 is the last
+fails rather than falling back to the Homebrew interpreter. For contributor interpreter
+setup, see [CONTRIBUTING](../CONTRIBUTING.md#setup).
+PyYAML 6.0.3 parses workflow structure safely. Pip 25.3 is the last
 release supporting Python 3.9; these dependencies are CI tools and do not ship in the app.
 
 ## Python setup

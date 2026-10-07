@@ -6,7 +6,7 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: scripts/check_all.sh [--with-unit-tests --ios-destination DEST --tvos-destination DEST --output-dir DIR]
+Usage: scripts/check_all.sh [--output-dir DIR] [--with-unit-tests --ios-destination DEST --tvos-destination DEST]
 
 Runs, in order:
   1. swift-format lint (strict) on immichSlides, immichSlidesTests, immichSlidesUITests, TestSupport
@@ -14,7 +14,7 @@ Runs, in order:
   3. release guards
   4. localization catalog
   5. localization usage (user-facing literals missing from the string catalog)
-  6. Python test prerequisites: Swift, zstd CLI and Pillow (missing tools fail)
+  6. Python test prerequisites: Swift, zstd CLI, Pillow and PyYAML (missing tools fail)
   7. workflow policy (pinned actions, permissions, timeouts and trusted execution)
   8. Python tests with per-test result records
   9. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
@@ -23,14 +23,13 @@ Options:
   --with-unit-tests        Also run scripts/run_offline_unit_tests.py for iOS and tvOS.
   --ios-destination DEST   xcodebuild destination for iOS, e.g. 'platform=iOS Simulator,id=<UDID>'.
   --tvos-destination DEST  xcodebuild destination for tvOS, e.g. 'platform=tvOS Simulator,id=<UDID>'.
-  --output-dir DIR         Directory for .xcresult bundles. Must be outside the repository.
+  --output-dir DIR         Keep host-records and optional .xcresult bundles outside the repository.
+                           Required for unit tests; DIR/host-records must be fresh.
   -h, --help               Show this help.
 
 Without --with-unit-tests the Xcode tests are skipped; run them before opening a pull request.
 No private configuration is needed.
 Every Python step uses "${PYTHON:-python3}", honoring an active venv or pyenv.
-Recommend PYTHON=/usr/bin/python3 or a venv created with /usr/bin/python3.
-Python 3.14 fixture stall: https://github.com/sudoHG/immichSlides/issues/122
 Optional unit-test DerivedData stays in .derivedData/check-all-{ios,tvos}.
 EOF
 }
@@ -77,13 +76,15 @@ if [[ $with_unit_tests -eq 1 ]]; then
     [[ -n "$ios_destination" ]] || die_usage "--with-unit-tests needs --ios-destination"
     [[ -n "$tvos_destination" ]] || die_usage "--with-unit-tests needs --tvos-destination"
     [[ -n "$output_dir" ]] || die_usage "--with-unit-tests needs --output-dir (outside the repository)"
+elif [[ -n "$ios_destination$tvos_destination" ]]; then
+    die_usage "--ios-destination and --tvos-destination require --with-unit-tests"
+fi
+if [[ -n "$output_dir" ]]; then
     mkdir -p "$output_dir"
     output_dir="$(cd "$output_dir" && pwd -P)"
     case "$output_dir/" in
     "$REPO_ROOT"/*) die_usage "--output-dir must be outside the repository: $output_dir" ;;
     esac
-elif [[ -n "$ios_destination$tvos_destination$output_dir" ]]; then
-    die_usage "--ios-destination, --tvos-destination and --output-dir require --with-unit-tests"
 fi
 
 cd "$REPO_ROOT"
@@ -99,7 +100,9 @@ run_step() {
     local started=$SECONDS
     echo
     echo "==> $name"
-    echo "    \$ $*"
+    if [[ "$name" != "host checks" || -n "$output_dir" ]]; then
+        echo "    \$ $*"
+    fi
     local status=0
     "$@" || status=$?
     local elapsed=$((SECONDS - started))
@@ -114,9 +117,16 @@ run_step() {
     fi
 }
 
-host_output="$(mktemp -d "${TMPDIR:-/tmp}/immichslides-check-all.XXXXXX")"
-trap 'rm -rf "$host_output"' EXIT
-run_step "host checks" "$python" -B scripts/run_host_checks.py --output-dir "$host_output"
+if [[ -n "$output_dir" ]]; then
+    host_output="$output_dir/host-records"
+    [[ ! -e "$host_output" && ! -L "$host_output" ]] || die_usage "--output-dir needs fresh host-records"
+    host_args=(--output-dir "$host_output")
+else
+    host_output="$(mktemp -d "${TMPDIR:-/tmp}/immichslides-check-all.XXXXXX")"
+    trap 'rm -rf "$host_output"' EXIT
+    host_args=(--output-dir "$host_output" --no-summary-path)
+fi
+run_step "host checks" "$python" -B scripts/run_host_checks.py "${host_args[@]}"
 
 if [[ $with_unit_tests -eq 1 ]]; then
     stamp="$(date +%Y%m%d-%H%M%S)"
@@ -132,6 +142,10 @@ if [[ $with_unit_tests -eq 1 ]]; then
         --result-bundle-path "$output_dir/check-all-tvos-$stamp.xcresult"
 fi
 
+if [[ -f "$host_output/summary.md" ]]; then
+    echo
+    cat "$host_output/summary.md"
+fi
 echo
 echo "==> Summary"
 for i in "${!step_names[@]}"; do

@@ -21,12 +21,35 @@ def test_cases(suite):
             yield test
 
 
+def failure_message(test, err):
+    lines = str(err[1]).splitlines()
+    detail = lines[0] if lines else ""
+    if len(detail) > 200:
+        detail = detail[:197] + "..."
+    return f"{test.id()}: {err[0].__name__}" + (f": {detail}" if detail else "")
+
+
 class RecordingResult(unittest.TextTestResult):
     def __init__(self, *args, fixture_members, **kwargs):
         super().__init__(*args, **kwargs)
         self.observed = []
         self.current = None
         self.fixture_members = fixture_members
+        self.fixture_records = {}
+
+    def record_fixture(self, key, outcome, *, reason=None, message=None):
+        if key not in self.fixture_records:
+            entry = observation(test_identity("python", key), outcome, 0,
+                                reason=reason, message=message, exit_code=None)
+            self.fixture_records[key] = entry
+            self.observed.append(entry)
+            return
+        entry = self.fixture_records[key]
+        attempt = entry["attempts"][0]
+        entry["outcome"] = attempt["outcome"] = "failed" if "failed" in (entry["outcome"], outcome) else outcome
+        for field, value in (("reason", reason), ("message", message)):
+            if value:
+                attempt[field] = "; ".join(filter(None, (attempt[field], value)))
 
     def startTest(self, test):
         super().startTest(test)
@@ -45,30 +68,33 @@ class RecordingResult(unittest.TextTestResult):
     def addFailure(self, test, err):
         super().addFailure(test, err)
         self.outcome = "failed"
-        self.message = f"{test.id()}: {err[0].__name__}"
+        self.message = "; ".join(filter(None, (self.message, failure_message(test, err))))
 
     def addError(self, test, err):
         super().addError(test, err)
         if self.current is None:
-            self.observed.append(observation(test_identity("python", test.id()), "failed", 0,
-                                             message=f"{test.id()}: {err[0].__name__}", exit_code=None))
+            self.record_fixture(test.id(), "failed", message=failure_message(test, err))
             return
         self.outcome = "failed"
-        self.message = f"{test.id()}: {err[0].__name__}"
+        self.message = "; ".join(filter(None, (self.message, failure_message(test, err))))
 
     def addSubTest(self, test, subtest, err):
         super().addSubTest(test, subtest, err)
         if err is not None:
             self.outcome = "failed"
-            message = f"{subtest.id()}: {err[0].__name__}: {err[1]}"
-            self.message = "; ".join(filter(None, (self.message, message)))
+            self.message = "; ".join(filter(None, (self.message, failure_message(subtest, err))))
 
     def addSkip(self, test, reason):
         super().addSkip(test, reason)
         reason = reason or "No skip reason provided by unittest"
         if self.current is None:
-            for identity in self.fixture_members.get(test.id(), []):
-                self.observed.append(observation(identity, "skipped", 0, reason=reason, exit_code=None))
+            members = self.fixture_members.get(test.id())
+            if members is None:
+                # Cleanup skips cannot replace the already executed member outcomes.
+                self.record_fixture(test.id(), "skipped", reason=reason)
+            else:
+                for identity in members:
+                    self.record_fixture(identity["key"], "skipped", reason=reason)
             return
         if self.outcome != "failed":
             self.outcome = "skipped"
@@ -78,7 +104,7 @@ class RecordingResult(unittest.TextTestResult):
     def addExpectedFailure(self, test, err):
         super().addExpectedFailure(test, err)
         self.outcome = "failed"
-        self.message = f"{test.id()}: expected failure is not an explicit pass"
+        self.message = failure_message(test, err) + " (expected failure is not an explicit pass)"
 
     def addUnexpectedSuccess(self, test):
         super().addUnexpectedSuccess(test)
