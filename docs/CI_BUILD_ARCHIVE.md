@@ -33,7 +33,10 @@ on `/System/Volumes/Data` and use the workspace device-slot/watchdog wrappers.
 Only GitHub-hosted CI can pass a smaller `--min-free-gib`; the workflow uses 30 GiB.
 Initial hosted inventory was about 39 GiB. Each build records space before/after,
 product bytes, archive bytes and threshold in `records/disk.json`. The CI allowance
-can therefore be assessed against measurements without changing local defaults.
+is based on measured builds: iOS 39.51 to 38.26 GiB and tvOS 38.71 to 37.49 GiB,
+about 1.3 GiB consumed per build. Products were 138/151 MiB and archives 34/38 MiB;
+the measured post-build reserve above the threshold was at least 7.49 GiB. Review
+fresh records after toolchain/project changes without changing local defaults.
 
 `archive/build.tar.gz` contains the complete `Build/Products`: `.xctestrun`, app,
 unit/UI bundles, frameworks and bundled public fixtures. Tar preserves permissions
@@ -80,6 +83,16 @@ extracts at a different absolute path and calls `test-without-building` with no 
 or scheme. Four explicitly selected metadata fixture tests and the fixture-set-A
 pause-hold test must all pass with no skips. Compact proof records artifact ID, producer/consumer attempts,
 full identity, selections, official counts/test tree, source absence and disk space.
+
+After removing its checkout, the hosted consumer invokes the staged entry point:
+
+```bash
+"$RUNNER_TEMP/consumer-python/bin/python3" -B "$RUNNER_TEMP/archive-tools/scripts/ci_build_archive.py" proof \
+    --selection-path "$RUNNER_TEMP/archive-selection.json" \
+    --archive-dir "$RUNNER_TEMP/archive-download" \
+    --relocated-path "$RUNNER_TEMP/consumer-relocated-ios" \
+    --output-dir "$RUNNER_TEMP/relocation-records" --min-free-gib 30
+```
 
 **Rerun failed jobs** retains successful producer outputs. Consumers download by
 artifact ID from the same run, including earlier producer attempts, and record the

@@ -1,6 +1,5 @@
 """Regression checks for build admission, artifact identity and extraction safety."""
 import copy
-import json
 import plistlib
 import platform
 import tempfile
@@ -105,6 +104,9 @@ class BuildArchiveTests(unittest.TestCase):
         manifest["files"][-1]["mode"] = 0
         with self.assertRaises(ContractError):
             archive.extract_products(tar_path, self.root / "tampered", manifest)
+        tar_path.write_bytes(tar_path.read_bytes() + b"modified")
+        with self.assertRaisesRegex(ContractError, "archive hash"):
+            archive.extract_products(tar_path, self.root / "corrupt", manifest)
 
     def test_archive_rejects_links_outside_products_and_unlisted_entries(self):
         (self.app / "link").unlink()
@@ -128,6 +130,26 @@ class BuildArchiveTests(unittest.TestCase):
             with self.subTest(environment=environment), patch.dict(archive.os.environ, environment, clear=True):
                 with self.assertRaisesRegex(ContractError, "local 80 GiB"):
                     archive.disk_check(30)
+
+    def test_manifest_rejects_unknown_versions_unsafe_paths_and_false_secret_claims(self):
+        manifest = self.manifest()
+        for key, value in (("schema_version", 2), ("private_configuration_present", True),
+                           ("signing_mode", "disabled"), ("unexpected", "field")):
+            with self.subTest(key=key):
+                candidate = dict(manifest, **{key: value})
+                with self.assertRaises(ContractError):
+                    archive.validate_manifest(candidate, self.identity, "123", 1, "ios", "27A266a", "f" * 64)
+        for name in ("/Products/App", "Products/../outside", "Products//App", "Other/App"):
+            with self.subTest(path=name):
+                with self.assertRaises(ContractError):
+                    archive.safe_path(name)
+
+    def test_ambient_server_configuration_is_rejected_without_echoing_values(self):
+        from unittest.mock import patch
+        for key in ("IMMICH_SERVER_URL", "TEST_RUNNER_IMMICH_API_KEY", "SIMCTL_CHILD_IMMICH_API_KEY", "ENABLE_DEBUG_AUTO_SERVER"):
+            with self.subTest(key=key), patch.dict(archive.os.environ, {key: "unread dummy value"}, clear=True):
+                with self.assertRaisesRegex(ContractError, "ambient server/debug configuration is forbidden"):
+                    archive.workspace_preflight(self.root)
 
 
 if __name__ == "__main__":

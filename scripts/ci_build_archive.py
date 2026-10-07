@@ -29,14 +29,14 @@ WORKFLOW = ".github/workflows/ci-gate.yml"
 SCHEMES = {"ios": "immichSlides-iOS", "tvos": "immichSlides-tvOS"}
 DESTINATIONS = {"ios": "iOS Simulator", "tvos": "tvOS Simulator"}
 PROOF_SELECTORS = [
-    "immichSlidesTests/ImmichAssetMetadataDecoderTests/" + name + "()" for name in (
+    "immichSlidesTests/ImmichAssetMetadataDecoderTests/`" + name + "`()" for name in (
         "complete metadata decodes asset dimensions, EXIF dimensions, orientation, and person face boxes",
         "old JSON missing metadata keeps the new fields nil",
         "nil, zero, unknown fields, and numeric orientation decode safely",
         "a person missing the faces field keeps faces nil",
     )
 ] + ["immichSlidesTests/SlideShowViewModelVisibleSceneIdentityTests/"
-     "pause hold after visible A2 and completed A3 keeps decoded size, view model ids, and overlay model on A2()"]
+     "`pause hold after visible A2 and completed A3 keeps decoded size, view model ids, and overlay model on A2`()"]
 MANIFEST_FIELDS = {"schema_version", "identity", "producer", "platform", "configuration", "architectures",
                    "xcode_build", "pins_sha256", "signing_mode", "private_configuration_present",
                    "source_path", "products_path", "archive_sha256", "files"}
@@ -280,6 +280,8 @@ def run_build(args):
     step = test_identity("host", "secret-free build archive", platform=args.platform, configuration="Debug")
     summary["population"]["declared"] = [step]
     summary["population"]["compiled"] = [step]
+    summary["population"]["observed"] = [observation(step, "not-run", 0, reason="build has not completed", exit_code=None)]
+    write_summary(summary, records)
     started = time.monotonic()
     code = 1
     try:
@@ -326,6 +328,7 @@ def run_build(args):
         summary["population"]["observed"] = [observation(step, "passed", time.monotonic() - started)]
         code = 0
     except (OSError, ValueError, CommandError, subprocess.SubprocessError) as error:
+        code = code or 1
         summary["status"] = "failed"
         summary["infrastructure"] = [{"code": "build-archive-failed", "message": str(error) if isinstance(error, (ContractError, CommandError)) else type(error).__name__}]
         summary["population"]["observed"] = [observation(step, "timed-out" if code == 124 else "failed",
@@ -362,6 +365,8 @@ def run_proof(args):
     summary["population"]["declared"] = [step]
     summary["population"]["compiled"] = [step]
     args.output_dir.mkdir(parents=True, exist_ok=False)
+    summary["population"]["observed"] = [observation(step, "not-run", 0, reason="relocation has not completed", exit_code=None)]
+    write_summary(summary, args.output_dir)
     started = time.monotonic()
     simulator = None
     code = 1
@@ -397,8 +402,6 @@ def run_proof(args):
         code = default_run(command, timeout_seconds=900)
         require(code == 0, f"relocated tests failed (exit {code})")
         official = read_official_test_results_summary(result_path)
-        require(classify_test_results(official) == "passed" and official.total_test_count == len(PROOF_SELECTORS),
-                "relocation proof requires all five fixture tests to pass without skips")
         tests = json.loads(checked_command(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(result_path), "--compact"]))
         proof = {"artifact_id": ctx["artifact_id"], "producer_attempt": ctx["producer_attempt"],
                  "consumer_attempt": ctx["attempt"], "identity": ctx["identity"],
@@ -406,12 +409,16 @@ def run_proof(args):
                  "selectors": PROOF_SELECTORS, "official_counts": official.__dict__, "official_tests": tests,
                  "disk_before_gib": before, "disk_after_gib": default_data_available_gib()}
         write_json(args.output_dir / "relocation-proof.json", proof)
+        print("Official relocated counts: " + json.dumps(official.__dict__), flush=True)
+        require(classify_test_results(official) == "passed" and official.total_test_count == len(PROOF_SELECTORS),
+                "relocation proof requires all five fixture tests to pass without skips")
         print(f"Relocation PASS: artifact ID {ctx['artifact_id']}, producer attempt {ctx['producer_attempt']}, "
               f"consumer attempt {ctx['attempt']}; {official.total_test_count} tests passed, no skips, source absent")
         summary["status"] = "passed"
         summary["population"]["observed"] = [observation(step, "passed", time.monotonic() - started)]
         code = 0
     except (OSError, ValueError, CommandError, subprocess.SubprocessError) as error:
+        code = code or 1
         summary["status"] = "failed"
         message = str(error) if isinstance(error, (ContractError, CommandError)) else type(error).__name__
         summary["infrastructure"] = [{"code": "relocation-failed", "message": message}]
