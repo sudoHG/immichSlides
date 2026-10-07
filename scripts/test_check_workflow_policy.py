@@ -80,6 +80,64 @@ class WorkflowPolicyTests(unittest.TestCase):
         document["jobs"]["other"] = {"runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}
         self.assertIn("timeout", self.rules(document))
 
+    def probe(self):
+        document = self.trusted()
+        document["name"] = "ci-probe"
+        document["on"] = {"schedule": [{"cron": "17 8 * * *"}], "workflow_dispatch": None}
+        document["permissions"] = {}
+        document["jobs"]["check"]["permissions"] = {"contents": "read", "issues": "write"}
+        document["jobs"]["check"]["steps"].extend([
+            {"run": '/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"'},
+            {"run": "/usr/bin/python3 scripts/probe_ci_toolchain.py", "env": {
+                "CI_PROBE_TOKEN": "${{ github.token }}",
+                "CI_PROBE_SIMULATE_MISSING_PIN": "${{ inputs.simulate_missing_pin || false }}",
+            }},
+        ])
+        return document
+
+    def test_probe_grants_only_its_named_trusted_entry_points_and_bindings(self):
+        document = self.probe()
+        self.assertEqual(set(), self.rules(document, ".github/workflows/ci-probe.yml"))
+        self.assertIn("issue-write", self.rules(document))
+        self.assertIn("trusted-run", self.rules(document, TRUSTED))
+        for mutation, rule in [
+            ({"name": "renamed"}, "probe-contract"),
+            ({"on": {"pull_request": None}}, "probe-contract"),
+            ({"on": {"workflow_dispatch": None}}, "probe-contract"),
+            ({"permissions": {"issues": "write"}}, "probe-contract"),
+        ]:
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(document)
+                changed.update(mutation)
+                self.assertIn(rule, self.rules(changed, ".github/workflows/ci-probe.yml"))
+        for key, value in [("contents", "write"), ("actions", "write"), ("id-token", "write")]:
+            with self.subTest(permission=key):
+                changed = copy.deepcopy(document)
+                changed["jobs"]["check"]["permissions"][key] = value
+                self.assertIn("probe-contract", self.rules(changed, ".github/workflows/ci-probe.yml"))
+        for script in ["/usr/bin/python3 scripts/probe_ci_toolchain.py --root ci-artifacts",
+                       "/usr/bin/python3 scripts/probe_ci_toolchain.py; echo unsafe"]:
+            with self.subTest(script=script):
+                changed = copy.deepcopy(document)
+                changed["jobs"]["check"]["steps"][-1]["run"] = script
+                self.assertIn("trusted-run", self.rules(changed, ".github/workflows/ci-probe.yml"))
+        changed = copy.deepcopy(document)
+        changed["jobs"]["check"]["steps"][-1]["env"]["CI_PROBE_TOKEN"] = "${{ secrets.OTHER_TOKEN }}"
+        self.assertIn("trusted-environment", self.rules(changed, ".github/workflows/ci-probe.yml"))
+        changed = copy.deepcopy(document)
+        changed["jobs"]["check"]["steps"][0]["with"]["ref"] = "${{ github.sha }}"
+        self.assertIn("trusted-checkout", self.rules(changed, ".github/workflows/ci-probe.yml"))
+
+    def test_issue_write_is_reserved_for_probe_and_report(self):
+        for path in [".github/workflows/example.yml", TRUSTED, ".github/workflows/ci-probe.yaml"]:
+            with self.subTest(path=path):
+                document = workflow()
+                document["permissions"]["issues"] = "write"
+                self.assertIn("issue-write", self.rules(document, path))
+        document = self.trusted()
+        document["permissions"]["issues"] = "write"
+        self.assertNotIn("issue-write", self.rules(document, ".github/workflows/ci-report.yml"))
+
     def test_privileged_triggers_use_exact_paths_in_all_yaml_forms(self):
         for event in ["pull_request_target", ["pull_request_target"], {"pull_request_target": None}]:
             with self.subTest(event=event):

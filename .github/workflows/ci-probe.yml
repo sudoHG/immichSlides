@@ -1,0 +1,39 @@
+name: ci-probe
+
+on:
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+    inputs:
+      simulate_missing_pin:
+        description: Treat the pinned Xcode as missing and report a separate simulation issue
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: ci-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: xcode-27
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up the existing pinned Python environment
+        run: /usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"
+
+      - name: Probe Xcode inventory and runner-image announcements
+        run: /usr/bin/python3 scripts/probe_ci_toolchain.py
+        env:
+          CI_PROBE_TOKEN: ${{ github.token }}
+          CI_PROBE_SIMULATE_MISSING_PIN: ${{ inputs.simulate_missing_pin || false }}
