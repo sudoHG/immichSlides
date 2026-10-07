@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import plistlib
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -60,14 +60,14 @@ def verify_environment(executable, pins):
 
 def verify_toolchain(pins):
     # This is an inventory check only: it never builds, boots or installs a simulator.
-    if shutil.disk_usage("/System/Volumes/Data").free < 80 * 1024**3:
-        raise ValueError("Xcode inventory check requires at least 80 GiB free on /System/Volumes/Data")
     environment = dict(os.environ, DEVELOPER_DIR=pins["xcode"]["developer_dir"])
-    version = run(["xcodebuild", "-version"], env=environment)
-    expected = f"Xcode {pins['xcode']['version']}\nBuild version {pins['xcode']['build']}"
-    if version != expected:
-        raise ValueError(f"Xcode pin mismatch: expected {expected!r}, observed {version!r}")
-    print(version)
+    version_path = Path(pins["xcode"]["developer_dir"]).parent / "version.plist"
+    metadata = plistlib.loads(version_path.read_bytes())
+    observed = (metadata["CFBundleShortVersionString"], metadata["ProductBuildVersion"])
+    expected = (pins["xcode"]["version"], pins["xcode"]["build"])
+    if observed != expected:
+        raise ValueError(f"Xcode pin mismatch: expected {expected!r}, observed {observed!r}")
+    print(f"Xcode {observed[0]}\nBuild version {observed[1]}")
     runtimes = json.loads(run(["xcrun", "simctl", "list", "runtimes", "--json"], env=environment))["runtimes"]
     for platform, pin in pins["simulators"].items():
         matches = [runtime for runtime in runtimes if runtime["identifier"] == pin["runtime"]

@@ -17,7 +17,7 @@ permissions:
 jobs:
   toolchain:
     runs-on: xcode-27
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -35,3 +35,8 @@ jobs:
           "$RUNNER_TEMP/ci-python/bin/python3" -B scripts/setup_ci_python.py --venv "$RUNNER_TEMP/ci-python" --check
           "$RUNNER_TEMP/ci-python/bin/python3" -B scripts/check_workflow_policy.py
           "$RUNNER_TEMP/ci-python/bin/python3" -B -m unittest discover -s scripts -p test_check_workflow_policy.py
+
+      - name: Run existing host checks in the pinned environment
+        run: |
+          export PATH="$RUNNER_TEMP/ci-python/bin:$PATH"
+          scripts/check_all.sh

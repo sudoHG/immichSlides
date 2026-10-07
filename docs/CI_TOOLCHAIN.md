@@ -36,12 +36,13 @@ failed. Invalid command-line arguments exit 2. A failed install may leave its ne
 directory for inspection; only its owner should remove it before retrying.
 
 `--verify-toolchain` also inventories the pinned Xcode and available simulator runtimes
-and device types, using the pinned `DEVELOPER_DIR`. It requires 80 GiB free on
-`/System/Volumes/Data` before calling `xcodebuild -version`. It does not build an app,
-boot a simulator or install platform resources. Ordinary Python setup does not require Xcode.
+and device types, using the pinned `DEVELOPER_DIR`. It reads Xcode's `Contents/version.plist`
+and calls only `simctl list`: it never invokes `xcodebuild`, builds an app, boots a simulator
+or installs platform resources. The repository's 80 GiB pre-build rule still applies to
+builds; inventory does not require build space. Ordinary Python setup does not require Xcode.
 
 The bounded [CI toolchain workflow](../.github/workflows/ci-toolchain.yml) proves setup,
-inventory, policy and its unit tests on `xcode-27` for relevant pull requests and manual
+inventory, policy, its unit tests and the existing host checks on `xcode-27` for relevant pull requests and manual
 dispatches. Its runner selector must match the pins file; GitHub chooses a runner before
 it can read repository files. This workflow is not the PR gate or the scheduled toolchain
 probe: those are separate epic tickets.
