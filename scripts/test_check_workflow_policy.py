@@ -7,7 +7,6 @@ from pathlib import Path
 
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_workflow_policy as policy
 
 

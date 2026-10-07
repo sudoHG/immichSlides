@@ -128,9 +128,9 @@ policy and may pass earlier; their result is informational. Adding an entry to a
 already approved file does not require resetting its whole-file approval state.
 See [Static population and verdict policy](CI_POPULATION.md#expected-skips-and-tier-deselections)
 for the entry formats and accounting rules.
-The initial proposed approval covers host calibration only. Known unit Live and
-Evidence conditional skips remain [pending with the unit producer](CI_POPULATION.md#pending-unit-layer-exceptions)
-and require their own measured identities/reasons and head-SHA policy approval.
+Approval covers only the registered tier and environment. Host approval does not
+authorize unit or UI exceptions; each tier requires measured identities/reasons
+and its own head-SHA policy approval.
 
 Strict end-to-end tests need the local fixture server and inputs that `scripts/run_strict_e2e.py` provides. They live in the `StrictE2E` test plans; the default and Evidence plans leave them out. Run without the runner, they fail and name the missing input, so a strict test that lands in another plan cannot hide. The runner also rejects any skipped test.
 

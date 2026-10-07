@@ -1,10 +1,14 @@
 {
   "schema_version": 1,
-  "app_unaffected": ["docs/**", "README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md", "CODE_OF_CONDUCT.md"],
+  "app_unaffected": ["docs/**", "README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md"],
   "ci_trusted": [
     ".github/workflows/**",
     ".swift-format",
     "scripts/ci_*.py",
+    "scripts/__init__.py",
+    "scripts/check_all.sh",
+    "scripts/git_privacy_gate.py",
+    "scripts/run_trusted_privacy_preflight.sh",
     "scripts/run_host_checks.py",
     "scripts/run_python_tests.py",
     "scripts/check_workflow_policy.py",
@@ -21,17 +25,16 @@
     "scripts/ci-classification.json",
     "scripts/test_conventions_allowlist.json",
     "scripts/test_ci_*.py",
-    "scripts/test_run_host_checks.py",
-    "scripts/test_run_python_tests.py",
+    "scripts/test_check_all.py",
+    "scripts/test_git_privacy_gate.py",
+    "scripts/git_privacy_gate_test_*.py",
     "scripts/test_check_workflow_policy.py",
     "scripts/test_check_test_conventions.py",
     "scripts/test_check_release_guards.py",
     "scripts/test_validate_localization_catalog.py",
     "scripts/test_scan_chinese_strings.py",
     "scripts/test_required_test_tools.py",
-    "scripts/test_setup_ci_python.py",
     "scripts/test_probe_ci_toolchain.py",
-    "scripts/test_ui_test_inventory.py",
     "scripts/test_excluded_ui_tests_have_a_runner.py"
   ]
 }

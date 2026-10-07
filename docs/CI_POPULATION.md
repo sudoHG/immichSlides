@@ -11,25 +11,17 @@ them informationally from its working checkout, which is not trusted publication
 `scripts/ci_population.py` accepts source-text maps. `python_sources(directory)`
 reads Python files into a module-name map; it reads no private configuration.
 
-- `python_identities(files)` uses the AST, follows imported and assignment aliases and local
-  mixins, computes C3 method resolution and respects method overrides. It discovers
-  classes visible in `test_*` modules, including imported TestCase subclasses,
-  keyed by the defining module/class/method used by unittest. Local classes inside
-  function bodies are fixture code, not discovered tests. Unresolved local or
-  third-party bases, and dynamic bases, in a test module fail closed, including
-  aliases that might otherwise erase a whole suite. Conditional imports or assignments
-  that can bind discovered classes or bases raise `ContractError`; harmless constant
-  configuration and function-local fixtures are not discovery bindings. Base names,
-  imported namespaces and their alias dependencies must be bound exactly once,
-  before use. Rebinding before or after a class definition, deletion, mutation and
-  forward alias bindings are explicitly rejected rather than resolved from the
-  module's final state. Conditional classes, wildcard imports and
-  `load_tests` hooks in test modules also fail. Non-test helper modules may contain
-  unrelated generic or factory-based classes; a discovered TestCase's MRO must
-  still resolve completely. Unshadowed builtins and the explicit Python 3.9
-  standard-library allowlist are non-test terminals. Local bindings/modules
-  cannot impersonate these terminals; unittest and doctest TestCase bases remain
-  recognized test ancestors.
+- `python_identities(files)` follows unconditional import aliases and local mixins,
+  computes C3 method resolution and respects function-definition overrides. It
+  discovers classes visible in `test_*` modules, including imported TestCase
+  subclasses, keyed by the defining module/class/method used by unittest. The
+  [allowed declaration grammar](#python-declaration-grammar) is enforced before
+  returning identities. Unsupported forms raise `ContractError` with file and line;
+  they never yield an incomplete successful inventory. Function bodies are opaque
+  fixture/runtime code. Unrelated non-test helpers may use generic or factory
+  bases; a discovered TestCase's complete MRO must still satisfy the grammar.
+  Unshadowed builtins and the explicit Python 3.9 standard-library allowlist are
+  non-test terminals; unittest and doctest TestCase bases are test ancestors.
 - `swift_identities(files, platform)` finds `@Test` functions in explicit or
   implicit suites, nested suites and cross-file extensions. Module-qualified
   `@Testing.Test` and `@Testing.Suite` have the same meaning as their bare forms.
@@ -64,6 +56,50 @@ input include every Swift file in `immichSlidesTests`. Target membership is a ca
 responsibility, not inferred from filenames. Parsers reject unsupported forms;
 they do not pretend to implement arbitrary Swift or Python metaprogramming.
 
+## Python declaration grammar
+
+Supply all local source modules, including imported test-class and mixin providers.
+The grammar applies to `test_*.py` and those providers. Imports of unrelated
+non-test helpers do not make their unrelated classes discoverable. At module scope:
+
+| Allowed form | Constraints |
+| --- | --- |
+| `import` / `from ... import` | Unconditional, explicit names; no star imports |
+| `class Name(Base, ...)` | Bases are names or attributes bound once before the definition and statically resolved; no decorators, metaclass keywords, subscript bases or class-name rebinding |
+| `def` / `async def` | Function bodies are not evaluated; no discovery hooks such as `load_tests`, dynamic attribute/subclass hooks or defaults that execute calls/attribute lookups |
+| `NAME = data` / `NAME: Type = data` | One plain name, never a class, base, discovery-hook or `test*` name; only the data expressions below |
+| Docstring / `pass` | No binding or execution |
+| `if __name__ == "__main__": unittest.main()` | Exact terminal script entry point, with no arguments, extra statements or else branch; import-based discovery never executes it |
+
+Class bodies accept method definitions, docstrings, `pass` and data assignments
+under the same name restrictions; class data assignments cannot call functions.
+Method overrides across classes follow C3 MRO; duplicate `test*` definitions within
+one class are rejected. Saving a class (`Saved = Hidden`), assigning a base alias,
+replacing a class/base import, assigning/deleting any `test*` member (including
+`test_a = None`), nested class declarations, conditional bindings and all other
+statement forms are outside the grammar. Function-local fixture classes are not
+module discovery declarations.
+
+Data expressions are literals, literal containers, references to earlier data
+assignments, unary/binary operations and comparisons. Module data can additionally
+use unshadowed `bool`, `int`, `float`, `complex`, `str`, `bytes`, `bytearray`, `list`,
+`tuple`, `dict`, `set` and `frozenset` constructors. Static `pathlib.Path` imports
+support data construction, `resolve`, `with_name`, the `parent`, `parents`, `name`,
+`stem`, `suffix` attributes and path-parent indexing. `__file__` and `sys.platform`
+are readonly data inputs. Constructor import bindings must stay identical at
+definition time; arbitrary factories, unpacking, assignment expressions and
+attribute/subscript mutation are unsupported.
+
+The callable-preserving decorators `classmethod`, `staticmethod`, `unittest.skip`,
+`skipIf`, `skipUnless` and `expectedFailure` are supported with unshadowed bindings;
+skip arguments use the data grammar. `property` is allowed for non-test methods.
+Other decorators are unsupported. Class decorators are always rejected.
+
+Package-form unittest commands initialize imports in `scripts/__init__.py`; test
+modules contain declarations rather than executable path setup. The package
+initializer is CI-trusted. This is a static declaration contract, not a Python
+sandbox or a replacement for executing the tests and comparing their populations.
+
 Example (from the repository root, with a trusted library on `PYTHONPATH`):
 
 ```python
@@ -83,21 +119,21 @@ ios_ui_methods = ui_identities(ui_sources, "ios")
 ## Expected skips and tier deselections
 
 `scripts/ci-test-policy.json` is version 1, with `approval_state`,
-`expected_skips` and `deselections`. It ships in **proposed** state. Changing that
-state or approving the initial lists is a maintainer gate; agents must not do it.
+`expected_skips` and `deselections`. Approval states are `proposed` and `approved`.
+Policy approval is a maintainer gate; agents must not perform it.
 Proposed entries never authorize passing exceptions in the verdict library.
 
 When adding a test that needs a skip or deselection, include the policy entry in
 the same PR as the test. Record its tier, environment and exact reason, and the
 other owning tier for a deselection. This is a CI-trusted policy change: the
 maintainer must approve the PR's exact head SHA before candidate exceptions can
-apply in the trusted verdict, and a later push requires fresh approval. After the
-initial lists are approved, add entries to that approved file without resetting
-its whole-file `approval_state`: the trusted verdict keeps using the admitted
+apply in the trusted verdict, and a later push requires fresh approval. Add entries
+to an approved file without resetting its whole-file `approval_state`: the trusted verdict keeps using the admitted
 base policy until the exact head is approved. Candidate host checks read their
 own policy and may pass with a new entry before approval; that result is
-informational. The initial lists in this PR remain `proposed` pending their
-separate maintainer decision. The test must still meet [TESTING section 4](TESTING.md#4-when-a-test-may-skip);
+informational. Approval covers only the registered tier/environment: host approval
+does not authorize unit, UI or other tier entries. Each tier needs its own measured
+identities/reasons and exact-head policy approval. The test must still meet [TESTING section 4](TESTING.md#4-when-a-test-may-skip);
 policy approval does not excuse a product failure or missing compilation.
 
 Expected-skip entries contain `kind`, `key_pattern`, exact `dimensions`, `tier`,
@@ -108,11 +144,9 @@ does not excuse a skip. A matching skip is reported in `expected_skips` and allo
 Only a fully accounted unverified result explained by matching skips can pass.
 Infrastructure failures and missing results cannot be explained by skip policy.
 
-The initial proposed list names each of the five
-`ReviewedScreenshotCalibrationTests` methods separately, for tier `host`,
-environment `hermetic`, reason `STRICT_E2E_REVIEWED_SCREENSHOTS is not set`.
-They require an external, human-reviewed calibration screenshot corpus. There is
-no class wildcard that silently registers future calibration tests.
+Reviewed screenshot calibration requires an external, human-reviewed corpus.
+Policy entries should name methods individually so adding a test cannot silently
+register a new exception through a class wildcard.
 Host checks strip `STRICT_E2E_REVIEWED_SCREENSHOTS`, so this environment remains
 `hermetic` even when the caller has configured external captures. Run the
 [reviewed screenshot calibration](TESTING.md#optional-reviewed-screenshot-calibration-dataset)
@@ -122,32 +156,7 @@ Deselections contain exact `identity`, `tier`, `environment`, `reason` and
 `owning_tier`. The owner must be another tier. A deselected identity must still be
 compiled, must not be observed, and must be reported with the policy's exact
 reason and owner. A policy-required deselection that executes or is omitted fails.
-The initial proposed deselection list is **empty**: no tests are moved out of a
-tier before fixture coverage is measured. UI shard/fixture selections belong to
-their separate ticket, which can propose entries using this model.
-
-### Pending unit-layer exceptions
-
-Approval of the five entries and empty deselection list above covers **only the
-host layer**. The review identified a 23-site unit-layer conditional-skip backlog;
-it remains pending in [unit producer ticket #91](https://github.com/sudoHG/immichSlides/issues/91).
-Known suites and gating files are listed below; none is authorized by the host policy.
-
-| Unit source | Pending condition |
-| --- | --- |
-| `FaceBoxLiveProbeTests.swift` | Live inputs and Evidence-plan gating |
-| `PerformanceLiveIntegrationTests.swift` | Live inputs and Evidence-plan gating |
-| `PlaybackPoolResolverLiveIntegrationTests.swift` | Live membership configuration |
-| `SlideShowViewModelLiveIntegrationTests.swift` | Live playback/dedup configuration |
-| `ExifForegroundAnalyzerPerformanceIOSTests.swift` | Evidence-plan gating |
-| `PlaybackRuntimeEvidenceManifestTests+Startup.swift` | External runtime evidence JSONL |
-| `EvidenceRun.swift` | Shared Evidence-plan environment switch |
-
-The current source-tree census finds 21 `.enabled(if:)` / `.disabled(` attributes
-across six test files, plus the shared Evidence switch. Reconcile that census with
-the review's 23-site backlog in #91, enumerate compiled identities and record actual
-emitted skip reasons/owning tiers before proposing unit entries. Head-SHA approval
-is required for those entries too; host approval cannot authorize unit skips.
+Measure fixture coverage and the owning tier before proposing a deselection.
 
 `evaluate_population(summary, expected, policy, environment="hermetic")` returns
 `status`, all `errors`, expected skip identities, deselections, missing compiled
@@ -159,12 +168,11 @@ human-review outcomes and unregistered retries are failures. Retry eligibility
 and the flaky registry are separate work; this library currently permits no
 `flaky-passed` shortcut.
 
-The host producer now records static Python declarations, dynamic discovery and
+The host producer records static Python declarations, dynamic discovery and
 observations separately, hashes this policy, and evaluates their equality. Only
-the exact proposed calibration skips retain exit 0 / `unverified` with
-`policy-proposed`; unexpected skips and missing identities return exit 1.
-Approved exceptions can produce `passed`. This explicitly replaces the previous
-rule that every skip unconditionally made the summary unverified.
+fully accounted exceptions matching a proposed policy retain exit 0 / `unverified`
+with `policy-proposed`; unexpected skips and missing identities return exit 1.
+Approved exceptions can produce `passed`.
 Coverage discrepancies use `coverage-failed` diagnostics with readable function
 keys and a failed status. The version 1 diagnostic array stores these separately
 by code. Markdown labels `coverage-failed` as `Coverage`, `policy-proposed` as
@@ -185,15 +193,19 @@ build membership for the tested tree and both diff sides. PR changes use
 An allowlisted document can be unaffected only if it is not a build member and
 not CI-trusted. The bundled privacy policy, all unknown paths and every trusted
 path affect the app. CI-trusted paths are `.github/workflows/**`, `.swift-format`,
-`scripts/ci_*.py`, every script invoked by `run_host_checks.HOST_CHECKS`, and the CI
+`scripts/ci_*.py`, every script invoked by `run_host_checks.HOST_CHECKS` or a workflow, and the CI
 entry points, policy/data/pins and their own tests listed in
 `scripts/ci-classification.json`. This includes test conventions, release guards,
 localization catalog/usage, Python prerequisites and workflow-policy checks, plus
-`test_conventions_allowlist.json`. The formatting policy changes the lint verdict.
-A regression requires every `HOST_CHECKS` script to be covered by `ci_trusted`.
+`test_conventions_allowlist.json`, `check_all.sh`, the privacy gate/trusted runner,
+their tests and privacy fixture modules, and `scripts/__init__.py`. The formatting policy changes the lint verdict.
+Regressions derive every `HOST_CHECKS` and workflow `scripts/...` reference and
+require CI-trusted coverage; every exact classification entry must exist.
 Ordinary product/runner tests and other scripts, `AGENTS.md` and `CLAUDE.md` are not CI-trusted;
 adding or removing an ordinary test does not itself require CI-head approval.
-Invalid relative paths fail closed. There is no comment-only classification.
+Invalid relative paths and empty changed-path lists fail closed. A caller must
+explicitly handle a proven zero-diff case; an empty or unavailable diff cannot
+authorize `not-applicable`. There is no comment-only classification.
 
 `evaluate_gate` consumes the required job artifacts and independent static
 `expected`, `admission_identity`, `required_jobs`, `base_policy`, `environment`

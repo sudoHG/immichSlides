@@ -18,7 +18,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts"))
 
 import run_access_lifecycle_tvos  # noqa: E402
 import run_access_lifecycle_ios  # noqa: E402

@@ -11,14 +11,15 @@ from test_ci_summary import valid_summary
 class StaticPopulationTests(unittest.TestCase):
     def test_python_mixins_aliases_and_overrides_match_discovery_without_importing(self):
         files = {
-            "cases": "raise RuntimeError('must not execute')\nclass Root:\n def test_inherited(self): pass\n"
+            "cases": "def must_not_execute():\n raise RuntimeError('must not execute')\nclass Root:\n def test_inherited(self): pass\n"
                      "class Mixin(Root):\n def test_shared(self): pass\n",
             "test_sample": "import unittest as ut\nfrom cases import Mixin as Cases\n"
-                           "class Tests(Cases, ut.TestCase):\n test_inherited = None\n"
+                           "class Tests(Cases, ut.TestCase):\n def test_inherited(self): pass\n"
                            " def test_local(self): pass\n"
                            " def helper(self):\n  class Hidden(ut.TestCase):\n   def test_hidden(self): pass\n",
         }
         self.assertEqual(python_identities(files), [
+            test_identity("python", "test_sample.Tests.test_inherited"),
             test_identity("python", "test_sample.Tests.test_local"),
             test_identity("python", "test_sample.Tests.test_shared"),
         ])
@@ -26,17 +27,19 @@ class StaticPopulationTests(unittest.TestCase):
     def test_imported_test_classes_use_defining_module_and_diamond_mro(self):
         files = {
             "support": "from unittest import TestCase as TC\nclass Root:\n def test_a(self): pass\n"
-                       "class Left(Root): pass\nclass Right(Root):\n test_a = None\n"
+                       "class Left(Root): pass\nclass Right(Root):\n def test_a(self): pass\n"
                        "class Tests(Left, Right, TC):\n def test_b(self): pass\n",
             "test_entry": "from support import Tests as Imported",
         }
-        self.assertEqual(python_identities(files), [test_identity("python", "support.Tests.test_b")])
+        self.assertEqual(python_identities(files), [test_identity("python", "support.Tests.test_a"),
+                                                  test_identity("python", "support.Tests.test_b")])
 
-    def test_assignment_base_aliases_cannot_silently_drop_test_classes(self):
+    def test_assignment_base_aliases_are_outside_the_allowed_grammar(self):
         files = {"support": "from unittest import TestCase\nBase = TestCase\nAlias = Base\n",
                  "test_entry": "from support import Alias\nLocal = Alias\n"
                                "class Tests(Local):\n def test_present(self): pass\n"}
-        self.assertEqual(python_identities(files), [test_identity("python", "test_entry.Tests.test_present")])
+        with self.assertRaisesRegex(ContractError, r"(?:support|test_entry)\.py:\d+:"):
+            python_identities(files)
 
     def test_non_test_helper_bases_do_not_obscure_discovered_tests(self):
         files = {"helpers": "from typing import Generic, TypeVar\nfrom collections import namedtuple\n"
@@ -48,11 +51,11 @@ class StaticPopulationTests(unittest.TestCase):
                                "class Tests(TestCase):\n def test_present(self): pass\n"}
         self.assertEqual(python_identities(files), [test_identity("python", "test_entry.Tests.test_present")])
 
-        files["test_entry"] += ("from enum import Enum\nfrom typing import NamedTuple, Generic, TypeVar\n"
-                                "from http.server import BaseHTTPRequestHandler\nT = TypeVar('T')\n"
+        files["test_entry"] += ("from enum import Enum\nfrom typing import NamedTuple, Generic\n"
+                                "from http.server import BaseHTTPRequestHandler\n"
                                 "class Error(ValueError): pass\nclass Failure(Exception): pass\n"
-                                "class Color(Enum): pass\nclass Row(NamedTuple): pass\n"
-                                "class Box(Generic[T]): pass\nclass Handler(BaseHTTPRequestHandler): pass\n")
+                                "class Color(Enum): pass\nclass LocalRow(NamedTuple): pass\n"
+                                "class LocalBox(Generic): pass\nclass Handler(BaseHTTPRequestHandler): pass\n")
         self.assertEqual(python_identities(files), [test_identity("python", "test_entry.Tests.test_present")])
 
     def test_dynamic_or_unresolved_python_discovery_fails_closed(self):
@@ -84,10 +87,10 @@ class StaticPopulationTests(unittest.TestCase):
                         "if (Alias := support.Imported):\n pass",
                         "try:\n Base = unittest.TestCase\nexcept Exception:\n Base = object\nclass Tests(Base): pass",
                         "if True:\n unittest.TestCase = object"):
-            with self.subTest(binding=binding), self.assertRaisesRegex(ContractError, "conditional.*binding"):
+            with self.subTest(binding=binding), self.assertRaisesRegex(ContractError, r"test_entry\.py:\d+:"):
                 python_identities({"support": support, "test_entry": always + binding})
-        # Function-local fixtures and constant module configuration are not discovery bindings.
-        self.assertEqual(python_identities({"test_entry": always + "if True:\n TIMEOUT = 5\n"
+        # Function-local fixtures and unconditional data configuration do not change discovery.
+        self.assertEqual(python_identities({"test_entry": always + "TIMEOUT = 5\n"
                                            "def helper():\n if True:\n  from support import Imported"}),
                          [test_identity("python", "test_entry.Always.test_always")])
 
@@ -102,8 +105,36 @@ class StaticPopulationTests(unittest.TestCase):
                 "Base = unittest.TestCase\nclass Tests(Base): pass\ndel Base",
                 "Base = unittest.TestCase\nclass Tests(Base): pass\nBase += other",
                 "class Tests(Base): pass\nBase = unittest.TestCase"):
-            with self.subTest(source=source), self.assertRaisesRegex(ContractError, "base binding"):
+            with self.subTest(source=source), self.assertRaisesRegex(ContractError, r"test_entry\.py:\d+:"):
                 python_identities({"test_entry": "import unittest\n" + source})
+
+    def test_saved_class_aliases_and_provider_rebindings_fail_with_file_and_line(self):
+        provider = "from unittest import TestCase\nclass Hidden(TestCase):\n def test_hidden(self): pass\n"
+        for files in (
+                {"support": provider, "test_entry": "from support import Hidden\nSaved = Hidden\nHidden = None"},
+                {"support": provider + "Saved = Hidden\nHidden = None\n", "test_entry": "from support import Saved"},
+                {"support": provider + "Hidden = None\n", "test_entry": "from support import Hidden"}):
+            with self.subTest(files=files), self.assertRaisesRegex(ContractError, r"(?:test_entry|support)\.py:\d+:"):
+                python_identities(files)
+
+    def test_test_member_assignments_and_other_unsupported_grammar_fail_closed(self):
+        for member in ("if True:\n  test_hidden = helper", "try:\n  test_hidden = helper\n except Exception:\n  pass",
+                       "test_hidden = helper", "test_hidden = None", "del test_hidden", "test_hidden += helper",
+                       "if True:\n  del test_hidden", "if True:\n  def test_hidden(self): pass",
+                       "Alias = unittest.TestCase", "helper()", "@replace\n def test_hidden(self): pass",
+                       "def helper(self, marker=replace()): pass", "VALUES = set()",
+                       "def classmethod(function): return function\n @classmethod\n def test_hidden(self): pass"):
+            source = "import unittest\nclass Tests(unittest.TestCase):\n def helper(self): pass\n " + member
+            with self.subTest(member=member), self.assertRaisesRegex(ContractError, r"test_entry\.py:\d+:"):
+                python_identities({"test_entry": source})
+        for declaration in ("@replace\nclass Tests(unittest.TestCase): pass",
+                            "class Tests(unittest.TestCase, metaclass=replace): pass",
+                            "Saved = factory()", "from support import *", "exec(source)",
+                            "if True:\n TIMEOUT = 5", "unittest.TestCase.test_hidden = helper",
+                            "if __name__ == '__main__':\n factory().main()",
+                            "def set(): return factory()\nVALUES = set()\nfrom builtins import set"):
+            with self.subTest(declaration=declaration), self.assertRaisesRegex(ContractError, r"test_entry\.py:\d+:"):
+                python_identities({"test_entry": "import unittest\n" + declaration})
 
     def test_swift_suites_extensions_platforms_and_parameters_keep_function_identity(self):
         files = {

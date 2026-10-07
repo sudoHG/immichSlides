@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -335,10 +336,21 @@ class AdmissionVerdictTests(unittest.TestCase):
         host_paths += ["scripts/test_check_test_conventions.py", "scripts/test_check_release_guards.py",
                        "scripts/test_validate_localization_catalog.py", "scripts/test_scan_chinese_strings.py",
                        "scripts/test_required_test_tools.py", "scripts/test_conventions_allowlist.json"]
+        root = Path(__file__).resolve().parent.parent
+        for workflow in (root / ".github/workflows").glob("*.yml"):
+            host_paths += re.findall(r"\bscripts/[A-Za-z0-9_./-]+", workflow.read_text(encoding="utf-8"))
+        host_paths += ["scripts/test_check_all.py", "scripts/test_git_privacy_gate.py", "scripts/__init__.py"]
+        host_paths += [str(path.relative_to(root)) for path in (root / "scripts").glob("git_privacy_gate_test_*.py")]
         for path in host_paths:
             with self.subTest(host_path=path):
                 self.assertTrue(classify_changes([path], allowlist, build_target_paths=set())["ci_changing"])
+        for pattern in allowlist["ci_trusted"] + allowlist["app_unaffected"]:
+            if not any(character in pattern for character in "*?["):
+                with self.subTest(exact_path=pattern):
+                    self.assertTrue((root / pattern).is_file(), "exact classification entries must exist")
         self.assertEqual(self.verdict(context="ui", app_affected=False)["status"], "not-applicable")
+        with self.assertRaisesRegex(ci_summary.ContractError, "changed path list"):
+            classify_changes([], allowlist, build_target_paths=set())
         for path in ("../README.md", "/README.md", "docs/../scripts/x.py"):
             with self.subTest(path=path), self.assertRaises(ci_summary.ContractError):
                 classify_changes([path], allowlist, build_target_paths=set())

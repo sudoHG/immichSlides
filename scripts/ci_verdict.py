@@ -55,6 +55,8 @@ def classify_changes(paths, policy, *, build_target_paths):
             string(pattern, "path pattern")
             require(not pattern.startswith("/") and ".." not in pattern.split("/"), "invalid path pattern")
     require(build_target_paths is not None, "build membership is required")
+    paths = list(paths)
+    require(paths, "changed path list is required")
     affected, trusted = [], []
     for path in paths:
         string(path, "changed path")

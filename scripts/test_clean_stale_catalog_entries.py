@@ -5,7 +5,6 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR))
 
 from clean_stale_catalog_entries import merge_missing_localizations, source_hits_for_key  # noqa: E402
 

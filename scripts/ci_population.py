@@ -79,132 +79,65 @@ def dotted(node):
 
 
 def python_identities(files, *, discovery_pattern="test_*"):
-    """Map importable module names to source; follow aliases, mixins and C3 MRO.
+    """Enumerate the documented declaration grammar without candidate execution.
 
-    The caller supplies all local modules, including non-discovered mixin modules.
-    Unsupported discovery hooks, conditional bindings and unresolved bases in test
-    modules fail closed. Unrelated helper classes need not be test-discoverable.
-    Functions' bodies are never evaluated and nested fixture classes are not discovered.
+    Test modules and their local test-class/MRO providers must satisfy the grammar.
+    Function bodies are opaque; unrelated non-test helper classes are not discovered.
     """
-    modules, classes = {}, {}
+    modules, classes, trees, events = {}, {}, {}, {}
+    terminals = {"unittest.TestCase", "unittest.case.TestCase", "unittest.IsolatedAsyncioTestCase",
+                 "unittest.async_case.IsolatedAsyncioTestCase", "doctest.DocTestCase"}
 
     def discovered(module):
         return fnmatch.fnmatchcase(module.rsplit(".", 1)[-1], discovery_pattern)
 
-    def target_names(target):
-        if isinstance(target, ast.Name):
-            return [target.id]
-        if isinstance(target, (ast.Tuple, ast.List)):
-            return [name for element in target.elts for name in target_names(element)]
-        if isinstance(target, (ast.Attribute, ast.Subscript)):
-            return target_names(target.value)
-        return []
+    def fail(module, node, message):
+        filename = module.replace(".", "/") + ".py"
+        raise ContractError(f"{filename}:{node.lineno}: {message}")
 
-    def assignment_targets(node):
-        return node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
-
-    def validate_bindings(module, tree):
-        # Final module bindings are safe only when base dependencies are bound once,
-        # before use. Reject unsupported control flow rather than simulating Python.
-        events = {}
-        for node in tree.body:
-            dependencies = []
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                names = [alias.asname or (alias.name.split('.')[0] if isinstance(node, ast.Import) else alias.name)
-                         for alias in node.names]
-            elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                names = [node.name]
-            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
-                names = [name for target in assignment_targets(node) for name in target_names(target)]
-                if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
-                    try:
-                        dependencies = [dotted(node.value).split('.')[0]]
-                    except ContractError:
-                        pass
-            else:
-                continue
-            for name in names:
-                events.setdefault(name, []).append((node.lineno, dependencies))
-
-        used_bases = set()
-
-        def check_base(name, before, visiting=()):
-            used_bases.add(name)
-            require(name not in visiting, f"{module}: cyclic base binding: {name}")
-            writes = events.get(name, [])
-            require(len(writes) <= 1, f"{module}: repeated base binding: {name}")
-            if writes:
-                line, dependencies = writes[0]
-                require(line < before, f"{module}: base binding occurs after use: {name}")
-                for dependency in dependencies:
-                    check_base(dependency, line, (*visiting, name))
-
-        for node in tree.body:
-            if isinstance(node, ast.ClassDef):
-                for base in node.bases:
-                    check_base(dotted(base).split('.')[0], node.lineno)
-
-        def check_conditional(node):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-                return
-            require(not isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.For, ast.NamedExpr))
-                    and not (isinstance(node, ast.With) and any(item.optional_vars for item in node.items)),
-                    f"{module}: conditional discovery binding is unsupported")
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
-                targets = assignment_targets(node)
-                names = {name for target in targets for name in target_names(target)}
-                harmless = (isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Constant)
-                            and all(isinstance(target, ast.Name) for target in targets)
-                            and not names.intersection(used_bases | set(events)))
-                require(harmless, f"{module}: conditional discovery binding is unsupported")
-            for child in ast.iter_child_nodes(node):
-                check_conditional(child)
-
-        for node in tree.body:
-            if isinstance(node, (ast.If, ast.Try, ast.For, ast.While, ast.With)):
-                check_conditional(node)
+    def imports(module, node):
+        if isinstance(node, ast.Import):
+            return [(alias.asname or alias.name.split(".")[0],
+                     alias.name if alias.asname else alias.name.split(".")[0]) for alias in node.names]
+        prefix = node.module or ""
+        if node.level:
+            prefix = ".".join(module.split(".")[:-node.level] + ([prefix] if prefix else []))
+        return [(alias.asname or alias.name, prefix + "." + alias.name) for alias in node.names]
 
     for module, source in files.items():
         try:
-            tree = ast.parse(source, filename=module)
+            tree = ast.parse(source, filename=module.replace(".", "/") + ".py")
         except SyntaxError as error:
-            raise ContractError(f"{module}: invalid Python syntax") from error
-        if discovered(module):
-            validate_bindings(module, tree)
-        bindings = {}
+            raise ContractError(f"{error.filename}:{error.lineno}: invalid Python syntax") from error
+        trees[module] = tree
+        bindings, writes = {}, {}
         for node in tree.body:
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    bindings[alias.asname or alias.name.split('.')[0]] = alias.name if alias.asname else alias.name.split('.')[0]
-            elif isinstance(node, ast.ImportFrom):
-                prefix = node.module or ""
-                if node.level:
-                    parts = module.split(".")[:-node.level]
-                    prefix = ".".join(parts + ([prefix] if prefix else []))
-                for alias in node.names:
-                    require(alias.name != "*" or not discovered(module), f"{module}: wildcard imports obscure discovery")
-                    bindings[alias.asname or alias.name] = prefix + "." + alias.name
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                entries = imports(module, node)
             elif isinstance(node, ast.ClassDef):
                 name = module + "." + node.name
-                require(name not in classes, f"{name}: duplicate class declaration")
+                if name in classes:
+                    fail(module, node, "duplicate class declaration")
                 classes[name] = node
-                bindings[node.name] = name
+                entries = [(node.name, name)]
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                entries = [(node.name, module + "." + node.name)]
             elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                entries = []
                 for target in targets:
                     if isinstance(target, ast.Name):
                         try:
-                            alias = dotted(node.value)
+                            value = dotted(node.value)
                         except ContractError:
-                            alias = target.id
-                        bindings[target.id] = module + "." + alias
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                require(node.name != "load_tests" or not discovered(module), f"{module}: load_tests is dynamic discovery")
-                bindings[node.name] = module + "." + node.name
-        modules[module] = bindings
-
-    terminals = {"unittest.TestCase", "unittest.case.TestCase", "unittest.IsolatedAsyncioTestCase",
-                 "unittest.async_case.IsolatedAsyncioTestCase", "doctest.DocTestCase"}
+                            value = target.id
+                        entries.append((target.id, module + "." + value))
+            else:
+                continue
+            for name, value in entries:
+                bindings[name] = value
+                writes.setdefault(name, []).append(node)
+        modules[module], events[module] = bindings, writes
 
     def non_test_terminal(name):
         root, separator, _ = name.partition(".")
@@ -214,7 +147,9 @@ def python_identities(files, *, discovery_pattern="test_*"):
     def resolve(name, seen=()):
         if name in classes or name in terminals or non_test_terminal(name):
             return name
-        require(name not in seen, f"cyclic Python alias: {name}")
+        if name in seen:
+            module = next(module for module in modules if name.startswith(module + "."))
+            fail(module, events[module][name[len(module) + 1:].split(".")[0]][0], "cyclic import or assignment alias")
         for module in sorted(modules, key=len, reverse=True):
             if name.startswith(module + "."):
                 suffix = name[len(module) + 1:]
@@ -228,24 +163,52 @@ def python_identities(files, *, discovery_pattern="test_*"):
                         return resolve(target, (*seen, name))
         return name
 
+    def bases(name):
+        node, module = classes[name], name.rsplit(".", 1)[0]
+        found = []
+        for base in node.bases:
+            try:
+                target = resolve(module + "." + dotted(base))
+            except ContractError:
+                if discovered(module):
+                    fail(module, base, "base must be a statically resolved name or attribute")
+                continue
+            found.append(target)
+        return found
+
+    def is_test_case(name, visiting=()):
+        if name in terminals:
+            return True
+        if name not in classes:
+            return False
+        module, node = name.rsplit(".", 1)[0], classes[name]
+        if name in visiting:
+            fail(module, node, "cyclic Python inheritance")
+        return any(is_test_case(base, (*visiting, name)) for base in bases(name))
+
     cache = {}
 
     def mro(name, visiting=()):
         if name in cache:
             return cache[name]
-        require(name not in visiting, f"cyclic Python inheritance: {name}")
         if name in terminals or non_test_terminal(name):
             return [name]
-        require(name in classes, f"unresolved Python test base: {name}")
-        node = classes[name]
-        module = name.rsplit(".", 1)[0]
-        bases = [resolve(module + "." + dotted(base)) for base in node.bases]
-        sequences = [list(mro(base, (*visiting, name))) for base in bases] + [list(bases)]
+        if name not in classes:
+            raise ContractError("unresolved Python test base: " + name)
+        module, node = name.rsplit(".", 1)[0], classes[name]
+        if name in visiting:
+            fail(module, node, "cyclic Python inheritance")
+        parents = bases(name)
+        for parent in parents:
+            if parent not in classes and parent not in terminals and not non_test_terminal(parent):
+                fail(module, node, "unresolved Python test base: " + parent)
+        sequences = [list(mro(base, (*visiting, name))) for base in parents] + [list(parents)]
         result = [name]
         while any(sequences):
             sequences = [sequence for sequence in sequences if sequence]
             head = next((seq[0] for seq in sequences if not any(seq[0] in other[1:] for other in sequences)), None)
-            require(head is not None, f"inconsistent Python MRO: {name}")
+            if head is None:
+                fail(module, node, "inconsistent Python MRO")
             result.append(head)
             for sequence in sequences:
                 if sequence[0] == head:
@@ -253,35 +216,242 @@ def python_identities(files, *, discovery_pattern="test_*"):
         cache[name] = result
         return result
 
-    def is_test_case(name, visiting=()):
-        if name in terminals:
-            return True
-        if name not in classes:
-            return False
-        require(name not in visiting, f"cyclic Python inheritance: {name}")
-        module = name.rsplit(".", 1)[0]
-        inherited = []
-        for base in classes[name].bases:
-            try:
-                target = resolve(module + "." + dotted(base))
-            except ContractError:
-                if discovered(module):
-                    raise
-                continue
-            if discovered(module):
-                require(target in classes or target in terminals or non_test_terminal(target),
-                        f"{name}: unresolved Python test base: {target}")
-            inherited.append(is_test_case(target, (*visiting, name)))
-        return any(inherited)
-
-    # Validate every class declared in a discovered module, even when its base
-    # never resolves to TestCase. Otherwise a broken alias can erase a whole suite.
+    # Include providers even when their final export was rebound or conditionally
+    # declared. Looking only at final bindings would silently erase those classes.
+    strict = {module for module in modules if discovered(module)}
+    providers = set()
+    for module, tree in trees.items():
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+                    resolve(target) in terminals or is_test_case(resolve(target)) for _alias, target in imports(module, node)):
+                providers.add(module)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and any(
+                    isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and member.name.startswith("test")
+                    for member in node.body):
+                providers.add(module)
+    pending = list(strict)
+    visited = set()
+    while pending:
+        module = pending.pop()
+        if module in visited:
+            continue
+        visited.add(module)
+        for node in trees[module].body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for _alias, target in imports(module, node):
+                    for provider in modules:
+                        if target == provider or target.startswith(provider + "."):
+                            if provider in providers:
+                                strict.add(provider)
+                            pending.append(provider)
     for name in classes:
-        if discovered(name.rsplit(".", 1)[0]):
-            is_test_case(name)
+        if is_test_case(name):
+            for ancestor in mro(name):
+                if ancestor in classes:
+                    strict.add(ancestor.rsplit(".", 1)[0])
 
-    identities = []
-    seen_classes = set()
+    def data_expression(module, node, before, local=None, visiting=()):
+        if node is None or isinstance(node, ast.Constant):
+            return True
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return all(data_expression(module, item, before, local, visiting) for item in node.elts)
+        if isinstance(node, ast.Dict):
+            return all(key is not None and data_expression(module, key, before, local, visiting)
+                       and data_expression(module, value, before, local, visiting)
+                       for key, value in zip(node.keys, node.values))
+        if isinstance(node, ast.BinOp):
+            return data_expression(module, node.left, before, local, visiting) and data_expression(module, node.right, before, local, visiting)
+        if isinstance(node, ast.UnaryOp):
+            return data_expression(module, node.operand, before, local, visiting)
+        if isinstance(node, ast.Compare):
+            return data_expression(module, node.left, before, local, visiting) and all(
+                data_expression(module, value, before, local, visiting) for value in node.comparators)
+        if isinstance(node, ast.Name):
+            if node.id == "__file__":
+                return True
+            writes = (local or {}).get(node.id, events[module].get(node.id, []))
+            prior = [item for item in writes if (item.lineno, item.col_offset) < before]
+            if not prior or node.id in visiting:
+                return False
+            item = prior[-1]
+            return isinstance(item, (ast.Assign, ast.AnnAssign)) and data_expression(
+                module, item.value, (item.lineno, item.col_offset), local, (*visiting, node.id))
+        if isinstance(node, ast.Attribute):
+            try:
+                attribute = resolve(module + "." + dotted(node))
+            except ContractError:
+                attribute = None
+            if attribute == "sys.platform" and non_test_terminal(attribute) and stable_constructor(module, node, node):
+                return True
+            return node.attr in {"parent", "parents", "name", "stem", "suffix"} and path_expression(module, node.value, before, visiting)
+        if isinstance(node, ast.Subscript):
+            return path_expression(module, node.value, before, visiting) and data_expression(module, node.slice, before, local, visiting)
+        if isinstance(node, ast.Call):
+            if path_expression(module, node, before, visiting):
+                return True
+            try:
+                function = resolve(module + "." + dotted(node.func))
+            except ContractError:
+                return False
+            return non_test_terminal(function) and function in {"builtins." + name for name in ("bool", "int", "float", "complex", "str", "bytes",
+                                                               "bytearray", "list", "tuple", "dict", "set", "frozenset")} and stable_constructor(module, node) and all(
+                not isinstance(arg, ast.Starred) and data_expression(module, arg, before, local, visiting)
+                for arg in node.args) and all(
+                keyword.arg is not None and data_expression(module, keyword.value, before, local, visiting)
+                for keyword in node.keywords)
+        return False
+
+    def stable_constructor(module, node, expression=None):
+        root = dotted(expression if expression is not None else node.func).split(".")[0]
+        writes = events[module].get(root, [])
+        if not writes:
+            return True
+        targets = [resolve(target) for write in writes if isinstance(write, (ast.Import, ast.ImportFrom))
+                   for alias, target in imports(module, write) if alias == root]
+        return len(targets) == len(writes) and len(set(targets)) == 1 and (
+            writes[0].lineno, writes[0].col_offset) < (node.lineno, node.col_offset)
+
+    def path_expression(module, node, before, visiting=()):
+        if isinstance(node, ast.Name):
+            prior = [item for item in events[module].get(node.id, []) if (item.lineno, item.col_offset) < before]
+            if node.id in visiting or not prior:
+                return False
+            item = prior[-1]
+            return isinstance(item, (ast.Assign, ast.AnnAssign)) and path_expression(
+                module, item.value, (item.lineno, item.col_offset), (*visiting, node.id))
+        if isinstance(node, ast.Attribute):
+            return node.attr in {"parent", "parents"} and path_expression(module, node.value, before, visiting)
+        if isinstance(node, ast.Subscript):
+            return path_expression(module, node.value, before, visiting) and data_expression(module, node.slice, before, visiting=visiting)
+        if isinstance(node, ast.Call):
+            if node.keywords or any(isinstance(arg, ast.Starred) for arg in node.args):
+                return False
+            try:
+                function = resolve(module + "." + dotted(node.func))
+            except ContractError:
+                function = None
+            constructor = function == "pathlib.Path" and non_test_terminal(function) and stable_constructor(module, node)
+            method = isinstance(node.func, ast.Attribute) and node.func.attr in {"resolve", "with_name"} and path_expression(
+                module, node.func.value, before, visiting)
+            return (constructor or method) and all(data_expression(module, arg, before, visiting=visiting) for arg in node.args)
+        return False
+
+    def function_definition(module, node, defined):
+        if node.name in {"load_tests", "__getattr__", "__dir__", "__init_subclass__", "__getattribute__", "__new__", "__class_getitem__"}:
+            fail(module, node, "discovery hook is outside the allowed grammar")
+        for default in node.args.defaults + node.args.kw_defaults:
+            if default is not None and any(isinstance(child, (ast.Call, ast.NamedExpr, ast.Attribute, ast.Subscript)) for child in ast.walk(default)):
+                fail(module, default, "definition defaults must not execute calls or attribute lookups")
+        for decorator in node.decorator_list:
+            expression = decorator.func if isinstance(decorator, ast.Call) else decorator
+            try:
+                root = dotted(expression).split(".")[0]
+            except ContractError:
+                root = None
+            if root in defined:
+                fail(module, decorator, "decorator binding cannot be shadowed")
+            if isinstance(decorator, ast.Name) and decorator.id in {"classmethod", "staticmethod", "property"} and decorator.id not in events[module]:
+                if decorator.id == "property" and node.name.startswith("test"):
+                    fail(module, decorator, "test methods must remain callable")
+                continue
+            try:
+                target = resolve(module + "." + dotted(expression))
+            except ContractError:
+                target = None
+            if target == "unittest.expectedFailure" and not isinstance(decorator, ast.Call) and stable_constructor(module, decorator, expression):
+                continue
+            if isinstance(decorator, ast.Call) and target in {"unittest.skip", "unittest.skipIf", "unittest.skipUnless"} and stable_constructor(module, decorator) and not decorator.keywords and all(
+                    data_expression(module, arg, (node.lineno, node.col_offset)) for arg in decorator.args):
+                continue
+            fail(module, decorator, "function decorator is outside the allowed grammar")
+
+    def validate_module(module):
+        protected = {node.name for node in trees[module].body if isinstance(node, ast.ClassDef)}
+        for node in trees[module].body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias, target in imports(module, node):
+                    if resolve(target) in classes or resolve(target) in terminals:
+                        protected.add(alias)
+            if isinstance(node, ast.ClassDef):
+                for base in node.bases:
+                    if not isinstance(base, (ast.Name, ast.Attribute)):
+                        fail(module, base, "base must be a name or attribute in the allowed grammar")
+                    try:
+                        spelling = dotted(base)
+                    except ContractError:
+                        fail(module, base, "base must be a statically resolved name or attribute")
+                    root = spelling.split(".")[0]
+                    protected.add(root)
+                    writes = events[module].get(root, [])
+                    if writes and (len(writes) != 1 or (writes[0].lineno, writes[0].col_offset) >= (node.lineno, node.col_offset)):
+                        fail(module, base, "base binding must occur once before class definition")
+                    target = resolve(module + "." + spelling)
+                    if target not in classes and target not in terminals and not non_test_terminal(target):
+                        fail(module, base, "unresolved Python test base: " + target)
+
+        def statements(body, *, class_body=False):
+            local = {}
+            for node in body:
+                if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            local.setdefault(target.id, []).append(node)
+            defined = set()
+            for node in body:
+                if isinstance(node, (ast.Import, ast.ImportFrom)) and not class_body:
+                    if isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
+                        fail(module, node, "star import is outside the allowed grammar")
+                    for alias, _target in imports(module, node):
+                        if alias in protected and alias in defined:
+                            fail(module, node, "class or base binding cannot be rebound")
+                        defined.add(alias)
+                elif isinstance(node, ast.ClassDef) and not class_body:
+                    if node.decorator_list or node.keywords:
+                        fail(module, node, "class decorators and metaclasses are outside the allowed grammar")
+                    if node.name in defined:
+                        fail(module, node, "class binding cannot be rebound")
+                    defined.add(node.name)
+                    statements(node.body, class_body=True)
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    function_definition(module, node, defined if class_body else set())
+                    if node.name in defined and (node.name in protected or node.name.startswith("test")):
+                        fail(module, node, "class, base or test member cannot be rebound")
+                    defined.add(node.name)
+                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+                        fail(module, node, "only a single data name can be assigned")
+                    target = targets[0].id
+                    if target.startswith("test") or target in protected or target in {"load_tests", "__getattr__", "__dir__"}:
+                        fail(module, node, "assignment cannot bind a class, base or test member")
+                    if class_body and node.value is not None and any(isinstance(child, ast.Call) for child in ast.walk(node.value)):
+                        fail(module, node, "class data assignments must not call functions")
+                    if not data_expression(module, node.value, (node.lineno, node.col_offset), local):
+                        fail(module, node, "assignment requires a supported data expression")
+                    defined.add(target)
+                elif isinstance(node, ast.Pass) or (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+                                                    and isinstance(node.value.value, str)):
+                    continue
+                elif not class_body and isinstance(node, ast.If) and ast.dump(node.test) == ast.dump(
+                        ast.parse('__name__ == "__main__"', mode="eval").body) and not node.orelse and len(node.body) == 1:
+                    call = node.body[0]
+                    try:
+                        target = resolve(module + "." + dotted(call.value.func)) if isinstance(call, ast.Expr) and isinstance(call.value, ast.Call) else None
+                    except ContractError:
+                        target = None
+                    if not (isinstance(call, ast.Expr) and isinstance(call.value, ast.Call) and not call.value.args
+                            and not call.value.keywords and target == "unittest.main"):
+                        fail(module, node, "only the terminal unittest.main guard is allowed")
+                else:
+                    fail(module, node, type(node).__name__ + " is outside the allowed declaration grammar")
+        statements(trees[module].body)
+
+    for module in sorted(strict):
+        validate_module(module)
+
+    identities, seen_classes = [], set()
     for module, bindings in modules.items():
         if not discovered(module):
             continue
@@ -292,26 +462,11 @@ def python_identities(files, *, discovery_pattern="test_*"):
             seen_classes.add(name)
             methods = {}
             for ancestor in mro(name):
-                if ancestor not in classes:
-                    continue
-                local = {}
-                for member in classes[ancestor].body:
-                    if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        local[member.name] = True
-                    elif isinstance(member, (ast.Assign, ast.AnnAssign)):
-                        targets = member.targets if isinstance(member, ast.Assign) else [member.target]
-                        for target in targets:
-                            if isinstance(target, ast.Name):
-                                require(not target.id.startswith("test") or isinstance(member.value, ast.Constant),
-                                        f"{ancestor}: dynamically assigned test method {target.id}")
-                                local[target.id] = False
-                    elif isinstance(member, (ast.If, ast.Try, ast.For)):
-                        require(not any(isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name.startswith("test")
-                                        for child in ast.walk(member)), f"{ancestor}: conditional test method")
-                for method, callable_member in local.items():
-                    methods.setdefault(method, callable_member)
-            identities.extend(test_identity("python", name + "." + method)
-                              for method, callable_member in methods.items() if method.startswith("test") and callable_member)
+                if ancestor in classes:
+                    for member in classes[ancestor].body:
+                        if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            methods.setdefault(member.name, True)
+            identities.extend(test_identity("python", name + "." + method) for method in methods if method.startswith("test"))
     return ordered(identities)
 
 

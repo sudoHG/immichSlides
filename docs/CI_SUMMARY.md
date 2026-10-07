@@ -25,12 +25,12 @@ Without it, temporary host records are removed on exit and their path is not pri
 Every run ends with each host outcome and all nonpassing Python identities and reasons,
 including after optional unit tests. DerivedData remains in `.derivedData/check-all-{ios,tvos}`.
 Checks continue after failures. Exit 0 means commands and coverage succeeded, or the
-only coverage exception matches the initial **proposed** expected-skip list. That last
+only coverage exception matches the policy's **proposed** expected-skip list. That last
 case remains `unverified` with `policy-proposed` evidence until maintainer approval;
 it never counts as a passing gate. Approved matching skips allow `passed`; an
 unexpected skip, a registered skip that runs, a missing compiled or executed identity,
-or an unapproved deselection fails. This replaces the interim "any skip is unverified"
-rule with the [expected-population and policy model](CI_POPULATION.md).
+or an unapproved deselection fails. The [expected-population and policy model](CI_POPULATION.md)
+defines exception accounting.
 Exit 1 means failed coverage, a failed command, expected failure, missing result,
 empty Python suite or infrastructure problem; invalid arguments
 exit 2. `--timeout-seconds` sets the total

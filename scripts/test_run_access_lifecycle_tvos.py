@@ -16,7 +16,6 @@ from PIL import Image
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR))
 
 import run_access_lifecycle_tvos as tvos_runner  # noqa: E402
 from run_access_lifecycle_tvos import (  # noqa: E402

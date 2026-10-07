@@ -8,7 +8,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts"))
 
 from validate_localization_catalog import SOURCE_LANGUAGE  # noqa: E402
 
