@@ -297,8 +297,8 @@ bundle and writes `result-bundle-disposal.json`, including the export's SHA-256.
 export, scan or cleanup keeps the bundle private and records `result-bundle-quarantine.json`;
 inspect it locally and delete it after diagnosing the failure. Finalization failures cannot make
 a run pass. Unexpected evidence or validator exceptions also retain the private bundle; disposal
-requires completed checks, and an existing Xcode failure exit code takes precedence over evidence
-or cleanup errors. The existing P2 export and disposal contract stays unchanged.
+requires completed checks, and an existing Xcode failure exit code takes precedence over handled
+evidence or cleanup errors. The existing P2 export and disposal contract stays unchanged.
 
 `filter-person` runs three isolated sessions (`normal`, `conflict-normal`, `nofaces`). Each has its
 own private bundle, `official-tests-<session>.json`, `official-summary-<session>.json` and disposal
