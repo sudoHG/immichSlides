@@ -58,27 +58,40 @@ toolchain probe below.
 checkout credentials disabled and reuses `scripts/setup_ci_python.py`. It never builds,
 boots a simulator, installs platform resources or chooses another Xcode.
 
-`/usr/bin/python3 scripts/probe_ci_toolchain.py` reads the existing pins and compares the
-developer directory and Xcode `Contents/version.plist` version/build. It also reads open
-`Announcement` issues in the official [actions/runner-images repository](https://github.com/actions/runner-images/labels/Announcement)
-without authentication; the repository-scoped issue token is used only for local tracking issues.
-It matches the selected runner's checked affected-image entries and pinned Xcode removal,
-deprecation or replacement statements in the title and Breaking changes section, including
-`Xcode versions` lists separated by commas, `and` or `&`. Exact versions are compared in
-full after padding omitted minor/patch components with zero: removing `12.5` covers
-`12.5.0`, but does not cover a retained `12.5.1`. Only explicit major-series wording
-(such as `all Xcode 27 versions`), wildcards (`27.*`, `27.0.x`) and older-than cutoffs
-match a range. Announcements for other
-images or tools, installation notices and statements that retain the pin stay quiet.
-The source is prose rather than a machine-readable removal contract: new announcement
-formats can require parser updates. Missing on-runner inventory is checked independently.
+`/usr/bin/python3 scripts/probe_ci_toolchain.py` reports two independent signals:
 
-When the pin is present and no matching removal is announced, the probe performs no issue
-writes. Otherwise it opens or updates one open, bot-authored issue per runner/Xcode
-version/build, identified by a stable body marker. Updates retain the issue number and
-comments, and replace the generated title/body with current findings and the run/attempt
-link. The probe never closes issues automatically. A manual missing-pin simulation uses a
-separate marker and `[SIMULATION]` title, so it cannot update a real tracking issue.
+- **Pinned toolchain missing:** the scheduled runner must contain the pinned developer
+  directory and exact Xcode `Contents/version.plist` version/build. With that pinned
+  `DEVELOPER_DIR`, `xcrun simctl list runtimes --json` must contain exactly one available
+  runtime matching each pinned iOS/tvOS identifier, version and build, using the same
+  inventory rules as `scripts/setup_ci_python.py`. Missing, unavailable or mismatched
+  inventory opens or updates a high-confidence `pinned toolchain missing` issue per
+  runner/Xcode version/build. The probe reports it before attempting upstream reads.
+- **Possible toolchain change - please check:** anonymous reads of the official
+  [arm64 image toolset](https://github.com/actions/runner-images/blob/main/images/macos/toolsets/toolset-xcode-27.json)
+  check whether the exact `version+build` Xcode pin is still listed. This verified
+  machine-readable source describes image build configuration, not the deployed runner;
+  its `install_runtimes: default` does not specify exact runtime builds. Separately, any
+  open [Announcement issue](https://github.com/actions/runner-images/labels/Announcement)
+  whose combined title/body contains `Xcode` (case insensitive) and the pinned major
+  number triggers the same early-warning issue. The number must not be part of a larger
+  integer: `27.1` matches major 27, while `127` and `270` do not. The words/numbers need
+  not be adjacent. No removal grammar, affected-image checkboxes, beta exclusions or
+  runtime/stable-version interpretation are used. Beta/runtime changes, installation
+  notices, retained versions, other images and unrelated numeric mentions can all warn;
+  these false positives are intentional. This issue quotes all matched announcement
+  links and any missing-toolset-pin link and never asserts an actual pinned removal.
+  One stable marker per runner/Xcode major keeps all early warnings in one open issue,
+  even when the exact minor version or build changes.
+
+When inventory is present, the upstream toolset lists the pin and no open announcement
+mentions Xcode with its major, both signals say `quiet` and perform no issue writes.
+Each signal has its own stable body marker and bot-authored tracking issue. Updates retain
+the issue number and comments and replace the generated title/body with current findings
+and the run/attempt link. The repository-scoped issue token is used only for local
+tracking issues. The probe never closes issues automatically. A manual missing-pin
+simulation uses a separate inventory marker and `[SIMULATION]` title, so it cannot update
+a real missing or possible-change issue; genuine early warnings still report normally.
 Workflow concurrency serializes issue lookup and creation without cancelling a running probe.
 
 The job receives only `contents: read` and `issues: write` through `GITHUB_TOKEN`; workflow
@@ -103,13 +116,15 @@ gh run list --workflow ci-probe.yml --event workflow_dispatch --limit 5
 gh run view <run-id> --log
 ```
 
-The real-pin run must say `quiet` and create no issue (unless an actual removal is already
-announced). The first simulation must open its tracking issue; the repeated simulation
+The real-pin run must say `quiet` for the `missing` signal and create no missing-toolchain
+issue. Its `possible` signal may independently warn about matched upstream sources; if
+there are none, it must also say `quiet`. The first simulation must open its tracking issue; the repeated simulation
 must update the same open issue. Inspect that issue's marker/run link, then close only that
 test issue with `gh issue close <simulation-issue-number> --reason completed`, using plain
 `gh` as the maintainer identity. This cleanup needs no bot comment. Pre-merge hosted
 dispatch acceptance is `PENDING_POST_MERGE`: do not register a temporary workflow or execute
-PR code in this trusted job just to produce an early run. The Python seam tests prove the
+PR code in this trusted job just to produce an early run. Issue #92 stays open until the
+coordinator records all three dispatch receipts. The Python seam tests prove the
 inventory, announcement, open/update, simulation isolation and quiet decisions before merge:
 
 ```bash
