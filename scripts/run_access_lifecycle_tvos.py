@@ -271,6 +271,8 @@ def build_xcodebuild_command(
     # access-lifecycle process must match a user process.
     command = [
         "xcodebuild",
+        "-disableAutomaticPackageResolution",
+        "-onlyUsePackageVersionsFromResolvedFile",
         "-project",
         str(repo_root / "immichSlides.xcodeproj"),
         "-scheme",
