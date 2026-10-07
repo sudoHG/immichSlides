@@ -98,6 +98,9 @@ pause-hold test must all pass with no skips. Compact proof records artifact ID, 
 full identity, selections, official counts/test tree, source absence and disk space.
 The selectors retain Swift raw-identifier backticks. Exit 0 with no selected tests
 is rejected, and official counts/test-tree records are retained even on this failure.
+The proof disables Xcode clone-process parallelism and runs on its dedicated
+simulator. This avoids an extra simulator startup while preserving the selected
+tests, their assertions and the command timeout.
 This is a temporary proof job: the [unit-test consumer (#91)](https://github.com/sudoHG/immichSlides/issues/91)
 will replace it, removing this separate job and its five hard-coded selectors.
 The full unit-test consumer will own the relocated test population instead.

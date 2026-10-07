@@ -533,6 +533,7 @@ def run_proof(args):
         result_path = args.output_dir / "private.xcresult"
         command = ["xcodebuild", "test-without-building", "-xctestrun", str(xctestrun),
                    "-destination", f"platform={DESTINATIONS[ctx['platform']]},id={simulator}",
+                   "-parallel-testing-enabled", "NO",
                    "-resultBundlePath", str(result_path), *["-only-testing:" + selector for selector in PROOF_SELECTORS]]
         disk_check(args.min_free_gib)
         code = default_run(command, timeout_seconds=900)
