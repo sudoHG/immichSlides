@@ -134,12 +134,19 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.expected = self.summary["population"]["declared"]
 
     def verdict(self, **kwargs):
-        trusted = {"fork_originated": False, "ci_changing": False, "app_affected": True}
+        trusted = {"fork_originated": False, "ci_changing": False, "app_affected": True,
+                   "allowed_events": ("pull_request", "push", "local")}
         trusted.update(kwargs)
         return evaluate_gate([self.summary], expected=self.expected, admission_identity=self.identity,
                              required_jobs=self.jobs, base_policy=policy(), environment="hermetic", **trusted)
 
-    def test_unclassified_inputs_cannot_default_to_a_non_ci_changing_green(self):
+    def test_default_admission_rejects_local_events_and_unclassified_inputs(self):
+        default = evaluate_gate([self.summary], expected=self.expected, admission_identity=self.identity,
+                                required_jobs=self.jobs, base_policy=policy(), environment="hermetic",
+                                fork_originated=False, ci_changing=False, app_affected=True)
+        self.assertEqual(default["status"], "failed")
+        self.assertTrue(any("event is not admitted" in error for error in default["errors"]))
+        self.assertEqual(self.verdict()["status"], "passed")
         for key in ("fork_originated", "ci_changing", "app_affected"):
             with self.subTest(key=key):
                 self.assertEqual(self.verdict(**{key: None})["status"], "failed")
@@ -148,7 +155,7 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.assertEqual(self.verdict()["status"], "passed")
         missing = evaluate_gate([], expected=self.expected, admission_identity=self.identity,
                                 required_jobs=self.jobs, base_policy=policy(), environment="hermetic",
-                                fork_originated=False, ci_changing=False, app_affected=True)
+                                fork_originated=False, ci_changing=False, app_affected=True, allowed_events=("local",))
         self.assertEqual(missing["status"], "failed")
         self.assertTrue(any("missing required job/artifact" in error for error in missing["errors"]))
         for mutate in (lambda s: s["run"].update(attempt=2),
@@ -218,7 +225,7 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.jobs.append(dict(self.jobs[0], shard="second"))
         verdict = evaluate_gate([first, second], expected=self.expected, admission_identity=self.identity,
                                 required_jobs=self.jobs, base_policy=policy(), environment="hermetic",
-                                fork_originated=False, ci_changing=False, app_affected=True)
+                                fork_originated=False, ci_changing=False, app_affected=True, allowed_events=("local",))
         self.assertEqual(verdict["status"], "failed")
         self.assertTrue(any("missing compiled" in error for error in verdict["errors"]))
 
@@ -233,14 +240,14 @@ class AdmissionVerdictTests(unittest.TestCase):
         old = ci_summary.test_identity("host", "removed-on-pr")
         admitted_base = self.expected + [old]
         before = self.verdict(base_population=admitted_base)
-        later_main = self.expected + [ci_summary.test_identity("host", "new-on-main")]
-        self.assertNotEqual(later_main, admitted_base)
-        after = self.verdict(base_population=admitted_base)
+        added_on_main = ci_summary.test_identity("host", "new-on-main")
+        later_main = admitted_base + [added_on_main]
+        after = self.verdict(base_population=later_main)
         self.assertEqual(after["status"], before["status"])
         self.assertEqual(after["status"], "passed")
-        self.assertEqual(after["removed_by_pr"], [old])
-        self.expected = later_main
-        self.assertEqual(self.verdict(base_population=admitted_base)["status"], "failed")
+        self.assertEqual(before["removed_by_pr"], [old])
+        self.assertEqual(after["removed_by_pr"], [added_on_main, old])
+        self.assertEqual(after["errors"], before["errors"])
 
     def test_push_requires_pushed_identity_and_manual_dispatch_is_not_gate_evidence(self):
         pushed = {"schema_version": 1, "event": "push", "repository": "sudoHG/immichSlides",
@@ -293,11 +300,17 @@ class AdmissionVerdictTests(unittest.TestCase):
         for paths, members, app, ci in ((["docs/README.md"], set(), False, False),
                                        (["docs/bundled.md"], {"docs/bundled.md"}, True, False),
                                        (["immichSlides/Resources/privacy.html"], set(), True, False),
-                                       (["scripts/ci-policy.json"], set(), True, True),
+                                       (["scripts/ci-test-policy.json"], set(), True, True),
+                                       (["scripts/ci_population.py"], set(), True, True),
+                                       (["scripts/test_ci_summary.py"], set(), True, True),
+                                       (["scripts/run_host_checks.py"], set(), True, True),
+                                       (["scripts/ui_test_inventory.py"], set(), True, True),
                                        (["scripts/ci-pins.json"], set(), True, True),
                                        ([".github/workflows/ci-gate.yml"], set(), True, True),
                                        ([".swift-format"], set(), True, True),
                                        (["AGENTS.md", "CLAUDE.md", ".github/ISSUE_TEMPLATE/bug.md"], set(), True, False),
+                                       (["scripts/run_strict_e2e.py", "scripts/test_strict_e2e_photo_identity.py",
+                                         "scripts/check_test_conventions.py"], set(), True, False),
                                        (["unknown.file"], set(), True, False)):
             with self.subTest(paths=paths):
                 classification = classify_changes(paths, allowlist, build_target_paths=members)

@@ -122,7 +122,10 @@ An unregistered skip fails the host checks. When adding a test that needs an exp
 skip or a tier deselection, include its `scripts/ci-test-policy.json` change in the
 same PR: specify the exact tier, environment and reason, plus the owning tier for
 a deselection. That CI policy change requires maintainer approval of the PR's exact
-head SHA; a later push requires fresh approval. Keep proposals inactive until approved.
+head SHA; a later push requires fresh approval. New entries become effective in
+the trusted verdict only after that approval. Candidate host checks read their own
+policy and may pass earlier; their result is informational. Adding an entry to an
+already approved file does not require resetting its whole-file approval state.
 See [Static population and verdict policy](CI_POPULATION.md#expected-skips-and-tier-deselections)
 for the entry formats and accounting rules.
 

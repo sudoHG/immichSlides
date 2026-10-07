@@ -1,5 +1,26 @@
 {
   "schema_version": 1,
   "app_unaffected": ["docs/**", "README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md", "CODE_OF_CONDUCT.md"],
-  "ci_trusted": ["scripts/**", ".github/workflows/**", ".swift-format"]
+  "ci_trusted": [
+    ".github/workflows/**",
+    ".swift-format",
+    "scripts/ci_*.py",
+    "scripts/run_host_checks.py",
+    "scripts/run_python_tests.py",
+    "scripts/check_workflow_policy.py",
+    "scripts/setup_ci_python.py",
+    "scripts/probe_ci_toolchain.py",
+    "scripts/ui_test_inventory.py",
+    "scripts/ci-pins.json",
+    "scripts/ci-test-policy.json",
+    "scripts/ci-classification.json",
+    "scripts/test_ci_*.py",
+    "scripts/test_run_host_checks.py",
+    "scripts/test_run_python_tests.py",
+    "scripts/test_check_workflow_policy.py",
+    "scripts/test_setup_ci_python.py",
+    "scripts/test_probe_ci_toolchain.py",
+    "scripts/test_ui_test_inventory.py",
+    "scripts/test_excluded_ui_tests_have_a_runner.py"
+  ]
 }

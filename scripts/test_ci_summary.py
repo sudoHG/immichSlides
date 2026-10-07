@@ -445,7 +445,7 @@ class HostResultTests(unittest.TestCase):
                 self.assertIn(name, terminal.getvalue())
             self.assertIn(identity["key"], terminal.getvalue())
 
-    def test_host_unexpected_class_skip_fails_instead_of_claiming_complete_coverage(self):
+    def test_host_coverage_failures_are_distinct_from_infrastructure(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"
             identity = ci_summary.test_identity("python", "calibration.Sample.test_photo")
@@ -468,6 +468,11 @@ class HostResultTests(unittest.TestCase):
             summary = ci_summary.parse_summary((output / "summary.json").read_text())
             self.assertEqual(summary["status"], "failed")
             self.assertEqual(summary["population"]["observed"][-1]["attempts"][0]["reason"], "external screenshots unavailable")
+            self.assertEqual({item["code"] for item in summary["infrastructure"]}, {"coverage-failed"})
+            self.assertTrue(all(identity["key"] in item["message"] for item in summary["infrastructure"]))
+            markdown = ci_summary.render_markdown(summary)
+            self.assertIn("Coverage: coverage-failed: skipped: " + identity["key"], markdown)
+            self.assertNotIn("Infrastructure:", markdown)
 
     def test_host_policy_distinguishes_proposed_and_approved_expected_skips(self):
         identity = ci_summary.test_identity("python", "calibration.Sample.test_photo")

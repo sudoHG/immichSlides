@@ -6,8 +6,9 @@ import re
 
 PLATFORMS = ("ios", "tvos")
 
-CLASS_RE = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*XCTestCase\b[^{]*\{")
-CLASS_DECL_RE = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b([^{]*)\{")
+CLASS_RE = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:XCTest\.)?XCTestCase\b[^{]*\{")
+CLASS_DECL_RE = re.compile(r"\bclass\s+([^\s:{}<>]+)([^{]*)\{")
+TYPE_ALIAS_RE = re.compile(r"\btypealias\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_][\w.]*)")
 EXTENSION_RE = re.compile(r"(?:\b(private|fileprivate)\s+)?\bextension\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\{")
 # XCTest runs `func test…()` with no parameters and no return value; a backtick name counts too.
 TEST_FUNC_RE = re.compile(
@@ -252,7 +253,7 @@ class SwiftFile:
         for m in CLASS_RE.finditer(self.code):
             if self.depth(0, m.start()) != 0:
                 self.errors.append(f"{name}: nested XCTestCase class {m.group(1)} is not supported")
-            self.classes[m.group(1)] = self.platforms_at(m.start())
+            self.classes[m.group(1)] = self.classes.get(m.group(1), set()) | self.platforms_at(m.start())
         # (open brace, close brace, type name, members are private)
         self.scopes = [
             (m.end() - 1, matching_brace(self.code, m.end() - 1), m.group(1), False) for m in CLASS_RE.finditer(self.code)
@@ -352,15 +353,19 @@ def parse_ui_tests(
     # a Swift Testing method or helper. Inherited XCTest methods need a separate
     # runtime-accurate inventory model; reject these classes until it is supported.
     descendants = set(classes)
-    declarations = [(swift_file.name, match[1], match[2].partition(":")[2].split(",")[0].strip().split("<")[0])
-                    for swift_file in parsed for match in CLASS_DECL_RE.finditer(swift_file.code)]
+    declarations = [(swift_file.name, match[1], bases)
+                    for swift_file in parsed for match in CLASS_DECL_RE.finditer(swift_file.code)
+                    for bases in [re.findall(r":\s*([A-Za-z_][\w.]*)", match[2])]]
+    aliases = [(swift_file.name, match[1], [match[2]])
+               for swift_file in parsed for match in TYPE_ALIAS_RE.finditer(swift_file.code)]
     changed = True
     while changed:
         changed = False
-        for filename, name, base in declarations:
-            if name not in descendants and base in descendants:
+        for filename, name, bases in declarations + aliases:
+            if name not in descendants and any(base in descendants or base in {"XCTestCase", "XCTest.XCTestCase"}
+                                               for base in bases):
                 descendants.add(name)
-                errors.append(f"{filename}: indirect XCTestCase inheritance for {name} is unsupported")
+                errors.append(f"{filename}: unsupported or indirect XCTestCase inheritance for {name}")
                 changed = True
     methods: dict[str, dict[str, set[str]]] = {name: {} for name in classes}
     strict_names = strict_function_names(parsed)

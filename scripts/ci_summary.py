@@ -271,7 +271,8 @@ def render_markdown(payload):
     for entry in population["deselected"]:
         lines.append(f"| {markdown_text(entry['identity']['key'])} | deselected | — | {markdown_text(entry['reason'])}; owned by {markdown_text(entry['owning_tier'])} |")
     for entry in payload["infrastructure"]:
-        lines.append(f"\nInfrastructure: {markdown_text(entry['code'])}: {markdown_text(entry['message'])}")
+        category = "Coverage" if entry["code"] == "coverage-failed" else "Infrastructure"
+        lines.append(f"\n{category}: {markdown_text(entry['code'])}: {markdown_text(entry['message'])}")
     return "\n".join(lines) + "\n"
 
 

@@ -10,6 +10,41 @@ from pathlib import Path
 from ci_summary import ContractError, identity_key, require, test_identity, validate_test_identity
 from ui_test_inventory import blank_comments_and_strings, line_platforms, matching_brace, parse_ui_tests
 
+# Explicit Python 3.9 names keep classification independent of the host Python.
+BUILTIN_BASES = frozenset("""
+object type bool int float complex str bytes bytearray list tuple dict set frozenset
+memoryview range slice property classmethod staticmethod super
+BaseException Exception ArithmeticError AssertionError AttributeError BlockingIOError
+BrokenPipeError BufferError ChildProcessError ConnectionAbortedError ConnectionError
+ConnectionRefusedError ConnectionResetError EOFError EnvironmentError FileExistsError
+FileNotFoundError FloatingPointError GeneratorExit IOError ImportError IndentationError
+IndexError InterruptedError IsADirectoryError KeyError KeyboardInterrupt LookupError
+MemoryError ModuleNotFoundError NameError NotADirectoryError NotImplementedError OSError
+OverflowError PermissionError ProcessLookupError RecursionError ReferenceError RuntimeError
+StopAsyncIteration StopIteration SyntaxError SystemError SystemExit TabError TimeoutError
+TypeError UnboundLocalError UnicodeDecodeError UnicodeEncodeError UnicodeError
+UnicodeTranslateError ValueError ZeroDivisionError Warning BytesWarning DeprecationWarning
+FutureWarning ImportWarning PendingDeprecationWarning ResourceWarning RuntimeWarning
+SyntaxWarning UnicodeWarning UserWarning
+""".split())
+STDLIB_BASE_MODULES = frozenset("""
+abc argparse array ast asynchat asyncore asyncio atexit base64 bdb binascii bisect builtins bz2 calendar
+cgi cgitb chunk cmd code codecs codeop collections colorsys compileall concurrent configparser
+contextlib contextvars copy copyreg crypt csv ctypes curses dataclasses datetime dbm decimal
+difflib dis distutils doctest email encodings enum errno faulthandler fcntl filecmp fileinput fnmatch
+fractions ftplib functools gc genericpath getopt getpass gettext glob graphlib grp gzip hashlib heapq hmac
+html http imaplib importlib inspect io ipaddress itertools json keyword linecache locale
+logging lzma mailbox mailcap marshal math mimetypes mmap modulefinder msilib msvcrt multiprocessing
+netrc nis nntplib ntpath nturl2path numbers opcode operator optparse os parser pathlib pdb pickle pickletools pipes pkgutil
+platform plistlib poplib posix posixpath pprint profile pstats pty pwd py_compile pyclbr pydoc queue quopri
+random re readline reprlib resource rlcompleter runpy sched secrets select selectors shelve
+shlex shutil signal site smtpd smtplib sndhdr socket socketserver spwd sqlite3 ssl stat statistics
+string stringprep struct subprocess sunau symbol symtable sys sysconfig syslog tabnanny tarfile
+telnetlib tempfile termios textwrap threading time timeit tkinter token tokenize trace traceback
+tracemalloc tty turtle types typing unicodedata urllib uu uuid venv warnings wave weakref
+webbrowser winreg winsound wsgiref xdrlib xml xmlrpc zipapp zipfile zipimport zlib
+""".split())
+
 
 def ordered(identities):
     found = {}
@@ -82,17 +117,23 @@ def python_identities(files, *, discovery_pattern="test_*"):
                         bindings[target.id] = module + "." + alias
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 require(node.name != "load_tests" or not discovered(module), f"{module}: load_tests is dynamic discovery")
+                bindings[node.name] = module + "." + node.name
             elif isinstance(node, (ast.If, ast.Try, ast.For, ast.While, ast.With)):
                 # Conditional top-level definitions are not the local classes inside test bodies.
                 require(not discovered(module) or not any(isinstance(child, ast.ClassDef) for child in ast.walk(node)),
                         f"{module}: conditional class discovery is unsupported")
         modules[module] = bindings
 
-    terminals = {"unittest.TestCase", "unittest.case.TestCase", "unittest.IsolatedAsyncioTestCase"}
-    non_test_terminals = {"builtins.object"}
+    terminals = {"unittest.TestCase", "unittest.case.TestCase", "unittest.IsolatedAsyncioTestCase",
+                 "unittest.async_case.IsolatedAsyncioTestCase", "doctest.DocTestCase"}
+
+    def non_test_terminal(name):
+        root, separator, _ = name.partition(".")
+        return bool(separator and root in STDLIB_BASE_MODULES and not any(
+            name == module or name.startswith(module + ".") for module in modules))
 
     def resolve(name, seen=()):
-        if name in classes or name in terminals or name in non_test_terminals:
+        if name in classes or name in terminals or non_test_terminal(name):
             return name
         require(name not in seen, f"cyclic Python alias: {name}")
         for module in sorted(modules, key=len, reverse=True):
@@ -100,8 +141,8 @@ def python_identities(files, *, discovery_pattern="test_*"):
                 suffix = name[len(module) + 1:]
                 first, _, rest = suffix.partition(".")
                 bound = modules[module].get(first)
-                if bound is None and suffix == "object":
-                    return "builtins.object"
+                if bound is None and suffix in BUILTIN_BASES:
+                    return "builtins." + suffix
                 if bound is not None:
                     target = bound + ("." + rest if rest else "")
                     if target != name:
@@ -114,7 +155,7 @@ def python_identities(files, *, discovery_pattern="test_*"):
         if name in cache:
             return cache[name]
         require(name not in visiting, f"cyclic Python inheritance: {name}")
-        if name in terminals or name in non_test_terminals:
+        if name in terminals or non_test_terminal(name):
             return [name]
         require(name in classes, f"unresolved Python test base: {name}")
         node = classes[name]
@@ -149,7 +190,7 @@ def python_identities(files, *, discovery_pattern="test_*"):
                     raise
                 continue
             if discovered(module):
-                require(target in classes or target in terminals or target in non_test_terminals,
+                require(target in classes or target in terminals or non_test_terminal(target),
                         f"{name}: unresolved Python test base: {target}")
             inherited.append(is_test_case(target, (*visiting, name)))
         return any(inherited)
@@ -212,7 +253,7 @@ def ui_identities(files, platform):
 
 
 TYPE_RE = re.compile(r"\b(struct|class|enum|extension)\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)[^{}]*\{")
-ATTRIBUTE_RE = re.compile(r"@(Test|Suite)\b")
+ATTRIBUTE_RE = re.compile(r"@\s*((?:`?[A-Za-z_]\w*`?\s*\.\s*)*`?[A-Za-z_]\w*`?)")
 FUNCTION_RE = re.compile(r"\bfunc\s+(`[^`]+`|[A-Za-z_]\w*)\s*(?:<[^>{}]*>)?\s*\(")
 
 
@@ -269,9 +310,15 @@ def swift_identities(files, platform):
 
     # The unit target mixes Swift Testing suites and XCTestCase classes.
     # Reuse the UI parser so compiled unit methods cannot disappear from coverage.
-    found = {identity["key"]: identity for identity in xctest_identities(files, platform, kind="swift")}
+    found = {identity["key"]: identity for identity in xctest_identities(
+        {filename: code for filename, code, _ in parsed}, platform, kind="swift")}
     for filename, code, scopes in parsed:
         for attribute in ATTRIBUTE_RE.finditer(code):
+            name = re.sub(r"\s|`", "", attribute[1])
+            if not {"Test", "Suite"}.intersection(name.split(".")):
+                continue
+            require(name in {"Test", "Suite", "Testing.Test", "Testing.Suite"},
+                    f"{filename}: unsupported test attribute @{name}")
             position = attribute.end()
             if code[position:].lstrip().startswith("("):
                 position = code.index("(", position)
@@ -282,7 +329,7 @@ def swift_identities(files, platform):
                     position += 1
                 require(depth == 0, f"{filename}: unbalanced Swift attribute")
             remainder = code[position:]
-            if attribute[1] == "Suite":
+            if name.rsplit(".", 1)[-1] == "Suite":
                 match = TYPE_RE.search(remainder)
                 require(match is not None and not re.search(r"[{};]|\bfunc\b", remainder[:match.start()]),
                         f"{filename}: @Suite without a type declaration")
@@ -290,7 +337,9 @@ def swift_identities(files, platform):
             function = FUNCTION_RE.search(remainder)
             require(function is not None, f"{filename}: @Test without function")
             prefix = remainder[:function.start()]
-            require(not re.search(r"[{};]|\b(var|let|struct|class|enum|extension)\b|@Test\b", prefix),
+            require(not re.search(r"[{};<>]|\b(var|let|struct|class|enum|actor|extension)\b", prefix)
+                    and not any({"Test", "Suite"}.intersection(re.sub(r"\s|`", "", match[1]).split("."))
+                                for match in ATTRIBUTE_RE.finditer(prefix)),
                     f"{filename}: unsupported @Test declaration")
             offset = position + function.start()
             owners = [scope for scope in scopes if scope[0] < offset < scope[1]]

@@ -83,6 +83,11 @@ def function_identity(identity):
     return identity
 
 
+def identity_label(identity):
+    dimensions = ", ".join(f"{key}={value}" for key, value in sorted(identity["dimensions"].items()))
+    return identity["key"] + (f" ({dimensions})" if dimensions else "")
+
+
 def tokens(identities, *, functions=False):
     result = {}
     for identity in identities:
@@ -129,46 +134,49 @@ def evaluate_population(raw, expected, policy, *, environment):
         for label, actual in (("declared", declared), ("compiled", compiled_functions)):
             for token in sorted(set(expected_by_function) - set(actual)):
                 identity = expected_by_function[token]
-                errors.append(f"missing {label}: {identity_key(identity)}")
+                errors.append(f"missing {label}: {identity_label(identity)}")
                 if label == "compiled":
                     result["missing_compiled"].append(identity)
             for token in sorted(set(actual) - set(expected_by_function)):
-                errors.append(f"unexpected {label}: {token}")
+                errors.append(f"unexpected {label}: {identity_label(actual[token])}")
         for token, entry in deselected.items():
             identity = entry["identity"]
+            label = identity_label(identity)
             matches = [rule for rule in deselections if rule["tier"] == tier and rule["environment"] == environment
                        and rule["identity"] == identity]
             if len(matches) != 1 or any(entry[key] != matches[0][key] for key in ("reason", "owning_tier")):
-                errors.append(f"unapproved or mismatched deselection: {token}")
+                errors.append(f"unapproved or mismatched deselection: {label}")
             else:
                 result["deselected"].append(entry)
             if token not in compiled or token in observed:
-                errors.append(f"deselection is not exclusively compiled and unexecuted: {token}")
+                errors.append(f"deselection is not exclusively compiled and unexecuted: {label}")
         for rule in deselections:
             if rule["tier"] == tier and rule["environment"] == environment:
                 token = identity_key(rule["identity"])
                 if identity_key(function_identity(rule["identity"])) in expected_by_function and token not in deselected:
-                    errors.append(f"required deselection missing: {token}")
+                    errors.append(f"required deselection missing: {identity_label(rule['identity'])}")
         for token, identity in compiled.items():
             if token not in observed and token not in deselected:
-                errors.append(f"missing executed: {token}")
+                errors.append(f"missing executed: {identity_label(identity)}")
                 result["missing_executed"].append(identity)
         for token, entry in observed.items():
             identity = entry["identity"]
+            label = identity_label(identity)
             if token not in compiled:
-                errors.append(f"observed without compilation: {token}")
+                errors.append(f"observed without compilation: {label}")
             matches = [rule for rule in skips if skip_matches(rule, identity, tier, environment)]
             if len(matches) > 1:
-                errors.append(f"ambiguous expected skip: {token}")
+                errors.append(f"ambiguous expected skip: {label}")
             elif matches:
                 if entry["outcome"] == "skipped" and entry["attempts"][0]["reason"] == matches[0]["reason"]:
                     result["expected_skips"].append(identity)
                 else:
-                    errors.append(f"expected skip ran or reason differed: {token}")
+                    errors.append(f"expected skip ran or reason differed: {label}")
             elif entry["outcome"] != "passed":
-                errors.append(f"{entry['outcome']}: {token}")
+                errors.append(f"{entry['outcome']}: {label}")
         for entry in summary["infrastructure"]:
-            errors.append(f"infrastructure {entry['code']}: {entry['message']}")
+            category = "coverage" if entry["code"] == "coverage-failed" else "infrastructure"
+            errors.append(f"{category} {entry['code']}: {entry['message']}")
         if summary["status"] == "failed" or (summary["status"] == "unverified" and not result["expected_skips"]):
             errors.append(f"producer status is {summary['status']}")
         result["status"] = "failed" if errors else "passed"
@@ -184,7 +192,7 @@ def job_key(job):
 def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, base_policy,
                   environment, candidate_policy=None, approved_head=None, fork_originated=None,
                   ci_changing=None, app_affected=None, context="gate", base_population=(),
-                  allowed_events=("pull_request", "push", "local")):
+                  allowed_events=("pull_request", "push")):
     """Evaluate admitted summaries using trusted inputs; publishing belongs elsewhere.
 
     required_jobs describe tier/job/shard, run_id/attempt, supported workflow_paths

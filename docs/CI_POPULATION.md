@@ -15,29 +15,37 @@ reads Python files into a module-name map; it reads no private configuration.
   mixins, computes C3 method resolution and respects method overrides. It discovers
   classes visible in `test_*` modules, including imported TestCase subclasses,
   keyed by the defining module/class/method used by unittest. Local classes inside
-  function bodies are fixture code, not discovered tests. Unresolved or dynamic
-  bases in any class declared in a test module fail closed, including aliases that
-  might otherwise erase a whole suite. Conditional classes, wildcard imports and
+  function bodies are fixture code, not discovered tests. Unresolved local or
+  third-party bases, and dynamic bases, in a test module fail closed, including
+  aliases that might otherwise erase a whole suite. Conditional classes, wildcard imports and
   `load_tests` hooks in test modules also fail. Non-test helper modules may contain
   unrelated generic or factory-based classes; a discovered TestCase's MRO must
-  still resolve completely.
+  still resolve completely. Unshadowed builtins and the explicit Python 3.9
+  standard-library allowlist are non-test terminals. Local bindings/modules
+  cannot impersonate these terminals; unittest and doctest TestCase bases remain
+  recognized test ancestors.
 - `swift_identities(files, platform)` finds `@Test` functions in explicit or
-  implicit suites, nested suites and cross-file extensions. `@Suite` attributes
-  are parsed, but do not replace function identities. Keys are `Type/function`
+  implicit suites, nested suites and cross-file extensions. Module-qualified
+  `@Testing.Test` and `@Testing.Suite` have the same meaning as their bare forms.
+  Unknown qualifications and unsupported test declarations raise `ContractError`.
+  `@Suite` attributes are parsed, but do not replace function identities. Keys are `Type/function`
   (qualified type for nested suites), or `function` for a top-level test. Arguments
   and display names are not keys. `#if os(...)`, compound conditions, `DEBUG` and
   simulator conditions use the shared parser's Debug simulator model. Unknown or
   malformed conditions, ambiguous duplicate function names, unresolved extensions
   and local `@Test` declarations are errors.
   Traditional `XCTestCase` methods in the mixed unit target are also enumerated
-  through the shared XCTest parser and recorded with kind `swift`. Indirect
+  through the shared XCTest parser using platform-filtered source and recorded
+  with kind `swift`. Indirect
   inheritance (`Child: Base: XCTestCase`) is explicitly rejected in both XCTest
   inventories until inherited-method enumeration is supported; it never silently
   drops a subclass. Mixed unit functions outside XCTest are classified by the
   parser's explicit mode, without filtering diagnostic strings.
 - `ui_identities(files, platform)` reuses `scripts/ui_test_inventory.py`, the
   parser also used by the existing excluded-test check. It intersects method and
-  owning-class platforms and keys tests as `Class/testMethod`.
+  owning-class platforms, merges same-named classes across conditional branches,
+  and keys tests as `Class/testMethod`. Module-qualified `XCTest.XCTestCase` is
+  supported; unsupported generic XCTest classes and XCTest base aliases fail explicitly.
 - `removed_tests(base_population, tested_population)` reports the admitted PR
   base minus the tested merge tree. Removal is informational. No later `main`
   population participates in coverage or a verdict.
@@ -71,8 +79,13 @@ When adding a test that needs a skip or deselection, include the policy entry in
 the same PR as the test. Record its tier, environment and exact reason, and the
 other owning tier for a deselection. This is a CI-trusted policy change: the
 maintainer must approve the PR's exact head SHA before candidate exceptions can
-apply, and a later push requires fresh approval. Keep new proposals inactive
-until approved. The test must still meet [TESTING section 4](TESTING.md#4-when-a-test-may-skip);
+apply in the trusted verdict, and a later push requires fresh approval. After the
+initial lists are approved, add entries to that approved file without resetting
+its whole-file `approval_state`: the trusted verdict keeps using the admitted
+base policy until the exact head is approved. Candidate host checks read their
+own policy and may pass with a new entry before approval; that result is
+informational. The initial lists in this PR remain `proposed` pending their
+separate maintainer decision. The test must still meet [TESTING section 4](TESTING.md#4-when-a-test-may-skip);
 policy approval does not excuse a product failure or missing compilation.
 
 Expected-skip entries contain `kind`, `key_pattern`, exact `dimensions`, `tier`,
@@ -117,6 +130,11 @@ the exact proposed calibration skips retain exit 0 / `unverified` with
 `policy-proposed`; unexpected skips and missing identities return exit 1.
 Approved exceptions can produce `passed`. This explicitly replaces the previous
 rule that every skip unconditionally made the summary unverified.
+Coverage discrepancies use `coverage-failed` diagnostics with readable function
+keys and a failed status. The version 1 diagnostic array stores these separately
+by code; Markdown labels them `Coverage`, and infrastructure health accounting
+must exclude that code. Unexpected skips retain their observed reason; missing
+compiled/executed identities are named without inventing execution rows.
 The producer writes its interruption placeholder before parsing the policy or
 static population. Invalid inputs record `population-invalid`, all host checks
 still run, and the final failed record preserves their observations.
@@ -129,10 +147,12 @@ build membership for the tested tree and both diff sides. PR changes use
 `base...head`; pushes use `before..after`; include old and new rename paths.
 An allowlisted document can be unaffected only if it is not a build member and
 not CI-trusted. The bundled privacy policy, all unknown paths and every trusted
-path affect the app. `.github/workflows/**`, `scripts/**` (including CI policy,
-data and pins), and `.swift-format` are CI-trusted; the formatting policy changes
-the lint verdict. `AGENTS.md` and `CLAUDE.md` are not CI-trusted. Invalid
-relative paths fail closed. There is no comment-only classification.
+path affect the app. CI-trusted paths are `.github/workflows/**`, `.swift-format`,
+`scripts/ci_*.py`, and the CI entry points, policy/data/pins and their tests listed
+in `scripts/ci-classification.json`. The formatting policy changes the lint verdict.
+Ordinary tests and other scripts, `AGENTS.md` and `CLAUDE.md` are not CI-trusted;
+adding or removing an ordinary test does not itself require CI-head approval.
+Invalid relative paths fail closed. There is no comment-only classification.
 
 `evaluate_gate` consumes the required job artifacts and independent static
 `expected`, `admission_identity`, `required_jobs`, `base_policy`, `environment`
@@ -155,9 +175,10 @@ verification are not implemented here.
 
 For context `ui`, trusted `app_affected=False` returns `not-applicable` only after
 approval checks; CI-changing input cannot use that shortcut. Host checks always
-run. Generic local evaluation accepts clean local identities; dirty local trees
-cannot prove the recorded tree. `ci-gate` consumers **must** pass
-`allowed_events=("pull_request", "push")`; manual dispatch is not gate evidence.
+run. `allowed_events` defaults to `("pull_request", "push")`, so local and manual
+dispatch records are rejected by default. A local caller explicitly opts in with
+`allowed_events=("local",)`; dirty local trees still cannot prove the recorded tree.
+Manual dispatch is not `ci-gate` evidence.
 
 Summary and identity parsing use the installed reader registries in
 `scripts/ci_summary.py`. A successor is accepted only once its parser/validator is

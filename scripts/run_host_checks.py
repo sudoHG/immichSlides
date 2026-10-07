@@ -345,7 +345,7 @@ def main():
                     "Only proposed exceptions explain coverage; maintainer approval is still required"})
             else:
                 summary["status"] = coverage["status"]
-                summary["infrastructure"].extend({"code": "population-invalid", "message": message} for message in coverage["errors"])
+                summary["infrastructure"].extend({"code": "coverage-failed", "message": message} for message in coverage["errors"])
         write_summary(summary, output)
         print_result(summary, output, args.no_summary_path)
         return 0 if command_passed and summary["status"] != "failed" else 1
