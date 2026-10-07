@@ -8,12 +8,13 @@ uses the existing [identity/summary contract](CI_SUMMARY.md) and [toolchain pins
 Its summaries describe host checks of archives, not a full Swift population or a
 trusted required verdict.
 
-## Admission and contents
+## Workspace preflight and contents
 
-Run admission before setup or Xcode:
+Run the workspace preflight before setup or Xcode:
 
 ```bash
-/usr/bin/python3 -B scripts/ci_build_archive.py preflight
+/usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform ios \
+    --output-dir /tmp/immichslides-workspace-preflight
 ```
 
 `Config/env.xcconfig` is forbidden: regular file, symlink or dangling symlink. The
@@ -43,40 +44,52 @@ unit/UI bundles, frameworks and bundled public fixtures. Tar preserves permissio
 and symlinks, unlike directly uploading Products. DerivedData, package checkouts,
 source and raw `.xcresult` are excluded. Builds reject checkout/lock changes,
 nonempty `IMMICH_SERVER_URL`/`IMMICH_API_KEY` in product plists, and enabled or
-unresolved `ENABLE_DEBUG_*` values.
+unresolved `ENABLE_DEBUG_*` values. The built app is inspected with
+`codesign -dv --verbose=2`; inspection must succeed with `Signature=adhoc`.
+Unsigned apps and other signature types fail before archive publication.
 
 Manifest version 1 contains the existing run identity; producer run, workflow,
 attempt and artifact name; platform, Debug configuration, actual binary architectures,
-actual Xcode build, pins SHA-256, signing mode, private-configuration absence,
+actual Xcode build, pins SHA-256, measured `signing_mode=adhoc`, private-configuration absence,
 source/Products paths, archive SHA-256 and every file/directory/link. Entries record
 permissions, file size/hash or link target. Extraction rejects unlisted/duplicate
 paths, traversal, absolute/escaping links, hard links, device files, non-directory
-ancestors, changed hashes and changed permissions.
+ancestors, changed hashes and changed permissions. Symlink targets are resolved
+segment by segment against the full file list, expanding chains before processing
+`..`; loops, missing targets and out-of-root targets are refused. Consumers repeat
+the app signature measurement after extraction. Summaries store the measured value
+in `toolchain.versions.codesign_signature`; the existing canonical signing-mode enum
+is set to `sign-to-run-locally` only after an `adhoc` measurement. Preflight/selection
+records use `not-applicable` and do not invoke Xcode or infer a signature.
 
 The immutable artifact ID is a producer job output: it does not exist until upload.
 Names are `build-PLATFORM-RUN-ATTEMPT`; archives expire after **one day**. Compact
 records use existing summary retention (30 days for PRs, 7 days for main pushes).
 
-## Selection, relocation and reruns
+## Artifact selection, relocation and reruns
 
 Consumers independently derive checkout identity with the existing parser. They
 check the repository's artifact API by exact ID for run, name, expiry and commit,
 download by ID, then verify the manifest. PR comparison includes repository, PR,
-base, head, merge commit and merge tree. The same head against another base is
-refused. Main pushes compare the full push identity.
+base, head, merge commit and merge tree. Main pushes compare the full push identity.
+Inside `ci-gate`, consumers accept only artifacts from the same `github.run_id`,
+using producer job outputs; a different-base archive cannot arise by construction.
+Python checks still guard full-identity comparisons. The real-run same-head/different-base
+refusal is deferred to the first cross-run consumer, the [UI tier tracer (#94)](https://github.com/sudoHG/immichSlides/issues/94).
 
 ```bash
 # CI supplies GH_TOKEN through a step environment, never a command argument.
 /usr/bin/python3 -B scripts/ci_build_archive.py select --platform ios \
-    --artifact-id ID --producer-attempt ATTEMPT --selection-path /tmp/archive-selection.json
+    --artifact-id ID --producer-attempt ATTEMPT --selection-path /tmp/archive-selection.json \
+    --output-dir /tmp/immichslides-artifact-selection
 ```
 
-Selection runs in CI with GitHub's run/event metadata and an actions-read token.
+Artifact selection runs in CI with GitHub's run/event metadata and an actions-read token.
 These candidate records are claims, not trusted attestations. Fork code can forge
 them; the epic's later trusted publisher and approval tickets own that boundary.
 
 The relocation matrix runs on separate GitHub-hosted runners. Producers check out
-`source-build`; consumers check out `consumer-source`. After admission, consumers
+`source-build`; consumers check out `consumer-source`. After artifact selection, consumers
 copy only the entry point, its existing helpers and pins to runner temp, then remove
 their entire source checkout. Proof rejects existing build-time source/Products paths,
 extracts at a different absolute path and calls `test-without-building` with no project
@@ -85,6 +98,9 @@ pause-hold test must all pass with no skips. Compact proof records artifact ID, 
 full identity, selections, official counts/test tree, source absence and disk space.
 The selectors retain Swift raw-identifier backticks. Exit 0 with no selected tests
 is rejected, and official counts/test-tree records are retained even on this failure.
+This is a temporary proof job: the [unit-test consumer (#91)](https://github.com/sudoHG/immichSlides/issues/91)
+will replace it, removing this separate job and its five hard-coded selectors.
+The full unit-test consumer will own the relocated test population instead.
 
 After removing its checkout, the hosted consumer invokes the staged entry point:
 
@@ -99,9 +115,22 @@ After removing its checkout, the hosted consumer invokes the staged entry point:
 **Rerun failed jobs** retains successful producer outputs. Consumers download by
 artifact ID from the same run, including earlier producer attempts, and record the
 attempt reused. Missing/expired archives fail without latest-head/name fallback or
-silent rebuild. A failed producer rerun creates an archive for the new attempt.
+silent rebuild. The failed record says **use Re-run all jobs** to produce fresh
+archives. A failed producer rerun creates an archive for the new attempt.
 **Rerun all jobs** rebuilds both platforms and creates new attempt-specific archives;
 consumers use the new IDs. Previous artifacts are never overwritten.
+
+Workspace preflight and artifact selection require `--output-dir` and write the
+existing summary/identity contract on success or failure. Workflow steps share the
+job's records path; a later build/proof replaces successful preflight/selection
+records. If either earlier step fails, its failed summary remains available to the
+always-run upload/display steps. The preflight records no private values and starts
+neither setup nor Xcode. Failures use `workspace-preflight-failed`,
+`archive-unavailable` (expired/missing artifacts, including API 404/410), or
+`archive-identity-mismatch`; proof/build errors retain their respective failure codes.
+Every failure message includes **use Re-run all jobs**. There is no silent rebuild
+or cross-run fallback. An invalid CLI/output location or unparseable run identity
+fails before a valid record can be constructed.
 
 Passing proofs establish relocation for both platforms on the pinned toolchain.
 If relocation later fails, the tier must not rely on reuse until fixed or the epic's

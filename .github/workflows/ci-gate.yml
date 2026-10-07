@@ -81,7 +81,9 @@ jobs:
           persist-credentials: false
       - name: Reject private configuration before setup
         working-directory: source-build
-        run: /usr/bin/python3 -B scripts/ci_build_archive.py preflight
+        run: |
+          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform ios \
+            --output-dir "$RUNNER_TEMP/producer-ios/records"
       - name: Select and verify the pinned toolchain
         working-directory: source-build
         run: |
@@ -137,7 +139,9 @@ jobs:
           persist-credentials: false
       - name: Reject private configuration before setup
         working-directory: source-build
-        run: /usr/bin/python3 -B scripts/ci_build_archive.py preflight
+        run: |
+          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform tvos \
+            --output-dir "$RUNNER_TEMP/producer-tvos/records"
       - name: Select and verify the pinned toolchain
         working-directory: source-build
         run: |
@@ -202,19 +206,21 @@ jobs:
       - name: Preflight and verify consumer pins
         working-directory: consumer-source
         run: |
-          /usr/bin/python3 -B scripts/ci_build_archive.py preflight
+          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform '${{ matrix.platform }}' \
+            --output-dir "$RUNNER_TEMP/relocation-records"
           /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/consumer-python" --verify-toolchain
-      - name: Admit the exact artifact ID and producer attempt
+      - name: Select the exact artifact ID and producer attempt
         working-directory: consumer-source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           "$RUNNER_TEMP/consumer-python/bin/python3" -B scripts/ci_build_archive.py select \
             --platform '${{ matrix.platform }}' --artifact-id "$ARCHIVE_ID" \
-            --producer-attempt "$PRODUCER_ATTEMPT" --selection-path "$RUNNER_TEMP/archive-selection.json"
-      - name: Download the admitted artifact, including earlier successful attempts
+            --producer-attempt "$PRODUCER_ATTEMPT" --selection-path "$RUNNER_TEMP/archive-selection.json" \
+            --output-dir "$RUNNER_TEMP/relocation-records"
+      - name: Download the selected artifact, including earlier successful attempts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ env.ARCHIVE_ID }}

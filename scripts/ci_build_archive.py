@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import hashlib
 import json
 import os
 import platform as host_platform
 import plistlib
-import posixpath
 import shutil
 import stat
 import subprocess
 import sys
 import tarfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path, PurePosixPath
 
@@ -40,13 +41,23 @@ PROOF_SELECTORS = [
 MANIFEST_FIELDS = {"schema_version", "identity", "producer", "platform", "configuration", "architectures",
                    "xcode_build", "pins_sha256", "signing_mode", "private_configuration_present",
                    "source_path", "products_path", "archive_sha256", "files"}
+RERUN_ADVICE = "use Re-run all jobs"
+
+
+class WorkspacePreflightError(ContractError):
+    pass
+
+
+class ArchiveUnavailableError(ContractError):
+    pass
 
 
 def workspace_preflight(root):
     # lexists/lstat deliberately reject dangling links without opening private content.
-    require(not os.path.lexists(root / "Config/env.xcconfig"), "private configuration is forbidden at build time")
-    require(not any(key.startswith(("IMMICH", "TEST_RUNNER_IMMICH", "SIMCTL_CHILD_IMMICH", "ENABLE_DEBUG_"))
-                    for key in os.environ), "ambient server/debug configuration is forbidden")
+    if os.path.lexists(root / "Config/env.xcconfig"):
+        raise WorkspacePreflightError("private configuration is forbidden at build time")
+    if any(key.startswith(("IMMICH", "TEST_RUNNER_IMMICH", "SIMCTL_CHILD_IMMICH", "ENABLE_DEBUG_")) for key in os.environ):
+        raise WorkspacePreflightError("ambient server/debug configuration is forbidden")
 
 
 def file_hash(path):
@@ -67,10 +78,50 @@ def safe_path(name):
 
 
 def safe_link(name, target):
-    require(isinstance(target, str) and target and not target.startswith("/") and "\\" not in target,
+    require(isinstance(target, str) and target and not target.startswith("/") and "\\" not in target and "\x00" not in target,
             "archive symlink escapes Products")
-    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), target))
-    require(resolved == "Products" or resolved.startswith("Products/"), "archive symlink escapes Products")
+
+
+def validate_links(entries):
+    by_path = {entry["path"]: entry for entry in entries}
+    require(len(by_path) == len(entries), "duplicate file entry")
+    require(by_path.get("Products", {}).get("kind") == "directory", "missing Products root")
+    for entry in entries:
+        path = safe_path(entry["path"])
+        for parent in path.parents:
+            if str(parent) != ".":
+                require(by_path.get(str(parent), {}).get("kind") == "directory", "archive parent is not a directory")
+        if entry["kind"] == "symlink":
+            safe_link(entry["path"], entry["target"])
+    for entry in entries:
+        if entry["kind"] != "symlink":
+            continue
+        resolved = list(PurePosixPath(entry["path"]).parent.parts)
+        active = {entry["path"]}
+        pending = deque([*entry["target"].split("/"), (entry["path"],)])
+        # Expand links before processing '..'; end markers allow finite repeated links.
+        while pending:
+            component = pending.popleft()
+            if isinstance(component, tuple):
+                active.remove(component[0])
+                continue
+            if component in {"", "."}:
+                continue
+            require(by_path.get("/".join(resolved), {}).get("kind") == "directory",
+                    "archive symlink target parent is not a directory")
+            if component == "..":
+                require(len(resolved) > 1, "archive symlink escapes Products")
+                resolved.pop()
+                continue
+            name = "/".join([*resolved, component])
+            target = by_path.get(name)
+            require(target is not None, "archive symlink target is not in the file list")
+            if target["kind"] == "symlink":
+                require(name not in active, "archive symlink loop")
+                active.add(name)
+                pending.extendleft(reversed([*target["target"].split("/"), (name,)]))
+            else:
+                resolved.append(component)
 
 
 def inventory(products):
@@ -83,7 +134,6 @@ def inventory(products):
         require(entry["mode"] & 0o7000 == 0, "special permission bits are forbidden")
         if path.is_symlink():
             entry.update(kind="symlink", target=os.readlink(path))
-            safe_link(name, entry["target"])
         elif path.is_file():
             entry.update(kind="file", sha256=file_hash(path), size=metadata.st_size)
         elif path.is_dir():
@@ -91,6 +141,7 @@ def inventory(products):
         else:
             raise ContractError("unsupported archive entry")
         entries.append(entry)
+    validate_links(entries)
     return entries
 
 
@@ -117,13 +168,30 @@ def artifact_name(platform, run_id, attempt):
     return f"build-{platform}-{run_id}-{attempt}"
 
 
+def measure_signing(app):
+    display = subprocess.run(["codesign", "-dv", "--verbose=2", str(app)],
+                             capture_output=True, text=True, timeout=120)
+    require(display.returncode == 0, "built app is unsigned or its signature cannot be inspected")
+    signatures = [line.partition("=")[2] for line in (display.stdout + display.stderr).splitlines()
+                  if line.startswith("Signature=")]
+    require(signatures == ["adhoc"], "built app must have Signature=adhoc")
+    return signatures[0]
+
+
+def record_signing(summary, signature):
+    require(signature == "adhoc", "built app must have Signature=adhoc")
+    summary["toolchain"]["versions"]["codesign_signature"] = signature
+    # Keep the canonical summary enum, deriving it only from the measured signature.
+    summary["toolchain"]["signing_mode"] = "sign-to-run-locally"
+
+
 def make_manifest(products, *, identity, run_id, attempt, platform, architecture, xcode_build,
-                  source_path, archive_sha, pins_sha):
+                  source_path, archive_sha, pins_sha, signing_mode):
     return {"schema_version": 1, "identity": parse_identity(identity),
             "producer": {"run_id": run_id, "attempt": attempt, "workflow_path": WORKFLOW,
                          "artifact_name": artifact_name(platform, run_id, attempt)},
             "platform": platform, "configuration": "Debug", "architectures": architecture,
-            "xcode_build": xcode_build, "pins_sha256": pins_sha, "signing_mode": "sign-to-run-locally",
+            "xcode_build": xcode_build, "pins_sha256": pins_sha, "signing_mode": signing_mode,
             "private_configuration_present": False, "source_path": str(source_path.resolve()),
             "products_path": str(products.resolve()),
             "archive_sha256": archive_sha, "files": inventory(products)}
@@ -141,7 +209,7 @@ def validate_manifest(manifest, expected_identity, run_id, attempt, platform, xc
     require(manifest["platform"] == platform and manifest["configuration"] == "Debug", "build platform mismatch")
     require(manifest["xcode_build"] == xcode_build and manifest["pins_sha256"] == pins_sha,
             "build toolchain/pins mismatch")
-    require(manifest["signing_mode"] == "sign-to-run-locally" and manifest["private_configuration_present"] is False,
+    require(manifest["signing_mode"] == "adhoc" and manifest["private_configuration_present"] is False,
             "archive was not built secret-free with local simulator signing")
     require(isinstance(manifest["architectures"], list) and bool(manifest["architectures"])
             and all(arch in {"arm64", "x86_64"} for arch in manifest["architectures"])
@@ -175,12 +243,15 @@ def validate_manifest(manifest, expected_identity, run_id, attempt, platform, xc
             safe_link(entry["path"], entry["target"])
     require(any(entry["path"] == "Products" and entry["kind"] == "directory" for entry in entries),
             "missing Products root")
+    validate_links(entries)
 
 
 def validate_artifact(metadata, identity, run_id, attempt, platform, artifact_id):
     integer(artifact_id, 1, "artifact ID")
     integer(attempt, 1, "producer attempt")
-    require(metadata.get("id") == artifact_id and metadata.get("expired") is False, "artifact ID absent or expired")
+    if metadata.get("expired") is not False:
+        raise ArchiveUnavailableError("artifact ID absent or expired")
+    require(metadata.get("id") == artifact_id, "artifact ID mismatch")
     require(metadata.get("name") == artifact_name(platform, run_id, attempt), "artifact producer attempt mismatch")
     run = metadata.get("workflow_run", {})
     require(str(run.get("id")) == run_id, "artifact run mismatch")
@@ -196,6 +267,7 @@ def pack_products(products, path):
 
 
 def extract_products(path, destination, manifest):
+    validate_links(manifest["files"])
     require(file_hash(path) == manifest["archive_sha256"], "archive hash mismatch")
     require(not os.path.lexists(destination), "extraction path must be fresh")
     expected = {entry["path"]: entry for entry in manifest["files"]}
@@ -219,7 +291,7 @@ def extract_products(path, destination, manifest):
                 if str(parent) != ".":
                     require(expected.get(str(parent), {}).get("kind") == "directory", "archive parent is not a directory")
         destination.mkdir(parents=True)
-        # All members and every ancestor have been admitted; hard links/devices are forbidden.
+        # All members, link chains and ancestors are checked; hard links/devices are forbidden.
         for member in sorted(members, key=lambda item: (not item.isdir(), len(PurePosixPath(item.name).parts))):
             handle.extract(member, destination, set_attrs=True)
     require(inventory(destination / "Products") == manifest["files"], "extracted file hashes or metadata mismatch")
@@ -245,11 +317,12 @@ def output(key, value):
             handle.write(f"{key}={value}\n")
 
 
-def context():
+def context(*, require_clean=True):
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
     identity = run_identity(os.environ, ci=ci)
     require(identity["event"] in {"pull_request", "push", "local"}, "ci-gate accepts only PR/main push identities")
-    require(identity.get("dirty") is not True, "build archives require a clean committed tree")
+    if require_clean:
+        require(identity.get("dirty") is not True, "build archives require a clean committed tree")
     workflow, fork = source_metadata(identity, os.environ, WORKFLOW if ci else None)
     return {"identity": identity, "source": {"repository": identity["repository"], "event": identity["event"],
             "workflow_path": workflow, "fork_originated": fork, "ci_changing": None},
@@ -258,14 +331,55 @@ def context():
 
 
 def record(context, platform, job):
-    versions = toolchain()
-    versions["signing_mode"] = "sign-to-run-locally"
+    # Preflight/selection failures must be recorded without starting Xcode or setup.
+    versions = {"versions": {"python": host_platform.python_version()}, "signing_mode": "not-applicable"}
     return {"schema_version": 1, "identity": context["identity"], "source": context["source"],
             "run": {"id": context["run_id"], "attempt": context["attempt"], "tier": "build", "job": job, "shard": platform},
             "hashes": {"manifests": {}, "policies": {"build-archive": file_hash(Path(__file__))}},
             "toolchain": versions, "population": {"declared": [], "compiled": [], "observed": [],
                                                     "deselected": [], "removed_by_pr": []},
             "infrastructure": [], "status": "unverified"}
+
+
+def record_failure(summary, step, error, code, started, infrastructure_code):
+    if isinstance(error, WorkspacePreflightError):
+        infrastructure_code = "workspace-preflight-failed"
+    elif isinstance(error, (ArchiveUnavailableError, FileNotFoundError)) or (
+            isinstance(error, urllib.error.HTTPError) and error.code in {404, 410}):
+        infrastructure_code = "archive-unavailable"
+    elif isinstance(error, ContractError) and (infrastructure_code == "archive-selection-failed" or
+                                             str(error) == "build identity mismatch"):
+        infrastructure_code = "archive-identity-mismatch"
+    message = str(error) if isinstance(error, (ContractError, CommandError)) else type(error).__name__
+    message += "; " + RERUN_ADVICE
+    summary["status"] = "failed"
+    summary["infrastructure"] = [{"code": infrastructure_code, "message": message}]
+    summary["population"]["observed"] = [observation(step, "timed-out" if code == 124 else "failed",
+                                                     time.monotonic() - started, exit_code=code)]
+    print(message, file=sys.stderr)
+
+
+def run_preflight(args):
+    ctx = context(require_clean=False)
+    summary = record(ctx, args.platform, "workspace-preflight")
+    step = test_identity("host", "workspace preflight", **({"platform": args.platform} if args.platform else {}))
+    summary["population"]["declared"] = [step]
+    summary["population"]["compiled"] = [step]
+    summary["population"]["observed"] = [observation(step, "not-run", 0, reason="workspace preflight has not completed", exit_code=None)]
+    write_summary(summary, args.output_dir)
+    started = time.monotonic()
+    code = 1
+    try:
+        workspace_preflight(ROOT)
+        summary["status"] = "passed"
+        summary["population"]["observed"] = [observation(step, "passed", time.monotonic() - started)]
+        print("Build workspace preflight PASS: no private configuration")
+        code = 0
+    except (OSError, ValueError) as error:
+        record_failure(summary, step, error, code, started, "workspace-preflight-failed")
+    finally:
+        write_summary(summary, args.output_dir)
+    return code
 
 
 def checked_command(command, timeout=120):
@@ -275,7 +389,7 @@ def checked_command(command, timeout=120):
 def run_build(args):
     ctx = context()
     summary = record(ctx, args.platform, "build-" + args.platform)
-    args.output_dir.mkdir(parents=True, exist_ok=False)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     records = args.output_dir / "records"
     step = test_identity("host", "secret-free build archive", platform=args.platform, configuration="Debug")
     summary["population"]["declared"] = [step]
@@ -291,6 +405,7 @@ def run_build(args):
         pins_sha = file_hash(pins_path)
         summary["hashes"]["manifests"]["ci-pins"] = pins_sha
         disk_before = disk_check(args.min_free_gib)
+        summary["toolchain"] = toolchain()
         command = ["xcodebuild", "build-for-testing", "-project", str(ROOT / "immichSlides.xcodeproj"),
                    "-scheme", SCHEMES[args.platform], "-testPlan", SCHEMES[args.platform],
                    "-configuration", "Debug", "-destination", "generic/platform=" + DESTINATIONS[args.platform],
@@ -304,6 +419,9 @@ def run_build(args):
         products = args.derived_data_path / "Build/Products"
         check_products(products)
         binary = next(products.glob("Debug-*simulator/immichSlides.app/immichSlides"))
+        signature = measure_signing(binary.parent)
+        record_signing(summary, signature)
+        print("Measured app signature: " + signature, flush=True)
         architectures = checked_command(["xcrun", "lipo", "-archs", str(binary)]).split()
         developer = Path(os.environ.get("DEVELOPER_DIR") or checked_command(["xcode-select", "-p"]))
         xcode_build = plistlib.loads((developer.parent / "version.plist").read_bytes())["ProductBuildVersion"]
@@ -313,7 +431,7 @@ def run_build(args):
         pack_products(products, archive_path)
         manifest = make_manifest(products, identity=ctx["identity"], run_id=ctx["run_id"] or "local", attempt=ctx["attempt"],
                                  platform=args.platform, architecture=architectures, xcode_build=xcode_build,
-                                 source_path=ROOT, archive_sha=file_hash(archive_path), pins_sha=pins_sha)
+                                 source_path=ROOT, archive_sha=file_hash(archive_path), pins_sha=pins_sha, signing_mode=signature)
         write_json(archive_dir / "manifest.json", manifest)
         disk = {"before_gib": disk_before, "after_gib": default_data_available_gib(),
                 "products_bytes": sum(entry.get("size", 0) for entry in manifest["files"]),
@@ -329,33 +447,46 @@ def run_build(args):
         code = 0
     except (OSError, ValueError, CommandError, subprocess.SubprocessError) as error:
         code = code or 1
-        summary["status"] = "failed"
-        summary["infrastructure"] = [{"code": "build-archive-failed", "message": str(error) if isinstance(error, (ContractError, CommandError)) else type(error).__name__}]
-        summary["population"]["observed"] = [observation(step, "timed-out" if code == 124 else "failed",
-                                                         time.monotonic() - started, exit_code=code)]
-        print(summary["infrastructure"][0]["message"], file=sys.stderr)
-        code = code or 1
+        record_failure(summary, step, error, code, started, "build-archive-failed")
     finally:
         write_summary(summary, records)
     return code
 
 
 def run_select(args):
-    ctx = context()
-    require(ctx["run_id"] is not None, "artifact selection requires a CI run")
-    require(args.producer_attempt <= ctx["attempt"], "producer attempt is in the future")
-    repository = ctx["identity"]["repository"]
-    request = urllib.request.Request(f"https://api.github.com/repos/{repository}/actions/artifacts/{args.artifact_id}",
-                                     headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
-                                              "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        metadata = json.load(response)
-    validate_artifact(metadata, ctx["identity"], ctx["run_id"], args.producer_attempt, args.platform, args.artifact_id)
-    ctx.update(artifact_id=args.artifact_id, producer_attempt=args.producer_attempt, platform=args.platform,
-               pins_sha256=file_hash(ROOT / "scripts/ci-pins.json"))
-    write_json(args.selection_path, ctx)
-    print(f"Selected artifact ID {args.artifact_id}, producer attempt {args.producer_attempt}, consumer attempt {ctx['attempt']}")
-    return 0
+    ctx = context(require_clean=False)
+    summary = record(ctx, args.platform, "artifact-selection")
+    step = test_identity("host", "artifact selection", platform=args.platform)
+    summary["population"]["declared"] = [step]
+    summary["population"]["compiled"] = [step]
+    summary["population"]["observed"] = [observation(step, "not-run", 0, reason="artifact selection has not completed", exit_code=None)]
+    write_summary(summary, args.output_dir)
+    started = time.monotonic()
+    code = 1
+    try:
+        workspace_preflight(ROOT)
+        require(ctx["identity"].get("dirty") is not True, "build archives require a clean committed tree")
+        require(ctx["run_id"] is not None, "artifact selection requires a CI run")
+        require(args.producer_attempt <= ctx["attempt"], "producer attempt is in the future")
+        repository = ctx["identity"]["repository"]
+        request = urllib.request.Request(f"https://api.github.com/repos/{repository}/actions/artifacts/{args.artifact_id}",
+                                         headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                                                  "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            metadata = json.load(response)
+        validate_artifact(metadata, ctx["identity"], ctx["run_id"], args.producer_attempt, args.platform, args.artifact_id)
+        ctx.update(artifact_id=args.artifact_id, producer_attempt=args.producer_attempt, platform=args.platform,
+                   pins_sha256=file_hash(ROOT / "scripts/ci-pins.json"))
+        write_json(args.selection_path, ctx)
+        print(f"Selected artifact ID {args.artifact_id}, producer attempt {args.producer_attempt}, consumer attempt {ctx['attempt']}")
+        summary["status"] = "passed"
+        summary["population"]["observed"] = [observation(step, "passed", time.monotonic() - started)]
+        code = 0
+    except (OSError, ValueError, KeyError) as error:
+        record_failure(summary, step, error, code, started, "archive-selection-failed")
+    finally:
+        write_summary(summary, args.output_dir)
+    return code
 
 
 def run_proof(args):
@@ -364,7 +495,7 @@ def run_proof(args):
     step = test_identity("host", "relocated fixture tests", platform=ctx["platform"], configuration="Debug")
     summary["population"]["declared"] = [step]
     summary["population"]["compiled"] = [step]
-    args.output_dir.mkdir(parents=True, exist_ok=False)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     summary["population"]["observed"] = [observation(step, "not-run", 0, reason="relocation has not completed", exit_code=None)]
     write_summary(summary, args.output_dir)
     started = time.monotonic()
@@ -388,6 +519,11 @@ def run_proof(args):
         extract_products(args.archive_dir / "build.tar.gz", args.relocated_path, manifest)
         summary["hashes"]["manifests"] = {"ci-pins": ctx["pins_sha256"], "build": file_hash(manifest_path)}
         before = disk_check(args.min_free_gib)
+        summary["toolchain"] = toolchain()
+        app = next((args.relocated_path / "Products").glob("Debug-*simulator/immichSlides.app"))
+        signature = measure_signing(app)
+        require(signature == manifest["signing_mode"], "relocated app signing mode mismatch")
+        record_signing(summary, signature)
         devices = json.loads(checked_command(["xcrun", "simctl", "list", "devicetypes", "--json"]))["devicetypes"]
         device_name = pins["device_types"]["iphone" if ctx["platform"] == "ios" else "appletv"]
         device = next(item["identifier"] for item in devices if item["name"] == device_name)
@@ -404,7 +540,7 @@ def run_proof(args):
         official = read_official_test_results_summary(result_path)
         tests = json.loads(checked_command(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(result_path), "--compact"]))
         proof = {"artifact_id": ctx["artifact_id"], "producer_attempt": ctx["producer_attempt"],
-                 "consumer_attempt": ctx["attempt"], "identity": ctx["identity"],
+                 "consumer_attempt": ctx["attempt"], "identity": ctx["identity"], "signing_mode": signature,
                  "build_source_absent": True, "relocated_path": str(args.relocated_path),
                  "selectors": PROOF_SELECTORS, "official_counts": official.__dict__, "official_tests": tests,
                  "disk_before_gib": before, "disk_after_gib": default_data_available_gib()}
@@ -419,12 +555,7 @@ def run_proof(args):
         code = 0
     except (OSError, ValueError, CommandError, subprocess.SubprocessError) as error:
         code = code or 1
-        summary["status"] = "failed"
-        message = str(error) if isinstance(error, (ContractError, CommandError)) else type(error).__name__
-        summary["infrastructure"] = [{"code": "relocation-failed", "message": message}]
-        summary["population"]["observed"] = [observation(step, "timed-out" if code == 124 else "failed", time.monotonic() - started, exit_code=code)]
-        print(message, file=sys.stderr)
-        code = code or 1
+        record_failure(summary, step, error, code, started, "relocation-failed")
     finally:
         if simulator:
             subprocess.run(["xcrun", "simctl", "shutdown", simulator], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -437,7 +568,9 @@ def run_proof(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("preflight")
+    preflight = commands.add_parser("preflight")
+    preflight.add_argument("--platform", choices=SCHEMES)
+    preflight.add_argument("--output-dir", type=Path, required=True)
     build = commands.add_parser("build")
     build.add_argument("--platform", choices=SCHEMES, required=True)
     build.add_argument("--output-dir", type=Path, required=True)
@@ -448,6 +581,7 @@ def main(argv=None):
     select.add_argument("--artifact-id", type=int, required=True)
     select.add_argument("--producer-attempt", type=int, required=True)
     select.add_argument("--selection-path", type=Path, required=True)
+    select.add_argument("--output-dir", type=Path, required=True)
     proof = commands.add_parser("proof")
     proof.add_argument("--selection-path", type=Path, required=True)
     proof.add_argument("--archive-dir", type=Path, required=True)
@@ -456,10 +590,6 @@ def main(argv=None):
     proof.add_argument("--min-free-gib", type=int, default=80)
     args = parser.parse_args(argv)
     try:
-        if args.command == "preflight":
-            workspace_preflight(ROOT)
-            print("Build workspace preflight PASS: no private configuration")
-            return 0
         if hasattr(args, "min_free_gib"):
             require(args.min_free_gib >= 0, "disk threshold must be nonnegative")
         for name in ("output_dir", "derived_data_path", "selection_path", "archive_dir", "relocated_path"):
@@ -467,7 +597,7 @@ def main(argv=None):
                 path = getattr(args, name).resolve()
                 require(path != ROOT and ROOT not in path.parents, "archive outputs must be outside the source checkout")
                 setattr(args, name, path)
-        return {"build": run_build, "select": run_select, "proof": run_proof}[args.command](args)
+        return {"preflight": run_preflight, "build": run_build, "select": run_select, "proof": run_proof}[args.command](args)
     except (OSError, ValueError, CommandError, subprocess.SubprocessError) as error:
         print(f"Build archive FAIL: {error if isinstance(error, (ContractError, CommandError)) else type(error).__name__}", file=sys.stderr)
         return 1
