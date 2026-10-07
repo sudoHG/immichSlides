@@ -87,10 +87,12 @@ The rules are:
   and inline interpreter code after an artifact download fail closed. Inline `gh run
   download` and artifact API downloads are rejected; use the pinned download action with
   an isolated destination and parse data through reviewed repository scripts.
+  Artifact data cannot supply executable search paths or interpreter startup variables
+  such as `PATH`, `BASH_ENV`, `PYTHONPATH` or `NODE_OPTIONS`.
 - `ci-publisher` may be referenced only by `ci-publish.yml`, `ci-approval.yml` and
   `ci-approve.yml`; `ci-approval` only by `ci-approval.yml`; `release` only by
-  `ci-release.yml`. Environment names must be literal so expressions cannot hide a
-  protected environment.
+  `ci-release.yml`. Protected names are matched case-insensitively, as on GitHub.
+  Environment names must be literal so expressions cannot hide a protected environment.
 
 This is a static workflow guard, not a proof of arbitrary shell, action or repository
 script behavior. Reviewers must inspect trusted parser scripts and pinned actions for

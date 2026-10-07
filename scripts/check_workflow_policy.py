@@ -202,8 +202,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if "environment" in job:
             environment = job["environment"]
             name = environment.get("name") if isinstance(environment, dict) else environment
+            normalized_name = name.casefold() if isinstance(name, str) else None
             if (not isinstance(name, str) or "${{" in name
-                    or (name in ENVIRONMENT_WORKFLOWS and path not in ENVIRONMENT_WORKFLOWS[name])):
+                    or (normalized_name in ENVIRONMENT_WORKFLOWS and path not in ENVIRONMENT_WORKFLOWS[normalized_name])):
                 flag(location, "environment", "Protected environments are bound to named workflows; names must be literal")
         steps = job.get("steps")
         if "uses" not in job and (not isinstance(steps, list) or not steps):
@@ -215,6 +216,14 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             flag(location, "action-pin", "Remote uses must have a full commit SHA; container actions need a sha256 digest")
         if not trusted:
             continue
+        environment = item.get("env", {})
+        loader_variables = {"PATH", "BASH_ENV", "ENV", "PYTHONPATH", "PYTHONHOME", "NODE_OPTIONS",
+                            "RUBYLIB", "PERL5LIB", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"}
+        if isinstance(environment, dict) and any(
+                key in loader_variables and isinstance(value, str)
+                and ("ci-artifacts" in value or (has_download and "$" in value))
+                for key, value in environment.items()):
+            flag(location, "artifact-execution", "Artifact data must not control executable search or interpreter startup")
         uses = item.get("uses", "")
         options = item.get("with", {})
         if not isinstance(options, dict):

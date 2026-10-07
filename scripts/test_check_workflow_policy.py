@@ -186,7 +186,7 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_protected_environments_are_bound_to_named_workflows(self):
         for environment, allowed in [("ci-publisher", TRUSTED), ("ci-approval", ".github/workflows/ci-approval.yml"),
                                      ("release", ".github/workflows/ci-release.yml")]:
-            for value in [environment, {"name": environment}]:
+            for value in [environment, environment.upper(), {"name": environment}]:
                 with self.subTest(value=value):
                     document = workflow()
                     document["jobs"]["check"]["steps"][0]["with"] = {"ref": "main"}
@@ -196,6 +196,16 @@ class WorkflowPolicyTests(unittest.TestCase):
         document = workflow()
         document["jobs"]["check"]["environment"] = "${{ inputs.environment }}"
         self.assertIn("environment", self.rules(document))
+
+    def test_trusted_artifacts_cannot_be_injected_through_loader_environment(self):
+        for key, value in [("PATH", "ci-artifacts:$PATH"), ("BASH_ENV", "ci-artifacts/env"),
+                           ("PYTHONPATH", "ci-artifacts"), ("NODE_OPTIONS", "--require ci-artifacts/init.js"),
+                           ("ENV", "${{ steps.download.outputs.path }}")]:
+            with self.subTest(key=key):
+                document = self.trusted()
+                document["jobs"]["check"]["steps"].append({"uses": f"actions/download-artifact@{SHA}", "with": {"path": "ci-artifacts"}})
+                document["env"] = {key: value}
+                self.assertIn("artifact-execution", self.rules(document, TRUSTED))
 
     def test_malformed_or_ambiguous_yaml_fails_closed(self):
         for source in ["on: [", "on: pull_request\non: push", "[]", "", "jobs: {}", "on: 7",
