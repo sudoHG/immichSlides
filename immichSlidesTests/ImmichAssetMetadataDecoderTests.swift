@@ -97,7 +97,9 @@ struct ImmichAssetMetadataDecoderTests {
 
     private func decodeFixture(_ name: String) throws -> Asset {
         let fixtureURL = try #require(
-            Bundle(for: ImmichAssetMetadataBundleToken.self).url(forResource: name, withExtension: "json"),
+            Bundle(for: ImmichAssetMetadataBundleToken.self).url(
+                forResource: name, withExtension: "json", subdirectory: "Fixtures/ImmichAssetMetadata"
+            ),
             "Missing bundled metadata fixture: \(name).json"
         )
         let fixtureData = try Data(contentsOf: fixtureURL)

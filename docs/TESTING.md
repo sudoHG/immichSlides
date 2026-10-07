@@ -38,9 +38,12 @@ Prefer extending an existing test file. A new test file needs a reason in the pu
 
 A test must be able to fail. Anything that only produces screenshots, logs or numbers without judging them is evidence tooling. It belongs in the `Evidence` test plan.
 
-Unit test fixtures stay under `immichSlidesTests/Fixtures/`. The synchronized unit test target copies
-them into `immichSlidesTests.xctest` on both platforms. Look them up by resource name and extension
-with `Bundle(for:)` and a class declared in the unit test target, never with `#filePath` or `Bundle.main`.
+Unit test fixtures stay under `immichSlidesTests/Fixtures/`. The synchronized unit test target marks
+`Fixtures` as an explicit resource folder and copies it into `immichSlidesTests.xctest` on both platforms.
+This preserves subdirectories and PNG bytes, including the hashes checked by the pause-hold test;
+individual PNG resources would otherwise go through Xcode's PNG processing. Look them up by resource
+name, extension and `Fixtures/...` subdirectory with `Bundle(for:)` and a class declared in the unit
+test target, never with `#filePath` or `Bundle.main`.
 Require the resource URL so a missing fixture fails the test. The compiled tests must work without
 the source checkout; see [Relocated unit tests](#relocated-unit-tests).
 

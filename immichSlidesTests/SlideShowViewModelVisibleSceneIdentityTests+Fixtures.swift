@@ -453,7 +453,7 @@ extension SlideShowViewModelVisibleSceneIdentityTests {
         var pngs: [String: Data] = [:]
         for assetId in assetIds {
             let url = try #require(
-                bundle.url(forResource: assetId, withExtension: "png"),
+                bundle.url(forResource: assetId, withExtension: "png", subdirectory: "Fixtures/StrictE2ESetA"),
                 "Missing bundled scene fixture: \(assetId).png"
             )
             pngs[assetId] = try Data(contentsOf: url)
