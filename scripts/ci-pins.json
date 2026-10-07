@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "runner": "xcode-27",
+  "xcode": {
+    "version": "27.0",
+    "build": "27A266a",
+    "developer_dir": "/Applications/Xcode_27.0.app/Contents/Developer"
+  },
+  "simulators": {
+    "ios": {"version": "27.0", "build": "24A434", "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0"},
+    "tvos": {"version": "27.0", "build": "24J360", "runtime": "com.apple.CoreSimulator.SimRuntime.tvOS-27-0"}
+  },
+  "device_types": {
+    "iphone": "iPhone 17e",
+    "ipad": "iPad Air 11-inch (M4)",
+    "appletv": "Apple TV 4K (3rd generation)"
+  },
+  "python": "3.14.7",
+  "python_packages": {"pip": "26.2.1", "Pillow": "12.3.0", "PyYAML": "6.0.3"},
+  "zstd": "1.5.7"
+}
