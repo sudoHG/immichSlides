@@ -63,8 +63,12 @@ developer directory and Xcode `Contents/version.plist` version/build. It also re
 `Announcement` issues in the official [actions/runner-images repository](https://github.com/actions/runner-images/labels/Announcement)
 without authentication; the repository-scoped issue token is used only for local tracking issues.
 It matches the selected runner's checked affected-image entries and pinned Xcode removal,
-deprecation or replacement statements in the title and Breaking changes section. Explicit
-older-than cutoffs also cover a pin below the announced minimum. Announcements for other
+deprecation or replacement statements in the title and Breaking changes section, including
+`Xcode versions` lists separated by commas, `and` or `&`. Exact versions are compared in
+full after padding omitted minor/patch components with zero: removing `12.5` covers
+`12.5.0`, but does not cover a retained `12.5.1`. Only explicit major-series wording
+(such as `all Xcode 27 versions`), wildcards (`27.*`, `27.0.x`) and older-than cutoffs
+match a range. Announcements for other
 images or tools, installation notices and statements that retain the pin stay quiet.
 The source is prose rather than a machine-readable removal contract: new announcement
 formats can require parser updates. Missing on-runner inventory is checked independently.
@@ -88,17 +92,19 @@ exit 1 and no response-body/token logging. Exit 0 means the probe was quiet or s
 reported an alert; it does not mean a missing toolchain was repaired. Build entry points
 continue to reject unavailable pins.
 
-After this workflow and script land on `main`, run both acceptance cases:
+After this workflow and script land on `main`, run the quiet case and the simulation twice.
+Dispatch one at a time and wait for its successful completion before starting the next:
 
 ```bash
 gh workflow run ci-probe.yml --ref main -f simulate_missing_pin=false
+gh workflow run ci-probe.yml --ref main -f simulate_missing_pin=true
 gh workflow run ci-probe.yml --ref main -f simulate_missing_pin=true
 gh run list --workflow ci-probe.yml --event workflow_dispatch --limit 5
 gh run view <run-id> --log
 ```
 
 The real-pin run must say `quiet` and create no issue (unless an actual removal is already
-announced). The simulation must link an opened or updated simulation issue; rerunning it
+announced). The first simulation must open its tracking issue; the repeated simulation
 must update the same open issue. Inspect that issue's marker/run link, then close only that
 test issue with `gh issue close <simulation-issue-number> --reason completed`, using plain
 `gh` as the maintainer identity. This cleanup needs no bot comment. Pre-merge hosted

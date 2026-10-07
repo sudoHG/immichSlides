@@ -81,6 +81,16 @@ def version_tuple(value):
     return parts + (0,) * (3 - len(parts))
 
 
+def announced_version_matches(pin_version, version, *, major_series):
+    pinned = version_tuple(pin_version)
+    if version.lower().endswith((".x", ".*")):
+        prefix = tuple(int(part) for part in version.split(".")[:-1])
+        return pinned[:len(prefix)] == prefix
+    if major_series and "." not in version:
+        return pinned[0] == int(version)
+    return pinned == version_tuple(version)
+
+
 def removal_announcements(pins, issues):
     findings = []
     runner = pins["runner"]
@@ -110,10 +120,15 @@ def removal_announcements(pins, issues):
             if re.search(r"\b(remain\w*|keep\w*|not remov\w*|not drop\w*|does not remov\w*)\b", sentence, re.I):
                 continue
             floor = re.search(r"Xcode (?:versions? )?(?:older than|below|before|less than) (\d+(?:\.\d+){0,2})", sentence, re.I)
-            subjects = re.findall(r"\bXcode\s+((?:\d+(?:\.\d+){0,2})(?:(?:\s*,\s*|\s+and\s+|\s*,?\s*and\s+)\d+(?:\.\d+){0,2})*)",
-                                  re.split(r"\b(?:by|with)\b", sentence, maxsplit=1)[0], re.I)
-            versions = [value for subject in subjects for value in re.findall(r"\d+(?:\.\d+){0,2}", subject)]
-            affected = any(pin_version == value or pin_version.startswith(value + ".") for value in versions)
+            version_pattern = r"\d+(?:\.\d+){0,2}(?:\.[xX*])?"
+            separator = r"(?:\s*,?\s*(?:and|&)\s*|\s*,\s*)"
+            subjects = re.finditer(
+                r"\b(?:(all)\s+)?Xcode\s+(?:versions?\s+)?(" + version_pattern +
+                r"(?:" + separator + version_pattern + r")*)(?:\s+(?:major\s+)?(series|versions))?",
+                re.split(r"\b(?:by|with)\b", sentence, maxsplit=1)[0], re.I)
+            affected = any(announced_version_matches(pin_version, value,
+                major_series=subject[1] is not None or subject[3] is not None)
+                for subject in subjects for value in re.findall(version_pattern, subject[2]))
             if floor:
                 affected = version_tuple(pin_version) < version_tuple(floor[1])
             if affected:

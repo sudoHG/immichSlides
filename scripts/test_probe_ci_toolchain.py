@@ -37,9 +37,41 @@ class ToolchainProbeTests(unittest.TestCase):
                 "### Breaking changes\nXcode 27.0 will be removed.\n### Runner images affected\n"
                 "- [ ] Xcode 27 Arm64\n- [x] macOS 15\n"}, False),
         ]
-        for issue, expected in cases:
-            with self.subTest(issue=issue):
-                self.assertEqual(expected, bool(probe.removal_announcements(self.pins, [issue])))
+        cases = [(self.pins, issue, expected) for issue, expected in cases]
+        # Replay the removal wording and affected image from runner-images#5463.
+        versions_removed = {"title": "[macOS] Xcode removal", "body":
+            "### Breaking changes\nWe are going to deprecate Xcode versions 13.2 & 13.3 from the image.\n"
+            "### Virtual environments affected\n- [X] macOS 12\n",
+            "html_url": "https://github.com/actions/runner-images/issues/5463"}
+        for version, expected in [("13.2", True), ("13.3", True), ("13.3.1", False)]:
+            pins = dict(self.pins, runner="macos-12", xcode=dict(self.pins["xcode"], version=version))
+            cases.append((pins, versions_removed, expected))
+        # runner-images#4183 removes 12.5 while directing users to the retained 12.5.1.
+        old_patch_removed = {"title": "[macOS] Xcode removal", "body":
+            "### Breaking changes\nXcode 12.5 will be removed from macOS 11 Big Sur on October, 18.\n"
+            "### Virtual environments affected\n- [X] macOS 11\n"
+            "### Mitigation ways\nUse the retained Xcode 12.5.1.\n",
+            "html_url": "https://github.com/actions/runner-images/issues/4183"}
+        for version, expected in [("12.5", True), ("12.5.0", True), ("12.5.1", False)]:
+            pins = dict(self.pins, runner="macos-11", xcode=dict(self.pins["xcode"], version=version))
+            cases.append((pins, old_patch_removed, expected))
+        for version, wording, expected in [
+            ("27.0.0", "Xcode 27.0 will be removed.", True),
+            ("27.0.1", "Xcode 27.0 will be removed. Xcode 27.0.1 remains installed.", False),
+            ("27.1", "Xcode 27 will be removed.", False),
+            ("27.1", "The Xcode 27 series will be removed.", True),
+            ("27.1", "All Xcode 27 versions will be removed.", True),
+            ("27.1", "Xcode versions 27.* will be removed.", True),
+            ("27.0.1", "Xcode 27.0.x will be removed.", True),
+            ("27.1", "Xcode 27.0.x will be removed.", False),
+            ("27.0.1", "Xcode versions older than 27.0.2 will be removed.", True),
+            ("27.0.2", "Xcode versions older than 27.0.2 will be removed.", False),
+        ]:
+            pins = dict(self.pins, xcode=dict(self.pins["xcode"], version=version))
+            cases.append((pins, self.announcement(wording), expected))
+        for pins, issue, expected in cases:
+            with self.subTest(pin=pins["xcode"]["version"], issue=issue):
+                self.assertEqual(expected, bool(probe.removal_announcements(pins, [issue])))
 
     def test_inventory_reports_absence_or_build_mismatch_without_selecting_another_xcode(self):
         import plistlib
