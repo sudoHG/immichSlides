@@ -55,8 +55,8 @@ def local_repository():
         return None
 
 
-def run_identity(env):
-    event = env.get("GITHUB_EVENT_NAME", "local")
+def run_identity(env, *, ci=False):
+    event = env.get("GITHUB_EVENT_NAME") if ci else "local"
     repository = local_repository() if event == "local" else env.get("GITHUB_REPOSITORY")
     commit = git("rev-parse", "HEAD")
     identity = {"schema_version": 1, "event": event, "repository": repository,
@@ -76,10 +76,14 @@ def run_identity(env):
         if commit != env.get("GITHUB_SHA"):
             raise ContractError("checkout does not match pushed GITHUB_SHA")
         identity.update(ref=env.get("GITHUB_REF"), pushed_sha=commit)
+    elif event == "workflow_dispatch":
+        if commit != env.get("GITHUB_SHA"):
+            raise ContractError("checkout does not match dispatched GITHUB_SHA")
+        identity.update(ref=env.get("GITHUB_REF"), commit_sha=commit)
     elif event == "local":
         identity.update(commit_sha=commit, dirty=bool(git("status", "--porcelain")))
     else:
-        raise ContractError("host entry point supports local, pull_request and main push only")
+        raise ContractError("CI identity supports pull_request, main push and workflow_dispatch only")
     return parse_identity(identity)
 
 
@@ -177,12 +181,13 @@ def stop_group(process):
 def run_steps(steps, repo_root, *, timeout_seconds=900):
     records, infrastructure = [], []
     deadline = time.monotonic() + timeout_seconds
+    interrupted = False
     for name, command in steps:
         print(f"\n==> {name}", flush=True)
         started = time.monotonic()
         remaining = deadline - started
         code, outcome = None, "not-run"
-        message = f"{name}: host-check time budget exhausted"
+        message = f"{name}: not run after interruption" if interrupted else f"{name}: host-check time budget exhausted"
         process = None
         try:
             if remaining > 0:
@@ -204,6 +209,7 @@ def run_steps(steps, repo_root, *, timeout_seconds=900):
             if process:
                 stop_group(process)
             outcome, message = "not-run", f"{name}: interrupted"
+            interrupted = True
             deadline = 0
             infrastructure.append({"code": "interrupted", "message": message})
         elapsed = round(time.monotonic() - started, 6)
@@ -219,7 +225,7 @@ def main():
         'Python 3.14 fixture stall: https://github.com/sudoHG/immichSlides/issues/122'))
     parser.add_argument("--output-dir", type=Path, help="Outside the repository; default is a new temporary directory")
     parser.add_argument("--timeout-seconds", type=float, default=900, help="Total host-check budget; default 900")
-    parser.add_argument("--workflow-path", help="Optional CI path assertion, cross-checked with GITHUB_WORKFLOW_REF")
+    parser.add_argument("--workflow-path", help="Enable CI identity; assert this path against GITHUB_WORKFLOW_REF. Omit for local identity, regardless of CI environment")
     args = parser.parse_args()
     if not 0 < args.timeout_seconds <= 1200:
         parser.error("--timeout-seconds must be in (0, 1200]")
@@ -231,7 +237,7 @@ def main():
         if (output / filename).exists():
             parser.error("--output-dir must not contain results of an earlier run")
     try:
-        identity = run_identity(os.environ)
+        identity = run_identity(os.environ, ci=args.workflow_path is not None)
         is_ci = identity["event"] != "local"
         workflow_path, fork = source_metadata(identity, os.environ, args.workflow_path)
         print(f"Python interpreter: {sys.executable} ({platform.python_version()})", flush=True)
@@ -273,7 +279,7 @@ def main():
         else:
             summary["status"] = "unverified"
             summary["infrastructure"].append({"code": "skip-policy-pending", "message":
-                "Coverage includes skips or missing class members; expected-skip policy is introduced separately"})
+                "Coverage includes skips or unexecuted tests; expected-skip policy is introduced separately"})
         write_summary(summary, output)
         print(f"\nRESULT: {summary['status'].upper()}\nSummary: {output / 'summary.json'}", flush=True)
         return 0 if command_passed else 1

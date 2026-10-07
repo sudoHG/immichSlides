@@ -74,6 +74,7 @@ def validate_identity_v1(payload):
     variants = {
         "pull_request": {"pull_request", "merge_sha", "base_sha", "head_sha"},
         "push": {"ref", "pushed_sha"},
+        "workflow_dispatch": {"ref", "commit_sha"},
         "local": {"commit_sha", "dirty"},
     }
     require(event in variants, "unsupported identity event")
@@ -89,6 +90,9 @@ def validate_identity_v1(payload):
         integer(payload["pull_request"], 1, "pull_request")
     elif event == "push":
         require(payload["ref"] == "refs/heads/main", "push identity requires refs/heads/main")
+    elif event == "workflow_dispatch":
+        require(isinstance(payload["ref"], str) and re.fullmatch(r"refs/(heads|tags)/[^\s]+", payload["ref"]) is not None,
+                "workflow_dispatch identity requires a branch or tag ref")
     else:
         require(type(payload["dirty"]) is bool, "dirty must be boolean")
 
@@ -261,7 +265,8 @@ def render_markdown(payload):
     for entry in population["observed"]:
         if entry["identity"]["kind"] == "python" and entry["outcome"] == "passed":
             continue
-        message = "; ".join(a["reason"] or a["message"] or "" for a in entry["attempts"])
+        message = "; ".join(detail for attempt in entry["attempts"]
+                            for detail in (attempt["reason"], attempt["message"]) if detail)
         lines.append(f"| {markdown_text(entry['identity']['key'])} | {entry['outcome']} | {entry['duration_seconds']:.3f} | {markdown_text(message)} |")
     for entry in population["deselected"]:
         lines.append(f"| {markdown_text(entry['identity']['key'])} | deselected | — | {markdown_text(entry['reason'])}; owned by {markdown_text(entry['owning_tier'])} |")

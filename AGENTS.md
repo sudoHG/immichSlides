@@ -67,7 +67,7 @@ These rules exist because past work "passed" while users still saw failures. The
 The Python checks require Python 3 with Pillow and PyYAML, Swift (included with Xcode), and the zstd CLI (`brew install zstd`). Every `check_all.sh` Python step uses `"${PYTHON:-python3}"`. Recommend `PYTHON=/usr/bin/python3` or an active venv made from that Xcode-bundled interpreter; see [CONTRIBUTING.md](CONTRIBUTING.md#setup) for installation. Python 3.14 has a known [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
 
 ```bash
-# Every fast check in one go: formatting, test conventions, release guards, localization, Python tests
+# All host checks: formatting, test conventions, release guards, localization, prerequisites, workflow policy, Python tests
 scripts/check_all.sh
 
 # Offline unit tests (pick a local simulator UDID with `xcrun simctl list devices available`)

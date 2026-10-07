@@ -32,12 +32,16 @@ command, expected failure, missing result, empty Python suite or infrastructure 
 exit 2. `--timeout-seconds` sets the total
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
+An interruption records remaining checks as `not-run` with "not run after interruption".
 
 Host checks do not compile the app, read private configuration or receive ambient
 Immich/test-runner configuration. They run the intended working files directly.
 Local dirty runs record the HEAD commit and tree with `dirty: true`; that tree is
 explicitly not proof of the changed working files. Snapshot builds belong to the
 separate build entry point.
+Without `--workflow-path`, the entry point always records a local identity, even
+inside GitHub Actions. Only that explicit flag enables CI identity and the associated
+GitHub event, workflow and run metadata. `check_all.sh` does not enable CI identity.
 
 ## Version 1
 
@@ -61,7 +65,7 @@ producer data, not its provenance or a trusted verdict.
 
 Source repository/event must match the identity. CI requires a workflow path below
 `.github/workflows/`, a run ID and a boolean fork-origin flag. The producer derives
-the path from `GITHUB_WORKFLOW_REF` and cross-checks `--workflow-path` if supplied.
+the path from `GITHUB_WORKFLOW_REF` and cross-checks the explicitly required `--workflow-path`.
 A deleted PR head repository is conservatively recorded as fork-originated.
 Classification is not
 implemented by the host producer: `ci_changing: null` means **unclassified**, never
@@ -88,12 +92,15 @@ origin is absent or cannot be interpreted), and lowercase Git
 | --- | --- |
 | `pull_request` | Positive integer `pull_request`, `merge_sha`, `base_sha`, `head_sha` |
 | `push` | `ref` equal to `refs/heads/main`, `pushed_sha` |
+| `workflow_dispatch` | `ref` under `refs/heads/` or `refs/tags/`, `commit_sha` |
 | `local` | `commit_sha`, boolean `dirty` |
 
 For a PR, the producer requires checkout HEAD to equal `GITHUB_SHA` and reads exactly
 two parents from that commit: first parent is base, second parent is head. It never
 substitutes the trigger payload's base/head claims. The tree comes from that merge
-commit. A push requires HEAD to equal `GITHUB_SHA` and the main ref. A later trusted
+commit. A push requires HEAD to equal `GITHUB_SHA` and the main ref. A manual dispatch
+requires HEAD to equal `GITHUB_SHA` and records the selected branch or tag's full
+`GITHUB_REF`; it does not claim to be a PR merge or a main push. A later trusted
 publisher compares these claims with its own admission record/API observations.
 
 ### Population and observations
@@ -124,8 +131,14 @@ never retries. A failed retry retains all attempts and a nonpassing final attemp
 other entries have one matching attempt. Parameterized producers
 can use the optional `parameter` dimension for per-parameter evidence while retaining
 the function key used by static enumeration. Subtest failures in Python fail the
-parent identity. Every subtest skip retains its parameter identity and reason in
-the parent's attempt reason. Expected failures and unexpected successes return
+parent identity and retain each failing subtest's parameter identity and failure
+message. Every subtest skip retains its parameter identity and reason in
+the parent's attempt reason. When both occur, JSON and Markdown retain both the
+skip reasons and failure messages. A `setUpClass` or `setUpModule` `SkipTest` records
+every discovered member of that class or module as `skipped` with the fixture's
+reason, without a synthetic setup test identity. A setup error remains a failed
+fixture observation, and its unexecuted members remain `not-run`.
+Expected failures and unexpected successes return
 exit 1 and do not count as passes.
 
 Each deselection is `{identity, reason, owning_tier}` with nonempty reason and owner.

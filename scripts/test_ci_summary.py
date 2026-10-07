@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -130,13 +131,15 @@ class SummaryContractTests(unittest.TestCase):
         with self.assertRaises(ci_summary.ContractError):
             ci_summary.parse_summary(summary)
 
-    def test_pr_and_push_identity_schemas_fail_closed(self):
+    def test_ci_identity_schemas_fail_closed(self):
         pr = {"schema_version": 1, "event": "pull_request", "repository": "sudoHG/immichSlides",
               "pull_request": 86, "merge_sha": "a" * 40, "base_sha": "b" * 40,
               "head_sha": "c" * 40, "tree_sha": "d" * 40}
         push = {"schema_version": 1, "event": "push", "repository": "sudoHG/immichSlides",
                 "ref": "refs/heads/main", "pushed_sha": "a" * 40, "tree_sha": "b" * 40}
-        for identity in (pr, push):
+        dispatch = {"schema_version": 1, "event": "workflow_dispatch", "repository": "sudoHG/immichSlides",
+                    "ref": "refs/heads/feature", "commit_sha": "a" * 40, "tree_sha": "b" * 40}
+        for identity in (pr, push, dispatch):
             self.assertEqual(ci_summary.parse_identity(json.dumps(identity)), identity)
             for key in identity:
                 broken = dict(identity)
@@ -146,6 +149,9 @@ class SummaryContractTests(unittest.TestCase):
         push["ref"] = "refs/heads/other"
         with self.assertRaises(ci_summary.ContractError):
             ci_summary.parse_identity(push)
+        for ref in (None, "", "main", "refs/pull/120/merge"):
+            with self.subTest(ref=ref), self.assertRaises(ci_summary.ContractError):
+                ci_summary.parse_identity(dict(dispatch, ref=ref))
 
 
 class HostResultTests(unittest.TestCase):
@@ -169,7 +175,10 @@ class HostResultTests(unittest.TestCase):
                             ("status", "--porcelain"): ""}[args]
 
                 with patch.object(run_host_checks, "git", side_effect=answers):
-                    identity = run_host_checks.run_identity({})
+                    # Ambient CI configuration must not switch a local caller into CI mode.
+                    identity = run_host_checks.run_identity({"GITHUB_EVENT_NAME": "workflow_dispatch",
+                                                             "GITHUB_REPOSITORY": "other/repo"})
+                self.assertEqual(identity["event"], "local")
                 self.assertEqual(identity["repository"], repository)
                 summary = valid_summary()
                 summary["identity"] = identity
@@ -212,15 +221,24 @@ class HostResultTests(unittest.TestCase):
             env = {"GITHUB_REPOSITORY": "sudoHG/immichSlides", "GITHUB_EVENT_NAME": "pull_request",
                    "GITHUB_SHA": "a" * 40, "GITHUB_EVENT_PATH": str(event_path)}
             with patch.object(run_host_checks, "git", side_effect=lambda *args: answers[args]):
-                identity = run_host_checks.run_identity(env)
+                identity = run_host_checks.run_identity(env, ci=True)
                 self.assertEqual((identity["base_sha"], identity["head_sha"]), ("b" * 40, "c" * 40))
                 env["GITHUB_SHA"] = "0" * 40
                 with self.assertRaises(ci_summary.ContractError):
-                    run_host_checks.run_identity(env)
+                    run_host_checks.run_identity(env, ci=True)
                 env["GITHUB_SHA"] = "a" * 40
                 answers[("cat-file", "commit", "a" * 40)] = "parent " + "b" * 40 + "\n\nMerge message"
                 with self.assertRaises(ci_summary.ContractError):
-                    run_host_checks.run_identity(env)
+                    run_host_checks.run_identity(env, ci=True)
+                for event, ref, field in (("push", "refs/heads/main", "pushed_sha"),
+                                          ("workflow_dispatch", "refs/heads/feature", "commit_sha")):
+                    with self.subTest(event=event):
+                        trigger = dict(env, GITHUB_EVENT_NAME=event, GITHUB_REF=ref)
+                        identity = run_host_checks.run_identity(trigger, ci=True)
+                        self.assertEqual((identity["event"], identity["ref"], identity[field]),
+                                         (event, ref, "a" * 40))
+                        with self.assertRaises(ci_summary.ContractError):
+                            run_host_checks.run_identity(dict(trigger, GITHUB_SHA="0" * 40), ci=True)
 
     def test_python_failures_skips_subtests_and_empty_suites_never_report_success(self):
         class Sample(unittest.TestCase):
@@ -238,6 +256,12 @@ class HostResultTests(unittest.TestCase):
                 for fixture in ("A", "B"):
                     with self.subTest(fixture=fixture):
                         self.skipTest(f"missing fixture {fixture}")
+
+            def test_mixed_subtests(self):
+                with self.subTest(fixture="A"):
+                    self.skipTest("fixture A unavailable")
+                with self.subTest(fixture="B"):
+                    self.fail("fixture B failed")
 
             @unittest.expectedFailure
             def test_unexpected_success(self):
@@ -260,7 +284,14 @@ class HostResultTests(unittest.TestCase):
             self.assertIn(f"missing fixture {fixture}", reason)
             self.assertIn(f"fixture='{fixture}'", reason)
             self.assertIn(f"missing fixture {fixture}", markdown)
-        self.assertEqual(len(payload["compiled"]), 5)
+        mixed = outcomes["test_mixed_subtests"]
+        self.assertEqual(mixed["outcome"], "failed")
+        summary["population"]["observed"] = [mixed]
+        summary["status"] = "failed"
+        markdown = ci_summary.render_markdown(ci_summary.parse_summary(summary))
+        for detail in ("fixture A unavailable", "fixture='B'", "AssertionError", "fixture B failed"):
+            self.assertIn(detail, markdown)
+        self.assertEqual(len(payload["compiled"]), 6)
         empty, code = run_python_tests.run_suite(unittest.TestSuite(), io.StringIO())
         self.assertEqual(code, 1)
         self.assertEqual(empty["observed"], [])
@@ -271,18 +302,11 @@ class HostResultTests(unittest.TestCase):
             def test_expected_failure(self):
                 self.fail("known failure")
 
-            @unittest.expectedFailure
-            def test_unexpected_success(self):
-                self.assertTrue(True)
-
-        for name, message in (("test_expected_failure", "expected failure"),
-                              ("test_unexpected_success", "unexpected success")):
-            with self.subTest(name=name):
-                payload, code = run_python_tests.run_suite(unittest.TestSuite([Sample(name)]), io.StringIO())
-                self.assertEqual(code, 1)
-                entry = payload["observed"][0]
-                self.assertEqual(entry["outcome"], "failed")
-                self.assertIn(message, entry["attempts"][0]["message"])
+        payload, code = run_python_tests.run_suite(unittest.defaultTestLoader.loadTestsFromTestCase(Sample), io.StringIO())
+        self.assertEqual(code, 1)
+        entry = payload["observed"][0]
+        self.assertEqual(entry["outcome"], "failed")
+        self.assertIn("expected failure", entry["attempts"][0]["message"])
 
     def test_python_class_setup_error_names_failure_and_accounts_for_missing_tests(self):
         class Sample(unittest.TestCase):
@@ -298,19 +322,37 @@ class HostResultTests(unittest.TestCase):
         self.assertEqual([entry["outcome"] for entry in payload["observed"]], ["failed", "not-run"])
         self.assertIn("setUpClass", payload["observed"][0]["identity"]["key"])
 
-    def test_python_class_skip_keeps_legacy_cli_verdict_and_records_unverified_members(self):
+    def test_python_fixture_skip_records_every_discovered_member_with_its_reason(self):
         class Sample(unittest.TestCase):
-            @classmethod
-            def setUpClass(cls):
-                raise unittest.SkipTest("external calibration screenshots unavailable")
-
             def test_never_started(self):
                 self.fail("must not run")
 
-        payload, code = run_python_tests.run_suite(unittest.defaultTestLoader.loadTestsFromTestCase(Sample), io.StringIO())
-        self.assertEqual(code, 0)
-        self.assertEqual([entry["outcome"] for entry in payload["observed"]], ["skipped", "not-run"])
-        self.assertEqual(payload["observed"][0]["attempts"][0]["reason"], "external calibration screenshots unavailable")
+            def test_also_never_started(self):
+                self.fail("must not run")
+
+        def skip_fixture(*args):
+            raise unittest.SkipTest("external calibration screenshots unavailable")
+
+        class OtherSample(Sample):
+            pass
+
+        module = types.ModuleType("fixture_skip_regression")
+        for scope in ("class", "module"):
+            with self.subTest(scope=scope), patch.dict(sys.modules, {module.__name__: module}), \
+                    patch.object(Sample, "__module__", module.__name__), \
+                    patch.object(OtherSample, "__module__", module.__name__), \
+                    patch.object(Sample, "setUpClass", classmethod(skip_fixture) if scope == "class" else classmethod(lambda cls: None)), \
+                    patch.object(module, "setUpModule", skip_fixture if scope == "module" else lambda: None, create=True):
+                suite = unittest.defaultTestLoader.loadTestsFromTestCase(Sample)
+                if scope == "module":
+                    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(OtherSample))
+                payload, code = run_python_tests.run_suite(suite, io.StringIO())
+                self.assertEqual(code, 0)
+                self.assertEqual([entry["identity"] for entry in payload["observed"]], payload["compiled"])
+                self.assertEqual([entry["outcome"] for entry in payload["observed"]],
+                                 ["skipped"] * (2 if scope == "class" else 4))
+                for entry in payload["observed"]:
+                    self.assertEqual(entry["attempts"][0]["reason"], "external calibration screenshots unavailable")
 
     def test_host_class_skip_preserves_cli_success_and_never_labels_summary_passed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -324,12 +366,13 @@ class HostResultTests(unittest.TestCase):
                         for name, _ in run_host_checks.HOST_CHECKS], []
 
             with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
-                    patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                    patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]) as identity_call, \
                     patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                     patch.object(run_host_checks, "run_steps", side_effect=steps), \
                     contextlib.redirect_stdout(io.StringIO()):
                 code = run_host_checks.main()
             self.assertEqual(code, 0)
+            identity_call.assert_called_once_with(os.environ, ci=False)
             summary = ci_summary.parse_summary((output / "summary.json").read_text())
             self.assertEqual(summary["status"], "unverified")
             self.assertEqual(summary["population"]["observed"][-1]["attempts"][0]["reason"], "external screenshots unavailable")
@@ -345,6 +388,15 @@ class HostResultTests(unittest.TestCase):
             self.assertIn("format", records[0]["attempts"][0]["message"])
             self.assertEqual(records[0]["attempts"][0]["exit_code"], 3)
             self.assertEqual(infrastructure[0]["code"], "step-timeout")
+            with patch.object(run_host_checks.subprocess, "Popen") as spawn, \
+                    patch.object(run_host_checks, "stop_group"), contextlib.redirect_stdout(io.StringIO()):
+                spawn.return_value.wait.side_effect = KeyboardInterrupt
+                records, infrastructure = run_host_checks.run_steps(steps, root, timeout_seconds=3)
+            self.assertEqual(spawn.call_count, 1)
+            self.assertEqual(infrastructure[0]["code"], "interrupted")
+            for entry in records[1:]:
+                self.assertEqual(entry["outcome"], "not-run")
+                self.assertIn("not run after interruption", entry["attempts"][0]["message"])
 
     def test_timeout_kills_a_surviving_child_after_the_parent_exits(self):
         code = """import os, signal, time

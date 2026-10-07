@@ -13,19 +13,20 @@ from pathlib import Path
 from ci_summary import observation, test_identity
 
 
-def test_ids(suite):
+def test_cases(suite):
     for test in suite:
         if isinstance(test, unittest.TestSuite):
-            yield from test_ids(test)
+            yield from test_cases(test)
         else:
-            yield test.id()
+            yield test
 
 
 class RecordingResult(unittest.TextTestResult):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, fixture_members, **kwargs):
         super().__init__(*args, **kwargs)
         self.observed = []
         self.current = None
+        self.fixture_members = fixture_members
 
     def startTest(self, test):
         super().startTest(test)
@@ -59,17 +60,18 @@ class RecordingResult(unittest.TextTestResult):
         super().addSubTest(test, subtest, err)
         if err is not None:
             self.outcome = "failed"
-            self.message = f"{test.id()}: subtest {err[0].__name__}"
+            message = f"{subtest.id()}: {err[0].__name__}: {err[1]}"
+            self.message = "; ".join(filter(None, (self.message, message)))
 
     def addSkip(self, test, reason):
         super().addSkip(test, reason)
+        reason = reason or "No skip reason provided by unittest"
         if self.current is None:
-            self.observed.append(observation(test_identity("python", test.id()), "skipped", 0,
-                                             reason=reason, exit_code=None))
+            for identity in self.fixture_members.get(test.id(), []):
+                self.observed.append(observation(identity, "skipped", 0, reason=reason, exit_code=None))
             return
         if self.outcome != "failed":
             self.outcome = "skipped"
-        reason = reason or "No skip reason provided by unittest"
         self.skip_reasons.append(reason if test is self.current else f"{test.id()}: {reason}")
         self.reason = "; ".join(self.skip_reasons)
 
@@ -92,8 +94,19 @@ class RecordingResult(unittest.TextTestResult):
 
 
 def run_suite(suite, stream):
-    compiled = [test_identity("python", key) for key in test_ids(suite)]
-    result = unittest.TextTestRunner(stream=stream, verbosity=1, resultclass=RecordingResult).run(suite)
+    # Snapshot discovery before unittest consumes the suite or skips a fixture's members.
+    cases = list(test_cases(suite))
+    compiled = [test_identity("python", test.id()) for test in cases]
+    fixture_members = {}
+    for test, identity in zip(cases, compiled):
+        cls = type(test)
+        for fixture in (f"setUpClass ({cls.__module__}.{cls.__qualname__})", f"setUpModule ({cls.__module__})"):
+            fixture_members.setdefault(fixture, []).append(identity)
+
+    def result_class(*args, **kwargs):
+        return RecordingResult(*args, fixture_members=fixture_members, **kwargs)
+
+    result = unittest.TextTestRunner(stream=stream, verbosity=1, resultclass=result_class).run(suite)
     observed_keys = {entry["identity"]["key"] for entry in result.observed}
     for identity in compiled:
         if identity["key"] not in observed_keys:

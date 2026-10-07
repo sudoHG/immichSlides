@@ -54,7 +54,7 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Run this before every push; it is the same set of checks a reviewer will run:
 
   ```bash
-  scripts/check_all.sh                     # swift-format lint, test conventions, release guards, localization, Python tests
+  scripts/check_all.sh                     # formatting, conventions, release guards, localization, prerequisites, workflow policy, Python tests
   scripts/check_all.sh --with-unit-tests \
       --ios-destination 'platform=iOS Simulator,id=<UDID>' \
       --tvos-destination 'platform=tvOS Simulator,id=<UDID>' \
