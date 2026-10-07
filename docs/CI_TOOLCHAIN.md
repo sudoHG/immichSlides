@@ -47,8 +47,91 @@ builds; inventory does not require build space. Ordinary Python setup does not r
 The bounded [CI toolchain workflow](../.github/workflows/ci-toolchain.yml) proves setup,
 inventory, policy, its unit tests and the existing host checks on `xcode-27` for relevant pull requests and manual
 dispatches. Its runner selector must match the pins file; GitHub chooses a runner before
-it can read repository files. This workflow is not the PR gate or the scheduled toolchain
-probe: those are separate epic tickets.
+it can read repository files. This workflow is separate from the PR gate and the scheduled
+toolchain probe below.
+
+## Scheduled Xcode probe
+
+[ci-probe](../.github/workflows/ci-probe.yml) runs daily at 08:17 UTC on the pinned
+`xcode-27` runner, with a 20-minute job deadline. Its runner selector must follow
+`scripts/ci-pins.json`. It checks out the repository's default branch with persisted
+checkout credentials disabled and reuses `scripts/setup_ci_python.py`. It never builds,
+boots a simulator, installs platform resources or chooses another Xcode.
+
+`/usr/bin/python3 scripts/probe_ci_toolchain.py` reports two independent signals:
+
+- **Pinned toolchain missing:** the scheduled runner must contain the pinned developer
+  directory and exact Xcode `Contents/version.plist` version/build. With that pinned
+  `DEVELOPER_DIR`, `xcrun simctl list runtimes --json` must contain exactly one available
+  runtime matching each pinned iOS/tvOS identifier, version and build, using the same
+  inventory rules as `scripts/setup_ci_python.py`. Missing, unavailable or mismatched
+  inventory opens or updates a high-confidence `pinned toolchain missing` issue per
+  runner/Xcode version/build. The probe reports it before attempting upstream reads.
+- **Possible toolchain change - please check:** anonymous reads of the official
+  [arm64 image toolset](https://github.com/actions/runner-images/blob/main/images/macos/toolsets/toolset-xcode-27.json)
+  check whether the exact `version+build` Xcode pin is still listed. This verified
+  machine-readable source describes image build configuration, not the deployed runner;
+  its `install_runtimes: default` does not specify exact runtime builds. Separately, any
+  open [Announcement issue](https://github.com/actions/runner-images/labels/Announcement)
+  whose combined title/body contains `Xcode` (case insensitive) and the pinned major
+  number triggers the same early-warning issue. The number must not be part of a larger
+  integer: `27.1` matches major 27, while `127` and `270` do not. The words/numbers need
+  not be adjacent. No removal grammar, affected-image checkboxes, beta exclusions or
+  runtime/stable-version interpretation are used. Beta/runtime changes, installation
+  notices, retained versions, other images and unrelated numeric mentions can all warn;
+  these false positives are intentional. This issue quotes all matched announcement
+  links and any missing-toolset-pin link and never asserts an actual pinned removal.
+  One stable marker per runner/Xcode major keeps all early warnings in one open issue,
+  even when the exact minor version or build changes.
+
+When inventory is present, the upstream toolset lists the pin and no open announcement
+mentions Xcode with its major, both signals say `quiet` and perform no issue writes.
+Each signal has its own stable body marker and bot-authored tracking issue. Updates retain
+the issue number and comments and replace the generated title/body with current findings
+and the run/attempt link. The repository-scoped issue token is used only for local
+tracking issues. The probe never closes issues automatically. A manual missing-pin
+simulation uses a separate inventory marker and `[SIMULATION]` title, so it cannot update
+a real missing or possible-change issue; genuine early warnings still report normally.
+Workflow concurrency serializes issue lookup and creation without cancelling a running probe.
+
+The job receives only `contents: read` and `issues: write` through `GITHUB_TOKEN`; workflow
+permissions are `{}`. No App, secret or environment setup is needed. The entry point
+rejects the wrong event, ref or workflow path before reading its token, and manual dispatch
+requires the repository owner. The only input is boolean `simulate_missing_pin`; it changes
+an inventory finding, never checkout code, pins or permissions. Branch dispatch is rejected.
+API requests have 30-second deadlines and complete pagination is required (at most 20 pages
+per query). Network errors, invalid data and duplicate matching issues fail closed with
+exit 1 and no response-body/token logging. Exit 0 means the probe was quiet or successfully
+reported an alert; it does not mean a missing toolchain was repaired. Build entry points
+continue to reject unavailable pins.
+
+After this workflow and script land on `main`, run the quiet case and the simulation twice.
+Dispatch one at a time and wait for its successful completion before starting the next:
+
+```bash
+gh workflow run ci-probe.yml --ref main -f simulate_missing_pin=false
+gh workflow run ci-probe.yml --ref main -f simulate_missing_pin=true
+gh workflow run ci-probe.yml --ref main -f simulate_missing_pin=true
+gh run list --workflow ci-probe.yml --event workflow_dispatch --limit 5
+gh run view <run-id> --log
+```
+
+The real-pin run must say `quiet` for the `missing` signal and create no missing-toolchain
+issue. Its `possible` signal may independently warn about matched upstream sources; if
+there are none, it must also say `quiet`. The first simulation must open its tracking issue; the repeated simulation
+must update the same open issue. Inspect that issue's marker/run link, then close only that
+test issue with `gh issue close <simulation-issue-number> --reason completed`, using plain
+`gh` as the maintainer identity. This cleanup needs no bot comment. Pre-merge hosted
+dispatch acceptance is `PENDING_POST_MERGE`: do not register a temporary workflow or execute
+PR code in this trusted job just to produce an early run. Issue #92 stays open until the
+coordinator records all three dispatch receipts. The Python seam tests prove the
+inventory, announcement, open/update, simulation isolation and quiet decisions before merge:
+
+```bash
+python3 -B -m unittest discover -s scripts -p test_probe_ci_toolchain.py
+python3 -B -m unittest discover -s scripts -p test_check_workflow_policy.py
+python3 -B scripts/check_workflow_policy.py
+```
 
 ## Workflow policy
 
@@ -67,6 +150,10 @@ The rules are:
 - Permissions must be explicit mappings, including `{}` for no grants. A workflow-level
   mapping may supply each job's permissions; jobs may override it. Blanket permission
   strings are rejected. Each job needs a literal `timeout-minutes` from 1 through 360.
+  Issue writes are reserved for the exact `ci-probe.yml` and `ci-report.yml` paths.
+  `ci-probe.yml` additionally requires the display name `ci-probe`, both scheduled and
+  manual triggers only, workflow permissions `{}`, and exactly `contents: read` plus
+  `issues: write` at job level.
 - Only `.github/workflows/privacy-preflight.yml` may use `pull_request_target`.
 - Only `ci-publish.yml` and `ci-report.yml` may use `workflow_run`. The former lists
   `ci-gate` and/or `ci-ui`; the latter lists `ci-nightly` and/or `ci-gate` (post-merge
@@ -90,6 +177,9 @@ The rules are:
   Other shell syntax, redirection, pipelines, global Git options, dynamic arguments,
   arbitrary entry points and artifact path arguments fail closed. Additional trusted
   entry points and argument contracts require an explicit policy change and review.
+  Only `ci-probe.yml` may also run the exact setup command shown in its workflow and
+  `/usr/bin/python3 scripts/probe_ci_toolchain.py`, without additional arguments or shell
+  commands. This exception does not authorize those commands in another trusted workflow.
 - Trusted remote actions must be both SHA-pinned and on the input allowlist:
   `actions/checkout` (`ref`, `repository`, `fetch-depth`, `persist-credentials`) or
   `actions/download-artifact` (`path`, `name`, `pattern`, `run-id`, `github-token`,
@@ -105,7 +195,9 @@ The rules are:
   or use shells other than literal `bash`/`sh`. Job containers and services are rejected.
   Workflow/job/step environment bindings must be explicitly reviewed; currently only the
   privacy workflow's `PRIVACY_PR_NUMBER`, `PRIVACY_HEAD_SHA` and `PRIVACY_BASE_SHA` bindings
-  to their corresponding event fields are allowed. Interpreter startup/search variables
+  to their corresponding event fields, and ci-probe's `CI_PROBE_TOKEN` binding to
+  `${{ github.token }}` and `CI_PROBE_SIMULATE_MISSING_PIN` binding to
+  `${{ inputs.simulate_missing_pin || false }}` are allowed. Interpreter startup/search variables
   such as `PATH`, `BASH_ENV`, `PYTHONPATH` and `NODE_OPTIONS` cannot be overridden.
 - `ci-publisher` may be referenced only by `ci-publish.yml`, `ci-approval.yml` and
   `ci-approve.yml`; `ci-approval` only by `ci-approval.yml`; `release` only by

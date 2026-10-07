@@ -13,6 +13,16 @@ import yaml
 
 
 PRIVACY_WORKFLOW = ".github/workflows/privacy-preflight.yml"
+PROBE_WORKFLOW = ".github/workflows/ci-probe.yml"
+ISSUE_WRITE_WORKFLOWS = {PROBE_WORKFLOW, ".github/workflows/ci-report.yml"}
+PROBE_COMMANDS = {
+    '/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"',
+    "/usr/bin/python3 scripts/probe_ci_toolchain.py",
+}
+PROBE_ENVIRONMENT = {
+    "CI_PROBE_TOKEN": "${{ github.token }}",
+    "CI_PROBE_SIMULATE_MISSING_PIN": "${{ inputs.simulate_missing_pin || false }}",
+}
 WORKFLOW_RUN_SOURCES = {
     ".github/workflows/ci-publish.yml": {"ci-gate", "ci-ui"},
     ".github/workflows/ci-report.yml": {"ci-nightly", "ci-gate"},
@@ -128,6 +138,9 @@ def trusted_run_allowed(script, path, events):
     if not isinstance(script, str):
         return False
     script = script.strip()
+    if path == PROBE_WORKFLOW and set(events) <= {"schedule", "workflow_dispatch"} and events:
+        if script in PROBE_COMMANDS:
+            return True
     if path == PRIVACY_WORKFLOW and set(events) == {"pull_request_target"}:
         if script in {PRIVACY_OBJECT_FETCH, "scripts/run_trusted_privacy_preflight.sh"}:
             return True
@@ -202,6 +215,10 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         return violations
     if "permissions" in document and not explicit_permissions(document["permissions"]):
         flag("permissions", "permissions", "Use an explicit permission mapping, including {} for no grants")
+    if path == PROBE_WORKFLOW and (document.get("name") != "ci-probe"
+            or set(events) != {"schedule", "workflow_dispatch"}
+            or document.get("permissions") != {}):
+        flag("workflow", "probe-contract", "ci-probe needs its exact name, scheduled/manual triggers and no workflow-level grants")
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
     for job_id, job in jobs.items():
         location = f"jobs.{job_id}"
@@ -211,6 +228,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         permissions = job.get("permissions", document.get("permissions"))
         if not explicit_permissions(permissions):
             flag(location, "permissions", "Job needs explicit permissions, directly or inherited")
+        if path == PROBE_WORKFLOW and permissions != {"contents": "read", "issues": "write"}:
+            flag(location, "probe-contract", "ci-probe grants only contents: read and issues: write at job level")
         timeout = job.get("timeout-minutes")
         if type(timeout) is not int or not 1 <= timeout <= 360:
             flag(location, "timeout", "Job needs a literal timeout-minutes from 1 to 360")
@@ -239,6 +258,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if trusted and any(key in job for key in ("container", "services")):
             flag(location, "trusted-run", "Trusted jobs cannot start unreviewed containers or services")
     for location, item in walk_mappings(document):
+        permissions = item.get("permissions")
+        if isinstance(permissions, dict) and permissions.get("issues") == "write" and path not in ISSUE_WRITE_WORKFLOWS:
+            flag(location, "issue-write", "Issue writes are reserved for ci-probe and ci-report")
         if "uses" in item and not pinned_action(item["uses"]):
             flag(location, "action-pin", "Remote uses must have a full commit SHA; container actions need a sha256 digest")
         if not trusted:
@@ -248,8 +270,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                             "RUBYLIB", "PERL5LIB", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"}
         if isinstance(environment, dict) and any(key in loader_variables for key in environment):
             flag(location, "artifact-execution", "Artifact data must not control executable search or interpreter startup")
-        if (not isinstance(environment, dict) or any(path != PRIVACY_WORKFLOW
-                or key not in PRIVACY_ENVIRONMENT or value != PRIVACY_ENVIRONMENT[key]
+        bindings = PRIVACY_ENVIRONMENT if path == PRIVACY_WORKFLOW else PROBE_ENVIRONMENT if path == PROBE_WORKFLOW else {}
+        if (not isinstance(environment, dict) or any(key not in bindings or value != bindings[key]
                 for key, value in environment.items())):
             flag(location, "trusted-environment", "Trusted environment variables need an explicit reviewed binding")
         if "defaults" in item:
