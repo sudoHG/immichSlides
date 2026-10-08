@@ -84,8 +84,7 @@ jobs:
       - name: Preflight and select the pinned Xcode
         working-directory: ui-source
         run: |
-          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform ios \
-            --output-dir "$RUNNER_TEMP/ui-workspace"
+          /usr/bin/python3 -B -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
           /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
       - name: Verify pins and prepare Python
         working-directory: ui-source
