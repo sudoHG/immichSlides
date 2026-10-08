@@ -4,6 +4,18 @@ Rules for adding or changing tests. Each rule can be checked on its own. When in
 
 Existing tests are being migrated to these rules. Do not rewrite unrelated tests while working on something else.
 
+**Local runner default:** script entry points run in a clean snapshot of the
+current tracked working files plus untracked, non-ignored files. They ignore
+ambient test/server inputs and private `Config/env.xcconfig` files or symlinks;
+no link is parked, followed or copied. The tested tree SHA is printed and recorded
+in `local-snapshot.json` beside output/evidence records, or an explicit
+`--snapshot-record` path. `--strict-ci` refuses dirty trees;
+`--allow-private-config` opts into the original checkout for local private testing.
+Use `--config NAME=VALUE` for explicit runtime inputs and run example-config setup
+separately. All existing runner flags remain available. This does not change
+Xcode GUI/direct commands or hosted producer contracts. The full mode/command
+policy is in [CONTRIBUTING](../CONTRIBUTING.md#setup).
+
 ## 0. When to write a test
 
 Every test must guard a failure that can realistically happen again. If you cannot name that failure in one sentence, do not write the test.

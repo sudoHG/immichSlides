@@ -129,16 +129,18 @@ delay every tier. Gate completion never depends on UI completion.
 
 ## Reproduce one shard
 
-From a checkout containing the producer, this one command reads the specified
-manifest revision from a disposable clean checkout, builds once without private
-configuration, starts the fixture server and runs the selected shard. Before
+From a checkout containing the producer, this one command snapshots the current
+working tree (including uncommitted and untracked, non-ignored files), builds once
+without private configuration, starts the fixture server and runs the selected
+shard. It records the tested tree in `local-snapshot.json` and `reproduction.json`,
+and prints the exact build, shard and Xcode test commands. Before
 building it reads that revision's pins, freezes the locally selected Xcode path, verifies its
 version/build, and checks the assigned UDID's exact runtime version/build and
 device type. The local Xcode bundle path may differ from hosted macOS; version
 and build must still match. A missing or mismatched pin fails before any build:
 
 ```bash
-python3 -B scripts/ci_ui_tests.py reproduce --manifest-revision COMMIT_SHA \
+python3 -B scripts/ci_ui_tests.py reproduce \
   --shard visual --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
   --wait-factor 2 --output-dir '<fresh-outside-repo>'
 ```
@@ -154,6 +156,13 @@ Clean those records and any task-owned quarantined failure bundle after recordin
 the necessary results in the PR. An output directory must be fresh and outside
 the source checkout. A revision must contain the producer and manifest.
 
+Pass `--manifest-revision COMMIT_SHA` to explicitly reproduce that historical
+tree instead of the working tree. Use `--strict-ci` to refuse local changes.
+An existing private `Config/env.xcconfig` symlink is left untouched and excluded
+from the snapshot. Ambient test configuration is ignored; the fixture runner
+injects only public set C runtime inputs. Fixture preflight starts its server
+before the fixture runner's build/enumeration and fails if it cannot become ready.
+
 To reuse a previously verified secret-free build locally:
 
 ```bash
@@ -163,8 +172,8 @@ python3 -B scripts/ci_ui_tests.py run --device iphone --shard visual \
   --wait-factor 2 --output-dir '<fresh-outside-repo>'
 ```
 
-This direct mode requires a checkout without `Config/env.xcconfig`, including
-symlinks. It selects the manifest revision's classes against the current default
+This direct mode also snapshots the checkout by default, excluding private
+`Config/env.xcconfig` files and symlinks. It selects the manifest revision's classes against the current default
 plan; use `reproduce` to reproduce the whole historical tree. CI accepts only its
 admitted current manifest and the verified archive path. Commands exit nonzero
 for failed/incomplete coverage, infrastructure, unapproved skips or privacy

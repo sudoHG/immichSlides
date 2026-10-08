@@ -21,6 +21,10 @@ Runs, in order:
  10. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
 
 Options:
+  --strict-ci             Refuse a dirty tree instead of snapshotting it.
+  --allow-private-config  Explicitly use local private configuration; never for public evidence.
+  --config NAME=VALUE     Explicit runtime test configuration (repeatable).
+  --snapshot-record PATH  Keep the tested tree receipt outside the repository.
   --with-unit-tests        Also run scripts/run_offline_unit_tests.py for iOS and tvOS.
   --ios-destination DEST   xcodebuild destination for iOS, e.g. 'platform=iOS Simulator,id=<UDID>'.
   --tvos-destination DEST  xcodebuild destination for tvOS, e.g. 'platform=tvOS Simulator,id=<UDID>'.
@@ -29,7 +33,8 @@ Options:
   -h, --help               Show this help.
 
 Without --with-unit-tests the Xcode tests are skipped; run them before opening a pull request.
-No private configuration is needed.
+By default all checks run in a clean snapshot of tracked working changes and
+untracked, non-ignored files. Ambient and private file configuration are ignored.
 Every Python step uses "${PYTHON:-python3}", honoring an active venv or pyenv.
 Optional unit-test DerivedData stays in .derivedData/check-all-{ios,tvos}.
 EOF
@@ -42,6 +47,12 @@ die_usage() {
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then
+    if [[ "${_IMMICHSLIDES_CI_LOCAL_ROOT:-}" != "$REPO_ROOT" ]]; then
+        exec "${PYTHON:-python3}" -B "$REPO_ROOT/scripts/ci_local.py" "$REPO_ROOT/scripts/check_all.sh" "$@"
+    fi
+fi
 
 with_unit_tests=0
 ios_destination=""

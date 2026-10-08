@@ -109,12 +109,11 @@ def is_placeholder_config(values: dict[str, str]) -> bool:
 def inspect_config(repo_root: Path) -> ConfigInspection:
     env_path = repo_root / ENV_XCCONFIG
     example_path = repo_root / EXAMPLE_XCCONFIG
-    env_exists = env_path.is_file()
+    env_exists = os.path.lexists(env_path)
     example_exists = example_path.is_file()
     example_placeholder = example_exists and is_placeholder_config(parse_xcconfig(example_path))
-    env_placeholder = (
-        is_placeholder_config(parse_xcconfig(env_path)) if env_exists else None
-    )
+    # Presence is sufficient; never open a private file or follow its symlink.
+    env_placeholder = None
 
     lines = [
         f"env.xcconfig: {'present' if env_exists else 'missing'}.",
@@ -127,8 +126,6 @@ def inspect_config(repo_root: Path) -> ConfigInspection:
                 "For local live/UI configuration, use --prepare-example-config; "
                 "copy from the version-controlled example only when env.xcconfig is missing; do not overwrite an existing file."
             )
-    elif env_placeholder:
-        lines.append("Existing env.xcconfig is still a placeholder; it does not mean a real server is configured.")
     else:
         lines.append("Existing env.xcconfig is present. This entry point does not read or print its server URL or key.")
     if example_exists:
@@ -148,7 +145,7 @@ def inspect_config(repo_root: Path) -> ConfigInspection:
 def prepare_example_config(repo_root: Path) -> tuple[bool, str]:
     env_path = repo_root / ENV_XCCONFIG
     example_path = repo_root / EXAMPLE_XCCONFIG
-    if env_path.is_file():
+    if os.path.lexists(env_path):
         return False, "env.xcconfig already exists; not overwritten."
     if not example_path.is_file():
         raise CommandError("Config/env.example.xcconfig is missing; cannot create local configuration.")
@@ -634,4 +631,5 @@ def main(
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from ci_local import local_main
+    raise SystemExit(local_main(main, __file__))

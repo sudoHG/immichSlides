@@ -10,6 +10,7 @@ import json
 import math
 import os
 import platform
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -345,15 +346,17 @@ def reproduction_wait_arguments(source, factor, environment):
 
 
 def reproduce(args):
-    revision = subprocess.check_output(["git", "rev-parse", "--verify", args.manifest_revision + "^{commit}"], cwd=ROOT,
+    revision = subprocess.check_output(["git", "rev-parse", "--verify", (args.manifest_revision or "HEAD") + "^{commit}"], cwd=ROOT,
                                        text=True, timeout=60).strip()
     output_root = args.output_dir.resolve()
     require(ROOT != output_root and ROOT not in output_root.parents, "reproduction output must be outside checkout")
     output_root.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix="ui-reproduction-", dir=output_root) as directory:
-        source = Path(directory, "source")
-        subprocess.run(["git", "clone", "--quiet", "--no-local", str(ROOT), str(source)], check=True, timeout=120)
-        subprocess.run(["git", "checkout", "--quiet", "--detach", revision], cwd=source, check=True, timeout=60)
+        source = ROOT
+        if args.manifest_revision:
+            source = Path(directory, "source")
+            subprocess.run(["git", "clone", "--quiet", "--no-local", str(ROOT), str(source)], check=True, timeout=120)
+            subprocess.run(["git", "checkout", "--quiet", "--detach", revision], cwd=source, check=True, timeout=60)
         workspace_preflight(source)
         manifest = parse_shard_manifest((source / MANIFEST_PATH).read_text())
         require(args.shard in manifest["shards"], "reproduction shard is missing at that revision")
@@ -361,20 +364,40 @@ def reproduce(args):
         from run_fixture_ui_tests import clean_environment
         environment = clean_environment(os.environ)
         wait_arguments = reproduction_wait_arguments(source, args.wait_factor, environment)
+        # The selected source is already isolated, including explicit historical reproduction.
+        from ci_local import CONTEXT
+        environment[CONTEXT] = str(source)
         verify_reproduction_pins(source, args.destination, environment)
+        from strict_e2e_runner_support import wait_for_service, stop_exact_process
+        ready = Path(directory, "fixture-preflight.json")
+        service = subprocess.Popen([sys.executable, "-B", str(source / "scripts/strict_e2e_server.py"),
+                                   "--fixture-set", "c", "--host", "127.0.0.1", "--port", "0",
+                                   "--ready-file", str(ready)], env=environment,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            host, port = wait_for_service(ready, service)
+            print(f"Reproduction fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
+        finally:
+            stop_exact_process(service)
         derived = Path(directory, "derived")
         build_records = Path(directory, "build")
-        completed = subprocess.run([sys.executable, "-B", str(source / "scripts/ci_build_archive.py"), "build", "--platform", "ios",
-                                   "--derived-data-path", str(derived), "--output-dir", str(build_records)], cwd=source,
-                                   env=environment, check=False)
+        build_command = [sys.executable, "-B", str(source / "scripts/ci_build_archive.py"), "build", "--platform", "ios",
+                         "--derived-data-path", str(derived), "--output-dir", str(build_records)]
+        print("Reproduction build command: " + shlex.join(build_command), flush=True)
+        completed = subprocess.run(build_command, cwd=source, env=environment, check=False)
         if completed.returncode:
             return completed.returncode
         runs = list((derived / "Build/Products").glob("*.xctestrun"))
         require(len(runs) == 1, "reproduction build needs one default plan")
-        return subprocess.run([sys.executable, "-B", str(source / "scripts/ci_ui_tests.py"), "run", "--device", "iphone",
-                               "--shard", args.shard, "--manifest-revision", revision, "--destination", args.destination,
-                               "--xctestrun", str(runs[0]), "--output-dir", str(output_root / "records")] + wait_arguments, cwd=source,
-                               env=environment, check=False).returncode
+        shard_command = [sys.executable, "-B", str(source / "scripts/ci_ui_tests.py"), "run", "--device", "iphone",
+                         "--shard", args.shard, "--manifest-revision", revision, "--destination", args.destination,
+                         "--xctestrun", str(runs[0]), "--output-dir", str(output_root / "records")] + wait_arguments
+        print("Reproduction shard command: " + shlex.join(shard_command), flush=True)
+        code = subprocess.run(shard_command, cwd=source, env=environment, check=False).returncode
+        write_json(output_root / "reproduction.json", {"schema_version": 1, "commit_sha": revision,
+                   "tree_sha": subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=source, text=True).strip(),
+                   "historical_revision": args.manifest_revision, "shard": args.shard, "exit_code": code})
+        return code
 
 
 def main(argv=None):
@@ -400,7 +423,7 @@ def main(argv=None):
     run.add_argument("--wait-factor", type=float, default=1)
     run.add_argument("--min-free-gib", type=int, default=80)
     local = commands.add_parser("reproduce")
-    local.add_argument("--manifest-revision", required=True)
+    local.add_argument("--manifest-revision", help="Explicit historical commit; default tests the current working-tree snapshot")
     local.add_argument("--shard", required=True)
     local.add_argument("--destination", required=True)
     local.add_argument("--output-dir", type=Path, required=True)
@@ -448,4 +471,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from ci_local import local_main
+    raise SystemExit(local_main(main, __file__))

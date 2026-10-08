@@ -1253,4 +1253,5 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from ci_local import local_main
+    raise SystemExit(local_main(main, __file__))

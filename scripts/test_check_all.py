@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from ci_local import CONTEXT
 
 SCRIPT = Path(__file__).resolve().parent / "check_all.sh"
 
@@ -47,6 +48,8 @@ class CheckAllTests(unittest.TestCase):
             stub.chmod(0o755)
         self.log = self.tmp / "calls.log"
         self.env = dict(os.environ)
+        # Exercise shell ordering/errors after the separately tested snapshot preflight.
+        self.env[CONTEXT] = str(self.repo.resolve())
         self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
         self.env["STUB_LOG"] = str(self.log)
         self.env.pop("STUB_FAIL_MATCH", None)
