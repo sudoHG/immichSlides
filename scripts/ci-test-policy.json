@@ -1,6 +1,12 @@
 {
   "schema_version": 1,
-  "approval_state": "proposed",
+  "approval_state": "approved",
+  "approval_record": {
+    "approver": "maintainer sudoHG",
+    "date": "2026-10-08",
+    "tier": "host",
+    "link": "https://github.com/sudoHG/immichSlides/issues/88#issuecomment-6050353140"
+  },
   "expected_skips": [
     {
       "kind": "python",

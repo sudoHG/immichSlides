@@ -131,6 +131,10 @@ ios_ui_methods = ui_identities(ui_sources, "ios")
 
 `scripts/ci-test-policy.json` is version 1, with `approval_state`,
 `expected_skips` and `deselections`. Approval states are `proposed` and `approved`.
+An optional `approval_record` records the `approver`, ISO calendar `date`, owning
+`tier` and GitHub comment `link`. It is historical metadata, not approval
+authentication or authorization for later entries/heads; the trusted caller still
+selects policy using the admitted base and exact-head approval.
 Policy approval is a maintainer gate; agents must not perform it.
 Proposed entries never authorize passing exceptions in the verdict library.
 

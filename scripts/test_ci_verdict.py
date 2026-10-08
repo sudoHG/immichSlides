@@ -119,6 +119,18 @@ class PopulationVerdictTests(unittest.TestCase):
         self.assertEqual(self.verdict()["status"], "failed")
 
     def test_malformed_policy_versions_duplicate_rules_and_owner_are_rejected(self):
+        record = {"approver": "maintainer example", "date": "2026-10-08", "tier": "host",
+                  "link": "https://github.com/example/project/issues/1#issuecomment-1"}
+        recorded = dict(policy(), approval_record=record)
+        self.assertEqual(parse_policy(recorded), recorded)
+        for field, value in (("approver", ""), ("date", "2026-02-30"), ("date", "20261008"),
+                             ("tier", ""), ("link", "http://github.com/example/project/issues/1#issuecomment-1"),
+                             ("link", "https://example.com/approval"), ("unknown", "value")):
+            with self.subTest(approval_field=field, value=value), self.assertRaises(ci_summary.ContractError):
+                parse_policy(dict(recorded, approval_record=dict(record, **{field: value})))
+        for malformed in (None, [], {}, {key: value for key, value in record.items() if key != "tier"}):
+            with self.subTest(approval_record=malformed), self.assertRaises(ci_summary.ContractError):
+                parse_policy(dict(recorded, approval_record=malformed))
         for version in (2, True, "1", None):
             with self.subTest(version=version), self.assertRaises(ci_summary.ContractError):
                 parse_policy(dict(policy(), schema_version=version))
@@ -215,6 +227,8 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.summary["run"]["id"] = "42"
         self.jobs[0].update(run_id="42", workflow_paths=[".github/workflows/ci-gate.yml"])
         candidate = policy()
+        candidate["approval_record"] = {"approver": "maintainer example", "date": "2026-10-08", "tier": "host",
+                                        "link": "https://github.com/example/project/issues/1#issuecomment-1"}
         candidate["expected_skips"] = [{"kind": "host", "key_pattern": "format", "dimensions": {},
                                         "tier": "host", "environment": "hermetic", "reason": "fixture unavailable"}]
         self.summary["status"] = "unverified"

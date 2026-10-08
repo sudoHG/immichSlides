@@ -7,6 +7,8 @@ Producer claims never select those inputs or grant approval.
 from __future__ import annotations
 
 import fnmatch
+import re
+from datetime import date
 from pathlib import PurePosixPath
 
 from ci_summary import (ContractError, NON_INFRASTRUCTURE_DIAGNOSTICS, decode, fields, identity_key, integer, parse_identity,
@@ -16,9 +18,24 @@ from ci_population import removed_tests
 
 def parse_policy(raw):
     policy = decode(raw)
-    fields(policy, {"schema_version", "approval_state", "expected_skips", "deselections"}, "test policy")
+    names = {"schema_version", "approval_state", "expected_skips", "deselections"}
+    if isinstance(policy, dict) and "approval_record" in policy:
+        names.add("approval_record")
+    fields(policy, names, "test policy")
     require(type(policy["schema_version"]) is int and policy["schema_version"] == 1, "unsupported test policy version")
     require(policy["approval_state"] in {"proposed", "approved"}, "invalid policy approval state")
+    if "approval_record" in policy:
+        # Historical metadata does not authenticate approval or approve a new head.
+        record = policy["approval_record"]
+        fields(record, {"approver", "date", "tier", "link"}, "approval record")
+        for key in record:
+            string(record[key], "approval " + key)
+        try:
+            require(date.fromisoformat(record["date"]).isoformat() == record["date"], "approval date must be ISO calendar date")
+        except ValueError as error:
+            raise ContractError("approval date must be ISO calendar date") from error
+        require(re.fullmatch(r"https://github\.com/[^/\s]+/[^/\s]+/(?:issues|pull)/[1-9][0-9]*#issuecomment-[1-9][0-9]*",
+                             record["link"]) is not None, "approval link must name a GitHub issue or PR comment")
     for collection in ("expected_skips", "deselections"):
         require(isinstance(policy[collection], list), f"{collection} must be an array")
         seen = set()
