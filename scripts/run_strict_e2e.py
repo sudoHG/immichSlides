@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from datetime import date
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
 
@@ -534,6 +535,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--derived-data-path", type=Path, help="shard-scoped DerivedData outside evidence; retained for reuse")
     parser.add_argument("--cloned-source-packages-path", type=Path, help="shared package downloads outside DerivedData and evidence")
     parser.add_argument("--configuration", choices=("Debug", "Release"), help="explicit shard configuration; defaults to the existing suite setting")
+    parser.add_argument("--listed-retry-device", choices=("iphone", "ipad", "tv"),
+                        help="Enable base-registry listed-only retries for this exact strict device class; requires warm reuse")
     parser.add_argument("--cold-timeout-seconds", type=parse_non_negative_int, help="explicit warm-up budget (default: 300 seconds)")
     parser.add_argument("--warm-timeout-seconds", type=parse_non_negative_int, help="explicit reuse budget (default: 300 seconds)")
     parser.add_argument(
@@ -544,6 +547,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help=f"minimum free GiB required before xcodebuild (default: {MIN_DATA_GIB})",
     )
     arguments = parser.parse_args(argv)
+    if arguments.listed_retry_device and not arguments.test_without_building:
+        parser.error("listed-only retry requires --test-without-building")
+    if arguments.listed_retry_device and (arguments.platform == "tvos") != (arguments.listed_retry_device == "tv"):
+        parser.error("listed retry device does not match platform")
     if not (arguments.warm_up_only or arguments.test_without_building) and (arguments.cold_timeout_seconds is not None or arguments.warm_timeout_seconds is not None):
         parser.error("cold/warm timeout options require explicit warm-up/reuse")
     arguments.cold_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.cold_timeout_seconds is None else arguments.cold_timeout_seconds
@@ -753,7 +760,52 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         if warm_receipt is not None:
             case_manifest["warm_build_identity"] = warm_receipt["identity"]
 
+        effective_result_bundle = result_bundle_path
         def execute_case(command, log_path):
+            nonlocal effective_result_bundle
+            from ci_flaky import check_retry_flags
+            check_retry_flags(command)
+            if arguments.listed_retry_device:
+                from ci_flaky import load_registry, registry_revision, run_xcode_attempts
+                from ci_summary import test_identity
+                registry_ref = registry_revision(REPO_ROOT, os.environ)
+                registry, registry_hash = load_registry(REPO_ROOT, registry_ref)
+                def reset_retry():
+                    with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
+                        log.write(reset_simulator_app(simulator_udid))
+                def execute_attempt(call):
+                    attempt_bundle = Path(call[call.index("-resultBundlePath") + 1])
+                    if call != command and all(path != attempt_bundle for path, _suffix in private_bundles):
+                        original = Path(command[command.index("-resultBundlePath") + 1])
+                        for index, (path, suffix) in enumerate(private_bundles):
+                            if path == original:
+                                private_bundles[index] = (path, suffix + "-attempt-1")
+                        private_bundles.append((attempt_bundle, "-" + log_path.stem + "-attempt-2"))
+                    ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
+                    started = time.monotonic()
+                    attempt_log = log_path if call == command else log_path.with_name(log_path.stem + "-retry.log")
+                    code = run_command(call, cwd=REPO_ROOT, environment=environment, log_path=attempt_log,
+                                       timeout_seconds=arguments.warm_timeout_seconds)
+                    validate_warm_products(derived_data_path, warm_receipt)
+                    return code, time.monotonic() - started
+                def case_identity(key):
+                    return test_identity("strict", key, device=arguments.listed_retry_device,
+                                         configuration=warm_receipt["identity"]["configuration"], suite=arguments.suite,
+                                         scenario=arguments.scenario, fixture=arguments.fixture_set)
+                retry_result = run_xcode_attempts(command, registry, tier="strict", environment="hermetic", today=date.today(),
+                                                 identity_for_key=case_identity, reset=reset_retry, execute=execute_attempt)
+                from strict_e2e_build import write_json
+                write_json(arguments.evidence_dir / (log_path.stem + "-attempts.json"),
+                           dict(retry_result, registry_revision=registry_ref, registry_sha256=registry_hash))
+                effective_result_bundle = Path(retry_result["effective_bundle"])
+                if case_manifest is not None:
+                    case_manifest.setdefault("retry_observations", []).extend(retry_result["observed"])
+                    case_manifest["flaky_registry_sha256"] = registry_hash
+                    case_manifest["flaky_registry_revision"] = registry_ref
+                for record in retry_result["observed"]:
+                    if len(record["attempts"]) > 1:
+                        print(f"{record['identity']['key']}: {record['outcome']}, attempts=2", file=stdout, flush=True)
+                return retry_result["exit_code"]
             started = time.monotonic()
             code = run_command(command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
                                timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else XCODEBUILD_TIMEOUT_SECONDS)
@@ -821,6 +873,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     command = warm_test_command(run, arguments.destination, session_bundle, session["selector"])
                 commands.append(shlex.join(command))
                 exit_code = execute_case(command, session_log)
+                if arguments.listed_retry_device:
+                    session_bundle = effective_result_bundle
                 primary_exit_code = exit_code
                 if exit_code != 0:
                     (arguments.evidence_dir / "xcodebuild.log").write_text(
@@ -880,6 +934,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     arguments.evidence_dir / "screen-recording.log",
                 )
             exit_code = execute_case(command, arguments.evidence_dir / "xcodebuild.log")
+            if arguments.listed_retry_device:
+                result_bundle_path = effective_result_bundle
             primary_exit_code = exit_code
             if recording_process is not None:
                 finished_recording, recording_process = recording_process, None
@@ -946,7 +1002,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         else:
             visual_payload = require_visual_identity(arguments.evidence_dir, arguments.suite)
         if case_manifest is not None:
-            case_manifest["result"] = summary.result
+            case_manifest["result"] = ("flaky-passed" if any(record["outcome"] == "flaky-passed"
+                                                          for record in case_manifest.get("retry_observations", [])) else summary.result)
             case_manifest["exit_code"] = 0
             case_manifest["official_summary"] = summary_payload
             case_manifest["visual_identity"] = visual_payload
@@ -979,6 +1036,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             )
             official_tests_digests[suffix] = digest
             if case_manifest is not None:
+                if bundle == result_bundle_path:
+                    case_manifest["official_tests_sha256"] = digest
                 if suffix:
                     case_manifest["official_session_tests_sha256"] = dict(official_tests_digests)
                 else:

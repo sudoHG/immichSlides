@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "StrictE2EFilterIOSUITests/testFilterPersonNormalMatch",
+        "dimensions": {
+          "device": "iphone",
+          "configuration": "Debug",
+          "suite": "filter-person",
+          "scenario": "normal",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/133",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Person filter page must open; failed in 3/8 candidate and 1/8 baseline runs.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/133 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "StrictE2EFilterIOSUITests/testFilterEditSwitchKeepsFilteredModeAndClearReturnsRandom",
+        "dimensions": {
+        "device": "iphone",
+        "configuration": "Release",
+        "suite": "filter-edit-switch",
+          "scenario": "normal",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/134",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Save Password dismissal or Continue remains on mode page during filter editing.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/134 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "StrictE2ELateImageIOSUITests/testLateImageKeepsCurrentSceneAfterLateRequest",
+        "dimensions": {
+          "device": "iphone",
+          "configuration": "Debug",
+          "suite": "late-image",
+          "scenario": "out-of-order",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/135",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Next must be tappable twice; state-sensitive first run failed and fresh simulator passed.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/135 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback",
+        "dimensions": {
+          "device": "tv",
+          "configuration": "Debug",
+          "suite": "tvos-flow",
+          "scenario": "normal",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/136",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "History first Next intermittently fails on both baseline and candidate.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/136 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "StrictE2EFilterTVOSUITests/testTVOSSmartFillDisplayPolicyChangesMultiToSingle",
+        "dimensions": {
+        "device": "tv",
+        "configuration": "Release",
+        "suite": "tvos-display-policy",
+          "scenario": "normal",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/137",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Settings lookup after Pause races the control bar auto-hide.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/137 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "StrictE2EFilterTVOSUITests/testTVOSPersonRules",
+        "dimensions": {
+          "device": "tv",
+          "configuration": "Debug",
+          "suite": "tvos-person",
+          "scenario": "normal",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/138",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Returning from the person page to the filter summary intermittently fails.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/138 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "AccessLifecycleIOSUITests/testBackgroundReturnPreservesScene",
+        "dimensions": {
+        "device": "iphone",
+        "configuration": "Release",
+        "suite": "ios-lifecycle-background",
+          "scenario": "normal",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/139",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "No new stable frame appeared before going to the background.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/139 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "ui",
+        "key": "AccessLifecycleIOSUITests/testAccessProtectionSettingsAndLifecycle",
+        "dimensions": {
+          "platform": "ios"
+        }
+      },
+      "scope": {
+        "tier": "ui",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/140",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Slider-to-12 or later background scene checkpoints fail intermittently on main.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/140 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    }
+  ]
+}

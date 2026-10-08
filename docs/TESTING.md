@@ -307,6 +307,66 @@ For explicit shard warm-up, build reuse, cold/warm budgets, full simulator reset
 the informational CI tracer, see [Strict runner warm-build tracer](CI_STRICT_RUNNER.md).
 The default local invocation and timeouts are unchanged.
 
+### Known-flaky registry and listed-only retries
+
+`scripts/ci-known-flaky.json` is the authoritative registry. Each entry names one
+exact XCTest method and platform (UI) or device/configuration/suite/scenario/fixture
+tuple (strict), its tier/environment scope, the shared per-identity tracking issue,
+owner, added date, review-by date, symptom and evidence. Wildcards and unit/Python
+entries are rejected. Use the same issue when the nightly reporter is introduced;
+do not open a second issue for the same identity.
+
+The host gate runs `python3 -B scripts/ci_flaky.py`. It checks the candidate file's
+format, duplicates and static test existence on the relevant platform, including
+strict-suite membership. It does not contact GitHub or gate on calendar age/issue
+state. `ci_flaky.nightly_findings` accepts trusted issue states and reports expired,
+closed or unknown entries for the future nightly reporter. A review date is
+inclusive; an entry past that date simply loses retry eligibility. Ordinary passes
+stay passes and expiration cannot fail unrelated tests.
+
+PR consumers read the registry from the checked-out merge commit's first parent.
+An absent base registry means an empty list, including during initial rollout.
+The PR's candidate entries cannot excuse its own failures. CI cannot override the
+registry revision. Main push/dispatch consumers use their tested main revision;
+local runs use `HEAD`, with an explicit local `--registry-ref <commit>` available
+for isolated acceptance probes. Both the revision and exact policy hash are kept.
+Trusted verdict callers supply `base_registry` and the trusted evaluation date to
+`ci_verdict`; producer-provided entries do not select that policy.
+
+Only an official first-call assertion failure (Xcode exit 65) with an exact active
+entry may obtain one retry. The executor resets the app, keychain and simulator
+privacy state, then calls `test-without-building` with only the failed method.
+Global retry/repetition/iteration flags are rejected. Both calls, official exports,
+exit codes, durations and per-test attempts remain recorded. Failed then passed is
+`flaky-passed`, which is distinct from an explicit pass; the reporter must not
+count it toward closing the issue. A second failure, skip, crash, timeout, missing
+or wrong/extra result stays failed. Unlisted failures never receive a second call.
+
+For a built UI target on a dedicated simulator, with a secret-free checkout:
+
+```bash
+python3 -B scripts/ci_flaky.py --xctestrun '<Products>/tests.xctestrun' \
+  --platform ios --destination 'platform=iOS Simulator,id=<UDID>' \
+  --only-testing immichSlidesUITests/ExampleUITests \
+  --output-dir '<fresh-outside-repo>/ui-attempts'
+```
+
+The UI adapter enumerates the selected compiled tests and compares them with
+observations. Its local declared list is that compiled selection; the future UI
+shard owner must independently compare against the admitted static population.
+This adapter does not implement shard assignment, fixture selection or trusted
+publication. Pass fixture inputs explicitly through the per-run xctestrun; ambient
+server inputs are stripped. Raw bundles stay private and are exported/disposed;
+only compact records are suitable for the future summary consumer.
+
+Strict warm runs opt in with `--listed-retry-device iphone`, `ipad` or `tv`, together
+with `--test-without-building`. This preserves the existing cold/default runner and
+informational tracer behavior. It uses the same executor and retains per-session
+attempt exports, including `filter-person`. Existing visual/evidence validators
+still run on the final attempt and must pass; an image-validator failure outside
+XCTest does not authorize a retry. The complete CI shard demonstration belongs to
+the UI-shard ticket; standalone access-lifecycle warm conversion remains excluded.
+
 Every strict suite and both access-lifecycle runners write raw XCTest result bundles under
 `Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"`, outside `--evidence-dir`.
 The root and each new holding directory have owner-only permissions (`0o700`); a symlink root is
