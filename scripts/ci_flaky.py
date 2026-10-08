@@ -315,7 +315,7 @@ def run_ui(args):
     from ci_summary import write_summary
     from run_strict_e2e import (run_command, export_private_result_bundle, finalize_private_result_bundle,
                                 prepare_private_result_bundle_path, ensure_disk_for_xcodebuild, data_available_gib)
-    from strict_e2e_runner_support import destination_udid, reset_simulator_app
+    from strict_e2e_runner_support import CommandError, destination_udid, reset_simulator_app
     from ci_build_archive import workspace_preflight
     from strict_e2e_server import PUBLIC_API_KEY
     from run_strict_e2e import WRONG_PUBLIC_API_KEY, write_sensitive_scan
@@ -390,7 +390,7 @@ def run_ui(args):
         for record in result["observed"]:
             print(f"{record['identity']['key']}: {record['outcome']}, attempts={len(record['attempts'])}", flush=True)
         return result["exit_code"]
-    except (ContractError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+    except (CommandError, ContractError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         if summary is not None:
             summary["status"] = "failed"
             summary["infrastructure"].append({"code": "ui-runner-failed", "message": str(error)})
@@ -400,14 +400,20 @@ def run_ui(args):
     finally:
         finalization_errors = []
         for number, bundle in enumerate(invocations, 1):
+            digest = None
+            exported = False
             if bundle.exists():
                 try:
                     digest = export_private_result_bundle(bundle, output, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=f"-attempt-{number}")
                     write_sensitive_scan(output, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY])
-                    failures = finalize_private_result_bundle(bundle, output, digest, successful=True, suffix=f"-attempt-{number}")
-                    require(not failures, "private result bundle disposal failed")
-                except (ContractError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                    exported = True
+                except (CommandError, ContractError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                     finalization_errors.append(f"Attempt {number}: {type(error).__name__}: {error}")
+            try:
+                failures = finalize_private_result_bundle(bundle, output, digest, successful=exported, suffix=f"-attempt-{number}")
+                finalization_errors.extend(f"Attempt {number}: {error}" for error in failures)
+            except (CommandError, ContractError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                finalization_errors.append(f"Attempt {number}: {type(error).__name__}: {error}")
         if finalization_errors:
             if summary is not None:
                 summary["status"] = "failed"

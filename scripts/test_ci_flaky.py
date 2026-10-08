@@ -1,11 +1,15 @@
 """Guard registry admission and listed-only retries against accidental green results."""
 
 import copy
+import io
+import json
 import os
 import subprocess
 import tempfile
 import unittest
 from datetime import date
+from argparse import Namespace
+from contextlib import ExitStack, redirect_stderr
 from pathlib import Path
 from unittest import mock
 
@@ -101,6 +105,47 @@ class RegistryTests(unittest.TestCase):
 
 
 class RetryTests(unittest.TestCase):
+    def test_timed_out_ui_invocation_keeps_failure_and_quarantines_unreadable_bundle(self):
+        from ci_flaky import run_ui
+        from strict_e2e_runner_support import CommandError
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            root = Path(directory)
+            checkout = root / "checkout"
+            checkout.mkdir()
+            output = root / "output"
+            stack.enter_context(mock.patch("run_strict_e2e.PRIVATE_RESULT_BUNDLE_ROOT", root / "private"))
+            def execute(call, **kwargs):
+                Path(call[call.index("-resultBundlePath") + 1]).mkdir()
+                raise CommandError("xcodebuild timed out after 300s without exiting")
+            patches = {
+                "ci_build_archive.workspace_preflight": {"return_value": None},
+                "ci_flaky.registry_revision": {"return_value": "b" * 40},
+                "ci_flaky.load_registry": {"return_value": (registry(), "a" * 64)},
+                "run_host_checks.run_identity": {"return_value": {"schema_version": 1, "event": "local",
+                    "repository": "sudoHG/immichSlides", "tree_sha": "a" * 40, "commit_sha": "b" * 40, "dirty": False}},
+                "run_host_checks.source_metadata": {"return_value": (None, False)},
+                "run_host_checks.toolchain": {"return_value": {"versions": {"python": "test"}}},
+                "strict_e2e_runner_support.reset_simulator_app": {"return_value": "reset"},
+                "run_strict_e2e.ensure_disk_for_xcodebuild": {"return_value": None},
+                "run_strict_e2e.run_command": {"side_effect": execute},
+                "run_strict_e2e.export_private_result_bundle": {"side_effect": CommandError("Official test export failed")},
+            }
+            for target, options in patches.items():
+                stack.enter_context(mock.patch(target, **options))
+            args = Namespace(root=checkout, output_dir=output, registry_ref=None, platform="ios", only_testing=[],
+                xctestrun=root / "built.xctestrun", destination="platform=iOS Simulator,id=00000000-0000-0000-0000-000000000000",
+                timeout_seconds=300)
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(run_ui(args), 1)
+            summary = json.loads((output / "summary.json").read_text())
+            self.assertEqual(summary["status"], "failed")
+            self.assertEqual({row["code"] for row in summary["infrastructure"]},
+                             {"ui-runner-failed", "bundle-finalization-failed"})
+            quarantine = json.loads((output / "result-bundle-quarantine-attempt-1.json").read_text())
+            self.assertFalse(quarantine["result_bundle_disposed"])
+            self.assertTrue(Path(quarantine["private_path"]).is_dir())
+            self.assertFalse((output / "result-bundle-disposal-attempt-1.json").exists())
+
     def test_retry_bundles_have_independent_private_directories_and_all_dispose(self):
         from run_strict_e2e import finalize_private_result_bundle, prepare_private_result_bundle_path
         with tempfile.TemporaryDirectory() as directory, mock.patch(
