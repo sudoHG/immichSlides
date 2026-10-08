@@ -43,7 +43,9 @@ final class immichSlidesUITests: XCTestCase {
 
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+            serverField.waitForExistence(
+                timeout: TestWait.seconds(
+                    .infrastructure(immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))))
 
         let apiField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(apiField.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))

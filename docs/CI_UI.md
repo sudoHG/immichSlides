@@ -62,6 +62,10 @@ is effective in the trusted verdict only after exact-head approval.
 
 ## Fixture execution, retry and public output
 
+The workflow passes an explicit infrastructure wait factor and publishes its
+scanned configuration record. Product timing never scales; see
+[test waits and the raw literal ratchet](TEST_WAITS.md).
+
 The shards use [fixture set C and the existing UI runner](CI_FIXTURE_UI.md),
 without a real server, private configuration or changed test assertions. They
 retain default simulator signing, pinned toolchains and runtime fixture inputs.

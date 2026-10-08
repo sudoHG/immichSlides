@@ -31,6 +31,7 @@ from run_strict_e2e import (export_private_result_bundle, finalize_private_resul
 from strict_e2e_runner_support import CommandError, destination_udid, reset_simulator_app, stop_exact_process, wait_for_service
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 from access_lifecycle_contract import logical_bytes_contain
+from ci_wait_policy import FACTOR_ENVIRONMENT_KEY, wait_configuration
 
 ROOT = Path(__file__).resolve().parent.parent
 DEVICE_MODELS = {"iphone": "iPhone", "ipad": "iPad", "appletv": "Apple TV"}
@@ -241,6 +242,7 @@ def main(argv=None):
     parser.add_argument("--timeout-minutes", type=float, default=90)
     parser.add_argument("--total-timeout-minutes", type=float, help="Bound all Xcode calls in a shard together")
     parser.add_argument("--result-export-timeout-seconds", type=float, default=60, help="Bound each official result export")
+    parser.add_argument("--wait-factor", type=float, default=1, help="Infrastructure test waits only; finite range [1, 4]")
     parser.add_argument("--listed-only-retry", action="store_true", help="Use only the trusted base known-flaky registry")
     parser.add_argument("--failure-screenshots", action="store_true", help="Export public fixture failure attachments before scanning")
     parser.add_argument("--shard")
@@ -253,6 +255,7 @@ def main(argv=None):
     rows = []
     bundles, digests = [], {}
     try:
+        waits = wait_configuration(args.wait_factor)
         require(math.isfinite(args.timeout_minutes) and args.timeout_minutes > 0, "timeout must be finite and positive")
         require(math.isfinite(args.result_export_timeout_seconds) and args.result_export_timeout_seconds > 0,
                 "result export timeout must be finite and positive")
@@ -274,6 +277,8 @@ def main(argv=None):
                    "hashes": {"manifests": {}, "policies": {}}, "toolchain": toolchain(),
                    "population": {"declared": [], "compiled": [], "observed": [], "deselected": [], "removed_by_pr": []},
                    "infrastructure": [], "status": "failed"}
+        summary["toolchain"]["versions"]["test_wait_factor"] = str(waits["infrastructure_factor"])
+        write_json(output / "wait-configuration.json", waits)
         require(not os.path.lexists(ROOT / "Config/env.xcconfig"), "fixture mode forbids private configuration files or links")
         udid = destination_udid(args.destination)
         platform = DEVICES[args.device]
@@ -354,6 +359,7 @@ def main(argv=None):
         inputs = {"IMMICH_TEST_SERVER_URL": f"http://{host}:{port}/api", "IMMICH_TEST_API_KEY": PUBLIC_API_KEY,
                   "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID": "album-c-exif",
                   "TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR": str(output / "scene-contracts")}
+        inputs[FACTOR_ENVIRONMENT_KEY] = str(waits["infrastructure_factor"])
         run = prepare_test_run(source_run, work, inputs, failure_screenshots=args.failure_screenshots)
         base = ["xcodebuild", "test-without-building", "-xctestrun", str(run), "-destination", args.destination,
                 "-derivedDataPath", str(work / "xcode-data"),

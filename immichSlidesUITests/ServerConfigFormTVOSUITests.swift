@@ -27,7 +27,9 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
         assertFirstBootCoreElements(app: app)
 
         let saveButton = firstBootSaveButton(in: app)
-        XCTAssertTrue(saveButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            saveButton.waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(WaitTiming.elementAppearanceTimeoutSeconds))))
         XCTAssertFalse(saveButton.isEnabled, "Before the connection is tested, the save button should stay disabled")
 
         attachScreenshot(app: app, name: "tvos-firstboot-core-elements-disabled-save")

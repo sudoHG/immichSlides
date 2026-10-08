@@ -159,5 +159,17 @@ class FixtureCoverageTests(unittest.TestCase):
                 problem_reason(invalid, "Flow/testFirst")
 
 
+class WaitFactorPolicyTests(unittest.TestCase):
+    def test_nonfinite_out_of_range_and_non_numeric_factors_are_refused(self):
+        from ci_wait_policy import wait_configuration
+        for value in (float("nan"), float("inf"), 0, 0.5, 4.01, True, "2", None):
+            with self.subTest(value=value), self.assertRaises(ContractError):
+                wait_configuration(value)
+        for value in (1, 2, 4):
+            with self.subTest(value=value):
+                self.assertEqual(value, wait_configuration(value)["infrastructure_factor"])
+                self.assertEqual(1, wait_configuration(value)["product_factor"])
+
+
 if __name__ == "__main__":
     unittest.main()

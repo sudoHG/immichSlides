@@ -180,6 +180,11 @@ These are exactly the problems tests exist to catch.
 
 ## 7. Automated check
 
+Classify new waits with the [central test wait API](TEST_WAITS.md). Infrastructure
+budgets can scale by the runner's recorded factor; product deadlines and
+observation windows never scale. The same conventions entry point enforces the
+per-file/function timeout-literal allowlist and rejects production factor access.
+
 `scripts/check_test_conventions.py` enforces the rules a machine can judge, over
 `immichSlidesTests/*.swift`, `immichSlidesUITests/*.swift` and `TestSupport/*.swift`:
 

@@ -730,6 +730,74 @@ class AllowlistTests(unittest.TestCase):
         self.assertEqual(allowlist, stale)
 
 
+class TimeoutLiteralTests(unittest.TestCase):
+    def test_timeout_inventory_ignores_comments_strings_and_classified_budgets(self):
+        source = '''
+        // element.waitForExistence(timeout: 9)
+        let message = "timeout: 9"
+        func poll() {
+            element.waitForExistence(timeout: TestWait.seconds(.infrastructure(9)))
+            TestWait.until(.product(3)) { true }
+        }
+        '''
+        self.assertEqual([], conv.timeout_literal_inventory("TestSupport/A.swift", source))
+
+    def test_wrapped_and_arithmetic_literals_cannot_bypass_inventory(self):
+        for value in ("TimeInterval(5)", "baseTimeout + 5", "1_000 / 10", ".seconds(5)"):
+            with self.subTest(value=value):
+                self.assertTrue(conv.timeout_literal_inventory("TestSupport/A.swift", "func poll() { wait(timeout: " + value + ") }"))
+        source = "func poll() { f(TestWait.seconds(.product(3)), timeout: 5) }"
+        self.assertEqual(1, len(conv.timeout_literal_inventory("TestSupport/A.swift", source)))
+
+    def test_timeout_inventory_tracks_calls_defaults_constants_and_nested_scopes(self):
+        source = '''
+        enum Timing { static let timeoutSeconds: TimeInterval = 8 }
+        class Flow {
+            func poll(timeout: Double = 4) {
+                element.waitForExistence(timeout: 5)
+                element.waitForExistence(timeout: 5)
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+                Task.sleep(for: .milliseconds(100))
+            }
+            func next() { element.waitForExistence(timeout: 6) }
+        }
+        '''
+        entries = conv.timeout_literal_inventory("TestSupport/A.swift", source)
+        self.assertTrue(any(e["function"] == "Timing.<scope>" for e in entries))
+        self.assertTrue(any(e["function"] == "Flow.poll" and e["count"] == 2 for e in entries))
+        self.assertTrue(any(e["function"] == "Flow.next" for e in entries))
+        self.assertEqual(6, len(entries))
+
+    def test_new_changed_duplicated_moved_and_removed_literals_fail(self):
+        path = "TestSupport/A.swift"
+        source = "func poll() { element.waitForExistence(timeout: 5) }"
+        baseline = conv.timeout_literal_inventory(path, source)
+        self.assertEqual(([], []), conv.partition_timeout_allowlist(baseline, baseline))
+        for changed_path, changed_source in (
+                (path, source.replace("5", "6")),
+                (path, source.replace(" }", "; element.waitForExistence(timeout: 5) }")),
+                (path, source.replace("poll", "next")),
+                ("TestSupport/B.swift", source),
+                (path, "func poll() {}")):
+            with self.subTest(path=changed_path, source=changed_source):
+                current = conv.timeout_literal_inventory(changed_path, changed_source)
+                added, stale = conv.partition_timeout_allowlist(current, baseline)
+                self.assertTrue(added or stale)
+
+    def test_timeout_exceptions_reject_duplicates_and_invalid_counts(self):
+        baseline = conv.timeout_literal_inventory("TestSupport/A.swift", "func poll() { wait(timeout: 5) }")
+        for invalid in (baseline * 2, [dict(baseline[0], count=0)], [dict(baseline[0], count=True)]):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    conv.partition_timeout_allowlist(baseline, invalid)
+
+    def test_product_factor_access_is_reported_but_comments_are_ignored(self):
+        for source in ('let key = "IMMICHSLIDES_TEST_WAIT_FACTOR"', 'let budget = TestWait.seconds(.product(3))'):
+            with self.subTest(source=source):
+                self.assertEqual(["product-wait-factor"], rules(conv.check_product_wait_factor("immichSlides/A.swift", source)))
+        self.assertEqual([], conv.check_product_wait_factor("immichSlides/A.swift", "// TestWait is test-only"))
+
+
 class RepositoryTests(unittest.TestCase):
     def test_repository_passes_with_the_committed_allowlist(self):
         violations = conv.check_repository(REPO_ROOT)

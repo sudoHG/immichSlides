@@ -26,6 +26,7 @@ from ci_summary import (ContractError, decode, observation, parse_identity, pars
 from ci_ui_shards import DEVICES, MANIFEST_PATH, parse_shard_manifest, shard_populations
 from ci_verdict import classify_changes
 from run_host_checks import run_identity, source_metadata
+from ci_wait_policy import wait_configuration
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-ui.yml"
@@ -277,6 +278,7 @@ def run_shard(args):
                    "--xctestrun", str(xctestrun), "--shard", args.shard, "--shard-manifest", str(manifest_path),
                    "--timeout-minutes", str(args.timeout_minutes), "--total-timeout-minutes", str(args.total_timeout_minutes),
                    "--result-export-timeout-seconds", str(args.result_export_timeout_seconds),
+                   "--wait-factor", str(args.wait_factor),
                    "--min-free-gib", str(args.min_free_gib), "--listed-only-retry", "--failure-screenshots"]
         for entry in shard:
             command += ["--only-testing", "immichSlidesUITests/" + entry["key"]]
@@ -359,6 +361,7 @@ def reproduce(args):
         require(len(runs) == 1, "reproduction build needs one default plan")
         return subprocess.run([sys.executable, "-B", str(source / "scripts/ci_ui_tests.py"), "run", "--device", "iphone",
                                "--shard", args.shard, "--manifest-revision", revision, "--destination", args.destination,
+                               "--wait-factor", str(args.wait_factor),
                                "--xctestrun", str(runs[0]), "--output-dir", str(output_root / "records")], cwd=source,
                                env=environment, check=False).returncode
 
@@ -383,18 +386,22 @@ def main(argv=None):
     run.add_argument("--timeout-minutes", type=float, default=65)
     run.add_argument("--total-timeout-minutes", type=float, default=85)
     run.add_argument("--result-export-timeout-seconds", type=float, default=60)
+    run.add_argument("--wait-factor", type=float, default=1)
     run.add_argument("--min-free-gib", type=int, default=80)
     local = commands.add_parser("reproduce")
     local.add_argument("--manifest-revision", required=True)
     local.add_argument("--shard", required=True)
     local.add_argument("--destination", required=True)
     local.add_argument("--output-dir", type=Path, required=True)
+    local.add_argument("--wait-factor", type=float, default=1)
     simulator = commands.add_parser("simulator")
     simulator.add_argument("--shard", required=True)
     upload = commands.add_parser("check-upload")
     upload.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        if args.command in {"run", "reproduce"}:
+            wait_configuration(args.wait_factor)
         if hasattr(args, "timeout_minutes"):
             require(math.isfinite(args.timeout_minutes) and args.timeout_minutes > 0, "timeout must be finite and positive")
         if getattr(args, "manifest_revision", None):

@@ -286,7 +286,8 @@ extension PlaybackHistoryIOSUITests {
         app: XCUIApplication,
         evidenceEventPrefix: String
     ) throws {
-        let initialProbe = try waitForPausedFrameSynchronizedPresentationProbe(app: app, timeout: 3)
+        let initialProbe = try waitForPausedFrameSynchronizedPresentationProbe(
+            app: app, timeout: TestWait.seconds(.product(3)))
         let initialSlots = frozenStateOfSmartFillSlots(app: app)
         XCTAssertFalse(
             initialSlots.isEmpty,
@@ -301,7 +302,8 @@ extension PlaybackHistoryIOSUITests {
 
         for sample in 1...PlaybackHistoryIOSUITestsCalibration.pauseSampleCount {
             RunLoop.current.run(
-                until: Date().addingTimeInterval(PlaybackHistoryIOSUITestsCalibration.pauseSampleIntervalSeconds))
+                until: Date().addingTimeInterval(
+                    TestWait.seconds(.product(PlaybackHistoryIOSUITestsCalibration.pauseSampleIntervalSeconds))))
             let probe = try waitForPausedFrameSynchronizedPresentationProbe(app: app, timeout: 2)
             let slots = frozenStateOfSmartFillSlots(app: app)
             let pixels = app.windows.firstMatch.screenshot().pngRepresentation
