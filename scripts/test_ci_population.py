@@ -1,9 +1,11 @@
 """Guard static inventory against silent loss and execution of candidate code."""
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from ci_summary import ContractError, observation, test_identity
-from ci_population import python_identities, swift_identities, ui_identities
+from ci_population import python_identities, python_sources, swift_identities, ui_identities
 from ci_verdict import evaluate_population
 from test_ci_summary import valid_summary
 
@@ -62,6 +64,56 @@ class StaticPopulationTests(unittest.TestCase):
                         environment="hermetic")
                     self.assertEqual(verdict["status"], "failed")
                     self.assertEqual(verdict["missing_compiled" if collection == "compiled" else "missing_executed"], [missing])
+
+        kept = "from unittest import TestCase\nclass Kept(TestCase):\n def test_kept(self): pass\n"
+        exported = "from unittest import TestCase\nclass Tests(TestCase):\n def test_actual(self): pass\n"
+        for package_files, key in (
+                ({"pkg/__init__.py": exported}, "pkg.Tests.test_actual"),
+                ({"pkg/__init__.py": "from .cases import Tests", "pkg/cases.py": exported}, "pkg.cases.Tests.test_actual"),
+                ({"pkg/__init__.py": "from .sub import Tests", "pkg/sub/__init__.py": "from ..cases import Tests",
+                  "pkg/cases.py": exported, "pkg/sub/test_relative.py": "from .. import Tests"}, "pkg.cases.Tests.test_actual"),
+                ({"pkg/__init__.py": "from . import cases\nclass Tests(cases.Tests): pass", "pkg/cases.py": exported},
+                 "pkg.Tests.test_actual")):
+            with self.subTest(package_files=package_files), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for filename, source in dict(package_files, **{"test_entry.py": kept + "from pkg import Tests"}).items():
+                    path = root / filename
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(source, encoding="utf-8")
+                sources = python_sources(root)
+                self.assertIn("pkg", sources)
+                self.assertNotIn("pkg.__init__", sources)
+                missing = test_identity("python", key)
+                expected = python_identities(sources)
+                self.assertEqual(expected, [missing, test_identity("python", "test_entry.Kept.test_kept")])
+                self.assertEqual(python_identities(dict(sources), packages=sources.packages), expected)
+                legacy = {module + (".__init__" if module in sources.packages else ""): source
+                          for module, source in sources.items()}
+                self.assertEqual(python_identities(legacy), expected)
+                for collection in ("compiled", "observed"):
+                    summary = valid_summary()
+                    summary["population"].update(declared=expected, compiled=expected,
+                                                 observed=[observation(identity, "passed", 0) for identity in expected])
+                    summary["population"][collection] = [entry for entry in summary["population"][collection]
+                        if (entry["identity"] if collection == "observed" else entry) != missing]
+                    verdict = evaluate_population(summary, expected,
+                        {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []},
+                        environment="hermetic")
+                    self.assertEqual(verdict["status"], "failed")
+                    self.assertEqual(verdict["missing_compiled" if collection == "compiled" else "missing_executed"], [missing])
+                # unittest discovers package initializers even without a test-module import.
+                (root / "test_entry.py").write_text(kept, encoding="utf-8")
+                self.assertEqual(python_identities(python_sources(root)), expected)
+        for files in (
+                {"pkg.__init__": "", "test_entry": kept + "from pkg import Tests"},
+                {"pkg.__init__": "from .missing import Tests", "test_entry": kept + "from pkg import Tests"},
+                {"pkg.__init__": "from . import Missing", "test_entry": kept},
+                {"pkg.__init__": "from .. import Tests", "test_entry": kept},
+                {"pkg.__init__": exported, "pkg.Tests": "", "test_entry": kept + "from pkg import Tests"},
+                {"pkg.__init__": "import external as Tests", "test_entry": kept + "from pkg import Tests"},
+                {"pkg.__init__": "from external import Tests", "test_entry": kept + "from pkg import Tests"}):
+            with self.subTest(files=files), self.assertRaisesRegex(ContractError, r"(?:pkg/__init__|test_entry)\.py:\d+:"):
+                python_identities(files)
 
     def test_assignment_base_aliases_are_outside_the_allowed_grammar(self):
         files = {"support": "from unittest import TestCase\nBase = TestCase\nAlias = Base\n",
@@ -172,6 +224,7 @@ class StaticPopulationTests(unittest.TestCase):
         files = {
             "A.swift": '@Suite(.serialized)\nstruct Tests {\n @Test(arguments: [1, 2])\n'
                        ' func `each input works`(value: Int) {}\n'
+                       " @Test func `input's identity stays stable`() {}\n"
                        ' #if os(iOS)\n @Test func phone() {}\n #else\n @Test func tv() {}\n #endif\n'
                        ' let decoy = "@Test func fake() { }"\n}\n',
             "B.swift": 'extension Tests {\n @Test func extended() {}\n}\n'
@@ -179,18 +232,23 @@ class StaticPopulationTests(unittest.TestCase):
         }
         ios = swift_identities(files, "ios")
         tvos = swift_identities(files, "tvos")
-        self.assertEqual([item["key"] for item in ios], ["Tests/each input works", "Tests/extended", "Tests/phone"])
-        self.assertEqual([item["key"] for item in tvos], ["TVOnly/works", "Tests/each input works", "Tests/extended", "Tests/tv"])
+        self.assertEqual([item["key"] for item in ios], ["Tests/each input works", "Tests/extended", "Tests/input's identity stays stable", "Tests/phone"])
+        self.assertEqual([item["key"] for item in tvos], ["TVOnly/works", "Tests/each input works", "Tests/extended", "Tests/input's identity stays stable", "Tests/tv"])
         self.assertTrue(all(item["dimensions"] == {"platform": "ios"} for item in ios))
 
     def test_swift_nested_suites_and_unknown_conditions_cannot_drop_tests(self):
         source = "@Suite struct Outer { @Suite struct Inner { @Test func works() {} } }"
         self.assertEqual(swift_identities({"A.swift": source}, "ios"),
                          [test_identity("swift", "Outer.Inner/works", platform="ios")])
+        self.assertEqual(swift_identities({"A.swift": source,
+                         "B.swift": "extension Outer /* qualifier */ . Inner { @Test func extended() {} }"}, "ios"),
+                         [test_identity("swift", "Outer.Inner/extended", platform="ios"),
+                          test_identity("swift", "Outer.Inner/works", platform="ios")])
         for source in ("#if UNKNOWN\n@Test func hidden() {}\n#endif", "@Test var broken = 1",
                        "@Other.Test func hidden() {}", "@Testing.Test.Extra func hidden() {}",
                        "@Testing.Test var broken = 1", "@Testing.Suite actor Unsupported {}",
-                       "extension Missing { @Test func hidden() {} }", "#if os(iOS)\n@Test func a() {}"):
+                       "extension Missing { @Test func hidden() {} }", "#if os(iOS)\n@Test func a() {}",
+                       "/* unfinished\n@Test func hidden() {}", 'let value = "unfinished\n@Test func hidden() {}'):
             with self.subTest(source=source), self.assertRaises(ContractError):
                 swift_identities({"A.swift": source}, "ios")
 
@@ -237,10 +295,16 @@ class StaticPopulationTests(unittest.TestCase):
                       f"func testMustCompile() -> {spelling} {{}} }}", {"ios": "Tests/testMustCompile", "tvos": "Tests/testMustCompile"})
                       for inventory in (swift_identities, ui_identities)
                       for spelling in ("Void", "Swift.Void", "()", "(Void)", "(Swift.Void)")]
+        lexical_cases = [(inventory, "class Present: XCTestCase { func testPresent() {} }\n"
+                          f"class /* declaration */ Hidden: {base} {{ func testMustCompile() {{}} }}",
+                          {"ios": "Hidden/testMustCompile", "tvos": "Hidden/testMustCompile"})
+                         for inventory in (swift_identities, ui_identities)
+                         for base in ("XCTest /* module */.XCTestCase", "XCTest \t . \n XCTestCase",
+                                      "XCTest // module\n . XCTestCase", "XCTest /* outer /* nested */ end */ . XCTestCase")]
         for inventory, source, keys in (
                 (swift_identities, conditional, {"ios": "Tests/testPhone", "tvos": "Tests/testTV"}),
                 (ui_identities, conditional, {"ios": "Tests/testPhone", "tvos": "Tests/testTV"}),
-                (swift_identities, qualified, {"ios": "Tests/mustRun", "tvos": "Tests/mustRun"}), *void_cases):
+                (swift_identities, qualified, {"ios": "Tests/mustRun", "tvos": "Tests/mustRun"}), *void_cases, *lexical_cases):
             for platform, key in keys.items():
                 with self.subTest(inventory=inventory.__name__, platform=platform, key=key):
                     kind = "ui" if inventory is ui_identities else "swift"
@@ -258,12 +322,23 @@ class StaticPopulationTests(unittest.TestCase):
                     self.assertEqual(verdict["status"], "failed")
                     self.assertEqual(verdict["missing_compiled"], [missing])
         for inventory in (swift_identities, ui_identities):
+            with self.subTest(inventory=inventory.__name__), self.assertRaisesRegex(
+                    ContractError, r"Tests\.swift:5: unsupported XCTest test signature"):
+                inventory({"Tests.swift": "/* outer\n /* nested */\n end */\nclass Tests: XCTestCase {\nfunc testBad() -> Unknown {} }"}, "ios")
             for signature in ("() -> Unknown", "() -> Int", "() nonisolated", "() -> Void?", "`test invalid`()", ""):
                 declaration = "func " + (signature if signature.startswith("`") else "testUnsupported" + signature)
                 source = "class Tests: XCTestCase { func testPresent() {}\n" + declaration + " {} }"
                 with self.subTest(inventory=inventory.__name__, signature=signature), self.assertRaisesRegex(
                         ContractError, r"Tests\.swift:\d+: unsupported XCTest test signature"):
                     inventory({"Tests.swift": source}, "ios")
+            for declaration in ("class Hidden<T>: XCTest /* module */ . XCTestCase { func testMissing() {} }",
+                                "typealias Base = XCTest /* module */ . XCTestCase\nclass Hidden: Base { func testMissing() {} }",
+                                "typealias `Base` = (XCTest /* multi\nline */ . XCTestCase)\nclass Hidden: Base { func testMissing() {} }",
+                                "typealias Base = Wrapper<XCTestCase>\nclass Hidden: Base { func testMissing() {} }",
+                                "class Hidden: Other /* module */ . XCTestCase { func testMissing() {} }"):
+                with self.subTest(inventory=inventory.__name__, declaration=declaration), self.assertRaisesRegex(
+                        ContractError, "XCTestCase inheritance"):
+                    inventory({"Tests.swift": declaration}, "ios")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import re
+from importlib.util import resolve_name
 from pathlib import Path
 
 from ci_summary import ContractError, fields, identity_key, require, sha, test_identity, validate_test_identity
@@ -28,7 +29,7 @@ FutureWarning ImportWarning PendingDeprecationWarning ResourceWarning RuntimeWar
 SyntaxWarning UnicodeWarning UserWarning
 """.split())
 STDLIB_BASE_MODULES = frozenset("""
-abc argparse array ast asynchat asyncore asyncio atexit base64 bdb binascii bisect builtins bz2 calendar
+__future__ abc argparse array ast asynchat asyncore asyncio atexit base64 bdb binascii bisect builtins bz2 calendar
 cgi cgitb chunk cmd code codecs codeop collections colorsys compileall concurrent configparser
 contextlib contextvars copy copyreg crypt csv ctypes curses dataclasses datetime dbm decimal
 difflib dis distutils doctest email encodings enum errno faulthandler fcntl filecmp fileinput fnmatch
@@ -78,22 +79,41 @@ def dotted(node):
     raise ContractError("dynamic Python class base cannot be enumerated statically")
 
 
-def python_identities(files, *, discovery_pattern="test_*"):
+class PythonSourceMap(dict):
+    """Source text plus package context, without importing any supplied module."""
+
+    def __init__(self):
+        super().__init__()
+        self.packages = set()
+        self.filenames = {}
+
+
+def python_identities(files, *, discovery_pattern="test_*", packages=()):
     """Enumerate the documented declaration grammar without candidate execution.
 
     Test modules and their local test-class/MRO providers must satisfy the grammar.
     Function bodies are opaque; unrelated non-test helper classes are not discovered.
     """
     modules, classes, trees, events = {}, {}, {}, {}
+    package_names = set(packages) | set(getattr(files, "packages", ()))
+    sources, filenames = {}, {}
+    for spelling, source in files.items():
+        module = spelling.removesuffix(".__init__")
+        if module != spelling:
+            package_names.add(module)
+        require(module not in sources, "ambiguous Python module/package source: " + module)
+        sources[module] = source
+        filenames[module] = getattr(files, "filenames", {}).get(spelling, module.replace(".", "/") +
+                                                               ("/__init__.py" if module in package_names else ".py"))
+    require(package_names <= sources.keys(), "package initializer source is missing")
     terminals = {"unittest.TestCase", "unittest.case.TestCase", "unittest.IsolatedAsyncioTestCase",
                  "unittest.async_case.IsolatedAsyncioTestCase", "doctest.DocTestCase"}
 
     def discovered(module):
-        return fnmatch.fnmatchcase(module.rsplit(".", 1)[-1], discovery_pattern)
+        return module in package_names or fnmatch.fnmatchcase(module.rsplit(".", 1)[-1], discovery_pattern)
 
     def fail(module, node, message):
-        filename = module.replace(".", "/") + ".py"
-        raise ContractError(f"{filename}:{node.lineno}: {message}")
+        raise ContractError(f"{filenames[module]}:{getattr(node, 'lineno', 1)}: {message}")
 
     def imports(module, node):
         if isinstance(node, ast.Import):
@@ -101,12 +121,16 @@ def python_identities(files, *, discovery_pattern="test_*"):
                      alias.name if alias.asname else alias.name.split(".")[0]) for alias in node.names]
         prefix = node.module or ""
         if node.level:
-            prefix = ".".join(module.split(".")[:-node.level] + ([prefix] if prefix else []))
+            package = module if module in package_names else module.rpartition(".")[0]
+            try:
+                prefix = resolve_name("." * node.level + prefix, package)
+            except (ImportError, ValueError) as error:
+                fail(module, node, "unresolvable relative import: " + str(error))
         return [(alias.asname or alias.name, prefix + "." + alias.name) for alias in node.names]
 
-    for module, source in files.items():
+    for module, source in sources.items():
         try:
-            tree = ast.parse(source, filename=module.replace(".", "/") + ".py")
+            tree = ast.parse(source, filename=filenames[module])
         except SyntaxError as error:
             raise ContractError(f"{error.filename}:{error.lineno}: invalid Python syntax") from error
         trees[module] = tree
@@ -139,12 +163,19 @@ def python_identities(files, *, discovery_pattern="test_*"):
                 writes.setdefault(name, []).append(node)
         modules[module], events[module] = bindings, writes
 
+    for module in modules:
+        parent, _, child = module.rpartition(".")
+        if parent in package_names and child in modules[parent]:
+            write = events[parent][child][-1]
+            if modules[parent][child] != module or not isinstance(write, (ast.Import, ast.ImportFrom)):
+                fail(parent, write, "package export conflicts with supplied submodule: " + module)
+
     def non_test_terminal(name):
         root, separator, _ = name.partition(".")
         return bool(separator and root in STDLIB_BASE_MODULES and not any(
             name == module or name.startswith(module + ".") for module in modules))
 
-    def resolve(name, seen=()):
+    def resolve(name, seen=(), *, exporting=False):
         if name in classes or name in terminals or non_test_terminal(name):
             return name
         if name in seen:
@@ -155,12 +186,22 @@ def python_identities(files, *, discovery_pattern="test_*"):
                 suffix = name[len(module) + 1:]
                 first, _, rest = suffix.partition(".")
                 bound = modules[module].get(first)
-                if bound is None and suffix in BUILTIN_BASES:
+                if bound is None and suffix in BUILTIN_BASES and not exporting:
                     return "builtins." + suffix
                 if bound is not None:
                     target = bound + ("." + rest if rest else "")
                     if target != name:
-                        return resolve(target, (*seen, name))
+                        write = events[module][first][-1]
+                        return resolve(target, (*seen, name), exporting=exporting or isinstance(write, ast.ImportFrom))
+                    if isinstance(events[module][first][-1], ast.ImportFrom) and name not in modules:
+                        fail(module, events[module][first][-1], "unresolved Python package/module export: " + name)
+                    return name  # A statically declared function or data export.
+                if name in modules:
+                    return name  # `from package import submodule` may load a supplied child.
+                if exporting:
+                    fail(module, trees[module], "unresolved Python package/module export: " + name)
+        if name in modules:
+            return name
         return name
 
     def bases(name):
@@ -447,7 +488,13 @@ def python_identities(files, *, discovery_pattern="test_*"):
                 if isinstance(node, (ast.Import, ast.ImportFrom)) and not class_body:
                     if isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
                         fail(module, node, "star import is outside the allowed grammar")
-                    for alias, _target in imports(module, node):
+                    for alias, target in imports(module, node):
+                        resolved = resolve(target, exporting=isinstance(node, ast.ImportFrom))
+                        if module in package_names and not (resolved in classes or resolved in terminals or
+                                resolved in modules or resolved in STDLIB_BASE_MODULES or non_test_terminal(resolved) or any(
+                                    resolved == owner + "." + name and bound == resolved
+                                    for owner, bindings in modules.items() for name, bound in bindings.items())):
+                            fail(module, node, "unresolved Python package export: " + target)
                         if alias in protected and alias in defined:
                             fail(module, node, "class or base binding cannot be rebound")
                         defined.add(alias)
@@ -537,7 +584,7 @@ def ui_identities(files, platform):
     return xctest_identities(files, platform, kind="ui")
 
 
-TYPE_RE = re.compile(r"\b(struct|class|enum|extension)\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)[^{}]*\{")
+TYPE_RE = re.compile(r"\b(struct|class|enum|extension)\s+([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)[^{}]*\{")
 ATTRIBUTE_RE = re.compile(r"@\s*((?:`?[A-Za-z_]\w*`?\s*\.\s*)*`?[A-Za-z_]\w*`?)")
 FUNCTION_RE = re.compile(r"\bfunc\s+(`[^`]+`|[A-Za-z_]\w*)\s*(?:<[^>{}]*>)?\s*\(")
 
@@ -576,7 +623,10 @@ def swift_identities(files, platform):
     require(platform in {"ios", "tvos"}, "unsupported platform")
     parsed, declarations = [], set()
     for filename, source in files.items():
-        code = conditional_code(source, platform)
+        try:
+            code = conditional_code(source, platform)
+        except ValueError as error:
+            raise ContractError(f"{filename}: {error}") from error
         scopes = []
         try:
             for match in TYPE_RE.finditer(code):
@@ -585,7 +635,7 @@ def swift_identities(files, platform):
                 parents = [scope for scope in scopes if scope[0] < match.start() < scope[1]]
                 parent = max(parents, default=None, key=lambda scope: scope[0])
                 local = bool(parent and (parent[4] or code.count("{", parent[0] + 1, match.start()) != code.count("}", parent[0] + 1, match.start())))
-                name = (parent[2] + "." if parent else "") + match[2]
+                name = (parent[2] + "." if parent else "") + re.sub(r"\s", "", match[2])
                 scopes.append((start, close, name, match[1], local))
                 if match[1] != "extension" and not local:
                     declarations.add(name)
@@ -642,7 +692,19 @@ def swift_identities(files, platform):
 
 
 def python_sources(root):
-    """Read public Python source only; callers choose the tested tree directory."""
+    """Read an import-root directory, retaining package initializer context."""
     root = Path(root)
-    return {".".join(path.relative_to(root).with_suffix("").parts): path.read_text(encoding="utf-8")
-            for path in sorted(root.rglob("*.py")) if "__pycache__" not in path.parts}
+    sources = PythonSourceMap()
+    for path in sorted(root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        relative = path.relative_to(root)
+        parts = relative.with_suffix("").parts
+        package = parts[-1] == "__init__" and len(parts) > 1
+        module = ".".join(parts[:-1] if package else parts)
+        require(module not in sources, "ambiguous Python module/package source: " + module)
+        sources[module] = path.read_text(encoding="utf-8")
+        sources.filenames[module] = relative.as_posix()
+        if package:
+            sources.packages.add(module)
+    return sources

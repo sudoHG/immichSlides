@@ -6,9 +6,13 @@ import re
 
 PLATFORMS = ("ios", "tvos")
 
-CLASS_RE = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:XCTest\.)?XCTestCase\b[^{]*\{")
-CLASS_DECL_RE = re.compile(r"\bclass\s+([^\s:{}<>]+)([^{]*)\{")
-TYPE_ALIAS_RE = re.compile(r"\btypealias\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_][\w.]*)")
+QUALIFIED_NAME = r"`?[A-Za-z_]\w*`?(?:\s*\.\s*`?[A-Za-z_]\w*`?)*"
+CLASS_RE = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:XCTest\s*\.\s*)?XCTestCase(?=\s*(?:,|\{|where\b))[^{]*\{")
+CLASS_DECL_RE = re.compile(r"\bclass\s+(?!func\b|var\b|subscript\b)([^\s:{}<>]+)([^{]*)\{")
+TYPE_ALIAS_RE = re.compile(
+    r"\btypealias\s+([^\s=]+)\s*=\s*(.*?)"
+    r"(?=\n\s*(?:(?:private|fileprivate|public|internal|package|static|final|override|nonisolated)\s+)*"
+    r"(?:@|(?:func|var|let|class|struct|enum|actor|extension|typealias|import)\b)|[{};]|\Z)", re.DOTALL)
 EXTENSION_RE = re.compile(r"(?:\b(private|fileprivate)\s+)?\bextension\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\{")
 # XCTest runs `func test…()` with no parameters and no return value; a backtick name counts too.
 TEST_FUNC_RE = re.compile(
@@ -146,7 +150,7 @@ def string_end(text: str, index: int) -> int:
         hashes += 1
     start = index + hashes
     multiline = text.startswith('"""', start)
-    quote = '"""' if multiline else '"'
+    quote = '"""' if multiline else text[start]
     closing, escape = quote + "#" * hashes, "\\" + "#" * hashes
     position = start + len(quote)
     while position < len(text):
@@ -159,16 +163,26 @@ def string_end(text: str, index: int) -> int:
         elif text.startswith(closing, position):
             return position + len(closing)
         elif not multiline and text[position] == "\n":
-            return position
+            raise ValueError(f"unterminated literal at line {text.count(chr(10), 0, index) + 1}")
         else:
             position += 1
-    return len(text)
+    raise ValueError(f"unterminated literal at line {text.count(chr(10), 0, index) + 1}")
+
+
+def escaped_identifier_end(text: str, index: int) -> int:
+    end = text.find("`", index + 1)
+    if end < 0:
+        raise ValueError(f"unterminated escaped identifier at line {text.count(chr(10), 0, index) + 1}")
+    return end + 1
 
 
 def interpolation_end(text: str, open_paren: int) -> int:
     """Index just after the `)` that closes the interpolation opened at `open_paren`."""
     depth, position = 0, open_paren
     while position < len(text):
+        if text[position] == "`":
+            position = escaped_identifier_end(text, position)
+            continue
         literal = literal_or_comment_end(text, position)
         if literal is not None:
             position = literal
@@ -180,11 +194,11 @@ def interpolation_end(text: str, open_paren: int) -> int:
                 return position
         else:
             position += 1
-    return len(text)
+    raise ValueError(f"unterminated interpolation at line {text.count(chr(10), 0, open_paren) + 1}")
 
 
 def literal_or_comment_end(text: str, index: int) -> int | None:
-    """If a comment or string literal starts at `index`, the index just after it."""
+    """If a comment or literal starts at `index`, the index just after it."""
     if text.startswith("//", index):
         end = text.find("\n", index)
         return len(text) if end < 0 else end
@@ -197,8 +211,10 @@ def literal_or_comment_end(text: str, index: int) -> int | None:
                 depth, end = depth - 1, end + 2
             else:
                 end += 1
+        if depth:
+            raise ValueError(f"unterminated block comment at line {text.count(chr(10), 0, index) + 1}")
         return end
-    if text[index] == '"':
+    if text[index] in {'"', "'"}:
         return string_end(text, index)
     if text[index] == "#":
         hashes = len(text[index:]) - len(text[index:].lstrip("#"))
@@ -206,15 +222,25 @@ def literal_or_comment_end(text: str, index: int) -> int | None:
             return string_end(text, index)
         if text.startswith("/", index + hashes):
             end = text.find("/" + "#" * hashes, index + hashes + 1)
-            return len(text) if end < 0 else end + 1 + hashes
+            if end < 0:
+                raise ValueError(f"unterminated regex literal at line {text.count(chr(10), 0, index) + 1}")
+            return end + 1 + hashes
     return None
 
 
 def blank_comments_and_strings(text: str) -> str:
-    """Replace comments and string literals with spaces, keeping offsets and newlines."""
+    """Lex comments and literals into spaces, preserving offsets and line numbers.
+
+    Swift Character values use quoted strings too; single-quoted lexer input is
+    also opaque. Nested comments, raw/multiline strings and interpolation cannot
+    manufacture declarations or swallow a later declaration silently.
+    """
     out = list(text)
     index = 0
     while index < len(text):
+        if text[index] == "`":
+            index = escaped_identifier_end(text, index)
+            continue
         end = literal_or_comment_end(text, index)
         if end is None:
             index += 1
@@ -243,7 +269,10 @@ class SwiftFile:
 
     def __init__(self, name: str, text: str) -> None:
         self.name = name
-        self.code = blank_comments_and_strings(text)
+        try:
+            self.code = blank_comments_and_strings(text)
+        except ValueError as error:
+            raise ValueError(f"{name}: {error}") from error
         condition_errors: list[str] = []
         self.platforms_by_line = line_platforms(self.code, condition_errors)
         self.line_starts = [0]
@@ -368,17 +397,19 @@ def parse_ui_tests(
     # a Swift Testing method or helper. Inherited XCTest methods need a separate
     # runtime-accurate inventory model; reject these classes until it is supported.
     descendants = set(classes)
-    declarations = [(swift_file.name, match[1], bases)
+    declarations = [(swift_file.name, match[1], bases, match[2])
                     for swift_file in parsed for match in CLASS_DECL_RE.finditer(swift_file.code)
-                    for bases in [re.findall(r":\s*([A-Za-z_][\w.]*)", match[2])]]
-    aliases = [(swift_file.name, match[1], [match[2]])
+                    for bases in [[re.sub(r"\s|`", "", base) for base in re.findall(
+                        QUALIFIED_NAME, match[2].partition(":")[2])]]]
+    aliases = [(swift_file.name, match[1].strip("`"),
+                [re.sub(r"\s|`", "", base) for base in re.findall(QUALIFIED_NAME, match[2])], match[2])
                for swift_file in parsed for match in TYPE_ALIAS_RE.finditer(swift_file.code)]
     changed = True
     while changed:
         changed = False
-        for filename, name, bases in declarations + aliases:
-            if name not in descendants and any(base in descendants or base in {"XCTestCase", "XCTest.XCTestCase"}
-                                               for base in bases):
+        for filename, name, bases, header in declarations + aliases:
+            xctest_like = any(base in descendants or base in {"XCTestCase", "XCTest.XCTestCase"} for base in bases)
+            if name not in descendants and (xctest_like or re.search(r"\bXCTestCase\b", header)):
                 descendants.add(name)
                 errors.append(f"{filename}: unsupported or indirect XCTestCase inheritance for {name}")
                 changed = True

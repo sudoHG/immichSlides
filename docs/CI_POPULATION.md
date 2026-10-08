@@ -6,10 +6,32 @@ candidate source. The future trusted consumer must run these libraries from its
 trusted revision and supply independently admitted inputs. The host producer uses
 them informationally from its working checkout, which is not trusted publication.
 
+Static population is an independent cross-check alongside the compiled test
+enumeration and execution observations. Neither inventory can substitute for the
+other: a declaration missing from compilation, or a compiled test missing from
+the static population, keeps the verdict red. These libraries implement documented
+subsets, not full Swift or Python parsers. Known unsupported or unresolved discovery
+forms fail closed with `ContractError`; successful parsing does not remove the
+need for the independent compiled enumeration. Extend the existing omission
+regressions when adding grammar support.
+
 ## Static input and identities
 
 `scripts/ci_population.py` accepts source-text maps. `python_sources(directory)`
 reads Python files into a module-name map; it reads no private configuration.
+The directory is the import root (a `sys.path` entry). A nested
+`pkg/__init__.py` maps to `pkg`, not `pkg.__init__`; the returned `PythonSourceMap`
+retains package names and relative diagnostic filenames. Relative imports use
+the initializer's own package, or an ordinary module's containing package, with
+Python's relative-import levels. Initializer re-exports and supplied child modules
+are resolved without imports. Unknown local exports, opaque third-party package
+re-exports and module/export collisions are unsupported and raise `ContractError`.
+Package initializers are discovery modules even if their names do not match
+`test_*`, as in unittest. The root's own initializer is not automatically treated
+as a package named after the directory; include its parent import root to do that.
+Keep the returned source-map metadata. For copied/serialized module maps, pass
+`packages=package_names` to `python_identities`, or explicitly name initializer
+keys `pkg.__init__` (normalized on input).
 
 - `python_identities(files)` follows unconditional import aliases and local mixins,
   computes C3 method resolution and respects function-definition overrides. It
@@ -47,6 +69,12 @@ reads Python files into a module-name map; it reads no private configuration.
   owning-class platforms, merges same-named classes across conditional branches,
   and keys tests as `Class/testMethod`. Module-qualified `XCTest.XCTestCase` is
   supported; unsupported generic XCTest classes and XCTest base aliases fail explicitly.
+  Before declaration classification, the shared lexer blanks line/block/nested
+  comments and string/Character literals, including raw/multiline strings and
+  interpolation, preserving offsets and line numbers. Escaped identifiers retain
+  their text. Qualified names tolerate whitespace after this pass; comments
+  around a module's dot cannot hide inheritance. Unterminated lexical input and
+  unresolved XCTest-like class/alias declarations fail explicitly.
   Zero-argument test returns may be implicit or spelled `Void`, `Swift.Void`,
   `()`, `(Void)` or `(Swift.Void)`. An unclassifiable direct `test...` signature
   raises `ContractError`, including unsupported return types. Private/static/class,
@@ -262,8 +290,8 @@ caller, not copied from producer claims. A fork PR or CI-changing PR requires
 the base policy unless the exact head is approved and a candidate policy is
 supplied. Even then, `proposed` exceptions remain inactive. Verdicts record
 `source`, `self_reported`, `approval_based`, every error, skips, deselections and
-the independently computed removal report. Approval records and provenance
-verification are not implemented here.
+the independently computed removal report. Approval provenance and authentication
+are not implemented here.
 
 For context `ui`, trusted `app_affected=False` returns `not-applicable` only after
 approval checks; CI-changing input cannot use that shortcut. Host checks always

@@ -261,18 +261,24 @@ class ParserTests(unittest.TestCase):
 
     def test_raw_strings_and_interpolation_do_not_hide_tests(self):
         source = """
-        final class LexTests: XCTestCase {
+        /* class CommentOnly: XCTestCase { func testFake() {} } */
+        // class LineCommentOnly: XCTestCase { func testFake() {} }
+        final class /* outer /* nested */ end */ LexTests: XCTest /* module */ . XCTestCase {
             func testCovered() {}
             let open = #"prefix " { " suffix"#
             let nested = "\(String("{"))"
             func testAfterRawString() {}
             let close = #"prefix " } " suffix"#
             let nestedClose = "\(String("}"))"
+            let rawCall = "\(helper.`don't call`())"
+            let character: Character = "{"
+            let decoy = "class Fake: XCTestCase { func testFake() {} }"
             func testLast() {}
         }
         """
-        _classes, methods, errors, _strict = self.parse(source)
+        classes, methods, errors, _strict = self.parse(source)
         self.assertEqual(errors, [])
+        self.assertEqual(set(classes), {"LexTests"})
         self.assertEqual(set(methods["LexTests"]), {"testCovered", "testAfterRawString", "testLast"})
 
     def test_same_test_in_both_branches_compiles_on_both_platforms(self):
