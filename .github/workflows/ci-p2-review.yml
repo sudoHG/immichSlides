@@ -53,7 +53,11 @@ jobs:
           os_name=$([ "$REVIEW_PLATFORM" = ios ] && echo iOS || echo tvOS)
           "$RUNNER_TEMP/review-python/bin/python3" -B scripts/run_strict_e2e.py \
             --platform "$REVIEW_PLATFORM" --destination "platform=$os_name Simulator,id=$udid" \
-            --suite p2-cache --evidence-dir "$RUNNER_TEMP/review-evidence" \
+            --suite p2-cache --warm-up-only --evidence-dir "$RUNNER_TEMP/review-warm-up" \
+            --derived-data-path "$RUNNER_TEMP/review-derived" --min-free-gib 30
+          "$RUNNER_TEMP/review-python/bin/python3" -B scripts/run_strict_e2e.py \
+            --platform "$REVIEW_PLATFORM" --destination "platform=$os_name Simulator,id=$udid" \
+            --suite p2-cache --test-without-building --evidence-dir "$RUNNER_TEMP/review-evidence" \
             --derived-data-path "$RUNNER_TEMP/review-derived" --min-free-gib 30
       - name: Validate and scan the review package
         id: package
@@ -84,6 +88,6 @@ jobs:
                       subprocess.run(["xcrun", "simctl", verb, udid], capture_output=True, timeout=60, check=False)
                   except subprocess.TimeoutExpired:
                       print("Owned simulator cleanup timed out; runner teardown will finish cleanup.")
-          for name in ("review-evidence", "review-derived", "review-package", "review-python"):
+          for name in ("review-warm-up", "review-evidence", "review-derived", "review-package", "review-python"):
               shutil.rmtree(os.path.join(os.environ["RUNNER_TEMP"], name), ignore_errors=True)
           PY
