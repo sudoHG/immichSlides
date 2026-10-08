@@ -8,6 +8,12 @@ on:
   schedule:
     - cron: '30 8 * * *'
   workflow_dispatch:
+    inputs:
+      reset_history:
+        description: Maintainer-only explicit bootstrap or reset of reporting history
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -15,7 +21,10 @@ jobs:
   report:
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'ci-nightly' || github.event.workflow_run.head_branch == 'main')
+      (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' &&
+      ((github.event.workflow_run.name == 'ci-nightly' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event.workflow_run.event)) ||
+      (contains(fromJSON('["ci-gate","ci-ui"]'), github.event.workflow_run.name) && github.event.workflow_run.event == 'push'))))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -38,7 +47,7 @@ jobs:
         env:
           CI_REPORT_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect'
-      - if: always()
+      - if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ci-report-daily-${{ github.run_id }}-${{ github.run_attempt }}
@@ -50,13 +59,6 @@ jobs:
         env:
           CI_REPORT_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync'
-      - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ci-report-pr-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-report/pull-requests
-          if-no-files-found: ignore
-          retention-days: 30
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -9,11 +9,18 @@ authority. See [trusted publication](CI_PUBLISHER.md) for admission and approval
 ## Collection and retention
 
 `workflow_run` is filtered to `branches: [main]`. A main completion reads only its
-triggering producer run and the prior verified reporting snapshot. PR and fork
-completions do not start reporter jobs. Daily scheduled/manual collection finds
-PR summaries and recent main runs, skips completed attempts already in the snapshot
+triggering producer run and the prior verified reporting snapshot. Its job condition
+checks the head repository and event: gate/UI must be main pushes, and nightly must
+be scheduled or manually dispatched on main. PR and fork completions do not start
+reporter jobs and are also excluded by collection and issue synchronization.
+Daily scheduled/manual collection finds recent main pushes and nightlies, skips completed attempts already in the snapshot
 and revisits pending runs. It never repeats two days of artifact reads per completion.
 Branch diagnostic nightlies, including historical #158 probes, remain excluded.
+Single-shard dispatches on main remain recorded with `diagnostic_shard`, but cannot
+open, update or recover issues. The scheduling plan verifies that flag even when
+the aggregate is missing; a manual dispatch without a verified plan is ineligible.
+The reporter never crawls PR runs. Producers retain their own per-run JSON artifacts
+and step summaries for 30 days.
 
 The latest trusted snapshot is merged, rather than rebuilding historical days from
 producer artifacts. Only new evidence from the seven most recent UTC dates may drive
@@ -27,9 +34,13 @@ or already tracked methods; complete declared/compiled/observed populations stay
 the producer's own artifact. Fork, CI-changing and approval-based provenance remain
 explicit. Candidate error messages, credentials and private runner text are not copied.
 
-The collector checks `X-RateLimit-Remaining`, reserves 100 requests and permits at most
-500 API requests per phase. Reaching either bound stops cleanly, preserves the prior
-snapshot and any verified updates, and defers issue writes. The next collection replays
+The repository's `GITHUB_TOKEN` quota is shared with its other workflows. The reporter
+uses `X-RateLimit-Limit` and `X-RateLimit-Remaining`, stops before a request would leave
+less than half that quota, and permits at most 150 requests across collection and
+synchronization together. The upload carries the consumed budget into synchronization.
+After the prior history is verified, reaching either bound preserves that history and
+verified updates and defers issue writes. Before history is verified, a rate-limit
+stop fails the job and publishes nothing. The next collection replays
 eligible saved evidence idempotently, so deferral cannot lose an issue transition. A receipt records requests,
 remaining allowance, snapshot bytes and whether collection stopped. JSON artifact
 downloads are bounded and never extracted or executed; reading two members of the
@@ -38,21 +49,27 @@ same artifact uses one download.
 | Artifact prefix | Content | Retention |
 | --- | --- | --- |
 | `ci-report-daily-<run>-<attempt>` | Compact `history.json` and UTC-day snapshots | 90 days |
-| `ci-report-pr-<run>-<attempt>` | Updated per-run PR JSON and Markdown | 30 days |
-| `ci-report-runs-<run>-<attempt>` | Other updated summaries and issue-sync receipts | 7 days |
+| Producer's own PR artifact | Per-run PR summaries; collected by the producer | 30 days |
+| `ci-report-runs-<run>-<attempt>` | Updated main/nightly summaries and issue-sync receipts | 7 days |
 
-History schema version 2 contains `days`, `issue_index`, `registry`, `budget_stopped`
+History schema version 2 contains `days`, `issue_index`, `registry`, `budget_stopped`, `api_budget`
 and trusted reporter `producer` provenance. Daily schema version 1 contains `day`,
 `retention_days` and `entries`; run entries remain version 1. The latest attempt replaces
 its run's saved entry; older deliveries cannot overwrite it. A nightly entry also keeps
 compact `attempt_history` so the first failure survives reruns. Conflicting identities
 or provenance are refused.
 
-Consume the newest completed reporter snapshot only after verifying its repository,
+Search completed reporter runs with pagination, and consume their newest available snapshot only after verifying its repository,
 workflow ID/path, main ancestry, uploader run/attempt and embedded provenance. The daily
 artifact is uploaded before issue synchronization. A later issue-sync failure makes
 the job fail while leaving that verified data available for the next collection;
 issue-sync success is not a condition for retaining already verified test evidence.
+Unreadable, invalid, expired or missing snapshots from prior reporter runs fail collection
+without uploading a replacement. A first bootstrap or intentional reset requires a
+repository-owner `workflow_dispatch` with `reset_history: true`; both the original
+and triggering actor must be the owner. The snapshot records the actor, day and run
+under `history_reset`. Scheduled runs cannot reset history. A read-only dry-run may
+start locally without a previous snapshot; it cannot publish that history.
 Monthly health calculation belongs to its separate ticket.
 
 ## Method identities and reruns
@@ -70,11 +87,17 @@ data can replace expired bytes. A failed first attempt remains a failed night af
 rerun. A newer attempt without a tracked method observation revokes its earlier pass
 eligibility as unverified. `flaky-passed`, skipped, missing and infrastructure results
 never supply an explicit pass.
+Failed identities from every attempt enter tracking before compaction and issue
+synchronization, including a run first collected after its rerun passed.
 
 For a P2 suite, an officially passed method with the suite's passing automated contract
 recorded as `needs-human-review` counts as an explicit pass for issue closure only.
 Signed human review and release eligibility remain separate and unchanged. The skeleton
 nightly remains not release eligible, and unbuilt/informational tiers open no test issues.
+A failed strict case with no officially failed method still creates a case-identity
+failure with `strict-case-contract-failed`, so a failed automated P2 contract cannot
+disappear behind passing methods. Later verified case-contract passes can recover
+that case issue; they grant no human approval or release authority.
 
 ## Issue lifecycle
 

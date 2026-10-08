@@ -250,6 +250,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             or set(events) != {"schedule", "workflow_dispatch", "workflow_run"}
             or not isinstance(events.get("workflow_run"), dict)
             or events.get("workflow_run", {}).get("branches") != ["main"]
+            or events.get("workflow_dispatch") != {"inputs": {"reset_history": {
+                "description": "Maintainer-only explicit bootstrap or reset of reporting history",
+                "required": False, "default": False, "type": "boolean"}}}
             or document.get("permissions") != {}):
         flag("workflow", "report-contract", "ci-report needs main-filtered completion/daily/manual triggers and no workflow-level grants")
     if approval_workflow and "concurrency" in document:
@@ -279,8 +282,10 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             if (permissions != {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"}
                     or job.get("runs-on") != "ubuntu-24.04" or "environment" in job
                     or job.get("if") != "github.ref == 'refs/heads/main' && "
-                    "(github.event_name != 'workflow_run' || github.event.workflow_run.name != 'ci-nightly' || "
-                    "github.event.workflow_run.head_branch == 'main')"
+                    "(github.event_name != 'workflow_run' || "
+                    "(github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && "
+                    "((github.event.workflow_run.name == 'ci-nightly' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
+                    "(contains(fromJSON('[\"ci-gate\",\"ci-ui\"]'), github.event.workflow_run.name) && github.event.workflow_run.event == 'push'))))"
                     or job.get("concurrency") != {"group": "ci-report-state", "cancel-in-progress": False}):
                 flag(location, "report-contract", "Reporter is serialized, main-only, excludes branch nightly, is environment-free and has only issue write")
         timeout = job.get("timeout-minutes")
@@ -307,7 +312,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 daily = [i for i, step in enumerate(steps) if isinstance(step, dict)
                          and step.get("uses", "").startswith("actions/upload-artifact@")
                          and step.get("with", {}).get("path") == "${{ runner.temp }}/ci-report/daily"]
-                if not (len(collect) == len(sync) == len(daily) == 1 and collect[0] < daily[0] < sync[0]):
+                if not (len(collect) == len(sync) == len(daily) == 1 and collect[0] < daily[0] < sync[0]
+                        and steps[daily[0]].get("if") == "success()" and steps[sync[0]].get("if") == "success()"):
                     flag(location, "report-contract", "Upload the verified daily rollup before issue synchronization")
             if path in PUBLISHER_COMMANDS and any(step.get("run", "").endswith("scripts/ci_publish.py publish")
                                                  for step in steps if isinstance(step, dict)):
@@ -382,7 +388,7 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                                              "path": "${{ runner.temp }}/ci-report/" + directory,
                                              "if-no-files-found": missing, "retention-days": retention}
                                  for name, directory, missing, retention in (("daily", "daily", "error", 90),
-                                     ("pr", "pull-requests", "ignore", 30), ("runs", "runs", "ignore", 7))))
+                                     ("runs", "runs", "ignore", 7))))
         if "uses" in item and not publisher_upload and not report_upload and not trusted_action_allowed(uses, options):
             flag(location, "trusted-action", "Trusted uses must be an approved pinned remote action or isolated repository-local action")
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":

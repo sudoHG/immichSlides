@@ -25,12 +25,10 @@ PRODUCER_PATHS = (".github/workflows/ci-gate.yml", ".github/workflows/ci-ui.yml"
 LABEL = "ci-reported-failure"
 MARKER = "<!-- ci-report-state:"
 SECTION = "\n\n<!-- ci-report-managed -->\n"
-APP_LOGIN = "sudohg-ci[bot]"
 FAILURES = {"failed", "crashed", "timed-out"}
 NIGHTLY_INFRASTRUCTURE = {"kind": "host", "key": "Nightly infrastructure", "dimensions": {}}
 EVIDENCE_DAYS = 7
-RATE_RESERVE = 100
-REQUEST_BUDGET = 500
+REQUEST_BUDGET = 150
 
 
 class RateLimitLow(RuntimeError):
@@ -43,7 +41,7 @@ class EvidenceExpired(ContractError):
 
 class ReportGitHub(GitHub):
     def __init__(self, repository, token, *, dry_run=False):
-        self.request_count, self.remaining, self.dry_run = 0, None, dry_run
+        self.request_count, self.remaining, self.rate_limit, self.dry_run = 0, None, 1000, dry_run
         self.binary_cache = {}
         super().__init__(repository, token, response_headers=self.check_headers)
 
@@ -51,18 +49,25 @@ class ReportGitHub(GitHub):
         remaining = headers.get("X-RateLimit-Remaining")
         if remaining is not None:
             self.remaining = int(remaining)
+        limit = headers.get("X-RateLimit-Limit")
+        if limit is not None:
+            self.rate_limit = int(limit)
+            require(self.rate_limit > 0, "invalid API quota")
+
+    def budget_exhausted(self):
+        return self.request_count >= REQUEST_BUDGET or self.remaining is not None and self.remaining <= (self.rate_limit + 1) // 2
 
     def request(self, path, *, method="GET", **options):
         require(not self.dry_run or method == "GET", "dry-run refuses every API write")
         if method == "GET" and options.get("binary") and path in self.binary_cache:
             return self.binary_cache[path]
-        if self.request_count >= REQUEST_BUDGET or self.remaining is not None and self.remaining <= RATE_RESERVE:
+        if self.budget_exhausted():
             raise RateLimitLow("API budget reserve reached")
         self.request_count += 1
         try:
             result = super().request(path, method=method, **options)
         except ContractError:
-            if self.remaining is not None and self.remaining <= RATE_RESERVE:
+            if self.budget_exhausted():
                 raise RateLimitLow("API budget reserve reached") from None
             raise
         if method == "GET" and options.get("binary"):
@@ -115,6 +120,13 @@ def method_observations(raw, trace):
             observed.append(observation(wanted[method["identifier"]], outcome, 0,
                 exit_code=phase.get("exit_code"), reason="Official test was skipped" if outcome == "skipped" else None))
         missing.extend({"identity": wanted[key], "reason": "official-method-not-observed"} for key in sorted(wanted.keys() - seen))
+        case_outcome = outcomes.get(identity_key(case))
+        if case_outcome in FAILURES and not counts["Failed"]:
+            observed.append(observation(case, case_outcome, 0, exit_code=phase.get("exit_code"), reason="strict-case-contract-failed"))
+        elif (case_outcome in {"passed", "needs-human-review"} and seen == wanted.keys()
+              and counts["Passed"] == len(wanted) and phase.get("build_operations") == 0
+              and phase.get("products_unchanged") is True and phase.get("log_present") is True):
+            observed.append(observation(case, case_outcome, 0, exit_code=phase.get("exit_code")))
     return observed, missing
 
 
@@ -204,7 +216,8 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
     if state["last_failure"]:
         previous_failed.add(state["last_failure"])
     new_failure = False
-    deliveries = [attempt for report in entries for attempt in report.get("attempt_history", [report])]
+    deliveries = [attempt for report in entries if issue_eligible(report)
+                  for attempt in report.get("attempt_history", [report]) if issue_eligible(attempt)]
     for entry in deliveries:
         if entry["source"]["workflow_path"] != NIGHTLY_PATH:
             continue
@@ -325,7 +338,26 @@ def report_base(run, repository):
                        "fork_originated": run["head_repository"]["full_name"] != repository,
                        "ci_changing": None, "approval_based": False},
             "status": "pending" if run["status"] != "completed" else "failed",
-            "release_eligible": False, "observed": [], "diagnostics": summary_diagnostics([])}
+            "release_eligible": False, "observed": [], "diagnostics": summary_diagnostics([]),
+            "diagnostic_shard": "unverified-dispatch-plan" if run["path"] == NIGHTLY_PATH and run["event"] == "workflow_dispatch" else None}
+
+
+def dispatch_shard(api, run, attempt, artifacts):
+    from ci_publish import json_member
+    if run["event"] != "workflow_dispatch":
+        return None
+    matches = [item for item in artifacts if item["name"] == f"nightly-plan-{run['id']}-{attempt}"]
+    require(len(matches) == 1 and not matches[0]["expired"], "nightly dispatch plan unavailable")
+    plan = json_member(api, matches[0], "plan.json")
+    identity = parse_identity(plan["identity"])
+    require(plan["schema_version"] == 1 and plan["run"] == {"id": str(run["id"]), "attempt": attempt}
+            and identity["repository"] == api.repository and identity["event"] == run["event"]
+            and identity["commit_sha"] == run["head_sha"] and identity["ref"] == "refs/heads/main"
+            and plan["source"]["workflow_path"] == NIGHTLY_PATH and plan["source"]["fork_originated"] is False,
+            "nightly dispatch plan provenance mismatch")
+    shard = plan["diagnostic_shard"]
+    require(shard is None or isinstance(shard, str) and bool(shard), "invalid diagnostic shard")
+    return shard
 
 
 def nightly_attempt(api, run, attempt, artifacts):
@@ -341,11 +373,15 @@ def nightly_attempt(api, run, attempt, artifacts):
     require(raw["schema_version"] == 1 and raw["run"] == {"id": str(run["id"]), "attempt": attempt}, "nightly run mismatch")
     require(identity["repository"] == api.repository and identity["event"] == run["event"]
             and identity["ref"] == "refs/heads/main" and identity["commit_sha"] == run["head_sha"], "nightly identity mismatch")
-    require(raw["source"]["workflow_path"] == NIGHTLY_PATH and raw["status"] in {"passed", "failed"}, "invalid nightly source or status")
+    require(raw["source"]["workflow_path"] == NIGHTLY_PATH and raw["source"]["repository"] == api.repository
+            and raw["source"]["event"] == run["event"] and raw["source"]["fork_originated"] is False
+            and raw["status"] in {"passed", "failed"}, "invalid nightly source or status")
     for item in raw["observed"]:
         validate_observation(item)
     entry.update(identity=identity, hashes=raw["hashes"], status=raw["status"], tiers=raw["tiers"],
-                 release_ineligible_reasons=raw["release_ineligible_reasons"])
+                 release_ineligible_reasons=raw["release_ineligible_reasons"], diagnostic_shard=raw.get("diagnostic_shard"))
+    require(entry["diagnostic_shard"] is None or run["event"] == "workflow_dispatch"
+            and isinstance(entry["diagnostic_shard"], str) and bool(entry["diagnostic_shard"]), "invalid nightly diagnostic")
     observed, missing = [], []
     case_keys = {identity_key(item["identity"]) for item in raw["observed"]}
     informational = {identity_key(item["identity"]) for item in raw["informational"]}
@@ -384,7 +420,7 @@ def nightly_attempt(api, run, attempt, artifacts):
 
 def read_run(api, run, admissions, previous=None):
     """Only bounded JSON data is read; artifact files are never extracted or executed."""
-    from ci_publish import json_member, producer_evidence, approval_context
+    from ci_publish import producer_evidence
     from ci_publish_git import evaluate_records
     entry = report_base(run, api.repository)
     if run["status"] != "completed":
@@ -404,8 +440,11 @@ def read_run(api, run, admissions, previous=None):
             history = []
             cached = {item["run"]["attempt"]: item for item in (previous or {}).get("attempt_history", [])}
             for attempt in range(1, run["run_attempt"] + 1):
+                diagnostic = "unverified-dispatch-plan" if run["event"] == "workflow_dispatch" else None
                 try:
+                    diagnostic = dispatch_shard(api, run, attempt, artifacts)
                     value = nightly_attempt(api, run, attempt, artifacts)
+                    require(value.get("diagnostic_shard") == diagnostic, "aggregate differs from dispatch plan")
                 except EvidenceExpired:
                     if attempt not in cached:
                         raise
@@ -414,6 +453,7 @@ def read_run(api, run, admissions, previous=None):
                     raise
                 except (ContractError, KeyError, ValueError, TypeError):
                     value = report_base({**run, "run_attempt": attempt}, api.repository)
+                    value["diagnostic_shard"] = diagnostic
                     value["diagnostics"]["infrastructure"] = ["nightly attempt evidence unavailable"]
                 history.append(value)
             if any(item["diagnostics"]["infrastructure"] for item in history):
@@ -431,16 +471,9 @@ def read_run(api, run, admissions, previous=None):
                     and identity.get("head_sha", identity.get("pushed_sha")) == run["head_sha"], "admission source mismatch")
             if run["event"] == "push":
                 require(run["head_branch"] == "main" and on_main(run["head_sha"]), "push is outside main history")
-            fork = entry["source"]["fork_originated"]
-            changing = record["classification"]["ci_changing"]
-            approved = False
-            if run["event"] == "pull_request":
-                context = approval_context(identity["pull_request"], identity["head_sha"])
-                statuses = api.pages("commits/" + identity["head_sha"] + "/statuses")
-                approval = next((s for s in statuses if s["context"] == context and s["creator"]["login"] == APP_LOGIN), None)
-                approved = bool(approval and approval["state"] == "success")
-            entry["source"].update(ci_changing=changing, approval_based=bool(approved and (fork or changing)))
-            source = record["workflows"][run["path"]]["candidate" if approved else "base"]
+            require(run["event"] == "push", "reporter reads main pushes only")
+            entry["source"]["ci_changing"] = record["classification"]["ci_changing"]
+            source = record["workflows"][run["path"]]["base"]
             errors = []
             jobs, summaries = producer_evidence(api, run, source, diagnostics=errors)
             if any(item.startswith("required artifact expired:") for item in errors):
@@ -454,14 +487,11 @@ def read_run(api, run, admissions, previous=None):
                 entry["diagnostics"]["infrastructure"] = []
             if not errors:
                 if all(job["status"] == "completed" and job["conclusion"] == "success" for job in jobs):
-                    result = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
+                    result = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
                     entry["evaluation"] = result
                     entry["status"] = "passed" if result["state"] == "success" and run["conclusion"] == "success" else "failed"
                 elif not entry["diagnostics"]["failures"]:
                     entry["diagnostics"]["infrastructure"].append("required job failed, skipped or cancelled without an official test failure")
-            if run["event"] == "pull_request" and (fork or changing) and not approved:
-                entry["status"] = "failed"
-                entry["diagnostics"]["infrastructure"].append("exact head approval required; producer evidence is unapproved")
     except EvidenceExpired:
         entry["evidence_expired"] = True
         entry["status"] = "unverified"
@@ -476,7 +506,8 @@ def read_run(api, run, admissions, previous=None):
     for item in entry["observed"]:
         for attempt in item["attempts"]:
             attempt["message"] = None
-            attempt["reason"] = "skip reason withheld; consult trusted policy" if attempt["outcome"] == "skipped" else None
+            attempt["reason"] = ("skip reason withheld; consult trusted policy" if attempt["outcome"] == "skipped"
+                                 else "strict-case-contract-failed" if attempt.get("reason") == "strict-case-contract-failed" else None)
     return entry
 
 
@@ -559,6 +590,9 @@ def sync_identity(api, token, identity, entries, registry_issues, registry_token
 
 
 def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inventory=None):
+    entries = [entry for entry in entries if issue_eligible(entry) and entry["source"]["repository"] == api.repository]
+    if not entries:
+        return [], {}
     raise_errors = errors is None
     errors = [] if errors is None else errors
     ensure_label(api, label)
@@ -581,7 +615,8 @@ def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inve
             errors.append({"issue": issue["number"], "code": "invalid-issue-state"})
     registry_tokens = {identity_token(item["identity"]): int(item["issue"].rsplit("/", 1)[-1]) for item in registry["entries"]}
     identities = {identity_token(item["identity"]): item["identity"] for report in entries
-                  if report["source"]["workflow_path"] == NIGHTLY_PATH for item in report["observed"]}
+                  if report["source"]["workflow_path"] == NIGHTLY_PATH
+                  for attempt in report.get("attempt_history", [report]) if issue_eligible(attempt) for item in attempt["observed"]}
     # A missing newer observation must still revoke a tracked run's old pass.
     identities.update({token: read_state(issue)["identity"] for token, issue in by_token.items()})
     identities.update({identity_token(item["identity"]): item["identity"] for item in registry["entries"]})
@@ -632,9 +667,11 @@ def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inve
 
 
 def compact_entry(entry, tracked):
+    tracked = tracked | {identity_token(item["identity"]) for attempt in entry.get("attempt_history", [entry])
+                         for item in attempt["observed"] if item["outcome"] in FAILURES}
     result = {key: copy.deepcopy(value) for key, value in entry.items() if key in {
         "schema_version", "day", "source", "run", "identity", "hashes", "status", "release_eligible",
-        "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired"}}
+        "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired", "diagnostic_shard"}}
     result["diagnostics"] = {key: copy.deepcopy(entry["diagnostics"].get(key, [] if key != "counts" else {}))
                              for key in ("counts", "failures", "missing", "infrastructure")}
     result["observed"] = [copy.deepcopy(item) for item in entry["observed"]
@@ -669,32 +706,42 @@ def merge_snapshot(previous, entries, now):
     return snapshot
 
 
+def issue_eligible(entry):
+    source = entry["source"]
+    return (source.get("fork_originated") is False and not entry.get("diagnostic_shard")
+            and (source["workflow_path"] == NIGHTLY_PATH and source["event"] in {"schedule", "workflow_dispatch"}
+                 or source["workflow_path"] in PRODUCER_PATHS[:2] and source["event"] == "push"))
+
+
+def eligible_run(run, repository):
+    return (run["repository"]["full_name"] == repository and run["head_repository"]["full_name"] == repository
+            and run["head_branch"] == "main" and issue_eligible({"source": {
+                "workflow_path": run["path"], "event": run["event"], "fork_originated": False}}))
+
+
 def decision_entries(entries, now):
     cutoff = (now - timedelta(days=EVIDENCE_DAYS - 1)).isoformat()
-    return [entry for entry in entries if cutoff <= entry["day"] <= now.isoformat() and not entry.get("evidence_expired")]
+    return [entry for entry in entries if cutoff <= entry["day"] <= now.isoformat()
+            and not entry.get("evidence_expired") and issue_eligible(entry)]
 
 
 def discover_runs(api, event_name, event, now):
     if event_name == "workflow_run":
         triggering = api.repo(f"actions/runs/{event['workflow_run']['id']}")
-        require(triggering["repository"]["full_name"] == api.repository and triggering["path"] in PRODUCER_PATHS
-                and triggering["head_branch"] == "main", "unknown or non-main triggering workflow")
-        return [triggering]
+        return [triggering] if eligible_run(triggering, api.repository) else []
     runs = {}
-    for path in PRODUCER_PATHS:
+    for path in (NIGHTLY_PATH, *PRODUCER_PATHS[:2]):
         workflow = api.repo("actions/workflows/" + path.rsplit("/", 1)[-1], missing=True)
         if workflow is None:
             continue
         require(workflow["path"] == path, "producer workflow path mismatch")
         start = (now - timedelta(days=1)).isoformat()
         for run in api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs",
+                             branch="main", **({"event": "push"} if path != NIGHTLY_PATH else {}),
                              created=start + "T00:00:00Z.." + now.isoformat() + "T23:59:59Z"):
             require(run["workflow_id"] == workflow["id"] and run["path"] == path
                     and run["repository"]["full_name"] == api.repository, "producer ID/path/repository mismatch")
-            if path == NIGHTLY_PATH:
-                if run["head_branch"] != "main" or run["event"] not in {"schedule", "workflow_dispatch"}:
-                    continue
-            elif run["event"] not in {"pull_request", "push"} or run["event"] == "push" and run["head_branch"] != "main":
+            if not eligible_run(run, api.repository):
                 continue
             runs[run["id"]] = run
     return sorted(runs.values(), key=lambda item: item["id"])
@@ -706,17 +753,26 @@ def read_snapshot(api):
     if workflow is None:
         return None
     require(workflow["path"] == REPORT_PATH, "reporter workflow path mismatch")
-    rows = api.repo(f"actions/workflows/{workflow['id']}/runs?branch=main&status=completed&per_page=10")["workflow_runs"]
-    for run in rows:
+    def previous_runs():
+        found = False
+        for page in range(1, 101):
+            rows = api.repo(f"actions/workflows/{workflow['id']}/runs?branch=main&status=completed&per_page=100&page={page}")["workflow_runs"]
+            found |= bool(rows)
+            yield from rows
+            if len(rows) < 100:
+                require(not found, "previous reporter runs exist but their snapshot could not be read")
+                return
+        raise ContractError("reporter history pagination exhausted")
+    for run in previous_runs():
         if not (run["path"] == REPORT_PATH and run["workflow_id"] == workflow["id"] and run["head_branch"] == "main"
                 and run["repository"]["full_name"] == api.repository and run["head_repository"]["full_name"] == api.repository
                 and run["event"] in {"schedule", "workflow_dispatch", "workflow_run"} and on_main(run["head_sha"])):
             continue
         name = f"ci-report-daily-{run['id']}-{run['run_attempt']}"
-        artifacts = [item for item in api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
-                     if item["name"] == name and not item["expired"]]
+        artifacts = [item for item in api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts") if item["name"] == name]
         require(len(artifacts) <= 1, "duplicate reporter snapshot")
         if artifacts:
+            require(not artifacts[0]["expired"], "previous reporter snapshot expired")
             snapshot = json_member(api, artifacts[0], "history.json")
             require(snapshot["schema_version"] == 2 and snapshot["producer"] == {
                 "repository": api.repository, "workflow_path": REPORT_PATH,
@@ -729,15 +785,15 @@ def read_snapshot(api):
 
 
 def write_report(output, snapshot, entries, registry, states, *, stopped, now=None):
-    for kind in ("daily", "pull-requests", "runs"):
-        (output / kind).mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n"
     require(len(encoded.encode()) <= 16 * 1024 * 1024, "reporter snapshot exceeds readable artifact limit")
+    for kind in ("daily", "runs"):
+        (output / kind).mkdir(parents=True, exist_ok=True)
     (output / "daily/history.json").write_text(encoded)
     for day, rollup in sorted(snapshot["days"].items()):
         (output / "daily" / (day + ".json")).write_text(json.dumps(rollup, separators=(",", ":")) + "\n")
     for entry in entries:
-        kind = "pull-requests" if entry["source"]["event"] == "pull_request" else "runs"
+        kind = "runs"
         stem = str(entry["run"]["id"]) + "-" + str(entry["run"]["attempt"])
         (output / kind / (stem + ".json")).write_text(json.dumps(entry, separators=(",", ":")) + "\n")
         (output / kind / (stem + ".md")).write_text(render_entry(entry))
@@ -745,7 +801,7 @@ def write_report(output, snapshot, entries, registry, states, *, stopped, now=No
     candidates = [entry for rollup in snapshot["days"].values() for entry in rollup["entries"]
                   if entry["source"]["event"] == "push" or entry["source"]["workflow_path"] == NIGHTLY_PATH]
     plan = {"schema_version": 2, "entries": [] if stopped else decision_entries(candidates, now),
-            "registry": registry, "budget_stopped": stopped}
+            "registry": registry, "budget_stopped": stopped, "api_budget": snapshot.get("api_budget", {})}
     (output / "sync.json").write_text(json.dumps(plan) + "\n")
 
 
@@ -753,15 +809,22 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
     from ci_publish import trusted_admissions
     from ci_flaky import parse_registry
     registry = parse_registry(Path("scripts/ci-known-flaky.json").read_text())
-    snapshot, entries, states, stopped = None, [], {}, False
+    snapshot, entries, states, stopped, history_loaded = None, [], {}, False, False
+    reset = event.get("inputs", {}).get("reset_history") in {True, "true"}
+    if reset:
+        owner = api.repository.split("/", 1)[0]
+        require(event_name == "workflow_dispatch" and os.environ.get("GITHUB_ACTOR") == owner
+                and os.environ.get("GITHUB_TRIGGERING_ACTOR") == owner, "history reset requires a maintainer dispatch")
     try:
         api.request("/rate_limit")
-        snapshot = read_snapshot(api)
+        snapshot = None if reset else read_snapshot(api)
+        require(snapshot is not None or reset or getattr(api, "dry_run", False), "initial history requires an explicit maintainer reset")
+        history_loaded = True
+        index = copy.deepcopy((snapshot or {}).get("issue_index", {}))
         inventory = visible_issues(api, LABEL)
         tracked = {identity_token(item["identity"]) for item in registry["entries"]}
         tracked.update(identity_token(item["identity"]) for rollup in (snapshot or {}).get("days", {}).values()
                        for entry in rollup["entries"] for item in entry["observed"])
-        index = copy.deepcopy((snapshot or {}).get("issue_index", {}))
         for issue in inventory:
             state = read_state(issue)
             if state:
@@ -778,10 +841,13 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
                 if run_ids else discover_runs(api, event_name, event, now))
         if event_name != "workflow_run":
             ids = {run["id"] for run in runs}
-            for entry in decision_entries(list(saved.values()), now):
-                if entry["status"] == "pending" and entry["run"]["id"] not in ids:
+            for entry in saved.values():
+                if (entry["status"] == "pending" and entry["run"]["id"] not in ids
+                        and (now - timedelta(days=EVIDENCE_DAYS - 1)).isoformat() <= entry["day"] <= now.isoformat()):
                     runs.append(api.repo(f"actions/runs/{entry['run']['id']}"))
         for run in runs:
+            if not eligible_run(run, api.repository):
+                continue
             if run["created_at"][:10] < (now - timedelta(days=EVIDENCE_DAYS - 1)).isoformat():
                 continue
             previous = saved.get(run["id"])
@@ -789,15 +855,25 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
                 continue
             admissions = trusted_admissions(api, [run["id"]]) if run["path"] != NIGHTLY_PATH else {}
             report = read_run(api, run, admissions, previous)
+            tracked.update(identity_token(item["identity"]) for attempt in report.get("attempt_history", [report])
+                           for item in attempt["observed"] if item["outcome"] in FAILURES)
             entries.append(compact_entry(report, tracked))
         snapshot = merge_snapshot(snapshot, entries, now)
         snapshot["issue_index"] = index
     except RateLimitLow:
+        if not history_loaded:
+            raise
         stopped = True
         snapshot = merge_snapshot(snapshot, entries, now)
+        snapshot["issue_index"] = index
     snapshot["registry"] = registry_checks(registry, now.isoformat(), states)
-    stopped |= api.request_count >= REQUEST_BUDGET or api.remaining is not None and api.remaining <= RATE_RESERVE
+    stopped |= api.budget_exhausted()
     snapshot["budget_stopped"] = stopped
+    snapshot["api_budget"] = {"requests": api.request_count, "remaining": api.remaining,
+                              "limit": getattr(api, "rate_limit", 1000)}
+    if reset:
+        snapshot["history_reset"] = {"actor": os.environ["GITHUB_ACTOR"], "day": now.isoformat(),
+                                    "run": os.environ.get("GITHUB_RUN_ID")}
     if os.environ.get("GITHUB_ACTIONS") == "true":
         snapshot["producer"] = {"repository": api.repository, "workflow_path": REPORT_PATH,
             "run": {"id": os.environ["GITHUB_RUN_ID"], "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
@@ -805,7 +881,7 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
     write_report(output, snapshot, entries, registry, states, stopped=stopped, now=now)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-            handle.write("# CI daily reporting\n\nDaily history: 90 days; PR summaries: 30 days; other summaries: 7 days.\n\n")
+            handle.write("# CI daily reporting\n\nDaily history: 90 days; main/nightly summaries: 7 days. PR producers retain their own summaries for 30 days.\n\n")
             for entry in entries:
                 handle.write(render_entry(entry))
             handle.write("\nRegistry review: " + text(snapshot["registry"]) + "\n")
@@ -842,6 +918,10 @@ def main(argv=None):
         return collect_report(api, event_name, event, datetime.now(timezone.utc).date(), output, run_ids=args.run_id)
     plan = decode((output / "sync.json").read_text())
     require(plan["schema_version"] == 2, "invalid issue synchronization plan")
+    budget = plan["api_budget"]
+    require(type(budget.get("requests")) is int and 0 <= budget["requests"] <= REQUEST_BUDGET
+            and type(budget.get("limit")) is int and budget["limit"] > 0, "invalid shared API budget")
+    api.request_count, api.remaining, api.rate_limit = budget["requests"], budget["remaining"], budget["limit"]
     plan["entries"] = decision_entries(plan["entries"], datetime.now(timezone.utc).date())
     if plan["budget_stopped"] or not plan["entries"]:
         print("No issue synchronization: no new eligible evidence or API budget reserved.")
@@ -862,6 +942,6 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (ContractError, OSError, ValueError, KeyError, TypeError):
+    except (ContractError, RateLimitLow, OSError, ValueError, KeyError, TypeError):
         # Neither credentials nor API/candidate payloads are included in failures.
         raise SystemExit("CI reporting refused: invalid context, evidence or issue state") from None

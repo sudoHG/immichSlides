@@ -4,7 +4,7 @@ import copy
 import json
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -299,9 +299,11 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual(identity_token(method), receipts[0]["token"])
         trace["warm"][0]["official_methods"][0]["result"] = "Passed"
         trace["warm"][0]["official_summary"].update(failedTests=0, passedTests=3)
-        self.assertEqual({"not-run"}, {item["outcome"] for item in ci_report.method_observations(shard, trace)[0]})
+        outcomes = ci_report.method_observations(shard, trace)[0]
+        self.assertEqual([case], [item["identity"] for item in outcomes if item["outcome"] == "failed"])
+        self.assertEqual("strict-case-contract-failed", outcomes[-1]["attempts"][0]["reason"])
         trace["warm"][0].pop("official_methods")
-        self.assertEqual([], ci_report.method_observations(shard, trace)[0])
+        self.assertEqual([case], [item["identity"] for item in ci_report.method_observations(shard, trace)[0]])
 
     def test_newer_attempt_without_observation_revokes_a_saved_pass_and_keeps_first_failure(self):
         state = self.transition(None, entry())["state"]
@@ -324,6 +326,12 @@ class ReporterTests(unittest.TestCase):
             observed = read_run(api, run, {})
         self.assertEqual([1, 2], [call.args[2] for call in reader.call_args_list])
         self.assertEqual("failed", self.transition(None, observed)["state"]["nights"]["2026-10-01"]["10"]["outcome"])
+        compact = ci_report.compact_entry(observed, set())
+        self.assertEqual([IDENTITY], [item["identity"] for item in compact["observed"]])
+        with patch("ci_report.ensure_label"), patch("ci_report.visible_issues", return_value=[]), \
+                patch("ci_report.sync_identity", return_value=None) as sync:
+            synchronize_issues(api, [compact], {"entries": []})
+        self.assertIn(IDENTITY, [call.args[2] for call in sync.call_args_list])
 
     def test_three_p2_contract_pass_nights_close_without_granting_release_authority(self):
         identity = copy.deepcopy(IDENTITY)
@@ -370,27 +378,136 @@ class ReporterTests(unittest.TestCase):
 
     def test_workflow_completions_read_only_the_trigger_and_prior_snapshot(self):
         run = {"id": 10, "path": ci_report.NIGHTLY_PATH, "head_branch": "main",
+               "event": "schedule", "head_repository": {"full_name": "sudoHG/immichSlides"},
                "repository": {"full_name": "sudoHG/immichSlides"}}
         api = type("API", (), {"repository": "sudoHG/immichSlides", "repo": lambda self, path: run,
                                "pages": lambda *args, **kwargs: self.fail("completion must not enumerate producer days")})()
         self.assertEqual([run], ci_report.discover_runs(api, "workflow_run", {"workflow_run": {"id": 10}}, date(2026, 10, 1)))
+        for changes in ({"head_repository": {"full_name": "contributor/immichSlides"}},
+                        {"event": "pull_request"}, {"path": ci_report.PRODUCER_PATHS[0], "event": "pull_request"},
+                        {"head_branch": "feature"}):
+            with self.subTest(changes=changes), patch.object(api, "repo", return_value={**run, **changes}):
+                self.assertEqual([], ci_report.discover_runs(api, "workflow_run", {"workflow_run": {"id": 10}}, date(2026, 10, 1)))
+        for changes in ({"fork_originated": True}, {"event": "pull_request"}):
+            report = entry()
+            report["source"].update(changes)
+            with self.subTest(changes=changes), patch("ci_report.ensure_label", side_effect=AssertionError("no writes")):
+                self.assertEqual(([], {}), synchronize_issues(api, [report], {"entries": []}))
 
     def test_dry_run_refuses_writes_and_low_api_budget_stops_before_another_request(self):
         api = ci_report.ReportGitHub("sudoHG/immichSlides", "", dry_run=True)
         with self.assertRaises(ContractError):
             api.repo("issues", method="POST", payload={"title": "must not write"})
         self.assertEqual(0, api.request_count)
-        api.check_headers({"X-RateLimit-Remaining": "1"})
+        api.check_headers({"X-RateLimit-Remaining": "500", "X-RateLimit-Limit": "1000"})
         with patch("ci_publish.GitHub.request", side_effect=AssertionError("no request allowed")), \
                 self.assertRaises(ci_report.RateLimitLow):
             api.repo("actions/runs/10")
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
-            self.assertEqual(0, ci_report.collect_report(api, "schedule", {}, date(2026, 10, 1), output))
-            saved = json.loads((output / "daily/history.json").read_text())
-            self.assertTrue(saved["budget_stopped"])
-            self.assertEqual([], json.loads((output / "sync.json").read_text())["entries"])
+            with self.assertRaises(ci_report.RateLimitLow):
+                ci_report.collect_report(api, "schedule", {}, date(2026, 10, 1), output)
+            self.assertEqual([], list(output.iterdir()))
         self.assertEqual(0, api.request_count)
+        self.assertLessEqual(ci_report.REQUEST_BUDGET, 150)
+        api.check_headers({"X-RateLimit-Remaining": "900", "X-RateLimit-Limit": "1000"})
+        api.request_count = 150
+        with patch("ci_publish.GitHub.request", side_effect=AssertionError("run budget exhausted")), self.assertRaises(ci_report.RateLimitLow):
+            api.repo("actions/runs/10")
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            (output / "runs").mkdir()
+            value = entry(day=datetime.now(timezone.utc).date().isoformat())
+            (output / "sync.json").write_text(json.dumps({"schema_version": 2, "entries": [value], "registry": {"entries": []},
+                "budget_stopped": False, "api_budget": {"requests": 150, "remaining": 900, "limit": 1000}}))
+            with patch("ci_report.check_context"), patch("ci_report.ReportGitHub", return_value=api), \
+                    patch.dict("os.environ", {"CI_REPORT_TOKEN": "synthetic-test-token", "GITHUB_REPOSITORY": api.repository}), \
+                    patch("ci_publish.GitHub.request", side_effect=AssertionError("sync cannot reset the run budget")):
+                self.assertEqual(0, ci_report.main(["--phase", "sync", "--output-dir", str(output)]))
+            self.assertEqual(150, json.loads((output / "runs/issue-actions.json").read_text())["requests"])
+
+    def test_unread_history_fails_without_outputs_but_loaded_history_survives_budget_stop(self):
+        saved = ci_report.merge_snapshot(None, [entry()], date(2026, 10, 1))
+        api = type("API", (), {"repository": "sudoHG/immichSlides", "request_count": 2, "remaining": 501,
+                               "request": lambda *args: None, "budget_exhausted": lambda *args: False})()
+        for previous, expected in ((None, "fail"), (saved, "preserve")):
+            with tempfile.TemporaryDirectory() as temporary, patch("ci_flaky.parse_registry", return_value={"entries": []}), \
+                    patch("ci_report.read_snapshot", side_effect=ci_report.RateLimitLow() if previous is None else None,
+                          return_value=previous), patch("ci_report.visible_issues", side_effect=ci_report.RateLimitLow()):
+                output = Path(temporary)
+                if expected == "fail":
+                    with self.assertRaises(ci_report.RateLimitLow):
+                        ci_report.collect_report(api, "schedule", {}, date(2026, 10, 1), output)
+                    self.assertFalse((output / "daily/history.json").exists())
+                else:
+                    ci_report.collect_report(api, "schedule", {}, date(2026, 10, 1), output)
+                    snapshot = json.loads((output / "daily/history.json").read_text())
+                    self.assertEqual(saved["days"], snapshot["days"])
+                    self.assertTrue(snapshot["budget_stopped"])
+
+    def test_history_search_paginates_and_missing_snapshots_require_explicit_maintainer_reset(self):
+        run = {"id": 10, "workflow_id": 20, "path": ci_report.REPORT_PATH, "head_branch": "main",
+               "head_repository": {"full_name": "sudoHG/immichSlides"}, "repository": {"full_name": "sudoHG/immichSlides"},
+               "event": "schedule", "head_sha": "a" * 40, "run_attempt": 1}
+        saved = ci_report.merge_snapshot(None, [entry()], date(2026, 10, 1))
+        saved["producer"] = {"repository": "sudoHG/immichSlides", "workflow_path": ci_report.REPORT_PATH,
+                             "run": {"id": "10", "attempt": 1}, "commit_sha": "a" * 40}
+        class API:
+            repository = "sudoHG/immichSlides"
+            def repo(self, path, **options):
+                if path == "actions/workflows/ci-report.yml":
+                    return {"id": 20, "path": ci_report.REPORT_PATH}
+                if "&page=1" in path:
+                    return {"workflow_runs": [{**run, "id": value} for value in range(110, 10, -1)]}
+                return {"workflow_runs": [run]}
+            def pages(self, path, *args, **options):
+                return [{"name": "ci-report-daily-10-1", "expired": False}] if path == "actions/runs/10/artifacts" else []
+        with patch("ci_report.on_main", return_value=True), patch("ci_publish.json_member", return_value=saved):
+            self.assertEqual(saved, ci_report.read_snapshot(API()))
+        with patch("ci_report.on_main", return_value=True), patch.object(API, "pages", return_value=[]), self.assertRaises(ContractError):
+            ci_report.read_snapshot(API())
+        api = type("EmptyAPI", (), {"repository": "sudoHG/immichSlides", "request_count": 1, "remaining": 900,
+                                   "request": lambda *args: None, "budget_exhausted": lambda *args: False})()
+        for event, actor, allowed in (("schedule", "sudoHG", False), ("workflow_dispatch", "other", False),
+                                      ("workflow_dispatch", "sudoHG", True)):
+            with self.subTest(event=event, actor=actor), tempfile.TemporaryDirectory() as temporary, \
+                    patch("ci_flaky.parse_registry", return_value={"entries": []}), patch("ci_report.read_snapshot", return_value=None), \
+                    patch("ci_report.visible_issues", return_value=[]), patch("ci_report.discover_runs", return_value=[]), \
+                    patch.dict("os.environ", {"GITHUB_ACTOR": actor, "GITHUB_TRIGGERING_ACTOR": actor}, clear=False):
+                output = Path(temporary)
+                if allowed:
+                    ci_report.collect_report(api, event, {"inputs": {"reset_history": True}}, date(2026, 10, 1), output)
+                    self.assertEqual("sudoHG", json.loads((output / "daily/history.json").read_text())["history_reset"]["actor"])
+                else:
+                    with self.assertRaises(ContractError):
+                        ci_report.collect_report(api, event, {"inputs": {"reset_history": True}}, date(2026, 10, 1), output)
+
+    def test_diagnostic_nightly_is_retained_but_never_writes_or_recovers_an_issue(self):
+        report = entry()
+        report["diagnostic_shard"] = "ios-iphone-0"
+        compact = ci_report.compact_entry(report, set())
+        self.assertEqual("ios-iphone-0", compact["diagnostic_shard"])
+        self.assertEqual([], ci_report.decision_entries([compact], date(2026, 10, 1)))
+        with patch("ci_report.ensure_label", side_effect=AssertionError("no diagnostic writes")):
+            self.assertEqual(([], {}), synchronize_issues(object(), [compact], {"entries": []}))
+        self.assertEqual("none", self.transition(None, compact)["action"])
+        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z", "head_sha": "a" * 40,
+               "path": ci_report.NIGHTLY_PATH, "event": "workflow_dispatch", "head_branch": "main",
+               "head_repository": {"full_name": "sudoHG/immichSlides"}, "status": "completed", "conclusion": "failure"}
+        api = type("API", (), {"repository": "sudoHG/immichSlides", "pages": lambda *args: []})()
+        with patch("ci_report.on_main", return_value=True):
+            unavailable = read_run(api, run, {})
+        self.assertEqual("unverified-dispatch-plan", unavailable["diagnostic_shard"])
+        self.assertFalse(ci_report.issue_eligible(unavailable))
+        plan = {"schema_version": 1, "identity": {"schema_version": 1, "repository": api.repository,
+                "event": "workflow_dispatch", "ref": "refs/heads/main", "commit_sha": "a" * 40, "tree_sha": "b" * 40},
+                "source": {"workflow_path": ci_report.NIGHTLY_PATH, "fork_originated": False},
+                "run": {"id": "10", "attempt": 1}, "diagnostic_shard": "ios-iphone-0"}
+        with patch("ci_report.on_main", return_value=True), patch.object(api, "pages", return_value=[{
+                "name": "nightly-plan-10-1", "expired": False}]), patch("ci_publish.json_member", return_value=plan):
+            failed_aggregate = read_run(api, run, {})
+        self.assertEqual("ios-iphone-0", failed_aggregate["diagnostic_shard"])
+        self.assertFalse(ci_report.issue_eligible(failed_aggregate))
 
     def test_rollup_is_written_before_issue_sync_and_sync_errors_preserve_other_identities(self):
         with tempfile.TemporaryDirectory() as temporary:
