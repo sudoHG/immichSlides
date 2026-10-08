@@ -65,6 +65,12 @@ Only these `*Live*` classes receive test-time configuration:
 - `SlideShowViewModelLiveIntegrationTests`: loading, filtered playback and sequence rules.
 - `FaceBoxLiveProbeTests`: a bounded random geometry sample, with Evidence enabled.
 
+Xcode enumeration returns the whole unit target catalog even with class selectors.
+The runner selects these suites from that credential-free catalog, rejects unowned
+Live suites and requires every declared selected method to compile. Actual execution
+still must equal the selected population exactly, including on the fake canary;
+missing, extra or duplicate functions/parameters cannot establish coverage.
+
 `PerformanceLiveIntegrationTests` is owned by the live-performance ticket. Other
 Evidence suites are offline performance and never receive secrets. The 37 approved
 hermetic skips remain unchanged; Evidence identities do not all belong to live units.
@@ -95,6 +101,9 @@ counts live in the separate provenance record. Runtime arguments, failure messag
 reasons are withheld. Missing/extra/duplicate execution, parameter failure, any skip,
 nonzero exit, official result disagreement or failed cleanup fails. Exceptions are
 never serialized. Missing records or a refused scan cannot authorize publication.
+Fixed phase markers contain no subprocess output or exception text. A canary
+preparation/finalization failure publishes its scanned shared failure summary but
+no passing canary verdict, so the audit remains red and the phase stays visible.
 
 Boot/enumeration use the [unit consumer bounds](CI_UNIT_TESTS.md); execution is
 bounded at 900 seconds, each official export at 60 seconds, and disposal at 15/60
@@ -109,7 +118,8 @@ masking, injects them as `CI_LIVE_URL/KEY` against a `.invalid` host, and invoke
 same execution core, selectors, private capture, official exports, cleanup, summary
 validator and publication scan as real live units. Actual live suites must fail after
 enumeration, with nonzero Xcode exit and official results; setup-only failure cannot
-establish the canary. The normal scanned failed summary and step summary publish,
+establish the canary. Complete selected execution and a genuine failed test are
+required; unrelated tests or process-only failure cannot establish it. The normal scanned failed summary and step summary publish,
 alongside a run/attempt-bound canary verdict. No real server is contacted.
 Scanner regressions cover raw, URL/JSON forms, host/key prefixes, UTF-16, chunk
 boundaries and Base64 offsets 0/1/2 in standard and URL-safe alphabets.

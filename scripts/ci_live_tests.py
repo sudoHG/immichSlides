@@ -109,7 +109,18 @@ def scan_tree(path, needles):
             scan_file(item, needles)
 
 
-def public_outcomes(declared, compiled, rows, counts, code):
+def compiled_live_keys(payload, declared):
+    catalog = units.enumeration_keys(payload)
+    owners = {name.split('/')[0] for name in catalog if 'Live' in name.split('/')[0]}
+    require(owners <= set(SUITES) | {'PerformanceLiveIntegrationTests'}, 'compiled live suite ownership changed')
+    selected = {name for name in catalog if name.split('/')[0] in SUITES}
+    identities = [test_identity('swift', units.UNIT_TARGET+'/'+name, platform=declared[0]['dimensions']['platform'])
+                  for name in selected]
+    require(set(tokens(identities, functions=True)) == set(tokens(declared, functions=True)), 'live selection mismatch')
+    return selected
+
+
+def validate_outcome_population(declared, compiled, rows, counts):
     tokens([row["identity"] for row in rows])
     expected = tokens(declared, functions=True)
     compiled_ids = [test_identity("swift", units.UNIT_TARGET + "/" + key,
@@ -118,8 +129,16 @@ def public_outcomes(declared, compiled, rows, counts, code):
     functions = [row for row in rows if "parameter" not in row["identity"]["dimensions"]]
     require(set(tokens([row["identity"] for row in functions], functions=True)) == set(expected)
             and len(functions) == len(expected), "live compiled/executed mismatch")
-    require(code == 0 and counts.result.casefold() == "passed" and counts.total_test_count == len(functions)
-            and counts.passed_tests == len(functions) and counts.failed_tests == 0 and counts.skipped_tests == 0,
+    require(counts.total_test_count == len(functions) and
+            counts.passed_tests == sum(row['outcome'] == 'passed' for row in functions) and
+            counts.failed_tests == sum(row['outcome'] == 'failed' for row in functions) and
+            counts.skipped_tests == sum(row['outcome'] == 'skipped' for row in functions), 'live official counts mismatch')
+
+
+def public_outcomes(declared, compiled, rows, counts, code):
+    validate_outcome_population(declared, compiled, rows, counts)
+    require(code == 0 and counts.result.casefold() == "passed"
+            and counts.passed_tests == len(declared) and counts.failed_tests == 0 and counts.skipped_tests == 0,
             "live process or official counts failed")
     require(all(row["outcome"] == "passed" for row in rows), "live function or parameter did not pass")
     return sanitized_outcomes(declared, rows)
@@ -197,6 +216,7 @@ def execute_live(args, selection):
                   'platform': platform, 'artifact_id': selection['artifact_id'],
                   'producer_attempt': selection['producer_attempt'], 'exit_code': 1, 'release_eligible': False}
     simulator = None
+    coverage_verified = False
     phase = "archive"
     try:
         archive.workspace_preflight(ROOT)
@@ -234,6 +254,7 @@ def execute_live(args, selection):
                                             env=clean, stderr=subprocess.DEVNULL, timeout=60, text=True).strip()
         budget = units.enumeration_budget("ci", platform)
         phase = "boot"
+        print('Live phase: boot.', flush=True)
         require(capture(["xcrun", "simctl", "bootstatus", simulator, "-b"], private / "boot.log", env=clean,
                         timeout=budget["simulator_boot_timeout_seconds"]) == 0, "live boot failed")
         base = ["xcodebuild", "test-without-building", "-xctestrun", str(next(products.glob("*.xctestrun"))),
@@ -241,15 +262,18 @@ def execute_live(args, selection):
                 "-derivedDataPath", str(private / "derived"), "-parallel-testing-enabled", "NO",
                 "-collect-test-diagnostics", "never", *["-only-testing:immichSlidesTests/" + suite for suite in SUITES]]
         phase = "enumeration"
+        print('Live phase: enumeration.', flush=True)
         archive.disk_check(args.min_free_gib)
         enum_path = private / "enumeration.json"
         require(capture([*base, "-enumerate-tests", "-test-enumeration-format", "json", "-test-enumeration-output-path", str(enum_path)],
                         private / "enumeration.log", env=clean, timeout=budget["timeout_seconds"]) == 0, "live enumeration failed")
-        compiled = units.enumeration_keys(decode(enum_path.read_text()))
+        # Enumeration returns the whole target catalog even with class selectors.
+        compiled = compiled_live_keys(decode(enum_path.read_text()), declared)
         compiled_ids = [test_identity("swift", "immichSlidesTests/" + name, platform=platform) for name in compiled]
         require(set(tokens(compiled_ids, functions=True)) == set(tokens(declared, functions=True)), "live selection mismatch")
         population["compiled"] = sorted(tokens(compiled_ids, functions=True).values(), key=lambda item: item["key"])
         phase = "execution"
+        print('Live phase: execution.', flush=True)
         live_env = dict(clean, TEST_RUNNER_IMMICH_TEST_SERVER_URL=url, TEST_RUNNER_IMMICH_TEST_API_KEY=key,
                         TEST_RUNNER_IMMICHSLIDES_EVIDENCE="1")
         bundle = private / "live.xcresult"
@@ -257,6 +281,7 @@ def execute_live(args, selection):
         code = capture([*base, "-resultBundlePath", str(bundle)], private / "execution.log", env=live_env, timeout=900)
         provenance["exit_code"] = code
         phase = "official-results"
+        print('Live phase: official-results.', flush=True)
         for kind in ("tests", "summary"):
             # stderr is private too; malformed or failed exports cannot be used as evidence.
             require(capture(["xcrun", "xcresulttool", "get", "test-results", kind, "--path", str(bundle), "--compact"],
@@ -265,11 +290,14 @@ def execute_live(args, selection):
         population["observed"] = sanitized_outcomes(declared, rows)
         provenance["official_counts"] = {"total": counts.total_test_count, "passed": counts.passed_tests,
                                      "failed": counts.failed_tests, "skipped": counts.skipped_tests}
+        validate_outcome_population(declared, compiled, rows, counts)
+        coverage_verified = True
+        phase = 'verdict'
         population["observed"] = public_outcomes(declared, compiled, rows, counts, code)
         record['status'] = 'passed'
     except Exception:
         # Never serialize exception text, subprocess output or runtime test arguments.
-        record['infrastructure'].append({'code': 'live-' + phase + '-failed',
+        record['infrastructure'].append({'code': 'coverage-failed' if phase == 'verdict' else 'live-' + phase + '-failed',
                                          'message': 'Live phase failed; private diagnostics withheld.'})
     finally:
         if simulator:
@@ -289,16 +317,17 @@ def execute_live(args, selection):
         archive.write_json(args.output_dir / 'live-provenance.json', provenance)
         (args.output_dir / "live-summary.md").write_text(render_markdown(record) +
             f"\nProcess exit: {provenance['exit_code']}; release eligibility remains disabled.\n")
-        if args.canary:
-            require(phase == 'official-results' and provenance['exit_code'] != 0 and
-                    provenance.get('official_counts', {}).get('total', 0) > 0 and
+        canary_passed = (phase == 'verdict' and coverage_verified and provenance['exit_code'] != 0 and
+                    provenance.get('official_counts', {}).get('failed', 0) > 0 and
                     bool(population['compiled']) and record['status'] == 'failed' and
-                    not any(entry['code'] == 'live-cleanup-failed' for entry in record['infrastructure']),
-                    'canary did not exercise a failed live execution')
+                    not any(entry['code'] == 'live-cleanup-failed' for entry in record['infrastructure']))
+        if args.canary and canary_passed:
             archive.write_json(args.output_dir / 'canary.json', {'schema_version': 1, 'status': 'passed',
                 'run_id': selection['run_id'], 'attempt': selection['attempt'], 'platform': platform, 'execution_failed': True})
         scan_tree(args.output_dir, needles)
         archive.output("records_safe", "true")
+        print(f"Live finalization: {record['status']}; phase={phase}; process-exit={provenance['exit_code']}.", flush=True)
+        require(not args.canary or canary_passed, 'canary did not exercise a failed live execution')
     return 0 if args.canary or record["status"] == "passed" else 1
 
 

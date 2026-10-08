@@ -10,7 +10,7 @@ import tarfile
 import tempfile
 import unittest
 import urllib.error
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -634,6 +634,48 @@ class ArchiveUnitResultTests(unittest.TestCase):
 
 
 class LiveBoundaryTests(unittest.TestCase):
+    def test_live_scope_selects_from_the_full_catalog_but_refuses_unowned_or_missing_live_tests(self):
+        import ci_live_tests as live
+        from ci_summary import test_identity
+        suite = live.SUITES[0]
+        declared = [test_identity('swift', suite+'/works', platform='ios')]
+        classes = [{'kind': 'class', 'name': suite, 'children': [{'kind': 'test', 'name': 'works()'}]},
+                   {'kind': 'class', 'name': 'OfflineTests', 'children': [{'kind': 'test', 'name': 'offline()'}]}]
+        def catalog(children):
+            return {'errors': [], 'values': [{'kind': 'target', 'name': 'immichSlidesTests', 'children': children}]}
+        self.assertEqual(live.compiled_live_keys(catalog(classes), declared), {suite+'/works()'})
+        for children in (classes[1:], classes+[{'kind': 'class', 'name': 'UnownedLiveTests',
+                                              'children': [{'kind': 'test', 'name': 'extra()'}]}]):
+            with self.subTest(children=children), self.assertRaises(ContractError):
+                live.compiled_live_keys(catalog(children), declared)
+
+    def test_failed_canary_preparation_keeps_a_scanned_shared_failure_summary(self):
+        import argparse
+        import ci_live_tests as live
+        from ci_summary import parse_summary
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            identity = {'schema_version': 1, 'event': 'pull_request', 'repository': 'owner/repo',
+                        'pull_request': 2, 'merge_sha': 'a' * 40, 'base_sha': 'b' * 40,
+                        'head_sha': 'c' * 40, 'tree_sha': 'd' * 40}
+            selection = {'identity': identity, 'source': {'repository': 'owner/repo', 'event': 'pull_request',
+                'workflow_path': live.WORKFLOW, 'fork_originated': False, 'ci_changing': None},
+                'run_id': '123', 'attempt': 2, 'platform': 'ios', 'artifact_id': 7, 'producer_attempt': 1}
+            args = argparse.Namespace(canary=True, output_dir=root/'public', private_dir=root/'private',
+                                      relocated_path=root/'relocated', archive_dir=root/'archive', min_free_gib=80)
+            url, key = live.canary_values('123', 2)
+            env = {'CI_LIVE_URL': url, 'CI_LIVE_KEY': key, 'GITHUB_OUTPUT': str(root/'outputs')}
+            with patch.dict('os.environ', env), patch.object(live.archive, 'workspace_preflight',
+                    side_effect=ContractError(key)), redirect_stdout(io.StringIO()), self.assertRaises(ContractError):
+                live.execute_live(args, selection)
+            record = parse_summary((args.output_dir/'live-summary.json').read_text())
+            self.assertEqual(record['status'], 'failed')
+            self.assertEqual(record['infrastructure'][0]['code'], 'live-archive-failed')
+            self.assertIn('records_safe=true', (root/'outputs').read_text())
+            self.assertFalse((args.output_dir/'canary.json').exists())
+            self.assertFalse(args.private_dir.exists())
+            live.scan_tree(args.output_dir, live.secret_forms(url, key))
+
     def test_nightly_archive_provenance_and_live_suite_ownership_fail_closed(self):
         import ci_live_tests as live
         from ci_summary import test_identity
@@ -749,6 +791,8 @@ class LiveBoundaryTests(unittest.TestCase):
                                             ([dict(row, outcome="skipped", reason="missing server")], {"ExampleLiveTests/works()"}, 0, counts),
                                             ([row, dict(parameter, outcome="failed")], {"ExampleLiveTests/works()"}, 0, counts),
                                             ([row, parameter, parameter], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row, dict(row, identity=test_identity('swift', 'immichSlidesTests/OtherTests/extra()', platform='ios'))],
+                                             {'ExampleLiveTests/works()'}, 0, TestResultsSummary(2, 2, 0, 0, 'Passed')),
                                             ([dict(row, duration_seconds=float("inf"))], {"ExampleLiveTests/works()"}, 0, counts),
                                             ([row], {"ExampleLiveTests/works()"}, 0, TestResultsSummary(1, 1, 0, 0, "Failed"))):
             with self.subTest(code=code, rows=len(rows)), self.assertRaises(ContractError):
