@@ -25,7 +25,7 @@ from ci_publish import ArtifactRedirect, GitHub, json_member, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
 from ci_ui_shards import DEVICES, MANIFEST_PATH, parse_shard_manifest, shard_populations
 from ci_verdict import classify_changes
-from run_host_checks import run_identity, source_metadata
+from run_host_checks import run_identity, source_metadata, toolchain
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-ui.yml"
@@ -57,7 +57,7 @@ def summary_for(ctx, manifest_hash):
     step = test_identity("host", "UI archive selection")
     return {"schema_version": 1, **ctx,
             "hashes": {"manifests": {"ui-shards": manifest_hash}, "policies": {}},
-            "toolchain": {"versions": {"python": platform.python_version()}, "signing_mode": "not-applicable"},
+            "toolchain": toolchain(tier="pr"),
             "population": {"declared": [step], "compiled": [step], "observed": [], "deselected": [], "removed_by_pr": []},
             "infrastructure": [], "status": "failed"}
 
@@ -349,6 +349,7 @@ def reproduce(args):
         # The clean checkout contains no private symlink or ambient local inputs.
         from run_fixture_ui_tests import clean_environment
         environment = clean_environment(os.environ)
+        environment["CI_TOOLCHAIN_TIER"] = "pr"
         verify_reproduction_pins(source, args.destination, environment)
         derived = Path(directory, "derived")
         build_records = Path(directory, "build")

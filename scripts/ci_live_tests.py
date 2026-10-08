@@ -247,7 +247,7 @@ def execute_live(args, selection):
         provenance['archive_sha256'] = manifest['archive_sha256']
         record["hashes"]["manifests"] = {"build": archive.file_hash(args.archive_dir / 'manifest.json'),
             "unit-declarations": archive.file_hash(ROOT / 'unit-declarations.json'), "ci-pins": archive.file_hash(pins_path)}
-        record["toolchain"] = toolchain()
+        record["toolchain"] = toolchain(tier="nightly")
         archive.record_signing(record, "adhoc")
         record["toolchain"]["versions"]["simulator_runtime"] = pins["simulators"][platform]["runtime"]
         runtime = pins["simulators"][platform]["runtime"]

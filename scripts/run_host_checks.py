@@ -118,9 +118,9 @@ def version(command):
         return None
 
 
-def toolchain():
+def toolchain(*, tier=None):
     from setup_ci_python import load_pins
-    pins = load_pins()
+    pins = load_pins(tier=tier)
     try:
         import PIL
         pillow = PIL.__version__
