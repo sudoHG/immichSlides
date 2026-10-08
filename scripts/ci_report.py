@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -46,6 +47,7 @@ def identity_token(identity):
 
 
 def summary_diagnostics(summaries, evidence_errors=()):
+    from ci_verdict import function_identity
     counts, failures, missing, infrastructure, skips, deselections = Counter(), [], [], list(evidence_errors), [], []
     for raw in summaries:
         summary = parse_summary(raw)
@@ -54,10 +56,14 @@ def summary_diagnostics(summaries, evidence_errors=()):
         compiled = {identity_key(item) for item in population["compiled"]}
         observed = {identity_key(item["identity"]): item for item in population["observed"]}
         deselected = {identity_key(item["identity"]) for item in population["deselected"]}
+        compiled_functions = {identity_key(function_identity(item)) for item in population["compiled"]}
+        observed_functions = {identity_key(function_identity(item["identity"])) for item in population["observed"]}
+        deselected_functions = {identity_key(function_identity(item["identity"])) for item in population["deselected"]}
         counts.update(declared=len(declared), compiled=len(compiled), observed=len(observed), deselected=len(deselected))
         for token, item in declared.items():
-            if token not in compiled or token not in observed and token not in deselected:
-                missing.append({"identity": item, "reason": "declared-not-compiled" if token not in compiled else "not-observed"})
+            function = identity_key(function_identity(item))
+            if function not in compiled_functions or function not in observed_functions and function not in deselected_functions:
+                missing.append({"identity": item, "reason": "declared-not-compiled" if function not in compiled_functions else "not-observed"})
         for item in observed.values():
             counts[item["outcome"]] += 1
             if item["outcome"] in FAILURES:
@@ -334,9 +340,27 @@ def issue_body(issue, state, repository):
     return body
 
 
+def visible_issues(api, label):
+    # Label indexing can lag an accepted create. Read the repository collection
+    # and filter labels locally; fetch bodies directly to avoid stale list state.
+    return [api.repo(f"issues/{item['number']}") for item in
+            api.pages("issues", state="all", sort="updated", direction="desc")
+            if "pull_request" not in item and any(value["name"] == label for value in item.get("labels", []))]
+
+
+def wait_for_issue_visibility(api, number, label):
+    deadline = time.monotonic() + 60
+    while True:
+        rows = api.pages("issues", state="all", sort="updated", direction="desc")
+        if any(item["number"] == number and any(value["name"] == label for value in item.get("labels", [])) for item in rows):
+            return
+        require(time.monotonic() < deadline, "created issue is not yet visible; refusing further writes")
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
+
+
 def synchronize_issues(api, entries, registry, *, label=LABEL):
     ensure_label(api, label)
-    issues = api.pages("issues", state="all", labels=label)
+    issues = visible_issues(api, label)
     registry_issues = {int(item["issue"].rsplit("/", 1)[-1]) for item in registry["entries"]}
     by_number = {item["number"]: item for item in issues if "pull_request" not in item}
     for number in registry_issues:
@@ -374,6 +398,7 @@ def synchronize_issues(api, entries, registry, *, label=LABEL):
             payload.pop("state")
             payload.update(title="CI nightly failure: " + identity["key"][:180], labels=[label])
             issue = api.repo("issues", method="POST", payload=payload)
+            wait_for_issue_visibility(api, issue["number"], label)
         receipts.append({"issue": issue["number"], "action": decision["action"], "token": token})
     # One notification per failing main push SHA, shared across gate/UI reruns.
     pushes = {}
@@ -393,6 +418,7 @@ def synchronize_issues(api, entries, registry, *, label=LABEL):
                 api.repo(f"issues/{issue['number']}", method="PATCH", payload={"body": body})
         else:
             issue = api.repo("issues", method="POST", payload={"title": "CI post-merge failure: " + pushed[:12], "body": body, "labels": [label]})
+            wait_for_issue_visibility(api, issue["number"], label)
         receipts.append({"issue": issue["number"], "action": "post-merge", "sha": pushed})
     return receipts, {number: issue["state"] for number, issue in by_number.items()}
 

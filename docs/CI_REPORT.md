@@ -64,6 +64,9 @@ configuration, suite, scenario and fixture. A registry issue is reused even if
 it is closed or its review date has expired. Missing or conflicting registry
 issues fail reporting instead of creating duplicates. Existing issue prose is
 preserved, and only an appended managed section changes.
+The reporter filters the repository's issue collection locally because GitHub's
+label index can lag a create, fetches issue bodies directly and waits up to
+60 seconds for a newly created issue to become visible before further writes.
 
 The managed JSON marker stores nights and run/attempt outcomes. Replayed events
 are idempotent and delivery order cannot move the first/last failure dates

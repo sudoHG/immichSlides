@@ -172,6 +172,42 @@ class ReporterTests(unittest.TestCase):
         with patch("ci_report.on_main", return_value=False):
             self.assertNotIn("pushed_sha", read_run(api, run, {}))
 
+    def test_immediate_issue_replay_survives_label_index_delay(self):
+        class API:
+            repository = "sudoHG/immichSlides"
+            def __init__(self):
+                self.issues, self.created = {}, 0
+            def pages(self, path, **filters):
+                # GitHub's label-filtered list can lag a successful create.
+                return [] if "labels" in filters else list(self.issues.values())
+            def repo(self, path, method="GET", payload=None, missing=False):
+                if path.startswith("labels/"):
+                    return {"name": "ci-reported-failure"}
+                if path == "issues":
+                    self.created += 1
+                    issue = {"number": self.created, "body": payload["body"], "state": "open",
+                             "labels": [{"name": name} for name in payload["labels"]]}
+                    self.issues[self.created] = issue
+                    return issue
+                number = int(path.rsplit("/", 1)[-1])
+                if method == "PATCH":
+                    self.issues[number].update(payload)
+                return self.issues[number]
+        api = API()
+        synchronize_issues(api, [entry()], {"entries": []})
+        self.assertEqual([], synchronize_issues(api, [entry()], {"entries": []})[0])
+        self.assertEqual(1, api.created)
+
+    def test_parameterized_swift_observations_cover_the_declared_function(self):
+        summary = valid_summary()
+        declared = test_identity("swift", "ExampleTests/loads photo", platform="ios")
+        compiled = test_identity("swift", "immichSlidesTests/ExampleTests/`loads photo`(input:)", platform="ios")
+        parameter = copy.deepcopy(compiled)
+        parameter["dimensions"]["parameter"] = "input=1"
+        summary["population"].update(declared=[declared], compiled=[compiled],
+                                     observed=[observation(parameter, "passed", 1)])
+        self.assertEqual([], summary_diagnostics([summary])["missing"])
+
     def test_reporter_credential_context_refuses_branch_fork_and_other_workflow(self):
         environment = {"GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "sudoHG/immichSlides",
                        "GITHUB_WORKFLOW_REF": "sudoHG/immichSlides/.github/workflows/ci-report.yml@refs/heads/main",
