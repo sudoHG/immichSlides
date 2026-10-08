@@ -39,6 +39,7 @@ concurrency:
 
 jobs:
   plan:
+    if: github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main'
     runs-on: xcode-27
     timeout-minutes: 15
     permissions:
@@ -75,7 +76,7 @@ jobs:
           if-no-files-found: error
 
   strict:
-    if: github.event_name != 'pull_request' && !inputs.live_only
+    if: github.event_name != 'pull_request' && !inputs.live_only && (github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main')
     needs: plan
     name: nightly-strict-${{ matrix.id }}
     runs-on: xcode-27
@@ -159,7 +160,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/nightly-strict"
 
   aggregate:
-    if: always() && github.event_name != 'pull_request' && !inputs.live_only
+    if: always() && github.event_name != 'pull_request' && !inputs.live_only && (github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main')
     needs: [plan, strict]
     name: nightly-aggregate
     runs-on: xcode-27
@@ -215,6 +216,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/nightly-plan" "$RUNNER_TEMP/nightly-records" "$RUNNER_TEMP/nightly-aggregate"
 
   live-admission:
+    if: github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main'
     runs-on: xcode-27
     timeout-minutes: 5
     permissions:
@@ -231,6 +233,7 @@ jobs:
         run: /usr/bin/python3 -B scripts/ci_live_tests.py admit
 
   live-canary:
+    if: github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main'
     runs-on: xcode-27
     timeout-minutes: 15
     permissions:

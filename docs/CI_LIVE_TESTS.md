@@ -19,9 +19,11 @@ run tests `GITHUB_SHA` on `main`, after verifying ancestry of `origin/main`.
 The environment's branch policy is independent. The negative probe binds no
 secrets, performs no checkout and has no token permissions; GitHub must refuse
 the branch job before it executes. Reaching `/usr/bin/false` would also fail.
+On a branch refusal dispatch, all other jobs skip, consuming no macOS runner slots.
+Normal PR runs exercise the canary and fork-style admission probe separately.
 
 ```sh
-# Before merge: branch refusal, fork-style probe and canary; no live traffic.
+# Before merge: only branch environment refusal; no live traffic or macOS jobs.
 gh workflow run ci-nightly.yml --ref <branch> \
   -f live_only=true -f probe_environment_refusal=true
 # After merge: run once and inspect both live platforms.
