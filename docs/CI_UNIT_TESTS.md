@@ -83,7 +83,9 @@ Producer records add setup/build/pack timings and sampled disk use.
 
 Raw results use the existing owner-only private result-bundle helpers from the strict
 runner, outside publishable records. Finalization exports official results even after
-Xcode failure. Successful export, record writing and the unchanged sensitive scan
+Xcode failure. A failed enumeration also attempts official export and quarantines
+its private bundle when export is unavailable; records distinguish enumeration from
+execution and retain both process exits. Successful export, record writing and the unchanged sensitive scan
 precede disposal; failed runs or export/scan errors retain the private bundle with a
 quarantine record. Upload uses an explicit compact-file allowlist and a successful
 sensitive-scan output. Raw bundles, activities, logs, screenshots and quarantine paths

@@ -134,8 +134,7 @@ def skip_reason(details):
     return "; ".join(dict.fromkeys(reasons))
 
 
-def collect_results(bundle, records, platform):
-    digest = export_private_result_bundle(bundle, records, [PUBLIC_API_KEY])
+def read_results(records, platform):
     tests = decode((records / "official-tests.json").read_text())
     reasons = {}
     for node in official_cases(tests):
@@ -149,7 +148,7 @@ def collect_results(bundle, records, platform):
             counts.failed_tests == sum(row["outcome"] == "failed" for row in cases) and
             counts.skipped_tests == sum(row["outcome"] == "skipped" for row in cases),
             "official counts and per-test outcomes disagree")
-    return digest, rows, counts
+    return rows, counts
 
 
 def run_units(args):
@@ -166,7 +165,8 @@ def run_units(args):
     archive.write_json(args.output_dir / "archive-consumption.json", provenance)
     started = time.monotonic()
     measurements = {"setup_seconds": args.setup_seconds, "transfer_seconds": args.transfer_seconds,
-                    "enumeration_seconds": None, "test_seconds": None, "test_exit_code": None}
+                    "enumeration_seconds": None, "enumeration_exit_code": None,
+                    "test_seconds": None, "test_exit_code": None}
     disk = None
     simulator, owns_simulator = args.simulator_id, False
     result_bundle = enumeration_bundle = None
@@ -224,6 +224,7 @@ def run_units(args):
                             "-test-enumeration-format", "json", "-test-enumeration-output-path", str(enumeration_path)],
                            timeout_seconds=300)
         measurements["enumeration_seconds"] = time.monotonic() - phase
+        measurements["enumeration_exit_code"] = code
         require(code == 0, f"unit enumeration failed (exit {code})")
         enumeration = decode(enumeration_path.read_text())
         compiled = enumeration_keys(enumeration)
@@ -239,12 +240,16 @@ def run_units(args):
         # Do not raise on xcodebuild failure until official results have been exported.
     except Exception as error:
         code = code or 1
+        # Enumeration can fail after creating a bundle; export or quarantine it too.
+        if result_bundle is None:
+            result_bundle = enumeration_bundle
         summary["infrastructure"].append({"code": "unit-archive-failed", "message": str(error) if isinstance(error, (ContractError, CommandError))
                                            else type(error).__name__})
     finally:
         if result_bundle is not None:
             try:
-                digest, rows, counts = collect_results(result_bundle, args.output_dir, platform)
+                digest = export_private_result_bundle(result_bundle, args.output_dir, [PUBLIC_API_KEY])
+                rows, counts = read_results(args.output_dir, platform)
                 summary["population"]["observed"] = rows
                 compare_execution(compiled, {node["nodeIdentifier"] for node in official_cases(
                     decode((args.output_dir / "official-tests.json").read_text()))})
@@ -267,6 +272,8 @@ def run_units(args):
         measurements["total_seconds"] = time.monotonic() - started
         archive.write_json(args.output_dir / "measurements.json", measurements)
         provenance["official_tests_sha256"] = digest
+        provenance["official_result_kind"] = ("execution" if measurements["test_exit_code"] is not None else "enumeration") if result_bundle else None
+        provenance["enumeration_exit_code"] = measurements["enumeration_exit_code"]
         provenance["test_exit_code"] = measurements["test_exit_code"]
         archive.write_json(args.output_dir / "archive-consumption.json", provenance)
         try:
@@ -285,8 +292,8 @@ def run_units(args):
                 summary["status"] = "failed"
                 summary["infrastructure"].extend({"code": "unit-disposal-failed", "message": failure} for failure in failures)
                 write_summary(summary, args.output_dir)
-        # Enumeration has no test activity to retain; it is not a result or uploaded artifact.
-        if enumeration_bundle:
+        # Successful enumeration has no execution activity; failed enumeration stays private.
+        if enumeration_bundle and enumeration_bundle != result_bundle:
             shutil.rmtree(enumeration_bundle.parent)
         if owns_simulator:
             subprocess.run(["xcrun", "simctl", "shutdown", simulator], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

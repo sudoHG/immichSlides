@@ -266,6 +266,64 @@ class BuildArchiveTests(unittest.TestCase):
             self.assertIn("build identity mismatch", summary["infrastructure"][0]["message"])
             self.assertFalse(relocated.exists())
 
+    def test_enumeration_timeout_exports_or_quarantines_its_bundle_without_losing_archive_identity(self):
+        import ci_unit_tests as units
+        pins_path = Path(units.__file__).with_name("ci-pins.json")
+        pins = json.loads(pins_path.read_text())
+        workspace = self.root / "tooling"
+        workspace.mkdir()
+        developer = self.root / "Xcode/Contents/Developer"
+        developer.mkdir(parents=True)
+        (developer.parent / "version.plist").write_bytes(plistlib.dumps({"ProductBuildVersion": "27A266a"}))
+        archive_dir = self.root / "archive"
+        archive_dir.mkdir()
+        (archive_dir / "manifest.json").write_text(json.dumps({
+            "source_path": str(self.root / "absent-source"), "products_path": str(self.root / "absent-products"),
+            "signing_mode": "adhoc", "archive_sha256": "e" * 64,
+        }))
+        ctx = {"identity": self.identity, "source": {"repository": "owner/repo", "event": "pull_request",
+               "workflow_path": archive.WORKFLOW, "fork_originated": False, "ci_changing": None},
+               "run_id": "123", "attempt": 2, "platform": "ios", "producer_attempt": 1, "artifact_id": 7,
+               "pins_sha256": archive.file_hash(pins_path)}
+        selection = self.root / "selection.json"
+        selection.write_text(json.dumps(ctx))
+        relocated, output = self.root / "relocated", self.root / "records"
+        bundle = self.root / "private/enumeration.xcresult"
+        bundle.mkdir(parents=True)
+
+        def extract(_tar, destination, _manifest):
+            products = destination / "Products"
+            (products / "Debug-iphonesimulator/immichSlides.app").mkdir(parents=True)
+            (products / "units.xctestrun").touch()
+
+        device_type, simulator = "fixture.device", "fixture-simulator"
+        device_types = {"devicetypes": [{"name": pins["device_types"]["iphone"], "identifier": device_type}]}
+        devices = {"devices": {pins["simulators"]["ios"]["runtime"]: [
+            {"udid": simulator, "deviceTypeIdentifier": device_type}]}}
+        with patch.object(units, "ROOT", workspace), patch.dict(archive.os.environ, {"DEVELOPER_DIR": str(developer)}), \
+                patch.object(archive, "workspace_preflight"), patch.object(archive, "validate_manifest"), \
+                patch.object(archive, "disk_check"), patch.object(archive, "DiskMeasurement"), \
+                patch.object(archive, "extract_products", side_effect=extract), \
+                patch.object(archive, "measure_signing", return_value="adhoc"), \
+                patch.object(archive, "checked_command", side_effect=[json.dumps(device_types), json.dumps(devices)]), \
+                patch.object(units, "toolchain", return_value={"versions": {}, "signing_mode": "not-applicable"}), \
+                patch.object(units, "prepare_private_result_bundle_path", return_value=bundle), \
+                patch.object(units, "default_run", return_value=124), \
+                patch.object(units, "export_private_result_bundle", side_effect=units.CommandError(
+                    "Enumeration has no readable official results")) as export:
+            archive.DiskMeasurement.return_value.finish.return_value = {}
+            self.assertEqual(units.main(["run", "--selection-path", str(selection), "--archive-dir", str(archive_dir),
+                                        "--relocated-path", str(relocated), "--output-dir", str(output),
+                                        "--simulator-id", simulator]), 124)
+            export.assert_called_once_with(bundle, output.resolve(), [units.PUBLIC_API_KEY])
+        self.assertTrue(bundle.is_dir())
+        self.assertFalse(json.loads((output / "result-bundle-quarantine.json").read_text())["result_bundle_disposed"])
+        provenance = json.loads((output / "archive-consumption.json").read_text())
+        self.assertEqual((provenance["artifact_id"], provenance["producer_attempt"], provenance["consumer_attempt"]), (7, 1, 2))
+        self.assertEqual(provenance["enumeration_exit_code"], 124)
+        self.assertIsNone(provenance["test_exit_code"])
+        self.assertEqual(json.loads((output / "summary.json").read_text())["status"], "failed")
+
 
 class ArchiveUnitResultTests(unittest.TestCase):
     def test_enumeration_errors_or_empty_unit_population_cannot_pass(self):
