@@ -189,6 +189,22 @@ class PublisherTests(unittest.TestCase):
                                              observed=[observation(value, "passed", 0) for value in expected])
             self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "failure")
 
+    def test_real_workflow_contract_ignores_copied_script_names_and_binds_quoted_proof_commands(self):
+        source = (Path(__file__).parent.parent / ".github/workflows/ci-gate.yml").read_text()
+        _, _, _, metadata = workflow_contract(source, RUN, metadata=True)
+        proofs = [meta for meta in metadata.values() if meta["population"] == "run_proof"]
+        self.assertEqual({meta["shard"] for meta in proofs}, {"ios", "tvos"})
+        self.assertTrue(all(meta["tier"] == "build" and meta["job"] == "archive-relocation" for meta in proofs))
+        reference_only = '''jobs:
+  copy:
+    steps:
+      - run: for file in run_host_checks.py; do cp "scripts/$file" tools/; done
+      - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: {name: copied-summary, path: records/summary.json}
+'''
+        with self.assertRaises(ContractError):
+            workflow_contract(reference_only, RUN, metadata=True)
+
     def test_untrusted_same_name_admissions_and_a_main_tag_cannot_poison_a_trusted_record(self):
         uploader = dict(RUN, id=500, workflow_id=201, path=".github/workflows/ci-publish.yml",
                         head_sha=BASE, head_branch="main", event="workflow_run")

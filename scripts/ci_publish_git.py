@@ -11,6 +11,7 @@ import itertools
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -154,6 +155,21 @@ def render_expression(value, bindings):
     return value
 
 
+def producer_commands(source):
+    # Copying a script into relocated tooling does not execute its producer.
+    commands = []
+    for line in source.replace("\\\n", " ").splitlines():
+        words = shlex.split(line, comments=True)
+        if not words or not (words[0] in {"$PYTHON", "${PYTHON}"} or Path(words[0]).name == "python3"):
+            continue
+        arguments = words[1:]
+        while arguments and arguments[0] in {"-B", "-I"}:
+            arguments = arguments[1:]
+        if arguments:
+            commands.append((Path(arguments[0]).name, arguments[1:]))
+    return commands
+
+
 def workflow_contract(source, run, *, details=False, metadata=False):
     # The workflow is data from the admitted trusted base (or exact-head approved
     # metadata), never an executable candidate workflow in this process.
@@ -176,13 +192,19 @@ def workflow_contract(source, run, *, details=False, metadata=False):
             scripts = "\n".join(step.get("run", "") for step in job.get("steps", []))
             for binding, replacement in bindings.items():
                 scripts = re.sub(r"\$\{\{\s*" + re.escape(binding) + r"\s*\}\}", str(replacement), scripts)
+            commands = producer_commands(scripts)
             producers = []
-            if re.search(r"\brun_host_checks\.py\b", scripts):
+            if any(script == "run_host_checks.py" for script, _ in commands):
                 producers.append({"tier": "host", "job": "host-checks", "shard": None, "population": "host"})
-            operations = re.findall(r"\bci_build_archive\.py[\"']?\s+(build|proof)\b", scripts)
-            unit = re.search(r"\bci_unit_tests\.py[\"']?\s+run\b", scripts)
+            operations = {arguments[0] for script, arguments in commands
+                          if script == "ci_build_archive.py" and arguments and arguments[0] in {"build", "proof"}}
+            unit = any(script == "ci_unit_tests.py" and arguments and arguments[0] == "run"
+                       for script, arguments in commands)
             if operations or unit:
-                platforms = set(re.findall(r"--platform\s+[\"']?(ios|tvos)\b", scripts))
+                platforms = {arguments[index + 1] for script, arguments in commands
+                             if script in {"ci_build_archive.py", "ci_unit_tests.py"}
+                             for index, argument in enumerate(arguments[:-1])
+                             if argument == "--platform" and arguments[index + 1] in {"ios", "tvos"}}
                 require(len(platforms) == 1, "producer platform must be independently known from workflow metadata")
                 platform = platforms.pop()
                 for operation in set(operations):
