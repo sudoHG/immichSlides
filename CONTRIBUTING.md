@@ -56,7 +56,7 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Run this before every push; it is the same set of checks a reviewer will run:
 
   ```bash
-  scripts/check_all.sh                     # formatting, conventions, release guards, localization, prerequisites, workflow policy, Python tests
+  scripts/check_all.sh                     # formatting, conventions, release guards, localization, prerequisites, workflow policy, known-flaky registry, Python tests
   scripts/check_all.sh --output-dir '<fresh-outside-repo>' # keep the host summary and identity in host-records/
   scripts/check_all.sh --with-unit-tests \
       --ios-destination 'platform=iOS Simulator,id=<UDID>' \

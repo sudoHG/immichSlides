@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from datetime import date
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
 
@@ -497,6 +498,60 @@ def require_p2_evidence(
     return payload
 
 
+class StrictRetryEvidence:
+    """Keep each case's prior outputs out of the final visual/timeline validation."""
+
+    def __init__(self, evidence, case, service_logs):
+        self.evidence, self.case = evidence, case
+        self.service_logs = [path for path in service_logs if path is not None]
+        self.offsets = {path.name: path.stat().st_size for path in self.service_logs}
+        self.before = {path.name: path.read_bytes() for path in evidence.iterdir() if path.is_file()}
+
+    def before_retry(self):
+        archive = self.evidence / "attempt-1" / self.case
+        archive.mkdir(parents=True)
+        active = {path.name for path in self.service_logs}
+        for path in self.evidence.iterdir():
+            if not path.is_file():
+                continue
+            payload = path.read_bytes()
+            if path.name in active:
+                (archive / path.name).write_bytes(payload[self.offsets[path.name]:])
+                self.offsets[path.name] = len(payload)
+            elif path.name == "simulator-reset.log":
+                (archive / path.name).write_bytes(payload)
+            elif self.before.get(path.name) != payload:
+                path.rename(archive / path.name)
+                if path.name in self.before:
+                    path.write_bytes(self.before[path.name])
+        (self.evidence / (self.case + "-service-log-offsets.json")).write_text(
+            json.dumps(self.offsets, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def finish(self):
+        for index, path in enumerate(self.service_logs):
+            target = "redacted-request.log" if index == 0 else "request-log-b.log"
+            (self.evidence / target).write_bytes(path.read_bytes()[self.offsets[path.name]:])
+
+    def audit(self, *, suite, scenario, fixture_set, fixture_hash, server_url):
+        from strict_e2e_filter_contract import (FilterContractError, assert_request_log_contract,
+                                                assert_foreign_server_ids_absent, _extract_ids_from_request_log)
+        for index, path in enumerate(self.service_logs):
+            first = self.evidence / "attempt-1" / self.case / path.name
+            segments = ([first.read_text(encoding="utf-8")] if first.is_file() else [])
+            segments.append(path.read_bytes()[self.offsets[path.name]:].decode("utf-8"))
+            for log_text in segments:
+                if scenario == "out-of-order":
+                    audit_out_of_order_runner_inputs(fixture_set=fixture_set, observed_hash=fixture_hash,
+                                                    service_log=log_text, server_url=server_url)
+                if suite in DUAL_SERVER_SUITES:
+                    try:
+                        assert_request_log_contract(log_text, forbidden=(PUBLIC_API_KEY, "x-api-key"))
+                        assert_foreign_server_ids_absent(_extract_ids_from_request_log(log_text),
+                                                         fixture_set if index == 0 else "b")
+                    except FilterContractError as error:
+                        raise CommandError(str(error), code=2) from error
+
+
 def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str], log_path: Path,
                 timeout_seconds: int = XCODEBUILD_TIMEOUT_SECONDS) -> int:
     with log_path.open("w", encoding="utf-8") as log_file:
@@ -534,6 +589,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--derived-data-path", type=Path, help="shard-scoped DerivedData outside evidence; retained for reuse")
     parser.add_argument("--cloned-source-packages-path", type=Path, help="shared package downloads outside DerivedData and evidence")
     parser.add_argument("--configuration", choices=("Debug", "Release"), help="explicit shard configuration; defaults to the existing suite setting")
+    parser.add_argument("--listed-retry-device", choices=("iphone", "ipad", "tv"),
+                        help="Enable base-registry listed-only retries for this exact strict device class; requires warm reuse")
     parser.add_argument("--cold-timeout-seconds", type=parse_non_negative_int, help="explicit warm-up budget (default: 300 seconds)")
     parser.add_argument("--warm-timeout-seconds", type=parse_non_negative_int, help="explicit reuse budget (default: 300 seconds)")
     parser.add_argument(
@@ -544,6 +601,16 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help=f"minimum free GiB required before xcodebuild (default: {MIN_DATA_GIB})",
     )
     arguments = parser.parse_args(argv)
+    if arguments.listed_retry_device and not arguments.test_without_building:
+        parser.error("listed-only retry requires --test-without-building")
+    if arguments.listed_retry_device and (arguments.platform == "tvos") != (arguments.listed_retry_device == "tv"):
+        parser.error("listed retry device does not match platform")
+    if arguments.listed_retry_device:
+        from ci_flaky import require_retryable_strict_suite
+        try:
+            require_retryable_strict_suite(arguments.suite)
+        except ValueError as error:
+            parser.error(str(error))
     if not (arguments.warm_up_only or arguments.test_without_building) and (arguments.cold_timeout_seconds is not None or arguments.warm_timeout_seconds is not None):
         parser.error("cold/warm timeout options require explicit warm-up/reuse")
     arguments.cold_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.cold_timeout_seconds is None else arguments.cold_timeout_seconds
@@ -612,6 +679,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         if "Simulator" not in arguments.destination:
             raise CommandError("strict E2E only accepts Simulator destinations.")
         simulator_udid = destination_udid(arguments.destination)
+        retry_device_class = None
+        if arguments.listed_retry_device:
+            from ci_flaky import simulator_device_class
+            retry_device_class = simulator_device_class(simulator_udid, arguments.listed_retry_device)
         if arguments.derived_data_path:
             from strict_e2e_build import load_warm_build, validate_paths, prepare_test_run, warm_test_command, validate_warm_products
             packages = (arguments.cloned_source_packages_path or derived_data_path.parent / "SourcePackages").resolve()
@@ -753,7 +824,82 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         if warm_receipt is not None:
             case_manifest["warm_build_identity"] = warm_receipt["identity"]
 
+        effective_result_bundle = result_bundle_path
+        retry_sessions = {}
         def execute_case(command, log_path):
+            nonlocal effective_result_bundle
+            from ci_flaky import check_retry_flags
+            check_retry_flags(command)
+            if arguments.listed_retry_device:
+                from functools import partial
+                from ci_flaky import load_registry, registry_revision, run_xcode_attempts, read_xcode_observations
+                from ci_summary import test_identity
+                registry_ref = registry_revision(REPO_ROOT, os.environ)
+                registry, registry_hash = load_registry(REPO_ROOT, registry_ref)
+                attempt_evidence = StrictRetryEvidence(arguments.evidence_dir, log_path.stem,
+                                                        [service_log_path, service_log_b_path])
+                def reset_retry():
+                    attempt_evidence.before_retry()
+                    retry_reset_log = reset_simulator_app(simulator_udid)
+                    (arguments.evidence_dir / (log_path.stem + "-retry-reset.log")).write_text(retry_reset_log, encoding="utf-8")
+                    with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
+                        log.write(retry_reset_log)
+                def execute_attempt(call):
+                    attempt_bundle = Path(call[call.index("-resultBundlePath") + 1])
+                    if call != command and all(path != attempt_bundle for path, _suffix in private_bundles):
+                        original = Path(command[command.index("-resultBundlePath") + 1])
+                        for index, (path, suffix) in enumerate(private_bundles):
+                            if path == original:
+                                private_bundles[index] = (path, suffix + "-attempt-1")
+                        private_bundles.append((attempt_bundle, "-" + log_path.stem + "-attempt-2"))
+                    ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
+                    started = time.monotonic()
+                    code = None
+                    products_unchanged = False
+                    try:
+                        code = run_command(call, cwd=REPO_ROOT, environment=environment, log_path=log_path,
+                                           timeout_seconds=arguments.warm_timeout_seconds)
+                    except CommandError as error:
+                        code = 124 if isinstance(error.__cause__, subprocess.TimeoutExpired) else error.code
+                        raise
+                    finally:
+                        from strict_e2e_build import write_json
+                        try:
+                            validate_warm_products(derived_data_path, warm_receipt)
+                            products_unchanged = True
+                        finally:
+                            write_json(arguments.evidence_dir / (log_path.stem + "-reuse.json"), {
+                                "duration_seconds": time.monotonic() - started, "exit_code": code,
+                                "timeout_seconds": arguments.warm_timeout_seconds,
+                                "action": "test-without-building", "products_unchanged": products_unchanged,
+                            })
+                    return code, time.monotonic() - started
+                def case_identity(key):
+                    return test_identity("strict", key, device=retry_device_class,
+                                         configuration=warm_receipt["identity"]["configuration"], suite=arguments.suite,
+                                         scenario=arguments.scenario, fixture=arguments.fixture_set)
+                retry_result = run_xcode_attempts(command, registry, tier="strict", environment="hermetic", today=date.today(),
+                                                 identity_for_key=case_identity, reset=reset_retry, execute=execute_attempt,
+                                                 read=partial(read_xcode_observations, expected_device=(simulator_udid, retry_device_class)),
+                                                 allocate_bundle=lambda: prepare_private_result_bundle_path(arguments.suite + "-retry"))
+                attempt_evidence.finish()
+                from strict_e2e_build import write_json
+                write_json(arguments.evidence_dir / (log_path.stem + "-attempts.json"),
+                           dict(retry_result, registry_revision=registry_ref, registry_sha256=registry_hash))
+                retry_sessions[log_path.stem] = dict(retry_result, registry_revision=registry_ref)
+                write_json(arguments.evidence_dir / "retry-invocations.json", {"sessions": retry_sessions})
+                effective_result_bundle = Path(retry_result["effective_bundle"])
+                if case_manifest is not None:
+                    case_manifest.setdefault("retry_observations", []).extend(retry_result["observed"])
+                    case_manifest["flaky_registry_sha256"] = registry_hash
+                    case_manifest["flaky_registry_revision"] = registry_ref
+                attempt_evidence.audit(suite=arguments.suite, scenario=arguments.scenario,
+                                       fixture_set=arguments.fixture_set,
+                                       fixture_hash=str(fixture_payload["fixture_sha256"]), server_url=server_url)
+                for record in retry_result["observed"]:
+                    if len(record["attempts"]) > 1:
+                        print(f"{record['identity']['key']}: {record['outcome']}, attempts=2", file=stdout, flush=True)
+                return retry_result["exit_code"]
             started = time.monotonic()
             code = run_command(command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
                                timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else XCODEBUILD_TIMEOUT_SECONDS)
@@ -799,6 +945,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             for index, session in enumerate(FILTER_PERSON_SESSIONS):
                 if index > 0:
                     reset_logs.append(reset_simulator_app(simulator_udid))
+                    with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
+                        log.write(reset_logs[-1])
                 session_bundle = prepare_private_result_bundle_path(f"filter-person-{session['name']}")
                 private_bundles.append((session_bundle, f"-{session['name']}"))
                 session_log = arguments.evidence_dir / f"xcodebuild-{session['name']}.log"
@@ -821,6 +969,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     command = warm_test_command(run, arguments.destination, session_bundle, session["selector"])
                 commands.append(shlex.join(command))
                 exit_code = execute_case(command, session_log)
+                if arguments.listed_retry_device:
+                    session_bundle = effective_result_bundle
                 primary_exit_code = exit_code
                 if exit_code != 0:
                     (arguments.evidence_dir / "xcodebuild.log").write_text(
@@ -829,9 +979,6 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     )
                     (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
                         "\n".join(commands) + "\n", encoding="utf-8"
-                    )
-                    (arguments.evidence_dir / "simulator-reset.log").write_text(
-                        "\n".join(reset_logs) + "\n", encoding="utf-8"
                     )
                     raise CommandError(f"xcodebuild strict E2E failed with exit {exit_code}.", code=exit_code)
                 summary = read_official_test_results_summary(session_bundle)
@@ -845,9 +992,6 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 case_manifest["command"] = "\n".join(commands)
                 write_case_manifest(arguments.evidence_dir, case_manifest)
             (arguments.evidence_dir / "xcodebuild.log").write_text("\n".join(log_parts), encoding="utf-8")
-            (arguments.evidence_dir / "simulator-reset.log").write_text(
-                "\n".join(reset_logs) + "\n", encoding="utf-8"
-            )
             person_summaries = summaries
         else:
             command = build_xcodebuild_command(
@@ -880,6 +1024,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     arguments.evidence_dir / "screen-recording.log",
                 )
             exit_code = execute_case(command, arguments.evidence_dir / "xcodebuild.log")
+            if arguments.listed_retry_device:
+                result_bundle_path = effective_result_bundle
             primary_exit_code = exit_code
             if recording_process is not None:
                 finished_recording, recording_process = recording_process, None
@@ -901,11 +1047,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 raise CommandError(f"xcodebuild strict E2E failed with exit {exit_code}.", code=exit_code)
             summary = read_official_test_results_summary(result_bundle_path)
             require_official_single_pass(summary)
-        if service_log_path.is_file():
+        if service_log_path.is_file() and not arguments.listed_retry_device:
             (arguments.evidence_dir / "redacted-request.log").write_bytes(service_log_path.read_bytes())
         if arguments.scenario == "out-of-order":
             log_text = (
-                service_log_path.read_text(encoding="utf-8") if service_log_path.is_file() else ""
+                (arguments.evidence_dir / "redacted-request.log").read_text(encoding="utf-8")
+                if (arguments.evidence_dir / "redacted-request.log").is_file() else ""
             )
             audit_payload = audit_out_of_order_runner_inputs(
                 fixture_set=arguments.fixture_set,
@@ -917,7 +1064,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 json.dumps(audit_payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-        if service_log_b_path is not None and service_log_b_path.is_file():
+        if service_log_b_path is not None and service_log_b_path.is_file() and not arguments.listed_retry_device:
             (arguments.evidence_dir / "request-log-b.log").write_bytes(service_log_b_path.read_bytes())
         if person_summaries is not None:
             summary_payload = merge_official_summaries(person_summaries)
@@ -946,7 +1093,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         else:
             visual_payload = require_visual_identity(arguments.evidence_dir, arguments.suite)
         if case_manifest is not None:
-            case_manifest["result"] = summary.result
+            case_manifest["result"] = ("flaky-passed" if any(record["outcome"] == "flaky-passed"
+                                                          for record in case_manifest.get("retry_observations", [])) else summary.result)
             case_manifest["exit_code"] = 0
             case_manifest["official_summary"] = summary_payload
             case_manifest["visual_identity"] = visual_payload
@@ -979,6 +1127,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             )
             official_tests_digests[suffix] = digest
             if case_manifest is not None:
+                if bundle == result_bundle_path:
+                    case_manifest["official_tests_sha256"] = digest
                 if suffix:
                     case_manifest["official_session_tests_sha256"] = dict(official_tests_digests)
                 else:

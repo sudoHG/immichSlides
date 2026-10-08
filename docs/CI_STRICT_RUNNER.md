@@ -7,7 +7,9 @@ It covers an iPhone smoke suite,
 an Apple TV smoke suite, iPhone P2 rotation with recording, and the dual-server
 `filter-switch` suite. [`strict-tracer.json`](../scripts/strict-tracer.json) is only
 this tracer's versioned case list, not the complete nightly matrix. Nightly matrix
-enumeration, retries and signed visual-review promotion are separate work.
+enumeration and signed visual-review promotion are separate work. Explicit warm runs
+can opt into [listed-only retries](TESTING.md#known-flaky-registry-and-listed-only-retries)
+with `--listed-retry-device`; the tracer itself continues to run once.
 
 Strict builds use their own test plans and settings; they do not consume the default
 unit/UI archives. They reuse the [archive workspace preflight](CI_BUILD_ARCHIVE.md),

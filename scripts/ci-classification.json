@@ -31,6 +31,7 @@
     "scripts/ui_test_inventory.py",
     "scripts/ci-pins.json",
     "scripts/ci-test-policy.json",
+    "scripts/ci-known-flaky.json",
     "scripts/ci-classification.json",
     "scripts/strict-tracer.json",
     "scripts/test_conventions_allowlist.json",

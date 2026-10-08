@@ -33,6 +33,7 @@ HOST_CHECKS = [
     ("localization usage", [sys.executable, "scripts/scan_chinese_strings.py", "--limit", "20"]),
     ("Python test prerequisites", [sys.executable, "scripts/check_required_test_tools.py"]),
     ("workflow policy", [sys.executable, "scripts/check_workflow_policy.py"]),
+    ("known-flaky registry", [sys.executable, "scripts/ci_flaky.py"]),
     ("python tests", [sys.executable, "-B", "scripts/run_python_tests.py"]),
 ]
 
