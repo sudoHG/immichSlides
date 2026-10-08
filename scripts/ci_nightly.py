@@ -196,6 +196,14 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def select_dispatch_shards(planned, shard):
+    if not shard:
+        return planned
+    selected = [entry for entry in planned if entry["id"] == shard]
+    require(len(selected) == 1, "unknown diagnostic shard")
+    return selected
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("plan", "aggregate"))
@@ -203,6 +211,7 @@ def main(argv=None):
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--records-dir", type=Path)
     parser.add_argument("--matrix-job-result", choices=("success", "failure", "cancelled", "skipped"))
+    parser.add_argument("--only-shard", help="dispatch one diagnostic shard while retaining the full plan")
     args = parser.parse_args(argv)
     output = args.output_dir.resolve()
     require(output != ROOT and ROOT not in output.parents and not os.path.lexists(output), "output must be fresh and outside checkout")
@@ -218,13 +227,15 @@ def main(argv=None):
               "fork_originated": fork, "ci_changing": None, "approval_based": False}
     planned = shards(manifest)
     if args.command == "plan":
+        selected = select_dispatch_shards(planned, args.only_shard)
         plan = {"schema_version": 1, "identity": identity, "source": source, "run": run, "hashes": hashes,
-                "shards": planned, "max_parallel": 2, "started_epoch": time.time()}
+                "shards": planned, "max_parallel": 2, "started_epoch": time.time(), "diagnostic_shard": args.only_shard or None}
         write_json(output / "plan.json", plan)
-        matrix = {"include": [{key: shard[key] for key in ("id", "platform", "device")} for shard in planned]}
+        matrix = {"include": [{key: shard[key] for key in ("id", "platform", "device")} for shard in selected]}
         print(json.dumps(matrix, separators=(",", ":")))
         return 0
     require(args.plan is not None and args.records_dir is not None, "aggregate needs plan and records")
+    require(args.only_shard is None, "only-shard is a planning option")
     summaries, errors, traces = [], [], []
     try:
         plan = decode(args.plan.read_text())
@@ -232,6 +243,9 @@ def main(argv=None):
                 and plan["shards"] == planned, "plan differs from workflow checkout, run or matrix")
         require(type(plan["started_epoch"]) in (int, float) and math.isfinite(plan["started_epoch"])
                 and plan["started_epoch"] <= time.time() and plan["max_parallel"] == 2, "invalid plan capacity")
+        select_dispatch_shards(planned, plan.get("diagnostic_shard"))
+        if plan.get("diagnostic_shard"):
+            errors.append("single-shard diagnostic cannot establish a complete nightly")
     except (ValueError, OSError, KeyError) as error:
         errors.append("invalid or missing scheduling record: " + str(error))
         plan = {"started_epoch": time.time(), "max_parallel": 2}
@@ -267,7 +281,8 @@ def main(argv=None):
     result["observed"].extend(observation(item, "not-run", 0, reason="missing or invalid shard evidence", exit_code=None)
                               for item in scheduled if identity_key(item) not in observed_keys)
     result.update(identity=identity, source=source, run=run, hashes=hashes, live_tier_in_scope=policy["live_tier_in_scope"],
-                  exclusions=manifest["exclusions"], runner_exclusions=manifest["runner_exclusions"])
+                  exclusions=manifest["exclusions"], runner_exclusions=manifest["runner_exclusions"],
+                  diagnostic_shard=plan.get("diagnostic_shard"))
     result["capacity"] = {"max_parallel": plan["max_parallel"], "shards": len(planned),
                           "minimum_shard_waves": math.ceil(len(planned) / plan["max_parallel"]),
                           "shard_intervals": traces,

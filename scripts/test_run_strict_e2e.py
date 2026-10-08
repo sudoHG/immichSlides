@@ -192,6 +192,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         failure_session: str | None = None,
         warm: bool = False,
         retry: bool = False,
+        timeout_phase: str | None = None,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -228,6 +229,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
         def fake_subprocess(command: list[str], **_: object) -> subprocess.CompletedProcess[object]:
             if command[:2] == ["xcrun", "xcresulttool"]:
+                if timeout_phase == "official-tests-export":
+                    raise subprocess.TimeoutExpired(["private-test-input"], 60, output=b"private-test-input")
                 return subprocess.CompletedProcess(command, export_exit, b'{"testNodes":[]}', b"")
             return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -252,11 +255,15 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "run_strict_e2e.prepare_task_xcconfig", return_value={}
         ), mock.patch("run_strict_e2e.cleanup_task_xcconfig"), mock.patch(
             "run_strict_e2e.subprocess.run", side_effect=fake_subprocess
-        ), mock.patch("run_strict_e2e.reset_simulator_app", return_value="reset\n"), mock.patch(
+        ), mock.patch("run_strict_e2e.reset_simulator_app", return_value="reset\n",
+                      side_effect=strict_runner.InfrastructureTimeout(timeout_phase, 60)
+                      if timeout_phase == "simulator-bootstatus" else None), mock.patch(
             "run_strict_e2e.run_command", side_effect=fake_run_command
         ), mock.patch(
             "run_strict_e2e.read_official_test_results_summary",
             return_value=TestResultsSummary(1, 1, 0, 0, "Passed"),
+            side_effect=strict_runner.InfrastructureTimeout(timeout_phase, 60)
+            if timeout_phase == "official-summary-export" else None,
         ), mock.patch(
             "run_strict_e2e.read_xcresult_facts",
             return_value=_p2_facts(suite, platform, model, facts_device_id) if suite in P2_CASES else {},
@@ -321,6 +328,58 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             self.assertEqual(code, 0, stderr)
             self.assertEqual(list((root / "private").iterdir()), [])
 
+    def test_inner_timeout_records_its_phase_and_finishes_private_cleanup(self):
+        for phase in ("simulator-bootstatus", "official-tests-export", "official-summary-export"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                evidence = root / "evidence"
+                code, _, stderr, _ = self._run_p2_main(
+                    evidence, suite="smoke", platform="ios", model="iPhone", warm=True,
+                    timeout_phase=phase,
+                )
+                self.assertNotEqual(code, 0, stderr)
+                record = json.loads((evidence / "case-manifest.json").read_text())
+                self.assertEqual(record["result"], "FAILED")
+                self.assertEqual(record["infrastructure"][0]["code"], phase + "-timeout")
+                self.assertNotIn("private-test-input", json.dumps(record) + stderr)
+                self.assertEqual(json.loads((evidence / "sensitive-scan.json").read_text())["result"], "PASS")
+                self.assertEqual(list((root / "derived").glob("strict-case-*/case.xctestrun")), [])
+                if phase.startswith("official-"):
+                    quarantine = json.loads((evidence / "result-bundle-quarantine.json").read_text())
+                    self.assertFalse(quarantine["result_bundle_disposed"])
+                    self.assertTrue(Path(quarantine["private_path"]).is_dir())
+
+    def test_simulator_and_summary_timeouts_name_the_hung_phase_without_command_output(self):
+        commands = {
+            "boot": "simulator-boot", "bootstatus": "simulator-bootstatus",
+            "terminate": "simulator-terminate", "uninstall": "simulator-uninstall",
+            "get_app_container": "simulator-container", "keychain": "simulator-keychain-reset",
+            "privacy": "simulator-privacy-reset",
+        }
+        for step, phase in commands.items():
+            with self.subTest(step=step):
+                def run(command, **kwargs):
+                    if command[2] == step:
+                        self.assertGreater(kwargs.get("timeout", 0), 0)
+                        raise subprocess.TimeoutExpired(["private-test-input"], kwargs["timeout"],
+                                                        output=b"private-test-input")
+                    return subprocess.CompletedProcess(command, 2 if command[2] == "get_app_container" else 0, "", "")
+                with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=run), mock.patch(
+                    "strict_e2e_runner_support.time.sleep"
+                ), self.assertRaises(CommandError) as raised:
+                    reset_simulator_app("SIM-UDID")
+                self.assertEqual(raised.exception.entry["code"], phase + "-timeout")
+                self.assertNotIn("private-test-input", str(raised.exception))
+        with tempfile.TemporaryDirectory() as raw:
+            bundle = Path(raw) / "result.xcresult"
+            bundle.mkdir()
+            def export(command, **kwargs):
+                self.assertEqual(kwargs.get("timeout"), 60)
+                raise subprocess.TimeoutExpired(["private-test-input"], 60, output=b"private-test-input")
+            with mock.patch("run_offline_unit_tests.subprocess.run", side_effect=export), self.assertRaises(CommandError) as raised:
+                strict_runner.read_official_test_results_summary(bundle)
+            self.assertEqual(raised.exception.entry["code"], "official-summary-export-timeout")
+
     def test_ordinary_and_person_results_never_expose_raw_bundles(self) -> None:
         # Raw XCTest activities may retain UI-entered credentials even in failed sessions.
         for suite, count in (("smoke", 1), ("filter-person", 3)):
@@ -372,8 +431,9 @@ class StrictCITracerTests(unittest.TestCase):
         case = {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "smoke", "scenario": "normal", "fixture": "a"}
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
-        for official_result in ("Passed", "Failed"):
-            with self.subTest(result=official_result), tempfile.TemporaryDirectory() as raw:
+        timeout = {"code": "xcodebuild-timeout", "message": "xcodebuild timed out after 600.0s."}
+        for official_result, infrastructure in (("Passed", []), ("Failed", []), ("Failed", [timeout])):
+            with self.subTest(result=official_result, infrastructure=infrastructure), tempfile.TemporaryDirectory() as raw:
                 output = Path(raw) / "trace"
                 manifest = Path(raw) / "manifest.json"
                 manifest.write_text(json.dumps({"cases": [case], "exclusions": []}))
@@ -386,6 +446,7 @@ class StrictCITracerTests(unittest.TestCase):
                         (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
                         return 0
                     evidence.mkdir(parents=True)
+                    (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": infrastructure}))
                     (evidence / "xcodebuild.log").write_text("test-without-building\n")
                     (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
                     counts = {"totalTestCount": 1, "passedTests": int(official_result == "Passed"),
@@ -395,7 +456,7 @@ class StrictCITracerTests(unittest.TestCase):
                         "nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [{
                             "nodeType": "Test Case", "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()",
                             "result": official_result}]}]}))
-                    return 65
+                    return 124 if infrastructure else 65
 
                 with mock.patch.object(tracer, "run_runner", side_effect=runner), mock.patch.object(tracer, "workspace_preflight"), \
                         mock.patch.object(tracer, "run_identity", return_value=identity), \
@@ -408,7 +469,9 @@ class StrictCITracerTests(unittest.TestCase):
                 self.assertEqual(summary["population"]["compiled"], summary["population"]["declared"])
                 self.assertEqual(summary["population"]["observed"][0]["outcome"], "failed")
                 self.assertEqual(trace["warm"][0]["official_summary"]["totalTestCount"], 1)
-                self.assertEqual(trace["warm"][0]["exit_code"], 65)
+                self.assertEqual(trace["warm"][0]["exit_code"], 124 if infrastructure else 65)
+                self.assertEqual(summary["infrastructure"], infrastructure)
+                self.assertEqual(trace["warm"][0]["infrastructure"], infrastructure)
 
     def test_official_export_rejects_another_selected_test_even_when_counts_match(self):
         from run_strict_ci_tracer import validate_case_export

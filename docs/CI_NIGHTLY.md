@@ -8,6 +8,7 @@ permissions, no secrets/environments and no publisher, reporter or release autho
 ```bash
 gh workflow run ci-nightly.yml --ref <branch>
 gh run list --workflow ci-nightly.yml --branch <branch>
+gh workflow run ci-nightly.yml --ref <branch> -f shard=ipad-immichSlides-iOS-debug-3
 python3 -B scripts/ci_nightly.py plan --output-dir '<fresh-outside-repo>/plan'
 python3 -B scripts/run_strict_ci_tracer.py --manifest scripts/nightly-matrix.json \
     --shard iphone-immichSlides-iOS-debug-0 --platform ios \
@@ -20,6 +21,9 @@ watchdog wrappers. Preflight rejects files, links and dangling private-config li
 without reading them. There is no SHA override: dispatch a ref at the desired commit.
 Checkout, workflow, matrix, policy, tree, run or attempt mismatches fail. Schedule
 identities require `refs/heads/main`.
+The optional dispatch `shard` input diagnoses one known shard exactly once. It retains
+the complete scheduling record; missing shards and the diagnostic marker make aggregate
+equality fail. This run cannot substitute for a complete nightly, and does not retry cases.
 
 ## Population and capacity
 
@@ -51,6 +55,14 @@ with immutable Products checks. Case directories are unique across repeated suit
 The 26 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS slots.
 Cold warm-up has 1,200 seconds; each warm invocation has 600. Each case adds a 240-second
 reset/export/cleanup allowance; filter-person receives three invocation budgets.
+Simulator preparation shares a 120-second deadline, with individual reset commands
+capped at 60 seconds and bootstatus using the remaining preparation budget. Official
+tests and summary exports each have a 60-second deadline. Timeouts name the phase in
+compact infrastructure entries without command arguments/output, preserve a failed
+case record, finish cleanup and quarantine raw bundles privately. Existing cold/warm
+and outer deadlines are unchanged. The tracer retains these entries even when official
+exports are unavailable, so application/test execution and infrastructure hangs remain
+distinguishable.
 Six cases can require eight invocations, giving a worst shard allowance of 128 minutes.
 The job timeout is 150 minutes including setup/upload/cleanup; planning/aggregate have
 15-minute caps. Hosted disk floor stays 30 GiB; local default stays 80 GiB.

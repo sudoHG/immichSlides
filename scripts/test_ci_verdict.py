@@ -15,6 +15,15 @@ from test_ci_summary import valid_summary
 
 
 class NightlyVerdictTests(unittest.TestCase):
+    def test_single_shard_diagnostics_keep_the_complete_scheduling_population(self):
+        from ci_nightly import select_dispatch_shards
+        planned = [{"id": "first", "cases": ["a"]}, {"id": "second", "cases": ["b"]}]
+        self.assertEqual(select_dispatch_shards(planned, None), planned)
+        self.assertEqual(select_dispatch_shards(planned, "second"), [planned[1]])
+        self.assertEqual(len(planned), 2)
+        with self.assertRaises(ValueError):
+            select_dispatch_shards(planned, "unknown")
+
     def test_informational_outcomes_are_reported_without_hiding_execution_or_infrastructure_failure(self):
         from ci_nightly import aggregate_nightly
         identity = ci_summary.test_identity("strict", "filter-vision", device="iphone", configuration="Debug",

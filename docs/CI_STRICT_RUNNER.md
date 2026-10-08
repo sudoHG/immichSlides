@@ -11,6 +11,8 @@ enumeration and aggregation are documented in [Skeleton nightly](CI_NIGHTLY.md).
 Explicit warm runs can opt into [listed-only retries](TESTING.md#known-flaky-registry-and-listed-only-retries)
 with `--listed-retry-device`; the tracer and skeleton nightly continue to run once.
 Signed visual-review promotion remains separate work.
+Simulator preparation and official exports have explicit phase deadlines; timeout
+records and private quarantine follow the [nightly infrastructure policy](CI_NIGHTLY.md#population-and-capacity).
 
 Strict builds use their own test plans and settings; they do not consume the default
 unit/UI archives. They reuse the [archive workspace preflight](CI_BUILD_ARCHIVE.md),

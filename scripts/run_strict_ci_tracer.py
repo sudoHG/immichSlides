@@ -127,7 +127,7 @@ def run_runner(command, repo_root, log_path, *, timeout_seconds):
             except BaseException as error:
                 raise RunnerGroupCleanupError(f"Runner process group cleanup failed: {type(error).__name__}: {error}") from error
             log.seek(offset)
-            errors = [line for line in log.read().splitlines() if line.startswith(("CommandError: ", "OfflineCommandError: "))]
+            errors = [line for line in log.read().splitlines() if line.startswith(("CommandError: ", "OfflineCommandError: ", "InfrastructureTimeout: "))]
             if errors:
                 print(errors[-1], file=sys.stderr, flush=True)
     return code
@@ -246,6 +246,12 @@ def main(argv=None):
     def collect_result(case, evidence, phase):
         manifest_path = evidence / "case-manifest.json"
         details = decode(manifest_path.read_text()) if manifest_path.is_file() else {}
+        infrastructure = details.get("infrastructure", [])
+        require(isinstance(infrastructure, list) and all(isinstance(entry, dict)
+                and set(entry) == {"code", "message"} and all(isinstance(value, str) for value in entry.values())
+                for entry in infrastructure), "invalid case infrastructure entries")
+        phase["infrastructure"] = infrastructure
+        summary["infrastructure"].extend(infrastructure)
         log_path = evidence / "xcodebuild.log"
         builds = BUILD_OPERATIONS.findall(log_path.read_text()) if log_path.is_file() else []
         reuse_paths = ([evidence / f"xcodebuild-{session['name']}-reuse.json" for session in FILTER_PERSON_SESSIONS]

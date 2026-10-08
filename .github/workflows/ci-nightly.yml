@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '15 21 * * *'
   workflow_dispatch:
+    inputs:
+      shard:
+        description: Optional single shard for diagnosis; cannot establish a complete nightly
+        required: false
+        default: ''
+        type: string
   pull_request:
     paths:
       - .github/workflows/ci-nightly.yml
@@ -41,9 +47,11 @@ jobs:
             --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
       - name: Validate the full versioned matrix and record this attempt
         id: matrix
+        env:
+          NIGHTLY_DIAGNOSTIC_SHARD: ${{ inputs.shard }}
         run: |
           matrix=$("$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_nightly.py plan \
-            --output-dir "$RUNNER_TEMP/nightly-plan")
+            --output-dir "$RUNNER_TEMP/nightly-plan" --only-shard "$NIGHTLY_DIAGNOSTIC_SHARD")
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
       - name: Publish the scheduling record
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
