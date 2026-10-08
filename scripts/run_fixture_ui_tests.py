@@ -21,6 +21,7 @@ from pathlib import Path
 from ci_build_archive import check_products, disk_check, measure_signing, record_signing
 from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
+from ci_ui_shards import DEVICES, default_plan_population
 from ci_verdict import evaluate_population, parse_policy, tier_approved
 from ci_flaky import load_registry, registry_revision, run_xcode_attempts, read_xcode_observations
 from run_host_checks import run_identity, source_metadata, toolchain
@@ -32,7 +33,6 @@ from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 from access_lifecycle_contract import logical_bytes_contain
 
 ROOT = Path(__file__).resolve().parent.parent
-DEVICES = {"iphone": "ios", "ipad": "ios", "appletv": "tvos"}
 DEVICE_MODELS = {"iphone": "iPhone", "ipad": "iPad", "appletv": "Apple TV"}
 
 
@@ -99,12 +99,7 @@ def canonical_test(identifier):
 
 
 def declared_tests(files, platform, plan, selectors):
-    targets = [target for target in plan["testTargets"] if target["target"]["name"] == "immichSlidesUITests"]
-    require(len(targets) == 1, "default plan must have exactly one UI target")
-    excluded = [item.removesuffix("()") for item in targets[0].get("skippedTests", [])]
-    def selected(key):
-        return not any(key == item or key.startswith(item + "/") for item in excluded)
-    declared = [entry for entry in ui_identities(files, platform) if selected(entry["key"])]
+    declared = default_plan_population(ui_identities(files, platform), plan)
     if selectors:
         keys = {canonical_test(selector) for selector in selectors}
         require(keys <= {entry["key"] for entry in declared}, "selector is outside the default UI plan")
