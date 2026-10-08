@@ -196,7 +196,7 @@ def read_problem_reason(bundle, key):
     return problem_reason(json.loads(completed.stdout), key)
 
 
-def prepare_test_run(source, directory, inputs):
+def prepare_test_run(source, directory, inputs, *, failure_screenshots=False):
     payload = plistlib.loads(source.read_bytes())
     def relocate(value):
         if isinstance(value, str):
@@ -215,6 +215,10 @@ def prepare_test_run(source, directory, inputs):
             target[field] = clean_environment(target.get(field, {}))
         if target.get("BlueprintName") == "immichSlidesUITests":
             target["EnvironmentVariables"].update(inputs)
+            if failure_screenshots:
+                # Archives default to video; export requires real failure images.
+                target["PreferredScreenCaptureFormat"] = "screenshots"
+                target["SystemAttachmentLifetime"] = "deleteOnSuccess"
     path = directory / "fixture.xctestrun"
     path.write_bytes(plistlib.dumps(payload))
     return path
@@ -347,7 +351,7 @@ def main(argv=None):
         inputs = {"IMMICH_TEST_SERVER_URL": f"http://{host}:{port}/api", "IMMICH_TEST_API_KEY": PUBLIC_API_KEY,
                   "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID": "album-c-exif",
                   "TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR": str(output / "scene-contracts")}
-        run = prepare_test_run(source_run, work, inputs)
+        run = prepare_test_run(source_run, work, inputs, failure_screenshots=args.failure_screenshots)
         base = ["xcodebuild", "test-without-building", "-xctestrun", str(run), "-destination", args.destination,
                 "-derivedDataPath", str(work / "xcode-data"),
                 "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never"]

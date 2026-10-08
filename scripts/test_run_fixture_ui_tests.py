@@ -1,6 +1,7 @@
 """Guard per-test fixture coverage against missing, duplicate and skipped results."""
 
 import copy
+import plistlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,30 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
+    def test_requested_failure_screenshots_override_video_capture_only_in_the_prepared_ui_target(self):
+        payload = {"TestConfigurations": [{"TestTargets": [
+            {"BlueprintName": "immichSlidesUITests", "EnvironmentVariables": {},
+             "TestingEnvironmentVariables": {}, "UITargetAppEnvironmentVariables": {},
+             "PreferredScreenCaptureFormat": "screenRecording", "SystemAttachmentLifetime": "keepNever"},
+            {"BlueprintName": "immichSlidesTests", "EnvironmentVariables": {},
+             "TestingEnvironmentVariables": {}, "UITargetAppEnvironmentVariables": {},
+             "PreferredScreenCaptureFormat": "screenRecording", "SystemAttachmentLifetime": "keepAlways"}]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "archive.xctestrun"
+            original = plistlib.dumps(payload)
+            source.write_bytes(original)
+            normal, screenshots = root / "normal", root / "screenshots"
+            normal.mkdir()
+            screenshots.mkdir()
+            self.assertEqual(plistlib.loads(runner.prepare_test_run(source, normal, {}).read_bytes()), payload)
+            prepared = runner.prepare_test_run(source, screenshots, {}, failure_screenshots=True)
+            targets = plistlib.loads(prepared.read_bytes())["TestConfigurations"][0]["TestTargets"]
+            self.assertEqual(targets[0]["PreferredScreenCaptureFormat"], "screenshots")
+            self.assertEqual(targets[0]["SystemAttachmentLifetime"], "deleteOnSuccess")
+            self.assertEqual(targets[1], payload["TestConfigurations"][0]["TestTargets"][1])
+            self.assertEqual(source.read_bytes(), original)
+
     def test_successful_private_disposal_removes_bundle_and_sibling_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
