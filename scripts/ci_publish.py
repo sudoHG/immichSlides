@@ -363,15 +363,18 @@ def producer_evidence(api, run, source):
     jobs = {}
     for attempt in range(1, run["run_attempt"] + 1):
         require(attempt <= 100, "too many producer attempts")
-        for job in api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs"):
+        attempt_jobs = api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs")
+        if run["path"] == ".github/workflows/ci-ui.yml":
+            from ci_ui_reuse import expand_skipped_ui_matrix
+            # Reruns may switch between a collapsed skip and literal execution.
+            # Normalize within each attempt before merging logical shard history.
+            attempt_jobs = expand_skipped_ui_matrix(source, dict(run, run_attempt=attempt), attempt_jobs, complete=False)
+        for job in attempt_jobs:
             previous = jobs.get(job["name"])
             execution = ("started_at", "completed_at", "runner_id")
             retained = (previous and all(job.get(key) and job[key] == previous.get(key) for key in execution))
             jobs[job["name"]] = dict(job, evidence_attempt=previous["evidence_attempt"] if retained else attempt)
     expected, _, by_job, metadata = workflow_contract(source, run, metadata=True)
-    if run["path"] == ".github/workflows/ci-ui.yml":
-        from ci_ui_reuse import expand_skipped_ui_matrix
-        jobs = {job["name"]: job for job in expand_skipped_ui_matrix(source, run, list(jobs.values()))}
     require(set(jobs) == set(expected), "required job set mismatch")
     artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
     summaries = []

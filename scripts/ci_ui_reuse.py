@@ -6,11 +6,13 @@ import hashlib
 import re
 import subprocess
 import zipfile
+import zlib
 
 import yaml
 
 from ci_publish_git import git, read_blob, workflow_contract
-from ci_summary import ContractError, decode, fields, parse_identity, parse_summary, require
+from ci_summary import (ContractError, decode, fields, integer, nullable_string, parse_identity,
+                        parse_summary, require, sha, string)
 
 UI_WORKFLOW = ".github/workflows/ci-ui.yml"
 PUBLISH_WORKFLOW = ".github/workflows/ci-publish.yml"
@@ -28,14 +30,46 @@ def device_shards(source, run):
     return sorted(meta["device"] + "/" + meta["shard"] for meta in metadata.values() if meta["tier"] == "ui")
 
 
-def validate_reuse(receipt, push, inputs, shards, pins, upstream, merged_pr):
+def parse_verdict(receipt):
+    """Validate nested types before any receipt-controlled attribute access."""
     fields(receipt, {"schema_version", "identity", "source", "status", "inputs", "device_shards", "toolchains"},
            "UI verdict receipt")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1, "unknown UI reuse receipt version")
-    identity = parse_identity(receipt["identity"])
+    parse_identity(receipt["identity"])
     source = receipt["source"]
     fields(source, {"repository", "workflow_path", "run_id", "attempt", "fork_originated", "ci_changing", "approval_based"},
            "UI verdict source")
+    for key in ("repository", "workflow_path"):
+        string(source[key], "UI verdict " + key)
+    for key in ("run_id", "attempt"):
+        integer(source[key], 1, "UI verdict " + key)
+    for key in ("fork_originated", "ci_changing", "approval_based"):
+        require(type(source[key]) is bool, "UI verdict " + key + " must be boolean")
+    string(receipt["status"], "UI verdict status")
+    require(isinstance(receipt["inputs"], dict) and receipt["inputs"], "UI verdict inputs must be a nonempty object")
+    for path, digest in receipt["inputs"].items():
+        string(path, "UI verdict input path")
+        sha(digest, 64)
+    shards = receipt["device_shards"]
+    require(isinstance(shards, list) and shards, "UI verdict device shards must be a nonempty list")
+    for shard in shards:
+        string(shard, "UI verdict device shard")
+    require(len(set(shards)) == len(shards), "UI verdict device shards are duplicated")
+    fields(receipt["toolchains"], shards, "UI verdict toolchains")
+    for toolchain in receipt["toolchains"].values():
+        fields(toolchain, {"versions", "signing_mode"}, "UI verdict toolchain")
+        require(isinstance(toolchain["versions"], dict) and toolchain["versions"], "UI verdict versions must be a nonempty object")
+        for name, version in toolchain["versions"].items():
+            string(name, "UI verdict tool name")
+            nullable_string(version, "UI verdict tool version")
+        require(isinstance(toolchain["signing_mode"], str)
+                and toolchain["signing_mode"] in {"not-applicable", "sign-to-run-locally"}, "invalid UI verdict signing mode")
+    return receipt
+
+
+def validate_reuse(receipt, push, inputs, shards, pins, upstream, merged_pr):
+    parse_verdict(receipt)
+    identity, source = receipt["identity"], receipt["source"]
     require(push["event"] == "push" and push["ref"] == "refs/heads/main", "reuse is main-push only")
     require(identity["event"] == "pull_request" and identity["repository"] == push["repository"] == source["repository"],
             "reuse requires a same-repository PR verdict")
@@ -125,7 +159,7 @@ def find_reuse(api, push):
                 continue
             try:
                 trusted_uploader(api, artifact, publisher)
-                receipt = json_member(api, artifact, "verdict.json")
+                receipt = parse_verdict(json_member(api, artifact, "verdict.json"))
                 head = receipt["identity"]["head_sha"]
                 runs = api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", head_sha=head, event="pull_request")
                 upstream = authoritative_run(runs, head, workflow, api.repository)
@@ -133,14 +167,14 @@ def find_reuse(api, push):
                 verify_workflow(upstream, workflow, api.repository)
                 validate_reuse(receipt, push, inputs, shards, pins, upstream, merged[0])
                 return dict(receipt, artifact_id=artifact["id"], publisher_run_id=artifact["workflow_run"]["id"])
-            except (OSError, ContractError, KeyError, ValueError, TypeError, zipfile.BadZipFile, subprocess.SubprocessError):
+            except (OSError, ContractError, KeyError, ValueError, TypeError, zipfile.BadZipFile, zlib.error, subprocess.SubprocessError):
                 continue
-    except (OSError, ContractError, KeyError, ValueError, TypeError, zipfile.BadZipFile, subprocess.SubprocessError):
+    except (OSError, ContractError, KeyError, ValueError, TypeError, zipfile.BadZipFile, zlib.error, subprocess.SubprocessError):
         return None
     return None
 
 
-def expand_skipped_ui_matrix(source, run, jobs):
+def expand_skipped_ui_matrix(source, run, jobs, *, complete=True):
     """Map a real whole-matrix skip to its trusted literal shard population."""
     from check_workflow_policy import WorkflowLoader
     names, _, _, metadata = workflow_contract(source, run, metadata=True)
@@ -160,7 +194,7 @@ def expand_skipped_ui_matrix(source, run, jobs):
             # Preserve the one real API job's ID, timestamps and attempt on every
             # logical shard. This mapping never supplies test observations.
             actual.update({name: dict(skipped, name=name, unexpanded_name=raw_name) for name in expanded})
-    require(set(actual) == set(names), "required job set mismatch")
+    require(set(actual) == set(names) if complete else set(actual) <= set(names), "required job set mismatch")
     return list(actual.values())
 
 

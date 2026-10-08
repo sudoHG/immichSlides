@@ -5,6 +5,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+import zlib
 from unittest.mock import patch
 
 from ci_summary import ContractError
@@ -178,6 +179,16 @@ class PublisherTests(unittest.TestCase):
                      lambda r: r["device_shards"].pop(),
                      lambda r: r["toolchains"].pop("ipad/default"),
                      lambda r: r["toolchains"]["ipad/default"]["versions"].update(xcode="26.0 (other)")]
+        # Wrong nested types must be contract failures, never attribute errors
+        # escaping the conservative reuse fallback.
+        mutations += [lambda r: r.update(identity=[]), lambda r: r.update(source=[]),
+                      lambda r: r.update(inputs=[]), lambda r: r.update(device_shards={}),
+                      lambda r: r.update(toolchains=list(shards)),
+                      lambda r: r["source"].update(run_id=True),
+                      lambda r: r["toolchains"].update({"ipad/default": []}),
+                      lambda r: r["toolchains"]["ipad/default"].update(versions=[]),
+                      lambda r: r["toolchains"]["ipad/default"].update(signing_mode=[]),
+                      lambda r: r["toolchains"]["ipad/default"]["versions"].update(zstd=[])]
         for mutate in mutations:
             bad = copy.deepcopy(receipt)
             mutate(bad)
@@ -221,10 +232,60 @@ class PublisherTests(unittest.TestCase):
                 with self.subTest(merged=matches):
                     self.assertIsNone(find_reuse(RecordedAPI(), push))
                 merged_prs = original
-            member.side_effect = zipfile.BadZipFile("corrupt receipt")
-            self.assertIsNone(find_reuse(RecordedAPI(), push))
-            with patch.object(RecordedAPI, "pages", side_effect=zipfile.BadZipFile("corrupt API proof")):
+            for mutate in mutations:
+                bad = copy.deepcopy(receipt)
+                mutate(bad)
+                member.return_value = bad
+                with self.subTest(malformed=bad):
+                    self.assertIsNone(find_reuse(RecordedAPI(), push))
+            for error in (zipfile.BadZipFile("corrupt receipt"), zlib.error("invalid compressed data")):
+                member.side_effect = error
                 self.assertIsNone(find_reuse(RecordedAPI(), push))
+                with patch.object(RecordedAPI, "pages", side_effect=error):
+                    self.assertIsNone(find_reuse(RecordedAPI(), push))
+
+    def test_ui_rerun_normalizes_each_attempt_before_merging_shard_history(self):
+        run = dict(RUN, event="push", head_branch="main", path=".github/workflows/ci-ui.yml", run_attempt=2)
+        names, _, _, metadata = workflow_contract(FIXTURE_UI, run, metadata=True)
+        def job(name, attempt, conclusion):
+            return {"name": name, "status": "completed", "conclusion": conclusion,
+                    "started_at": f"2026-10-08T15:0{attempt}:00Z", "completed_at": f"2026-10-08T15:0{attempt}:10Z",
+                    "runner_id": 100 + attempt, "run_attempt": attempt}
+        skipped = [job("ui-archive", 1, "success"),
+                   job("ui-${{ matrix.device }}-${{ matrix.shard }}", 1, "skipped")]
+        executed = [job(name, 1, "success") for name in names]
+        def read_summary(api, artifact, filename):
+            name, attempt = artifact["name"].rsplit("-", 1)
+            meta = metadata[name.rsplit("-", 1)[0]]
+            summary = valid_summary()
+            summary["run"].update(id=str(run["id"]), attempt=int(attempt),
+                                  tier=meta["tier"], job=meta["job"], shard=meta["shard"])
+            return summary
+        class RecordedAPI:
+            def pages(self, path, collection):
+                if collection == "jobs":
+                    return attempts[int(path.split("/attempts/")[1].split("/")[0])]
+                return [{"name": f"{name}-{run['id']}-{attempt}", "expired": False}
+                        for attempt in (1, 2) for name in names]
+        for first, second in ((skipped, executed), (executed, skipped)):
+            # Include both full reruns and a jobs API response that retains
+            # archive execution only in the earlier attempt.
+            for partial in (False, True):
+                latest = [job(row["name"], 2, row["conclusion"]) for row in second
+                          if not partial or row["name"] != "ui-archive"]
+                attempts = {1: first, 2: latest}
+                with self.subTest(first=first, partial=partial), patch("ci_publish.json_member", side_effect=read_summary):
+                    jobs, summaries = producer_evidence(RecordedAPI(), run, FIXTURE_UI)
+                self.assertEqual({row["name"] for row in jobs}, set(names))
+                self.assertEqual({row["evidence_attempt"] for row in jobs if row["name"] != "ui-archive"}, {2})
+                self.assertEqual(next(row for row in jobs if row["name"] == "ui-archive")["evidence_attempt"],
+                                 1 if partial else 2)
+                self.assertEqual(len(summaries), 1 if second is skipped else len(names))
+                self.assertEqual({row["conclusion"] for row in jobs if row["name"] != "ui-archive"},
+                                 {"skipped" if second is skipped else "success"})
+        attempts = {1: executed, 2: skipped + [executed[1]]}
+        with patch("ci_publish.json_member", side_effect=read_summary), self.assertRaises(ContractError):
+            producer_evidence(RecordedAPI(), run, FIXTURE_UI)
 
     def test_ui_skipped_shards_need_independent_trusted_reuse_proof(self):
         from ci_ui_reuse import evaluate_reused_push

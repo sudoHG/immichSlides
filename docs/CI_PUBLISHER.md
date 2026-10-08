@@ -153,8 +153,10 @@ The archive-selection job must still succeed and supply its identity-bound,
 manifest-bound summary; skipping that job or only part of the device matrix fails.
 GitHub may report a whole skipped matrix as one unexpanded job name. The reader
 maps that exact trusted-workflow name to its declared literal shards while
-retaining the real job's identity and attempt; overlapping executed shards,
-unknown names or an incomplete job set fail. This mapping supplies no test
+retaining the real job's identity and attempt. Each attempt is normalized before
+execution history is merged by logical shard, so a rerun may switch between
+skipping and executing the matrix. Overlapping shards within one attempt,
+unknown names or an incomplete final job set fail. This mapping supplies no test
 observations and still requires independent trusted reuse proof.
 Every ordinary run retains the existing successful-job and complete-population checks.
 
@@ -173,6 +175,8 @@ successful run and exact attempt. A rerun in progress invalidates the receipt.
 Unknown versions, missing/expired proof, red/cancelled runs, forks, CI changes,
 approval-based verdicts, different trees or inputs, incomplete device coverage,
 or observed toolchains that disagree with current pins all mean run the UI tier.
+Malformed nested receipt fields and corrupt ZIP or compressed data also fall
+back to running UI.
 The publisher repeats this decision before accepting skipped shards and links
 the status to the original successful UI run.
 The publication summary displays the reused producer run/attempt, verdict artifact,
