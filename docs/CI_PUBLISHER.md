@@ -147,7 +147,9 @@ The manifest and both default `immichSlides-iOS.xctestplan` /
 `immichSlides-tvOS.xctestplan` files are CI-trusted classification inputs;
 changing selections or exclusions requires exact-head approval.
 The reader accepts no dynamic matrices or alternate manifest paths.
-This reader compatibility step creates no UI workflow; its producer is separate.
+The [iPhone UI producer](CI_UI.md) uses this contract with a Linux archive-selection
+job and three literal iPhone shards. iPad and Apple TV producer rollout remains
+separate; publisher trust and exact-head approval rules apply to every device.
 
 The bridge calls the admitted base revision's `evaluate_gate`, including per-job
 expectations and the complete context population. `ci-pr-gate` includes host,

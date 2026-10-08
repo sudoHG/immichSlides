@@ -128,8 +128,18 @@ def select_archive(api, identity, *, timeout_seconds, poll_seconds=20, record_re
     workflow = api.repo("actions/workflows/ci-gate.yml")
     require(workflow["path"] == GATE_WORKFLOW and workflow["state"] == "active", "gate workflow is not active at its expected path")
     head = identity.get("head_sha", identity.get("pushed_sha"))
+    head_repository = (api.repo(f"pulls/{identity['pull_request']}")["head"]["repo"]["full_name"]
+                       if identity["event"] == "pull_request" else api.repository)
     started, refusals = time.monotonic(), []
     pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+    def refuse(run, outcome, **details):
+        refusal = {"run_id": run["id"], "head_sha": head, "consumer_identity": identity,
+                   "outcome": outcome, **details}
+        if refusal not in refusals:
+            refusals.append(refusal)
+            if record_refusals:
+                record_refusals(refusals)
+            print(f"Refused same-head archive from run {run['id']}: {outcome}", flush=True)
     while time.monotonic() - started < timeout_seconds:
         runs = api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", head_sha=head, event=identity["event"])
         runs = [run for run in runs if run.get("head_sha") == head and
@@ -140,30 +150,37 @@ def select_archive(api, identity, *, timeout_seconds, poll_seconds=20, record_re
         # matching runs must finish their build before older runs can be reused.
         for run in sorted(runs, key=lambda value: value["id"], reverse=True):
             verify_workflow(run, workflow, api.repository)
+            if run["head_repository"]["full_name"] != head_repository:
+                refuse(run, "archive-head-repository-mismatch", producer_head_repository=run["head_repository"]["full_name"])
+                continue
             job = build_job_attempt(api, run)
-            if job is None or job["status"] != "completed":
-                break
-            require(job["conclusion"] == "success", "newest gate iOS build did not succeed")
-            attempt = job["evidence_attempt"]
+            attempt = job["evidence_attempt"] if job else run["run_attempt"]
             artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
             name = f"build-ios-records-{run['id']}-{attempt}"
             records = [artifact for artifact in artifacts if artifact["name"] == name and not artifact["expired"]]
             if not records:
+                # A cancelled build may have no summary; its recorded PR base can
+                # still prove refusal, but cannot establish an exact identity.
+                pr = next((pr for pr in run.get("pull_requests", []) if pr["number"] == identity.get("pull_request")), None)
+                base = pr.get("base", {}).get("sha") if pr else None
+                if base and base != identity.get("base_sha"):
+                    refuse(run, "archive-identity-mismatch", producer_attempt=attempt, producer_base_sha=base)
+                    continue
                 break
             require(len(records) == 1, "duplicate gate build record")
             build = parse_summary(json_member(api, records[0], "summary.json"))
-            require(build["source"]["workflow_path"] == GATE_WORKFLOW and build["identity"].get("head_sha", build["identity"].get("pushed_sha")) == head
-                    and build["run"] == {"id": str(run["id"]), "attempt": attempt, "tier": "build", "job": "build-ios", "shard": "ios"}
-                    and build["status"] == "passed", "invalid gate build record provenance")
+            require(build["source"]["workflow_path"] == GATE_WORKFLOW and build["source"]["repository"] == api.repository
+                    and build["source"]["event"] == identity["event"]
+                    and build["source"]["fork_originated"] == (head_repository != api.repository)
+                    and build["identity"].get("head_sha", build["identity"].get("pushed_sha")) == head
+                    and build["run"] == {"id": str(run["id"]), "attempt": attempt, "tier": "build", "job": "build-ios", "shard": "ios"},
+                    "invalid gate build record provenance")
             if build["identity"] != identity:
-                refusal = {"run_id": run["id"], "producer_attempt": attempt, "head_sha": head,
-                           "consumer_identity": identity, "producer_identity": build["identity"], "outcome": "archive-identity-mismatch"}
-                if refusal not in refusals:
-                    refusals.append(refusal)
-                    if record_refusals:
-                        record_refusals(refusals)
-                    print(f"Refused same-head archive from run {run['id']}: different base/merge/tree", flush=True)
+                refuse(run, "archive-identity-mismatch", producer_attempt=attempt, producer_identity=build["identity"])
                 continue
+            if job is None or job["status"] != "completed":
+                break
+            require(job["conclusion"] == "success" and build["status"] == "passed", "newest exact-identity gate iOS build did not succeed")
             archives = [artifact for artifact in artifacts if artifact["name"] == artifact_name("ios", str(run["id"]), attempt)]
             require(len(archives) == 1, "matching archive is missing or duplicated")
             archive = archives[0]
@@ -259,6 +276,7 @@ def run_shard(args):
         command = ["--device", args.device, "--destination", args.destination, "--output-dir", str(args.output_dir),
                    "--xctestrun", str(xctestrun), "--shard", args.shard, "--shard-manifest", str(manifest_path),
                    "--timeout-minutes", str(args.timeout_minutes), "--total-timeout-minutes", str(args.total_timeout_minutes),
+                   "--result-export-timeout-seconds", str(args.result_export_timeout_seconds),
                    "--min-free-gib", str(args.min_free_gib), "--listed-only-retry", "--failure-screenshots"]
         for entry in shard:
             command += ["--only-testing", "immichSlidesUITests/" + entry["key"]]
@@ -267,7 +285,7 @@ def run_shard(args):
         write_json(args.output_dir / "shard-timing.json", {"schema_version": 1, "device": args.device, "shard": args.shard,
                    "wall_seconds": time.monotonic() - started, "exit_code": code,
                    "max_parallel": 2, "invocation_timeout_minutes": args.timeout_minutes,
-                   "total_timeout_minutes": args.total_timeout_minutes})
+                   "total_timeout_minutes": args.total_timeout_minutes, "result_export_timeout_seconds": args.result_export_timeout_seconds})
         return code
 
 
@@ -282,6 +300,29 @@ def failed_shard(args, error):
     summary["population"].update(declared=[], compiled=[], observed=[])
     summary["infrastructure"] = [{"code": "ui-shard-preflight-failed", "message": str(error)[:200]}]
     write_summary(summary, directory)
+
+
+def verify_reproduction_pins(source, destination, environment):
+    from strict_e2e_runner_support import destination_udid
+    from setup_ci_python import load_pins
+    pins = load_pins(source / "scripts/ci-pins.json")
+    environment["DEVELOPER_DIR"] = pins["xcode"]["developer_dir"]
+    observed = subprocess.check_output(["xcodebuild", "-version"], env=environment, text=True, timeout=60).strip()
+    expected = f"Xcode {pins['xcode']['version']}\nBuild version {pins['xcode']['build']}"
+    require(observed == expected, f"reproduction Xcode pin mismatch: expected {expected!r}, observed {observed!r}")
+    require(destination.startswith("platform=iOS Simulator,"), "reproduction needs an iOS Simulator destination")
+    udid = destination_udid(destination)
+    inventory = decode(subprocess.check_output(["xcrun", "simctl", "list", "--json"], env=environment, text=True, timeout=60))
+    pin = pins["simulators"]["ios"]
+    runtimes = [runtime for runtime in inventory["runtimes"] if runtime["identifier"] == pin["runtime"]
+                and runtime.get("isAvailable") and runtime["version"] == pin["version"] and runtime["buildversion"] == pin["build"]]
+    require(len(runtimes) == 1, "reproduction simulator runtime pin mismatch")
+    devices = [(runtime, device) for runtime, devices in inventory["devices"].items() for device in devices if device["udid"] == udid]
+    types = [device["identifier"] for device in inventory["devicetypes"] if device["name"] == pins["device_types"]["iphone"]]
+    require(len(devices) == 1 and devices[0][0] == pin["runtime"] and devices[0][1].get("isAvailable") is True,
+            "reproduction destination runtime pin mismatch or unavailable simulator")
+    require(len(types) == 1 and devices[0][1].get("deviceTypeIdentifier") == types[0], "reproduction destination device type pin mismatch")
+    print("Verified reproduction Xcode, runtime and destination device pins", flush=True)
 
 
 def reproduce(args):
@@ -299,11 +340,13 @@ def reproduce(args):
         require(args.shard in manifest["shards"], "reproduction shard is missing at that revision")
         # The clean checkout contains no private symlink or ambient local inputs.
         from run_fixture_ui_tests import clean_environment
+        environment = clean_environment(os.environ)
+        verify_reproduction_pins(source, args.destination, environment)
         derived = Path(directory, "derived")
         build_records = Path(directory, "build")
         completed = subprocess.run([sys.executable, "-B", str(source / "scripts/ci_build_archive.py"), "build", "--platform", "ios",
                                    "--derived-data-path", str(derived), "--output-dir", str(build_records)], cwd=source,
-                                   env=clean_environment(os.environ), check=False)
+                                   env=environment, check=False)
         if completed.returncode:
             return completed.returncode
         runs = list((derived / "Build/Products").glob("*.xctestrun"))
@@ -311,7 +354,7 @@ def reproduce(args):
         return subprocess.run([sys.executable, "-B", str(source / "scripts/ci_ui_tests.py"), "run", "--device", "iphone",
                                "--shard", args.shard, "--manifest-revision", revision, "--destination", args.destination,
                                "--xctestrun", str(runs[0]), "--output-dir", str(output_root / "records")], cwd=source,
-                               env=clean_environment(os.environ), check=False).returncode
+                               env=environment, check=False).returncode
 
 
 def main(argv=None):
@@ -331,8 +374,9 @@ def main(argv=None):
     source.add_argument("--xctestrun", type=Path)
     run.add_argument("--selection-path", type=Path)
     run.add_argument("--relocated-path", type=Path)
-    run.add_argument("--timeout-minutes", type=float, default=45)
-    run.add_argument("--total-timeout-minutes", type=float, default=70)
+    run.add_argument("--timeout-minutes", type=float, default=65)
+    run.add_argument("--total-timeout-minutes", type=float, default=85)
+    run.add_argument("--result-export-timeout-seconds", type=float, default=60)
     run.add_argument("--min-free-gib", type=int, default=80)
     local = commands.add_parser("reproduce")
     local.add_argument("--manifest-revision", required=True)

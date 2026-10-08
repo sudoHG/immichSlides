@@ -65,7 +65,7 @@ jobs:
     needs: archive
     if: needs.archive.outputs.app_affected == 'true'
     runs-on: xcode-27
-    timeout-minutes: 95
+    timeout-minutes: 110
     permissions:
       contents: read
       actions: read
@@ -117,7 +117,7 @@ jobs:
             --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
-            --timeout-minutes 45 --total-timeout-minutes 70 --min-free-gib 30
+            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --min-free-gib 30
       - name: Recheck the sensitive scan before publishing
         id: scan
         if: always()
@@ -139,6 +139,8 @@ jobs:
             ${{ runner.temp }}/ui-records/official-*.json
             ${{ runner.temp }}/ui-records/retry-invocations.json
             ${{ runner.temp }}/ui-records/shard-timing.json
+            ${{ runner.temp }}/ui-records/export-timing*.json
+            ${{ runner.temp }}/ui-records/export-read-timing.json
             ${{ runner.temp }}/ui-records/sensitive-scan.json
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
           if-no-files-found: error

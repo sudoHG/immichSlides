@@ -18,9 +18,13 @@ build. It verifies GitHub's repository, workflow ID/path, event, PR and head; th
 successful `build-ios` job's execution attempt; its bound build record; immutable
 artifact ID/name; and the downloaded manifest and tar hash. The manifest must
 match the full consumer identity, including base, head, merge commit and merge
-tree. A same-head archive from another base is refused and recorded. No archive
-is executed on Linux. An expired or missing archive, failed build or timeout
-fails selection. A rerun job cannot reuse an earlier attempt's archive; a retained
+tree. Runs from another head repository or base are refused and recorded even
+when their build failed or was cancelled. The record's source and complete identity
+are checked before build success or waiting; only an exact-identity build failure
+is fatal. A cancelled run without a record can be refused by its recorded PR base,
+but cannot establish an exact identity. No archive is executed on Linux. An expired
+or missing exact-identity archive or timeout fails selection. A rerun job cannot
+reuse an earlier attempt's archive; a retained
 successful build job keeps its original archive and evidence attempt.
 
 Shards download that exact artifact ID/run. They repeat the full
@@ -70,6 +74,12 @@ iteration flags are used. Both official attempts and invocations remain in the
 records. A passing retry is `flaky-passed`; an unlisted failure, skipped/crashed/
 missing retry or reset failure remains failed. Reset failures preserve attempt
 1's observations and `retry-invocations.json`, and record infrastructure failure.
+An official-result read error records `official-result-read-failed` with its
+exception type and a bounded message. Validated completed cases survive an
+incomplete result; only missing official cases stay `not-run`. Exit 124 marks
+the invocation `timed-out` and records `xcodebuild-timeout`, so partial passes
+cannot turn a timed-out shard green. Result export timeouts additionally record
+`xcresult-export-timeout`; infrastructure errors never obtain a retry.
 The [registry contract](TESTING.md#known-flaky-registry-and-listed-only-retries)
 defines ownership and expiry.
 
@@ -88,8 +98,22 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 The iPhone matrix has `max-parallel: 2` and `fail-fast: false`. Superseded runs
 cancel only within the same PR; main pushes and unrelated PRs are not cancelled.
 The Linux selection timeout is 45 minutes inside a 50-minute job. Xcode calls
-have a 45-minute timeout and share a 70-minute shard budget inside a 95-minute
-job. Local disk checks retain 80 GiB; only hosted jobs pass the existing 30 GiB
+have a 65-minute timeout and share an 85-minute shard budget inside a 110-minute
+job. The earlier visual invocation consumed 2,643 seconds of its 2,700-second
+budget and was stopped at 2,715 seconds in [the hosted run](https://github.com/sudoHG/immichSlides/actions/runs/37796334799/job/113382323589).
+A subsequent control completed all 61 visual cases in 3,097.84 seconds of shard
+wall time, [exit 65 with one EXIF assertion](https://github.com/sudoHG/immichSlides/actions/runs/37798609844/job/113394133806).
+The larger infrastructure budget preserves product assertions and observation
+windows. [Splitting the large visual class](https://github.com/sudoHG/immichSlides/issues/176) is follow-up work.
+
+Hosted shards pass `--result-export-timeout-seconds 180`; local commands retain
+60 seconds. The 60-second `xcresulttool get test-results tests` limit expired
+in [the default control](https://github.com/sudoHG/immichSlides/actions/runs/37798609844/job/113394133909),
+so the hosted allowance is bounded at three times that observed limit and is
+checked against fresh run measurements. Each compact official export records
+elapsed time and its bound in `export-timing*.json`; normalized result reading
+records its per-attempt total in `export-read-timing.json`. Shard timing also records
+the bound. Local disk checks retain 80 GiB; only hosted jobs pass the existing 30 GiB
 allowance. No simulator runtime is downloaded or installed.
 
 `archive-selection.json` records selection wait, producer run/attempt and refused
@@ -103,7 +127,10 @@ delay every tier. Gate completion never depends on UI completion.
 
 From a checkout containing the producer, this one command reads the specified
 manifest revision from a disposable clean checkout, builds once without private
-configuration, starts the fixture server and runs the selected shard:
+configuration, starts the fixture server and runs the selected shard. Before
+building it reads that revision's pins, selects the pinned Xcode, verifies its
+version/build, and checks the assigned UDID's exact runtime version/build and
+device type. A missing or mismatched pin fails before any build:
 
 ```bash
 python3 -B scripts/ci_ui_tests.py reproduce --manifest-revision COMMIT_SHA \
@@ -112,10 +139,8 @@ python3 -B scripts/ci_ui_tests.py reproduce --manifest-revision COMMIT_SHA \
 ```
 
 Use the same Python environment as [CONTRIBUTING](../CONTRIBUTING.md#setup).
-Check `df -h /System/Volumes/Data` first. Managed local runs wrap this command in
-`<workspace>/tools/run_with_watchdog.sh` and
-`<workspace>/tools/run_with_device_slot.sh uitier-reproduce --`. Only the assigned
-simulator is used; no new local simulator is created. The temporary checkout and
+Check `df -h /System/Volumes/Data` first. Use a dedicated simulator and a bounded
+command. Only the assigned simulator is used; no new local simulator is created. The temporary checkout and
 build products are removed after the command; public records remain for review.
 Clean those records and any task-owned quarantined failure bundle after recording
 the necessary results in the PR. An output directory must be fresh and outside

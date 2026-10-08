@@ -23,7 +23,7 @@ from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
 from ci_ui_shards import DEVICES, default_plan_population
 from ci_verdict import evaluate_population, parse_policy, tier_approved
-from ci_flaky import load_registry, registry_revision, run_xcode_attempts, read_xcode_observations
+from ci_flaky import OfficialResultReadError, load_registry, registry_revision, run_xcode_attempts, read_xcode_observations
 from run_host_checks import run_identity, source_metadata, toolchain
 from run_offline_unit_tests import CommandError as OfflineCommandError, _stop_process_group
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
@@ -188,9 +188,9 @@ def problem_reason(payload, key):
     return " ".join(messages)
 
 
-def read_problem_reason(bundle, key):
+def read_problem_reason(bundle, key, *, export_timeout_seconds=60):
     completed = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details", "--path", str(bundle),
-                                "--test-id", key + "()", "--compact"], capture_output=True, check=False, timeout=60)
+                                "--test-id", key + "()", "--compact"], capture_output=True, check=False, timeout=export_timeout_seconds)
     require(completed.returncode == 0, "official problem detail export failed")
     require(not logical_bytes_contain(completed.stdout, [PUBLIC_API_KEY]), "official problem detail contains credentials")
     return problem_reason(json.loads(completed.stdout), key)
@@ -240,6 +240,7 @@ def main(argv=None):
     parser.add_argument("--mode", choices=("measure", "pr"), default="pr")
     parser.add_argument("--timeout-minutes", type=float, default=90)
     parser.add_argument("--total-timeout-minutes", type=float, help="Bound all Xcode calls in a shard together")
+    parser.add_argument("--result-export-timeout-seconds", type=float, default=60, help="Bound each official result export")
     parser.add_argument("--listed-only-retry", action="store_true", help="Use only the trusted base known-flaky registry")
     parser.add_argument("--failure-screenshots", action="store_true", help="Export public fixture failure attachments before scanning")
     parser.add_argument("--shard")
@@ -253,6 +254,8 @@ def main(argv=None):
     bundles, digests = [], {}
     try:
         require(math.isfinite(args.timeout_minutes) and args.timeout_minutes > 0, "timeout must be finite and positive")
+        require(math.isfinite(args.result_export_timeout_seconds) and args.result_export_timeout_seconds > 0,
+                "result export timeout must be finite and positive")
         require(args.min_free_gib >= 0, "disk threshold must be non-negative")
         require((args.shard is None) == (args.shard_manifest is None), "shard and its manifest must be supplied together")
         require(args.total_timeout_minutes is None or (math.isfinite(args.total_timeout_minutes) and args.total_timeout_minutes > 0),
@@ -375,16 +378,29 @@ def main(argv=None):
             evaluated_on = date.today()
             summary["hashes"]["policies"]["known-flaky"] = registry_hash
             expected_by_key = {entry["key"]: entry for entry in selected}
-            read = partial(read_xcode_observations, expected_device=(udid, "tv" if args.device == "appletv" else args.device))
-            def read_attempt(path, identity_for_key, elapsed, exit_code):
+            read = partial(read_xcode_observations, expected_device=(udid, "tv" if args.device == "appletv" else args.device),
+                           export_timeout_seconds=args.result_export_timeout_seconds)
+            def read_details(path, identity_for_key, elapsed, exit_code):
                 observed = read(path, identity_for_key, elapsed, exit_code)
-                for item in observed:
-                    if item["outcome"] in {"failed", "skipped"}:
-                        message = read_problem_reason(path, item["identity"]["key"])
-                        item["attempts"][0]["message"] = message
-                        if item["outcome"] == "skipped":
-                            item["attempts"][0]["reason"] = message
+                try:
+                    for item in observed:
+                        if item["outcome"] in {"failed", "skipped"}:
+                            message = read_problem_reason(path, item["identity"]["key"], export_timeout_seconds=args.result_export_timeout_seconds)
+                            item["attempts"][0]["message"] = message
+                            if item["outcome"] == "skipped":
+                                item["attempts"][0]["reason"] = message
+                except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+                    raise OfficialResultReadError(error, observed) from error
                 return observed
+            reads = []
+            def read_attempt(path, identity_for_key, elapsed, exit_code):
+                started = time.monotonic()
+                try:
+                    return read_details(path, identity_for_key, elapsed, exit_code)
+                finally:
+                    reads.append({"attempt": len(reads) + 1, "elapsed_seconds": time.monotonic() - started})
+                    write_json(output / "export-read-timing.json", {"schema_version": 1, "attempts": reads,
+                               "timeout_seconds": args.result_export_timeout_seconds})
             def allocate():
                 path = prepare_fixture_result_bundle()
                 bundles.append(path)
@@ -416,7 +432,11 @@ def main(argv=None):
             if not path.exists():
                 continue
             suffix = "" if number == 1 else "-attempt-" + str(number)
-            digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix)
+            export_started = time.monotonic()
+            digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix,
+                summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds)
+            write_json(output / ("export-timing" + suffix + ".json"), {"schema_version": 1,
+                "official_export_seconds": time.monotonic() - export_started, "timeout_seconds": args.result_export_timeout_seconds})
             official = json.loads((output / ("official-tests" + suffix + ".json")).read_text())
             verify_official_device(official, udid, args.device)
             if args.failure_screenshots:
@@ -424,14 +444,14 @@ def main(argv=None):
                 attachment_root.mkdir(parents=True, exist_ok=True)
                 subprocess.run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(path),
                                 "--output-path", str(attachment_root), "--only-failures"],
-                               capture_output=True, check=True, timeout=120)
+                               capture_output=True, check=True, timeout=args.result_export_timeout_seconds)
         digest = digests.get(bundle)
         if not args.listed_only_retry:
             require(bundle in digests, "official fixture result is missing")
             rows = coverage_rows(selected, compiled, official, args.device)
             for row in rows:
                 if row["outcome"] in {"skipped", "failed"}:
-                    row["reason"] = read_problem_reason(bundle, row["identity"]["key"])
+                    row["reason"] = read_problem_reason(bundle, row["identity"]["key"], export_timeout_seconds=args.result_export_timeout_seconds)
             summary["population"]["observed"] = [observation(row["identity"], row["outcome"], row["duration_seconds"],
                                                   reason=row["reason"], exit_code=0 if row["outcome"] == "passed" else None)
                                                  for row in rows]
@@ -452,7 +472,8 @@ def main(argv=None):
         code = code or 1
         print(f"Fixture UI failed: {error}", file=sys.stderr)
         if summary:
-            summary["infrastructure"].append({"code": "fixture-run-failed", "message": str(error)[:200]})
+            summary["infrastructure"].append({"code": "xcresult-export-timeout" if isinstance(error, subprocess.TimeoutExpired)
+                                               and "xcresulttool" in str(error.cmd) else "fixture-run-failed", "message": str(error)[:200]})
     finally:
         if service:
             try:

@@ -16,8 +16,8 @@ an external directory for the existing scene-presentation contract collectors.
 Use an isolated checkout with no `Config/env.xcconfig`. On a managed local
 worktree, park only that worktree's read-only symlink and restore it in an EXIT
 trap, checking its `readlink` target. Do not read or copy its contents. Device
-runs on the maintainer's workspace use the existing watchdog and device-slot
-wrappers; iPhone and iPad runs are serial. Before every Xcode invocation the
+runs use a dedicated simulator and a bounded command; iPhone and iPad runs are
+serial. Before every Xcode invocation the
 runner uses the shared archive disk guard with `--min-free-gib` (default 80).
 Only GitHub-hosted runners may lower this threshold. For their approximately
 39 GiB free disks, pass `--min-free-gib 30`, as the archive jobs do:

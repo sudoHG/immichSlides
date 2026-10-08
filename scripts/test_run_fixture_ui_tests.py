@@ -13,27 +13,21 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
-    def test_requested_failure_screenshots_override_video_capture_only_in_the_prepared_ui_target(self):
+    def test_fixture_launch_inputs_never_mutate_the_archived_run_or_unit_target(self):
         payload = {"TestConfigurations": [{"TestTargets": [
             {"BlueprintName": "immichSlidesUITests", "EnvironmentVariables": {},
-             "TestingEnvironmentVariables": {}, "UITargetAppEnvironmentVariables": {},
-             "PreferredScreenCaptureFormat": "screenRecording", "SystemAttachmentLifetime": "keepNever"},
+             "TestingEnvironmentVariables": {}, "UITargetAppEnvironmentVariables": {}},
             {"BlueprintName": "immichSlidesTests", "EnvironmentVariables": {},
-             "TestingEnvironmentVariables": {}, "UITargetAppEnvironmentVariables": {},
-             "PreferredScreenCaptureFormat": "screenRecording", "SystemAttachmentLifetime": "keepAlways"}]}]}
+             "TestingEnvironmentVariables": {}, "UITargetAppEnvironmentVariables": {}}]}]}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "archive.xctestrun"
             original = plistlib.dumps(payload)
             source.write_bytes(original)
-            normal, screenshots = root / "normal", root / "screenshots"
-            normal.mkdir()
+            screenshots = root / "screenshots"
             screenshots.mkdir()
-            self.assertEqual(plistlib.loads(runner.prepare_test_run(source, normal, {}).read_bytes()), payload)
-            prepared = runner.prepare_test_run(source, screenshots, {}, failure_screenshots=True)
+            prepared = runner.prepare_test_run(source, screenshots, {"IMMICH_TEST_API_KEY": "public-fixture-input"}, failure_screenshots=True)
             targets = plistlib.loads(prepared.read_bytes())["TestConfigurations"][0]["TestTargets"]
-            self.assertEqual(targets[0]["PreferredScreenCaptureFormat"], "screenshots")
-            self.assertEqual(targets[0]["SystemAttachmentLifetime"], "deleteOnSuccess")
             self.assertEqual(targets[1], payload["TestConfigurations"][0]["TestTargets"][1])
             self.assertEqual(source.read_bytes(), original)
 

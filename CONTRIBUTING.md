@@ -80,7 +80,7 @@ retention and the remaining iPad/Apple TV boundary.
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
 run on pull requests and pushes to `main`. Separate hosted runners execute the
 [complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
-The UI consumer tier remains separate work.
+The [iPhone UI tier](docs/CI_UI.md) consumes the iOS archive across runs.
 Release archive preparation and the maintainer-gated App Store Connect steps are in
 [Xcode Cloud to internal TestFlight](docs/XCODE_CLOUD_TESTFLIGHT.md). Its first upload
 is manual, the Default workflow stays disabled, and tag starts need later approval.

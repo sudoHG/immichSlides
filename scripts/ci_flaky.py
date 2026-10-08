@@ -284,10 +284,18 @@ def official_assertion_details(payload, raw_key):
     return bool(failures) and all(failures)
 
 
-def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, *, expected_device=None):
+class OfficialResultReadError(ContractError):
+    """Carry validated completed cases when another official export is incomplete."""
+    def __init__(self, error, observed):
+        super().__init__(str(error))
+        self.error = error
+        self.observed = observed
+
+
+def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, *, expected_device=None, export_timeout_seconds=60):
     from strict_e2e_p2_contract import official_tests_facts, device_class_of, P2ContractError
     completed = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
-                               capture_output=True, check=True, timeout=60)
+                               capture_output=True, check=True, timeout=export_timeout_seconds)
     payload = json.loads(completed.stdout)
     facts = official_tests_facts(payload)
     if expected_device is not None:
@@ -300,10 +308,14 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
             raise ContractError("official result has an unknown simulator class") from error
         require(actual_class == device_class, "official result device class does not match target simulator")
     failure_outcomes = {}
+    read_errors = []
     if any(case["result"] == "Failed" for case in facts["test_cases"]):
-        details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
-                                 capture_output=True, check=True, timeout=60)
-        failure_outcomes = official_failure_outcomes(json.loads(details.stdout))
+        try:
+            details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
+                                     capture_output=True, check=True, timeout=export_timeout_seconds)
+            failure_outcomes = official_failure_outcomes(json.loads(details.stdout))
+        except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+            read_errors.append(error)
     durations = {}
     def collect_durations(nodes):
         require(isinstance(nodes, list), "invalid official result children")
@@ -315,29 +327,39 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
     collect_durations(payload.get("testNodes", []))
     records = []
     seen = set()
-    for case in facts["test_cases"]:
+    def read_case(case):
         require(case["bundle"] == "immichSlidesUITests", "unexpected result bundle target")
         raw_key = case["identifier"]
         require(isinstance(raw_key, str) and raw_key.endswith("()"), "unknown XCTest method identity")
         key = raw_key[:-2]
         require(METHOD.fullmatch(key) is not None and key not in seen, "invalid or repeated XCTest identity")
         seen.add(key)
+        duration(durations.get(raw_key))
         if case["result"] == "Failed" and failure_outcomes.get(key) == "uncategorized":
-            details = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details", "--path", str(bundle),
-                                      "--test-id", raw_key, "--compact"], capture_output=True, check=True, timeout=60)
-            if official_assertion_details(json.loads(details.stdout), raw_key):
-                failure_outcomes[key] = "assertion"
+            try:
+                details = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details", "--path", str(bundle),
+                                          "--test-id", raw_key, "--compact"], capture_output=True, check=True, timeout=export_timeout_seconds)
+                if official_assertion_details(json.loads(details.stdout), raw_key):
+                    failure_outcomes[key] = "assertion"
+            except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+                read_errors.append(error)
         outcome = {"Passed": "passed", "Failed": "failed", "Skipped": "skipped"}.get(case["result"])
         require(outcome is not None, "unknown XCTest outcome")
         if outcome == "failed" and failure_outcomes.get(key) == "crashed":
             outcome = "crashed"
-        duration(durations.get(raw_key))
-        records.append(observation(identity_for_key(key), outcome, durations[raw_key],
+        return observation(identity_for_key(key), outcome, durations[raw_key],
                                    reason=("Official XCTest skip" if outcome == "skipped" else
                                            "Official XCTest crash" if outcome == "crashed" else
                                            ASSERTION_FAILURE if outcome == "failed" and failure_outcomes.get(key) == "assertion" else
                                            "Official non-assertion or unclassified failure" if outcome == "failed" else None),
-                                   exit_code=0 if outcome == "passed" else invocation_exit))
+                                   exit_code=0 if outcome == "passed" else invocation_exit)
+    for case in facts["test_cases"]:
+        try:
+            records.append(read_case(case))
+        except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+            read_errors.append(error)
+    if read_errors:
+        raise OfficialResultReadError(read_errors[0], records)
     require(bool(records), "official XCTest result contains no tests")
     return records
 
@@ -353,6 +375,7 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
     check_retry_flags(command)
     bundle = Path(command[command.index("-resultBundlePath") + 1])
     invocations = []
+    infrastructure = []
     def invoke(call, path, retry_identity=None):
         from strict_e2e_runner_support import CommandError
         started = time.monotonic()
@@ -367,14 +390,23 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
             code, elapsed = (124 if timed_out else getattr(error, "code", 2)), time.monotonic() - started
             outcome = "timed-out" if timed_out else "not-run"
             invocation.update(exit_code=code, duration_seconds=elapsed, outcome=outcome)
+            if timed_out:
+                infrastructure.append({"code": "xcodebuild-timeout", "message": "Xcode invocation exceeded its execution budget"})
             rows = ([observation(retry_identity, outcome, elapsed, reason="Xcode execution did not complete", exit_code=code)]
                     if retry_identity is not None else [])
             return rows, code
         invocation.update(exit_code=code, duration_seconds=elapsed)
+        if code == 124:
+            invocation["outcome"] = "timed-out"
+            infrastructure.append({"code": "xcodebuild-timeout", "message": "Xcode invocation exceeded its execution budget"})
         try:
             return read(path, identity_for_key, elapsed, code), code
-        except (ContractError, OSError, ValueError, subprocess.SubprocessError):
-            return [], code or 1
+        except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+            cause = error.error if isinstance(error, OfficialResultReadError) else error
+            infrastructure.append({"code": "official-result-read-failed", "message": (type(cause).__name__ + ": " + str(cause))[:200]})
+            if isinstance(cause, subprocess.TimeoutExpired):
+                infrastructure.append({"code": "xcresult-export-timeout", "message": "Official result export exceeded its budget"})
+            return error.observed if isinstance(error, OfficialResultReadError) else [], code or 1
     first, first_exit = invoke(command, bundle)
     effective_bundle = bundle
     def retry(identity):
@@ -392,10 +424,9 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
         return records[0]
     # Exit 65 with official assertion failures is retryable. Infrastructure exits
     # and first-call skips/crashes/missing results never obtain a second call.
-    infrastructure = []
     observed = retry_observations(first, registry, tier=tier, environment=environment, today=today,
-                                  reset=reset, execute=retry, infrastructure=infrastructure) if first_exit == 65 else first
-    successful = bool(observed) and all(item["outcome"] in {"passed", "flaky-passed"} for item in observed)
+                                  reset=reset, execute=retry, infrastructure=infrastructure) if first_exit == 65 and not infrastructure else first
+    successful = not infrastructure and bool(observed) and all(item["outcome"] in {"passed", "flaky-passed"} for item in observed)
     code = 0 if successful and (first_exit == 0 or (first_exit == 65 and len(invocations) > 1)) else first_exit or 1
     return {"exit_code": code, "observed": observed, "invocations": invocations,
             "effective_bundle": str(effective_bundle), "infrastructure": infrastructure}
