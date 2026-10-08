@@ -184,6 +184,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_ui_reader_requires_device_population_union_and_admitted_manifest_hash(self):
         from ci_publish_git import ui_inputs
+        from test_ci_verdict import approval_record
         identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
         population = [test_identity("ui", key, platform="ios") for key in
                       ("NewUITests/testNew", "VisualUITests/testFlow", "EvidenceUITests/testRecord")]
@@ -203,7 +204,8 @@ class PublisherTests(unittest.TestCase):
         record = {"identity": identity, "populations": {"ui-ios": population},
                   "base_populations": {"ui-ios": population}, "ui_inputs": {"base": admitted, "candidate": admitted},
                   "workflows": {".github/workflows/ci-ui.yml": {"base": FIXTURE_UI, "candidate": FIXTURE_UI}},
-                  "base_policy": {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []},
+                  "base_policy": {"schema_version": 1, "approval_records": [approval_record("ui")],
+                                  "expected_skips": [], "deselections": []},
                   "classification": {"app_affected": True, "ci_changing": False}}
         record["candidate_policy"] = record["base_policy"]
         run = dict(RUN, path=".github/workflows/ci-ui.yml", run_started_at="2026-10-08T10:00:00Z")
