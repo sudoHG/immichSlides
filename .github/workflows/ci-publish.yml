@@ -1,0 +1,104 @@
+name: ci-publish
+
+on:
+  workflow_run:
+    workflows: [ci-gate, ci-ui]
+    types: [requested, in_progress, completed]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Current PR to re-evaluate
+        type: string
+        default: ''
+      pushed_sha:
+        description: Main push SHA to re-evaluate instead of a PR
+        type: string
+        default: ''
+
+permissions: {}
+
+jobs:
+  route:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.route.outputs.pr }}
+      pushed: ${{ steps.route.outputs.pushed }}
+      key: ${{ steps.route.outputs.key }}
+      run_id: ${{ steps.route.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
+      - id: route
+        env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py route'
+
+  admission:
+    needs: route
+    if: github.event_name == 'workflow_run' && github.event.action != 'completed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    concurrency:
+      group: ci-admission-${{ needs.route.outputs.run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
+      - id: admit
+        env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py admit'
+      - if: steps.admit.outputs.recorded == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-admission-${{ steps.admit.outputs.run_id }}
+          path: ${{ runner.temp }}/ci-admission/record.json
+          if-no-files-found: error
+          retention-days: 30
+      - if: steps.admit.outputs.recorded == 'true'
+        env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py reevaluate'
+
+  publish:
+    needs: route
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    environment: ci-publisher
+    concurrency:
+      group: ci-state-${{ needs.route.outputs.key }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
+      - env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+          CI_APP_ID: ${{ vars.CI_APP_ID }}
+          CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          CI_PR_NUMBER: ${{ needs.route.outputs.pr }}
+          CI_PUSHED_SHA: ${{ needs.route.outputs.pushed }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py publish'

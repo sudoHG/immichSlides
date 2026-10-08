@@ -28,6 +28,7 @@
     "scripts/scan_chinese_strings.py",
     "scripts/check_required_test_tools.py",
     "scripts/setup_ci_python.py",
+    "scripts/setup_ci_publisher_python.py",
     "scripts/probe_ci_toolchain.py",
     "scripts/ui_test_inventory.py",
     "scripts/ci-pins.json",

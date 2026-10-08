@@ -180,6 +180,9 @@ The rules are:
   Only `ci-probe.yml` may also run the exact setup command shown in its workflow and
   `/usr/bin/python3 scripts/probe_ci_toolchain.py`, without additional arguments or shell
   commands. This exception does not authorize those commands in another trusted workflow.
+  The publisher/approval paths additionally allow their exact minimal-Python setup
+  and `ci_publish.py` commands, listed in `PUBLISHER_COMMANDS`. Their command, token
+  and credential contracts are described in [CI_PUBLISHER.md](CI_PUBLISHER.md).
 - Trusted remote actions must be both SHA-pinned and on the input allowlist:
   `actions/checkout` (`ref`, `repository`, `fetch-depth`, `persist-credentials`) or
   `actions/download-artifact` (`path`, `name`, `pattern`, `run-id`, `github-token`,
@@ -187,22 +190,33 @@ The rules are:
   container actions, inline action scripts and unknown inputs are rejected. Local actions
   must be literal paths under `.github/actions`, outside artifact/download directories,
   without inputs. Approved downloads cannot write into that local-action directory.
+  `ci-publish.yml` alone may use the pinned admission `actions/upload-artifact`
+  step with its exact reviewed name, path, retention and missing-file inputs.
 - Trusted artifact downloads must go into `ci-artifacts` or its children, optionally
   under `${{ runner.temp }}`. They cannot overwrite checked-out scripts or local actions.
   Future approved entry points may read artifact data internally after review; the workflow
   cannot choose an artifact path as an executable, action or argument.
 - Trusted command settings cannot change the working directory from the default workspace
   or use shells other than literal `bash`/`sh`. Job containers and services are rejected.
-  Workflow/job/step environment bindings must be explicitly reviewed; currently only the
+  Workflow/job/step environment bindings must be explicitly reviewed, including the
   privacy workflow's `PRIVACY_PR_NUMBER`, `PRIVACY_HEAD_SHA` and `PRIVACY_BASE_SHA` bindings
   to their corresponding event fields, and ci-probe's `CI_PROBE_TOKEN` binding to
   `${{ github.token }}` and `CI_PROBE_SIMULATE_MISSING_PIN` binding to
-  `${{ inputs.simulate_missing_pin || false }}` are allowed. Interpreter startup/search variables
+  `${{ inputs.simulate_missing_pin || false }}`. The publisher/approval paths use the
+  explicit `PUBLISHER_BINDINGS` allowlist. `CI_APP_*` cannot be bound at workflow or
+  job scope; App ID/key bindings belong only to the guarded status-writing step.
+  Interpreter startup/search variables
   such as `PATH`, `BASH_ENV`, `PYTHONPATH` and `NODE_OPTIONS` cannot be overridden.
 - `ci-publisher` may be referenced only by `ci-publish.yml`, `ci-approval.yml` and
   `ci-approve.yml`; `ci-approval` only by `ci-approval.yml`; `release` only by
   `ci-release.yml`. Protected names are matched case-insensitively, as on GitHub.
   Environment names must be literal so expressions cannot hide a protected environment.
+- Publisher-specific rules enforce `publisher-credential` (guarded writing-step
+  bindings), `publisher-history` (full publication checkout), `publisher-runner`
+  (`ubuntu-24.04`), `publisher-admission` (re-evaluate only a newly recorded admission),
+  `approval-queue` (no replaceable approval queue), and `approval-wait` (credential-free
+  environment wait). See [publisher trust](CI_PUBLISHER.md#trust-and-identities) and
+  [approval and credentials](CI_PUBLISHER.md#approval-and-credentials) for runtime guards.
 
 Non-trusted workflows retain the general pin, permission, timeout, trigger and protected
 environment checks; they do not receive this trusted command/action allowlist.
