@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import ci_build_archive as archive
+import ci_ui_tests as ui
 from ci_summary import ContractError
 
 
@@ -118,6 +119,60 @@ class BuildArchiveTests(unittest.TestCase):
         from ci_summary import observation
         summary["population"]["observed"] = [observation(declared[0], "passed", 0)]
         self.assertEqual(evaluate_population(summary, declared, empty_policy, environment="hermetic")["status"], "passed")
+
+    def test_cross_run_ui_selection_refuses_same_head_other_base_and_binds_build_record_hash(self):
+        from ci_summary import observation, test_identity
+        manifest = self.manifest()
+        pins = {"xcode": {"build": "27A266a"}}
+        run = {"id": 123, "run_attempt": 1, "workflow_id": 42, "path": ui.GATE_WORKFLOW,
+               "event": "pull_request", "head_sha": self.identity["head_sha"],
+               "repository": {"full_name": "owner/repo"}, "pull_requests": [{"number": 2}]}
+        ui.check_cross_run_identity(manifest, self.identity, run, 1, pins, "f" * 64)
+        with self.assertRaisesRegex(ContractError, "archive-identity-mismatch"):
+            ui.check_cross_run_identity(manifest, dict(self.identity, base_sha="e" * 40), run, 1, pins, "f" * 64)
+        step = test_identity("host", "secret-free build archive", platform="ios", configuration="Debug")
+        summary = archive.record({"identity": self.identity, "source": {
+            "repository": "owner/repo", "event": "pull_request", "workflow_path": ui.GATE_WORKFLOW,
+            "fork_originated": False, "ci_changing": None}, "run_id": "123", "attempt": 1}, "ios", "build-ios")
+        summary.update(status="passed")
+        summary["population"].update(declared=[step], compiled=[step], observed=[observation(step, "passed", 0)])
+        summary["hashes"]["manifests"]["build"] = "a" * 64
+        records = {"id": 8, "name": "build-ios-records-123-1", "expired": False}
+        artifact = {"id": 9, "name": "build-ios-123-1", "expired": False,
+                    "workflow_run": {"id": 123, "head_sha": self.identity["head_sha"]}}
+        class API:
+            repository = "owner/repo"
+            def repo(self, path):
+                return {"id": 42, "path": ui.GATE_WORKFLOW, "state": "active"}
+            def pages(self, path, collection, **filters):
+                return [run] if collection == "workflow_runs" else [records, artifact]
+        with patch.object(ui, "build_job_attempt", return_value={"status": "completed", "conclusion": "success", "evidence_attempt": 1}), \
+                patch.object(ui, "json_member", return_value=summary), patch.object(ui, "downloaded_archive", return_value=(manifest, "a" * 64)), \
+                patch.object(ui, "file_hash", return_value="f" * 64):
+            selected = ui.select_archive(API(), self.identity, timeout_seconds=1)
+            self.assertEqual((selected["artifact_id"], selected["producer_run_id"], selected["producer_attempt"]), (9, "123", 1))
+            with patch.object(ui, "downloaded_archive", return_value=(manifest, "e" * 64)), self.assertRaisesRegex(ContractError, "manifest differ"):
+                ui.select_archive(API(), self.identity, timeout_seconds=1)
+            refused = []
+            summary["identity"] = dict(self.identity, base_sha="e" * 40)
+            with self.assertRaisesRegex(ContractError, "archive-identity-mismatch"):
+                ui.select_archive(API(), self.identity, timeout_seconds=.001, poll_seconds=0,
+                                  record_refusals=lambda rows: refused.extend(rows))
+            self.assertTrue(refused)
+            self.assertEqual(refused[0]["head_sha"], self.identity["head_sha"])
+
+    def test_ui_archive_retains_successful_job_attempt_but_never_falls_back_for_a_rerun_job(self):
+        runs = {1: [{"name": "build-ios", "started_at": "first", "completed_at": "done", "runner_id": 1,
+                     "status": "completed", "conclusion": "success"}],
+                2: [{"name": "build-ios", "started_at": "first", "completed_at": "done", "runner_id": 1,
+                     "status": "completed", "conclusion": "success"}]}
+        class API:
+            def pages(self, path, collection):
+                return runs[int(path.split("/")[-2])]
+        self.assertEqual(ui.build_job_attempt(API(), {"id": 123, "run_attempt": 2})["evidence_attempt"], 1)
+        runs[2][0].update(started_at="rerun", completed_at="later", runner_id=2, conclusion="failure")
+        self.assertEqual(ui.build_job_attempt(API(), {"id": 123, "run_attempt": 2})["evidence_attempt"], 2)
+        self.assertEqual(ui.build_job_attempt(API(), {"id": 123, "run_attempt": 2})["conclusion"], "failure")
 
     def test_artifact_selection_requires_id_run_and_producer_attempt(self):
         metadata = {"id": 7, "name": archive.artifact_name("ios", "123", 1), "expired": False,

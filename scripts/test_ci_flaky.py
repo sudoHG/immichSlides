@@ -343,6 +343,28 @@ class RetryTests(unittest.TestCase):
                                    reset=lambda: events.append("reset"), execute=execute)
                 self.assertEqual(events, [])
 
+    def test_reset_failure_preserves_first_observations_and_invocation_as_infrastructure_failure(self):
+        from strict_e2e_runner_support import CommandError
+        payload = registry()
+        identity = payload["entries"][0]["identity"]
+        first = [observation(identity, "failed", 1, reason="Official XCTest assertion failure", exit_code=65),
+                 observation(dict(identity, key="ExampleTests/testUnlisted"), "failed", 2,
+                             reason="Official XCTest assertion failure", exit_code=65)]
+        command = ["xcodebuild", "test-without-building", "-resultBundlePath", "first.xcresult"]
+        for error in (CommandError("reset failed"), OSError("reset failed"), subprocess.TimeoutExpired("reset", 1)):
+            with self.subTest(error=type(error).__name__):
+                def reset():
+                    raise error
+                actual = run_xcode_attempts(command, payload, tier="ui", environment="hermetic", today=date(2026, 10, 8),
+                    identity_for_key=lambda key: dict(identity, key=key), reset=reset,
+                    execute=lambda call: (65, 3), read=lambda *args: copy.deepcopy(first),
+                    allocate_bundle=lambda: self.fail("reset failure must not allocate or invoke retry"))
+                self.assertEqual(actual["observed"], first)
+                self.assertEqual(len(actual["invocations"]), 1)
+                self.assertEqual(actual["invocations"][0]["exit_code"], 65)
+                self.assertEqual(actual["exit_code"], 65)
+                self.assertEqual(actual["infrastructure"], [{"code": "retry-reset-failed", "message": "App reset failed before listed retry"}])
+
     def test_skip_crash_timeout_missing_mismatch_and_failed_retry_stay_failed(self):
         identity = registry()["entries"][0]["identity"]
         first = observation(identity, "failed", 1, exit_code=65)

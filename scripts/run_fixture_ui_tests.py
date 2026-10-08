@@ -14,12 +14,15 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import date
+from functools import partial
 from pathlib import Path
 
 from ci_build_archive import check_products, disk_check, measure_signing, record_signing
 from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
 from ci_verdict import evaluate_population, parse_policy, tier_approved
+from ci_flaky import load_registry, registry_revision, run_xcode_attempts, read_xcode_observations
 from run_host_checks import run_identity, source_metadata, toolchain
 from run_offline_unit_tests import CommandError as OfflineCommandError, _stop_process_group
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
@@ -237,15 +240,25 @@ def main(argv=None):
     parser.add_argument("--only-testing", action="append", default=[], help="Exact default-plan UI test selector")
     parser.add_argument("--mode", choices=("measure", "pr"), default="pr")
     parser.add_argument("--timeout-minutes", type=float, default=90)
+    parser.add_argument("--total-timeout-minutes", type=float, help="Bound all Xcode calls in a shard together")
+    parser.add_argument("--listed-only-retry", action="store_true", help="Use only the trusted base known-flaky registry")
+    parser.add_argument("--failure-screenshots", action="store_true", help="Export public fixture failure attachments before scanning")
+    parser.add_argument("--shard")
+    parser.add_argument("--shard-manifest", type=Path)
     parser.add_argument("--min-free-gib", type=int, default=80,
                         help="Disk guard; thresholds below 80 require a GitHub-hosted runner")
     args = parser.parse_args(argv)
     output = args.output_dir.resolve()
     code, service, bundle, digest, summary = 1, None, None, None, None
     rows = []
+    bundles, digests = [], {}
     try:
         require(math.isfinite(args.timeout_minutes) and args.timeout_minutes > 0, "timeout must be finite and positive")
         require(args.min_free_gib >= 0, "disk threshold must be non-negative")
+        require((args.shard is None) == (args.shard_manifest is None), "shard and its manifest must be supplied together")
+        require(args.total_timeout_minutes is None or (math.isfinite(args.total_timeout_minutes) and args.total_timeout_minutes > 0),
+                "total timeout must be finite and positive")
+        total_deadline = time.monotonic() + args.total_timeout_minutes * 60 if args.total_timeout_minutes else float("inf")
         require(ROOT != output and ROOT not in output.parents, "output must be outside the checkout")
         output.mkdir(parents=True, exist_ok=True, mode=0o700)
         require(not any(output.iterdir()), "output directory must be fresh")
@@ -255,7 +268,7 @@ def main(argv=None):
                    "source": {"repository": identity["repository"], "workflow_path": workflow,
                               "event": identity["event"], "fork_originated": fork, "ci_changing": None},
                    "run": {"id": os.environ.get("GITHUB_RUN_ID"), "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
-                           "tier": "ui", "job": "fixture-ui", "shard": args.device},
+                           "tier": "ui", "job": "ui-" + args.device if args.shard else "fixture-ui", "shard": args.shard or args.device},
                    "hashes": {"manifests": {}, "policies": {}}, "toolchain": toolchain(),
                    "population": {"declared": [], "compiled": [], "observed": [], "deselected": [], "removed_by_pr": []},
                    "infrastructure": [], "status": "failed"}
@@ -283,10 +296,13 @@ def main(argv=None):
         summary["hashes"] = {"manifests": {"fixture-c": fixture_manifest("c")["fixture_sha256"],
                                            "test-plan": hashlib.sha256((ROOT / (plan_name + ".xctestplan")).read_bytes()).hexdigest()},
                              "policies": {"test-policy": hashlib.sha256(policy_path.read_bytes()).hexdigest()}}
+        if args.shard_manifest:
+            summary["hashes"]["manifests"]["ui-shards"] = hashlib.sha256(args.shard_manifest.read_bytes()).hexdigest()
         summary["population"]["declared"] = declared
         summary["population"]["deselected"] = [
             {key: value for key, value in entry.items() if key not in {"tier", "environment"}} for entry in deselections]
         bundle = prepare_fixture_result_bundle()
+        bundles.append(bundle)
         work = bundle.parent.parent
         env = clean_environment(os.environ)
         timeout = args.timeout_minutes * 60
@@ -297,7 +313,7 @@ def main(argv=None):
             with (work / (name + ".log")).open("w") as log:
                 process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=True)
-                deadline = time.monotonic() + timeout
+                deadline = min(time.monotonic() + timeout, total_deadline)
                 try:
                     while time.monotonic() < deadline:
                         try:
@@ -349,24 +365,82 @@ def main(argv=None):
         summary["population"]["compiled"] = compiled_tests(json.loads(enumeration.read_text()), declared)
         rows = coverage_rows(declared, summary["population"]["compiled"], {"testNodes": []}, args.device)
         reset_simulator_app(udid)
-        code = execute(base + selections + ["-resultBundlePath", str(bundle)] +
-                       ["-skip-testing:immichSlidesUITests/" + entry["identity"]["key"] for entry in deselections], "test")
-        digest = export_private_result_bundle(bundle, output, [PUBLIC_API_KEY])
-        official = json.loads((output / "official-tests.json").read_text())
-        verify_official_device(official, udid, args.device)
         selected = [entry for entry in declared if not any(rule["identity"] == entry for rule in deselections)]
         compiled = [entry for entry in summary["population"]["compiled"] if entry in selected]
-        rows = coverage_rows(selected, compiled, official, args.device)
-        for row in rows:
-            if row["outcome"] in {"skipped", "failed"}:
-                row["reason"] = read_problem_reason(bundle, row["identity"]["key"])
-        summary["population"]["observed"] = [observation(row["identity"], row["outcome"], row["duration_seconds"],
-                                              reason=row["reason"], exit_code=0 if row["outcome"] == "passed" else None)
-                                             for row in rows]
+        command = base + selections + ["-resultBundlePath", str(bundle)] + [
+            "-skip-testing:immichSlidesUITests/" + entry["identity"]["key"] for entry in deselections]
+        registry, evaluated_on = None, None
+        if args.listed_only_retry:
+            revision = registry_revision(ROOT, os.environ)
+            registry, registry_hash = load_registry(ROOT, revision)
+            evaluated_on = date.today()
+            summary["hashes"]["policies"]["known-flaky"] = registry_hash
+            expected_by_key = {entry["key"]: entry for entry in selected}
+            read = partial(read_xcode_observations, expected_device=(udid, "tv" if args.device == "appletv" else args.device))
+            def read_attempt(path, identity_for_key, elapsed, exit_code):
+                observed = read(path, identity_for_key, elapsed, exit_code)
+                for item in observed:
+                    if item["outcome"] in {"failed", "skipped"}:
+                        message = read_problem_reason(path, item["identity"]["key"])
+                        item["attempts"][0]["message"] = message
+                        if item["outcome"] == "skipped":
+                            item["attempts"][0]["reason"] = message
+                return observed
+            def allocate():
+                path = prepare_fixture_result_bundle()
+                bundles.append(path)
+                return path
+            def attempt(call):
+                started = time.monotonic()
+                return execute(call, "test-" + str(len(bundles))), time.monotonic() - started
+            retry_result = run_xcode_attempts(command, registry, tier="ui", environment="fixture", today=evaluated_on,
+                identity_for_key=lambda key: expected_by_key[key], reset=lambda: reset_simulator_app(udid),
+                execute=attempt, allocate_bundle=allocate, read=read_attempt)
+            summary["population"]["observed"] = retry_result["observed"]
+            summary["infrastructure"].extend(retry_result["infrastructure"])
+            write_json(output / "retry-invocations.json", dict(retry_result, registry_revision=revision, registry_sha256=registry_hash))
+            code = retry_result["exit_code"]
+            if (not retry_result["infrastructure"] and retry_result["observed"]
+                    and all(item["outcome"] in {"passed", "flaky-passed", "skipped"} for item in retry_result["observed"])
+                    and (retry_result["invocations"][0]["exit_code"] == 0 or
+                         (retry_result["invocations"][0]["exit_code"] == 65 and len(retry_result["invocations"]) > 1))):
+                code = 0
+            observed = {entry["identity"]["key"]: entry for entry in retry_result["observed"]}
+            rows = [{"identity": entry, "device": args.device,
+                     "outcome": observed[entry["key"]]["outcome"] if entry["key"] in observed else "not-run",
+                     "duration_seconds": observed[entry["key"]]["duration_seconds"] if entry["key"] in observed else 0,
+                     "reason": observed[entry["key"]]["attempts"][-1]["reason"] if entry["key"] in observed else "compiled but no official result"}
+                    for entry in selected]
+        else:
+            code = execute(command, "test")
+        for number, path in enumerate(bundles, 1):
+            if not path.exists():
+                continue
+            suffix = "" if number == 1 else "-attempt-" + str(number)
+            digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix)
+            official = json.loads((output / ("official-tests" + suffix + ".json")).read_text())
+            verify_official_device(official, udid, args.device)
+            if args.failure_screenshots:
+                attachment_root = output / "failure-screenshots" / ("attempt-" + str(number))
+                attachment_root.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(path),
+                                "--output-path", str(attachment_root), "--only-failures"],
+                               capture_output=True, check=True, timeout=120)
+        digest = digests.get(bundle)
+        if not args.listed_only_retry:
+            require(bundle in digests, "official fixture result is missing")
+            rows = coverage_rows(selected, compiled, official, args.device)
+            for row in rows:
+                if row["outcome"] in {"skipped", "failed"}:
+                    row["reason"] = read_problem_reason(bundle, row["identity"]["key"])
+            summary["population"]["observed"] = [observation(row["identity"], row["outcome"], row["duration_seconds"],
+                                                  reason=row["reason"], exit_code=0 if row["outcome"] == "passed" else None)
+                                                 for row in rows]
         if code == 0:
             summary["status"] = "unverified" if any(row["outcome"] == "skipped" for row in rows) else "passed"
         measured_policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
-        verdict = evaluate_population(summary, declared, policy if args.mode == "pr" else measured_policy, environment="fixture")
+        verdict = evaluate_population(summary, declared, policy if args.mode == "pr" else measured_policy, environment="fixture",
+                                      base_registry=registry, evaluated_on=evaluated_on)
         write_json(output / "coverage-verdict.json", verdict)
         summary["status"] = verdict["status"]
         if summary["status"] != "passed":
@@ -407,7 +481,11 @@ def main(argv=None):
                 summary["status"] = "failed"
                 summary["infrastructure"].append({"code": "sensitive-scan-failed", "message": str(error)[:200]})
                 write_summary(summary, output)
-            failures = finalize_fixture_run(bundle, output, digest, successful=code == 0) if bundle else []
+            failures = []
+            for number, path in reversed(list(enumerate(bundles, 1))):
+                disposal_output = output if number == 1 else output / ("disposal-attempt-" + str(number))
+                disposal_output.mkdir(exist_ok=True)
+                failures.extend(finalize_fixture_run(path, disposal_output, digests.get(path), successful=code == 0))
             if failures:
                 code = code or 1
                 summary["status"] = "failed"
