@@ -89,6 +89,14 @@ class FixtureCoverageTests(unittest.TestCase):
         self.assertEqual([entry["key"] for entry in declared_tests(files, "ios", plan, [])], ["Flow/testFirst"])
         with self.assertRaises(ContractError):
             declared_tests(files, "ios", plan, ["immichSlidesUITests/Flow/testSecond"])
+        selected = {"testTargets": [{"target": {"name": "immichSlidesUITests"},
+                                    "selectedTests": ["Flow/testSecond()"]}]}
+        self.assertEqual([entry["key"] for entry in declared_tests(files, "ios", selected, [])], ["Flow/testSecond"])
+        with self.assertRaises(ContractError):
+            declared_tests(files, "ios", selected, ["immichSlidesUITests/Flow/testFirst"])
+        selected["testTargets"][0]["enabled"] = False
+        with self.assertRaises(ContractError):
+            declared_tests(files, "ios", selected, [])
 
     def test_missing_duplicate_unexpected_and_skipped_results_cannot_be_covered(self):
         expected = [{"kind": "ui", "key": "Flow/testFirst", "dimensions": {"platform": "ios"}}]

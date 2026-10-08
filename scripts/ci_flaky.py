@@ -115,6 +115,8 @@ def eligible_entry(registry, identity, *, tier, environment, today):
     entries = parse_registry(registry)["entries"]
     if identity["kind"] == "ui" and "device" in identity["dimensions"]:
         device = identity["dimensions"]["device"]
+        # This copy preserves older isolated base readers that carry ci_flaky
+        # without the newer ci_ui_shards dependency.
         platform = {"iphone": "ios", "ipad": "ios", "appletv": "tvos"}.get(device)
         if platform is None or identity["dimensions"].get("platform") != platform:
             return None
