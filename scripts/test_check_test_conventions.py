@@ -738,14 +738,21 @@ class TimeoutLiteralTests(unittest.TestCase):
         func poll() {
             element.waitForExistence(timeout: TestWait.seconds(.infrastructure(9)))
             TestWait.until(.product(3)) { true }
+            scene(candidateWindowUsed: 12, recentWindowLimit: 4, candidateWindowSize: 8, windowCount: 3)
         }
         '''
         self.assertEqual([], conv.timeout_literal_inventory("TestSupport/A.swift", source))
 
     def test_wrapped_and_arithmetic_literals_cannot_bypass_inventory(self):
-        for value in ("TimeInterval(5)", "baseTimeout + 5", "1_000 / 10", ".seconds(5)"):
-            with self.subTest(value=value):
-                self.assertTrue(conv.timeout_literal_inventory("TestSupport/A.swift", "func poll() { wait(timeout: " + value + ") }"))
+        calls = (("wait(timeout: ", ("TimeInterval(5)", "baseTimeout + 5", "1_000 / 10", ".seconds(5)")),
+                 ("wait(windowSeconds: ", ("5", "baseSeconds + 5")),
+                 ("wait(windowLimitSeconds: ", ("5",)),
+                 ("Task.sleep(nanoseconds: ", ("20_000_000", "UInt64(5)", "baseNanoseconds + 5", "1_000 / 10")),
+                 ("Thread.sleep(forTimeInterval: ", ("TimeInterval(5)", "baseSeconds + 5", "1_000 / 10")))
+        for call, values in calls:
+            for value in values:
+                with self.subTest(value=value, call=call):
+                    self.assertTrue(conv.timeout_literal_inventory("TestSupport/A.swift", "func poll() { " + call + value + ") }"))
         source = "func poll() { f(TestWait.seconds(.product(3)), timeout: 5) }"
         self.assertEqual(1, len(conv.timeout_literal_inventory("TestSupport/A.swift", source)))
 

@@ -67,9 +67,12 @@ normalized expression and occurrence count. No line numbers are stored.
 
 The scanner recognizes timeout/deadline/duration/window/observation/poll/hold
 arguments and defaults, named timing constants, numeric duration constructors,
-`addingTimeInterval`, `sleep`, `usleep` and `Thread.sleep`. Wrapped and arithmetic
+`addingTimeInterval`, `sleep`, `usleep`, `Task.sleep(nanoseconds:)` and
+`Thread.sleep(forTimeInterval:)`. Wrapped and arithmetic
 arguments are included. Comments and strings are ignored. This is a lexical
 convention check; it does not infer whether a named variable is a product promise.
+Window arguments ending in `Count`, `Limit`, `Size` or `Used` represent counts
+and are excluded; timing window names should include their time unit.
 Choose the classification explicitly during migration.
 
 An additional literal, including a duplicate in an already listed function,

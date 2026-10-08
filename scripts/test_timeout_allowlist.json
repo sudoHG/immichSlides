@@ -43,6 +43,12 @@
   },
   {
     "path": "immichSlidesTests/LateLoadRealPathHTTPFixture.swift",
+    "function": "LateLoadLocalHTTPFixture.waitUntil",
+    "literal": "nanoseconds:20_000_000",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesTests/LateLoadRealPathHTTPFixture.swift",
     "function": "LateLoadLocalHTTPFixture.waitUntilCompleted",
     "literal": "timeout:TimeInterval=8",
     "count": 1
@@ -98,31 +104,13 @@
   {
     "path": "immichSlidesTests/PlaybackPoolResolverTests.swift",
     "function": "PlaybackPoolResolverTests.solo only resolver emits live stage events before the random provider returns",
+    "literal": "nanoseconds:1_000_000_000",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesTests/PlaybackPoolResolverTests.swift",
+    "function": "PlaybackPoolResolverTests.solo only resolver emits live stage events before the random provider returns",
     "literal": "pollInterval:.milliseconds(1)",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/PlaybackSceneTests.swift",
-    "function": "PlaybackSceneTests.SmartFill debug summary lists the scene and full asset ids for every slot",
-    "literal": "candidateWindowUsed:2",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/PlaybackSceneTests.swift",
-    "function": "PlaybackSceneTests.SmartFill slot planning summary exposes v2 reviewable fields without leaking the raw assetId",
-    "literal": "candidateWindowUsed:12",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/PlaybackSequenceDebugRecorderTests.swift",
-    "function": "PlaybackSequenceDebugRecorderTests.recorder stops writing the file after the record limit but keeps returning OSLog records",
-    "literal": "recentWindowLimit:4",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/PlaybackSequenceDebugRecorderTests.swift",
-    "function": "PlaybackSequenceDebugRecorderTests.recorder writes stable id JSONL lines and marks recent window duplicates",
-    "literal": "recentWindowLimit:2",
     "count": 1
   },
   {
@@ -130,12 +118,6 @@
     "function": "PlaybackSessionEngineAutoPlayRetryTests.<scope>",
     "literal": "letintervalSeconds:TimeInterval=5",
     "count": 1
-  },
-  {
-    "path": "immichSlidesTests/PlaybackSessionEngineTests+Fixtures.swift",
-    "function": "PlaybackSessionEngineTests.makeSmartFillScene",
-    "literal": "candidateWindowUsed:12",
-    "count": 2
   },
   {
     "path": "immichSlidesTests/PlaybackSessionEngineTests+PreparedRing.swift",
@@ -217,20 +199,8 @@
   },
   {
     "path": "immichSlidesTests/SlideShowViewModelNavigationSemanticsTests+Fixtures.swift",
-    "function": "SlideShowViewModelNavigationSemanticsTests.makeEstimatedReadback",
-    "literal": "candidateWindowUsed:24",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/SlideShowViewModelNavigationSemanticsTests+Fixtures.swift",
     "function": "SlideShowViewModelNavigationSemanticsTests.waitUntilForTesting",
     "literal": "pollInterval:.milliseconds(2)",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/SlideShowViewModelNavigationSemanticsTests+PreparedPlanning.swift",
-    "function": "SlideShowViewModelNavigationSemanticsTests.the background prepared plan builder matches the legacy MainActor SmartFill planner's selection",
-    "literal": "candidateWindowUsed:24",
     "count": 1
   },
   {

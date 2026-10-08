@@ -823,7 +823,8 @@ def timeout_literal_inventory(path: str, source: str) -> list[dict]:
         return len(code)
 
     heads = (
-        r"\b(?:\w*(?:timeout|deadline|duration|window|pollInterval|observation)\w*|hold)\s*:\s*",
+        r"\b(?:\w*(?:timeout|deadline|duration|pollInterval|observation)\w*|"
+        r"\w*window(?!\w*(?:count|limit|size|used)\b)\w*|hold|nanoseconds|forTimeInterval)\s*:\s*",
         r"\b(?:let|var)\s+\w*(?:timeout|deadline|duration|window|seconds|wait|poll|settle)\s*(?::[^=\n]+)?=\s*",
     )
     for head in heads:
