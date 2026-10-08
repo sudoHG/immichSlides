@@ -221,7 +221,7 @@ def simulator_device_class(udid, expected=None):
     return actual
 
 
-def official_assertion_keys(payload):
+def official_failure_outcomes(payload):
     # The typed legacy issue summaries distinguish assertions from crashes. Never
     # infer eligibility from failure text, which can also contain private values.
     keys = {}
@@ -244,8 +244,9 @@ def official_assertion_keys(payload):
             for child in value:
                 walk(child)
     walk(payload)
-    return set() if blocked else {key for key, kinds in keys.items()
-                                 if kinds and all(kind == "Assertion Failure" for kind in kinds)}
+    return {key: ("crashed" if any(kind in {"Crash", "Uncaught Exception"} for kind in kinds) else
+                  "assertion" if not blocked and kinds and all(kind == "Assertion Failure" for kind in kinds) else
+                  "failed") for key, kinds in keys.items()}
 
 
 def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, *, expected_device=None):
@@ -263,11 +264,11 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
         except P2ContractError as error:
             raise ContractError("official result has an unknown simulator class") from error
         require(actual_class == device_class, "official result device class does not match target simulator")
-    assertion_keys = set()
+    failure_outcomes = {}
     if any(case["result"] == "Failed" for case in facts["test_cases"]):
         details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
                                  capture_output=True, check=True, timeout=60)
-        assertion_keys = official_assertion_keys(json.loads(details.stdout))
+        failure_outcomes = official_failure_outcomes(json.loads(details.stdout))
     durations = {}
     def collect_durations(nodes):
         require(isinstance(nodes, list), "invalid official result children")
@@ -288,10 +289,13 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
         seen.add(key)
         outcome = {"Passed": "passed", "Failed": "failed", "Skipped": "skipped"}.get(case["result"])
         require(outcome is not None, "unknown XCTest outcome")
+        if outcome == "failed" and failure_outcomes.get(key) == "crashed":
+            outcome = "crashed"
         duration(durations.get(raw_key))
         records.append(observation(identity_for_key(key), outcome, durations[raw_key],
                                    reason=("Official XCTest skip" if outcome == "skipped" else
-                                           ASSERTION_FAILURE if outcome == "failed" and key in assertion_keys else
+                                           "Official XCTest crash" if outcome == "crashed" else
+                                           ASSERTION_FAILURE if outcome == "failed" and failure_outcomes.get(key) == "assertion" else
                                            "Official non-assertion or unclassified failure" if outcome == "failed" else None),
                                    exit_code=0 if outcome == "passed" else invocation_exit))
     require(bool(records), "official XCTest result contains no tests")

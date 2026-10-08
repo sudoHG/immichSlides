@@ -136,7 +136,8 @@ class RetryTests(unittest.TestCase):
                         today=date(2026, 10, 8), reset=lambda: resets.append(True),
                         execute=lambda key: observation(identity, "passed", 1))
                     self.assertEqual(bool(resets), issue_types == ["Assertion Failure"])
-                    self.assertEqual(actual[0]["outcome"], "flaky-passed" if resets else "failed")
+                    self.assertEqual(actual[0]["outcome"], "flaky-passed" if resets else
+                                     "crashed" if "Crash" in issue_types else "failed")
                     with self.assertRaises(ContractError):
                         read_xcode_observations(Path("result"), lambda key: identity, 1, 65,
                                                 expected_device=("target", "ipad"))
