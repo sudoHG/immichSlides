@@ -356,7 +356,8 @@ observations. Its local declared list is that compiled selection; the future UI
 shard owner must independently compare against the admitted static population.
 This adapter does not implement shard assignment, fixture selection or trusted
 publication. Pass fixture inputs explicitly through the per-run xctestrun; ambient
-server inputs are stripped. Raw bundles stay private and are exported/disposed;
+server inputs are stripped. Each invocation gets an independent private directory
+so every raw bundle can be exported/disposed before its directory is removed;
 only compact records are suitable for the future summary consumer.
 
 Strict warm runs opt in with `--listed-retry-device iphone`, `ipad` or `tv`, together

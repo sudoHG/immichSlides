@@ -238,11 +238,12 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit):
 
 
 def run_xcode_attempts(command, registry, *, tier, environment, today, identity_for_key,
-                       reset, execute, read=read_xcode_observations):
+                       reset, execute, allocate_bundle, read=read_xcode_observations):
     """Execute once, then retry each eligible assertion failure once; retain both calls.
 
-    execute(command) returns (exit_code, elapsed_seconds). A consumer exports
-    and disposes every invocation's private bundle after reading this result.
+    execute(command) returns (exit_code, elapsed_seconds). allocate_bundle()
+    returns a fresh private directory's bundle path for each retry. A consumer
+    exports and disposes every invocation's bundle after reading this result.
     """
     check_retry_flags(command)
     bundle = Path(command[command.index("-resultBundlePath") + 1])
@@ -258,7 +259,9 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
     effective_bundle = bundle
     def retry(identity):
         nonlocal effective_bundle
-        retry_bundle = bundle.with_name(bundle.stem + "-retry-" + str(len(invocations)) + ".xcresult")
+        retry_bundle = Path(allocate_bundle())
+        require(retry_bundle.parent not in {Path(call["result_bundle"]).parent for call in invocations},
+                "Every retry bundle requires an independent private directory")
         records, code = invoke(retry_command(command, identity["key"], retry_bundle), retry_bundle)
         if len(records) != 1 or records[0]["identity"] != identity:
             return None
@@ -362,7 +365,8 @@ def run_ui(args):
             return code, time.monotonic() - started
         result = run_xcode_attempts(command, registry, tier="ui", environment="hermetic", today=date.today(),
                                    identity_for_key=lambda key: test_identity("ui", key, platform=args.platform),
-                                   reset=reset, execute=execute)
+                                   reset=reset, execute=execute,
+                                   allocate_bundle=lambda: prepare_private_result_bundle_path("ui-flaky-retry"))
         summary["population"]["observed"] = result["observed"]
         (output / "retry-invocations.json").write_text(json.dumps(dict(result, registry_revision=revision), indent=2) + "\n")
         # The shard owner supplies independently compiled and declared selections.

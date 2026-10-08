@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 from ci_summary import ContractError, observation, test_identity
 from ci_flaky import (eligible_entry, enumerated_ui_keys, load_registry, merge_retry, parse_registry, registry_revision, retry_command, run_xcode_attempts,
@@ -100,6 +101,38 @@ class RegistryTests(unittest.TestCase):
 
 
 class RetryTests(unittest.TestCase):
+    def test_retry_bundles_have_independent_private_directories_and_all_dispose(self):
+        from run_strict_e2e import finalize_private_result_bundle, prepare_private_result_bundle_path
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+                "run_strict_e2e.PRIVATE_RESULT_BUNDLE_ROOT", Path(directory) / "private"):
+            evidence = Path(directory) / "exports"
+            evidence.mkdir()
+            payload = registry()
+            first_identity = payload["entries"][0]["identity"]
+            second_identity = dict(first_identity, key="ExampleTests/testOtherNavigation")
+            payload["entries"].append(dict(payload["entries"][0], identity=second_identity))
+            first_bundle = prepare_private_result_bundle_path("first")
+            command = ["xcodebuild", "test-without-building", "-resultBundlePath", str(first_bundle)]
+            def execute(call):
+                Path(call[call.index("-resultBundlePath") + 1]).mkdir()
+                return (65 if call == command else 0), 1
+            records = iter([[observation(first_identity, "failed", 1, exit_code=65),
+                             observation(second_identity, "failed", 1, exit_code=65)],
+                            [observation(first_identity, "passed", 1)],
+                            [observation(second_identity, "passed", 1)]])
+            actual = run_xcode_attempts(command, payload, tier="ui", environment="hermetic", today=date(2026, 10, 8),
+                identity_for_key=lambda key: dict(first_identity, key=key), reset=lambda: None,
+                execute=execute, read=lambda *args: next(records),
+                allocate_bundle=lambda: prepare_private_result_bundle_path("retry"))
+            self.assertEqual(actual["exit_code"], 0)
+            bundles = [Path(call["result_bundle"]) for call in actual["invocations"]]
+            self.assertEqual(len({bundle.parent for bundle in bundles}), 3)
+            for number, bundle in enumerate(bundles, 1):
+                self.assertEqual(finalize_private_result_bundle(bundle, evidence, "a" * 64,
+                                 successful=True, suffix=f"-attempt-{number}"), [])
+                self.assertFalse(bundle.exists())
+                self.assertFalse(bundle.parent.exists())
+
     def test_compiled_selection_accounts_for_xcode_disabled_nodes_and_errors(self):
         payload = {"errors": [], "values": [{"name": "immichSlides-iOS", "children": [{
             "name": "immichSlidesUITests", "children": [{"name": "ExampleTests", "children": [
@@ -184,7 +217,8 @@ class RetryTests(unittest.TestCase):
                 events = []
                 actual = run_xcode_attempts(command, payload, tier="ui", environment="hermetic", today=date(2026, 10, 8),
                     identity_for_key=lambda key: dict(identity, key=key), reset=lambda: events.append("reset"),
-                    execute=lambda call: next(codes), read=lambda *args: next(rows))
+                    execute=lambda call: next(codes), read=lambda *args: next(rows),
+                    allocate_bundle=lambda: Path("retry-private") / "second.xcresult")
                 self.assertEqual(events, ["reset"])
                 self.assertEqual(actual["observed"][0]["outcome"], expected)
                 self.assertEqual(actual["exit_code"], 0 if expected == "flaky-passed" else 65)
@@ -193,12 +227,14 @@ class RetryTests(unittest.TestCase):
                 events = []
                 actual = run_xcode_attempts(command, payload, tier="ui", environment="hermetic", today=date(2026, 10, 8),
                     identity_for_key=lambda key: dict(identity, key=key), reset=lambda: events.append("reset"),
-                    execute=lambda call: (code, 1), read=lambda *args: [observation(identity, "failed", 1, exit_code=code)])
+                    execute=lambda call: (code, 1), read=lambda *args: [observation(identity, "failed", 1, exit_code=code)],
+                    allocate_bundle=lambda: self.fail("must not allocate retry bundle"))
                 self.assertEqual(events, [])
                 self.assertNotEqual(actual["exit_code"], 0)
         actual = run_xcode_attempts(command, payload, tier="ui", environment="hermetic", today=date(2026, 10, 8),
             identity_for_key=lambda key: dict(identity, key=key), reset=lambda: self.fail("must not reset"),
-            execute=lambda call: (65, 1), read=lambda *args: [observation(identity, "passed", 1)])
+            execute=lambda call: (65, 1), read=lambda *args: [observation(identity, "passed", 1)],
+            allocate_bundle=lambda: self.fail("must not allocate retry bundle"))
         self.assertEqual(actual["exit_code"], 65)
 
 

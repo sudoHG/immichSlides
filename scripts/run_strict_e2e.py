@@ -793,7 +793,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                                          configuration=warm_receipt["identity"]["configuration"], suite=arguments.suite,
                                          scenario=arguments.scenario, fixture=arguments.fixture_set)
                 retry_result = run_xcode_attempts(command, registry, tier="strict", environment="hermetic", today=date.today(),
-                                                 identity_for_key=case_identity, reset=reset_retry, execute=execute_attempt)
+                                                 identity_for_key=case_identity, reset=reset_retry, execute=execute_attempt,
+                                                 allocate_bundle=lambda: prepare_private_result_bundle_path(arguments.suite + "-retry"))
                 from strict_e2e_build import write_json
                 write_json(arguments.evidence_dir / (log_path.stem + "-attempts.json"),
                            dict(retry_result, registry_revision=registry_ref, registry_sha256=registry_hash))
