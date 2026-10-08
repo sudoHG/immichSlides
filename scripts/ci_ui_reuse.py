@@ -5,6 +5,9 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+import zipfile
+
+import yaml
 
 from ci_publish_git import git, read_blob, workflow_contract
 from ci_summary import ContractError, decode, fields, parse_identity, parse_summary, require
@@ -25,7 +28,7 @@ def device_shards(source, run):
     return sorted(meta["device"] + "/" + meta["shard"] for meta in metadata.values() if meta["tier"] == "ui")
 
 
-def validate_reuse(receipt, push, inputs, shards, pins, upstream):
+def validate_reuse(receipt, push, inputs, shards, pins, upstream, merged_pr):
     fields(receipt, {"schema_version", "identity", "source", "status", "inputs", "device_shards", "toolchains"},
            "UI verdict receipt")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1, "unknown UI reuse receipt version")
@@ -36,6 +39,8 @@ def validate_reuse(receipt, push, inputs, shards, pins, upstream):
     require(push["event"] == "push" and push["ref"] == "refs/heads/main", "reuse is main-push only")
     require(identity["event"] == "pull_request" and identity["repository"] == push["repository"] == source["repository"],
             "reuse requires a same-repository PR verdict")
+    require(identity["pull_request"] == merged_pr["number"] and identity["head_sha"] == merged_pr["head"]["sha"],
+            "reuse verdict does not match the PR and final head actually merged")
     require(receipt["status"] == "passed" and source["workflow_path"] == UI_WORKFLOW
             and all(source[key] is False for key in ("fork_originated", "ci_changing", "approval_based")),
             "reuse requires a green non-CI-changing verdict without approval")
@@ -96,6 +101,12 @@ def find_reuse(api, push):
         push = parse_identity(push)
         require(push["repository"] == api.repository, "reuse repository differs")
         revision = push["pushed_sha"]
+        merged = [pr for pr in api.pages(f"commits/{revision}/pulls")
+                  if pr["merge_commit_sha"] == revision and pr.get("merged_at")
+                  and pr["base"]["ref"] == "main"
+                  and pr["base"]["repo"]["full_name"] == api.repository
+                  and pr["head"]["repo"] and pr["head"]["repo"]["full_name"] == api.repository]
+        require(len(merged) == 1, "reuse needs exactly one same-repository PR actually merged by this push")
         inputs = reuse_inputs(revision)
         pins = decode(read_blob(revision, "scripts/ci-pins.json"))
         shards = device_shards(read_blob(revision, UI_WORKFLOW), {"id": 1, "run_attempt": 1})
@@ -120,17 +131,42 @@ def find_reuse(api, push):
                 upstream = authoritative_run(runs, head, workflow, api.repository)
                 require(upstream is not None, "reused producer is missing")
                 verify_workflow(upstream, workflow, api.repository)
-                validate_reuse(receipt, push, inputs, shards, pins, upstream)
+                validate_reuse(receipt, push, inputs, shards, pins, upstream, merged[0])
                 return dict(receipt, artifact_id=artifact["id"], publisher_run_id=artifact["workflow_run"]["id"])
-            except (OSError, ContractError, KeyError, ValueError, TypeError, subprocess.SubprocessError):
+            except (OSError, ContractError, KeyError, ValueError, TypeError, zipfile.BadZipFile, subprocess.SubprocessError):
                 continue
-    except (OSError, ContractError, KeyError, ValueError, TypeError, subprocess.SubprocessError):
+    except (OSError, ContractError, KeyError, ValueError, TypeError, zipfile.BadZipFile, subprocess.SubprocessError):
         return None
     return None
 
 
+def expand_skipped_ui_matrix(source, run, jobs):
+    """Map a real whole-matrix skip to its trusted literal shard population."""
+    from check_workflow_policy import WorkflowLoader
+    names, _, _, metadata = workflow_contract(source, run, metadata=True)
+    actual = {job["name"]: job for job in jobs}
+    require(len(actual) == len(jobs), "duplicate reuse jobs")
+    if (run["path"] == UI_WORKFLOW and run["event"] == "push" and run["head_branch"] == "main"):
+        workflow = yaml.load(source, Loader=WorkflowLoader)
+        for key, job in workflow["jobs"].items():
+            raw_name = job.get("name", key)
+            if not job.get("strategy", {}).get("matrix") or raw_name not in actual or raw_name in names:
+                continue
+            skipped = actual.pop(raw_name)
+            expanded, _, _, evidence = workflow_contract(yaml.safe_dump({"jobs": {key: job}}), run, metadata=True)
+            require(skipped["status"] == "completed" and skipped["conclusion"] == "skipped"
+                    and expanded and all(meta["tier"] == "ui" for meta in evidence.values())
+                    and not set(expanded).intersection(actual), "whole-matrix skip overlaps execution or is invalid")
+            # Preserve the one real API job's ID, timestamps and attempt on every
+            # logical shard. This mapping never supplies test observations.
+            actual.update({name: dict(skipped, name=name, unexpanded_name=raw_name) for name in expanded})
+    require(set(actual) == set(names), "required job set mismatch")
+    return list(actual.values())
+
+
 def evaluate_reused_push(api, record, run, jobs, summaries):
     source = record["workflows"][UI_WORKFLOW]["base"]
+    jobs = expand_skipped_ui_matrix(source, run, jobs)
     names, _, _, metadata = workflow_contract(source, run, metadata=True)
     require(len(jobs) == len(names) and {job["name"] for job in jobs} == set(names), "reuse job set differs")
     for job in jobs:
@@ -155,4 +191,5 @@ def evaluate_reused_push(api, record, run, jobs, summaries):
     return {"state": "success", "description": "UI reused: complete trusted identical-tree PR verdict",
             "target_url": f"https://github.com/{api.repository}/actions/runs/{receipt['source']['run_id']}",
             "reuse": {"producer_run_id": receipt["source"]["run_id"], "producer_attempt": receipt["source"]["attempt"],
-                      "verdict_artifact_id": receipt["artifact_id"], "tree_sha": receipt["identity"]["tree_sha"]}}
+                      "verdict_artifact_id": receipt["artifact_id"], "tree_sha": receipt["identity"]["tree_sha"],
+                      **{key: receipt["source"][key] for key in ("approval_based", "fork_originated", "ci_changing")}}}

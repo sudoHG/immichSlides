@@ -190,8 +190,16 @@ The rules are:
   container actions, inline action scripts and unknown inputs are rejected. Local actions
   must be literal paths under `.github/actions`, outside artifact/download directories,
   without inputs. Approved downloads cannot write into that local-action directory.
-  `ci-publish.yml` alone may use the pinned admission `actions/upload-artifact`
-  step with its exact reviewed name, path, retention and missing-file inputs.
+  `ci-publish.yml` alone may use the pinned `actions/upload-artifact` action for
+  these two exact reviewed upload contracts; both retain files for 30 days and
+  set `if-no-files-found: error`:
+  - Admission: name `ci-admission-${{ steps.admit.outputs.run_id }}`,
+    path `${{ runner.temp }}/ci-admission/record.json`.
+  - UI verdict receipt: name `ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}`,
+    path `${{ runner.temp }}/ci-ui-verdict/verdict.json`.
+  Additional inputs or changes to name, path, retention or missing-file behavior
+  are rejected. [CI_PUBLISHER.md](CI_PUBLISHER.md) defines when these trusted
+  records are emitted and how their provenance is validated.
 - Trusted artifact downloads must go into `ci-artifacts` or its children, optionally
   under `${{ runner.temp }}`. They cannot overwrite checked-out scripts or local actions.
   Future approved entry points may read artifact data internally after review; the workflow

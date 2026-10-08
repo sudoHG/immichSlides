@@ -369,6 +369,9 @@ def producer_evidence(api, run, source):
             retained = (previous and all(job.get(key) and job[key] == previous.get(key) for key in execution))
             jobs[job["name"]] = dict(job, evidence_attempt=previous["evidence_attempt"] if retained else attempt)
     expected, _, by_job, metadata = workflow_contract(source, run, metadata=True)
+    if run["path"] == ".github/workflows/ci-ui.yml":
+        from ci_ui_reuse import expand_skipped_ui_matrix
+        jobs = {job["name"]: job for job in expand_skipped_ui_matrix(source, run, list(jobs.values()))}
     require(set(jobs) == set(expected), "required job set mismatch")
     artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
     summaries = []
@@ -552,6 +555,12 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                 if source:
                     handle.write(f"  Source: {source['repository']}, {source['workflow_path']}; run {source['run_id']}, attempt {source['attempt']}; "
                                  f"approval-based: {source['approval_based']}, fork-originated: {source['fork_originated']}.\n")
+                reuse = status.get("reuse")
+                if reuse:
+                    handle.write(f"  Reuse: producer run {reuse['producer_run_id']}, attempt {reuse['producer_attempt']}; "
+                                 f"verdict artifact {reuse['verdict_artifact_id']}; tree {reuse['tree_sha']}; "
+                                 f"approval-based: {reuse['approval_based']}, fork-originated: {reuse['fork_originated']}, "
+                                 f"CI-changing: {reuse['ci_changing']}.\n")
                 for population in status.get("population", []):
                     handle.write(f"  {population['tier']} / {population['shard']}: expected {population['expected']}, "
                                  f"compiled {population['compiled']}, observed {population['observed']}, "

@@ -151,6 +151,11 @@ The post-merge reader additionally accepts skipped device shards on a main push
 only after independently finding a complete trusted identical-tree PR verdict.
 The archive-selection job must still succeed and supply its identity-bound,
 manifest-bound summary; skipping that job or only part of the device matrix fails.
+GitHub may report a whole skipped matrix as one unexpanded job name. The reader
+maps that exact trusted-workflow name to its declared literal shards while
+retaining the real job's identity and attempt; overlapping executed shards,
+unknown names or an incomplete job set fail. This mapping supplies no test
+observations and still requires independent trusted reuse proof.
 Every ordinary run retains the existing successful-job and complete-population checks.
 
 After publishing a complete PR UI success, the main publisher retains
@@ -160,13 +165,18 @@ manifest/default-plan/policy/registry/classification/workflow/pins hashes, cover
 device shards and observed toolchains. This is publisher output, never a producer
 claim or a matching artifact name alone. The reuse reader verifies the uploader's
 workflow ID/path, event, both repositories, main branch and main-history revision,
-then verifies that the upstream UI producer is still its head's newest completed
+then resolves the pushed commit's associated PRs to exactly one same-repository
+PR merged into main with `merge_commit_sha` equal to the pushed SHA. The receipt's
+PR number and head SHA must match that PR's final head; another green head with
+the same tree cannot authorize reuse. It verifies that the upstream UI producer is still its head's newest completed
 successful run and exact attempt. A rerun in progress invalidates the receipt.
 Unknown versions, missing/expired proof, red/cancelled runs, forks, CI changes,
 approval-based verdicts, different trees or inputs, incomplete device coverage,
 or observed toolchains that disagree with current pins all mean run the UI tier.
 The publisher repeats this decision before accepting skipped shards and links
 the status to the original successful UI run.
+The publication summary displays the reused producer run/attempt, verdict artifact,
+tree and approval/fork/CI-change provenance alongside that link.
 
 This reader lands before a producer starts skipping shards. Existing iPhone
 producers keep running normally; the separate iPad/Apple TV and reuse producer

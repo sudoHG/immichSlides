@@ -165,9 +165,10 @@ class PublisherTests(unittest.TestCase):
                                             "signing_mode": "not-applicable"} for name in shards}}
         pins = json.loads(Path(__file__).with_name("ci-pins.json").read_text())
         ui_run = dict(RUN, path=".github/workflows/ci-ui.yml")
-        validate_reuse(receipt, push, inputs, shards, pins, ui_run)
+        validate_reuse(receipt, push, inputs, shards, pins, ui_run, PR)
         mutations = [lambda r: r.update(schema_version=2), lambda r: r.update(status="failed"),
                      lambda r: r["identity"].update(tree_sha="e" * 40),
+                     lambda r: r["identity"].update(pull_request=8),
                      lambda r: r["source"].update(fork_originated=True),
                      lambda r: r["source"].update(ci_changing=True),
                      lambda r: r["source"].update(approval_based=True),
@@ -180,13 +181,50 @@ class PublisherTests(unittest.TestCase):
         for mutate in mutations:
             bad = copy.deepcopy(receipt)
             mutate(bad)
-            with self.subTest(mutate=mutate), self.assertRaises((ContractError, KeyError)):
-                validate_reuse(bad, push, inputs, shards, pins, ui_run)
+            with self.subTest(mutate=mutate), self.assertRaises(ContractError):
+                validate_reuse(bad, push, inputs, shards, pins, ui_run, PR)
         for change in ({"conclusion": "failure"}, {"conclusion": "cancelled"},
                        {"status": "in_progress"}, {"run_attempt": 2}, {"id": 102},
                        {"head_repository": {"full_name": "fork/photos"}}):
             with self.subTest(change=change), self.assertRaises(ContractError):
-                validate_reuse(receipt, push, inputs, shards, pins, dict(ui_run, **change))
+                validate_reuse(receipt, push, inputs, shards, pins, dict(ui_run, **change), PR)
+        # Another green head can have the same tree and all the same inputs.
+        # It still cannot authorize skipping for the PR head actually merged.
+        previous = copy.deepcopy(receipt)
+        previous["identity"]["head_sha"] = "f" * 40
+        with self.assertRaises(ContractError):
+            validate_reuse(previous, push, inputs, shards, pins, dict(ui_run, head_sha="f" * 40), PR)
+        from ci_ui_reuse import find_reuse
+        import zipfile
+        merged_prs = [dict(PR, merge_commit_sha=MERGE, merged_at="2026-10-08T15:03:00Z")]
+        artifact = {"id": 22, "name": "ci-ui-verdict-" + TREE, "expired": False, "workflow_run": {"id": 201}}
+        class RecordedAPI:
+            repository = REPOSITORY
+            def repo(self, path, **kwargs):
+                return {"id": 43 if "ci-publish" in path else 42,
+                        "path": ".github/workflows/ci-publish.yml" if "ci-publish" in path else ui_run["path"]}
+            def pages(self, path, *args, **kwargs):
+                if path == f"commits/{MERGE}/pulls":
+                    return merged_prs
+                return [artifact] if path == "actions/artifacts" else [ui_run]
+        with patch("ci_ui_reuse.reuse_inputs", return_value=inputs), \
+                patch("ci_ui_reuse.read_blob", return_value=json.dumps(pins)), \
+                patch("ci_ui_reuse.device_shards", return_value=shards), \
+                patch("ci_ui_reuse.git"), patch("ci_ui_reuse.trusted_uploader"), \
+                patch("ci_publish.json_member", return_value=receipt) as member:
+            self.assertEqual(find_reuse(RecordedAPI(), push)["artifact_id"], 22)
+            for matches in ([], merged_prs * 2,
+                            [dict(merged_prs[0], merge_commit_sha="f" * 40)],
+                            [dict(merged_prs[0], head=dict(PR["head"], sha="f" * 40))],
+                            [dict(merged_prs[0], head=dict(PR["head"], repo={"full_name": "fork/photos"}))]):
+                original, merged_prs = merged_prs, matches
+                with self.subTest(merged=matches):
+                    self.assertIsNone(find_reuse(RecordedAPI(), push))
+                merged_prs = original
+            member.side_effect = zipfile.BadZipFile("corrupt receipt")
+            self.assertIsNone(find_reuse(RecordedAPI(), push))
+            with patch.object(RecordedAPI, "pages", side_effect=zipfile.BadZipFile("corrupt API proof")):
+                self.assertIsNone(find_reuse(RecordedAPI(), push))
 
     def test_ui_skipped_shards_need_independent_trusted_reuse_proof(self):
         from ci_ui_reuse import evaluate_reused_push
@@ -194,7 +232,7 @@ class PublisherTests(unittest.TestCase):
         api = SimpleNamespace(repository=REPOSITORY)
         push = {"schema_version": 1, "repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
                 "pushed_sha": MERGE, "tree_sha": TREE}
-        run = dict(RUN, event="push", path=".github/workflows/ci-ui.yml")
+        run = dict(RUN, event="push", head_branch="main", path=".github/workflows/ci-ui.yml")
         manifest_hash = "e" * 64
         record = {"identity": push, "workflows": {run["path"]: {"base": FIXTURE_UI}},
                   "ui_inputs": {"base": {"manifest_sha256": manifest_hash}}}
@@ -209,9 +247,45 @@ class PublisherTests(unittest.TestCase):
         summary["hashes"]["manifests"] = {"ui-shards": manifest_hash}
         summary["population"].update(declared=expected, compiled=expected, deselected=[],
                                      observed=[observation(expected[0], "passed", 0)])
-        receipt = {"source": {"run_id": 101, "attempt": 1}, "artifact_id": 22, "identity": {"tree_sha": TREE}}
+        receipt = {"source": {"run_id": 101, "attempt": 1, "approval_based": False,
+                              "fork_originated": False, "ci_changing": False},
+                   "artifact_id": 22, "identity": {"tree_sha": TREE}}
         with patch("ci_ui_reuse.find_reuse", return_value=receipt):
             self.assertEqual(evaluate_reused_push(api, record, run, jobs, [summary])["state"], "success")
+            # Actual jobs API payload from run 37797617602: a skipped whole
+            # matrix is one unexpanded job, rather than one row per shard.
+            collapsed = [
+                {"id": 113381069593, "name": "ui-archive", "status": "completed", "conclusion": "success",
+                 "started_at": "2026-10-08T15:03:47Z", "completed_at": "2026-10-08T15:03:57Z", "run_attempt": 1},
+                {"id": 113381171846, "name": "ui-${{ matrix.device }}-${{ matrix.shard }}", "status": "completed",
+                 "conclusion": "skipped", "started_at": "2026-10-08T15:03:58Z",
+                 "completed_at": "2026-10-08T15:03:57Z", "run_attempt": 1}]
+            class RecordedAPI:
+                def pages(self, path, collection):
+                    if collection == "jobs":
+                        return collapsed
+                    return [{"name": f"ui-archive-{run['id']}-1", "expired": False}]
+            with patch("ci_publish.json_member", return_value=summary):
+                mapped, records = producer_evidence(RecordedAPI(), run, FIXTURE_UI)
+            self.assertEqual({job["name"] for job in mapped}, set(names))
+            self.assertEqual({job["id"] for job in mapped if job["conclusion"] == "skipped"}, {113381171846})
+            self.assertEqual(evaluate_reused_push(api, record, run, collapsed, records)["state"], "success")
+            reused = evaluate_reused_push(api, record, run, collapsed, records)
+            self.assertNotIn("source", reused)
+            with tempfile.TemporaryDirectory() as directory, \
+                    patch("ci_publish.compute", return_value=(MERGE, {"ci-ui": reused}, None)), \
+                    patch("ci_publish.os.environ", {"GITHUB_STEP_SUMMARY": directory + "/summary.md"}), \
+                    patch.object(api, "status", create=True):
+                write_publication(api, api, 0, MERGE, "generic-app[bot]")
+                rendered = Path(directory, "summary.md").read_text()
+                self.assertIn("Reuse: producer run 101, attempt 1; verdict artifact 22; tree " + TREE, rendered)
+                self.assertIn("approval-based: False, fork-originated: False, CI-changing: False", rendered)
+            for bad in (collapsed + [jobs[1]], collapsed[:1],
+                        [collapsed[0], dict(collapsed[1], conclusion="success")],
+                        [dict(collapsed[0], conclusion="skipped"), collapsed[1]],
+                        [collapsed[0], dict(collapsed[1], name="ui-${{ matrix.other }}")]):
+                with self.subTest(jobs=bad), self.assertRaises(ContractError):
+                    evaluate_reused_push(api, record, run, bad, [summary])
             for mutate in (lambda j, s: j[0].update(conclusion="skipped"),
                            lambda j, s: j[1].update(conclusion="cancelled"),
                            lambda j, s: j[1].update(conclusion="success"),
@@ -225,6 +299,8 @@ class PublisherTests(unittest.TestCase):
                     evaluate_reused_push(api, record, run, bad_jobs, [bad_summary])
         with patch("ci_ui_reuse.find_reuse", return_value=None), self.assertRaises(ContractError):
             evaluate_reused_push(api, record, run, jobs, [summary])
+        with patch("ci_ui_reuse.find_reuse", return_value=None), self.assertRaises(ContractError):
+            evaluate_reused_push(api, record, run, collapsed, [summary])
 
     def test_ui_verdict_artifact_must_come_from_main_publisher_history(self):
         from ci_ui_reuse import trusted_uploader
