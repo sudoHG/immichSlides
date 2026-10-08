@@ -189,11 +189,12 @@ class PublisherTests(unittest.TestCase):
                                              observed=[observation(value, "passed", 0) for value in expected])
             self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "failure")
 
-    def test_real_workflow_contract_ignores_copied_script_names_and_binds_quoted_proof_commands(self):
+    def test_real_workflow_contract_ignores_copied_script_names_and_binds_producer_platforms(self):
         source = (Path(__file__).parent.parent / ".github/workflows/ci-gate.yml").read_text()
         _, _, _, metadata = workflow_contract(source, RUN, metadata=True)
+        builds = [meta for meta in metadata.values() if meta["population"] == "run_build"]
+        self.assertEqual({meta["shard"] for meta in builds}, {"ios", "tvos"})
         proofs = [meta for meta in metadata.values() if meta["population"] == "run_proof"]
-        self.assertEqual({meta["shard"] for meta in proofs}, {"ios", "tvos"})
         self.assertTrue(all(meta["tier"] == "build" and meta["job"] == "archive-relocation" for meta in proofs))
         reference_only = '''jobs:
   copy:
