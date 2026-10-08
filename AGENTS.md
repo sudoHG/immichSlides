@@ -16,6 +16,8 @@ Never do these without explicit approval from the maintainer, whatever the task 
 - Commit secrets, local config (`Config/env.xcconfig`), build output, `.xcresult` bundles, screenshots or scratch scripts.
 - Overwrite, reformat, restore or delete changes you did not make. Report them instead.
 
+Agents never approve CI runs, fork commits, CI-changing commits or releases, even when asked; they may only request approval.
+
 ## Language
 
 - Everything committed to the repository is written in English: identifiers, comments, commit messages, docs. Some existing comments and docs are still in Chinese. Translate them only in a task that asks for it, not as drive-by edits.
