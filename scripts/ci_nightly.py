@@ -143,6 +143,10 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=()):
                 result["errors"].append("producer infrastructure failure: " + str(summary["infrastructure"]))
             if summary["status"] == "failed":
                 result["errors"].append("producer failed: " + str(summary["run"]["shard"]))
+            if summary["status"] == "unverified" and not any(
+                    entry["outcome"] == "needs-human-review" and entry["identity"]["dimensions"]["suite"] in P2_CASES
+                    for entry in summary["population"]["observed"]):
+                result["errors"].append("unverified producer has no passing P2 contract")
         result["matrix"] = matrix_equality(scheduled, result["observed"])
         if not result["matrix"]["equal"]:
             result["errors"].append("executed matrix differs from scheduled matrix")

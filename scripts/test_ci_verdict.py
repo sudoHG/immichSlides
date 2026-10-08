@@ -68,6 +68,8 @@ class NightlyVerdictTests(unittest.TestCase):
                 self.assertEqual(result["status"], expected)
                 self.assertFalse(result["release_eligible"])
                 self.assertEqual(result["tiers"]["ui"], "not yet in scope")
+        summary["status"] = "unverified"
+        self.assertEqual(aggregate_nightly([identity], [summary], live_in_scope=False)["status"], "failed")
 
     def test_p2_contracts_allow_review_pending_but_never_a_failed_producer(self):
         from ci_nightly import aggregate_nightly
