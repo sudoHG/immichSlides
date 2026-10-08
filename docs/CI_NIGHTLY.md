@@ -103,7 +103,9 @@ any suite total. Valid failed exports still record compilation and official coun
 Nonzero exits remain failures even with passing XCTest counts. Missing/malformed exports
 fail. Timeouts/interruptions preserve completed outcomes; unfinished cases are `not-run`.
 
-The always-run aggregate downloads only this attempt's compact records. It validates
+The always-run aggregate downloads only this attempt's compact records, including
+P2 package hash bindings written before upload. It carries the bindings into its
+aggregate and rollup metadata for review validation after media expiry. It validates
 every expected shard's identity, run, hashes and declared population, then checks
 compilation per entry and compares executed identities with scheduling. A missing
 compiled identity fails only that entry as `declared-not-compiled`; other observed

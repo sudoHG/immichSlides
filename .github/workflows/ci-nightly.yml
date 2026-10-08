@@ -142,14 +142,6 @@ jobs:
             --platform "$NIGHTLY_PLATFORM" --destination "$NIGHTLY_DESTINATION" \
             --output-dir "$RUNNER_TEMP/nightly-strict" --min-free-gib 30 \
             --cold-timeout-seconds 1200 --warm-timeout-seconds 600
-      - name: Publish compact records even after failure
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: nightly-strict-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/nightly-strict/records
-          retention-days: 7
-          if-no-files-found: error
       - name: Export scanned public fixture review packages
         id: review
         if: always()
@@ -157,6 +149,14 @@ jobs:
           "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_review_packages.py export-shard \
             --input-dir "$RUNNER_TEMP/nightly-strict" --output-dir "$RUNNER_TEMP/p2-review-packages"
           echo 'safe=true' >> "$GITHUB_OUTPUT"
+      - name: Publish compact records and package hash bindings even after failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-strict-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-strict/records
+          retention-days: 7
+          if-no-files-found: error
       - name: Publish P2 packages for maintainer review
         if: always() && steps.review.outputs.safe == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
