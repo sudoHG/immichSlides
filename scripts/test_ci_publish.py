@@ -1,6 +1,7 @@
 """Recorded GitHub payload seams guard trusted publication races and provenance."""
 
 import copy
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -386,6 +387,23 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(approved["ci-pr-gate"]["state"], "success")
         self.assertIn("approval-based", approved["ci-pr-gate"]["description"])
 
+    def test_failure_details_link_to_each_authoritative_producer(self):
+        for conclusion, evaluation, needs_approval in (
+                ("failure", {}, False), ("cancelled", {}, False),
+                ("success", {}, False),
+                ("success", {"state": "failure", "description": "Base moved; push again"}, False),
+                ("success", {"state": "success", "description": "Complete"}, True)):
+            with self.subTest(conclusion=conclusion, evaluation=evaluation, needs_approval=needs_approval):
+                runs = {context: dict(RUN, id=run_id, conclusion=conclusion)
+                        for context, run_id in (("ci-pr-gate", 101), ("ci-ui", 102))}
+                plan = publication_plan(PR, runs, {101: {}, 102: {}},
+                                        {context: evaluation for context in runs} if evaluation else {},
+                                        approved=False, needs_approval=needs_approval)
+                for context, run in runs.items():
+                    self.assertEqual(plan[context]["state"], "failure")
+                    self.assertEqual(plan[context]["target_url"],
+                                     f"https://github.com/{REPOSITORY}/actions/runs/{run['id']}")
+
     def test_publisher_writing_an_old_snapshot_cannot_erase_a_concurrent_approval(self):
         class RecordedAPI:
             repository = REPOSITORY
@@ -548,8 +566,9 @@ class PublisherTests(unittest.TestCase):
                 self.requests = [{"head_sha": HEAD, "run_id": 200, "status": "waiting"}]
         plan = {context: {"state": "pending", "description": "pending"} for context in ("ci-pr-gate", "ci-ui", "ci-approval-state")}
         api = RecordedAPI()
-        with patch("ci_publish.compute", return_value=(HEAD, plan, {"request": HEAD, "obsolete": []})), \
-                patch("ci_publish.os.environ", {}), \
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("ci_publish.compute", return_value=(HEAD, plan, {"request": HEAD, "obsolete": []})), \
+                patch("ci_publish.os.environ", {"GITHUB_RUN_ID": "100", "GITHUB_STEP_SUMMARY": directory + "/summary.md"}), \
                 patch("ci_publish.approval_requests", side_effect=lambda *args: api.requests):
             with self.assertRaises(ContractError):
                 write_publication(api, api, 7, "", "generic-app[bot]")
@@ -561,6 +580,11 @@ class PublisherTests(unittest.TestCase):
             self.assertEqual(len(api.dispatches), 2)
             self.assertEqual(api.writes[-1][2], "success")
             self.assertEqual(api.writes[-1][4], "https://github.com/example/photos/actions/runs/200")
+            display = next(row for row in reversed(api.writes) if row[1] == "ci-approval-state")
+            self.assertEqual(display[2], "pending")
+            self.assertEqual(display[4], "https://github.com/example/photos/actions/runs/200")
+            self.assertIn("- ci-approval-state: pending — pending ([Details](https://github.com/example/photos/actions/runs/200))",
+                          Path(directory, "summary.md").read_text())
             write_publication(api, api, 7, "", "generic-app[bot]")
             self.assertEqual(len(api.dispatches), 2)
             writes = len(api.writes)

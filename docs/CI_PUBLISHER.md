@@ -100,6 +100,7 @@ exact-head-approved docs-only fork; fork/approval labels still apply. Unit/archi
 producer changes are independent sibling work; this publisher does not create
 or rename their jobs. Fork successes remain explicitly **self-reported**, and
 approved CI-changing/fork verdicts are labeled **approval-based**.
+Failure Details links identify the authoritative producer run; #111 owns richer failing-test, count and missing-evidence reporting.
 
 ## Approval and credentials
 
@@ -121,8 +122,9 @@ Only the approval job and the maintainer-only `ci-approve` fallback write the
 immutable approval context. `ci-publish` only reads it, checking the App bot's
 identity. It never includes that context in its display writes, so a publisher's
 read/approve/write interleaving cannot erase approval. The display context's
-Details link points to the existing approval run. The reservation also links to
-that run when visible. After dispatch, lookup waits at most ten seconds; if GitHub
+Details link and publication summary update immediately when the approval run
+is discovered. The reservation also links to that run when visible. After
+dispatch, lookup waits at most ten seconds; if GitHub
 has not exposed the run yet, the accepted receipt links to the approval workflow
 until the next publication can replace it with the run link.
 

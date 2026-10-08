@@ -127,6 +127,8 @@ def publication_plan(pr, runs, admissions, evaluations, *, approved, needs_appro
             state = {"state": "failure", "description": "Authoritative producer failed or was cancelled"}
         else:
             state = dict(evaluations.get(context, {"state": "failure", "description": "Missing or invalid producer evidence"}))
+        if state["state"] == "failure" and run:
+            state.setdefault("target_url", f"https://github.com/{pr['base']['repo']['full_name']}/actions/runs/{run['id']}")
         suffix = "; self-reported" if fork else ""
         suffix += "; approval-based" if approved and needs_approval else ""
         state["description"] = state["description"][:140 - len(suffix)] + suffix
@@ -505,15 +507,20 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                 if request:
                     break
                 time.sleep(1)
-        if request and (reservation or dispatched):
-            app.status(head, request_context, "success", "Bookkeeping: approval request created; not a test result",
-                       f"https://github.com/{api.repository}/actions/runs/{request['run_id']}")
+        if request:
+            approval_target = f"https://github.com/{api.repository}/actions/runs/{request['run_id']}"
+            display = plan["ci-approval-state"]
+            display["target_url"] = approval_target
+            app.status(head, "ci-approval-state", display["state"], display["description"], approval_target)
+            if reservation or dispatched:
+                app.status(head, request_context, "success", "Bookkeeping: approval request created; not a test result", approval_target)
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:
         with open(step_summary, "a") as handle:
             handle.write("## Trusted CI publication\n\nInformational commit statuses; required promotion is a maintainer decision.\n\n")
             for context, status in plan.items():
-                handle.write(f"- {context}: {status['state']} — {status['description']}\n")
+                details = f" ([Details]({status['target_url']}))" if status.get("target_url") else ""
+                handle.write(f"- {context}: {status['state']} — {status['description']}{details}\n")
                 source = status.get("source")
                 if source:
                     handle.write(f"  Source: {source['repository']}, {source['workflow_path']}; run {source['run_id']}, attempt {source['attempt']}; "
