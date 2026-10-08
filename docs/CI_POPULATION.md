@@ -171,6 +171,11 @@ authentication or authorization for later entries/heads; the trusted caller stil
 selects policy using the admitted base and exact-head approval.
 Policy approval is a maintainer gate; agents must not perform it.
 Proposed entries never authorize passing exceptions in the verdict library.
+An optional `proposed` section contains `expected_skips` and `deselections` arrays
+with the same entry grammar. It is validated but never activated, even when the
+file's top-level state is `approved` or its exact head is approved. This allows
+fixture coverage proposals to coexist with the approved host policy; the
+maintainer must explicitly promote accepted entries to the active arrays.
 
 When adding a test that needs a skip or deselection, include the policy entry in
 the same PR as the test. Record its tier, environment and exact reason, and the
