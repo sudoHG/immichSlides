@@ -418,6 +418,9 @@ class StrictCITracerTests(unittest.TestCase):
                 {"nodeType": "Test Case", "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()", "result": "Failed"}]}]}
             (evidence / "official-tests.json").write_text(json.dumps(payload))
             validate_case_export(evidence, "ios", "smoke")
+            with self.assertRaises(ValueError):
+                validate_case_export(evidence, "ios", "smoke", {
+                    "totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0})
             payload["testNodes"][0]["children"][0]["nodeIdentifier"] = "OtherTests/testWrong()"
             (evidence / "official-tests.json").write_text(json.dumps(payload))
             with self.assertRaises(ValueError):

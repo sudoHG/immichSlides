@@ -57,10 +57,11 @@ def read_case_official(evidence, suite):
     return combined
 
 
-def validate_case_export(evidence, platform, suite):
+def validate_case_export(evidence, platform, suite, official=None):
     sessions = [("-" + entry["name"], entry["selector"]) for entry in FILTER_PERSON_SESSIONS] if suite == "filter-person" else [
         ("", resolve_suite_selector(platform, suite))]
     seen = 0
+    counts = {"totalTestCount": 0, "passedTests": 0, "failedTests": 0, "skippedTests": 0}
     for suffix, selector in sessions:
         path = evidence / f"official-tests{suffix}.json"
         if not path.is_file():
@@ -69,8 +70,12 @@ def validate_case_export(evidence, platform, suite):
         require(len(facts) == 1, "official export must contain exactly one selected method per invocation")
         bundle, name = selector.split("/", 1)
         require(facts[0]["bundle"] == bundle and facts[0]["identifier"] == name + "()", "official selected method differs from case")
+        require(facts[0]["result"] in {"Passed", "Failed", "Skipped"}, "unknown official method outcome")
+        counts["totalTestCount"] += 1
+        counts[{"Passed": "passedTests", "Failed": "failedTests", "Skipped": "skippedTests"}[facts[0]["result"]]] += 1
         seen += 1
     require(seen > 0, "official test identity export is missing")
+    require(official is None or counts == {key: official[key] for key in counts}, "official counts differ from exported method outcomes")
 
 
 def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
@@ -250,7 +255,7 @@ def main(argv=None):
         try:
             official = read_case_official(evidence, case["suite"])
             if official is not None and official["totalTestCount"] > 0:
-                validate_case_export(evidence, args.platform, case["suite"])
+                validate_case_export(evidence, args.platform, case["suite"], official)
         except (ValueError, OSError) as error:
             phase["official_error"] = str(error)
             official = None

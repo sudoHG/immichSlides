@@ -232,6 +232,10 @@ def main(argv=None):
         errors.append("invalid or missing scheduling record: " + str(error))
         plan = {"started_epoch": time.time(), "max_parallel": 2}
     scheduled = [case_identity(case) for shard in planned for case in shard["cases"]]
+    expected_artifacts = {f"nightly-strict-{shard['id']}-{run['id']}-{run['attempt']}" for shard in planned}
+    actual_artifacts = {path.name for path in args.records_dir.iterdir()} if args.records_dir.is_dir() else set()
+    if actual_artifacts - expected_artifacts:
+        errors.append("unexpected shard artifacts: " + str(sorted(actual_artifacts - expected_artifacts)))
     for shard in planned:
         paths = list(args.records_dir.glob(f"nightly-strict-{shard['id']}-{run['id']}-{run['attempt']}/summary.json"))
         if len(paths) != 1:
