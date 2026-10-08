@@ -14,7 +14,6 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR))
 
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256  # noqa: E402
 from strict_e2e_out_of_order_contract import (  # noqa: E402

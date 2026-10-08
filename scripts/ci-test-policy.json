@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "approval_state": "approved",
+  "approval_record": {
+    "approver": "maintainer sudoHG",
+    "date": "2026-10-08",
+    "tier": "host",
+    "link": "https://github.com/sudoHG/immichSlides/issues/88#issuecomment-6050353140"
+  },
+  "expected_skips": [
+    {
+      "kind": "python",
+      "key_pattern": "test_strict_e2e_photo_identity.ReviewedScreenshotCalibrationTests.test_dark_paused_a2_is_still_a2_not_black",
+      "dimensions": {},
+      "tier": "host",
+      "environment": "hermetic",
+      "reason": "STRICT_E2E_REVIEWED_SCREENSHOTS is not set"
+    },
+    {
+      "kind": "python",
+      "key_pattern": "test_strict_e2e_photo_identity.ReviewedScreenshotCalibrationTests.test_ipad_history_round_trip_is_not_iphone_sequence",
+      "dimensions": {},
+      "tier": "host",
+      "environment": "hermetic",
+      "reason": "STRICT_E2E_REVIEWED_SCREENSHOTS is not set"
+    },
+    {
+      "kind": "python",
+      "key_pattern": "test_strict_e2e_photo_identity.ReviewedScreenshotCalibrationTests.test_iphone_history_round_trip_a2_a3_a4",
+      "dimensions": {},
+      "tier": "host",
+      "environment": "hermetic",
+      "reason": "STRICT_E2E_REVIEWED_SCREENSHOTS is not set"
+    },
+    {
+      "kind": "python",
+      "key_pattern": "test_strict_e2e_photo_identity.ReviewedScreenshotCalibrationTests.test_transition_boundary_keeps_a2_and_rejects_fixture3",
+      "dimensions": {},
+      "tier": "host",
+      "environment": "hermetic",
+      "reason": "STRICT_E2E_REVIEWED_SCREENSHOTS is not set"
+    },
+    {
+      "kind": "python",
+      "key_pattern": "test_strict_e2e_photo_identity.ReviewedScreenshotCalibrationTests.test_tvos_pause_hold_and_resume",
+      "dimensions": {},
+      "tier": "host",
+      "environment": "hermetic",
+      "reason": "STRICT_E2E_REVIEWED_SCREENSHOTS is not set"
+    }
+  ],
+  "deselections": []
+}

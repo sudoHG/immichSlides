@@ -14,7 +14,6 @@ from PIL import Image, ImageDraw, ImageFilter
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR))
 
 from album_server_narrow_contract import (  # noqa: E402
     EMPTY_FILTERED_COPY,

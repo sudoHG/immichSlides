@@ -17,7 +17,6 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-sys.path.insert(0, str(SCRIPT_DIR))
 
 from strict_e2e_photo_identity import (  # noqa: E402
     IdentityAssertionError,

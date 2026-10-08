@@ -118,6 +118,20 @@ Skip **only when the environment cannot run the test**:
 
 State the reason in one plain English sentence.
 
+An unregistered skip fails the host checks. When adding a test that needs an expected
+skip or a tier deselection, include its `scripts/ci-test-policy.json` change in the
+same PR: specify the exact tier, environment and reason, plus the owning tier for
+a deselection. That CI policy change requires maintainer approval of the PR's exact
+head SHA; a later push requires fresh approval. New entries become effective in
+the trusted verdict only after that approval. Candidate host checks read their own
+policy and may pass earlier; their result is informational. Adding an entry to an
+already approved file does not require resetting its whole-file approval state.
+See [Static population and verdict policy](CI_POPULATION.md#expected-skips-and-tier-deselections)
+for the entry formats and accounting rules.
+Approval covers only the registered tier and environment. Host approval does not
+authorize unit or UI exceptions; each tier requires measured identities/reasons
+and its own head-SHA policy approval.
+
 Strict end-to-end tests need the local fixture server and inputs that `scripts/run_strict_e2e.py` provides. They live in the `StrictE2E` test plans; the default and Evidence plans leave them out. Run without the runner, they fail and name the missing input, so a strict test that lands in another plan cannot hide. The runner also rejects any skipped test.
 
 **When the behavior under test does not happen, fail. Do not skip:**
@@ -138,6 +152,12 @@ These are exactly the problems tests exist to catch.
 - Python `test_*.py` modules remain discovery entry points. Moved methods live in non-discovered
   `*_test_*_cases.py` mixins and shared fixtures in `*_test_fixtures.py`; the original classes inherit
   those methods so discovered test IDs and counts stay unchanged.
+  Entry points and their test-class/mixin providers must follow the
+  [Python declaration grammar](CI_POPULATION.md#python-declaration-grammar);
+  unsupported discovery-changing forms fail host checks with `population-invalid`.
+  Use `with patch(...)` inside the method body instead of patch decorators,
+  compile regexes inside functions, and use plain helper classes instead of
+  decorating classes in these modules.
 - Flows that are the same on iOS and tvOS live in shared helpers. Platform files contain only the differences.
 
 ## 6. Checklist before submitting
@@ -366,6 +386,10 @@ Review the exported originals against the marks, history order and transition ex
 not automatically produce this dataset's filenames. Run with
 `STRICT_E2E_REVIEWED_SCREENSHOTS='<external-directory>' python3 -B -m unittest discover -s scripts -p 'test_strict_e2e_photo_identity.py'`.
 Synthetic images do not replace reviewed Simulator captures for these calibration cases.
+The host entry point removes `STRICT_E2E_REVIEWED_SCREENSHOTS` from every check's
+environment so its `hermetic` skip policy stays accurate. Run reviewed calibration
+directly with the unittest command above; setting the variable for `check_all.sh`
+does not enable calibration.
 
 ### Standalone SmartFill planner benchmark
 

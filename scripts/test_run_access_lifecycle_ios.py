@@ -15,7 +15,6 @@ from unittest import mock
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR))
 
 from run_access_lifecycle_ios import (  # noqa: E402
     DEVICE_SELECTOR,

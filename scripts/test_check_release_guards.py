@@ -5,7 +5,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import check_release_guards as guards
 
