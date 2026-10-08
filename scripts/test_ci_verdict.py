@@ -618,6 +618,7 @@ class AdmissionVerdictTests(unittest.TestCase):
                                        (["scripts/ui_test_inventory.py"], set(), True, True),
                                        (["scripts/ci-pins.json"], set(), True, True),
                                        (["scripts/ci-ui-shards.json"], set(), True, True),
+                                       (["scripts/test_timeout_allowlist.json"], set(), True, True),
                                        (["immichSlides-iOS.xctestplan"], set(), True, True),
                                        (["immichSlides-tvOS.xctestplan"], set(), True, True),
                                        ([".github/workflows/ci-gate.yml"], set(), True, True),

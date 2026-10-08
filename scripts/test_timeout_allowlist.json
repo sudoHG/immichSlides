@@ -14,19 +14,19 @@
   {
     "path": "immichSlidesTests/AsyncTestWaitTests.swift",
     "function": "AsyncTestWaitTests.polls with sleep when an interval is given",
-    "literal": ".milliseconds(20",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/AsyncTestWaitTests.swift",
-    "function": "AsyncTestWaitTests.polls with sleep when an interval is given",
     "literal": "pollInterval:.milliseconds(1)",
     "count": 1
   },
   {
     "path": "immichSlidesTests/AsyncTestWaitTests.swift",
+    "function": "AsyncTestWaitTests.polls with sleep when an interval is given",
+    "literal": "sleep(for:.milliseconds(20))",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesTests/AsyncTestWaitTests.swift",
     "function": "AsyncTestWaitTests.returns false instead of hanging when the condition never holds",
-    "literal": ".minutes(1",
+    "literal": ".minutes(1)",
     "count": 1
   },
   {
@@ -44,7 +44,7 @@
   {
     "path": "immichSlidesTests/LateLoadRealPathHTTPFixture.swift",
     "function": "LateLoadLocalHTTPFixture.waitUntil",
-    "literal": "nanoseconds:20_000_000",
+    "literal": "sleep(nanoseconds:20_000_000)",
     "count": 1
   },
   {
@@ -104,13 +104,13 @@
   {
     "path": "immichSlidesTests/PlaybackPoolResolverTests.swift",
     "function": "PlaybackPoolResolverTests.solo only resolver emits live stage events before the random provider returns",
-    "literal": "nanoseconds:1_000_000_000",
+    "literal": "pollInterval:.milliseconds(1)",
     "count": 1
   },
   {
     "path": "immichSlidesTests/PlaybackPoolResolverTests.swift",
     "function": "PlaybackPoolResolverTests.solo only resolver emits live stage events before the random provider returns",
-    "literal": "pollInterval:.milliseconds(1)",
+    "literal": "sleep(nanoseconds:1_000_000_000)",
     "count": 1
   },
   {
@@ -152,7 +152,7 @@
   {
     "path": "immichSlidesTests/PlaybackSmartFillPlannerTests+CandidateSearch.swift",
     "function": "PlaybackSmartFillPlannerTests.planner's pure computation stays bounded for a 21-candidate workload",
-    "literal": ".milliseconds(900",
+    "literal": ".milliseconds(900)",
     "count": 1
   },
   {
@@ -166,6 +166,24 @@
     "function": "ScenePresentationReducerEffectResultTests.planning completion only retries the demand that still applies",
     "literal": "deadline:6",
     "count": 2
+  },
+  {
+    "path": "immichSlidesTests/ScenePresentationReducerEffectResultTests.swift",
+    "function": "ScenePresentationReducerEffectResultTests.planning completion only retries the demand that still applies",
+    "literal": "varcompletionTime:TimeInterval=7",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesTests/ScenePresentationReducerEffectResultTests.swift",
+    "function": "ScenePresentationReducerEffectResultTests.planning completion only retries the demand that still applies",
+    "literal": "varfailureTime:TimeInterval=11.1",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesTests/SceneTransitionDiagnosticTests.swift",
+    "function": "SceneTransitionDiagnosticTests.phases that run backwards or never settle are rejected",
+    "literal": "letrehold=[crossfade(outgoing:0.67,incoming:0.33,progress:0.2),held(0.2),settledNewPhoto]",
+    "count": 1
   },
   {
     "path": "immichSlidesTests/SettingsResumeContractTests+Timing.swift",
@@ -198,6 +216,18 @@
     "count": 4
   },
   {
+    "path": "immichSlidesTests/SlideShowViewModelAutoPlayIdentityTests.swift",
+    "function": "VirtualClock.<scope>",
+    "literal": "varnow:TimeInterval=0",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesTests/SlideShowViewModelAutoPlayOutgoingExifTests.swift",
+    "function": "SlideShowViewModelAutoPlayOutgoingExifTests.PresentationClock.<scope>",
+    "literal": "varnow:TimeInterval=0",
+    "count": 1
+  },
+  {
     "path": "immichSlidesTests/SlideShowViewModelNavigationSemanticsTests+Fixtures.swift",
     "function": "SlideShowViewModelNavigationSemanticsTests.waitUntilForTesting",
     "literal": "pollInterval:.milliseconds(2)",
@@ -212,7 +242,7 @@
   {
     "path": "immichSlidesTests/SlideShowViewModelStartupTests.swift",
     "function": "SlideShowViewModelStartupTests.<scope>",
-    "literal": "initialSceneRequestPollInterval:Duration=.milliseconds(30)",
+    "literal": "letinitialSceneRequestPollInterval:Duration=.milliseconds(30)",
     "count": 1
   },
   {
@@ -231,6 +261,12 @@
     "path": "immichSlidesTests/SlideShowViewModelVisibleSceneIdentityTests+Fixtures.swift",
     "function": "SlideShowViewModelVisibleSceneIdentityTests.<scope>",
     "literal": "letpreparedNextWaitTimeoutSeconds:TimeInterval=1",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesTests/SlideShowViewModelVisibleSceneIdentityTests+Fixtures.swift",
+    "function": "SlideShowViewModelVisibleSceneIdentityTests.PresentationTestClock.<scope>",
+    "literal": "varnow:TimeInterval=0",
     "count": 1
   },
   {
@@ -260,7 +296,7 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift",
     "function": "AccessLifecycleIOSUITests.captureRequiredMark",
-    "literal": "addingTimeInterval(0.4",
+    "literal": "addingTimeInterval(0.4)",
     "count": 1
   },
   {
@@ -296,7 +332,7 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift",
     "function": "AccessLifecycleIOSUITests.findFirstExistingIdentifiedText",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
@@ -332,7 +368,7 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift",
     "function": "AccessLifecycleIOSUITests.openSettingsSection",
-    "literal": "addingTimeInterval(0.3",
+    "literal": "addingTimeInterval(0.3)",
     "count": 1
   },
   {
@@ -356,13 +392,13 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift",
     "function": "AccessLifecycleIOSUITests.returnToSlideshowFromSettings",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift",
     "function": "AccessLifecycleIOSUITests.returnToSlideshowFromSettings",
-    "literal": "addingTimeInterval(0.3",
+    "literal": "addingTimeInterval(0.3)",
     "count": 2
   },
   {
@@ -410,7 +446,7 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift",
     "function": "AccessLifecycleIOSUITests.waitForSaveEnabled",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
@@ -506,7 +542,7 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift",
     "function": "AccessLifecycleIOSUITests.dismissSystemSavePromptIfPresent",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
@@ -518,13 +554,13 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift",
     "function": "AccessLifecycleIOSUITests.enablePasswordFromSettingsUI",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift",
     "function": "AccessLifecycleIOSUITests.enablePasswordFromSettingsUI",
-    "literal": "addingTimeInterval(2",
+    "literal": "addingTimeInterval(2)",
     "count": 1
   },
   {
@@ -554,7 +590,7 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift",
     "function": "AccessLifecycleIOSUITests.enablePinAndProveGate",
-    "literal": "addingTimeInterval(0.5",
+    "literal": "addingTimeInterval(0.5)",
     "count": 1
   },
   {
@@ -626,7 +662,7 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift",
     "function": "AccessLifecycleIOSUITests.provePasswordGateAfterRestart",
-    "literal": "addingTimeInterval(0.5",
+    "literal": "addingTimeInterval(0.5)",
     "count": 1
   },
   {
@@ -776,7 +812,13 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift",
     "function": "AccessLifecycleIOSUITests.exercisePauseNextContinueVisibleTiming",
-    "literal": "addingTimeInterval(0.4",
+    "literal": "addingTimeInterval(0.4)",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift",
+    "function": "AccessLifecycleIOSUITests.exercisePauseNextContinueVisibleTiming",
+    "literal": "addingTimeInterval(interval/2)",
     "count": 1
   },
   {
@@ -800,7 +842,13 @@
   {
     "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift",
     "function": "AccessLifecycleIOSUITests.waitUntil",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift",
+    "function": "AccessLifecycleIOSUITests.watchContinueToFirstAdvance",
+    "literal": "varearlyElapsed:TimeInterval=0",
     "count": 1
   },
   {
@@ -960,6 +1008,30 @@
     "count": 1
   },
   {
+    "path": "immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift",
+    "function": "AccessLifecycleTVOSUITests.changeTVOSFourSettingsFromInitial",
+    "literal": "letinitialInterval=initial[]as?Int??5",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift",
+    "function": "AccessLifecycleTVOSUITests.exerciseTVOSPauseNextContinueVisibleTiming",
+    "literal": "addingTimeInterval(interval/2)",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift",
+    "function": "AccessLifecycleTVOSUITests.watchTVOSContinueToFirstAdvance",
+    "literal": "varearlyElapsed:TimeInterval=0",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/AccessLifecycleTVOSUITests.swift",
+    "function": "AccessLifecycleTVOSUITests.Timing.<scope>",
+    "literal": "letcontrolBarHide:TimeInterval=9",
+    "count": 1
+  },
+  {
     "path": "immichSlidesUITests/AccessLifecycleTVOSUITests.swift",
     "function": "AccessLifecycleTVOSUITests.Timing.<scope>",
     "literal": "letfocusPoll:TimeInterval=0.08",
@@ -975,6 +1047,24 @@
     "path": "immichSlidesUITests/AccessLifecycleTVOSUITests.swift",
     "function": "AccessLifecycleTVOSUITests.Timing.<scope>",
     "literal": "letsceneSettle:TimeInterval=2.5",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/AccessLifecycleTVOSUITests.swift",
+    "function": "AccessLifecycleTVOSUITests.Timing.<scope>",
+    "literal": "letsceneStableExtra:TimeInterval=1",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/AccessLifecycleTVOSUITests.swift",
+    "function": "AccessLifecycleTVOSUITests.Timing.<scope>",
+    "literal": "letsystemPauseHold:TimeInterval=9",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/AccessLifecycleTVOSUITests.swift",
+    "function": "AccessLifecycleTVOSUITests.Timing.<scope>",
+    "literal": "lettransitionHold:TimeInterval=1.2",
     "count": 1
   },
   {
@@ -1118,7 +1208,7 @@
   {
     "path": "immichSlidesUITests/AppStoreScreenshotUITests+Support.swift",
     "function": "AppStoreScreenshotUITests.capture",
-    "literal": "addingTimeInterval(0.7",
+    "literal": "addingTimeInterval(0.7)",
     "count": 1
   },
   {
@@ -1538,7 +1628,7 @@
   {
     "path": "immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift",
     "function": "PlaybackHistoryIOSUITests.announceManualLifecycleCaptureWindowIfRequested",
-    "literal": "addingTimeInterval(1",
+    "literal": "addingTimeInterval(1)",
     "count": 1
   },
   {
@@ -1568,7 +1658,7 @@
   {
     "path": "immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift",
     "function": "PlaybackHistoryIOSUITests.returnToSlideshowFromPlaybackSettings",
-    "literal": "addingTimeInterval(0.3",
+    "literal": "addingTimeInterval(0.3)",
     "count": 1
   },
   {
@@ -1640,7 +1730,7 @@
   {
     "path": "immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift",
     "function": "PlaybackHistoryIOSUITests.waitUntil",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
@@ -1664,7 +1754,7 @@
   {
     "path": "immichSlidesUITests/PlaybackHistoryIOSUITests.swift",
     "function": "PlaybackHistoryIOSUITests.runManualLifecycleContract",
-    "literal": "addingTimeInterval(0.8",
+    "literal": "addingTimeInterval(0.8)",
     "count": 1
   },
   {
@@ -1694,13 +1784,13 @@
   {
     "path": "immichSlidesUITests/PlaybackHistoryIOSUITests.swift",
     "function": "PlaybackHistoryIOSUITests.runNormalAutoplayFiveSecondContract",
-    "literal": "addingTimeInterval(0.8",
+    "literal": "addingTimeInterval(0.8)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/PlaybackHistoryIOSUITests.swift",
     "function": "PlaybackHistoryIOSUITests.runNormalAutoplayFiveSecondContract",
-    "literal": "addingTimeInterval(4.2",
+    "literal": "addingTimeInterval(4.2)",
     "count": 1
   },
   {
@@ -1813,6 +1903,12 @@
   },
   {
     "path": "immichSlidesUITests/PlaybackRequestLifecycleDiagnosticsUITests.swift",
+    "function": "PlaybackRequestLifecycleDiagnosticsUITests.<scope>",
+    "literal": "letpreviousFlowTransitionSettleDelay:TimeInterval=0.65",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/PlaybackRequestLifecycleDiagnosticsUITests.swift",
     "function": "PlaybackRequestLifecycleDiagnosticsUITests.flushRequestLifecycleEvidence",
     "literal": "timeout:5",
     "count": 3
@@ -1856,7 +1952,7 @@
   {
     "path": "immichSlidesUITests/PlaybackRequestLifecycleDiagnosticsUITests.swift",
     "function": "PlaybackRequestLifecycleDiagnosticsUITests.runSinglePhotoKenBurnsRuntimeSnapshots",
-    "literal": "addingTimeInterval(6",
+    "literal": "addingTimeInterval(6)",
     "count": 2
   },
   {
@@ -1880,7 +1976,7 @@
   {
     "path": "immichSlidesUITests/PlaybackRequestLifecycleDiagnosticsUITests.swift",
     "function": "PlaybackRequestLifecycleDiagnosticsUITests.waitUntil",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
@@ -2000,7 +2096,7 @@
   {
     "path": "immichSlidesUITests/PlaybackSmartFillTVOSVisualUITests+Collection.swift",
     "function": "PlaybackSmartFillTVOSVisualUITests.startFilteredPlaybackFromModeSelection",
-    "literal": "addingTimeInterval(0.16",
+    "literal": "addingTimeInterval(0.16)",
     "count": 4
   },
   {
@@ -2030,7 +2126,7 @@
   {
     "path": "immichSlidesUITests/PlaybackSmartFillTVOSVisualUITests+Collection.swift",
     "function": "PlaybackSmartFillTVOSVisualUITests.startRandomPlaybackFromModeSelection",
-    "literal": "addingTimeInterval(0.16",
+    "literal": "addingTimeInterval(0.16)",
     "count": 2
   },
   {
@@ -2048,7 +2144,7 @@
   {
     "path": "immichSlidesUITests/PlaybackSmartFillTVOSVisualUITests+Manifest.swift",
     "function": "PlaybackSmartFillTVOSVisualUITests.pressNext",
-    "literal": "addingTimeInterval(0.16",
+    "literal": "addingTimeInterval(0.16)",
     "count": 3
   },
   {
@@ -2060,19 +2156,19 @@
   {
     "path": "immichSlidesUITests/PlaybackSmartFillTVOSVisualUITests+Motion.swift",
     "function": "PlaybackSmartFillTVOSVisualUITests.waitUntil",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/PlaybackSmartFillTVOSVisualUITests.swift",
     "function": "PlaybackSmartFillTVOSVisualUITests.testPlaybackTransitionAnimationEvidenceControlBarQuickSwitchOnAppleTV",
-    "literal": "addingTimeInterval(0.35",
+    "literal": "addingTimeInterval(0.35)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/PlaybackSmartFillTVOSVisualUITests.swift",
     "function": "PlaybackSmartFillTVOSVisualUITests.testPlaybackTransitionAnimationEvidenceControlBarQuickSwitchOnAppleTV",
-    "literal": "addingTimeInterval(0.65",
+    "literal": "addingTimeInterval(0.65)",
     "count": 1
   },
   {
@@ -2186,13 +2282,13 @@
   {
     "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests+Collection.swift",
     "function": "PlaybackSmartFillVisualUITests.runPlaybackTransitionAnimationEvidence",
-    "literal": "addingTimeInterval(0.25",
+    "literal": "addingTimeInterval(0.25)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests+Collection.swift",
     "function": "PlaybackSmartFillVisualUITests.runPlaybackTransitionAnimationEvidence",
-    "literal": "addingTimeInterval(0.65",
+    "literal": "addingTimeInterval(0.65)",
     "count": 1
   },
   {
@@ -2234,7 +2330,7 @@
   {
     "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests+Manifest.swift",
     "function": "PlaybackSmartFillVisualUITests.waitUntil",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
@@ -2258,6 +2354,18 @@
   {
     "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests.swift",
     "function": "PlaybackSmartFillVisualUITests.testPlaybackTransitionExifPresenceEvidenceSmartFillEdges",
+    "literal": "letmidTransitionDelay:TimeInterval=0.14",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests.swift",
+    "function": "PlaybackSmartFillVisualUITests.testPlaybackTransitionExifPresenceEvidenceSmartFillEdges",
+    "literal": "letsettledDelay:TimeInterval=0.55",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests.swift",
+    "function": "PlaybackSmartFillVisualUITests.testPlaybackTransitionExifPresenceEvidenceSmartFillEdges",
     "literal": "timeout:10",
     "count": 1
   },
@@ -2276,25 +2384,25 @@
   {
     "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests.swift",
     "function": "PlaybackSmartFillVisualUITests.testSmartFillMotionInteractionLivenessEvidence",
-    "literal": "addingTimeInterval(1.0",
+    "literal": "addingTimeInterval(1.0)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests.swift",
     "function": "PlaybackSmartFillVisualUITests.testSmartFillMotionInteractionLivenessEvidence",
-    "literal": "addingTimeInterval(1.2",
+    "literal": "addingTimeInterval(1.2)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests.swift",
     "function": "PlaybackSmartFillVisualUITests.testSmartFillMotionInteractionLivenessEvidence",
-    "literal": "addingTimeInterval(1.5",
+    "literal": "addingTimeInterval(1.5)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/PlaybackSmartFillVisualUITests.swift",
     "function": "PlaybackSmartFillVisualUITests.testSmartFillMotionInteractionLivenessEvidence",
-    "literal": "addingTimeInterval(2.5",
+    "literal": "addingTimeInterval(2.5)",
     "count": 1
   },
   {
@@ -2366,6 +2474,18 @@
   {
     "path": "immichSlidesUITests/ReduceMotionUITests.swift",
     "function": "MotionTiming.<scope>",
+    "literal": "letpositiveControlHold:TimeInterval=8",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/ReduceMotionUITests.swift",
+    "function": "MotionTiming.<scope>",
+    "literal": "letreducedMotionHold:TimeInterval=3.5",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/ReduceMotionUITests.swift",
+    "function": "MotionTiming.<scope>",
     "literal": "letsettingsPageTimeout:TimeInterval=4",
     "count": 1
   },
@@ -2373,6 +2493,12 @@
     "path": "immichSlidesUITests/ReduceMotionUITests.swift",
     "function": "MotionTiming.<scope>",
     "literal": "letsettingsReadbackTimeout:TimeInterval=3",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/RotationUITests.swift",
+    "function": "RotationTiming.<scope>",
+    "literal": "letnaturalSwitchEarliest:TimeInterval=30",
     "count": 1
   },
   {
@@ -2534,7 +2660,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift",
     "function": "StrictE2EFilterIOSUITests.capturePlaybackPNG",
-    "literal": "addingTimeInterval(0.8",
+    "literal": "addingTimeInterval(0.8)",
     "count": 1
   },
   {
@@ -2618,7 +2744,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift",
     "function": "StrictE2EFilterIOSUITests.returnToSlideshowFromSettings",
-    "literal": "addingTimeInterval(0.3",
+    "literal": "addingTimeInterval(0.3)",
     "count": 1
   },
   {
@@ -2714,7 +2840,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterIOSUITests+Playback.swift",
     "function": "StrictE2EFilterIOSUITests.dismissSystemSavePasswordPromptIfPresent",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
@@ -2774,7 +2900,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterIOSUITests+Playback.swift",
     "function": "StrictE2EFilterIOSUITests.openAlbumFilterHandlingSystemPrompt",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
@@ -2906,7 +3032,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterIOSUITests+Support.swift",
     "function": "StrictE2EFilterIOSUITests.chooseOnboardingModeAndContinue",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
@@ -2966,13 +3092,13 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterIOSUITests+Support.swift",
     "function": "StrictE2EFilterIOSUITests.waitForSaveEnabled",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/StrictE2EFilterIOSUITests+Support.swift",
     "function": "StrictE2EFilterIOSUITests.waitUntil",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
@@ -3044,7 +3170,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterIOSUITests.swift",
     "function": "StrictE2EFilterIOSUITests.testSmartFillDisplayPolicyChangesMultiToSingle",
-    "literal": "addingTimeInterval(1.0",
+    "literal": "addingTimeInterval(1.0)",
     "count": 1
   },
   {
@@ -3068,7 +3194,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterIOSUITests.swift",
     "function": "StrictE2EFilterIOSUITests.waitForDisplayControlsToHide",
-    "literal": "addingTimeInterval(0.5",
+    "literal": "addingTimeInterval(0.5)",
     "count": 1
   },
   {
@@ -3182,7 +3308,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift",
     "function": "StrictE2EFilterTVOSUITests.focusAndConfigurePerson",
-    "literal": "addingTimeInterval(0.4",
+    "literal": "addingTimeInterval(0.4)",
     "count": 1
   },
   {
@@ -3194,7 +3320,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift",
     "function": "StrictE2EFilterTVOSUITests.isolateAndSelectEmptyAlbum",
-    "literal": "addingTimeInterval(0.4",
+    "literal": "addingTimeInterval(0.4)",
     "count": 1
   },
   {
@@ -3206,7 +3332,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift",
     "function": "StrictE2EFilterTVOSUITests.isolatePersonSelection",
-    "literal": "addingTimeInterval(0.4",
+    "literal": "addingTimeInterval(0.4)",
     "count": 1
   },
   {
@@ -3224,7 +3350,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift",
     "function": "StrictE2EFilterTVOSUITests.namedFilterModeBlockedAlert",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
@@ -3236,7 +3362,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift",
     "function": "StrictE2EFilterTVOSUITests.openFilterConfigFromPlaybackSettings",
-    "literal": "addingTimeInterval(0.8",
+    "literal": "addingTimeInterval(0.8)",
     "count": 1
   },
   {
@@ -3254,7 +3380,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift",
     "function": "StrictE2EFilterTVOSUITests.openFilterEditorFromCurrentSurface",
-    "literal": "addingTimeInterval(0.8",
+    "literal": "addingTimeInterval(0.8)",
     "count": 1
   },
   {
@@ -3302,7 +3428,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift",
     "function": "StrictE2EFilterTVOSUITests.returnToSlideshowFromSettings",
-    "literal": "addingTimeInterval(0.6",
+    "literal": "addingTimeInterval(0.6)",
     "count": 1
   },
   {
@@ -3356,7 +3482,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests.swift",
     "function": "StrictE2EFilterTVOSUITests.openAlbumFilter",
-    "literal": "addingTimeInterval(1.2",
+    "literal": "addingTimeInterval(1.2)",
     "count": 1
   },
   {
@@ -3380,7 +3506,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests.swift",
     "function": "StrictE2EFilterTVOSUITests.openPeopleFilter",
-    "literal": "addingTimeInterval(1.2",
+    "literal": "addingTimeInterval(1.2)",
     "count": 1
   },
   {
@@ -3392,7 +3518,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests.swift",
     "function": "StrictE2EFilterTVOSUITests.returnToFilterSummary",
-    "literal": "addingTimeInterval(0.6",
+    "literal": "addingTimeInterval(0.6)",
     "count": 1
   },
   {
@@ -3512,7 +3638,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFilterTVOSUITests.swift",
     "function": "StrictE2EFilterTVOSUITests.testTVOSTargetAlbumPlaybackAndEmptyStart",
-    "literal": "addingTimeInterval(1",
+    "literal": "addingTimeInterval(1)",
     "count": 1
   },
   {
@@ -3566,7 +3692,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift",
     "function": "StrictE2EFirstBatchIOSUITests.captureHistoryIdentity",
-    "literal": "addingTimeInterval(0.8",
+    "literal": "addingTimeInterval(0.8)",
     "count": 1
   },
   {
@@ -3638,7 +3764,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift",
     "function": "StrictE2EFirstBatchIOSUITests.returnToModeSelectionFromFilterSummary",
-    "literal": "addingTimeInterval(0.6",
+    "literal": "addingTimeInterval(0.6)",
     "count": 1
   },
   {
@@ -3674,13 +3800,13 @@
   {
     "path": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift",
     "function": "StrictE2EFirstBatchIOSUITests.waitForSaveEnabled",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift",
     "function": "StrictE2EFirstBatchIOSUITests.waitUntil",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
@@ -3722,7 +3848,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift",
     "function": "StrictE2EFirstBatchIOSUITests.returnToSlideshowFromPlaybackSettings",
-    "literal": "addingTimeInterval(0.3",
+    "literal": "addingTimeInterval(0.3)",
     "count": 1
   },
   {
@@ -3752,7 +3878,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift",
     "function": "StrictE2EFirstBatchIOSUITests.waitForSettledPhoto",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
@@ -3836,7 +3962,7 @@
   {
     "path": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift",
     "function": "StrictE2EFirstBatchIOSUITests.testSinglePhotoOutgoingPauseWindowCapture",
-    "literal": "addingTimeInterval(0.3",
+    "literal": "addingTimeInterval(0.3)",
     "count": 1
   },
   {
@@ -3862,6 +3988,12 @@
     "function": "StrictE2EFirstBatchIOSUITests.testSinglePhotoOutgoingPauseWindowCapture",
     "literal": "timeout:8",
     "count": 2
+  },
+  {
+    "path": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift",
+    "function": "StrictE2EFirstBatchIOSUITests.testSinglePhotoOutgoingPauseWindowCapture",
+    "literal": "varhitProbeUptime:TimeInterval=0",
+    "count": 1
   },
   {
     "path": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift",
@@ -3908,7 +4040,7 @@
   {
     "path": "immichSlidesUITests/StrictE2ELateImageIOSUITests.swift",
     "function": "StrictE2ELateImageIOSUITests.enterPlaybackThenAdvanceTwice",
-    "literal": "addingTimeInterval(0.02",
+    "literal": "addingTimeInterval(0.02)",
     "count": 1
   },
   {
@@ -3956,13 +4088,13 @@
   {
     "path": "immichSlidesUITests/StrictE2ELateImageIOSUITests.swift",
     "function": "StrictE2ELateImageIOSUITests.waitForSaveEnabled",
-    "literal": "addingTimeInterval(0.2",
+    "literal": "addingTimeInterval(0.2)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/StrictE2ELateImageIOSUITests.swift",
     "function": "StrictE2ELateImageIOSUITests.waitUntil",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
@@ -4106,13 +4238,13 @@
   {
     "path": "immichSlidesUITests/StrictE2ESmokeUITests.swift",
     "function": "StrictE2ESmokeUITests.waitForTVOSConnectionSuccess",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
     "path": "immichSlidesUITests/StrictE2ESmokeUITests.swift",
     "function": "StrictE2ESmokeUITests.waitForTVOSFocus",
-    "literal": "addingTimeInterval(0.1",
+    "literal": "addingTimeInterval(0.1)",
     "count": 1
   },
   {
@@ -4340,6 +4472,12 @@
   {
     "path": "immichSlidesUITests/UITestSupport.swift",
     "function": "Timing.<scope>",
+    "literal": "letmultiPhotoHold:TimeInterval=1",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/UITestSupport.swift",
+    "function": "Timing.<scope>",
     "literal": "letmultiPhotoWait:TimeInterval=4",
     "count": 1
   },
@@ -4347,6 +4485,12 @@
     "path": "immichSlidesUITests/UITestSupport.swift",
     "function": "Timing.<scope>",
     "literal": "letpoll:TimeInterval=0.1",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/UITestSupport.swift",
+    "function": "Timing.<scope>",
+    "literal": "letstableFramePair:TimeInterval=0.5",
     "count": 1
   },
   {
@@ -4580,13 +4724,13 @@
   {
     "path": "TestSupport/AccessLifecycleContract.swift",
     "function": "AccessLifecycleContract.<scope>",
-    "literal": "ipadStableImageDeadlineAfterTransition:TimeInterval=4.0",
+    "literal": "letipadNewStableMarkConfirmWindow:TimeInterval=1.0",
     "count": 1
   },
   {
     "path": "TestSupport/AccessLifecycleContract.swift",
     "function": "AccessLifecycleContract.<scope>",
-    "literal": "letipadNewStableMarkConfirmWindow:TimeInterval=1.0",
+    "literal": "letipadStableImageDeadlineAfterTransition:TimeInterval=4.0",
     "count": 1
   },
   {
@@ -4604,6 +4748,12 @@
   {
     "path": "TestSupport/AccessLifecycleContract.swift",
     "function": "AccessLifecycleContract.<scope>",
+    "literal": "letnewStableMarkPollInterval:TimeInterval=0.1",
+    "count": 1
+  },
+  {
+    "path": "TestSupport/AccessLifecycleContract.swift",
+    "function": "AccessLifecycleContract.<scope>",
     "literal": "lettimingToleranceSeconds:TimeInterval=0.001",
     "count": 1
   },
@@ -4611,12 +4761,6 @@
     "path": "TestSupport/AccessLifecycleContract.swift",
     "function": "AccessLifecycleContract.<scope>",
     "literal": "letwakeEvidenceBudgetSeconds:TimeInterval=2.5",
-    "count": 1
-  },
-  {
-    "path": "TestSupport/AccessLifecycleContract.swift",
-    "function": "AccessLifecycleContract.<scope>",
-    "literal": "newStableMarkPollInterval:TimeInterval=0.1",
     "count": 1
   },
   {

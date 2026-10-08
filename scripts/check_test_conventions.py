@@ -801,13 +801,30 @@ def timeout_literal_inventory(path: str, source: str) -> list[dict]:
             names.append("<scope>")
         return ".".join(names)
 
+    # Keep the original expression for the ratchet, but exclude only classified argument regions
+    # from numeric detection. Raw arithmetic outside a nested classified call must still be counted.
+    unclassified = list(code)
+    for match in re.finditer(r"\bTestWait\.(seconds|until|observe)\s*\(", code):
+        opening = code.find("(", match.start(), match.end())
+        closing = find_matching(code, opening, "(", ")")
+        if closing < 0:
+            continue
+        arguments = swift_call_argument_spans(code, opening + 1, closing)
+        if not arguments:
+            continue
+        first = code[slice(*arguments[0])].strip()
+        if match.group(1) == "observe" and not re.match(r"seconds\s*:", first):
+            continue
+        for index, (start, end) in enumerate(arguments):
+            argument = code[start:end]
+            # Conditions can be passed inside the parentheses instead of as a trailing closure.
+            if "{" in argument or (index and not re.match(r"\s*pollIntervalSeconds\s*:", argument)):
+                continue
+            for offset in range(start, end):
+                if unclassified[offset] not in "\n\r":
+                    unclassified[offset] = " "
+    unclassified = "".join(unclassified)
     number = r"(?<![\w.$])[-+]?(?:0[xX][\da-fA-F_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][-+]?\d+)?)\b"
-    expression = rf"(?:{number})(?:\s*[*+/\-]\s*(?:{number}))*"
-    patterns = (
-        rf"\b(?:addingTimeInterval|sleep|usleep)\s*\(\s*{expression}",
-        rf"\bThread\.sleep\s*\(\s*forTimeInterval\s*:\s*{expression}",
-        rf"\.(?:seconds|milliseconds|microseconds|nanoseconds|minutes)\s*\(\s*{expression}",
-    )
     sites = {}
 
     def expression_end(start):
@@ -825,19 +842,20 @@ def timeout_literal_inventory(path: str, source: str) -> list[dict]:
     heads = (
         r"\b(?:\w*(?:timeout|deadline|duration|pollInterval|observation)\w*|"
         r"\w*window(?!\w*(?:count|limit|size|used)\b)\w*|hold|nanoseconds|forTimeInterval)\s*:\s*",
-        r"\b(?:let|var)\s+\w*(?:timeout|deadline|duration|window|seconds|wait|poll|settle)\s*(?::[^=\n]+)?=\s*",
+        r"\b(?:let|var)\s+(?!\w*threshold\b)\w*(?:timeout|deadline|duration|window|seconds|wait|poll|settle|hold|delay|interval)\s*(?::[^=\n]+)?=\s*",
+        r"\b(?:let|var)\s+\w+\s*:\s*(?:\w+\.)?(?:TimeInterval|Duration|DispatchTimeInterval)\??\s*=\s*",
     )
     for head in heads:
         for match in re.finditer(head, code, re.IGNORECASE):
             end = expression_end(match.end())
-            value = code[match.end():end]
-            if re.fullmatch(r"\s*TestWait\.seconds\s*\(\s*\.(?:infrastructure|product)\s*\([^;{}]*\)\s*\)\s*", value):
-                continue
-            if re.search(number, value):
+            if re.search(number, unclassified[match.end():end]):
                 sites[(match.start(), end)] = re.sub(r"\s+", "", code[match.start():end])
-    for pattern in patterns:
-        for match in re.finditer(pattern, code, re.IGNORECASE):
-            sites[(match.start(), match.end())] = re.sub(r"\s+", "", match.group())
+    calls = r"\b(?:addingTimeInterval|sleep|usleep)\s*\(|\.(?:seconds|milliseconds|microseconds|nanoseconds|minutes)\s*\("
+    for match in re.finditer(calls, code, re.IGNORECASE):
+        opening = code.find("(", match.start(), match.end())
+        closing = find_matching(code, opening, "(", ")")
+        if closing >= 0 and re.search(number, unclassified[opening + 1:closing]):
+            sites[(match.start(), closing + 1)] = re.sub(r"\s+", "", code[match.start():closing + 1])
     sites = {span: literal for span, literal in sites.items()
              if not any(other != span and other[0] <= span[0] and span[1] <= other[1] for other in sites)}
     counts = Counter((owner(start), literal) for (start, _), literal in sites.items())

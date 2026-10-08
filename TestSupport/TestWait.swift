@@ -41,9 +41,11 @@ enum TestWait {
         precondition(pollIntervalSeconds.isFinite && pollIntervalSeconds > 0)
         let deadline = ProcessInfo.processInfo.systemUptime + seconds(budget)
         while true {
-            if condition() { return true }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
+            let isSatisfied = condition()
             let remaining = deadline - ProcessInfo.processInfo.systemUptime
             guard remaining > 0 else { return false }
+            if isSatisfied { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(min(pollIntervalSeconds, remaining)))
         }
     }

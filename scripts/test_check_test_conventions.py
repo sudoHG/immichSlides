@@ -739,6 +739,8 @@ class TimeoutLiteralTests(unittest.TestCase):
             element.waitForExistence(timeout: TestWait.seconds(.infrastructure(9)))
             TestWait.until(.product(3)) { true }
             scene(candidateWindowUsed: 12, recentWindowLimit: 4, candidateWindowSize: 8, windowCount: 3)
+            let brightChannelThreshold: UInt8 = 210
+            let cropRetentionThreshold: Double = 0.60
         }
         '''
         self.assertEqual([], conv.timeout_literal_inventory("TestSupport/A.swift", source))
@@ -749,12 +751,52 @@ class TimeoutLiteralTests(unittest.TestCase):
                  ("wait(windowLimitSeconds: ", ("5",)),
                  ("Task.sleep(nanoseconds: ", ("20_000_000", "UInt64(5)", "baseNanoseconds + 5", "1_000 / 10")),
                  ("Thread.sleep(forTimeInterval: ", ("TimeInterval(5)", "baseSeconds + 5", "1_000 / 10")))
+        calls += (("Date().addingTimeInterval(", ("TimeInterval(5)", "interval / 200", "(interval + 5) / 2")),
+                  ("usleep(", ("UInt32(5)", "interval / 200")),
+                  ("Task.sleep(for: .milliseconds(", ("Int64(5))", "interval / 200)")))
         for call, values in calls:
             for value in values:
                 with self.subTest(value=value, call=call):
                     self.assertTrue(conv.timeout_literal_inventory("TestSupport/A.swift", "func poll() { " + call + value + ") }"))
         source = "func poll() { f(TestWait.seconds(.product(3)), timeout: 5) }"
         self.assertEqual(1, len(conv.timeout_literal_inventory("TestSupport/A.swift", source)))
+
+    def test_named_and_typed_timing_initializers_cannot_bypass_inventory(self):
+        declarations = ["let " + name + " = 0.25" for name in (
+            "systemPauseHold", "positiveControlHold", "reducedMotionHold", "multiPhotoHold", "transitionHold",
+            "midTransitionDelay", "settledDelay", "previousFlowTransitionSettleDelay", "sampleInterval")]
+        declarations += [keyword + " span: " + value_type + " = " + value
+                         for keyword in ("let", "var")
+                         for value_type, value in (("TimeInterval", "5"), ("Duration", ".seconds(5)"),
+                                                  ("DispatchTimeInterval", ".milliseconds(5)"),
+                                                  ("Foundation.TimeInterval", "interval / 200"))]
+        for declaration in declarations:
+            with self.subTest(declaration=declaration):
+                entries = conv.timeout_literal_inventory("TestSupport/A.swift", "func poll() { " + declaration + " }")
+                self.assertEqual(1, len(entries))
+                self.assertEqual("poll", entries[0]["function"])
+
+    def test_classified_regions_ignore_only_their_own_numeric_arguments(self):
+        for expression in (
+                "TestWait.seconds(.product(3))", "TimeInterval(TestWait.seconds(.infrastructure(5)))",
+                "TestWait.seconds(.product(base + 5)) / factor",
+                "TestWait.seconds(isSlow ? .infrastructure(5) : .product(3))"):
+            for prefix in ("wait(timeout: ", "Date().addingTimeInterval(", "Thread.sleep(forTimeInterval: "):
+                with self.subTest(expression=expression, prefix=prefix):
+                    source = "func poll() { " + prefix + expression + ") }"
+                    self.assertEqual([], conv.timeout_literal_inventory("TestSupport/A.swift", source))
+        for expression in (
+                "TestWait.seconds(.infrastructure(5)) + 5", "5 + TestWait.seconds(.product(3))"):
+            with self.subTest(expression=expression):
+                source = "func poll() { wait(timeout: " + expression + ") }"
+                self.assertEqual(1, len(conv.timeout_literal_inventory("TestSupport/A.swift", source)))
+        source = '''func poll() {
+            TestWait.until(.infrastructure(5), pollIntervalSeconds: 0.1) { wait(timeout: 7); return true }
+            TestWait.observe(seconds: 3, pollIntervalSeconds: 0.1) { wait(timeout: 8); return true }
+            TestWait.until(budget, pollIntervalSeconds: 0.1, { wait(timeout: 9); return true })
+        }'''
+        entries = conv.timeout_literal_inventory("TestSupport/A.swift", source)
+        self.assertEqual({"timeout:7", "timeout:8", "timeout:9"}, {entry["literal"] for entry in entries})
 
     def test_test_time_limit_is_owned_by_its_function(self):
         source = "struct Flow { @Test(.timeLimit(.minutes(1)))\nfunc `finishes before its deadline`() {} }"

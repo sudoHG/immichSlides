@@ -259,9 +259,11 @@ path affect the app. CI-trusted paths are `.github/workflows/**`, `.github/actio
 entry points, policy/data/pins and their own tests listed in
 `scripts/ci-classification.json`. This includes test conventions, release guards,
 localization catalog/usage, Python prerequisites and workflow-policy checks, plus
-`test_conventions_allowlist.json`, `check_all.sh`, the privacy gate/trusted runner,
+`test_conventions_allowlist.json`, `scripts/test_timeout_allowlist.json`, `check_all.sh`, the privacy gate/trusted runner,
 their tests and privacy fixture modules, and `scripts/__init__.py`. It also covers
 the source-free consumer's copied `run_offline_unit_tests.py` and its test modules.
+Every timeout-allowlist edit is CI-changing, including migration removals; this
+keeps newly admitted raw waits behind exact-head maintainer approval.
 The UI shard manifest `scripts/ci-ui-shards.json` and both default plans,
 `immichSlides-iOS.xctestplan` and `immichSlides-tvOS.xctestplan`, are CI-trusted.
 Editing default plans or renaming/removing manifest-named classes requires

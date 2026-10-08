@@ -1,8 +1,22 @@
+import Foundation
 import Testing
 
 @MainActor
 @Suite
 struct AsyncTestWaitTests {
+    @Test(arguments: ["expired", "late", "timely"])
+    func `product deadline accepts success only when polling finishes before expiry`(scenario: String) {
+        var checks = 0
+        let satisfied = TestWait.until(.product(scenario == "expired" ? 0 : (scenario == "late" ? 0.01 : 1))) {
+            checks += 1
+            // A synchronous UI predicate can finish after its budget even when it reports success.
+            if scenario == "late" { Thread.sleep(forTimeInterval: TestWait.seconds(.product(0.03))) }
+            return true
+        }
+        #expect(satisfied == (scenario == "timely"))
+        #expect(checks == (scenario == "expired" ? 0 : 1))
+    }
+
     @Test func `returns true as soon as the condition holds`() async {
         var checks = 0
         let satisfied = await waitUntil {

@@ -18,7 +18,8 @@ Infrastructure waits cover availability of test machinery: launch, element
 discovery, fixture readiness and network setup. `seconds` resolves the budget
 once; pass that result to a legacy helper without scaling it again. `until`
 polls to a monotonic deadline. Poll cadence stays fixed and its last delay is
-clamped to the remaining budget.
+clamped to the remaining budget. The clock is checked before polling and after
+each predicate evaluation; a predicate returning success after expiry is rejected.
 
 Product deadlines measure the app's promise to the user. Observation windows
 measure an invariant throughout a fixed span. Neither scales. `observe` fails
@@ -66,7 +67,8 @@ by file, qualified function (or `<scope>` for declarations outside a function),
 normalized expression and occurrence count. No line numbers are stored.
 
 The scanner recognizes timeout/deadline/duration/window/observation/poll/hold
-arguments and defaults, named timing constants, numeric duration constructors,
+arguments and defaults, named timing constants ending in hold/delay/interval,
+typed `TimeInterval`/`Duration`/`DispatchTimeInterval` initializers, numeric duration constructors,
 `addingTimeInterval`, `sleep`, `usleep`, `Task.sleep(nanoseconds:)` and
 `Thread.sleep(forTimeInterval:)`. Wrapped and arithmetic
 arguments are included. Comments and strings are ignored. This is a lexical
@@ -74,6 +76,12 @@ convention check; it does not infer whether a named variable is a product promis
 Window arguments ending in `Count`, `Limit`, `Size` or `Used` represent counts
 and are excluded; timing window names should include their time unit.
 Choose the classification explicitly during migration.
+Classified `TestWait.seconds`, `until` and `observe` budget/cadence arguments are
+masked before numeric detection. Arithmetic literals outside those regions and
+raw waits inside predicates still count. The baseline inventory is from main
+`7516d4e`, with only the initial migrated sites removed. The allowlist is a
+[CI-trusted input](CI_POPULATION.md#classification-and-gate-evaluation); every edit
+requires exact-head maintainer approval, including removals during migration.
 
 An additional literal, including a duplicate in an already listed function,
 fails. A changed value, moved function/file, removed literal or decreased count

@@ -140,10 +140,13 @@ and build must still match. A missing or mismatched pin fails before any build:
 ```bash
 python3 -B scripts/ci_ui_tests.py reproduce --manifest-revision COMMIT_SHA \
   --shard visual --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
-  --output-dir '<fresh-outside-repo>'
+  --wait-factor 2 --output-dir '<fresh-outside-repo>'
 ```
 
 Use the same Python environment as [CONTRIBUTING](../CONTRIBUTING.md#setup).
+`--wait-factor 2` matches hosted infrastructure budgets; product deadlines and
+observation windows remain fixed. See [test waits](TEST_WAITS.md). Omit the option
+to use the local default factor `1`, including historical revisions without factor support.
 Check `df -h /System/Volumes/Data` first. Use a dedicated simulator and a bounded
 command. Only the assigned simulator is used; no new local simulator is created. The temporary checkout and
 build products are removed after the command; public records remain for review.
@@ -157,7 +160,7 @@ To reuse a previously verified secret-free build locally:
 python3 -B scripts/ci_ui_tests.py run --device iphone --shard visual \
   --manifest-revision COMMIT_SHA --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
   --xctestrun '<verified-products>/<default-plan>.xctestrun' \
-  --output-dir '<fresh-outside-repo>'
+  --wait-factor 2 --output-dir '<fresh-outside-repo>'
 ```
 
 This direct mode requires a checkout without `Config/env.xcconfig`, including

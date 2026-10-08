@@ -32,6 +32,9 @@ python3 -B scripts/run_fixture_ui_tests.py \
 The shared guard requires both `GITHUB_ACTIONS=true` and
 `RUNNER_ENVIRONMENT=github-hosted` for thresholds below 80; local and self-hosted
 runs retain the 80 GiB minimum. Negative thresholds are rejected.
+Pass `--wait-factor 2` when matching the hosted UI tier's infrastructure budgets;
+the local default is `1`. Product deadlines and observation windows never scale.
+The bounded factor and its published record are described in [test waits](TEST_WAITS.md).
 
 ```bash
 python3 -B scripts/run_fixture_ui_tests.py \
