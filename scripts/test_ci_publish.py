@@ -5,6 +5,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+import os
 from unittest.mock import patch
 
 from ci_summary import ContractError
@@ -149,6 +150,23 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_failed_publication_summary_keeps_source_and_approval_basis(self):
+        source = {"repository": REPOSITORY, "workflow_path": RUN["path"], "event": "pull_request",
+                  "run_id": RUN["id"], "attempt": 1, "fork_originated": True,
+                  "ci_changing": True, "approval_based": True}
+        plan = {"ci-pr-gate": {"state": "failure", "description": "Authoritative producer failed",
+                               "report_source": source}}
+        api = type("API", (), {"repository": REPOSITORY, "status": lambda *args: None})()
+        with tempfile.TemporaryDirectory() as temporary:
+            summary = Path(temporary) / "summary.md"
+            with patch("ci_publish.compute", return_value=(HEAD, plan, None)), patch.dict(
+                    os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+                write_publication(api, api, None, HEAD, "generic-app[bot]")
+            rendered = summary.read_text()
+        self.assertIn("approval-based: True", rendered)
+        self.assertIn("fork-originated: True", rendered)
+        self.assertIn("pull_request", rendered)
+
     def test_shards_put_new_classes_in_default_and_partition_the_default_plan(self):
         declared = [test_identity("ui", key, platform="ios") for key in
                     ("NewUITests/testNew", "VisualUITests/testFlow", "VisualUITests/testCapture",
@@ -427,6 +445,7 @@ class PublisherTests(unittest.TestCase):
                          "diagnostics": {"counts": {}, "failures": [], "missing": [], "infrastructure": [],
                                          "skipped": [], "deselected": []},
                          "report_source": {"repository": REPOSITORY, "workflow_path": ui_run["path"], "event": "pull_request",
+                                           "run_id": RUN["id"], "attempt": RUN["run_attempt"],
                                            "fork_originated": False, "ci_changing": False, "approval_based": False}})
 
     def test_admission_uses_github_merge_parents_and_preserves_original_on_rerun(self):

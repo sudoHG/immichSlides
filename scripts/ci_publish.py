@@ -474,6 +474,7 @@ def compute(api, pr_number, pushed, login):
         evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
         evaluations[context]["report_source"] = {
             "repository": api.repository, "workflow_path": run["path"], "event": run["event"],
+            "run_id": run["id"], "attempt": run["run_attempt"],
             "fork_originated": fork, "ci_changing": record["classification"]["ci_changing"],
             "approval_based": bool(approved and needs_approval)}
     if pr:
@@ -552,9 +553,10 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
             for context, status in plan.items():
                 details = f" ([Details]({status['target_url']}))" if status.get("target_url") else ""
                 handle.write(f"- {context}: {status['state']} — {status['description']}{details}\n")
-                source = status.get("source")
+                source = status.get("report_source") or status.get("source")
                 if source:
                     handle.write(f"  Source: {source['repository']}, {source['workflow_path']}; run {source['run_id']}, attempt {source['attempt']}; "
+                                 f"event: {source.get('event', 'unknown')}; CI-changing: {source.get('ci_changing')}; "
                                  f"approval-based: {source['approval_based']}, fork-originated: {source['fork_originated']}.\n")
                 for population in status.get("population", []):
                     handle.write(f"  {population['tier']} / {population['shard']}: expected {population['expected']}, "
