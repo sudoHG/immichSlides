@@ -12,7 +12,7 @@ from ci_publish_git import derive_record, base_reader, BASE_MODULES, evaluate_re
 from pathlib import Path
 from test_ci_summary import valid_summary
 from ci_summary import observation, test_identity
-from ci_publish import trusted_admissions, compute, prior_mismatch
+from ci_publish import trusted_admissions, compute, prior_mismatch, map_pr
 from ci_publish_git import workflow_contract
 
 FIXTURE_GATE = '''jobs:
@@ -242,6 +242,30 @@ class PublisherTests(unittest.TestCase):
             with patch("ci_publish.approved_status", return_value=True):
                 _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")
                 self.assertEqual(statuses["ci-approval-state"]["state"], "pending")
+
+    def test_empty_fork_run_pr_list_uses_commit_mapping_and_refuses_stale_or_wrong_source(self):
+        fork = copy.deepcopy(PR)
+        fork["head"]["repo"]["full_name"] = "contributor/photos"
+        run = dict(RUN, pull_requests=[], head_repository=fork["head"]["repo"])
+        class RecordedAPI:
+            repository = REPOSITORY
+            def __init__(self, current):
+                self.current, self.paths = current, []
+            def repo(self, path):
+                self.paths.append(path)
+                return [{"number": 7}] if path == "commits/" + HEAD + "/pulls" else self.current
+        api = RecordedAPI(fork)
+        self.assertEqual(map_pr(api, run), fork)
+        self.assertEqual(api.paths, ["commits/" + HEAD + "/pulls", "pulls/7"])
+        newer = copy.deepcopy(fork)
+        newer["head"]["sha"] = "e" * 40
+        with self.assertRaises(ContractError):
+            map_pr(RecordedAPI(newer), run)
+        self.assertEqual(map_pr(RecordedAPI(newer), run, current=False), newer)
+        wrong = copy.deepcopy(fork)
+        wrong["head"]["repo"]["full_name"] = "another/photos"
+        with self.assertRaises(ContractError):
+            map_pr(RecordedAPI(wrong), run)
 
     def test_repeated_mismatch_requires_a_persisted_earlier_attempt_from_the_app(self):
         run = dict(RUN, run_attempt=3)
