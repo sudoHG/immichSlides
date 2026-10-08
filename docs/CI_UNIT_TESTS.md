@@ -74,13 +74,22 @@ Until unit integration, `declared` remains empty.
 
 The official overall `result` is classified with the offline runner's rules.
 `Failed` fails even when function counts look successful; unknown overall results
-cannot pass. Otherwise successful results with skips remain `unverified`, using
-`policy-proposed`, a non-infrastructure `Policy` diagnostic. No expected skip is
-approved or applied by this consumer. Exception proposals belong in the PR body.
-The current policy has a single file-level `approval_state`; it cannot represent
-approved host exceptions and proposed unit exceptions separately. Unit integration
-requires a maintainer decision between per-tier approval state and a separate unit
-policy file. The consumer does not change the schema or the approved host policy.
+cannot pass. The staged [test policy](CI_POPULATION.md#expected-skips-and-tier-deselections)
+activates expected skips only for tiers with an approval record. The unit record
+covers 37 exact hermetic identities/reasons (19 iOS, 18 tvOS). The consumer records
+the policy hash and uses the verdict library's matching rules; every observed skip
+must match exactly one rule, including platform and emitted reason. Unlisted skips,
+changed reasons and an expected-skip test that runs fail coverage. Otherwise passing
+results with approved matching skips are verified. Matching proposed exceptions
+remain `unverified` with the non-infrastructure `policy-proposed` diagnostic.
+Host approval does not activate another tier; UI proposals remain inactive until
+a UI approval record exists. Producer policy checks do not authorize trusted
+publication or approve a later PR head.
+
+The [unit approval conditions](https://github.com/sudoHG/immichSlides/pull/131#issuecomment-6056062100)
+assign live tests to the nightly live tier. Until that tier runs nightly, networking
+or filtering changes require a manual live run before merge. Hermetic skips do not
+establish live membership, deduplication or performance coverage.
 
 The [summary contract](CI_SUMMARY.md) keeps successful Swift rows in JSON and displays
 failures/skips in Markdown. Parameter rows retain official arguments and outcomes.

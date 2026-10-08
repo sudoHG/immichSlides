@@ -16,6 +16,7 @@ from pathlib import Path
 
 import ci_build_archive as archive
 from ci_summary import ContractError, decode, observation, parse_summary, require, test_identity, write_summary
+from ci_verdict import expected_skip_verdict, identity_label, parse_policy, tier_approved
 from run_host_checks import toolchain
 from run_offline_unit_tests import (CommandError, INTERRUPT_GRACE_SECONDS, classify_test_results,
                                     default_run, parse_official_test_results_summary)
@@ -30,7 +31,7 @@ TOOL_FILES = ("ci_unit_tests.py", "ci_build_archive.py", "ci_summary.py", "run_h
               "strict_e2e_server.py", "strict_e2e_photo_identity.py", "strict_e2e_filter_contract.py",
               "strict_e2e_filter_manifest.py", "strict_e2e_out_of_order_contract.py",
               "strict_e2e_p2_contract.py", "album_server_narrow_contract.py", "access_lifecycle_contract.py",
-              "ci-pins.json")
+              "ci-pins.json", "ci_verdict.py", "ci_population.py", "ui_test_inventory.py", "ci-test-policy.json")
 
 # Post-boot enumeration calibration is distinct from the separately measured simulator startup.
 HOSTED_ENUMERATION_SAMPLES = {
@@ -202,7 +203,7 @@ def compare_execution(compiled, observed):
     require(not missing and not extra, f"unit enumeration mismatch: missing={missing}; extra={extra}")
 
 
-def judge_execution(summary, compiled, rows, counts, code):
+def judge_execution(summary, compiled, rows, counts, code, policy=None):
     summary["population"]["observed"] = rows
     observed = {row["identity"]["key"].removeprefix(UNIT_TARGET + "/") for row in rows
                 if "parameter" not in row["identity"]["dimensions"]}
@@ -219,9 +220,24 @@ def judge_execution(summary, compiled, rows, counts, code):
         summary["infrastructure"].append({"code": "unit-results-unverified", "message":
             "The official overall result does not establish passing unit tests."})
         return 1
-    if counts.skipped_tests:
+    policy = policy or {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+    approved = tier_approved(policy, "unit")
+    errors = []
+    for row in rows:
+        matched, error = expected_skip_verdict(row, policy["expected_skips"], tier="unit", environment="hermetic")
+        if error:
+            errors.append(error)
+        elif row["outcome"] == "skipped" and not matched:
+            errors.append("unexpected skip: " + identity_label(row["identity"]))
+    if errors:
+        summary["status"] = "failed"
+        summary["infrastructure"].extend({"code": "coverage-failed", "message": error} for error in errors)
+        return 1
+    if counts.skipped_tests and not approved:
         summary["infrastructure"].append({"code": "policy-proposed", "message":
-            "Measured unit skips remain proposed for maintainer approval; no expected-skip policy is applied."})
+            "Only proposed unit exceptions explain coverage; maintainer approval is still required."})
+    elif approved:
+        summary["status"] = "passed"
     return code
 
 
@@ -309,6 +325,7 @@ def run_units(args):
     digest = None
     compiled = set()
     code = 1
+    policy = None
     export_complete = False
     archive_ready = False
     try:
@@ -323,6 +340,9 @@ def run_units(args):
         require(archive.file_hash(pins_path) == ctx["pins_sha256"], "consumer pins changed after selection")
         archive.validate_manifest(manifest, ctx["identity"], ctx["run_id"] or "local", ctx["producer_attempt"],
                                   platform, xcode_build, ctx["pins_sha256"])
+        policy_path = Path(__file__).with_name("ci-test-policy.json")
+        policy = parse_policy(policy_path.read_text(encoding="utf-8"))
+        summary["hashes"]["policies"]["test-policy"] = archive.file_hash(policy_path)
         require(not os.path.lexists(manifest["source_path"]), "build-time source checkout is present on consumer")
         require(not os.path.lexists(manifest["products_path"]), "build-time Products path is present on consumer")
         require(str((args.relocated_path / "Products").resolve()) != manifest["products_path"], "Products were not relocated")
@@ -402,7 +422,7 @@ def run_units(args):
                 digest = export_private_result_bundle(result_bundle, args.output_dir, [PUBLIC_API_KEY],
                                                       summary_timeout_seconds=OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS)
                 rows, counts = read_results(args.output_dir, platform)
-                code = judge_execution(summary, compiled, rows, counts, code)
+                code = judge_execution(summary, compiled, rows, counts, code, policy)
                 export_complete = True
             except Exception as error:
                 code = code or 1

@@ -517,6 +517,22 @@ class ArchiveUnitResultTests(unittest.TestCase):
                 summary = {"population": {}, "infrastructure": [], "status": "unverified"}
                 code = judge_execution(summary, {"A/a()"}, rows, TestResultsSummary(1, 1, 0, 0, overall), 0)
                 self.assertEqual((code, summary["status"]), (expected_code, expected_status))
+        record = {"approver": "maintainer example", "date": "2026-10-08", "tier": "unit",
+                  "link": "https://github.com/example/project/issues/1#issuecomment-1"}
+        rule = {"kind": "swift", "key_pattern": rows[0]["identity"]["key"], "dimensions": {"platform": "ios"},
+                "tier": "unit", "environment": "hermetic", "reason": "no fixture"}
+        skipped = [observation(rows[0]["identity"], "skipped", 0, reason="no fixture")]
+        for records, reason, rules, status, expected_code in (
+                ([record], "no fixture", [rule], "passed", 0),
+                ([], "no fixture", [rule], "unverified", 0),
+                ([record], "changed reason", [rule], "failed", 1),
+                ([record], "no fixture", [], "failed", 1)):
+            with self.subTest(records=records, reason=reason, rules=rules):
+                summary = {"population": {}, "infrastructure": [], "status": "unverified"}
+                skipped[0]["attempts"][0]["reason"] = reason
+                unit_policy = {"schema_version": 1, "approval_records": records, "expected_skips": rules, "deselections": []}
+                code = judge_execution(summary, {"A/a()"}, skipped, TestResultsSummary(1, 0, 0, 1, "Passed"), 0, unit_policy)
+                self.assertEqual((code, summary["status"]), (expected_code, status))
 
     def test_enumeration_errors_or_empty_unit_population_cannot_pass(self):
         from ci_unit_tests import enumeration_keys

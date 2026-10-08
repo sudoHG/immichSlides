@@ -15,7 +15,12 @@ from test_ci_summary import valid_summary
 
 
 def policy():
-    return {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []}
+    return {"schema_version": 1, "approval_records": [approval_record("host")], "expected_skips": [], "deselections": []}
+
+
+def approval_record(tier):
+    return {"approver": "maintainer example", "date": "2026-10-08", "tier": tier,
+            "link": "https://github.com/example/project/issues/1#issuecomment-1"}
 
 
 def expected_population(identities, tree_sha):
@@ -80,6 +85,18 @@ class PopulationVerdictTests(unittest.TestCase):
                 self.policy["expected_skips"][0][field] = original
         self.summary["population"]["observed"] = [ci_summary.observation(identity, "passed", 0)]
         self.assertEqual(self.verdict()["status"], "failed")
+        unit = ci_summary.test_identity("swift", "Tests/skipped()", platform="ios")
+        self.summary["run"]["tier"] = "unit"
+        self.expected = self.summary["population"]["declared"] = self.summary["population"]["compiled"] = [unit]
+        self.summary["population"]["observed"] = [ci_summary.observation(unit, "skipped", 0, reason="no fixture")]
+        self.policy["expected_skips"] = [{"kind": "swift", "key_pattern": unit["key"], "dimensions": unit["dimensions"],
+                                          "tier": "unit", "environment": "hermetic", "reason": "no fixture"}]
+        for records, status in (([approval_record("host"), approval_record("unit")], "passed"),
+                                ([approval_record("host")], "failed")):
+            with self.subTest(approval_tiers=[record["tier"] for record in records]):
+                self.policy["approval_records"] = records
+                self.assertEqual(self.verdict()["status"], status)
+                self.assertEqual(self.verdict()["expected_skips"], [unit] if status == "passed" else [])
 
     def test_deselections_require_compilation_reason_owner_and_exclusive_accounting(self):
         entry = {"identity": self.expected[0], "tier": "host", "environment": "hermetic",
@@ -130,7 +147,7 @@ class PopulationVerdictTests(unittest.TestCase):
         self.assertEqual(self.verdict()["status"], "failed")
 
     def test_proposed_or_ambiguous_policy_cannot_authorize_an_exception(self):
-        self.policy["approval_state"] = "proposed"
+        self.policy["approval_records"] = []
         self.assertEqual(self.verdict()["status"], "passed")
         self.policy["expected_skips"] = [{"kind": "host", "key_pattern": "format", "dimensions": {},
                                           "tier": "host", "environment": "hermetic", "reason": "missing"}]
@@ -145,16 +162,19 @@ class PopulationVerdictTests(unittest.TestCase):
     def test_malformed_policy_versions_duplicate_rules_and_owner_are_rejected(self):
         record = {"approver": "maintainer example", "date": "2026-10-08", "tier": "host",
                   "link": "https://github.com/example/project/issues/1#issuecomment-1"}
-        recorded = dict(policy(), approval_record=record)
+        recorded = dict(policy(), approval_records=[record])
         self.assertEqual(parse_policy(recorded), recorded)
         for field, value in (("approver", ""), ("date", "2026-02-30"), ("date", "20261008"),
                              ("tier", ""), ("link", "http://github.com/example/project/issues/1#issuecomment-1"),
                              ("link", "https://example.com/approval"), ("unknown", "value")):
             with self.subTest(approval_field=field, value=value), self.assertRaises(ci_summary.ContractError):
-                parse_policy(dict(recorded, approval_record=dict(record, **{field: value})))
+                parse_policy(dict(recorded, approval_records=[dict(record, **{field: value})]))
         for malformed in (None, [], {}, {key: value for key, value in record.items() if key != "tier"}):
             with self.subTest(approval_record=malformed), self.assertRaises(ci_summary.ContractError):
-                parse_policy(dict(recorded, approval_record=malformed))
+                parse_policy(dict(recorded, approval_records=[malformed]))
+        for records in (None, {}, [record, record]):
+            with self.subTest(approval_records=records), self.assertRaises(ci_summary.ContractError):
+                parse_policy(dict(recorded, approval_records=records))
         for version in (2, True, "1", None):
             with self.subTest(version=version), self.assertRaises(ci_summary.ContractError):
                 parse_policy(dict(policy(), schema_version=version))
@@ -267,8 +287,7 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.summary["run"]["id"] = "42"
         self.jobs[0].update(run_id="42", workflow_paths=[".github/workflows/ci-gate.yml"])
         candidate = policy()
-        candidate["approval_record"] = {"approver": "maintainer example", "date": "2026-10-08", "tier": "host",
-                                        "link": "https://github.com/example/project/issues/1#issuecomment-1"}
+        candidate["approval_records"] = [approval_record("host")]
         candidate["expected_skips"] = [{"kind": "host", "key_pattern": "format", "dimensions": {},
                                         "tier": "host", "environment": "hermetic", "reason": "fixture unavailable"}]
         self.summary["status"] = "unverified"

@@ -202,7 +202,9 @@ offline runner's official overall-result classification and the
 `policy-proposed` diagnostic for unapproved unit skips, labeled `Policy` and excluded
 from infrastructure health accounting.
 Static population, skip/deselection
-policy and the verdict evaluator are libraries; trusted publication and approval
+policy and the verdict evaluator are libraries. Unit consumers apply their recorded
+per-tier policy approval to exact hermetic skips; host approval never activates
+unit or UI exceptions. Trusted publication and approval
 enforcement are separate from producer claims. The workflow consumes the merged
 [pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone
 workflow-policy check as a distinct host identity. CI sets `PYTHON` to the pinned

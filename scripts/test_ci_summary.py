@@ -52,7 +52,10 @@ class SummaryContractTests(unittest.TestCase):
         unit = valid_summary()
         skipped = ci_summary.observation(ci_summary.test_identity("swift", "immichSlidesTests/A/a()", platform="ios"),
                                          "skipped", 0, reason="Test skipped")
-        self.assertEqual(judge_execution(unit, {"A/a()"}, [skipped], TestResultsSummary(1, 0, 0, 1, "Passed"), 0), 0)
+        proposed = {"schema_version": 1, "approval_records": [], "deselections": [], "expected_skips": [
+            {"kind": "swift", "key_pattern": skipped["identity"]["key"], "dimensions": {"platform": "ios"},
+             "tier": "unit", "environment": "hermetic", "reason": "Test skipped"}]}
+        self.assertEqual(judge_execution(unit, {"A/a()"}, [skipped], TestResultsSummary(1, 0, 0, 1, "Passed"), 0, proposed), 0)
         diagnostics = [(code, category, "diagnostic detail") for code, category in
                        (("policy-proposed", "Policy"), ("population-invalid", "Population"),
                         ("coverage-failed", "Coverage"), ("step-timeout", "Infrastructure"))]
@@ -498,7 +501,9 @@ class HostResultTests(unittest.TestCase):
         for state, outcome in (("proposed", "unverified"), ("approved", "passed")):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "output"
-                policy = {"schema_version": 1, "approval_state": state, "deselections": [],
+                record = {"approver": "maintainer example", "date": "2026-10-08", "tier": "host",
+                          "link": "https://github.com/example/project/issues/1#issuecomment-1"}
+                policy = {"schema_version": 1, "approval_records": [record] if state == "approved" else [], "deselections": [],
                           "expected_skips": [{"kind": "python", "key_pattern": identity["key"], "dimensions": {},
                                               "tier": "host", "environment": "hermetic", "reason": "no fixture"}]}
 

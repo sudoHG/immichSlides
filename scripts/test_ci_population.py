@@ -60,7 +60,7 @@ class StaticPopulationTests(unittest.TestCase):
                     summary["population"][collection] = [entry for entry in summary["population"][collection]
                         if (entry["identity"] if collection == "observed" else entry) != missing]
                     verdict = evaluate_population(summary, expected,
-                        {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []},
+                        {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []},
                         environment="hermetic")
                     self.assertEqual(verdict["status"], "failed")
                     self.assertEqual(verdict["missing_compiled" if collection == "compiled" else "missing_executed"], [missing])
@@ -97,7 +97,7 @@ class StaticPopulationTests(unittest.TestCase):
                     summary["population"][collection] = [entry for entry in summary["population"][collection]
                         if (entry["identity"] if collection == "observed" else entry) != missing]
                     verdict = evaluate_population(summary, expected,
-                        {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []},
+                        {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []},
                         environment="hermetic")
                     self.assertEqual(verdict["status"], "failed")
                     self.assertEqual(verdict["missing_compiled" if collection == "compiled" else "missing_executed"], [missing])
@@ -317,7 +317,7 @@ class StaticPopulationTests(unittest.TestCase):
                     summary["population"].update(declared=expected, compiled=compiled,
                                                  observed=[observation(identity, "passed", 0) for identity in compiled])
                     verdict = evaluate_population(summary, expected,
-                        {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []},
+                        {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []},
                         environment="hermetic")
                     self.assertEqual(verdict["status"], "failed")
                     self.assertEqual(verdict["missing_compiled"], [missing])
