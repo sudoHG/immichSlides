@@ -1,6 +1,7 @@
 """Guard per-test fixture coverage against missing, duplicate and skipped results."""
 
 import copy
+import plistlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,24 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
+    def test_fixture_launch_inputs_never_mutate_the_archived_run_or_unit_target(self):
+        payload = {"TestConfigurations": [{"TestTargets": [
+            {"BlueprintName": "immichSlidesUITests", "EnvironmentVariables": {},
+             "TestingEnvironmentVariables": {}, "UITargetAppEnvironmentVariables": {}},
+            {"BlueprintName": "immichSlidesTests", "EnvironmentVariables": {},
+             "TestingEnvironmentVariables": {}, "UITargetAppEnvironmentVariables": {}}]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "archive.xctestrun"
+            original = plistlib.dumps(payload)
+            source.write_bytes(original)
+            screenshots = root / "screenshots"
+            screenshots.mkdir()
+            prepared = runner.prepare_test_run(source, screenshots, {"IMMICH_TEST_API_KEY": "public-fixture-input"}, failure_screenshots=True)
+            targets = plistlib.loads(prepared.read_bytes())["TestConfigurations"][0]["TestTargets"]
+            self.assertEqual(targets[1], payload["TestConfigurations"][0]["TestTargets"][1])
+            self.assertEqual(source.read_bytes(), original)
+
     def test_successful_private_disposal_removes_bundle_and_sibling_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -89,6 +108,14 @@ class FixtureCoverageTests(unittest.TestCase):
         self.assertEqual([entry["key"] for entry in declared_tests(files, "ios", plan, [])], ["Flow/testFirst"])
         with self.assertRaises(ContractError):
             declared_tests(files, "ios", plan, ["immichSlidesUITests/Flow/testSecond"])
+        selected = {"testTargets": [{"target": {"name": "immichSlidesUITests"},
+                                    "selectedTests": ["Flow/testSecond()"]}]}
+        self.assertEqual([entry["key"] for entry in declared_tests(files, "ios", selected, [])], ["Flow/testSecond"])
+        with self.assertRaises(ContractError):
+            declared_tests(files, "ios", selected, ["immichSlidesUITests/Flow/testFirst"])
+        selected["testTargets"][0]["enabled"] = False
+        with self.assertRaises(ContractError):
+            declared_tests(files, "ios", selected, [])
 
     def test_missing_duplicate_unexpected_and_skipped_results_cannot_be_covered(self):
         expected = [{"kind": "ui", "key": "Flow/testFirst", "dimensions": {"platform": "ios"}}]

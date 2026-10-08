@@ -16,8 +16,8 @@ an external directory for the existing scene-presentation contract collectors.
 Use an isolated checkout with no `Config/env.xcconfig`. On a managed local
 worktree, park only that worktree's read-only symlink and restore it in an EXIT
 trap, checking its `readlink` target. Do not read or copy its contents. Device
-runs on the maintainer's workspace use the existing watchdog and device-slot
-wrappers; iPhone and iPad runs are serial. Before every Xcode invocation the
+runs use a dedicated simulator and a bounded command; iPhone and iPad runs are
+serial. Before every Xcode invocation the
 runner uses the shared archive disk guard with `--min-free-gib` (default 80).
 Only GitHub-hosted runners may lower this threshold. For their approximately
 39 GiB free disks, pass `--min-free-gib 30`, as the archive jobs do:
@@ -55,7 +55,14 @@ repeat it for multiple tests. The runner rejects selections outside the default
 plan. `--timeout-minutes` bounds each Xcode invocation (default 90). A nonzero
 Xcode exit, missing result, unexpected identity, failed test, unapproved skip,
 malformed export or sensitive-scan failure fails the run. There are no automatic
-retries.
+retries by default. The [iPhone UI tier](CI_UI.md) explicitly passes
+`--listed-only-retry`, `--shard` and `--shard-manifest`, with a total Xcode budget
+and failure-attachment export. This uses only the base registry, retains both
+official attempts and preserves the first attempt if the retry reset fails.
+`--failure-screenshots` requests screenshot capture with failure-only retention
+in the prepared UI target's temporary `.xctestrun`, overriding the archive's
+default video format. The archived run file and unit target stay unchanged.
+Only failed-test attachments are exported, then scanned before publication.
 
 ## Coverage and policy
 
@@ -93,9 +100,9 @@ Product failures remain failures, tracked separately without an exclusion
 proposal; they must not be attributed to fixture gaps without evidence.
 Only demonstrated fixture/server gaps may become `nightly-live` deselections.
 
-The UI-shard workflow is separate work. Until it exists, coverage is proven by
-local device-slot runs, and CI execution on all three devices is `NOT_RUN`.
-The PR records the per-test measurements and any proposed exceptions.
+The [UI-shard workflow](CI_UI.md) schedules iPhone only. iPad/Apple TV hosted
+execution remains a separate rollout. The PR records the per-test measurements,
+real run links and any proposed exceptions; proposals remain inactive.
 
 ## Public fixture and output boundaries
 

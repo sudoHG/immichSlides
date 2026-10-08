@@ -236,7 +236,7 @@ symlinks; do not copy private configuration into it. Keep the default simulator 
 
 Run the following in Bash, once for each platform. Set `scheme` to `immichSlides-iOS` or
 `immichSlides-tvOS`, and `destination` to an installed simulator of that platform. The scheme and
-default test plan have the same name. Use the local device-slot queue and watchdog when available;
+default test plan have the same name. Use a dedicated simulator and a bounded command;
 check at least 80 GiB free on `/System/Volumes/Data` before each Xcode invocation.
 
 ```bash
@@ -372,13 +372,13 @@ The UI adapter enumerates the selected compiled tests and compares them with
 observations. Each test invocation and the enumeration use `--min-free-gib N`
 (default 80). Only GitHub-hosted Actions runners may lower that threshold; their
 consumer command can pass `--min-free-gib 30`, using the shared archive disk guard.
-Its local declared list is that compiled selection; the future UI
-shard owner must independently compare against the admitted static population.
+Its local declared list is that compiled selection; the [iPhone UI producer](CI_UI.md)
+independently compares its manifest shards against the admitted static population.
 This adapter does not implement shard assignment, fixture selection or trusted
 publication. Pass fixture inputs explicitly through the per-run xctestrun; ambient
 server inputs are stripped. Each invocation gets an independent private directory
 so every raw bundle can be exported/disposed before its directory is removed;
-only compact records are suitable for the future summary consumer.
+only compact records are suitable for the trusted summary consumer.
 The adapter uses `-collect-test-diagnostics never` to keep failed invocations
 bounded without simulator diagnostic collection. Execution errors and timeouts
 retain all attempted calls in `retry-invocations.json`; a retry timeout records a
