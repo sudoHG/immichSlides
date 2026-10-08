@@ -143,20 +143,6 @@
             "device": "ipad",
             "platform": "ios"
           },
-          "key": "PlaybackHistoryIOSUITests/testDiagnosticSmartFillSettingsPauseOnlyThreeSecondsFreezesRenderedFrames",
-          "kind": "ui"
-        },
-        "tier": "ui",
-        "environment": "fixture",
-        "reason": "Local fixture assertion failed: After pausing, the rendered transform/frame of every SmartFill slot must stay frozen; full official diagnostic comparison is recorded in the PR; nightly-live reproduction NOT_RUN",
-        "owning_tier": "nightly-live"
-      },
-      {
-        "identity": {
-          "dimensions": {
-            "device": "ipad",
-            "platform": "ios"
-          },
           "key": "immichSlidesUITests/testCacheManagementClearDiskCacheEntryWorks",
           "kind": "ui"
         },
@@ -485,6 +471,34 @@
         "tier": "ui",
         "environment": "fixture",
         "reason": "Test skipped - This regression test only covers the split-view navigation in iPad settings",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "kind": "ui",
+          "key": "FilterSummaryIOSVisualUITests/testIOSExifAlbumDiagnosticScreenshots",
+          "dimensions": {
+            "platform": "ios",
+            "device": "iphone"
+          }
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Local fixture assertion failed: XCTAssertTrue failed - Playback page should expose the current EXIF text color diagnostic marker; nightly-live reproduction NOT_RUN",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "kind": "ui",
+          "key": "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptancePersonFilterScreenshot",
+          "dimensions": {
+            "platform": "ios",
+            "device": "ipad"
+          }
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Local fixture XCTest failed: Failed to get matching snapshot: No matches found for Elements matching predicate '\"slideshow.control.settings.button\" IN identifiers' from input {(\n    Button, label: 'current-asset-id-probe'\n)}; nightly-live reproduction NOT_RUN",
         "owning_tier": "nightly-live"
       }
     ]
