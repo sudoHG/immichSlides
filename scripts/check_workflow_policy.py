@@ -14,6 +14,7 @@ import yaml
 
 PRIVACY_WORKFLOW = ".github/workflows/privacy-preflight.yml"
 PROBE_WORKFLOW = ".github/workflows/ci-probe.yml"
+REPORT_WORKFLOW = ".github/workflows/ci-report.yml"
 ISSUE_WRITE_WORKFLOWS = {PROBE_WORKFLOW, ".github/workflows/ci-report.yml"}
 PROBE_COMMANDS = {
     '/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"',
@@ -25,7 +26,7 @@ PROBE_ENVIRONMENT = {
 }
 WORKFLOW_RUN_SOURCES = {
     ".github/workflows/ci-publish.yml": {"ci-gate", "ci-ui"},
-    ".github/workflows/ci-report.yml": {"ci-nightly", "ci-gate"},
+    REPORT_WORKFLOW: {"ci-nightly", "ci-gate", "ci-ui"},
 }
 ENVIRONMENT_WORKFLOWS = {
     "ci-publisher": {".github/workflows/ci-publish.yml", ".github/workflows/ci-approval.yml",
@@ -150,6 +151,10 @@ def trusted_run_allowed(script, path, events):
     if not isinstance(script, str):
         return False
     script = script.strip()
+    if path == REPORT_WORKFLOW and set(events) <= {"schedule", "workflow_dispatch", "workflow_run"}:
+        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py',
+                      '/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
+            return True
     if path in PUBLISHER_COMMANDS:
         commands = {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py ' + command
                     for command in PUBLISHER_COMMANDS[path]}
@@ -240,6 +245,10 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             or document.get("permissions") != {}):
         flag("workflow", "probe-contract", "ci-probe needs its exact name, scheduled/manual triggers and no workflow-level grants")
     approval_workflow = path in {".github/workflows/ci-approval.yml", ".github/workflows/ci-approve.yml"}
+    if path == REPORT_WORKFLOW and (document.get("name") != "ci-report"
+            or set(events) != {"schedule", "workflow_dispatch", "workflow_run"}
+            or document.get("permissions") != {}):
+        flag("workflow", "report-contract", "ci-report needs its exact name, completion/daily/manual triggers and no workflow-level grants")
     if approval_workflow and "concurrency" in document:
         flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
@@ -263,6 +272,12 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             flag(location, "permissions", "Job needs explicit permissions, directly or inherited")
         if path == PROBE_WORKFLOW and permissions != {"contents": "read", "issues": "write"}:
             flag(location, "probe-contract", "ci-probe grants only contents: read and issues: write at job level")
+        if path == REPORT_WORKFLOW:
+            if (permissions != {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"}
+                    or job.get("runs-on") != "ubuntu-24.04" or "environment" in job
+                    or job.get("if") != "github.ref == 'refs/heads/main'"
+                    or job.get("concurrency") != {"group": "ci-report-state", "cancel-in-progress": False}):
+                flag(location, "report-contract", "Reporter is serialized, main-only, environment-free and has only issue write")
         timeout = job.get("timeout-minutes")
         if type(timeout) is not int or not 1 <= timeout <= 360:
             flag(location, "timeout", "Job needs a literal timeout-minutes from 1 to 360")
@@ -327,7 +342,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if isinstance(environment, dict) and any(key in loader_variables for key in environment):
             flag(location, "artifact-execution", "Artifact data must not control executable search or interpreter startup")
         bindings = (PRIVACY_ENVIRONMENT if path == PRIVACY_WORKFLOW else PROBE_ENVIRONMENT
-                    if path == PROBE_WORKFLOW else PUBLISHER_BINDINGS if path in PUBLISHER_COMMANDS else {})
+                    if path == PROBE_WORKFLOW else {"CI_REPORT_TOKEN": "${{ github.token }}"} if path == REPORT_WORKFLOW
+                    else PUBLISHER_BINDINGS if path in PUBLISHER_COMMANDS else {})
         if (not isinstance(environment, dict) or any(key not in bindings or value != bindings[key]
                 for key, value in environment.items())):
             flag(location, "trusted-environment", "Trusted environment variables need an explicit reviewed binding")
@@ -346,7 +362,13 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                             and options == {"name": "ci-admission-${{ steps.admit.outputs.run_id }}",
                                             "path": "${{ runner.temp }}/ci-admission/record.json",
                                             "if-no-files-found": "error", "retention-days": 30})
-        if "uses" in item and not publisher_upload and not trusted_action_allowed(uses, options):
+        report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+                         and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",
+                                             "path": "${{ runner.temp }}/ci-report/" + directory,
+                                             "if-no-files-found": missing, "retention-days": retention}
+                                 for name, directory, missing, retention in (("daily", "daily", "error", 90),
+                                     ("pr", "pull-requests", "ignore", 30), ("runs", "runs", "ignore", 7))))
+        if "uses" in item and not publisher_upload and not report_upload and not trusted_action_allowed(uses, options):
             flag(location, "trusted-action", "Trusted uses must be an approved pinned remote action or isolated repository-local action")
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":
             ref = options.get("ref")
@@ -358,6 +380,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                     or not (repository is None or isinstance(repository, str))
                     or repository not in {None, "${{ github.repository }}"}):
                 flag(location, "trusted-checkout", "Trusted checkout must use this repository's default branch (privacy may use base.sha)")
+            if path == REPORT_WORKFLOW and (ref != "main" or options.get("fetch-depth") != 0):
+                flag(location, "report-contract", "Reporter needs explicit main checkout and full history")
         if isinstance(uses, str) and "download-artifact" in uses.lower() and not artifact_path(options.get("path")):
             flag(location, "artifact-execution", "Download artifact data only into an explicit ci-artifacts directory")
         if "script" in options:

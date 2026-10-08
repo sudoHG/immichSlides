@@ -332,7 +332,7 @@ do not open a second issue for the same identity.
 The host gate runs `python3 -B scripts/ci_flaky.py`. It checks the candidate file's
 format, duplicates and static test existence on the relevant platform, including
 strict-suite membership. It does not contact GitHub or gate on calendar age/issue
-state. Expiration and issue-state reporting belong to the future nightly reporter. A review date is
+state. [CI reporting](CI_REPORT.md) checks expiration and issue state without changing the test verdict. A review date is
 inclusive; an entry past that date simply loses retry eligibility. Ordinary passes
 stay passes and expiration cannot fail unrelated tests.
 

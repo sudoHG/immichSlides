@@ -326,7 +326,7 @@ class PublisherTests(unittest.TestCase):
             with patch("ci_publish.approved_status", return_value=True):
                 _, statuses, approval = compute(RecordedAPI(), 7, "", "generic-app[bot]")
             self.assertEqual(statuses["ci-ui"]["state"], "success")
-            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI)
+            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[])
             self.assertIsNone(approval["request"])
             with patch("ci_publish.approved_status", return_value=True), patch(
                     "ci_publish.evaluate_records", side_effect=ContractError(
@@ -423,7 +423,11 @@ class PublisherTests(unittest.TestCase):
                 patch("ci_publish.producer_evidence", return_value=(ui_jobs, [])):
             _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")
         self.assertEqual(statuses["ci-ui"], {"state": "failure", "description": hint,
-                         "target_url": "https://github.com/" + REPOSITORY + "/actions/runs/101"})
+                         "target_url": "https://github.com/" + REPOSITORY + "/actions/runs/101",
+                         "diagnostics": {"counts": {}, "failures": [], "missing": [], "infrastructure": [],
+                                         "skipped": [], "deselected": []},
+                         "report_source": {"repository": REPOSITORY, "workflow_path": ui_run["path"], "event": "pull_request",
+                                           "fork_originated": False, "ci_changing": False, "approval_based": False}})
 
     def test_admission_uses_github_merge_parents_and_preserves_original_on_rerun(self):
         identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
@@ -842,6 +846,12 @@ class PublisherTests(unittest.TestCase):
                 return rows
         with patch("ci_publish.json_member", side_effect=read_summary), self.assertRaises(ContractError):
             producer_evidence(RerunAPI(), dict(RUN, id=37700479666, run_attempt=3), FIXTURE_GATE)
+        with patch("ci_publish.json_member", side_effect=read_summary):
+            diagnostics = []
+            _, partial = producer_evidence(RerunAPI(), dict(RUN, id=37700479666, run_attempt=3), FIXTURE_GATE,
+                                          diagnostics=diagnostics)
+        self.assertEqual(4, len(partial))
+        self.assertEqual(["required artifact missing or invalid: host-summary-37700479666-3"], diagnostics)
 
     def test_credential_free_approval_requires_the_actual_environment_reviewer(self):
         environment = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",

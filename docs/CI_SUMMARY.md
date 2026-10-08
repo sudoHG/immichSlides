@@ -1,5 +1,8 @@
 # Host checks and producer summary contract
 
+[CI reporting and failure tracking](CI_REPORT.md) describes retained daily rollups,
+PR summaries and notifications built from these records and trusted admissions.
+
 Run the same macOS host checks as `ci-gate` from the repository root:
 
 ```bash

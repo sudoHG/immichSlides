@@ -212,7 +212,26 @@ class WorkflowPolicyTests(unittest.TestCase):
                 self.assertIn("workflow-run", self.rules(document, TRUSTED))
         document = self.trusted()
         document["on"]["workflow_run"] = {"workflows": ["ci-nightly"], "types": ["completed"]}
-        self.assertEqual(set(), self.rules(document, ".github/workflows/ci-report.yml"))
+        self.assertNotIn("workflow-run", self.rules(document, ".github/workflows/ci-report.yml"))
+
+    def test_reporter_rejects_write_grants_environments_branch_code_and_unbounded_retention(self):
+        document = {"name": "ci-report", "on": {"schedule": [{"cron": "30 8 * * *"}],
+                    "workflow_dispatch": None, "workflow_run": {"workflows": ["ci-nightly"], "types": ["completed"]}},
+                    "permissions": {}, "jobs": {"report": {"if": "github.ref == 'refs/heads/main'",
+                    "runs-on": "ubuntu-24.04", "timeout-minutes": 30,
+                    "permissions": {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"},
+                    "concurrency": {"group": "ci-report-state", "cancel-in-progress": False},
+                    "steps": [{"uses": "actions/checkout@" + SHA, "with": {"ref": "main", "fetch-depth": 0}},
+                              {"run": '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py',
+                               "env": {"CI_REPORT_TOKEN": "${{ github.token }}"}}]}}}
+        self.assertEqual(set(), self.rules(document, policy.REPORT_WORKFLOW))
+        for mutate in (lambda job: job["permissions"].update(actions="write"),
+                       lambda job: job.update(environment="ci-publisher"),
+                       lambda job: job["steps"][0]["with"].update(ref="${{ github.event.workflow_run.head_sha }}"),
+                       lambda job: job.update(concurrency={"group": "ci-report-state", "cancel-in-progress": True})):
+            changed = copy.deepcopy(document)
+            mutate(changed["jobs"]["report"])
+            self.assertIn("report-contract", self.rules(changed, policy.REPORT_WORKFLOW))
 
     def test_trusted_checkout_rejects_pr_refs_shas_and_indirection(self):
         for ref in ["refs/pull/123/head", "refs/pull/123/merge", "${{ github.event.pull_request.head.sha }}",
