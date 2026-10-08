@@ -106,6 +106,34 @@ latency under overlapping PR/nightly load; that capacity acceptance remains with
 later UI tracer and publisher tickets. Workflow bounds are cancellation limits, not
 a passing gate or a promise of reserved capacity.
 
+Initial hosted sample: [run 37705159130](https://github.com/sudoHG/immichSlides/actions/runs/37705159130),
+head `a8fd257`, merge `2b61062`, tree `6bd06c2`, producer/consumer attempt 1.
+Both unit jobs succeeded; function results were iOS 618 passed + 19 skipped and
+tvOS 616 passed + 18 skipped, with 41 parameter outcomes on each platform.
+Both producer summaries remain `unverified` for the unapproved skips.
+
+| Phase / measurement | iOS | tvOS |
+| --- | ---: | ---: |
+| Producer setup | 13 s | 11 s |
+| Build-for-testing | 168.93 s | 148.07 s |
+| Archive packing | 16.41 s | 16.13 s |
+| Consumer setup | 13 s | 14 s |
+| Archive download | 1 s | 4 s |
+| Bundle enumeration | 166.58 s | 63.16 s |
+| Unit execution | 147.33 s | 91.33 s |
+| Consumer total, excluding setup/download | 323.46 s | 164.01 s |
+| Build runner queue, from workflow creation | 7 s | 52 s |
+| Consumer runner queue, after both builds completed | 51 s | 294 s |
+| Producer peak volume growth / minimum free | 1.32 / 37.48 GiB | 1.30 / 37.63 GiB |
+| Consumer peak volume growth / minimum free | 2.65 / 36.15 GiB | 1.98 / 36.84 GiB |
+
+GitHub job timestamps give 12 minutes 10 seconds from workflow creation to the last
+completed job, including queueing. The initial gate feedback budget is **20 minutes**,
+providing 7 minutes 50 seconds of headroom above this observed sample. The script/job
+timeouts remain larger failure-recovery bounds, not this latency target. Enforcement
+and admission by the trusted publisher remain #89's responsibility. Do not promote
+the gate from one sample; concurrent PR/nightly capacity remains unmeasured.
+
 ## Proposed unit skip policy
 
 [`scripts/ci-unit-skip-proposal.json`](../scripts/ci-unit-skip-proposal.json) is a
