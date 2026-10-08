@@ -44,6 +44,18 @@ TRUSTED_REMOTE_ACTION_INPUTS = {
                                   "artifact-ids", "merge-multiple"},
 }
 TRUSTED_READ_ONLY_COMMANDS = {("pwd",), ("git", "rev-parse", "HEAD")}
+PUBLISHER_COMMANDS = {
+    ".github/workflows/ci-publish.yml": {"route", "admit", "reevaluate", "publish"},
+    ".github/workflows/ci-approval.yml": {"approve"},
+    ".github/workflows/ci-approve.yml": {"fallback"},
+}
+PUBLISHER_BINDINGS = {
+    "CI_WORKFLOW_TOKEN": "${{ github.token }}",
+    "CI_APP_ID": "${{ vars.CI_APP_ID }}",
+    "CI_APP_PRIVATE_KEY": "${{ secrets.CI_APP_PRIVATE_KEY }}",
+    "CI_PR_NUMBER": "${{ needs.route.outputs.pr }}",
+    "CI_PUSHED_SHA": "${{ needs.route.outputs.pushed }}",
+}
 TRUSTED_PYTHON_COMMANDS = {
     ("/usr/bin/python3", "scripts/check_workflow_policy.py"),
     ("/usr/bin/python3", "scripts/check_workflow_policy.py", "--root", "."),
@@ -138,6 +150,14 @@ def trusted_run_allowed(script, path, events):
     if not isinstance(script, str):
         return False
     script = script.strip()
+    if path in PUBLISHER_COMMANDS:
+        commands = {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py ' + command
+                    for command in PUBLISHER_COMMANDS[path]}
+        commands.add('/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"')
+        if path == ".github/workflows/ci-approval.yml":
+            commands.add("/usr/bin/true")
+        if script in commands:
+            return True
     if path == PROBE_WORKFLOW and set(events) <= {"schedule", "workflow_dispatch"} and events:
         if script in PROBE_COMMANDS:
             return True
@@ -255,6 +275,20 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 settings = {key: step[key] for key in ("shell", "working-directory") if key in step}
                 if not trusted_run_settings_allowed(settings):
                     flag(step_location, "trusted-run", "Trusted commands require the default workspace and a reviewed shell")
+                if path in PUBLISHER_COMMANDS and isinstance(step.get("env"), dict):
+                    if {"CI_APP_PRIVATE_KEY", "CI_APP_ID"}.intersection(step["env"]):
+                        environment = job.get("environment")
+                        environment_name = environment.get("name") if isinstance(environment, dict) else environment
+                        command = step.get("run", "")
+                        allowed_command = ("publish" if path.endswith("ci-publish.yml") else "approve"
+                                           if path.endswith("ci-approval.yml") else "fallback")
+                        if (environment_name != "ci-publisher" or command !=
+                                '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py ' + allowed_command):
+                            flag(step_location, "publisher-credential", "App credentials belong only to the guarded status-writing step")
+        if path == ".github/workflows/ci-approval.yml" and job.get("environment") == "ci-approval":
+            if (permissions != {} or job.get("env") or document.get("env")
+                    or steps != [{"run": "/usr/bin/true"}]):
+                flag(location, "approval-wait", "Approval wait must have no credentials, checkout, actions or token grants")
         if trusted and any(key in job for key in ("container", "services")):
             flag(location, "trusted-run", "Trusted jobs cannot start unreviewed containers or services")
     for location, item in walk_mappings(document):
@@ -270,7 +304,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                             "RUBYLIB", "PERL5LIB", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"}
         if isinstance(environment, dict) and any(key in loader_variables for key in environment):
             flag(location, "artifact-execution", "Artifact data must not control executable search or interpreter startup")
-        bindings = PRIVACY_ENVIRONMENT if path == PRIVACY_WORKFLOW else PROBE_ENVIRONMENT if path == PROBE_WORKFLOW else {}
+        bindings = (PRIVACY_ENVIRONMENT if path == PRIVACY_WORKFLOW else PROBE_ENVIRONMENT
+                    if path == PROBE_WORKFLOW else PUBLISHER_BINDINGS if path in PUBLISHER_COMMANDS else {})
         if (not isinstance(environment, dict) or any(key not in bindings or value != bindings[key]
                 for key, value in environment.items())):
             flag(location, "trusted-environment", "Trusted environment variables need an explicit reviewed binding")
@@ -284,7 +319,12 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if not isinstance(options, dict):
             flag(location, "workflow-format", "Action inputs must be a mapping")
             continue
-        if "uses" in item and not trusted_action_allowed(uses, options):
+        publisher_upload = (path == ".github/workflows/ci-publish.yml"
+                            and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+                            and options == {"name": "ci-admission-${{ steps.admit.outputs.run_id }}",
+                                            "path": "${{ runner.temp }}/ci-admission/record.json",
+                                            "if-no-files-found": "error", "retention-days": 30})
+        if "uses" in item and not publisher_upload and not trusted_action_allowed(uses, options):
             flag(location, "trusted-action", "Trusted uses must be an approved pinned remote action or isolated repository-local action")
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":
             ref = options.get("ref")

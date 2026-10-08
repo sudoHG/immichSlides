@@ -79,6 +79,30 @@ class WorkflowPolicyTests(unittest.TestCase):
         document["jobs"]["other"] = {"runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}
         self.assertIn("timeout", self.rules(document))
 
+    def test_approval_wait_cannot_acquire_credentials_or_execute_an_action(self):
+        document = {"on": {"workflow_dispatch": None}, "permissions": {}, "jobs": {
+            "wait": {"runs-on": "macos-latest", "timeout-minutes": 5, "permissions": {},
+                     "environment": "ci-approval", "steps": [{"run": "/usr/bin/true"}]}}}
+        path = ".github/workflows/ci-approval.yml"
+        self.assertEqual(self.rules(document, path), set())
+        for key, value in (("permissions", {"contents": "read"}),
+                           ("env", {"CI_APP_PRIVATE_KEY": "${{ secrets.CI_APP_PRIVATE_KEY }}"}),
+                           ("steps", [{"uses": f"actions/checkout@{SHA}", "with": {"ref": "main"}}])):
+            with self.subTest(key=key):
+                modified = copy.deepcopy(document)
+                modified["jobs"]["wait"][key] = value
+                self.assertIn("approval-wait", self.rules(modified, path))
+
+    def test_app_key_binding_is_refused_outside_the_guarded_publisher_step(self):
+        document = self.trusted()
+        document["jobs"]["check"]["steps"] = [{"run": '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py route',
+            "env": {"CI_APP_PRIVATE_KEY": "${{ secrets.CI_APP_PRIVATE_KEY }}"}}]
+        self.assertIn("publisher-credential", self.rules(document, TRUSTED))
+        document["jobs"]["check"]["environment"] = "ci-publisher"
+        self.assertIn("publisher-credential", self.rules(document, TRUSTED))
+        document["jobs"]["check"]["steps"][0]["run"] = '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py publish'
+        self.assertNotIn("publisher-credential", self.rules(document, TRUSTED))
+
     def probe(self):
         document = self.trusted()
         document["name"] = "ci-probe"

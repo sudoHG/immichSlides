@@ -319,4 +319,5 @@ PYTHON=/usr/bin/python3 scripts/check_all.sh --output-dir '<fresh-outside-repo>'
 
 Use a fresh output directory; records are temporary and should be removed after
 reading results. No simulator, build, private server or credential is needed.
-There is no trusted publisher or status-writing identity in this ticket.
+The [trusted publisher](CI_PUBLISHER.md) supplies these libraries with admitted
+inputs and publishes through the CI App; candidate host output remains informational.

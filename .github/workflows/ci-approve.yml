@@ -1,0 +1,40 @@
+name: ci-approve
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: PR for the maintainer fallback
+        type: string
+        required: true
+      head_sha:
+        description: Exact current head SHA to approve
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  record:
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: xcode-27
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    environment: ci-publisher
+    concurrency:
+      group: ci-state-pr-${{ inputs.pull_request }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - run: /usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"
+      - env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+          CI_APP_ID: ${{ vars.CI_APP_ID }}
+          CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py fallback'

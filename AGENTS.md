@@ -15,6 +15,7 @@ Never do these without explicit approval from the maintainer, whatever the task 
 - Create, edit or delete data on a real Immich server.
 - Commit secrets, local config (`Config/env.xcconfig`), build output, `.xcresult` bundles, screenshots or scratch scripts.
 - Overwrite, reformat, restore or delete changes you did not make. Report them instead.
+- Approve CI runs, fork commits, CI-changing commits or releases on the maintainer's behalf. Agents may request approval, never grant it.
 
 ## Language
 
