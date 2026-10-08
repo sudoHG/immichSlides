@@ -31,9 +31,9 @@
         "kind": "strict",
         "key": "StrictE2EFilterIOSUITests/testFilterEditSwitchKeepsFilteredModeAndClearReturnsRandom",
         "dimensions": {
-        "device": "iphone",
-        "configuration": "Release",
-        "suite": "filter-edit-switch",
+          "device": "iphone",
+          "configuration": "Release",
+          "suite": "filter-edit-switch",
           "scenario": "normal",
           "fixture": "a"
         }
@@ -106,9 +106,9 @@
         "kind": "strict",
         "key": "StrictE2EFilterTVOSUITests/testTVOSSmartFillDisplayPolicyChangesMultiToSingle",
         "dimensions": {
-        "device": "tv",
-        "configuration": "Release",
-        "suite": "tvos-display-policy",
+          "device": "tv",
+          "configuration": "Release",
+          "suite": "tvos-display-policy",
           "scenario": "normal",
           "fixture": "a"
         }
@@ -156,9 +156,9 @@
         "kind": "strict",
         "key": "AccessLifecycleIOSUITests/testBackgroundReturnPreservesScene",
         "dimensions": {
-        "device": "iphone",
-        "configuration": "Release",
-        "suite": "ios-lifecycle-background",
+          "device": "iphone",
+          "configuration": "Release",
+          "suite": "ios-lifecycle-background",
           "scenario": "normal",
           "fixture": "a"
         }
@@ -174,27 +174,6 @@
       "symptom": "No new stable frame appeared before going to the background.",
       "evidence": [
         "https://github.com/sudoHG/immichSlides/issues/139 (2026-10-06/07 verification excerpts and coordinator classification)"
-      ]
-    },
-    {
-      "identity": {
-        "kind": "ui",
-        "key": "AccessLifecycleIOSUITests/testAccessProtectionSettingsAndLifecycle",
-        "dimensions": {
-          "platform": "ios"
-        }
-      },
-      "scope": {
-        "tier": "ui",
-        "environment": "hermetic"
-      },
-      "issue": "https://github.com/sudoHG/immichSlides/issues/140",
-      "owner": "sudoHG",
-      "review_by": "2026-11-07",
-      "added_on": "2026-10-08",
-      "symptom": "Slider-to-12 or later background scene checkpoints fail intermittently on main.",
-      "evidence": [
-        "https://github.com/sudoHG/immichSlides/issues/140 (2026-10-06/07 verification excerpts and coordinator classification)"
       ]
     }
   ]

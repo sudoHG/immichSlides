@@ -136,7 +136,7 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
     try:
         summary = parse_summary(raw)
         policy = parse_policy(policy)
-        from ci_flaky import eligible_entry, parse_registry
+        from ci_flaky import ASSERTION_FAILURE, eligible_entry, parse_registry
         registry = parse_registry(base_registry) if base_registry is not None else {"schema_version": 1, "entries": []}
         expected_by_function = tokens(expected, functions=True)
         tokens(expected)
@@ -194,6 +194,7 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
                 else:
                     errors.append(f"expected skip ran or reason differed: {label}")
             elif (entry["outcome"] == "flaky-passed" and entry["attempts"][0]["exit_code"] == 65
+                  and entry["attempts"][0]["reason"] == ASSERTION_FAILURE
                   and entry["attempts"][1]["exit_code"] == 0 and eligible_entry(
                     registry, identity, tier=tier, environment=environment, today=evaluated_on or date.today())):
                 result["flaky_passed"].append(identity)

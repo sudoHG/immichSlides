@@ -327,14 +327,16 @@ stay passes and expiration cannot fail unrelated tests.
 PR consumers read the registry from the checked-out merge commit's first parent.
 An absent base registry means an empty list, including during initial rollout.
 The PR's candidate entries cannot excuse its own failures. CI cannot override the
-registry revision. Main push/dispatch consumers use their tested main revision;
+registry revision. Main push/dispatch/schedule consumers use their tested main revision;
 local runs use `HEAD`, with an explicit local `--registry-ref <commit>` available
 for isolated acceptance probes. Both the revision and exact policy hash are kept.
 Trusted verdict callers supply `base_registry` and the trusted evaluation date to
 `ci_verdict`; producer-provided entries do not select that policy.
 
 Only an official first-call assertion failure (Xcode exit 65) with an exact active
-entry may obtain one retry. The executor resets the app, keychain and simulator
+entry may obtain one retry. Official typed failure summaries must classify every
+failure for that method as `Assertion Failure`; crashes, infrastructure errors and
+unclassifiable results are ineligible. The executor resets the app, keychain and simulator
 privacy state, then calls `test-without-building` with only the failed method.
 Global retry/repetition/iteration flags are rejected. Both calls, official exports,
 exit codes, durations and per-test attempts remain recorded. Failed then passed is
@@ -359,14 +361,24 @@ publication. Pass fixture inputs explicitly through the per-run xctestrun; ambie
 server inputs are stripped. Each invocation gets an independent private directory
 so every raw bundle can be exported/disposed before its directory is removed;
 only compact records are suitable for the future summary consumer.
+The adapter uses `-collect-test-diagnostics never` to keep failed invocations
+bounded without simulator diagnostic collection. Execution errors and timeouts
+retain all attempted calls in `retry-invocations.json`; a retry timeout records a
+second `timed-out` attempt and returns failure.
 
 Strict warm runs opt in with `--listed-retry-device iphone`, `ipad` or `tv`, together
 with `--test-without-building`. This preserves the existing cold/default runner and
 informational tracer behavior. It uses the same executor and retains per-session
 attempt exports, including `filter-person`. Existing visual/evidence validators
-still run on the final attempt and must pass; an image-validator failure outside
-XCTest does not authorize a retry. The complete CI shard demonstration belongs to
-the UI-shard ticket; standalone access-lifecycle warm conversion remains excluded.
+still run on the final attempt and must pass. The target UDID's simulator device
+type determines the device class; the argument and every official result device
+must agree. A retry moves the case's first outputs to `attempt-1/<case>/`, records
+service-log byte offsets, and exports only the final attempt's request segment for
+validation. Reset logs are appended across sessions and attempts. An image-validator
+failure outside XCTest does not authorize a retry. The hosted shard demonstration
+remains an open acceptance criterion of #97 until #94 supplies the UI shards;
+standalone access-lifecycle warm conversion remains excluded. #140 tracks its
+flake but is not registered because the UI tier excludes that test.
 
 Every strict suite and both access-lifecycle runners write raw XCTest result bundles under
 `Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"`, outside `--evidence-dir`.

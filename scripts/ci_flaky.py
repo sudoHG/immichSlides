@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from datetime import date
+from functools import partial
 from pathlib import Path
 
 from ci_summary import (ContractError, decode, duration, fields, identity_key, observation,
@@ -26,6 +27,7 @@ EMPTY_REGISTRY = {"schema_version": 1, "entries": []}
 FORBIDDEN_FLAGS = {"-retry-tests-on-failure", "-run-tests-until-failure", "-test-iterations",
                    "-maximum-test-iterations", "-test-repetition-relaunch-enabled"}
 METHOD = re.compile(r"[A-Za-z_]\w*/test[A-Za-z_]\w*")
+ASSERTION_FAILURE = "Official XCTest assertion failure"
 
 
 def calendar_date(value):
@@ -143,6 +145,7 @@ def retry_observations(first, registry, *, tier, environment, today, reset, exec
         require(token not in seen, "duplicate first-attempt identity")
         seen.add(token)
         if (record["outcome"] == "failed" and len(record["attempts"]) == 1
+                and record["attempts"][0]["reason"] == ASSERTION_FAILURE
                 and eligible_entry(registry, record["identity"], tier=tier, environment=environment, today=today)):
             reset()
             record = merge_retry(record, execute(record["identity"]))
@@ -186,7 +189,7 @@ def registry_revision(root, environment, local_ref=None):
             parents = [line[7:] for line in headers.splitlines() if line.startswith("parent ")]
             require(len(parents) == 2, "PR registry requires the merge commit's base parent")
             return parents[0]
-        require(event in {"push", "workflow_dispatch"} and environment.get("GITHUB_REF") == "refs/heads/main",
+        require(event in {"push", "workflow_dispatch", "schedule"} and environment.get("GITHUB_REF") == "refs/heads/main",
                 "CI registry consumption requires PR or main")
         return head
     ref = local_ref or "HEAD"
@@ -203,12 +206,68 @@ def load_registry(root, revision):
     return parse_registry(raw.decode()), hashlib.sha256(raw).hexdigest()
 
 
-def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit):
-    from strict_e2e_p2_contract import official_tests_facts
+def simulator_device_class(udid, expected=None):
+    completed = subprocess.run(["xcrun", "simctl", "list", "devices", "available", "--json"],
+                               capture_output=True, check=True, timeout=60)
+    payload = json.loads(completed.stdout)
+    devices = [device for group in payload.get("devices", {}).values() for device in group if device.get("udid") == udid]
+    require(len(devices) == 1, "target UDID must identify one available simulator")
+    identifier = devices[0].get("deviceTypeIdentifier", "")
+    classes = {"iPhone-": "iphone", "iPad-": "ipad", "Apple-TV-": "tv"}
+    actual = next((kind for prefix, kind in classes.items()
+                   if identifier.startswith("com.apple.CoreSimulator.SimDeviceType." + prefix)), None)
+    require(actual is not None, "target simulator has an unknown device class")
+    require(expected is None or actual == expected, "listed retry device does not match target simulator")
+    return actual
+
+
+def official_assertion_keys(payload):
+    # The typed legacy issue summaries distinguish assertions from crashes. Never
+    # infer eligibility from failure text, which can also contain private values.
+    keys = {}
+    blocked = False
+    def walk(value):
+        nonlocal blocked
+        if isinstance(value, dict):
+            if "errorSummaries" in value and value["errorSummaries"].get("_values"):
+                blocked = True
+            if "testCaseName" in value:
+                require(isinstance(value["testCaseName"], dict) and isinstance(value.get("issueType"), dict),
+                        "invalid official failure summary")
+                name = value["testCaseName"].get("_value", "")
+                kind = value.get("issueType", {}).get("_value")
+                key = name.removesuffix("()").replace(".", "/")
+                keys.setdefault(key, []).append(kind)
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+    walk(payload)
+    return set() if blocked else {key for key, kinds in keys.items()
+                                 if kinds and all(kind == "Assertion Failure" for kind in kinds)}
+
+
+def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, *, expected_device=None):
+    from strict_e2e_p2_contract import official_tests_facts, device_class_of, P2ContractError
     completed = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
                                capture_output=True, check=True, timeout=60)
     payload = json.loads(completed.stdout)
     facts = official_tests_facts(payload)
+    if expected_device is not None:
+        udid, device_class = expected_device
+        require(len(facts["devices"]) == 1 and facts["devices"][0].get("deviceId") == udid,
+                "official result device does not match target UDID")
+        try:
+            actual_class = device_class_of(facts["devices"][0])
+        except P2ContractError as error:
+            raise ContractError("official result has an unknown simulator class") from error
+        require(actual_class == device_class, "official result device class does not match target simulator")
+    assertion_keys = set()
+    if any(case["result"] == "Failed" for case in facts["test_cases"]):
+        details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
+                                 capture_output=True, check=True, timeout=60)
+        assertion_keys = official_assertion_keys(json.loads(details.stdout))
     durations = {}
     def collect_durations(nodes):
         require(isinstance(nodes, list), "invalid official result children")
@@ -231,7 +290,9 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit):
         require(outcome is not None, "unknown XCTest outcome")
         duration(durations.get(raw_key))
         records.append(observation(identity_for_key(key), outcome, durations[raw_key],
-                                   reason="Official XCTest skip" if outcome == "skipped" else None,
+                                   reason=("Official XCTest skip" if outcome == "skipped" else
+                                           ASSERTION_FAILURE if outcome == "failed" and key in assertion_keys else
+                                           "Official non-assertion or unclassified failure" if outcome == "failed" else None),
                                    exit_code=0 if outcome == "passed" else invocation_exit))
     require(bool(records), "official XCTest result contains no tests")
     return records
@@ -248,9 +309,24 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
     check_retry_flags(command)
     bundle = Path(command[command.index("-resultBundlePath") + 1])
     invocations = []
-    def invoke(call, path):
-        code, elapsed = execute(call)
-        invocations.append({"command": call, "result_bundle": str(path), "exit_code": code, "duration_seconds": elapsed})
+    def invoke(call, path, retry_identity=None):
+        from strict_e2e_runner_support import CommandError
+        started = time.monotonic()
+        invocation = {"command": call, "result_bundle": str(path)}
+        invocations.append(invocation)
+        try:
+            code, elapsed = execute(call)
+        except (CommandError, OSError, subprocess.SubprocessError) as error:
+            timed_out = (isinstance(error, subprocess.TimeoutExpired) or
+                         isinstance(error.__cause__, subprocess.TimeoutExpired) or
+                         str(error).startswith("xcodebuild timed out after "))
+            code, elapsed = (124 if timed_out else getattr(error, "code", 2)), time.monotonic() - started
+            outcome = "timed-out" if timed_out else "not-run"
+            invocation.update(exit_code=code, duration_seconds=elapsed, outcome=outcome)
+            rows = ([observation(retry_identity, outcome, elapsed, reason="Xcode execution did not complete", exit_code=code)]
+                    if retry_identity is not None else [])
+            return rows, code
+        invocation.update(exit_code=code, duration_seconds=elapsed)
         try:
             return read(path, identity_for_key, elapsed, code), code
         except (ContractError, OSError, ValueError, subprocess.SubprocessError):
@@ -262,7 +338,7 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
         retry_bundle = Path(allocate_bundle())
         require(retry_bundle.parent not in {Path(call["result_bundle"]).parent for call in invocations},
                 "Every retry bundle requires an independent private directory")
-        records, code = invoke(retry_command(command, identity["key"], retry_bundle), retry_bundle)
+        records, code = invoke(retry_command(command, identity["key"], retry_bundle), retry_bundle, identity)
         if len(records) != 1 or records[0]["identity"] != identity:
             return None
         effective_bundle = retry_bundle
@@ -344,13 +420,16 @@ def run_ui(args):
         summary["toolchain"]["signing_mode"] = "sign-to-run-locally"
         write_summary(summary, output)
         udid = destination_udid(args.destination)
+        device_class = simulator_device_class(udid)
+        require((device_class == "tv") == (args.platform == "tvos"), "UI platform does not match target simulator")
         def reset():
             with (output / "app-reset.log").open("a") as log:
                 log.write(reset_simulator_app(udid))
         reset()
         bundle = prepare_private_result_bundle_path("ui-flaky")
         command = ["xcodebuild", "test-without-building", "-xctestrun", str(args.xctestrun.resolve()),
-                   "-destination", args.destination, "-parallel-testing-enabled", "NO", "-resultBundlePath", str(bundle)]
+                   "-destination", args.destination, "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
+                   "-resultBundlePath", str(bundle)]
         for selector in args.only_testing:
             command.append("-only-testing:" + selector)
         def execute(call):
@@ -366,6 +445,7 @@ def run_ui(args):
         result = run_xcode_attempts(command, registry, tier="ui", environment="hermetic", today=date.today(),
                                    identity_for_key=lambda key: test_identity("ui", key, platform=args.platform),
                                    reset=reset, execute=execute,
+                                   read=partial(read_xcode_observations, expected_device=(udid, device_class)),
                                    allocate_bundle=lambda: prepare_private_result_bundle_path("ui-flaky-retry"))
         summary["population"]["observed"] = result["observed"]
         (output / "retry-invocations.json").write_text(json.dumps(dict(result, registry_revision=revision), indent=2) + "\n")

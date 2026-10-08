@@ -30,6 +30,14 @@ def registry():
 
 
 class RegistryTests(unittest.TestCase):
+    def test_schedule_consumes_only_tested_main_registry(self):
+        environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule", "GITHUB_SHA": "a" * 40,
+                       "GITHUB_REF": "refs/heads/main"}
+        with mock.patch("ci_flaky.subprocess.check_output", return_value="a" * 40):
+            self.assertEqual(registry_revision(Path("."), environment), "a" * 40)
+            with self.assertRaises(ContractError):
+                registry_revision(Path("."), environment | {"GITHUB_REF": "refs/heads/candidate"})
+
     def test_pr_uses_merge_base_parent_and_never_candidate_or_ci_override(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -105,6 +113,61 @@ class RegistryTests(unittest.TestCase):
 
 
 class RetryTests(unittest.TestCase):
+    def test_official_failure_types_and_devices_control_retry_admission(self):
+        from ci_flaky import read_xcode_observations
+        identity = registry()["entries"][0]["identity"]
+        device = {"deviceId": "target", "modelName": "iPhone 17", "platform": "iOS Simulator"}
+        tests = {"devices": [device], "testNodes": [{"nodeType": "UI test bundle", "name": "immichSlidesUITests",
+            "children": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
+                          "result": "Failed", "durationInSeconds": 1}]}]}
+        for issue_types in (["Assertion Failure"], ["Crash"], ["Infrastructure Failure"], [],
+                            ["Unknown"], ["Assertion Failure", "Crash"]):
+            with self.subTest(issue_types=issue_types):
+                issues = {"issues": {"testFailureSummaries": {"_values": [
+                    {"testCaseName": {"_value": "ExampleTests.testNavigation()"},
+                     "issueType": {"_value": kind}} for kind in issue_types]}}}
+                def run(command, **kwargs):
+                    return subprocess.CompletedProcess(command, 0, json.dumps(issues if "--legacy" in command else tests))
+                with mock.patch("ci_flaky.subprocess.run", side_effect=run):
+                    rows = read_xcode_observations(Path("result"), lambda key: identity, 1, 65,
+                                                   expected_device=("target", "iphone"))
+                    resets = []
+                    actual = retry_observations(rows, registry(), tier="ui", environment="hermetic",
+                        today=date(2026, 10, 8), reset=lambda: resets.append(True),
+                        execute=lambda key: observation(identity, "passed", 1))
+                    self.assertEqual(bool(resets), issue_types == ["Assertion Failure"])
+                    self.assertEqual(actual[0]["outcome"], "flaky-passed" if resets else "failed")
+                    with self.assertRaises(ContractError):
+                        read_xcode_observations(Path("result"), lambda key: identity, 1, 65,
+                                                expected_device=("target", "ipad"))
+
+    def test_target_udid_refuses_device_class_mismatch(self):
+        from ci_flaky import simulator_device_class
+        payload = {"devices": {"runtime": [{"udid": "target", "deviceTypeIdentifier":
+                   "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5"}]}}
+        with mock.patch("ci_flaky.subprocess.run", return_value=subprocess.CompletedProcess([], 0, json.dumps(payload))):
+            self.assertEqual(simulator_device_class("target", "ipad"), "ipad")
+            with self.assertRaises(ContractError):
+                simulator_device_class("target", "iphone")
+
+    def test_second_execution_timeout_keeps_first_failure_and_both_invocations(self):
+        from strict_e2e_runner_support import CommandError
+        identity = registry()["entries"][0]["identity"]
+        first = observation(identity, "failed", 1, reason="Official XCTest assertion failure", exit_code=65)
+        command = ["xcodebuild", "test-without-building", "-resultBundlePath", "first-private/result.xcresult"]
+        for error, outcome in ((CommandError("xcodebuild timed out after 300s without exiting."), "timed-out"),
+                               (subprocess.TimeoutExpired("xcodebuild", 300), "timed-out"),
+                               (CommandError("Cannot execute xcodebuild"), "not-run")):
+            with self.subTest(error=error):
+                actual = run_xcode_attempts(command, registry(), tier="ui", environment="hermetic",
+                    today=date(2026, 10, 8), identity_for_key=lambda key: identity, reset=lambda: None,
+                    execute=mock.Mock(side_effect=[(65, 1), error]), read=lambda *args: [first],
+                    allocate_bundle=lambda: Path("second-private/result.xcresult"))
+                self.assertEqual(actual["observed"][0]["attempts"][0], first["attempts"][0])
+                self.assertEqual(actual["observed"][0]["attempts"][1]["outcome"], outcome)
+                self.assertEqual(len(actual["invocations"]), 2)
+                self.assertNotEqual(actual["exit_code"], 0)
+
     def test_timed_out_ui_invocation_keeps_failure_and_quarantines_unreadable_bundle(self):
         from ci_flaky import run_ui
         from strict_e2e_runner_support import CommandError
@@ -114,13 +177,21 @@ class RetryTests(unittest.TestCase):
             checkout.mkdir()
             output = root / "output"
             stack.enter_context(mock.patch("run_strict_e2e.PRIVATE_RESULT_BUNDLE_ROOT", root / "private"))
+            executed = []
             def execute(call, **kwargs):
                 Path(call[call.index("-resultBundlePath") + 1]).mkdir()
+                executed.append(call)
+                if len(executed) == 1:
+                    return 65
                 raise CommandError("xcodebuild timed out after 300s without exiting")
             patches = {
                 "ci_build_archive.workspace_preflight": {"return_value": None},
                 "ci_flaky.registry_revision": {"return_value": "b" * 40},
                 "ci_flaky.load_registry": {"return_value": (registry(), "a" * 64)},
+                "ci_flaky.simulator_device_class": {"return_value": "iphone"},
+                "ci_flaky.subprocess.run": {"side_effect": subprocess.CalledProcessError(1, "enumeration")},
+                "ci_flaky.read_xcode_observations": {"return_value": [observation(
+                    registry()["entries"][0]["identity"], "failed", 1, reason="Official XCTest assertion failure", exit_code=65)]},
                 "run_host_checks.run_identity": {"return_value": {"schema_version": 1, "event": "local",
                     "repository": "sudoHG/immichSlides", "tree_sha": "a" * 40, "commit_sha": "b" * 40, "dirty": False}},
                 "run_host_checks.source_metadata": {"return_value": (None, False)},
@@ -138,6 +209,11 @@ class RetryTests(unittest.TestCase):
             with redirect_stderr(io.StringIO()):
                 self.assertEqual(run_ui(args), 1)
             summary = json.loads((output / "summary.json").read_text())
+            attempts = json.loads((output / "retry-invocations.json").read_text())
+            self.assertEqual(len(attempts["invocations"]), 2)
+            self.assertEqual(attempts["invocations"][0]["exit_code"], 65)
+            self.assertEqual(attempts["invocations"][1]["outcome"], "timed-out")
+            self.assertEqual(summary["population"]["observed"][0]["attempts"][1]["outcome"], "timed-out")
             self.assertEqual(summary["status"], "failed")
             self.assertEqual({row["code"] for row in summary["infrastructure"]},
                              {"ui-runner-failed", "bundle-finalization-failed"})
@@ -161,8 +237,8 @@ class RetryTests(unittest.TestCase):
             def execute(call):
                 Path(call[call.index("-resultBundlePath") + 1]).mkdir()
                 return (65 if call == command else 0), 1
-            records = iter([[observation(first_identity, "failed", 1, exit_code=65),
-                             observation(second_identity, "failed", 1, exit_code=65)],
+            records = iter([[observation(first_identity, "failed", 1, reason="Official XCTest assertion failure", exit_code=65),
+                             observation(second_identity, "failed", 1, reason="Official XCTest assertion failure", exit_code=65)],
                             [observation(first_identity, "passed", 1)],
                             [observation(second_identity, "passed", 1)]])
             actual = run_xcode_attempts(command, payload, tier="ui", environment="hermetic", today=date(2026, 10, 8),
@@ -208,7 +284,8 @@ class RetryTests(unittest.TestCase):
         payload = registry()
         listed = payload["entries"][0]["identity"]
         unlisted = dict(listed, key="ExampleTests/testUnlisted")
-        first = [observation(listed, "failed", 1, exit_code=65), observation(unlisted, "failed", 2, exit_code=65)]
+        first = [observation(listed, "failed", 1, reason="Official XCTest assertion failure", exit_code=65),
+                 observation(unlisted, "failed", 2, reason="Official XCTest assertion failure", exit_code=65)]
         events = []
         def execute(identity):
             events.append(("execute", identity))
@@ -258,7 +335,7 @@ class RetryTests(unittest.TestCase):
                 (0, [observation(dict(identity, key="ExampleTests/testOther"), "passed", 2)], "failed")):
             with self.subTest(retry_exit=retry_exit, rows=retry_rows):
                 codes = iter([(65, 1), (retry_exit, 2)])
-                rows = iter([[observation(identity, "failed", 1, exit_code=65)], retry_rows])
+                rows = iter([[observation(identity, "failed", 1, reason="Official XCTest assertion failure", exit_code=65)], retry_rows])
                 events = []
                 actual = run_xcode_attempts(command, payload, tier="ui", environment="hermetic", today=date(2026, 10, 8),
                     identity_for_key=lambda key: dict(identity, key=key), reset=lambda: events.append("reset"),

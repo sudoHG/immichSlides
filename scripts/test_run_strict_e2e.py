@@ -93,7 +93,35 @@ from run_strict_e2e_test_configuration_cases import StrictE2ERunnerTestsCasesCon
 from run_strict_e2e_test_evidence_cases import StrictE2ERunnerTestsCasesEvidence
 
 class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunnerTestsCasesEvidence, unittest.TestCase):
-    pass
+    def test_retry_cannot_borrow_first_attempt_out_of_order_timeline_or_screenshots(self):
+        from run_strict_e2e import StrictRetryEvidence
+        from strict_e2e_out_of_order_contract import assert_out_of_order_timeline, OutOfOrderContractError
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            service = evidence / "service.log"
+            service.write_text("")
+            state = StrictRetryEvidence(evidence, "xcodebuild", [service])
+            timeline = (
+                "request_started elapsed_ms=10 method=GET path=/api/assets/<fixture-id>/thumbnail size=preview range=absent fixture_asset_id=asset-a-1\n"
+                "request_started elapsed_ms=20 method=GET path=/api/assets/<fixture-id>/thumbnail size=preview range=absent fixture_asset_id=asset-a-2\n"
+                "request elapsed_ms=30 method=GET path=/api/assets/<fixture-id>/thumbnail status=200 range=absent fixture_asset_id=asset-a-2 size=preview\n"
+                "request elapsed_ms=40 method=GET path=/api/assets/<fixture-id>/thumbnail status=200 range=absent fixture_asset_id=asset-a-1 size=preview\n")
+            service.write_text(timeline)
+            (evidence / "ooo-current-scene.png").write_bytes(b"first screenshot")
+            (evidence / "simulator-reset.log").write_text("first reset\n")
+            state.before_retry()
+            self.assertFalse((evidence / "ooo-current-scene.png").exists())
+            self.assertEqual((evidence / "attempt-1/xcodebuild/ooo-current-scene.png").read_bytes(), b"first screenshot")
+            with (evidence / "simulator-reset.log").open("a") as log:
+                log.write("retry reset\n")
+            with service.open("a") as log:
+                log.write("request elapsed_ms=50 method=GET path=/healthz status=200 range=absent fixture_asset_id=none\n")
+            state.finish()
+            arguments = dict(delayed_asset_id="asset-a-1", immediate_asset_id="asset-a-2", size="preview")
+            self.assertEqual(assert_out_of_order_timeline(service.read_text(), **arguments)["delayed_complete_ms"], 40)
+            with self.assertRaises(OutOfOrderContractError):
+                assert_out_of_order_timeline((evidence / "redacted-request.log").read_text(), **arguments)
+            self.assertIn("retry reset", (evidence / "simulator-reset.log").read_text())
 
 
 from run_strict_e2e_test_p2_cases import StrictE2EP2RunnerTestsCases

@@ -32,7 +32,8 @@ class PopulationVerdictTests(unittest.TestCase):
         summary = valid_summary()
         summary["run"]["tier"] = "ui"
         summary["population"]["declared"] = summary["population"]["compiled"] = [identity]
-        summary["population"]["observed"] = [merge_retry(ci_summary.observation(identity, "failed", 1, exit_code=65),
+        summary["population"]["observed"] = [merge_retry(ci_summary.observation(identity, "failed", 1,
+                                                        reason="Official XCTest assertion failure", exit_code=65),
                                                         ci_summary.observation(identity, "passed", 2))]
         args = {"environment": "hermetic", "base_registry": base, "evaluated_on": date(2026, 10, 8)}
         self.assertEqual(evaluate_population(summary, [identity], policy(), **args)["status"], "passed")
@@ -41,6 +42,9 @@ class PopulationVerdictTests(unittest.TestCase):
             with self.subTest(override=override):
                 self.assertEqual(evaluate_population(summary, [identity], policy(), **(args | override))["status"], "failed")
         summary["run"]["tier"] = "host"
+        self.assertEqual(evaluate_population(summary, [identity], policy(), **args)["status"], "failed")
+        summary["run"]["tier"] = "ui"
+        summary["population"]["observed"][0]["attempts"][0]["reason"] = "Unclassified failure"
         self.assertEqual(evaluate_population(summary, [identity], policy(), **args)["status"], "failed")
 
     def setUp(self):
