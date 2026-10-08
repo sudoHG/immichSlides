@@ -10,18 +10,18 @@ import math
 import os
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from ci_build_archive import check_products, measure_signing, record_signing
+from ci_build_archive import check_products, disk_check, measure_signing, record_signing
 from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
 from ci_verdict import evaluate_population, parse_policy
 from run_host_checks import run_identity, source_metadata, toolchain
-from run_offline_unit_tests import (CommandError as OfflineCommandError, _stop_process_group,
-                                    default_data_available_gib, ensure_disk_for_xcodebuild)
+from run_offline_unit_tests import CommandError as OfflineCommandError, _stop_process_group
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
                             prepare_private_result_bundle_path, write_sensitive_scan)
 from strict_e2e_runner_support import CommandError, destination_udid, reset_simulator_app, stop_exact_process, wait_for_service
@@ -30,6 +30,50 @@ from access_lifecycle_contract import logical_bytes_contain
 
 ROOT = Path(__file__).resolve().parent.parent
 DEVICES = {"iphone": "ios", "ipad": "ios", "appletv": "tvos"}
+DEVICE_MODELS = {"iphone": "iPhone", "ipad": "iPad", "appletv": "Apple TV"}
+
+
+def verify_simulator_device(payload, udid, device):
+    require(isinstance(payload, dict) and isinstance(payload.get("devices"), dict), "invalid simulator inventory")
+    matches = []
+    for devices in payload["devices"].values():
+        require(isinstance(devices, list) and all(isinstance(item, dict) for item in devices),
+                "invalid simulator inventory devices")
+        matches.extend(item for item in devices if item.get("udid") == udid)
+    require(len(matches) == 1 and matches[0].get("isAvailable") is True, "destination simulator is missing or unavailable")
+    type_id = matches[0].get("deviceTypeIdentifier")
+    prefix = "com.apple.CoreSimulator.SimDeviceType." + DEVICE_MODELS[device].replace(" ", "-") + "-"
+    require(isinstance(type_id, str) and type_id.startswith(prefix), "destination simulator type differs from --device")
+
+
+def verify_official_device(payload, udid, device):
+    devices = payload.get("devices") if isinstance(payload, dict) else None
+    require(isinstance(devices, list) and len(devices) == 1 and isinstance(devices[0], dict),
+            "official results must record exactly one device")
+    recorded = devices[0]
+    require(recorded.get("deviceId") == udid, "official result device UDID differs from destination")
+    platform = "tvOS Simulator" if DEVICES[device] == "tvos" else "iOS Simulator"
+    model = recorded.get("modelName")
+    require(recorded.get("platform") == platform and isinstance(model, str)
+            and model.startswith(DEVICE_MODELS[device]), "official result device type differs from --device")
+
+
+def prepare_fixture_result_bundle():
+    original = prepare_private_result_bundle_path("fixture-ui")
+    # The shared finalizer removes the bundle's parent; logs must live outside it.
+    directory = original.parent / "result"
+    directory.mkdir(mode=0o700)
+    return directory / original.name
+
+
+def finalize_fixture_run(bundle, output, digest, *, successful):
+    failures = finalize_private_result_bundle(bundle, output, digest, successful=successful)
+    if successful and not failures and not bundle.exists():
+        try:
+            shutil.rmtree(bundle.parent.parent)
+        except OSError as error:
+            failures.append("dispose_fixture_logs: " + str(error))
+    return failures
 
 
 def clean_environment(source):
@@ -81,8 +125,8 @@ def duration_seconds(value):
 
 def coverage_rows(declared, compiled, official, device):
     expected = {entry["key"]: entry for entry in declared}
-    compiled_keys = {entry["key"] for entry in compiled}
-    require(len(compiled_keys) == len(compiled), "duplicate compiled identity")
+    compiled_keys = {entry["key"] for entry in compiled or []}
+    require(len(compiled_keys) == len(compiled or []), "duplicate compiled identity")
     require(compiled_keys <= expected.keys(), "unexpected compiled identity")
     outcomes = {"Passed": "passed", "Failed": "failed", "Skipped": "skipped"}
     observed = {}
@@ -104,7 +148,8 @@ def coverage_rows(declared, compiled, official, device):
     for node in official["testNodes"]:
         visit(node)
     return [observed.get(key, {"identity": entry, "device": device, "outcome": "not-run",
-                              "duration_seconds": 0, "reason": "not compiled" if key not in compiled_keys
+                              "duration_seconds": 0, "reason": "not attempted" if compiled is None
+                              else "not compiled" if key not in compiled_keys
                               else "compiled but no official result"}) for key, entry in sorted(expected.items())]
 
 
@@ -192,12 +237,15 @@ def main(argv=None):
     parser.add_argument("--only-testing", action="append", default=[], help="Exact default-plan UI test selector")
     parser.add_argument("--mode", choices=("measure", "pr"), default="pr")
     parser.add_argument("--timeout-minutes", type=float, default=90)
+    parser.add_argument("--min-free-gib", type=int, default=80,
+                        help="Disk guard; thresholds below 80 require a GitHub-hosted runner")
     args = parser.parse_args(argv)
     output = args.output_dir.resolve()
     code, service, bundle, digest, summary = 1, None, None, None, None
     rows = []
     try:
         require(math.isfinite(args.timeout_minutes) and args.timeout_minutes > 0, "timeout must be finite and positive")
+        require(args.min_free_gib >= 0, "disk threshold must be non-negative")
         require(ROOT != output and ROOT not in output.parents, "output must be outside the checkout")
         output.mkdir(parents=True, exist_ok=True, mode=0o700)
         require(not any(output.iterdir()), "output directory must be fresh")
@@ -216,6 +264,9 @@ def main(argv=None):
         platform = DEVICES[args.device]
         expected_destination = "tvOS Simulator" if platform == "tvos" else "iOS Simulator"
         require(args.destination.startswith("platform=" + expected_destination + ","), "wrong simulator platform")
+        inventory = subprocess.run(["xcrun", "simctl", "list", "devices", "available", "--json"],
+                                   capture_output=True, check=True, timeout=60)
+        verify_simulator_device(json.loads(inventory.stdout), udid, args.device)
         plan_name = "immichSlides-" + ("tvOS" if platform == "tvos" else "iOS")
         plan = json.loads((ROOT / (plan_name + ".xctestplan")).read_text())
         ui_root = ROOT / "immichSlidesUITests"
@@ -223,7 +274,7 @@ def main(argv=None):
                                   platform, plan, args.only_testing)
         for entry in declared:
             entry["dimensions"]["device"] = args.device
-        rows = coverage_rows(declared, [], {"testNodes": []}, args.device)
+        rows = coverage_rows(declared, None, {"testNodes": []}, args.device)
         policy_path = ROOT / "scripts/ci-test-policy.json"
         policy = parse_policy(policy_path.read_text())
         deselections = [entry for entry in policy["deselections"] if policy["approval_state"] == "approved"
@@ -235,15 +286,15 @@ def main(argv=None):
         summary["population"]["declared"] = declared
         summary["population"]["deselected"] = [
             {key: value for key, value in entry.items() if key not in {"tier", "environment"}} for entry in deselections]
-        bundle = prepare_private_result_bundle_path("fixture-ui")
+        bundle = prepare_fixture_result_bundle()
+        work = bundle.parent.parent
         env = clean_environment(os.environ)
         timeout = args.timeout_minutes * 60
         def execute(command, name):
-            subprocess.run(["df", "-h", "/System/Volumes/Data"], check=True)
-            ensure_disk_for_xcodebuild(min_free_gib=80, data_available_gib=default_data_available_gib)
+            disk_check(args.min_free_gib)
             require(not os.path.lexists(ROOT / "Config/env.xcconfig"), "private configuration reappeared")
             print("Running " + name, flush=True)
-            with (bundle.parent / (name + ".log")).open("w") as log:
+            with (work / (name + ".log")).open("w") as log:
                 process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=True)
                 deadline = time.monotonic() + timeout
@@ -276,33 +327,36 @@ def main(argv=None):
         require(len(apps) == 1, "expected one Debug simulator app")
         check_products(source_run.parent)
         record_signing(summary, measure_signing(apps[0]))
-        with (bundle.parent / "service.log").open("wb") as log:
+        with (work / "service.log").open("wb") as log:
             service = subprocess.Popen([sys.executable, str(ROOT / "scripts/strict_e2e_server.py"), "--fixture-set", "c",
-                                        "--host", "127.0.0.1", "--port", "0", "--ready-file", str(bundle.parent / "ready.json"),
-                                        "--log-file", str(bundle.parent / "service-requests.log")],
+                                        "--host", "127.0.0.1", "--port", "0", "--ready-file", str(work / "ready.json"),
+                                        "--log-file", str(work / "service-requests.log")],
                                        env=env, stdout=log, stderr=subprocess.STDOUT)
-        host, port = wait_for_service(bundle.parent / "ready.json", service)
+        host, port = wait_for_service(work / "ready.json", service)
         inputs = {"IMMICH_TEST_SERVER_URL": f"http://{host}:{port}/api", "IMMICH_TEST_API_KEY": PUBLIC_API_KEY,
                   "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID": "album-c-exif",
                   "TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR": str(output / "scene-contracts")}
-        run = prepare_test_run(source_run, bundle.parent, inputs)
+        run = prepare_test_run(source_run, work, inputs)
         base = ["xcodebuild", "test-without-building", "-xctestrun", str(run), "-destination", args.destination,
-                "-derivedDataPath", str(bundle.parent / "xcode-data"),
+                "-derivedDataPath", str(work / "xcode-data"),
                 "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never"]
         selections = ["-only-testing:immichSlidesUITests/" + entry["key"] for entry in declared]
         enumeration = output / "compiled-tests.json"
         code = execute(base + selections + ["-enumerate-tests", "-test-enumeration-style", "flat",
                        "-test-enumeration-format", "json", "-test-enumeration-output-path", str(enumeration),
-                       "-resultBundlePath", str(bundle.parent / "enumeration.xcresult")], "enumerate")
+                       "-resultBundlePath", str(work / "enumeration.xcresult")], "enumerate")
         require(code == 0, "compiled enumeration failed")
         summary["population"]["compiled"] = compiled_tests(json.loads(enumeration.read_text()), declared)
+        rows = coverage_rows(declared, summary["population"]["compiled"], {"testNodes": []}, args.device)
         reset_simulator_app(udid)
         code = execute(base + selections + ["-resultBundlePath", str(bundle)] +
                        ["-skip-testing:immichSlidesUITests/" + entry["identity"]["key"] for entry in deselections], "test")
         digest = export_private_result_bundle(bundle, output, [PUBLIC_API_KEY])
+        official = json.loads((output / "official-tests.json").read_text())
+        verify_official_device(official, udid, args.device)
         selected = [entry for entry in declared if not any(rule["identity"] == entry for rule in deselections)]
         compiled = [entry for entry in summary["population"]["compiled"] if entry in selected]
-        rows = coverage_rows(selected, compiled, json.loads((output / "official-tests.json").read_text()), args.device)
+        rows = coverage_rows(selected, compiled, official, args.device)
         for row in rows:
             if row["outcome"] in {"skipped", "failed"}:
                 row["reason"] = read_problem_reason(bundle, row["identity"]["key"])
@@ -353,15 +407,12 @@ def main(argv=None):
                 summary["status"] = "failed"
                 summary["infrastructure"].append({"code": "sensitive-scan-failed", "message": str(error)[:200]})
                 write_summary(summary, output)
-            failures = finalize_private_result_bundle(bundle, output, digest, successful=code == 0) if bundle else []
+            failures = finalize_fixture_run(bundle, output, digest, successful=code == 0) if bundle else []
             if failures:
                 code = code or 1
                 summary["status"] = "failed"
                 summary["infrastructure"].append({"code": "cleanup-failed", "message": "Private bundle disposal failed"})
                 write_summary(summary, output)
-            if code == 0 and bundle and bundle.parent.exists():
-                import shutil
-                shutil.rmtree(bundle.parent)
             print(f"Fixture UI: {summary['status']} ({len(rows)} per-test rows), exit {code}", flush=True)
     return code
 

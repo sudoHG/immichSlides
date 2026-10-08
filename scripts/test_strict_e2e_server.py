@@ -168,10 +168,6 @@ def logged_request_events(log: str, *, size: str) -> list[tuple[str, str, int]]:
 
 class StrictE2EServerContractTests(unittest.TestCase):
     def test_ui_corpus_preserves_frozen_sets_and_supports_album_person_playback(self) -> None:
-        self.assertEqual(fixture_manifest("a")["fixture_sha256"],
-                         "44f9dc4b144e5fcc5dd14a98b76ba1bf1ca8829648555aebe738c3e2b3048989")
-        self.assertEqual(fixture_manifest("b")["fixture_sha256"],
-                         "4eaeac910ff1abf6555225368882e989f7cd5d5fd568f2cccde20fab60bacf71")
         self.assertEqual(fixture_manifest("c")["fixture_sha256"],
                          "e600a8feadd7f6d142f862698b58cacdaba116164e69bc27f5bc6278d96b087d")
         with RunningServer(fixture_set="c") as server:

@@ -17,8 +17,21 @@ Use an isolated checkout with no `Config/env.xcconfig`. On a managed local
 worktree, park only that worktree's read-only symlink and restore it in an EXIT
 trap, checking its `readlink` target. Do not read or copy its contents. Device
 runs on the maintainer's workspace use the existing watchdog and device-slot
-wrappers; iPhone and iPad runs are serial. The runner checks the 80 GiB disk
-threshold before every Xcode invocation.
+wrappers; iPhone and iPad runs are serial. Before every Xcode invocation the
+runner uses the shared archive disk guard with `--min-free-gib` (default 80).
+Only GitHub-hosted runners may lower this threshold. For their approximately
+39 GiB free disks, pass `--min-free-gib 30`, as the archive jobs do:
+
+```bash
+python3 -B scripts/run_fixture_ui_tests.py \
+  --device iphone --destination 'platform=iOS Simulator,id=<UDID>' \
+  --xctestrun '<relocated-products>/<default-plan>.xctestrun' \
+  --output-dir "$RUNNER_TEMP/fixture-iphone" --min-free-gib 30
+```
+
+The shared guard requires both `GITHUB_ACTIONS=true` and
+`RUNNER_ENVIRONMENT=github-hosted` for thresholds below 80; local and self-hosted
+runs retain the 80 GiB minimum. Negative thresholds are rejected.
 
 ```bash
 python3 -B scripts/run_fixture_ui_tests.py \
@@ -33,6 +46,9 @@ and requires a fresh directory. To reuse a secret-free build, replace it with
 `--xctestrun '<build-products>/<default-plan>.xctestrun'`. The iOS build can serve
 both iPhone and iPad. Build archive provenance and relocation verification belong
 to the archive consumer, which must run before passing the xctestrun here.
+The runner verifies the destination UDID's CoreSimulator device type before
+building, then requires the official result to record exactly that UDID, model
+class and simulator platform. A CLI device label alone cannot claim coverage.
 
 `--only-testing immichSlidesUITests/<Class>/<method>` reproduces an exact test;
 repeat it for multiple tests. The runner rejects selections outside the default
@@ -50,6 +66,9 @@ the compiled tests and reads official xcresult outcomes. It emits the shared
 `not-run`; a skipped test never counts as fixture-covered. The JSON includes
 `covered_selectors` for the tests observed passing, which is measurement output,
 not an approved exclusion policy.
+Before compiled enumeration completes, pre-seeded rows say `not attempted`.
+After enumeration, missing declarations say `not compiled`, while compiled
+tests with no official result retain that separate reason.
 
 `--mode measure` attempts every selected test, including active tier deselections.
 All skips fail measurement, including approved environment skips.
@@ -62,10 +81,14 @@ as fixture-covered. Device or build applicability limits stay separate from
 server/fixture gaps. The `proposed` section uses the same entry grammar as
 the approved lists and **never affects execution or verdicts**. The maintainer
 must promote approved proposals to the active lists; agents cannot approve them.
-All non-covered identities are proposed for the `nightly-live` owning tier.
-Device, build and diagnostic opt-in limits do not imply that live data fixes the
-skip; that tier's owner must honor each recorded prerequisite. A product failure
-is still a failure; moving it to another tier does not fix it.
+Device, build and diagnostic opt-in skips belong in `proposed.expected_skips`,
+with an exact key, platform/device dimensions and the official reason. Live data
+cannot fix these prerequisites. The debug-fill button cannot run in any hosted
+tier: the shared archive check forbids `ENABLE_DEBUG_*=1`. The maintainer must
+decide whether to approve that expected skip or move the test out of the default
+plan. Product failures remain failures, tracked separately without an exclusion
+proposal; they must not be attributed to fixture gaps without evidence.
+Only demonstrated fixture/server gaps may become `nightly-live` deselections.
 
 The UI-shard workflow is separate work. Until it exists, coverage is proven by
 local device-slot runs, and CI execution on all three devices is `NOT_RUN`.
