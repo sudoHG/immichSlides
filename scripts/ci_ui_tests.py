@@ -333,6 +333,17 @@ def verify_reproduction_pins(source, destination, environment):
     print("Verified reproduction Xcode, runtime and destination device pins", flush=True)
 
 
+def reproduction_wait_arguments(source, factor, environment):
+    # Legacy revisions have the original fixed budgets and no factor option.
+    if factor == 1:
+        return []
+    help_text = subprocess.check_output([sys.executable, "-B", str(source / "scripts/ci_ui_tests.py"), "run", "--help"],
+                                        cwd=source, env=environment, text=True, timeout=30)
+    require("--wait-factor" in help_text.split(),
+            "selected revision predates configurable test waits; use factor 1 or select a newer revision")
+    return ["--wait-factor", str(factor)]
+
+
 def reproduce(args):
     revision = subprocess.check_output(["git", "rev-parse", "--verify", args.manifest_revision + "^{commit}"], cwd=ROOT,
                                        text=True, timeout=60).strip()
@@ -349,6 +360,7 @@ def reproduce(args):
         # The clean checkout contains no private symlink or ambient local inputs.
         from run_fixture_ui_tests import clean_environment
         environment = clean_environment(os.environ)
+        wait_arguments = reproduction_wait_arguments(source, args.wait_factor, environment)
         verify_reproduction_pins(source, args.destination, environment)
         derived = Path(directory, "derived")
         build_records = Path(directory, "build")
@@ -361,8 +373,7 @@ def reproduce(args):
         require(len(runs) == 1, "reproduction build needs one default plan")
         return subprocess.run([sys.executable, "-B", str(source / "scripts/ci_ui_tests.py"), "run", "--device", "iphone",
                                "--shard", args.shard, "--manifest-revision", revision, "--destination", args.destination,
-                               "--wait-factor", str(args.wait_factor),
-                               "--xctestrun", str(runs[0]), "--output-dir", str(output_root / "records")], cwd=source,
+                               "--xctestrun", str(runs[0]), "--output-dir", str(output_root / "records")] + wait_arguments, cwd=source,
                                env=environment, check=False).returncode
 
 

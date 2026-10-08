@@ -54,7 +54,9 @@ python3 -B scripts/run_fixture_ui_tests.py --device iphone \
 
 `ci_ui_tests.py run` and `reproduce` also accept `--wait-factor` (default `1`).
 Pass `--wait-factor 2` to reproduce hosted wait budgets. Reproduction still
-checks the selected revision's toolchain and device pins.
+checks the selected revision's toolchain and device pins. Historical revisions
+keep their original fixed budgets at factor `1`; a non-default factor is refused
+before building when the selected revision does not advertise that option.
 
 ## Raw literal ratchet
 
