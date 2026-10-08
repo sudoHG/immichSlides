@@ -17,7 +17,7 @@ and contain no previous result files. Without `--output-dir`, a new temporary di
 is printed. Remove local outputs after reading the result.
 
 The entry point owns the format, test-convention, release-guard, localization-catalog,
-localization-usage, required-tool, workflow-policy and Python checks. `check_all.sh` delegates to it and
+localization-usage, required-tool, workflow-policy, known-flaky-registry and Python checks. `check_all.sh` delegates to it and
 keeps its optional iOS/tvOS unit-test interface. With `--output-dir`, it keeps records
 in `DIR/host-records` and optional unit bundles in `DIR`; use a fresh output directory
 whose `host-records` does not already exist. This option also works without unit tests.

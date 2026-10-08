@@ -307,6 +307,93 @@ For explicit shard warm-up, build reuse, cold/warm budgets, full simulator reset
 the informational CI tracer, see [Strict runner warm-build tracer](CI_STRICT_RUNNER.md).
 The default local invocation and timeouts are unchanged.
 
+### Known-flaky registry and listed-only retries
+
+`scripts/ci-known-flaky.json` is the authoritative registry. Each entry names one
+exact XCTest method and platform (UI) or device/configuration/suite/scenario/fixture
+tuple (strict), its tier/environment scope, the shared per-identity tracking issue,
+owner, added date, review-by date, symptom and evidence. Wildcards and unit/Python
+entries are rejected. Use the same issue when the nightly reporter is introduced;
+do not open a second issue for the same identity.
+
+The host gate runs `python3 -B scripts/ci_flaky.py`. It checks the candidate file's
+format, duplicates and static test existence on the relevant platform, including
+strict-suite membership. It does not contact GitHub or gate on calendar age/issue
+state. Expiration and issue-state reporting belong to the future nightly reporter. A review date is
+inclusive; an entry past that date simply loses retry eligibility. Ordinary passes
+stay passes and expiration cannot fail unrelated tests.
+
+PR consumers read the registry from the checked-out merge commit's first parent.
+An absent base registry means an empty list, including during initial rollout.
+The PR's candidate entries cannot excuse its own failures. CI cannot override the
+registry revision. Main push/dispatch/schedule consumers use their tested main revision;
+local runs use `HEAD`, with an explicit local `--registry-ref <commit>` available
+for isolated acceptance probes. Both the revision and exact policy hash are kept.
+Trusted verdict callers supplying `base_registry` must also supply `evaluated_on`
+as the trusted producer run's calendar date, rather than the later verdict date.
+`ci_verdict` rejects a missing date; producer-provided entries do not select that policy.
+
+Only an official first-call assertion failure (Xcode exit 65) with an exact active
+entry may obtain one retry. Official typed failure summaries must classify every
+failure for that method as `Assertion Failure`. When Xcode emits `Uncategorized`,
+official per-test details must instead identify each failure by XCTest's assertion
+message prefix and a positive source line. Crash/unknown messages, missing details
+and infrastructure errors are ineligible. The executor resets the app, keychain and simulator
+privacy state, then calls `test-without-building` with only the failed method.
+Global retry/repetition/iteration flags are rejected. Both calls, official exports,
+exit codes, durations and per-test attempts remain recorded. Failed then passed is
+`flaky-passed`, which is distinct from an explicit pass; the reporter must not
+count it toward closing the issue. A second failure, skip, crash, timeout, missing
+or wrong/extra result stays failed. Unlisted failures never receive a second call.
+
+For a built UI target on a dedicated simulator, with a secret-free checkout:
+
+```bash
+python3 -B scripts/ci_flaky.py --xctestrun '<Products>/tests.xctestrun' \
+  --platform ios --destination 'platform=iOS Simulator,id=<UDID>' \
+  --only-testing immichSlidesUITests/ExampleUITests \
+  --output-dir '<fresh-outside-repo>/ui-attempts'
+```
+
+The UI adapter enumerates the selected compiled tests and compares them with
+observations. Each test invocation and the enumeration use `--min-free-gib N`
+(default 80). Only GitHub-hosted Actions runners may lower that threshold; their
+consumer command can pass `--min-free-gib 30`, using the shared archive disk guard.
+Its local declared list is that compiled selection; the future UI
+shard owner must independently compare against the admitted static population.
+This adapter does not implement shard assignment, fixture selection or trusted
+publication. Pass fixture inputs explicitly through the per-run xctestrun; ambient
+server inputs are stripped. Each invocation gets an independent private directory
+so every raw bundle can be exported/disposed before its directory is removed;
+only compact records are suitable for the future summary consumer.
+The adapter uses `-collect-test-diagnostics never` to keep failed invocations
+bounded without simulator diagnostic collection. Execution errors and timeouts
+retain all attempted calls in `retry-invocations.json`; a retry timeout records a
+second `timed-out` attempt and returns failure.
+
+Strict warm runs opt in with `--listed-retry-device iphone`, `ipad` or `tv`, together
+with `--test-without-building`. This preserves the existing cold/default runner and
+informational tracer behavior. It uses the same executor and retains per-session
+attempt exports, including `filter-person`. `retry-invocations.json` has a `sessions`
+map keyed by Xcode log stem, so later sessions retain earlier retries. Every warm
+attempt writes `<stem>-reuse.json` with duration, exit code, timeout budget and
+Products immutability; a first attempt's receipt moves with its archived outputs.
+Recording suites (P2 cases with `video=True`, `server-switch-display` and
+`tvos-server-switch-display`) are refused by registry validation and the retry CLI.
+Existing visual/evidence validators
+still run on the final attempt and must pass. The target UDID's simulator device
+type determines the device class; the argument and every official result device
+must agree. A retry moves the case's first outputs to `attempt-1/<case>/`, records
+service-log byte offsets, and exports only the final attempt's request segment for
+timeline validation. Request invariants (unknown paths, 400 bodies, forbidden key
+fields and cross-server IDs, as applicable) are audited on every attempt's segment;
+any violation fails the run even when the final test passes. Reset logs are appended
+across sessions and attempts. An image-validator
+failure outside XCTest does not authorize a retry. The hosted shard demonstration
+remains an open acceptance criterion of #97 until #94 supplies the UI shards;
+standalone access-lifecycle warm conversion remains excluded. #140 tracks its
+flake but is not registered because the UI tier excludes that test.
+
 Every strict suite and both access-lifecycle runners write raw XCTest result bundles under
 `Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"`, outside `--evidence-dir`.
 The root and each new holding directory have owner-only permissions (`0o700`); a symlink root is

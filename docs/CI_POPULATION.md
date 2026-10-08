@@ -215,8 +215,10 @@ equal the independently supplied expected population. Swift parameter rows can
 expand one function, but every compiled parameter must have its own observation
 or approved deselection. Extra observations, failed/cancelled/incomplete results,
 human-review outcomes and unregistered retries are failures. Retry eligibility
-and the flaky registry are separate work; this library currently permits no
-`flaky-passed` shortcut.
+and the retry executor are described in [Testing conventions](TESTING.md#known-flaky-registry-and-listed-only-retries).
+`flaky-passed` is accepted only with the caller-supplied trusted base registry,
+an exact active identity/scope, and the summary contract's preserved failed/pass
+attempt pair. Without that registry it remains a failure.
 
 The host producer records static Python declarations, dynamic discovery and
 observations separately, hashes this policy, and evaluates their equality. Only

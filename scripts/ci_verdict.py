@@ -124,18 +124,22 @@ def skip_matches(rule, identity, tier, environment):
             and rule["dimensions"] == identity["dimensions"])
 
 
-def evaluate_population(raw, expected, policy, *, environment):
+def evaluate_population(raw, expected, policy, *, environment, base_registry=None, evaluated_on=None):
     """Compare one producer's declared, compiled and executed populations.
 
     Proposed exceptions stay inactive. All discrepancies are retained by identity.
     A legacy unverified result can pass only when matching skips explain it fully.
     Deselections never excuse a missing compiled declaration.
     """
-    result = {"status": "failed", "errors": [], "expected_skips": [], "deselected": [],
+    result = {"status": "failed", "errors": [], "expected_skips": [], "deselected": [], "flaky_passed": [],
               "missing_compiled": [], "missing_executed": []}
     try:
         summary = parse_summary(raw)
         policy = parse_policy(policy)
+        from ci_flaky import ASSERTION_FAILURE, eligible_entry, parse_registry
+        require(base_registry is None or type(evaluated_on) is date,
+                "base_registry requires the trusted producer evaluation date")
+        registry = parse_registry(base_registry) if base_registry is not None else {"schema_version": 1, "entries": []}
         expected_by_function = tokens(expected, functions=True)
         tokens(expected)
         require(bool(expected_by_function), "empty expected population")
@@ -191,6 +195,11 @@ def evaluate_population(raw, expected, policy, *, environment):
                     result["expected_skips"].append(identity)
                 else:
                     errors.append(f"expected skip ran or reason differed: {label}")
+            elif (entry["outcome"] == "flaky-passed" and entry["attempts"][0]["exit_code"] == 65
+                  and entry["attempts"][0]["reason"] == ASSERTION_FAILURE
+                  and entry["attempts"][1]["exit_code"] == 0 and eligible_entry(
+                    registry, identity, tier=tier, environment=environment, today=evaluated_on)):
+                result["flaky_passed"].append(identity)
             elif entry["outcome"] != "passed":
                 errors.append(f"{entry['outcome']}: {label}")
         for entry in summary["infrastructure"]:
@@ -220,6 +229,7 @@ def admitted_population(record, tree_sha):
 def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, base_policy,
                   environment, candidate_policy=None, approved_head=None, fork_originated=None,
                   ci_changing=None, app_affected=None, context="gate", base_population=None,
+                  base_registry=None, evaluated_on=None,
                   allowed_events=("pull_request", "push")):
     """Evaluate admitted summaries using trusted inputs; publishing belongs elsewhere.
 
@@ -233,7 +243,7 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
     No summary is used to determine classification, approval, provenance or policy.
     """
     result = {"status": "failed", "errors": [], "approval_based": False, "self_reported": fork_originated,
-              "source": admission_identity, "expected_skips": [], "deselected": [], "removed_by_pr": []}
+              "source": admission_identity, "expected_skips": [], "deselected": [], "removed_by_pr": [], "flaky_passed": []}
     try:
         admission = parse_identity(admission_identity)
         expected = admitted_population(expected, admission["tree_sha"])
@@ -284,10 +294,12 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
             require(summary["source"]["fork_originated"] == fork_originated, "fork source mismatch")
             require(summary["run"]["id"] == job["run_id"] and summary["run"]["attempt"] == job["attempt"], "wrong run or attempt")
             population = summary["population"]
-            coverage = evaluate_population(summary, job["expected"], policy, environment=environment)
+            coverage = evaluate_population(summary, job["expected"], policy, environment=environment,
+                                           base_registry=base_registry, evaluated_on=evaluated_on)
             result["errors"].extend(coverage["errors"])
             result["expected_skips"].extend(coverage["expected_skips"])
             result["deselected"].extend(coverage["deselected"])
+            result["flaky_passed"].extend(coverage["flaky_passed"])
             declared.extend(population["declared"])
             compiled.extend(population["compiled"])
         require(seen == set(jobs), "missing required job/artifact (failed or cancelled job)")
