@@ -216,8 +216,6 @@ def wait_archive(args):
 
 
 def run_shard(args):
-    from ci_ui_calibration import activate, LISTED, UNLISTED
-    activate()
     from run_fixture_ui_tests import declared_tests, main as fixture_main
     ctx = context()
     workspace_preflight(ROOT)
@@ -230,8 +228,6 @@ def run_shard(args):
     ui_root = ROOT / "immichSlidesUITests"
     population = declared_tests({path.relative_to(ui_root).as_posix(): path.read_text() for path in ui_root.rglob("*.swift")}, platform_name, plan, [])
     shard = shard_populations(population, plan, manifest, args.device)[args.shard]
-    shard = [entry for entry in shard if entry["key"] in {LISTED, UNLISTED}]
-    require(len(shard) == 2, "calibration requires both real XCTest methods")
     require(shard, "requested UI shard has no declared tests")
     require(not os.environ.get("GITHUB_ACTIONS") or args.manifest_revision is None, "CI cannot override the admitted manifest")
     with tempfile.TemporaryDirectory(prefix="ui-shard-manifest-") as manifest_directory:
@@ -270,7 +266,7 @@ def run_shard(args):
         code = fixture_main(command)
         write_json(args.output_dir / "shard-timing.json", {"schema_version": 1, "device": args.device, "shard": args.shard,
                    "wall_seconds": time.monotonic() - started, "exit_code": code,
-                   "max_parallel": 1, "invocation_timeout_minutes": args.timeout_minutes,
+                   "max_parallel": 2, "invocation_timeout_minutes": args.timeout_minutes,
                    "total_timeout_minutes": args.total_timeout_minutes})
         return code
 

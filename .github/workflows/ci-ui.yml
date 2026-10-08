@@ -71,10 +71,10 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 2
       matrix:
         device: [iphone]
-        shard: [default]
+        shard: [default, navigation, visual]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
