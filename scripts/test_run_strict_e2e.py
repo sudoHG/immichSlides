@@ -113,6 +113,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         create_result_bundle: bool = True,
         export_exit: int = 0,
         failure_session: str | None = None,
+        warm: bool = False,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -141,6 +142,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 return subprocess.CompletedProcess(command, export_exit, b'{"testNodes":[]}', b"")
             return subprocess.CompletedProcess(command, 0, "", "")
 
+        def fake_test_run(source, directory, environment):
+            run = directory / "case.xctestrun"
+            run.write_bytes(b"private test inputs")
+            return run
+
         stdout, stderr = io.StringIO(), io.StringIO()
         with mock.patch("run_strict_e2e.PRIVATE_RESULT_BUNDLE_ROOT", evidence.parent / "private"), mock.patch(
             "run_strict_e2e.data_available_gib", return_value=100
@@ -160,7 +166,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             return_value=_p2_facts(suite, platform, model, facts_device_id) if suite in P2_CASES else {},
         ) as facts, mock.patch("run_strict_e2e.require_visual_identity", return_value={}), mock.patch(
             "run_strict_e2e.start_screen_recording", return_value=(recording_process, 900.0)
-        ) as start, mock.patch("run_strict_e2e.stop_screen_recording", return_value=0) as stop:
+        ) as start, mock.patch("run_strict_e2e.stop_screen_recording", return_value=0) as stop, mock.patch(
+            "strict_e2e_build.load_warm_build", return_value=({"identity": {}}, Path("warm.xctestrun"))
+        ), mock.patch("strict_e2e_build.validate_warm_products"), mock.patch(
+            "strict_e2e_build.prepare_test_run", side_effect=fake_test_run
+        ):
             exit_code = runner_main(
                 [
                     "--platform",
@@ -171,6 +181,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     str(evidence),
                     "--suite",
                     suite,
+                    *(["--test-without-building", "--derived-data-path", str(evidence.parent / "derived")] if warm else []),
                 ],
                 stdout=stdout,
                 stderr=stderr,
@@ -182,6 +193,14 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "stop": stop,
             "recording_process": recording_process,
         }
+
+    def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            evidence = root / "evidence"
+            code, _, stderr, _ = self._run_p2_main(evidence, suite="smoke", platform="ios", model="iPhone", warm=True)
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual(list((root / "private").iterdir()), [])
 
     def test_ordinary_and_person_results_never_expose_raw_bundles(self) -> None:
         # Raw XCTest activities may retain UI-entered credentials even in failed sessions.
@@ -226,6 +245,94 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertFalse(json.loads((evidence / "result-bundle-quarantine.json").read_text())["result_bundle_disposed"])
 
 
+
+
+class StrictCITracerTests(unittest.TestCase):
+    def test_tracer_rejects_incomplete_or_failed_checks(self):
+        from ci_summary import test_identity
+        from run_strict_ci_tracer import evaluate_tracer
+        from strict_e2e_p2_contract import RAW_VERDICT
+        identity = test_identity("strict", "smoke", configuration="Debug", device="iphone", fixture="a", scenario="normal", suite="smoke")
+        p2 = test_identity("strict", "p2-rotation", configuration="Debug", device="iphone", fixture="a", scenario="normal", suite="p2-rotation")
+        good = {"identity": identity, "duration_seconds": 1, "exit_code": 0, "log_present": True,
+                "build_operations": 0, "products_unchanged": True,
+                "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0, "result": "Passed"}}
+        cases = [
+            ("complete", [identity], [good], False, "passed", ["passed"]),
+            ("empty manifest", [], [], False, "failed", []),
+            ("p2", [p2], [{**good, "identity": p2, "p2_verdict": RAW_VERDICT}], False, "unverified", ["needs-human-review"]),
+            ("build in log", [identity], [{**good, "build_operations": 1}], False, "failed", ["failed"]),
+            ("Products changed", [identity], [{**good, "products_unchanged": False}], False, "failed", ["failed"]),
+            ("log missing", [identity], [{**good, "log_present": False}], False, "failed", ["failed"]),
+            ("P2 verdict mismatch", [p2], [{**good, "identity": p2, "p2_verdict": "passed"}], False, "failed", ["failed"]),
+            ("official results missing", [identity], [{**good, "official_summary": None}], False, "failed", ["failed"]),
+            ("incomplete results", [identity, p2], [good], False, "failed", ["passed", "not-run"]),
+            ("interruption", [identity, p2], [good], True, "failed", ["passed", "not-run"]),
+            ("interruption after checks", [identity], [good], True, "failed", ["passed"]),
+        ]
+        for name, declared, results, interrupted, status, outcomes in cases:
+            with self.subTest(name=name):
+                observed, actual = evaluate_tracer(declared, results, interrupted=interrupted)
+                self.assertEqual(actual, status)
+                self.assertEqual([entry["outcome"] for entry in observed], outcomes)
+
+    def test_tracer_interruptions_record_failed_status_and_unrun_cases(self):
+        import run_strict_ci_tracer as tracer
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        for error in (KeyboardInterrupt(), KeyError("unexpected state")):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as raw, mock.patch(
+                "run_strict_ci_tracer.run_runner", side_effect=error
+            ), mock.patch("run_strict_ci_tracer.workspace_preflight"), mock.patch(
+                "run_strict_ci_tracer.run_identity", return_value=identity
+            ), mock.patch("run_strict_ci_tracer.source_metadata", return_value=(None, False)), mock.patch(
+                "run_strict_ci_tracer.toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}
+            ):
+                output = Path(raw) / "trace"
+                self.assertEqual(tracer.main(["--platform", "ios", "--destination", "unused", "--output-dir", str(output)]), 1)
+                summary = json.loads((output / "records/summary.json").read_text())
+                self.assertEqual(summary["status"], "failed")
+                self.assertEqual(summary["infrastructure"][0]["code"], "interrupted")
+                self.assertEqual(len(summary["population"]["observed"]), 3)
+                self.assertTrue(all(entry["outcome"] == "not-run" for entry in summary["population"]["observed"]))
+                self.assertTrue((output / "records/trace.json").is_file())
+
+    def test_runner_timeout_or_cancellation_stops_its_descendants(self):
+        import contextlib
+        import run_strict_ci_tracer as tracer
+        from run_host_checks import group_has_live_members
+        import time
+        popen = subprocess.Popen
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                marker = root / "group"
+                code = "import os,pathlib,subprocess,sys,time; subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); print('CommandError: fixture failure',flush=True); pathlib.Path(sys.argv[1]).write_text(str(os.getpgrp())); time.sleep(60)"
+                command = [sys.executable, "-c", code, str(marker)]
+
+                def start(*args, **kwargs):
+                    process = popen(*args, **kwargs)
+                    wait = process.wait
+
+                    def interrupt_after_start(*args, **kwargs):
+                        deadline = time.monotonic() + 5
+                        while not marker.exists() and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(marker.exists(), "runner must start its child before cancellation")
+                        process.wait = wait
+                        raise KeyboardInterrupt()
+
+                    if interrupted and args[0] == command:
+                        process.wait = interrupt_after_start
+                    return process
+
+                stderr = io.StringIO()
+                with mock.patch("run_strict_ci_tracer.subprocess.Popen", side_effect=start), contextlib.redirect_stderr(stderr):
+                    with self.assertRaises(KeyboardInterrupt if interrupted else subprocess.TimeoutExpired):
+                        tracer.run_runner(command, root, root / "runner.log", timeout_seconds=2)
+                self.assertTrue(marker.exists())
+                self.assertFalse(group_has_live_members(int(marker.read_text())))
+                self.assertIn("CommandError: fixture failure", stderr.getvalue())
 
 
 if __name__ == "__main__":

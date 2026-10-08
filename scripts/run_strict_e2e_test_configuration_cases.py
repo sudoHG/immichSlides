@@ -84,6 +84,31 @@ from run_strict_e2e_test_fixtures import (
 )
 
 class StrictE2ERunnerTestsCasesConfiguration:
+    def test_inline_mode_rejects_explicit_warm_timeout_options(self):
+        import contextlib
+        for option in ("--cold-timeout-seconds", "--warm-timeout-seconds"):
+            with self.subTest(option=option), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                runner_main(["--platform", "ios", "--destination", "unused", "--evidence-dir", "unused", option, "300"])
+            self.assertEqual(error.exception.code, 2)
+
+    def test_source_fingerprint_ignores_python_caches_but_tracks_source_changes(self):
+        from strict_e2e_build import source_fingerprint
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "__pycache__").mkdir()
+            source = root / "source.swift"
+            cache = root / "__pycache__/source.cpython.pyc"
+            loose_cache = root / "loose.pyc"
+            for path in (source, cache, loose_cache):
+                path.write_text("initial")
+            with mock.patch("strict_e2e_build.subprocess.check_output", return_value=b"source.swift\0__pycache__/source.cpython.pyc\0loose.pyc\0"):
+                initial = source_fingerprint(root)
+                cache.write_text("generated cache changed")
+                loose_cache.unlink()
+                self.assertEqual(source_fingerprint(root), initial)
+                source.write_text("source changed")
+                self.assertNotEqual(source_fingerprint(root), initial)
+
     def test_private_result_bundles_use_the_system_temporary_directory(self) -> None:
         self.assertEqual(
             PRIVATE_RESULT_BUNDLE_ROOT,
@@ -374,6 +399,10 @@ class StrictE2ERunnerTestsCasesConfiguration:
             "UI_TEST_RESET_STATE": "1",
             "IMMICH_TEST_SERVER_URL": "private",
             "IMMICH_TEST_API_KEY": "private",
+            "TEST_RUNNER_UI_TEST_RESET_STATE": "1",
+            "TEST_RUNNER_IMMICH_TEST_SERVER_URL": "private",
+            "TEST_RUNNER_IMMICH_TEST_API_KEY": "private",
+            "SIMCTL_CHILD_IMMICH_SERVER_URL": "private",
         }
         environment = make_test_environment(
             source,
@@ -387,6 +416,9 @@ class StrictE2ERunnerTestsCasesConfiguration:
         self.assertFalse(any(key.startswith("UI_TEST_") for key in environment))
         self.assertNotIn("IMMICH_TEST_SERVER_URL", environment)
         self.assertNotIn("IMMICH_TEST_API_KEY", environment)
+        self.assertEqual(set(environment), {
+            "PATH", "STRICT_E2E_INPUT_SERVER_URL", "STRICT_E2E_INPUT_PUBLIC_KEY", "STRICT_E2E_INPUT_SCENARIO",
+        })
 
 
     def test_app_launch_environment_rejects_every_forbidden_key_family(self) -> None:
@@ -397,6 +429,10 @@ class StrictE2ERunnerTestsCasesConfiguration:
             "IMMICH_TEST_SERVER_URL",
             "IMMICH_TEST_URL",
             "IMMICH_TEST_API_KEY",
+            "TEST_RUNNER_UI_TEST_ANY_FUTURE_KEY",
+            "TEST_RUNNER_IMMICH_TEST_SERVER_URL",
+            "TEST_RUNNER_IMMICH_TEST_API_KEY",
+            "SIMCTL_CHILD_IMMICH_SERVER_URL",
         ):
             with self.subTest(key=key), self.assertRaises(CommandError):
                 validate_app_launch_environment({key: "present"})
@@ -659,6 +695,70 @@ class StrictE2ERunnerTestsCasesConfiguration:
                 reset_simulator_app("SIM-UDID")
         self.assertIn("Second uninstall failed", str(raised.exception))
         self.assertIn("uninstall_retry_exit=149", str(raised.exception))
+
+    def test_reset_refuses_to_continue_with_keychain_or_privacy_state(self) -> None:
+        for failed_step in ("keychain", "privacy"):
+            with self.subTest(failed_step=failed_step):
+                calls = []
+
+                def fake_run(command, **kwargs):
+                    calls.append(command)
+                    code = 1 if command[2] == failed_step else 0
+                    if command[2] == "get_app_container":
+                        code = 2
+                    return subprocess.CompletedProcess(command, code, "", "reset unavailable" if code == 1 else "")
+
+                with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch("run_strict_e2e.time.sleep"):
+                    with self.assertRaises(CommandError):
+                        reset_simulator_app("SIM-UDID")
+                self.assertIn(["xcrun", "simctl", failed_step, "SIM-UDID", "reset", *(["all"] if failed_step == "privacy" else [])], calls)
+
+    def test_warm_products_and_per_case_environment_cannot_silently_change(self) -> None:
+        import plistlib
+        from strict_e2e_build import prepare_test_run, validate_warm_products
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            products = root / "Build/Products"
+            products.mkdir(parents=True)
+            xctestrun = products / "strict.xctestrun"
+            xctestrun.write_bytes(plistlib.dumps({
+                "TestConfigurations": [{"TestTargets": [{
+                    "BlueprintName": "immichSlidesUITests",
+                    "EnvironmentVariables": {"LANG": "en_US.UTF-8", "STRICT_E2E_INPUT_SCENARIO": "old", "TEST_RUNNER_UI_TEST_RESET_STATE": "1"},
+                    "UITargetAppEnvironmentVariables": {"UI_TEST_RESET_STATE": "1", "STRICT_E2E_INPUT_SERVER_URL": "stale"},
+                }]}],
+            }))
+            from ci_build_archive import inventory
+            receipt = {"products": inventory(products)}
+            validate_warm_products(root, receipt)
+            run = prepare_test_run(xctestrun, root / "case", {
+                "STRICT_E2E_INPUT_SERVER_URL": "http://127.0.0.1:1234/api",
+                "STRICT_E2E_INPUT_SCENARIO": "normal",
+                "PATH": "kept out of test inputs",
+            })
+            target = plistlib.loads(run.read_bytes())["TestConfigurations"][0]["TestTargets"][0]
+            self.assertEqual(target["EnvironmentVariables"], {
+                "LANG": "en_US.UTF-8", "STRICT_E2E_INPUT_SERVER_URL": "http://127.0.0.1:1234/api", "STRICT_E2E_INPUT_SCENARIO": "normal",
+            })
+            self.assertEqual(target["UITargetAppEnvironmentVariables"], {})
+            xctestrun.write_bytes(b"changed products")
+            with self.assertRaises(CommandError):
+                validate_warm_products(root, receipt)
+
+    def test_warm_build_rejects_a_different_source_or_shard(self):
+        from strict_e2e_build import load_warm_build, RECEIPT
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            identity = {"scheme": "immichSlides-iOS", "configuration": "Debug", "source_sha256": "a"}
+            (root / RECEIPT).write_text(json.dumps({"schema_version": 1, "identity": identity}))
+            for key in identity:
+                with self.subTest(key=key), mock.patch("strict_e2e_build.workspace_preflight"), mock.patch(
+                    "strict_e2e_build.shard_identity", return_value={**identity, key: "changed"}
+                ), mock.patch("strict_e2e_build.validate_warm_products") as products:
+                    with self.assertRaises(CommandError):
+                        load_warm_build(root, "ios", "smoke", "Debug", "destination", root)
+                    products.assert_not_called()
 
 
     def test_reset_simulator_app_stops_on_boot_failure_but_accepts_already_booted(self) -> None:

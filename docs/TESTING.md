@@ -303,6 +303,10 @@ Use `python3 scripts/run_strict_e2e.py --help` for the current suite list. Setti
 
 Run serially within a checkout because the runner manages temporary test configuration. Use a new evidence directory outside the repository for each run. The runner prepares the fixture and app state, reads official test statistics, checks result contracts and cleans up. Zero selected tests, skipped strict tests, missing evidence or an unknown image are failures. A successful contract check does not replace human visual review; inspect the current run's original screenshots. The separate [iPad host tool](../scripts/ipad-pause-host-testing.md) remains diagnostic tooling and does not replace an XCTest result.
 
+For explicit shard warm-up, build reuse, cold/warm budgets, full simulator resets and
+the informational CI tracer, see [Strict runner warm-build tracer](CI_STRICT_RUNNER.md).
+The default local invocation and timeouts are unchanged.
+
 Every strict suite and both access-lifecycle runners write raw XCTest result bundles under
 `Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"`, outside `--evidence-dir`.
 The root and each new holding directory have owner-only permissions (`0o700`); a symlink root is

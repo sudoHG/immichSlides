@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "purpose": "Warm-build tracer only; the complete nightly matrix is maintained separately.",
+  "cases": [
+    {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "smoke", "scenario": "normal", "fixture": "a"},
+    {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "p2-rotation", "scenario": "normal", "fixture": "a"},
+    {"platform": "ios", "device": "iphone", "configuration": "Release", "suite": "filter-switch", "scenario": "normal", "fixture": "a"},
+    {"platform": "tvos", "device": "tv", "configuration": "Debug", "suite": "smoke", "scenario": "normal", "fixture": "a"}
+  ],
+  "exclusions": [
+    {"runner": "run_access_lifecycle_ios.py", "reason": "Standalone access-protection flow is unstable on main; no warm-build conversion is claimed."},
+    {"runner": "run_access_lifecycle_tvos.py", "reason": "Standalone access-protection flow creates a transient isolated Release scheme; not converted to persistent shards."}
+  ]
+}

@@ -497,7 +497,8 @@ def require_p2_evidence(
     return payload
 
 
-def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str], log_path: Path) -> int:
+def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str], log_path: Path,
+                timeout_seconds: int = XCODEBUILD_TIMEOUT_SECONDS) -> int:
     with log_path.open("w", encoding="utf-8") as log_file:
         try:
             completed = subprocess.run(
@@ -507,11 +508,11 @@ def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str]
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 check=False,
-                timeout=XCODEBUILD_TIMEOUT_SECONDS,
+                timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as error:
             raise CommandError(
-                f"xcodebuild timed out after {XCODEBUILD_TIMEOUT_SECONDS}s without exiting.",
+                f"xcodebuild timed out after {timeout_seconds}s without exiting.",
                 code=2,
             ) from error
     return completed.returncode
@@ -527,6 +528,14 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--fixture-set", choices=("a", "b"), default="a")
     parser.add_argument("--scenario", choices=RUNNER_SCENARIOS, default="normal")
     parser.add_argument("--suite", choices=RUNNER_SUITES, default="smoke")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--warm-up-only", action="store_true", help="build this shard once without starting a test or recording")
+    mode.add_argument("--test-without-building", action="store_true", help="require and reuse an explicit shard warm-up")
+    parser.add_argument("--derived-data-path", type=Path, help="shard-scoped DerivedData outside evidence; retained for reuse")
+    parser.add_argument("--cloned-source-packages-path", type=Path, help="shared package downloads outside DerivedData and evidence")
+    parser.add_argument("--configuration", choices=("Debug", "Release"), help="explicit shard configuration; defaults to the existing suite setting")
+    parser.add_argument("--cold-timeout-seconds", type=parse_non_negative_int, help="explicit warm-up budget (default: 300 seconds)")
+    parser.add_argument("--warm-timeout-seconds", type=parse_non_negative_int, help="explicit reuse budget (default: 300 seconds)")
     parser.add_argument(
         "--min-free-gib",
         type=parse_non_negative_int,
@@ -535,14 +544,49 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help=f"minimum free GiB required before xcodebuild (default: {MIN_DATA_GIB})",
     )
     arguments = parser.parse_args(argv)
+    if not (arguments.warm_up_only or arguments.test_without_building) and (arguments.cold_timeout_seconds is not None or arguments.warm_timeout_seconds is not None):
+        parser.error("cold/warm timeout options require explicit warm-up/reuse")
+    arguments.cold_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.cold_timeout_seconds is None else arguments.cold_timeout_seconds
+    arguments.warm_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.warm_timeout_seconds is None else arguments.warm_timeout_seconds
+    if not arguments.cold_timeout_seconds or not arguments.warm_timeout_seconds:
+        parser.error("cold and warm timeouts must be positive")
+    if (arguments.warm_up_only or arguments.test_without_building) and not arguments.derived_data_path:
+        parser.error("warm-up/reuse requires --derived-data-path")
+    if arguments.derived_data_path and not (arguments.warm_up_only or arguments.test_without_building):
+        parser.error("--derived-data-path requires explicit warm-up/reuse")
+    if (arguments.configuration or arguments.cloned_source_packages_path) and not arguments.derived_data_path:
+        parser.error("configuration/shared packages require explicit warm-up/reuse")
     try:
         validate_suite_scenario(arguments.suite, arguments.scenario)
         validate_suite_fixture(arguments.suite, arguments.fixture_set)
         if arguments.suite in (*P2_CASES, *LIFECYCLE_SUITES, *IMAGE_FAILURE_RECOVERY_SUITES):
             resolve_suite_selector(arguments.platform, arguments.suite)
     except CommandError as error:
-        print(str(error), file=stderr)
+        print(f"CommandError: {error}", file=stderr)
         return error.code
+
+    if arguments.warm_up_only:
+        from strict_e2e_build import warm_up
+        try:
+            ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
+            if "Simulator" not in arguments.destination:
+                raise CommandError("strict E2E only accepts Simulator destinations.")
+            destination_udid(arguments.destination)
+            # Preflight before creating output or invoking Xcode, including dangling links.
+            from ci_build_archive import workspace_preflight
+            workspace_preflight(REPO_ROOT)
+            prepare_evidence_directory(arguments.evidence_dir)
+            derived = arguments.derived_data_path.resolve()
+            packages = (arguments.cloned_source_packages_path or derived.parent / "SourcePackages").resolve()
+            warm_up(root=REPO_ROOT, platform=arguments.platform, suite=arguments.suite,
+                    configuration=arguments.configuration, destination=arguments.destination,
+                    derived=derived, packages=packages, evidence=arguments.evidence_dir,
+                    timeout=arguments.cold_timeout_seconds, execute=run_command)
+            write_sensitive_scan(arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY])
+            return 0
+        except (CommandError, ValueError, OSError, subprocess.SubprocessError) as error:
+            print(f"CommandError: {error}", file=stderr)
+            return getattr(error, "code", 2)
 
     config_path = REPO_ROOT / TASK_XCCONFIG
     did_create_config = False
@@ -553,19 +597,30 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     unreachable_reservation: socket.socket | None = None
     server_url_b: str | None = None
     service_log_b_path: Path | None = None
-    derived_data_path = arguments.evidence_dir / "DerivedData"
+    derived_data_path = (arguments.derived_data_path or arguments.evidence_dir / "DerivedData").resolve()
+    warm_receipt = None
     primary_exit_code = 0
     did_complete_checks = False
     cleanup_failures: list[str] = []
     case_manifest: dict[str, object] | None = None
     result_bundle_path: Path | None = None
     private_bundles: list[tuple[Path, str]] = []
+    private_test_runs: list[Path] = []
     official_tests_digests: dict[str, str] = {}
     try:
         ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
         if "Simulator" not in arguments.destination:
             raise CommandError("strict E2E only accepts Simulator destinations.")
         simulator_udid = destination_udid(arguments.destination)
+        if arguments.derived_data_path:
+            from strict_e2e_build import load_warm_build, validate_paths, prepare_test_run, warm_test_command, validate_warm_products
+            packages = (arguments.cloned_source_packages_path or derived_data_path.parent / "SourcePackages").resolve()
+            validate_paths(REPO_ROOT, derived_data_path, arguments.evidence_dir, packages)
+            if arguments.test_without_building:
+                warm_receipt, warm_run = load_warm_build(
+                    REPO_ROOT, arguments.platform, arguments.suite, arguments.configuration,
+                    arguments.destination, derived_data_path,
+                )
         prepare_evidence_directory(arguments.evidence_dir)
         owns_evidence_directory = True
         if arguments.suite != "filter-person":
@@ -587,8 +642,11 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             case_manifest["source_dirty_paths"] = read_source_dirty_paths(REPO_ROOT)
         write_case_manifest(arguments.evidence_dir, case_manifest)
 
-        xcconfig_audit = prepare_task_xcconfig(REPO_ROOT / EXAMPLE_XCCONFIG, config_path)
-        did_create_config = True
+        if warm_receipt is None:
+            xcconfig_audit = prepare_task_xcconfig(REPO_ROOT / EXAMPLE_XCCONFIG, config_path)
+            did_create_config = True
+        else:
+            xcconfig_audit = {"private_configuration_present": False, "warm_build": True}
         (arguments.evidence_dir / "xcconfig-audit.json").write_text(
             json.dumps(xcconfig_audit, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -691,6 +749,23 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             scenario=arguments.scenario,
             server_url_b=server_url_b,
         )
+        environment["STRICT_E2E_EVIDENCE_DIR"] = str(arguments.evidence_dir.resolve())
+        if warm_receipt is not None:
+            case_manifest["warm_build_identity"] = warm_receipt["identity"]
+
+        def execute_case(command, log_path):
+            started = time.monotonic()
+            code = run_command(command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
+                               timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else XCODEBUILD_TIMEOUT_SECONDS)
+            if warm_receipt is not None:
+                validate_warm_products(derived_data_path, warm_receipt)
+                from strict_e2e_build import write_json
+                write_json(arguments.evidence_dir / (log_path.stem + "-reuse.json"), {
+                    "duration_seconds": time.monotonic() - started, "exit_code": code,
+                    "timeout_seconds": arguments.warm_timeout_seconds,
+                    "action": "test-without-building", "products_unchanged": True,
+                })
+            return code
         (arguments.evidence_dir / "runner-input-audit.json").write_text(
             json.dumps(
                 {
@@ -740,13 +815,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     server_url_b=server_url_b,
                     only_testing=session["selector"],
                 )
+                if warm_receipt is not None:
+                    run = prepare_test_run(warm_run, session_bundle.parent, environment)
+                    private_test_runs.append(run)
+                    command = warm_test_command(run, arguments.destination, session_bundle, session["selector"])
                 commands.append(shlex.join(command))
-                exit_code = run_command(
-                    command,
-                    cwd=REPO_ROOT,
-                    environment=environment,
-                    log_path=session_log,
-                )
+                exit_code = execute_case(command, session_log)
                 primary_exit_code = exit_code
                 if exit_code != 0:
                     (arguments.evidence_dir / "xcodebuild.log").write_text(
@@ -788,6 +862,11 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 evidence_dir=arguments.evidence_dir,
                 server_url_b=server_url_b,
             )
+            if warm_receipt is not None:
+                run = prepare_test_run(warm_run, result_bundle_path.parent, environment)
+                private_test_runs.append(run)
+                command = warm_test_command(run, arguments.destination, result_bundle_path,
+                                            resolve_suite_selector(arguments.platform, arguments.suite))
             (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
                 shlex.join(command) + "\n", encoding="utf-8"
             )
@@ -800,12 +879,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     arguments.evidence_dir / RECORDING_FILE,
                     arguments.evidence_dir / "screen-recording.log",
                 )
-            exit_code = run_command(
-                command,
-                cwd=REPO_ROOT,
-                environment=environment,
-                log_path=arguments.evidence_dir / "xcodebuild.log",
-            )
+            exit_code = execute_case(command, arguments.evidence_dir / "xcodebuild.log")
             primary_exit_code = exit_code
             if recording_process is not None:
                 finished_recording, recording_process = recording_process, None
@@ -879,8 +953,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             write_case_manifest(arguments.evidence_dir, case_manifest)
         print(json.dumps(summary_payload, sort_keys=True), file=stdout)
         did_complete_checks = True
-    except (CommandError, OfflineCommandError, json.JSONDecodeError) as error:
-        print(str(error), file=stderr)
+    except (CommandError, OfflineCommandError, ValueError) as error:
+        print(f"{type(error).__name__}: {error}", file=stderr)
         primary_exit_code = primary_exit_code or getattr(error, "code", 2)
         if owns_evidence_directory and case_manifest is not None:
             case_manifest["result"] = "FAILED"
@@ -952,8 +1026,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     lambda: cleanup_task_xcconfig(REPO_ROOT / EXAMPLE_XCCONFIG, config_path),
                 )
             )
-        if derived_data_path.exists():
+        if not arguments.derived_data_path and derived_data_path.exists():
             actions.append(("remove_derived_data", lambda: shutil.rmtree(derived_data_path)))
+        for run in private_test_runs:
+            actions.append(("remove_private_test_run", lambda path=run: path.unlink(missing_ok=True)))
         for bundle, suffix in private_bundles:
             actions.append(("export_and_hold_bundle" + suffix, lambda b=bundle, s=suffix: export_and_hold_bundle(b, s)))
         cleanup_failures.extend(run_cleanup_actions(actions))
