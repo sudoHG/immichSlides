@@ -319,7 +319,7 @@ class BuildArchiveTests(unittest.TestCase):
                         patch.object(archive, "checked_command", side_effect=[json.dumps(device_types), json.dumps(devices)]), \
                         patch.object(units, "toolchain", return_value={"versions": {}, "signing_mode": "not-applicable"}), \
                         patch.object(units, "prepare_private_result_bundle_path", return_value=bundle), \
-                        patch.object(units, "default_run", return_value=124), \
+                        patch.object(units, "default_run", side_effect=[0, 124]), \
                         patch.object(units, "export_private_result_bundle", side_effect=export_empty) as export:
                     archive.DiskMeasurement.return_value.finish.return_value = {}
                     self.assertEqual(units.main(["run", "--selection-path", str(selection), "--archive-dir", str(archive_dir),
@@ -336,26 +336,74 @@ class BuildArchiveTests(unittest.TestCase):
                 self.assertEqual(summary["status"], "failed")
                 if readable:
                     self.assertEqual(provenance["official_tests_sha256"], archive.file_hash(output / "official-tests.json"))
-                    self.assertEqual(summary["infrastructure"][-1]["message"], "official unit tests failed or were empty")
+                    self.assertEqual(summary["infrastructure"][-1]["message"], "official unit tests were empty")
 
 
 class ArchiveUnitResultTests(unittest.TestCase):
-    def test_hosted_budget_keeps_local_default_and_records_censored_samples_and_margin(self):
+    def test_unscanned_records_never_reach_workflow_summary_and_cleanup_runs(self):
+        import os
+        import yaml
+        workflow = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/ci-gate.yml").read_text())
+        for platform in ("ios", "tvos"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                records = root / "unit-records"
+                records.mkdir()
+                marker = "PROTECTED_SUMMARY_CANARY"
+                (records / "summary.md").write_text(marker)
+                (records / "measurements.json").write_text(marker)
+                relocated = root / ("consumer-relocated-" + platform)
+                relocated.mkdir()
+                (root / "archive-download").mkdir()
+                summary = root / "step-summary.md"
+                job = workflow["jobs"]["unit-" + platform]
+                for name in ("Display only scanned records", "Remove relocated products"):
+                    step = next(step for step in job["steps"] if step["name"] == name)
+                    command = step["run"].replace("${{ steps.units.outputs.records_safe }}", "false").replace(
+                        "${{ env.UNIT_PLATFORM }}", platform)
+                    completed = subprocess.run(["bash", "-eo", "pipefail", "-c", command], capture_output=True,
+                                               env={**os.environ, "RUNNER_TEMP": temporary, "GITHUB_STEP_SUMMARY": str(summary)},
+                                               text=True, timeout=10)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertNotIn(marker, completed.stdout)
+                self.assertNotIn(marker, summary.read_text())
+                self.assertEqual(summary.read_text().strip(),
+                                 "Unit records are unavailable or failed the sensitive scan; publication was withheld.")
+                self.assertFalse(relocated.exists())
+                self.assertFalse((root / "archive-download").exists())
+
+    def test_measured_timeout_uses_sample_rank_censoring_margin_rounding_and_floor(self):
+        from ci_unit_tests import measured_timeout
+        for completed, censored, minimum, expected in (([40, 80], [], 60, 120),
+                ([40, 80], [{"limit_seconds": 200, "wall_seconds": 999}], 60, 300),
+                ([10], [], 180, 180), ([60 * value for value in range(1, 21)], [], 0, 1740)):
+            with self.subTest(completed=completed, censored=censored):
+                result = measured_timeout({"completed_seconds": completed, "censored_samples": censored},
+                                          margin=1.5, minimum=minimum)
+                self.assertEqual(result["timeout_seconds"], expected)
+                self.assertGreaterEqual(result["timeout_seconds"], result["p95_lower_bound_seconds"] * 1.5)
+        with self.assertRaises(ContractError):
+            measured_timeout({"completed_seconds": [], "censored_samples": []}, margin=1.5, minimum=60)
+
+    def test_consumer_phase_bounds_leave_room_in_actual_workflow_jobs(self):
+        import yaml
         from ci_unit_tests import enumeration_budget
-        self.assertEqual(enumeration_budget("local", "ios")["timeout_seconds"], 300)
-        self.assertEqual(enumeration_budget("local", "tvos")["timeout_seconds"], 300)
-        budget = enumeration_budget("ci", "ios")
-        self.assertEqual(budget["p95_lower_bound_seconds"], 300)
-        self.assertEqual(len(budget["completed_seconds"]), 2)
-        self.assertEqual(len(budget["censored_samples"]), 2)
-        self.assertGreaterEqual(budget["timeout_seconds"], budget["p95_lower_bound_seconds"] * budget["margin_multiplier"])
-        self.assertLess(budget["timeout_seconds"] + 900, budget["job_timeout_seconds"])
-        self.assertEqual(enumeration_budget("ci", "tvos")["timeout_seconds"], 300)
+        workflow = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/ci-gate.yml").read_text())
+        for platform in ("ios", "tvos"):
+            budget = enumeration_budget("ci", platform)
+            job_seconds = workflow["jobs"]["unit-" + platform]["timeout-minutes"] * 60
+            self.assertEqual(budget["job_timeout_seconds"], job_seconds)
+            self.assertLess(budget["simulator_boot_timeout_seconds"] + budget["timeout_seconds"] +
+                            budget["test_timeout_seconds"], job_seconds)
 
     def test_enumeration_errors_or_empty_unit_population_cannot_pass(self):
         from ci_unit_tests import enumeration_keys
-        for payload in ({"errors": ["bootstrap failed"], "values": []}, {"values": []},
-                        {"values": [{"kind": "target", "name": "immichSlidesUITests"}]}):
+        duplicate = {"errors": [], "values": [{"kind": "target", "name": "immichSlidesTests", "children": [
+            {"kind": "class", "name": "A", "children": [{"kind": "test", "name": "a()"},
+                                                         {"kind": "test", "name": "a()"}]}]}]}
+        for payload in ({"errors": ["bootstrap failed"], "values": []}, {"errors": [], "values": []}, duplicate,
+                        {"errors": [], "values": [{"kind": "target", "name": "immichSlidesUITests", "children": [
+                            {"kind": "class", "name": "A", "children": [{"kind": "test", "name": "a()"}]}]}]}):
             with self.subTest(payload=payload), self.assertRaises(ContractError):
                 enumeration_keys(payload)
 
@@ -367,17 +415,27 @@ class ArchiveUnitResultTests(unittest.TestCase):
         compare_execution({"A/a()"}, {"A/a()"})
 
     def test_official_failed_parameter_and_skip_reason_are_preserved(self):
-        from ci_unit_tests import result_observations
+        from ci_unit_tests import result_observations, judge_execution
+        from run_offline_unit_tests import TestResultsSummary
+        function_message = "Expectation failed: function value\nSecond diagnostic line"
+        parameter_message = "Expectation failed: " + "x" * 250 + "\nSecond diagnostic line"
         payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesTests", "children": [
             {"nodeType": "Test Case", "nodeIdentifier": "A/a()", "result": "Failed", "duration": "0.25s",
-             "children": [{"nodeType": "Test Case Run", "nodeIdentifier": "A/a()/argument:2", "name": "argument:2",
-                           "result": "Failed", "duration": "0.25s"}]},
+             "children": [{"nodeType": "Failure Message", "name": function_message},
+                          {"nodeType": "Test Case Run", "nodeIdentifier": "A/a()/argument:2", "name": "argument:2",
+                           "result": "Failed", "duration": "0.25s", "children": [
+                               {"nodeType": "Failure Message", "name": parameter_message}]}]},
             {"nodeType": "Test Case", "nodeIdentifier": "B/b()", "result": "Skipped", "duration": "0s"},
         ]}]}
         rows = result_observations(payload, "ios", {"B/b()": "No local live config"})
         self.assertEqual([row["outcome"] for row in rows], ["failed", "failed", "skipped"])
         self.assertEqual(rows[1]["identity"]["dimensions"]["parameter"], "A/a()/argument:2")
         self.assertEqual(rows[2]["attempts"][0]["reason"], "No local live config")
+        self.assertEqual(rows[0]["attempts"][0]["message"], function_message.splitlines()[0])
+        self.assertEqual(rows[1]["attempts"][0]["message"], parameter_message.splitlines()[0][:200])
+        summary = {"population": {}, "infrastructure": [], "status": "unverified"}
+        code = judge_execution(summary, {"A/a()", "B/b()"}, rows, TestResultsSummary(2, 0, 1, 1, "Failed"), 65)
+        self.assertEqual((code, summary["status"], summary["infrastructure"]), (65, "failed", []))
         with self.assertRaisesRegex(ContractError, "skip reason"):
             result_observations(payload, "ios", {})
 

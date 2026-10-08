@@ -66,8 +66,9 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
-run on pull requests and pushes to `main`. Separate hosted runners prove source-free
-relocation with fixture tests; the full unit/UI consumer tiers are separate work.
+run on pull requests and pushes to `main`. Separate hosted runners execute the
+[complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
+The UI consumer tier remains separate work.
 To keep its JSON and short Markdown records locally, run
 `"${PYTHON:-python3}" -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run`.
 `check_all.sh` uses the same checks. `--output-dir` keeps records in `DIR/host-records`

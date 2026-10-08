@@ -39,17 +39,26 @@ HOSTED_ENUMERATION_SAMPLES = {
 }
 
 
+def measured_timeout(samples, *, margin, minimum):
+    bounds = sorted([*samples["completed_seconds"], *(item["limit_seconds"] for item in samples["censored_samples"])])
+    require(bool(bounds) and all(isinstance(value, (int, float)) and math.isfinite(value) and value > 0 for value in bounds),
+            "timeout calibration needs positive measured samples")
+    require(margin > 1 and minimum >= 0, "timeout calibration needs a margin and nonnegative floor")
+    p95_floor = bounds[math.ceil(0.95 * len(bounds)) - 1]
+    return {**samples, "p95_lower_bound_seconds": p95_floor, "margin_multiplier": margin,
+            "timeout_seconds": max(minimum, math.ceil(p95_floor * margin / 60) * 60),
+            "method": "nearest-rank sample p95 lower bound; censored durations are unknown above their limit"}
+
+
 def enumeration_budget(profile, platform):
     require(profile in {"local", "ci"} and platform in HOSTED_ENUMERATION_SAMPLES, "unknown enumeration profile or platform")
     budget = {"profile": profile, "timeout_seconds": 300, "test_timeout_seconds": 900,
+              "simulator_boot_timeout_seconds": 600,
               "job_timeout_seconds": None}
     if profile == "ci":
         samples = HOSTED_ENUMERATION_SAMPLES[platform]
-        bounds = sorted([*samples["completed_seconds"], *(item["limit_seconds"] for item in samples["censored_samples"])])
-        p95_floor = bounds[math.ceil(0.95 * len(bounds)) - 1]
-        budget.update(samples, p95_lower_bound_seconds=p95_floor, margin_multiplier=2,
-                      timeout_seconds=max(300, math.ceil(p95_floor * 2 / 60) * 60), job_timeout_seconds=2100,
-                      method="nearest-rank sample p95 lower bound; censored durations are unknown above their limit")
+        budget.update(measured_timeout(samples, margin=2, minimum=300), job_timeout_seconds=2400,
+                      sample_configuration="implicit-boot historical bootstrap; separate-boot recalibration pending")
     return budget
 
 
@@ -57,13 +66,15 @@ def write_unit_summary(summary, path, budget):
     write_summary(summary, path)
     with (path / "summary.md").open("a", encoding="utf-8") as handle:
         handle.write(f"\nEnumeration infrastructure budget ({budget['profile']}): {budget['timeout_seconds']} s; "
-                     f"execution: {budget['test_timeout_seconds']} s.\n")
+                     f"execution: {budget['test_timeout_seconds']} s; "
+                     f"separate simulator boot: {budget['simulator_boot_timeout_seconds']} s.\n")
         if budget["profile"] == "ci":
-            handle.write(f"Completed hosted samples: {budget['completed_seconds']} s; "
+            handle.write(f"Sample configuration: {budget['sample_configuration']}. "
+                         f"Completed hosted samples: {budget['completed_seconds']} s; "
                          f"right-censored samples (limit and wall including shutdown): {budget['censored_samples']}. "
                          f"Nearest-rank p95 lower bound: {budget['p95_lower_bound_seconds']} s; "
                          f"margin: {budget['margin_multiplier']}x, rounded up to whole minutes with a 300 s minimum. "
-                         f"Combined script phase bounds: {budget['timeout_seconds'] + budget['test_timeout_seconds']} s; "
+                         f"Combined script phase bounds: {budget['simulator_boot_timeout_seconds'] + budget['timeout_seconds'] + budget['test_timeout_seconds']} s; "
                          f"job bound: {budget['job_timeout_seconds']} s. "
                          "The censored sample does not estimate the true p95; local defaults and product assertions are unchanged.\n")
 
@@ -124,6 +135,16 @@ def duration_seconds(node):
     return float(value[:-1])
 
 
+def failure_message(node):
+    if node.get("nodeType") == "Failure Message" and isinstance(node.get("name"), str) and node["name"].strip():
+        return node["name"].strip().splitlines()[0][:200]
+    for child in node.get("children", []):
+        message = failure_message(child)
+        if message:
+            return message
+    return None
+
+
 def result_observations(payload, platform, skip_reasons):
     outcomes = {"Passed": "passed", "Failed": "failed", "Skipped": "skipped", "Expected Failure": "failed"}
     rows = []
@@ -134,7 +155,8 @@ def result_observations(payload, platform, skip_reasons):
         reason = skip_reasons.get(key) if outcome == "skipped" else None
         require(outcome != "skipped" or isinstance(reason, str) and bool(reason.strip()), "missing official skip reason")
         rows.append(observation(test_identity("swift", UNIT_TARGET + "/" + key, platform=platform), outcome,
-                                duration_seconds(node), reason=reason, exit_code=None))
+                                duration_seconds(node), reason=reason,
+                                message=failure_message(node) if outcome == "failed" else None, exit_code=None))
         # The function remains the primary identity; parameter runs have their own dimensions.
         for child in node.get("children", []):
             if child.get("nodeType") not in {"Test Case Run", "Arguments"}:
@@ -144,13 +166,33 @@ def result_observations(payload, platform, skip_reasons):
             require(isinstance(parameter, str) and parameter, "missing parameter identity")
             rows.append(observation(test_identity("swift", UNIT_TARGET + "/" + key,
                                                  platform=platform, parameter=parameter), outcomes[child["result"]],
-                                    duration_seconds(child), reason=reason, exit_code=None))
+                                    duration_seconds(child), reason=reason,
+                                    message=(failure_message(child) or failure_message(node))
+                                    if outcomes[child["result"]] == "failed" else None, exit_code=None))
     return rows
 
 
 def compare_execution(compiled, observed):
     missing, extra = sorted(compiled - observed), sorted(observed - compiled)
     require(not missing and not extra, f"unit enumeration mismatch: missing={missing}; extra={extra}")
+
+
+def judge_execution(summary, compiled, rows, counts, code):
+    summary["population"]["observed"] = rows
+    observed = {row["identity"]["key"].removeprefix(UNIT_TARGET + "/") for row in rows
+                if "parameter" not in row["identity"]["dimensions"]}
+    compare_execution(compiled, observed)
+    require(counts.total_test_count > 0, "official unit tests were empty")
+    failed = counts.failed_tests > 0 or any(row["outcome"] == "failed" for row in rows)
+    if failed and code in {0, 65}:
+        summary["status"] = "failed"
+        return code or 1
+    require(code == 0, f"test-without-building failed (exit {code})")
+    summary["status"] = "unverified" if counts.skipped_tests else "passed"
+    if counts.skipped_tests:
+        summary["infrastructure"].append({"code": "unit-skips-unapproved", "message":
+            "Measured unit skips remain proposed for maintainer approval; no expected-skip policy is applied."})
+    return code
 
 
 def skip_reason(details):
@@ -204,6 +246,7 @@ def run_units(args):
     started = time.monotonic()
     measurements = {"setup_seconds": args.setup_seconds, "transfer_seconds": args.transfer_seconds,
                     "enumeration_budget": budget,
+                    "simulator_boot_seconds": None, "simulator_boot_exit_code": None,
                     "enumeration_seconds": None, "enumeration_exit_code": None,
                     "test_seconds": None, "test_exit_code": None}
     disk = None
@@ -251,6 +294,13 @@ def run_units(args):
         else:
             simulator = archive.checked_command(["xcrun", "simctl", "create", "immichSlides-unit-archive", device_type, runtime])
             owns_simulator = True
+        archive.disk_check(args.min_free_gib)
+        phase = time.monotonic()
+        code = default_run(["xcrun", "simctl", "bootstatus", simulator, "-b"],
+                           timeout_seconds=budget["simulator_boot_timeout_seconds"])
+        measurements["simulator_boot_seconds"] = time.monotonic() - phase
+        measurements["simulator_boot_exit_code"] = code
+        require(code == 0, f"simulator boot failed (exit {code})")
         xctestrun = next((args.relocated_path / "Products").glob("*.xctestrun"))
         base = ["xcodebuild", "test-without-building", "-xctestrun", str(xctestrun),
                 "-destination", f"platform={archive.DESTINATIONS[platform]},id={simulator}",
@@ -291,16 +341,7 @@ def run_units(args):
             try:
                 digest = export_private_result_bundle(result_bundle, args.output_dir, [PUBLIC_API_KEY])
                 rows, counts = read_results(args.output_dir, platform)
-                summary["population"]["observed"] = rows
-                compare_execution(compiled, {node["nodeIdentifier"] for node in official_cases(
-                    decode((args.output_dir / "official-tests.json").read_text()))})
-                require(counts.total_test_count > 0 and counts.failed_tests == 0, "official unit tests failed or were empty")
-                require(not any(row["outcome"] == "failed" for row in rows), "official parameter run failed")
-                require(code == 0, f"test-without-building failed (exit {code})")
-                summary["status"] = "unverified" if counts.skipped_tests else "passed"
-                if counts.skipped_tests:
-                    summary["infrastructure"].append({"code": "unit-skips-unapproved", "message":
-                        "Measured unit skips remain proposed for maintainer approval; no expected-skip policy is applied."})
+                code = judge_execution(summary, compiled, rows, counts, code)
                 export_complete = True
             except Exception as error:
                 code = code or 1

@@ -190,22 +190,18 @@ jobs:
           fi
           rm -rf "$RUNNER_TEMP/producer-derived-tvos" "$RUNNER_TEMP/producer-tvos/archive"
 
-  unit-tests:
-    name: unit-${{ matrix.platform }}
-    needs: [build-ios, build-tvos]
+  unit-ios:
+    name: unit-ios
+    needs: [build-ios]
     runs-on: xcode-27
-    timeout-minutes: 35
+    timeout-minutes: 40
     permissions:
       contents: read
       actions: read
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        platform: [ios, tvos]
     env:
-      ARCHIVE_ID: ${{ matrix.platform == 'ios' && needs.build-ios.outputs.artifact_id || needs.build-tvos.outputs.artifact_id }}
-      PRODUCER_ATTEMPT: ${{ matrix.platform == 'ios' && needs.build-ios.outputs.producer_attempt || needs.build-tvos.outputs.producer_attempt }}
+      UNIT_PLATFORM: ios
+      ARCHIVE_ID: ${{ needs.build-ios.outputs.artifact_id }}
+      PRODUCER_ATTEMPT: ${{ needs.build-ios.outputs.producer_attempt }}
     steps:
       - name: Checkout consumer tooling at a different path
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -217,7 +213,7 @@ jobs:
         working-directory: consumer-source
         run: |
           echo "UNIT_SETUP_START=$(date +%s)" >> "$GITHUB_ENV"
-          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform '${{ matrix.platform }}' \
+          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform '${{ env.UNIT_PLATFORM }}' \
             --output-dir "$RUNNER_TEMP/unit-records"
           /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
@@ -228,7 +224,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           "$RUNNER_TEMP/consumer-python/bin/python3" -B scripts/ci_build_archive.py select \
-            --platform '${{ matrix.platform }}' --artifact-id "$ARCHIVE_ID" \
+            --platform '${{ env.UNIT_PLATFORM }}' --artifact-id "$ARCHIVE_ID" \
             --producer-attempt "$PRODUCER_ATTEMPT" --selection-path "$RUNNER_TEMP/archive-selection.json" \
             --output-dir "$RUNNER_TEMP/unit-records"
           echo "TRANSFER_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -256,14 +252,14 @@ jobs:
           "$RUNNER_TEMP/consumer-python/bin/python3" -B "$RUNNER_TEMP/archive-tools/scripts/ci_unit_tests.py" run \
             --selection-path "$RUNNER_TEMP/archive-selection.json" \
             --archive-dir "$RUNNER_TEMP/archive-download" \
-            --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ matrix.platform }}" \
+            --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ env.UNIT_PLATFORM }}" \
             --output-dir "$RUNNER_TEMP/unit-records" --min-free-gib 30 --enumeration-profile ci \
             --setup-seconds "$UNIT_SETUP_SECONDS" --transfer-seconds "$TRANSFER_SECONDS"
       - name: Publish only unit records and official exports, including failures
-        if: always() && (steps.units.outcome == 'skipped' || steps.units.outputs.records_safe == 'true')
+        if: always() && steps.units.outputs.records_safe == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: unit-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: unit-${{ env.UNIT_PLATFORM }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/unit-records/summary.json
             ${{ runner.temp }}/unit-records/summary.md
@@ -276,13 +272,118 @@ jobs:
             ${{ runner.temp }}/unit-records/sensitive-scan.json
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
           if-no-files-found: error
-      - name: Display records and remove relocated products
+      - name: Display only scanned records
         if: always()
         run: |
-          if test -f "$RUNNER_TEMP/unit-records/summary.md"; then
-            cat "$RUNNER_TEMP/unit-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          if test '${{ steps.units.outputs.records_safe }}' = true; then
+            if test -f "$RUNNER_TEMP/unit-records/summary.md"; then
+              cat "$RUNNER_TEMP/unit-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if test -f "$RUNNER_TEMP/unit-records/measurements.json"; then
+              cat "$RUNNER_TEMP/unit-records/measurements.json"
+            fi
+          else
+            printf '%s\n' 'Unit records are unavailable or failed the sensitive scan; publication was withheld.' >> "$GITHUB_STEP_SUMMARY"
           fi
-          if test -f "$RUNNER_TEMP/unit-records/measurements.json"; then
-            cat "$RUNNER_TEMP/unit-records/measurements.json"
+      - name: Remove relocated products
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/consumer-relocated-${{ env.UNIT_PLATFORM }}" "$RUNNER_TEMP/archive-download"
+
+  unit-tvos:
+    name: unit-tvos
+    needs: [build-tvos]
+    runs-on: xcode-27
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    env:
+      UNIT_PLATFORM: tvos
+      ARCHIVE_ID: ${{ needs.build-tvos.outputs.artifact_id }}
+      PRODUCER_ATTEMPT: ${{ needs.build-tvos.outputs.producer_attempt }}
+    steps:
+      - name: Checkout consumer tooling at a different path
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: consumer-source
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Preflight and verify consumer pins
+        working-directory: consumer-source
+        run: |
+          echo "UNIT_SETUP_START=$(date +%s)" >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform '${{ env.UNIT_PLATFORM }}' \
+            --output-dir "$RUNNER_TEMP/unit-records"
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/consumer-python" --verify-toolchain
+      - name: Select the exact artifact ID and producer attempt
+        working-directory: consumer-source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$RUNNER_TEMP/consumer-python/bin/python3" -B scripts/ci_build_archive.py select \
+            --platform '${{ env.UNIT_PLATFORM }}' --artifact-id "$ARCHIVE_ID" \
+            --producer-attempt "$PRODUCER_ATTEMPT" --selection-path "$RUNNER_TEMP/archive-selection.json" \
+            --output-dir "$RUNNER_TEMP/unit-records"
+          echo "TRANSFER_START=$(date +%s)" >> "$GITHUB_ENV"
+          echo "UNIT_SETUP_SECONDS=$(( $(date +%s) - UNIT_SETUP_START ))" >> "$GITHUB_ENV"
+      - name: Download the selected artifact, including earlier successful attempts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ env.ARCHIVE_ID }}
+          path: ${{ runner.temp }}/archive-download
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+      - name: Keep only tooling and remove the entire source checkout
+        run: |
+          echo "TRANSFER_SECONDS=$(( $(date +%s) - TRANSFER_START ))" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/consumer-python/bin/python3" -B consumer-source/scripts/ci_unit_tests.py stage \
+            --path "$RUNNER_TEMP/archive-tools"
+          rm -rf "$GITHUB_WORKSPACE/consumer-source"
+          test ! -e "$GITHUB_WORKSPACE/source-build"
+          test ! -e "$GITHUB_WORKSPACE/consumer-source"
+      - name: Enumerate and run all unit tests from the relocated archive
+        id: units
+        run: |
+          "$RUNNER_TEMP/consumer-python/bin/python3" -B "$RUNNER_TEMP/archive-tools/scripts/ci_unit_tests.py" run \
+            --selection-path "$RUNNER_TEMP/archive-selection.json" \
+            --archive-dir "$RUNNER_TEMP/archive-download" \
+            --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ env.UNIT_PLATFORM }}" \
+            --output-dir "$RUNNER_TEMP/unit-records" --min-free-gib 30 --enumeration-profile ci \
+            --setup-seconds "$UNIT_SETUP_SECONDS" --transfer-seconds "$TRANSFER_SECONDS"
+      - name: Publish only unit records and official exports, including failures
+        if: always() && steps.units.outputs.records_safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unit-${{ env.UNIT_PLATFORM }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/unit-records/summary.json
+            ${{ runner.temp }}/unit-records/summary.md
+            ${{ runner.temp }}/unit-records/run-identity.json
+            ${{ runner.temp }}/unit-records/archive-consumption.json
+            ${{ runner.temp }}/unit-records/bundle-enumeration.json
+            ${{ runner.temp }}/unit-records/official-tests.json
+            ${{ runner.temp }}/unit-records/official-summary.json
+            ${{ runner.temp }}/unit-records/measurements.json
+            ${{ runner.temp }}/unit-records/sensitive-scan.json
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+      - name: Display only scanned records
+        if: always()
+        run: |
+          if test '${{ steps.units.outputs.records_safe }}' = true; then
+            if test -f "$RUNNER_TEMP/unit-records/summary.md"; then
+              cat "$RUNNER_TEMP/unit-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if test -f "$RUNNER_TEMP/unit-records/measurements.json"; then
+              cat "$RUNNER_TEMP/unit-records/measurements.json"
+            fi
+          else
+            printf '%s\n' 'Unit records are unavailable or failed the sensitive scan; publication was withheld.' >> "$GITHUB_STEP_SUMMARY"
           fi
-          rm -rf "$RUNNER_TEMP/consumer-relocated-${{ matrix.platform }}" "$RUNNER_TEMP/archive-download"
+      - name: Remove relocated products
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/consumer-relocated-${{ env.UNIT_PLATFORM }}" "$RUNNER_TEMP/archive-download"

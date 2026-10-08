@@ -13,25 +13,28 @@ flowchart LR
     PR[PR merge commit or main push] --> H[host-checks]
     PR --> I[build-ios]
     PR --> T[build-tvos]
-    I --> A[unit-tests matrix: unit-ios and unit-tvos]
-    T --> A
-    A --> R[summary and official result exports]
+    I --> U[unit-ios]
+    T --> V[unit-tvos]
+    U --> R[scanned summary and official exports]
+    V --> R
 ```
 
-Host checks, iOS build and tvOS build start independently. The unit matrix waits for
-both builds, uses at most two hosted runners, and does not fail-fast across platforms.
-The critical path is the longer build plus the longer consumer, with queue time
-reported separately. Script bounds are 30 minutes for a build and 15 minutes for
-unit execution. CI enumeration uses the measured profile below: 10 minutes on iOS
-and 5 minutes on tvOS; the local default remains 5 minutes on both. Job bounds are
-40/35 minutes, leaving 10 minutes beyond the longest combined consumer script phases
-for setup, interruption grace, official exports, upload and cleanup. There is no
-automatic test retry or silent rebuild.
+Host checks, iOS build and tvOS build start independently. Each unit job waits only
+for its own platform's build; a slow or failed sibling does not block it. The critical
+path is the longer complete platform path or host checks, with queue time reported
+separately. Script bounds are 30 minutes for a build and 15 minutes for unit execution.
+Simulator startup is a separate `simctl bootstatus <UDID> -b` phase, bounded at
+10 minutes and recorded as `simulator_boot_seconds` and `simulator_boot_exit_code`.
+The local enumeration default remains 5 minutes. Both build and consumer jobs have
+40-minute bounds, with combined boot/enumeration/execution script bounds shorter
+than the consumer job. There is no automatic test retry or silent rebuild.
 
 The publisher in [#89](https://github.com/sudoHG/immichSlides/issues/89) owns the future
 trusted `ci-pr-gate` status. This producer does not create it, set a required status,
 approve a policy or implement a trusted verdict. A failing unit test fails the job
 and the workflow, and its official results remain available in the compact records.
+This PR is **Part of #91**, not its closure: the acceptance criterion requiring a
+deliberate unit failure to turn `ci-pr-gate` red remains open until #89 is available.
 
 ## Execution and records
 
@@ -78,13 +81,18 @@ The consumer writes the existing [summary contract](CI_SUMMARY.md). Successful S
 rows stay in JSON; Markdown displays failures and skips. Parameter runs retain
 their official argument identity and outcome under the function-level identity.
 Exact `Skip Message` diagnostics are retained, including Xcode's generic `Test skipped`.
+Failed functions and parameter runs retain the first official `Failure Message` line,
+capped at 200 characters. A plain assertion failure fails the producer without adding
+an infrastructure failure; missing results, process timeouts and export errors remain
+infrastructure failures.
 
 `archive-consumption.json` is written before Xcode and updated after export. It records
 artifact ID, producer run/attempt, consumer attempt, full identity, manifest/archive
 hashes, signing measurement, source/Products absence, process exit and official export
 hash. `bundle-enumeration.json`, `official-tests.json` and `official-summary.json`
 preserve the independent enumeration, function/parameter outcomes and official counts.
-`measurements.json` records setup, transfer, enumeration, test and total seconds.
+`measurements.json` records setup, transfer, separate simulator boot, enumeration,
+test and total seconds. Enumeration starts only after boot status succeeds.
 Producer records add setup/build/pack timings and sampled disk use.
 
 Raw results use the existing owner-only private result-bundle helpers from the strict
@@ -94,8 +102,11 @@ its private bundle when export is unavailable; records distinguish enumeration f
 execution and retain both process exits. Successful export, record writing and the unchanged sensitive scan
 precede disposal; failed runs or export/scan errors retain the private bundle with a
 quarantine record. Upload uses an explicit compact-file allowlist and a successful
-sensitive-scan output. Raw bundles, activities, logs, screenshots and quarantine paths
-are never uploaded. Records expire after 30 days for PRs and 7 days for other runs.
+sensitive-scan output. Step-summary publication requires the same `records_safe`
+output; otherwise it displays only a fixed message, without raw diagnostics or
+measurements. Relocated-product cleanup is a separate `always()` step. Raw bundles,
+activities, logs, screenshots and quarantine paths are never uploaded. Records expire
+after 30 days for PRs and 7 days for other runs.
 
 ## Measurements and budget
 
@@ -109,7 +120,11 @@ existing 30 GiB allowance and record the reserve. Queue measurements come from
 GitHub's run-created and job-start timestamps, separately from job execution.
 
 The explicit `--enumeration-profile ci` budget is computed from hosted observations
-in the consumer; omitting it keeps the local 300-second default. iOS completed
+in the consumer; omitting it keeps the local 300-second default. Separate-boot
+calibration is pending during this revision; historical implicit-boot samples below
+provide only a bounded bootstrap profile until new measurements replace them.
+
+Historical implicit-boot iOS enumeration completed
 enumeration in 166.58 seconds ([initial run](https://github.com/sudoHG/immichSlides/actions/runs/37705159130))
 and 293.18 seconds ([negative attempt 2](https://github.com/sudoHG/immichSlides/actions/runs/37706340184)).
 Two other iOS runs were interrupted at 300 seconds; their observed wall durations
@@ -121,9 +136,9 @@ tvOS completed in 63.16, 95.22 and 89.32 seconds, so the same rule retains 300 s
 The small, censored sample does not estimate the true tail latency or prove capacity.
 
 `measurements.json` records the completed/censored samples, p95 lower bound, margin,
-chosen enumeration bound, unchanged 900-second execution bound and 2100-second job
+chosen enumeration bound, separate 600-second boot bound, unchanged 900-second execution bound and 2400-second job
 bound; the job's Markdown summary presents the same decision. The longest combined
-script phase bounds are 1500 seconds, shorter than the job's 2100 seconds. This is
+bootstrap script phase bounds are 2100 seconds, shorter than the job's 2400 seconds. This is
 an infrastructure timeout decision; no product assertion or success threshold changes.
 
 Measured hosted timings, queue values, disk samples and the resulting proposed gate
@@ -132,7 +147,8 @@ latency under overlapping PR/nightly load; that capacity acceptance remains with
 later UI tracer and publisher tickets. Workflow bounds are cancellation limits, not
 a passing gate or a promise of reserved capacity.
 
-Initial hosted sample: [run 37705159130](https://github.com/sudoHG/immichSlides/actions/runs/37705159130),
+Historical hosted sample, before independent platform jobs and separate boot:
+[run 37705159130](https://github.com/sudoHG/immichSlides/actions/runs/37705159130),
 head `a8fd257`, merge `2b61062`, tree `6bd06c2`, producer/consumer attempt 1.
 Both unit jobs succeeded; function results were iOS 618 passed + 19 skipped and
 tvOS 616 passed + 18 skipped, with 41 parameter outcomes on each platform.
@@ -153,12 +169,15 @@ Both producer summaries remain `unverified` for the unapproved skips.
 | Producer peak volume growth / minimum free | 1.32 / 37.48 GiB | 1.30 / 37.63 GiB |
 | Consumer peak volume growth / minimum free | 2.65 / 36.15 GiB | 1.98 / 36.84 GiB |
 
-GitHub job timestamps give 12 minutes 10 seconds from workflow creation to the last
-completed job, including queueing. The initial gate feedback budget is **20 minutes**,
-providing 7 minutes 50 seconds of headroom above this observed sample. The script/job
-timeouts remain larger failure-recovery bounds, not this latency target. Enforcement
-and admission by the trusted publisher remain #89's responsibility. Do not promote
-the gate from one sample; concurrent PR/nightly capacity remains unmeasured.
+GitHub job timestamps give 12 minutes 10 seconds for that historical configuration.
+Its former 20-minute target is not the current budget: a later success took 19m51s,
+and the old diagnostic-enabled failure path took 29m29s. The current provisional
+gate feedback budget will be derived from final-configuration success and failure
+measurements using nearest-rank sample p95, a documented margin, and rounding up to
+whole minutes. This is a coordinator-set technical value, **provisional until #93
+promotion**, not a maintainer approval operation. Script/job timeouts remain larger
+failure-recovery bounds. Enforcement belongs to #89; concurrent PR/nightly capacity
+and the required promotion sample remain unverified.
 
 ## Proposed unit skip policy
 

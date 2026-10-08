@@ -169,12 +169,18 @@ then can producers emit the successor. A version number alone never enables pars
 contents permission, bounded job/script budgets, PR-specific cancellation, and no
 secrets or status-writing identity. It uploads only `summary.json`, `summary.md` and
 `run-identity.json`, with run/attempt-specific names, retained 30 days for PRs and
-7 days for pushes. Successful Python identities are kept in JSON; the short Markdown
-shows every host check and all nonpassing Python identities.
+7 days for pushes. Successful Python and Swift identities are kept in JSON; the short
+Markdown shows every host check and all nonpassing Python/Swift identities. Unit failure
+rows retain the first official failure-message line, capped at 200 characters, including
+parameter outcomes. Plain assertion failures fail the producer without being relabeled
+as infrastructure failures.
 
 This job is informational and does not configure required statuses. The workflow also
-produces [secret-free build archives and relocation checks](CI_BUILD_ARCHIVE.md).
-Full unit jobs, expected populations, skip policy, trusted publication
+produces [secret-free build archives](CI_BUILD_ARCHIVE.md) and independent
+[complete iOS/tvOS unit consumers](CI_UNIT_TESTS.md), each depending only on its own
+platform's build. Unit artifacts and step summaries require scanned records; refused
+summary publication emits only a fixed message, and cleanup runs separately.
+Expected populations, skip policy, trusted publication
 and approval enforcement are separate tickets. The workflow consumes the merged
 [pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone
 workflow-policy check as a distinct host identity. CI sets `PYTHON` to the pinned
