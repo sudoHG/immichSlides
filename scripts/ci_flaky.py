@@ -141,10 +141,11 @@ def merge_retry(first, second):
     return merged
 
 
-def retry_observations(first, registry, *, tier, environment, today, reset, execute):
+def retry_observations(first, registry, *, tier, environment, today, reset, execute, infrastructure=None):
+    from strict_e2e_runner_support import CommandError
     seen = set()
     merged = []
-    for record in first:
+    for index, record in enumerate(first):
         validate_observation(record)
         token = identity_key(record["identity"])
         require(token not in seen, "duplicate first-attempt identity")
@@ -152,7 +153,13 @@ def retry_observations(first, registry, *, tier, environment, today, reset, exec
         if (record["outcome"] == "failed" and len(record["attempts"]) == 1
                 and record["attempts"][0]["reason"] == ASSERTION_FAILURE
                 and eligible_entry(registry, record["identity"], tier=tier, environment=environment, today=today)):
-            reset()
+            try:
+                reset()
+            except (CommandError, OSError, subprocess.SubprocessError):
+                if infrastructure is None:
+                    raise
+                infrastructure.append({"code": "retry-reset-failed", "message": "App reset failed before listed retry"})
+                return merged + first[index:]
             record = merge_retry(record, execute(record["identity"]))
         merged.append(record)
     return merged
@@ -383,12 +390,13 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
         return records[0]
     # Exit 65 with official assertion failures is retryable. Infrastructure exits
     # and first-call skips/crashes/missing results never obtain a second call.
+    infrastructure = []
     observed = retry_observations(first, registry, tier=tier, environment=environment, today=today,
-                                  reset=reset, execute=retry) if first_exit == 65 else first
+                                  reset=reset, execute=retry, infrastructure=infrastructure) if first_exit == 65 else first
     successful = bool(observed) and all(item["outcome"] in {"passed", "flaky-passed"} for item in observed)
     code = 0 if successful and (first_exit == 0 or (first_exit == 65 and len(invocations) > 1)) else first_exit or 1
     return {"exit_code": code, "observed": observed, "invocations": invocations,
-            "effective_bundle": str(effective_bundle)}
+            "effective_bundle": str(effective_bundle), "infrastructure": infrastructure}
 
 
 def main(argv=None):
@@ -486,6 +494,7 @@ def run_ui(args):
                                    read=partial(read_xcode_observations, expected_device=(udid, device_class)),
                                    allocate_bundle=lambda: prepare_private_result_bundle_path("ui-flaky-retry"))
         summary["population"]["observed"] = result["observed"]
+        summary["infrastructure"].extend(result["infrastructure"])
         (output / "retry-invocations.json").write_text(json.dumps(dict(result, registry_revision=revision), indent=2) + "\n")
         # The shard owner supplies independently compiled and declared selections.
         # This local adapter enumerates the selected compiled bundle below.

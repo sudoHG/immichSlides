@@ -55,7 +55,10 @@ repeat it for multiple tests. The runner rejects selections outside the default
 plan. `--timeout-minutes` bounds each Xcode invocation (default 90). A nonzero
 Xcode exit, missing result, unexpected identity, failed test, unapproved skip,
 malformed export or sensitive-scan failure fails the run. There are no automatic
-retries.
+retries by default. The [iPhone UI tier](CI_UI.md) explicitly passes
+`--listed-only-retry`, `--shard` and `--shard-manifest`, with a total Xcode budget
+and failure-attachment export. This uses only the base registry, retains both
+official attempts and preserves the first attempt if the retry reset fails.
 
 ## Coverage and policy
 
@@ -93,9 +96,9 @@ Product failures remain failures, tracked separately without an exclusion
 proposal; they must not be attributed to fixture gaps without evidence.
 Only demonstrated fixture/server gaps may become `nightly-live` deselections.
 
-The UI-shard workflow is separate work. Until it exists, coverage is proven by
-local device-slot runs, and CI execution on all three devices is `NOT_RUN`.
-The PR records the per-test measurements and any proposed exceptions.
+The [UI-shard workflow](CI_UI.md) schedules iPhone only. iPad/Apple TV hosted
+execution remains a separate rollout. The PR records the per-test measurements,
+real run links and any proposed exceptions; proposals remain inactive.
 
 ## Public fixture and output boundaries
 

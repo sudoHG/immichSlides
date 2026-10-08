@@ -1,0 +1,164 @@
+name: ci-ui
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-ui-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  archive:
+    name: ui-archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      app_affected: ${{ steps.select.outputs.app_affected }}
+      artifact_id: ${{ steps.select.outputs.artifact_id }}
+      producer_run_id: ${{ steps.select.outputs.producer_run_id }}
+      selection_artifact: ${{ steps.select.outputs.selection_artifact }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Create the pinned Linux reader environment
+        run: |
+          python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ui-python"
+          echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Wait for and verify the exact-identity gate archive
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py wait-archive \
+            --output-dir "$RUNNER_TEMP/ui-selection" --timeout-minutes 45
+      - name: Publish the bound selection records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-archive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ui-selection/summary.json
+            ${{ runner.temp }}/ui-selection/summary.md
+            ${{ runner.temp }}/ui-selection/archive-selection.json
+            ${{ runner.temp }}/ui-selection/archive-refusals.json
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+      - name: Display selection summary
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/ui-selection/summary.md"; then
+            cat "$RUNNER_TEMP/ui-selection/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  shards:
+    name: ui-${{ matrix.device }}-${{ matrix.shard }}
+    needs: archive
+    if: needs.archive.outputs.app_affected == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 95
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        device: [iphone]
+        shard: [default, navigation, visual]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: ui-source
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Preflight and select the pinned Xcode
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform ios \
+            --output-dir "$RUNNER_TEMP/ui-workspace"
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+      - name: Verify pins and prepare Python
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
+          echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Read the retained archive job's selection record
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.archive.outputs.selection_artifact }}
+          path: ${{ runner.temp }}/ui-selection
+      - name: Download by verified immutable archive ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.archive.outputs.artifact_id }}
+          path: ${{ runner.temp }}/ui-archive
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.archive.outputs.producer_run_id }}
+      - name: Create only this shard's pinned simulator
+        working-directory: ui-source
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py simulator --shard '${{ matrix.shard }}'
+      - name: Run the UI target from relocated Products
+        working-directory: ui-source
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py run --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
+            --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection.json" \
+            --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
+            --timeout-minutes 45 --total-timeout-minutes 70 --min-free-gib 30
+      - name: Recheck the sensitive scan before publishing
+        id: scan
+        if: always()
+        working-directory: ui-source
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py check-upload --output-dir "$RUNNER_TEMP/ui-records"
+      - name: Publish only scanned fixture records
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-${{ matrix.device }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ui-records/summary.json
+            ${{ runner.temp }}/ui-records/summary.md
+            ${{ runner.temp }}/ui-records/fixture-coverage.json
+            ${{ runner.temp }}/ui-records/fixture-coverage.md
+            ${{ runner.temp }}/ui-records/coverage-verdict.json
+            ${{ runner.temp }}/ui-records/compiled-tests.json
+            ${{ runner.temp }}/ui-records/official-*.json
+            ${{ runner.temp }}/ui-records/retry-invocations.json
+            ${{ runner.temp }}/ui-records/shard-timing.json
+            ${{ runner.temp }}/ui-records/sensitive-scan.json
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+      - name: Publish scanned public failure attachments
+        if: always() && steps.scan.outcome == 'success' && steps.scan.outputs.has_screenshots == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-failures-${{ matrix.device }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ui-records/failure-screenshots
+          retention-days: 7
+          if-no-files-found: error
+      - name: Display summary and remove task-owned products
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/ui-records/summary.md"; then
+            cat "$RUNNER_TEMP/ui-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -n "${UI_SIMULATOR:-}"; then
+            xcrun simctl shutdown "$UI_SIMULATOR" || true
+            xcrun simctl delete "$UI_SIMULATOR"
+          fi
+          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive"
