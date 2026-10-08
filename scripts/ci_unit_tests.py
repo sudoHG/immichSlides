@@ -31,11 +31,12 @@ TOOL_FILES = ("ci_unit_tests.py", "ci_build_archive.py", "ci_summary.py", "run_h
               "strict_e2e_p2_contract.py", "album_server_narrow_contract.py", "access_lifecycle_contract.py",
               "ci-pins.json")
 
-# Interrupted samples provide lower bounds for their unknown true duration, excluding shutdown grace.
+# Post-boot enumeration calibration is distinct from the separately measured simulator startup.
 HOSTED_ENUMERATION_SAMPLES = {
-    "ios": {"completed_seconds": [166.58, 293.18], "censored_samples": [
-        {"limit_seconds": 300, "wall_seconds": 352.58}, {"limit_seconds": 300, "wall_seconds": 304.47}]},
-    "tvos": {"completed_seconds": [63.16, 95.22, 89.32], "censored_samples": []},
+    "ios": {"completed_seconds": [307.096293334], "censored_samples": [],
+            "calibration_run_id": "37716498397", "calibration_boot_seconds": [53.769112167]},
+    "tvos": {"completed_seconds": [41.619890792], "censored_samples": [],
+             "calibration_run_id": "37716498397", "calibration_boot_seconds": [25.735431]},
 }
 
 
@@ -58,7 +59,7 @@ def enumeration_budget(profile, platform):
     if profile == "ci":
         samples = HOSTED_ENUMERATION_SAMPLES[platform]
         budget.update(measured_timeout(samples, margin=2, minimum=300), job_timeout_seconds=2400,
-                      sample_configuration="implicit-boot historical bootstrap; separate-boot recalibration pending")
+                      sample_configuration="separate boot; calibration run " + samples["calibration_run_id"])
     return budget
 
 
@@ -76,7 +77,7 @@ def write_unit_summary(summary, path, budget):
                          f"margin: {budget['margin_multiplier']}x, rounded up to whole minutes with a 300 s minimum. "
                          f"Combined script phase bounds: {budget['simulator_boot_timeout_seconds'] + budget['timeout_seconds'] + budget['test_timeout_seconds']} s; "
                          f"job bound: {budget['job_timeout_seconds']} s. "
-                         "The censored sample does not estimate the true p95; local defaults and product assertions are unchanged.\n")
+                         "The small calibration sample does not estimate population tail latency; local defaults and product assertions are unchanged.\n")
 
 
 def enumeration_keys(payload):

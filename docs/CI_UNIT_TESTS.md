@@ -120,25 +120,26 @@ existing 30 GiB allowance and record the reserve. Queue measurements come from
 GitHub's run-created and job-start timestamps, separately from job execution.
 
 The explicit `--enumeration-profile ci` budget is computed from hosted observations
-in the consumer; omitting it keeps the local 300-second default. Separate-boot
-calibration is pending during this revision; historical implicit-boot samples below
-provide only a bounded bootstrap profile until new measurements replace them.
+in the consumer; omitting it keeps the local 300-second default. Post-boot calibration
+[run 37716498397](https://github.com/sudoHG/immichSlides/actions/runs/37716498397)
+measured iOS boot at 53.77 s and enumeration at 307.10 s; tvOS boot was 25.74 s and
+enumeration 41.62 s. Enumeration excludes boot, so a 300-second CI iOS bound would
+still interrupt this successful sample.
 
-Historical implicit-boot iOS enumeration completed
-enumeration in 166.58 seconds ([initial run](https://github.com/sudoHG/immichSlides/actions/runs/37705159130))
-and 293.18 seconds ([negative attempt 2](https://github.com/sudoHG/immichSlides/actions/runs/37706340184)).
-Two other iOS runs were interrupted at 300 seconds; their observed wall durations
-were 352.58 and 304.47 seconds including shutdown grace, which are **not** completed
-enumeration durations. These right-censored samples make the nearest-rank sample
-p95 only a lower bound of 300 seconds. A 2x margin (100% above that bound), rounded
-up to whole minutes with a 300-second minimum, selects **600 seconds** for CI iOS.
-tvOS completed in 63.16, 95.22 and 89.32 seconds, so the same rule retains 300 seconds.
-The small, censored sample does not estimate the true tail latency or prove capacity.
+The initial post-boot calibration uses nearest-rank sample p95 per platform, a **2x
+margin**, rounding up to whole minutes, and a 300-second floor. With one completed
+sample per platform, this chooses **660 s for iOS and 300 s for tvOS**. The calibration
+run ID, boot samples, enumeration samples and method are versioned in the consumer.
+This small calibration set does not estimate population tail latency or prove capacity.
+The rule supports censored samples as lower bounds, excluding shutdown grace; older
+implicit-boot samples are historical and are not mixed into the post-boot calibration.
 
 `measurements.json` records the completed/censored samples, p95 lower bound, margin,
-chosen enumeration bound, separate 600-second boot bound, unchanged 900-second execution bound and 2400-second job
-bound; the job's Markdown summary presents the same decision. The longest combined
-bootstrap script phase bounds are 2100 seconds, shorter than the job's 2400 seconds. This is
+chosen enumeration bound, separate 600-second boot bound, unchanged 900-second
+execution bound and 2400-second job bound; the Markdown summary presents the same
+decision. The longest combined script phase bounds are **2160 seconds**, shorter
+than the job's 2400 seconds. The regression compares these bounds to the actual
+workflow `timeout-minutes`, rather than only comparing Python constants. This is
 an infrastructure timeout decision; no product assertion or success threshold changes.
 
 Measured hosted timings, queue values, disk samples and the resulting proposed gate
