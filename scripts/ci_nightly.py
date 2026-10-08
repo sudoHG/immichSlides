@@ -155,14 +155,16 @@ def matrix_equality(scheduled, observed):
             "duplicates": sorted(key for key, count in counts.items() if count != 1)}
 
 
-def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=()):
+def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), review_packages=()):
     from strict_e2e_p2_contract import P2_CASES
     result = {"schema_version": 1, "status": "failed", "release_eligible": False,
               "release_ineligible_reasons": ["skeleton nightly: mandatory tiers are not built"],
               "tiers": {"strict": "failed", **{tier: "not yet in scope" for tier in UNBUILT_TIERS}},
-              "matrix": {}, "observed": [], "needs_human_review": [], "informational": [], "errors": []}
+              "matrix": {}, "observed": [], "needs_human_review": [], "review_packages": [], "informational": [], "errors": []}
     try:
         require(type(live_in_scope) is bool, "live scope must be explicit")
+        from ci_review_packages import validate_bindings
+        result["review_packages"] = copy.deepcopy(validate_bindings(list(review_packages)))
         for raw in summaries:
             summary = parse_summary(raw)
             population = summary["population"]
@@ -283,7 +285,7 @@ def main(argv=None):
         return 0
     require(args.plan is not None and args.records_dir is not None, "aggregate needs plan and records")
     require(args.only_shard is None, "only-shard is a planning option")
-    summaries, errors, traces = [], [], []
+    summaries, errors, traces, review_packages = [], [], [], []
     try:
         plan = decode(args.plan.read_text())
         require(plan["identity"] == identity and plan["run"] == run and plan["hashes"] == hashes
@@ -308,8 +310,16 @@ def main(argv=None):
             continue
         expected = [case_identity(case) for case in shard["cases"]]
         try:
-            summaries.append(validate_shard(paths[0].read_text(), identity,
-                {**run, "tier": "strict", "job": "nightly-strict", "shard": shard["id"]}, hashes, expected))
+            summary = validate_shard(paths[0].read_text(), identity,
+                {**run, "tier": "strict", "job": "nightly-strict", "shard": shard["id"]}, hashes, expected)
+            summaries.append(summary)
+            from ci_review_packages import validate_bindings
+            binding_path = paths[0].parent / "p2-review-bindings.json"
+            require(binding_path.is_file() and not binding_path.is_symlink(), "missing compact P2 package bindings")
+            binding_record = decode(binding_path.read_text())
+            fields(binding_record, {"schema_version", "review_packages"}, "shard package bindings")
+            require(type(binding_record["schema_version"]) is int and binding_record["schema_version"] == 1, "unknown binding schema")
+            review_packages.extend(validate_bindings(binding_record["review_packages"], summary))
             trace = decode((paths[0].parent / "trace.json").read_text())
             require(all(type(trace[key]) in (int, float) and math.isfinite(trace[key]) for key in ("started_epoch", "finished_epoch")),
                     "invalid shard clock")
@@ -318,7 +328,7 @@ def main(argv=None):
         except (ValueError, OSError, KeyError) as error:
             errors.append(shard["id"] + ": " + str(error))
     result = aggregate_nightly(scheduled, summaries, live_in_scope=policy["live_tier_in_scope"],
-                               informational=[item["suite"] for item in manifest["informational"]])
+                               informational=[item["suite"] for item in manifest["informational"]], review_packages=review_packages)
     if args.matrix_job_result != "success":
         errors.append("matrix jobs did not all succeed: " + str(args.matrix_job_result))
     if errors:
@@ -341,7 +351,8 @@ def main(argv=None):
                              "event": source["event"], "fork_originated": fork, "ci_changing": None,
                              "approval_based": False, "identity": identity, "run": run,
                              "status": result["status"], "release_eligible": False,
-                             "release_ineligible_reasons": result["release_ineligible_reasons"], "hashes": hashes}
+                             "release_ineligible_reasons": result["release_ineligible_reasons"], "hashes": hashes,
+                             "review_packages": result["review_packages"]}
     write_json(output / "nightly.json", result)
     lines = [f"# Nightly: {result['status']}", "", "Release eligible: **no — skeleton nightly**", "",
              f"Matrix equality: {result['matrix'].get('equal', False)}; scheduled {len(scheduled)}, executed {result['matrix'].get('executed', 0)}.",

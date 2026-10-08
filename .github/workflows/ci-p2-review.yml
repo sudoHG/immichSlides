@@ -1,0 +1,85 @@
+name: ci-p2-review
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-p2-review.yml
+      - .github/workflows/ci-nightly.yml
+      - scripts/ci_review_packages.py
+      - scripts/p2-review.html
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-p2-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review-package:
+    name: review-package (iphone, ios)
+    runs-on: xcode-27
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Reject private configuration and select pinned tools
+        run: |
+          /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/review-python" --verify-toolchain
+      - name: Collect a real public fixture cache review
+        run: |
+          device=$(/usr/bin/python3 -c 'import json; print(json.load(open("scripts/ci-pins.json"))["device_types"]["iphone"])')
+          runtime=$(/usr/bin/python3 -c 'import json; print(json.load(open("scripts/ci-pins.json"))["simulators"]["ios"]["runtime"])')
+          udid=$(xcrun simctl create immichSlides-review-probe "$device" "$runtime")
+          echo "REVIEW_SIMULATOR=$udid" >> "$GITHUB_ENV"
+          /usr/bin/python3 -B - "$udid" <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          from strict_e2e_runner_support import boot_simulator
+          boot_simulator(sys.argv[1], report=lambda line: print(line, flush=True))
+          PY
+          "$RUNNER_TEMP/review-python/bin/python3" -B scripts/run_strict_e2e.py \
+            --platform ios --destination "platform=iOS Simulator,id=$udid" \
+            --suite p2-cache --warm-up-only --evidence-dir "$RUNNER_TEMP/review-warm-up" \
+            --derived-data-path "$RUNNER_TEMP/review-derived" --min-free-gib 30 --cold-timeout-seconds 1200
+          "$RUNNER_TEMP/review-python/bin/python3" -B scripts/run_strict_e2e.py \
+            --platform ios --destination "platform=iOS Simulator,id=$udid" \
+            --suite p2-cache --test-without-building --evidence-dir "$RUNNER_TEMP/review-evidence" \
+            --derived-data-path "$RUNNER_TEMP/review-derived" --min-free-gib 30 --warm-timeout-seconds 300
+      - name: Validate and scan the review package
+        id: package
+        run: |
+          "$RUNNER_TEMP/review-python/bin/python3" -B scripts/ci_review_packages.py export-case \
+            --evidence-dir "$RUNNER_TEMP/review-evidence" --output-dir "$RUNNER_TEMP/review-package" \
+            --suite p2-cache --device-class iphone
+          echo 'safe=true' >> "$GITHUB_OUTPUT"
+      - name: Upload only the scanned package
+        if: steps.package.outputs.safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: p2-review-probe-iphone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/review-package
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove owned simulator and local outputs
+        if: always()
+        run: |
+          /usr/bin/python3 -B - <<'PY'
+          import os, shutil, subprocess
+          udid = os.environ.get("REVIEW_SIMULATOR")
+          if udid:
+              for verb in ("shutdown", "delete"):
+                  try:
+                      subprocess.run(["xcrun", "simctl", verb, udid], capture_output=True, timeout=60, check=False)
+                  except subprocess.TimeoutExpired:
+                      print("Owned simulator cleanup timed out; runner teardown will finish cleanup.")
+          for name in ("review-warm-up", "review-evidence", "review-derived", "review-package", "review-python"):
+              shutil.rmtree(os.path.join(os.environ["RUNNER_TEMP"], name), ignore_errors=True)
+          PY
