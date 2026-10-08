@@ -49,5 +49,444 @@
       "reason": "STRICT_E2E_REVIEWED_SCREENSHOTS is not set"
     }
   ],
-  "deselections": []
+  "deselections": [],
+  "proposed": {
+    "expected_skips": [],
+    "deselections": [
+      {
+        "identity": {
+          "dimensions": {
+            "device": "appletv",
+            "platform": "tvos"
+          },
+          "key": "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterTopBarFocusedScreenshot",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Local fixture assertion failed: failed - After moving up on the person filter page, the back button should get focus; nightly-live reproduction NOT_RUN",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "FilterSummaryIOSVisualUITests/testIOSAlbumFilterTopBarIPhonePortraitScreenshotDark",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - The iPhone portrait top bar visual subset does not apply to iPad; the core iPad filter tests still run separately.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "FilterSummaryIOSVisualUITests/testIOSExifAlbumSamplingOverlayDiagnosticScreenshots",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - EXIF sampling overlay diagnostic screenshots are not part of regular UI regression by default; set IMMICHSLIDES_RUN_EXIF_SAMPLING_DIAGNOSTIC=1 to run them explicitly.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "FilterSummaryIOSVisualUITests/testIOSFirstBootDebugFillConfigButtonFillsFieldsWhenEnabled",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - This build does not show the debug fill button; skipping the tap check.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "FilterSummaryIOSVisualUITests/testIOSOnboardingMainTitleFramesStayAlignedPortrait",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Local fixture assertion failed: XCTAssertLessThanOrEqual failed: (\"6.0\") is greater than (\"4.0\") - Mode selection page main title left edge should match step 1; nightly-live reproduction NOT_RUN",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "FilterSummaryIOSVisualUITests/testIOSPersonFilterTopBarIPhonePortraitScreenshotDark",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - The iPhone portrait top bar visual subset does not apply to iPad; the core iPad filter tests still run separately.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "PlaybackHistoryIOSUITests/testDiagnosticSmartFillSettingsPauseOnlyThreeSecondsFreezesRenderedFrames",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Local fixture assertion failed: After pausing, the rendered transform/frame of every SmartFill slot must stay frozen; full official diagnostic comparison is recorded in the PR; nightly-live reproduction NOT_RUN",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testCacheManagementClearDiskCacheEntryWorks",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testEmptyAlbumAndPersonFilterPagesCanReturn",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testFilteredModeKeepsFilterSummaryBackButHidesPlaybackBackButton",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testFirstBootAPIKeyHelpSheet",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testIPhonePortraitAndLandscapeFilterSummaryToAlbum",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testIPhonePortraitAndLandscapeFilterSummaryToPerson",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testIPhonePortraitAndLandscapeFirstBootElements",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testIPhonePortraitAndLandscapeModeSelectionFlow",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testIPhonePortraitAndLandscapeSettingsSectionsNavigation",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testIPhonePortraitAndLandscapeSlideshowControls",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testPinAndServerConfigPersistAfterRelaunch",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testPinProtectionBlocksBackAndRequiresPINForSettings",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testPlaybackSettingAutoPlayAppliesAfterBackToSlideshow",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testPlaybackSettingsBlocksFilteredModeWhenSelectionEmpty",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testPlaybackSettingsDisplayModePickerCanSelectSinglePhoto",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testRandomModeHidesPlaybackBackButtonWithoutPIN",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testResetStateEnvironmentForcesFirstBootAfterConfigured",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testServerSettingsAPIKeyHelpSheet",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "dimensions": {
+            "device": "ipad",
+            "platform": "ios"
+          },
+          "key": "immichSlidesUITests/testServerSettingsShowsConnectionErrorAlertImmediately",
+          "kind": "ui"
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "kind": "ui",
+          "key": "FilterSummaryIOSVisualUITests/testIOSExifAlbumSamplingOverlayDiagnosticScreenshots",
+          "dimensions": {
+            "platform": "ios",
+            "device": "iphone"
+          }
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - EXIF sampling overlay diagnostic screenshots are not part of regular UI regression by default; set IMMICHSLIDES_RUN_EXIF_SAMPLING_DIAGNOSTIC=1 to run them explicitly.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "kind": "ui",
+          "key": "FilterSummaryIOSVisualUITests/testIOSFirstBootDebugFillConfigButtonFillsFieldsWhenEnabled",
+          "dimensions": {
+            "platform": "ios",
+            "device": "iphone"
+          }
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - This build does not show the debug fill button; skipping the tap check.",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "kind": "ui",
+          "key": "FilterSummaryIOSVisualUITests/testIOSSettingsOpenSourceLicensesCanReopenAfterBackOnPad",
+          "dimensions": {
+            "platform": "ios",
+            "device": "iphone"
+          }
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - This regression test only covers reopening the open source licenses entry in iPad settings",
+        "owning_tier": "nightly-live"
+      },
+      {
+        "identity": {
+          "kind": "ui",
+          "key": "FilterSummaryIOSVisualUITests/testIOSSettingsOpenSourceLicensesKeepsPadSidebarResponsive",
+          "dimensions": {
+            "platform": "ios",
+            "device": "iphone"
+          }
+        },
+        "tier": "ui",
+        "environment": "fixture",
+        "reason": "Test skipped - This regression test only covers the split-view navigation in iPad settings",
+        "owning_tier": "nightly-live"
+      }
+    ]
+  }
 }

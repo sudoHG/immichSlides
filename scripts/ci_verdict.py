@@ -21,9 +21,15 @@ def parse_policy(raw):
     names = {"schema_version", "approval_state", "expected_skips", "deselections"}
     if isinstance(policy, dict) and "approval_record" in policy:
         names.add("approval_record")
+    if isinstance(policy, dict) and "proposed" in policy:
+        names.add("proposed")
     fields(policy, names, "test policy")
     require(type(policy["schema_version"]) is int and policy["schema_version"] == 1, "unsupported test policy version")
     require(policy["approval_state"] in {"proposed", "approved"}, "invalid policy approval state")
+    if "proposed" in policy:
+        fields(policy["proposed"], {"expected_skips", "deselections"}, "proposed policy")
+        # Proposals use the same grammar, but never enter the active policy lists.
+        parse_policy(dict(policy["proposed"], schema_version=1, approval_state="proposed"))
     if "approval_record" in policy:
         # Historical metadata does not authenticate approval or approve a new head.
         record = policy["approval_record"]

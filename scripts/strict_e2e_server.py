@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 PUBLIC_API_KEY = "immichslides-public-e2e-key"
-FIXTURE_SETS = ("a", "b")
+FIXTURE_SETS = ("a", "b", "c")
 SCENARIOS = ("normal", "html-200", "timeout", "out-of-order")
 MAX_REQUEST_BODY_BYTES = 64 * 1024
 REQUEST_BODY_TIMEOUT_SECONDS = 5
@@ -54,11 +54,17 @@ def server_argument_error(port: int, timeout_seconds: float) -> str | None:
 GLYPHS = {
     "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
     "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
+    "C": ("01111", "10000", "10000", "10000", "10000", "10000", "01111"),
+    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
     "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
     "2": ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
     "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
     "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
     "5": ("11111", "10000", "10000", "11110", "00001", "00001", "11110"),
+    "6": ("01110", "10000", "10000", "11110", "10001", "10001", "01110"),
+    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
+    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
+    "9": ("01110", "10001", "10001", "01111", "00001", "00001", "01110"),
 }
 
 
@@ -125,6 +131,8 @@ def _fixture_data(name: str) -> dict[str, Any]:
 def _cached_fixture_data(name: str) -> dict[str, Any]:
     if name not in FIXTURE_SETS:
         raise ValueError(f"Unknown fixture set: {name}")
+    if name == "c":
+        return _ui_fixture_data()
 
     # Public PNGs keep small identity color blocks; the API width/height are scaled 12x to simulate 4K-class
     # originals.
@@ -258,6 +266,43 @@ def _cached_fixture_data(name: str) -> dict[str, Any]:
         "person_cases": person_cases,
         "images": images,
     }
+
+
+def _ui_fixture_data() -> dict[str, Any]:
+    """Default-plan corpus; A/B and their strict identities remain frozen."""
+    templates = _fixture_data("a")["assets"]
+    people = [{"id": f"person-c-{role}", "name": f"{index:02d} UI Synthetic {role.title()}", "isHidden": False,
+               "isFavorite": index == 1, "faces": [{"id": f"face-c-{role}"}]}
+              for index, role in enumerate(("normal", "other", "third"), 1)]
+    dimensions = [(320, 180), (180, 320), (300, 300), (360, 240), (240, 360)]
+    assets, images = [], {}
+    for index in range(1, 41):
+        asset = copy.deepcopy(templates[(index - 1) % len(templates)])
+        matching_people = [people[0]] + ([people[1]] if index % 2 == 0 else []) + ([people[2]] if index % 3 == 0 else [])
+        asset.update(id=f"asset-c-{index}", label=f"C{index}",
+                     people=copy.deepcopy(matching_people), unassignedFaces=[],
+                     tags=["public-synthetic", "c"], fullsize_delay_ms=0)
+        width, height = dimensions[(index - 1) % len(dimensions)]
+        image = _png(width, height, index, asset["label"])
+        asset["sha256"] = hashlib.sha256(image).hexdigest()
+        images[asset["id"]] = image
+        assets.append(asset)
+    albums = []
+    for index in range(1, 13):
+        members = assets if index == 1 else assets[(index - 2) * 2:(index - 2) * 2 + 10]
+        albums.append({"id": f"album-c-{index}", "albumName": f"UI Synthetic Album {index:02d}",
+                       "fixture_role": "ui", "albumThumbnailAssetId": assets[(index * 2 - 1) % 40]["id"],
+                       "assetCount": len(members), "assets": [], "assetIds": [asset["id"] for asset in members]})
+    # Existing UI launch hooks seed this ID before any server selection is made.
+    seeded_album = copy.deepcopy(albums[0])
+    seeded_album.update(id="ui-test-album-id", albumName="UI Synthetic Seeded Album")
+    albums.append(seeded_album)
+    exif_assets = [asset for asset in assets if asset["exifInfo"].get("dateTimeOriginal")][:10]
+    albums.append({"id": "album-c-exif", "albumName": "UI Synthetic EXIF Diagnostic",
+                   "fixture_role": "exif", "albumThumbnailAssetId": exif_assets[0]["id"],
+                   "assetCount": len(exif_assets), "assets": [], "assetIds": [asset["id"] for asset in exif_assets]})
+    return {"name": "c", "assets": assets, "albums": albums, "people": people,
+            "person_cases": {"normal_match": [asset["id"] for asset in assets]}, "images": images}
 
 
 def fixture_manifest(name: str) -> dict[str, Any]:

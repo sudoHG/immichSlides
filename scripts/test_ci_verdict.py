@@ -142,6 +142,22 @@ class PopulationVerdictTests(unittest.TestCase):
         self.policy["expected_skips"] = [rule, dict(rule, key_pattern="format")]
         self.assertEqual(self.verdict()["status"], "failed")
 
+    def test_proposed_section_is_validated_but_never_authorizes_deselections(self):
+        entry = {"identity": self.expected[0], "tier": "host", "environment": "hermetic",
+                 "reason": "fixture mismatch", "owning_tier": "nightly-live"}
+        self.policy["proposed"] = {"expected_skips": [], "deselections": [entry]}
+        self.assertEqual(parse_policy(self.policy), self.policy)
+        self.assertEqual(self.verdict()["status"], "passed")
+        self.summary["population"]["observed"] = []
+        self.summary["population"]["deselected"] = [
+            {key: value for key, value in entry.items() if key not in {"tier", "environment"}}]
+        self.assertEqual(self.verdict()["status"], "failed")
+        for proposed in ({"deselections": []}, {"expected_skips": [], "deselections": [dict(entry, owning_tier="host")]},
+                         {"expected_skips": [], "deselections": [entry, entry]},
+                         {"expected_skips": [], "deselections": [], "approval_state": "approved"}):
+            with self.subTest(proposed=proposed), self.assertRaises(ci_summary.ContractError):
+                parse_policy(dict(self.policy, proposed=proposed))
+
     def test_malformed_policy_versions_duplicate_rules_and_owner_are_rejected(self):
         record = {"approver": "maintainer example", "date": "2026-10-08", "tier": "host",
                   "link": "https://github.com/example/project/issues/1#issuecomment-1"}

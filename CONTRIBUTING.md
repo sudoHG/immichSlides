@@ -41,6 +41,8 @@ Thanks for helping out. immichSlides is a SwiftUI photo slideshow client for [Im
 
   A run that times out (exit 124) or selects zero tests is not a pass.
 - **UI tests** in the default test plans that need a server run the real app against the Immich server set in `Config/env.xcconfig`, and skip when none is set. They only read from that server; tests that start from the filter summary need its first album to contain photos and at least one person. See [docs/TESTING.md](docs/TESTING.md).
+  For secret-free default-plan runs, use [Fixture-server UI mode](docs/CI_FIXTURE_UI.md).
+  It starts a public loopback server and measures coverage for every selected test.
 - **Strict end-to-end tests** run the real app against a local public fixture server that `scripts/run_strict_e2e.py` starts for you, so they do not touch anyone's Immich server. See [Running controlled integration and end-to-end tests](docs/TESTING.md#running-controlled-integration-and-end-to-end-tests) and `python3 scripts/run_strict_e2e.py --help`.
   Explicit warm-build reuse and the informational hosted tracer are documented in
   [Strict runner warm-build tracer](docs/CI_STRICT_RUNNER.md).
