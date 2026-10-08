@@ -50,9 +50,10 @@ The default plan filters the statically declared population before assignment.
 Selections plus approved tier deselections must equal that population for the
 device. Evidence/strict tests excluded by the plan stay excluded. Each shard
 records its declared and compiled identities, observed outcomes and exact skip
-reasons; missing, duplicate or unexpected identities fail. The publisher derives
-the same populations from admitted source text and checks the full shard union
-and each summary's manifest/default-plan hashes. A candidate manifest or policy
+reasons; missing, duplicate or unexpected identities fail. Admission derives
+and stores these populations using the base revision's shard rules. The publisher
+checks that stored shard union and each summary's manifest/default-plan hashes.
+A candidate manifest or policy
 is effective in the trusted verdict only after exact-head approval.
 
 ## Fixture execution, retry and public output
