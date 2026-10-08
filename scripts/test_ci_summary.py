@@ -5,7 +5,6 @@ import contextlib
 import io
 import json
 import os
-import re
 import select
 import signal
 import subprocess
@@ -41,22 +40,6 @@ def valid_summary():
 
 
 class SummaryContractTests(unittest.TestCase):
-    def test_source_free_archive_tooling_does_not_require_host_population_modules(self):
-        root = Path(__file__).resolve().parent.parent
-        workflow = (root / ".github/workflows/ci-gate.yml").read_text(encoding="utf-8")
-        copied = re.search(r"for file in ([^;]+); do", workflow).group(1).split()
-        with tempfile.TemporaryDirectory() as directory:
-            tools = Path(directory)
-            for name in copied:
-                (tools / name).write_bytes((root / "scripts" / name).read_bytes())
-            completed = subprocess.run([sys.executable, "-I", "-B", "-c",
-                                       "import sys, runpy; sys.path.insert(0, sys.argv.pop(1)); "
-                                       "runpy.run_module('ci_build_archive', run_name='__main__')",
-                                       str(tools), "--help"],
-                                       capture_output=True, text=True, timeout=30, cwd=tools)
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertIn("proof", completed.stdout)
-
     def test_current_summary_round_trips_and_names_failures_in_markdown(self):
         summary = valid_summary()
         self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)

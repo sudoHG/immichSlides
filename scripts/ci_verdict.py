@@ -10,7 +10,7 @@ import fnmatch
 from pathlib import PurePosixPath
 
 from ci_summary import (ContractError, NON_INFRASTRUCTURE_DIAGNOSTICS, decode, fields, identity_key, integer, parse_identity,
-                        parse_summary, require, string, validate_test_identity)
+                        parse_summary, require, sha, string, validate_test_identity)
 from ci_population import removed_tests
 
 
@@ -191,6 +191,15 @@ def job_key(job):
     return (job["tier"], job["job"], job["shard"])
 
 
+def admitted_population(record, tree_sha):
+    fields(record, {"tree_sha", "identities"}, "expected population")
+    sha(record["tree_sha"])
+    require(record["tree_sha"] == tree_sha, "expected population differs from admitted tree SHA")
+    require(isinstance(record["identities"], list), "expected population identities must be an array")
+    tokens(record["identities"])
+    return record["identities"]
+
+
 def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, base_policy,
                   environment, candidate_policy=None, approved_head=None, fork_originated=None,
                   ci_changing=None, app_affected=None, context="gate", base_population=None,
@@ -198,7 +207,8 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
     """Evaluate admitted summaries using trusted inputs; publishing belongs elsewhere.
 
     required_jobs describe tier/job/shard, run_id/attempt, supported workflow_paths
-    and independently derived expected identities for each job.
+    and independently derived expected records {tree_sha, identities} for each job.
+    Overall and per-job expected records must name admission_identity's tree_sha.
     For PRs admission_identity names the admitted merge/base/head/tree, not current main.
     base_population is a required PR record {base_sha, identities} from that base.
     No summary is used to determine classification, approval, provenance or policy.
@@ -207,6 +217,7 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
               "source": admission_identity, "expected_skips": [], "deselected": [], "removed_by_pr": []}
     try:
         admission = parse_identity(admission_identity)
+        expected = admitted_population(expected, admission["tree_sha"])
         require(admission["event"] in allowed_events, "event is not admitted by this consumer")
         require(admission["event"] != "local" or not admission["dirty"], "dirty local identity cannot prove the tested tree")
         require(type(fork_originated) is bool and type(ci_changing) is bool and type(app_affected) is bool,
@@ -234,8 +245,8 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
             integer(job["attempt"], 1, "required attempt")
             require(isinstance(job["workflow_paths"], list) and bool(job["workflow_paths"]), "supported workflow paths required")
             require(job_key(job) not in jobs, "duplicate required job")
-            tokens(job["expected"])
-            jobs[job_key(job)] = job
+            job_expected = admitted_population(job["expected"], admission["tree_sha"])
+            jobs[job_key(job)] = dict(job, expected=job_expected)
         scheduled = [identity for job in jobs.values() for identity in job["expected"]]
         require(set(tokens(scheduled, functions=True)) == set(tokens(expected, functions=True)),
                 "required-job population differs from tested tree")

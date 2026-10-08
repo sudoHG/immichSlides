@@ -22,6 +22,9 @@ reads Python files into a module-name map; it reads no private configuration.
   bases; a discovered TestCase's complete MRO must still satisfy the grammar.
   Unshadowed builtins and the explicit Python 3.9 standard-library allowlist are
   non-test terminals; unittest and doctest TestCase bases are test ancestors.
+  As in unittest, a class with no `test*` methods is registered once as `runTest`
+  when that method exists in its inheritance chain; a class with named tests does
+  not also run the fallback.
 - `swift_identities(files, platform)` finds `@Test` functions in explicit or
   implicit suites, nested suites and cross-file extensions. Module-qualified
   `@Testing.Test` and `@Testing.Suite` have the same meaning as their bare forms.
@@ -67,15 +70,15 @@ non-test helpers do not make their unrelated classes discoverable. At module sco
 | `import` / `from ... import` | Unconditional, explicit names; no star imports |
 | `class Name(Base, ...)` | Bases are names or attributes bound once before the definition and statically resolved; no decorators, metaclass keywords, subscript bases or class-name rebinding |
 | `def` / `async def` | Function bodies are not evaluated; no discovery hooks such as `load_tests` or dynamic attribute/subclass hooks; signatures use the grammar below |
-| `NAME = data` / `NAME: Type = data` | One plain name, never a class, base, discovery-hook or `test*` name; only the data expressions below |
+| `NAME = data` / `NAME: Type = data` | One plain name, never a class, base, discovery-hook, `test*` or `runTest` name; only the data expressions below |
 | Docstring / `pass` | No binding or execution |
-| `if __name__ == "__main__": unittest.main()` | Exact terminal script entry point, with no arguments, extra statements or else branch; import-based discovery never executes it |
+| `if __name__ == "__main__": unittest.main()` | Exact script entry point, with no arguments, extra statements or else branch; import-based discovery never executes it |
 
 Class bodies accept method definitions, docstrings, `pass` and data assignments
 under the same name restrictions; class data assignments cannot call functions.
-Method overrides across classes follow C3 MRO; duplicate `test*` definitions within
+Method overrides across classes follow C3 MRO; duplicate `test*` or `runTest` definitions within
 one class are rejected. Saving a class (`Saved = Hidden`), assigning a base alias,
-replacing a class/base import, assigning/deleting any `test*` member (including
+replacing a class/base import, assigning/deleting any `test*` or `runTest` member (including
 `test_a = None`), nested class declarations, conditional bindings and all other
 statement forms are outside the grammar. Function-local fixture classes are not
 module discovery declarations.
@@ -92,7 +95,8 @@ attribute/subscript mutation are unsupported.
 
 The callable-preserving decorators `classmethod`, `staticmethod`, `unittest.skip`,
 `skipIf`, `skipUnless` and `expectedFailure` are supported with unshadowed bindings;
-skip arguments use the data grammar. `property` is allowed for non-test methods.
+skip arguments use the data grammar. `property` is allowed for non-test methods,
+excluding `runTest`.
 Other decorators are unsupported. Class decorators are always rejected.
 
 Signature defaults accept literals, names, literal containers, name/container
@@ -165,7 +169,8 @@ compiled, must not be observed, and must be reported with the policy's exact
 reason and owner. A policy-required deselection that executes or is omitted fails.
 Measure fixture coverage and the owning tier before proposing a deselection.
 
-`evaluate_population(summary, expected, policy, environment="hermetic")` returns
+`evaluate_population(summary, expected, policy, environment=...)` requires the
+`environment` keyword argument and returns
 `status`, all `errors`, expected skip identities, deselections, missing compiled
 and missing executed identities. Declared and compiled function populations must
 equal the independently supplied expected population. Swift parameter rows can
@@ -205,10 +210,16 @@ entry points, policy/data/pins and their own tests listed in
 `scripts/ci-classification.json`. This includes test conventions, release guards,
 localization catalog/usage, Python prerequisites and workflow-policy checks, plus
 `test_conventions_allowlist.json`, `check_all.sh`, the privacy gate/trusted runner,
-their tests and privacy fixture modules, and `scripts/__init__.py`. The formatting policy changes the lint verdict.
-Regressions derive every `HOST_CHECKS` and workflow `scripts/...` reference and
-require CI-trusted coverage; every exact classification entry must exist.
-Ordinary product/runner tests and other scripts, `AGENTS.md` and `CLAUDE.md` are not CI-trusted;
+their tests and privacy fixture modules, and `scripts/__init__.py`. It also covers
+the source-free consumer's copied `run_offline_unit_tests.py` and its test modules.
+The recursive local-import closure is trusted too: the excluded-UI check imports
+access-lifecycle and strict runners, so their contracts, fixture support and own
+tests are CI inputs. The formatting policy changes the lint verdict.
+Regressions derive every `HOST_CHECKS` and workflow `scripts/...` reference,
+the bare filenames in workflow `for file in ...; do` toolsets, and the recursive
+local-import closure of every trusted Python script. They require CI-trusted
+coverage; every exact classification entry must exist.
+Other product/runner tests and scripts outside that closure, `AGENTS.md` and `CLAUDE.md` are not CI-trusted;
 adding or removing an ordinary test does not itself require CI-head approval.
 Invalid relative paths and empty changed-path lists fail closed. A caller must
 explicitly handle a proven zero-diff case; an empty or unavailable diff cannot
@@ -218,7 +229,10 @@ authorize `not-applicable`. There is no comment-only classification.
 `expected`, `admission_identity`, `required_jobs`, `base_policy`, `environment`
 and trusted classification booleans. Every required-job object has `tier`, `job`,
 `shard`, `run_id`, `attempt`, an explicitly supported `workflow_paths` list, and
-independently derived `expected` identities for that job. Their union must equal
+independently derived `expected={"tree_sha": admitted_tree_sha, "identities":
+job_identities}`. The overall `expected` uses the same record shape. Both must
+match `admission_identity.tree_sha`; missing, malformed, duplicate or later-main
+population records fail validation. Their identity union must equal
 the overall expected population; one shard cannot cover an omission in another.
 Every artifact must match the admitted run identity, job, run, attempt and workflow;
 missing, duplicate or unexpected jobs fail. Each job accounts for its compiled

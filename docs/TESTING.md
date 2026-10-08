@@ -152,6 +152,9 @@ These are exactly the problems tests exist to catch.
 - Python `test_*.py` modules remain discovery entry points. Moved methods live in non-discovered
   `*_test_*_cases.py` mixins and shared fixtures in `*_test_fixtures.py`; the original classes inherit
   those methods so discovered test IDs and counts stay unchanged.
+  Entry points and their test-class/mixin providers must follow the
+  [Python declaration grammar](CI_POPULATION.md#python-declaration-grammar);
+  unsupported discovery-changing forms fail host checks with `population-invalid`.
 - Flows that are the same on iOS and tvOS live in shared helpers. Platform files contain only the differences.
 
 ## 6. Checklist before submitting

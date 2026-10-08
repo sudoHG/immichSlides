@@ -1,5 +1,6 @@
 """Guard coverage and admission decisions against accidental green verdicts."""
 
+import ast
 import copy
 import json
 import re
@@ -15,6 +16,10 @@ from test_ci_summary import valid_summary
 
 def policy():
     return {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []}
+
+
+def expected_population(identities, tree_sha):
+    return {"tree_sha": tree_sha, "identities": identities}
 
 
 class PopulationVerdictTests(unittest.TestCase):
@@ -132,7 +137,8 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.summary = valid_summary()
         self.identity = self.summary["identity"]
         self.jobs = [{"tier": "host", "job": "host-checks", "shard": None, "run_id": None,
-                      "attempt": 1, "workflow_paths": [None], "expected": self.summary["population"]["declared"]}]
+                      "attempt": 1, "workflow_paths": [None],
+                      "expected": expected_population(self.summary["population"]["declared"], self.identity["tree_sha"])}]
         self.expected = self.summary["population"]["declared"]
 
     def verdict(self, **kwargs):
@@ -141,11 +147,12 @@ class AdmissionVerdictTests(unittest.TestCase):
         if self.identity["event"] == "pull_request":
             trusted["base_population"] = {"base_sha": self.identity["base_sha"], "identities": self.expected}
         trusted.update(kwargs)
-        return evaluate_gate([self.summary], expected=self.expected, admission_identity=self.identity,
+        expected = trusted.pop("expected", expected_population(self.expected, self.identity["tree_sha"]))
+        return evaluate_gate([self.summary], expected=expected, admission_identity=self.identity,
                              required_jobs=self.jobs, base_policy=policy(), environment="hermetic", **trusted)
 
     def test_default_admission_rejects_local_events_and_unclassified_inputs(self):
-        default = evaluate_gate([self.summary], expected=self.expected, admission_identity=self.identity,
+        default = evaluate_gate([self.summary], expected=expected_population(self.expected, self.identity["tree_sha"]), admission_identity=self.identity,
                                 required_jobs=self.jobs, base_policy=policy(), environment="hermetic",
                                 fork_originated=False, ci_changing=False, app_affected=True)
         self.assertEqual(default["status"], "failed")
@@ -157,7 +164,7 @@ class AdmissionVerdictTests(unittest.TestCase):
 
     def test_absent_artifacts_jobs_or_mismatched_run_identity_fail_closed(self):
         self.assertEqual(self.verdict()["status"], "passed")
-        missing = evaluate_gate([], expected=self.expected, admission_identity=self.identity,
+        missing = evaluate_gate([], expected=expected_population(self.expected, self.identity["tree_sha"]), admission_identity=self.identity,
                                 required_jobs=self.jobs, base_policy=policy(), environment="hermetic",
                                 fork_originated=False, ci_changing=False, app_affected=True, allowed_events=("local",))
         self.assertEqual(missing["status"], "failed")
@@ -225,9 +232,9 @@ class AdmissionVerdictTests(unittest.TestCase):
         second["population"]["declared"].append(extra)
         second["population"]["compiled"].append(extra)
         second["population"]["observed"].append(ci_summary.observation(extra, "passed", 0))
-        self.jobs[0]["expected"] = self.expected
+        self.jobs[0]["expected"] = expected_population(self.expected, self.identity["tree_sha"])
         self.jobs.append(dict(self.jobs[0], shard="second"))
-        verdict = evaluate_gate([first, second], expected=self.expected, admission_identity=self.identity,
+        verdict = evaluate_gate([first, second], expected=expected_population(self.expected, self.identity["tree_sha"]), admission_identity=self.identity,
                                 required_jobs=self.jobs, base_policy=policy(), environment="hermetic",
                                 fork_originated=False, ci_changing=False, app_affected=True, allowed_events=("local",))
         self.assertEqual(verdict["status"], "failed")
@@ -250,6 +257,27 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.assertEqual(rejected["status"], "failed")
         self.assertEqual(rejected["removed_by_pr"], [])
         self.assertTrue(any("admitted base SHA" in error for error in rejected["errors"]))
+        later_denominator = expected_population(self.expected + [added_on_main], "f" * 40)
+        for location in ("overall", "job"):
+            with self.subTest(location=location):
+                if location == "overall":
+                    rejected = self.verdict(base_population=admitted_base, expected=later_denominator)
+                else:
+                    admitted_job = self.jobs[0]["expected"]
+                    self.jobs[0]["expected"] = later_denominator
+                    rejected = self.verdict(base_population=admitted_base)
+                    self.jobs[0]["expected"] = admitted_job
+                self.assertEqual(rejected["status"], "failed")
+                self.assertTrue(any("admitted tree SHA" in error for error in rejected["errors"]))
+        for malformed in (None, self.expected, {}, expected_population(self.expected, "invalid"),
+                          expected_population(None, self.identity["tree_sha"]),
+                          expected_population(self.expected * 2, self.identity["tree_sha"])):
+            with self.subTest(expected=malformed):
+                self.assertEqual(self.verdict(base_population=admitted_base, expected=malformed)["status"], "failed")
+                admitted_job = self.jobs[0]["expected"]
+                self.jobs[0]["expected"] = malformed
+                self.assertEqual(self.verdict(base_population=admitted_base)["status"], "failed")
+                self.jobs[0]["expected"] = admitted_job
         after = self.verdict(base_population=admitted_base)
         self.assertEqual(after["status"], before["status"])
         self.assertEqual(after["status"], "passed")
@@ -327,7 +355,8 @@ class AdmissionVerdictTests(unittest.TestCase):
                                        ([".swift-format"], set(), True, True),
                                        (["scripts/check_test_conventions.py", "scripts/test_conventions_allowlist.json"], set(), True, True),
                                        (["AGENTS.md", "CLAUDE.md", ".github/ISSUE_TEMPLATE/bug.md"], set(), True, False),
-                                       (["scripts/run_strict_e2e.py", "scripts/test_strict_e2e_photo_identity.py"], set(), True, False),
+                                       (["scripts/run_strict_e2e.py", "scripts/test_strict_e2e_photo_identity.py"], set(), True, True),
+                                       (["scripts/clean_stale_catalog_entries.py", "scripts/test_clean_stale_catalog_entries.py"], set(), True, False),
                                        (["unknown.file"], set(), True, False)):
             with self.subTest(paths=paths):
                 classification = classify_changes(paths, allowlist, build_target_paths=members)
@@ -338,12 +367,44 @@ class AdmissionVerdictTests(unittest.TestCase):
                        "scripts/test_required_test_tools.py", "scripts/test_conventions_allowlist.json"]
         root = Path(__file__).resolve().parent.parent
         for workflow in (root / ".github/workflows").glob("*.yml"):
-            host_paths += re.findall(r"\bscripts/[A-Za-z0-9_./-]+", workflow.read_text(encoding="utf-8"))
+            source = workflow.read_text(encoding="utf-8")
+            host_paths += re.findall(r"\bscripts/[A-Za-z0-9_./-]+", source)
+            # Bare names in the source-free consumer toolset are CI inputs too.
+            for copied in re.findall(r"for file in ([^;]+); do", source):
+                host_paths += ["scripts/" + name for name in copied.split()]
         host_paths += ["scripts/test_check_all.py", "scripts/test_git_privacy_gate.py", "scripts/__init__.py"]
         host_paths += [str(path.relative_to(root)) for path in (root / "scripts").glob("git_privacy_gate_test_*.py")]
+        host_paths += ["scripts/test_run_offline_unit_tests.py"]
+        host_paths += [str(path.relative_to(root)) for path in (root / "scripts").glob("run_offline_unit_tests_test_*.py")]
         for path in host_paths:
             with self.subTest(host_path=path):
                 self.assertTrue(classify_changes([path], allowlist, build_target_paths=set())["ci_changing"])
+        local_modules = {path.stem: path for path in (root / "scripts").glob("*.py")}
+        pending = [path for path in local_modules.values()
+                   if classify_changes([str(path.relative_to(root))], allowlist, build_target_paths=set())["ci_changing"]]
+        visited = set()
+        while pending:
+            path = pending.pop()
+            if path in visited:
+                continue
+            visited.add(path)
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = (["__init__"] + [alias.name for alias in node.names] if node.module == "scripts"
+                             else [node.module] if node.module else [alias.name for alias in node.names])
+                else:
+                    continue
+                for name in names:
+                    module = name.removeprefix("scripts.").split(".")[0]
+                    if module in local_modules:
+                        dependency = local_modules[module]
+                        relative = str(dependency.relative_to(root))
+                        with self.subTest(importer=str(path.relative_to(root)), dependency=relative):
+                            self.assertTrue(classify_changes([relative], allowlist, build_target_paths=set())["ci_changing"],
+                                            "CI-trusted scripts must include their recursive local-import closure")
+                        pending.append(dependency)
         for pattern in allowlist["ci_trusted"] + allowlist["app_unaffected"]:
             if not any(character in pattern for character in "*?["):
                 with self.subTest(exact_path=pattern):

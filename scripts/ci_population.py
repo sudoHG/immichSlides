@@ -227,7 +227,7 @@ def python_identities(files, *, discovery_pattern="test_*"):
                 providers.add(module)
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef) and any(
-                    isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and member.name.startswith("test")
+                    isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and (member.name.startswith("test") or member.name == "runTest")
                     for member in node.body):
                 providers.add(module)
     pending = list(strict)
@@ -396,7 +396,7 @@ def python_identities(files, *, discovery_pattern="test_*"):
             if root in defined:
                 fail(module, decorator, "decorator binding cannot be shadowed")
             if isinstance(decorator, ast.Name) and decorator.id in {"classmethod", "staticmethod", "property"} and decorator.id not in events[module]:
-                if decorator.id == "property" and node.name.startswith("test"):
+                if decorator.id == "property" and (node.name.startswith("test") or node.name == "runTest"):
                     fail(module, decorator, "test methods must remain callable")
                 continue
             try:
@@ -460,7 +460,7 @@ def python_identities(files, *, discovery_pattern="test_*"):
                     statements(node.body, class_body=True)
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     function_definition(module, node, defined if class_body else set())
-                    if node.name in defined and (node.name in protected or node.name.startswith("test")):
+                    if node.name in defined and (node.name in protected or node.name.startswith("test") or node.name == "runTest"):
                         fail(module, node, "class, base or test member cannot be rebound")
                     defined.add(node.name)
                 elif isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -470,7 +470,7 @@ def python_identities(files, *, discovery_pattern="test_*"):
                     if len(targets) != 1 or not isinstance(targets[0], ast.Name):
                         fail(module, node, "only a single data name can be assigned")
                     target = targets[0].id
-                    if target.startswith("test") or target in protected or target in {"load_tests", "__getattr__", "__dir__"}:
+                    if target.startswith("test") or target in protected or target in {"runTest", "load_tests", "__getattr__", "__dir__"}:
                         fail(module, node, "assignment cannot bind a class, base or test member")
                     if class_body and node.value is not None and any(isinstance(child, ast.Call) for child in ast.walk(node.value)):
                         fail(module, node, "class data assignments must not call functions")
@@ -489,7 +489,7 @@ def python_identities(files, *, discovery_pattern="test_*"):
                         target = None
                     if not (isinstance(call, ast.Expr) and isinstance(call.value, ast.Call) and not call.value.args
                             and not call.value.keywords and target == "unittest.main"):
-                        fail(module, node, "only the terminal unittest.main guard is allowed")
+                        fail(module, node, "only the exact unittest.main guard is allowed")
                 else:
                     fail(module, node, type(node).__name__ + " is outside the allowed declaration grammar")
         statements(trees[module].body)
@@ -508,11 +508,16 @@ def python_identities(files, *, discovery_pattern="test_*"):
             seen_classes.add(name)
             methods = {}
             for ancestor in mro(name):
+                if ancestor == "doctest.DocTestCase":
+                    methods.setdefault("runTest", True)
                 if ancestor in classes:
                     for member in classes[ancestor].body:
                         if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
                             methods.setdefault(member.name, True)
-            identities.extend(test_identity("python", name + "." + method) for method in methods if method.startswith("test"))
+            selected = [method for method in methods if method.startswith("test")]
+            if not selected and "runTest" in methods:
+                selected = ["runTest"]
+            identities.extend(test_identity("python", name + "." + method) for method in selected)
     return ordered(identities)
 
 

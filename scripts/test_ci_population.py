@@ -33,6 +33,35 @@ class StaticPopulationTests(unittest.TestCase):
         }
         self.assertEqual(python_identities(files), [test_identity("python", "support.Tests.test_a"),
                                                   test_identity("python", "support.Tests.test_b")])
+        files["support"] += "class Fallback(TC):\n def runTest(self): pass\nclass Child(Fallback): pass\n"
+        files["test_entry"] += "\nfrom support import Fallback, Child"
+        expected = python_identities(files)
+        fallback = [test_identity("python", f"support.{name}.runTest") for name in ("Child", "Fallback")]
+        self.assertEqual(expected, fallback + [test_identity("python", "support.Tests.test_a"),
+                                               test_identity("python", "support.Tests.test_b")])
+        files["support"] += "class Named(Fallback):\n def test_named(self): pass\n"
+        files["test_entry"] += "\nfrom support import Named"
+        self.assertIn(test_identity("python", "support.Named.test_named"), python_identities(files))
+        self.assertNotIn(test_identity("python", "support.Named.runTest"), python_identities(files))
+        self.assertEqual(python_identities({"test_doc": "import doctest\nclass Documented(doctest.DocTestCase): pass"}),
+                         [test_identity("python", "test_doc.Documented.runTest")])
+        for member in ("runTest = None", "@property\n def runTest(self): pass",
+                       "def runTest(self): pass\n def runTest(self): pass"):
+            with self.subTest(member=member), self.assertRaisesRegex(ContractError, r"test_fallback\.py:\d+:"):
+                python_identities({"test_fallback": "import unittest\nclass Tests(unittest.TestCase):\n " + member})
+        for missing in fallback:
+            for collection in ("compiled", "observed"):
+                with self.subTest(missing=missing, collection=collection):
+                    summary = valid_summary()
+                    summary["population"].update(declared=expected, compiled=expected,
+                                                 observed=[observation(identity, "passed", 0) for identity in expected])
+                    summary["population"][collection] = [entry for entry in summary["population"][collection]
+                        if (entry["identity"] if collection == "observed" else entry) != missing]
+                    verdict = evaluate_population(summary, expected,
+                        {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []},
+                        environment="hermetic")
+                    self.assertEqual(verdict["status"], "failed")
+                    self.assertEqual(verdict["missing_compiled" if collection == "compiled" else "missing_executed"], [missing])
 
     def test_assignment_base_aliases_are_outside_the_allowed_grammar(self):
         files = {"support": "from unittest import TestCase\nBase = TestCase\nAlias = Base\n",
