@@ -16,12 +16,20 @@ permissions:
 
 jobs:
   toolchain:
-    runs-on: xcode-27
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+
+      - name: Inventory the GA runner before locking its runtime builds
+        run: |
+          export DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer
+          /usr/bin/python3 --version
+          /usr/bin/python3 -c 'import os,plistlib; from pathlib import Path; print(plistlib.loads((Path(os.environ["DEVELOPER_DIR"]).parent / "version.plist").read_bytes()))'
+          xcrun simctl list runtimes --json
+          xcrun simctl list devicetypes --json
 
       - name: Select Xcode and inspect its Python
         run: |
