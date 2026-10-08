@@ -36,7 +36,8 @@ Without --with-unit-tests the Xcode tests are skipped; run them before opening a
 By default all checks run in a clean snapshot of tracked working changes and
 untracked, non-ignored files. Ambient and private file configuration are ignored.
 Every Python step uses "${PYTHON:-python3}", honoring an active venv or pyenv.
-Optional unit-test DerivedData stays in .derivedData/check-all-{ios,tvos}.
+Optional unit-test DerivedData stays in the caller's original checkout under
+.derivedData/check-all-{ios,tvos}, outside the disposable snapshot.
 EOF
 }
 
@@ -142,15 +143,16 @@ run_step "host checks" "$python" -B scripts/run_host_checks.py "${host_args[@]}"
 
 if [[ $with_unit_tests -eq 1 ]]; then
     stamp="$(date +%Y%m%d-%H%M%S)"
+    cache_root="${_IMMICHSLIDES_CI_LOCAL_SOURCE:-$REPO_ROOT}"
     run_step "xcode unit tests (iOS)" "$python" scripts/run_offline_unit_tests.py \
         --platform ios \
         --destination "$ios_destination" \
-        --derived-data-path .derivedData/check-all-ios \
+        --derived-data-path "$cache_root/.derivedData/check-all-ios" \
         --result-bundle-path "$output_dir/check-all-ios-$stamp.xcresult"
     run_step "xcode unit tests (tvOS)" "$python" scripts/run_offline_unit_tests.py \
         --platform tvos \
         --destination "$tvos_destination" \
-        --derived-data-path .derivedData/check-all-tvos \
+        --derived-data-path "$cache_root/.derivedData/check-all-tvos" \
         --result-bundle-path "$output_dir/check-all-tvos-$stamp.xcresult"
 fi
 

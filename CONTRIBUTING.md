@@ -19,8 +19,13 @@ non-ignored files. A temporary commit object records that tree without moving a
 branch or changing your index; its disposable worktree is removed afterward.
 The terminal prints the tested tree SHA. An output/evidence directory also gets
 `local-snapshot.json`; otherwise use `--snapshot-record '<outside-repo>/tree.json'`.
-Existing runner flags still work; relative output and DerivedData paths retain
-their caller-relative meaning. Keep task-specific DerivedData and remove it after use.
+Existing runner flags still work; separated and inline output/DerivedData options
+retain their caller-relative meaning. Offline aliases `--derived-data` and
+`--result-bundle` are explicit; implicit option abbreviations are not supported.
+DerivedData stays outside the disposable snapshot: `check_all.sh` uses the original
+checkout's `.derivedData/check-all-{ios,tvos}`, and the standalone offline runner
+defaults to `.derivedData/offline-{ios,tvos}` there. Explicit paths win. These caches
+survive individual runs; keep them task-specific and remove them after verification.
 
 Use `--strict-ci` to refuse a dirty tree, including non-ignored untracked files.
 Use repeatable `--config NAME=VALUE` for explicit runtime test inputs; values are
@@ -46,6 +51,9 @@ server and prints the exact build, shard and Xcode test commands. Pass
 See [the UI reproduction guide](docs/CI_UI.md#reproduce-one-shard) for pins,
 skip/deselection accounting and artifact boundaries. Hosted producers retain
 their existing admitted-checkout/identity contracts.
+Local nightly planning, execution and aggregation also share this snapshot contract;
+keep the source tree unchanged between commands, as described in
+[the nightly guide](docs/CI_NIGHTLY.md).
 
 - A Mac with the Xcode version the project was last upgraded with (Xcode 26.3, see `LastUpgradeCheck` in `immichSlides.xcodeproj`), the iOS and tvOS Simulator runtimes, Python 3 with Pillow and PyYAML, Swift (included with Xcode), and the zstd CLI (`brew install zstd`) for Python contract tests.
 - CI tool versions and the isolated Python setup are documented in [CI toolchain and workflow policy](docs/CI_TOOLCHAIN.md). The host entry point runs the standalone workflow-policy check in the same environment as the other Python checks.

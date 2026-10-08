@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from ci_local import CONTEXT
+from ci_local import CONTEXT, SOURCE_CONTEXT
 
 SCRIPT = Path(__file__).resolve().parent / "check_all.sh"
 
@@ -50,6 +50,7 @@ class CheckAllTests(unittest.TestCase):
         self.env = dict(os.environ)
         # Exercise shell ordering/errors after the separately tested snapshot preflight.
         self.env[CONTEXT] = str(self.repo.resolve())
+        self.env[SOURCE_CONTEXT] = str((self.tmp / "original").resolve())
         self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
         self.env["STUB_LOG"] = str(self.log)
         self.env.pop("STUB_FAIL_MATCH", None)
@@ -170,7 +171,7 @@ class CheckAllTests(unittest.TestCase):
                 self.assertIn("--platform tvos", runner_calls[1])
                 for call in runner_calls:
                     self.assertIn(f"--result-bundle-path {out.resolve()}/", call)
-                    self.assertIn("--derived-data-path .derivedData/check-all-", call)
+                    self.assertIn("--derived-data-path " + self.env[SOURCE_CONTEXT] + "/.derivedData/check-all-", call)
                     self.assertNotIn("--timeout-minutes", call)
                 self.assertNotIn("Xcode unit tests were skipped", result.stdout)
 

@@ -208,7 +208,6 @@ class ConfigInspectionTestsCases:
         self.assertFalse(info.env_xcconfig_exists)
         self.assertTrue(info.example_xcconfig_exists)
         self.assertTrue(info.example_is_placeholder)
-        self.assertIsNone(info.env_is_placeholder)
 
 
     def test_existing_env_placeholder_does_not_expose_secret(self) -> None:
@@ -228,7 +227,6 @@ class ConfigInspectionTestsCases:
             )
             info = inspect_config(root)
             self.assertTrue(info.env_xcconfig_exists)
-            self.assertIsNone(info.env_is_placeholder)
             self.assertTrue(info.example_is_placeholder)
             self.assertNotIn("super-secret-canary", info.report)
             self.assertNotIn("secret.example.invalid", info.report)
@@ -259,7 +257,6 @@ class ConfigInspectionTestsCases:
             copied, _ = prepare_example_config(root)
             info = inspect_config(root)
             self.assertTrue(copied)
-            self.assertIsNone(info.env_is_placeholder)
             self.assertEqual(
                 (config_dir / "env.xcconfig").read_text(encoding="utf-8"),
                 example_path.read_text(encoding="utf-8"),

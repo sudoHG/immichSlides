@@ -10,13 +10,49 @@ import signal
 import subprocess
 import sys
 import tempfile
+import shutil
+import time
 
 PRIVATE_PATHS = ("Config/env.xcconfig", "immichSlides/Config/env.xcconfig")
 CONTEXT = "_IMMICHSLIDES_CI_LOCAL_ROOT"
 MODE_CONTEXT = "_IMMICHSLIDES_CI_LOCAL_MODE"
+SOURCE_CONTEXT = "_IMMICHSLIDES_CI_LOCAL_SOURCE"
 PATH_OPTIONS = {"--output-dir", "--evidence-dir", "--derived-data-path", "--result-bundle-path",
                 "--cloned-source-packages-path", "--cloned-source-packages", "--xctestrun",
-                "--archive-dir", "--selection-path", "--relocated-path", "--shard-manifest"}
+                "--archive-dir", "--selection-path", "--relocated-path", "--shard-manifest", "--plan", "--records-dir"}
+PATH_ALIASES = {"--derived-data": "--derived-data-path", "--result-bundle": "--result-bundle-path"}
+INTERRUPT_GRACE_SECONDS = 150
+
+
+class SnapshotCleanupError(RuntimeError):
+    """Live or unverifiable child processes require retaining their source tree."""
+
+
+class Interrupted(KeyboardInterrupt):
+    def __init__(self, signum):
+        self.signum = signum
+
+
+@contextmanager
+def cancellation_signals():
+    def interrupted(signum, frame):
+        raise Interrupted(signum)
+    previous = {signum: signal.signal(signum, interrupted) for signum in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+@contextmanager
+def ignored_cancellation_signals():
+    previous = {signum: signal.signal(signum, signal.SIG_IGN) for signum in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def forbidden_input(key):
@@ -46,8 +82,12 @@ def select_mode(arguments):
 
 
 def git(root, *args, environment=None, input=None):
-    return subprocess.check_output(["git", "--no-optional-locks", "-c", "core.fsmonitor=false", *args], cwd=root,
-                                   env=environment, input=input, stderr=subprocess.PIPE, timeout=120).decode().strip()
+    try:
+        return subprocess.check_output(["git", "--no-optional-locks", "-c", "core.fsmonitor=false", *args], cwd=root,
+                                       env=environment, input=input, stderr=subprocess.PIPE, timeout=120).decode().strip()
+    except subprocess.CalledProcessError as error:
+        print(error.stderr.decode(errors="replace").strip(), file=sys.stderr)
+        raise
 
 
 @contextmanager
@@ -60,8 +100,10 @@ def snapshot(root, *, strict=False):
     dirty = bool(git(root, "status", "--porcelain", "--untracked-files=all", environment=environment))
     if strict and dirty:
         raise ValueError("strict CI-equivalent mode refuses tracked changes and untracked, non-ignored files")
-    with tempfile.TemporaryDirectory(prefix="immichslides-local-") as directory:
-        directory = Path(directory)
+    directory = Path(tempfile.mkdtemp(prefix="immichslides-local-")).resolve()
+    retained = False
+    checkout = directory / "source"
+    try:
         index_environment = {**environment, "GIT_INDEX_FILE": str(directory / "index")}
         git(root, "read-tree", head, environment=index_environment)
         names = subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -71,20 +113,19 @@ def snapshot(root, *, strict=False):
         paths = sorted((set(names) | set(committed)) - {b"", *(path.encode() for path in PRIVATE_PATHS)})
         paths = [path for path in paths if path in committed or os.path.lexists(root / os.fsdecode(path))]
         if paths:
-            git(root, "add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul",
+            git(root, "add", "--force", "--all", "--pathspec-from-file=-", "--pathspec-file-nul",
                 environment=index_environment, input=b"\0".join(b":(literal)" + path for path in paths) + b"\0")
         # Exclusion also applies if a malformed tree tracked private configuration.
         git(root, "update-index", "--force-remove", "--", *PRIVATE_PATHS, environment=index_environment)
         tree = git(root, "write-tree", environment=index_environment)
-        commit_environment = {**environment, "GIT_AUTHOR_NAME": "sudoHG", "GIT_AUTHOR_EMAIL": "by331works@gmail.com",
-                              "GIT_COMMITTER_NAME": "sudoHG", "GIT_COMMITTER_EMAIL": "by331works@gmail.com"}
+        commit_environment = {**environment, "GIT_AUTHOR_NAME": "immichSlides local snapshot", "GIT_AUTHOR_EMAIL": "local-snapshot@invalid",
+                              "GIT_COMMITTER_NAME": "immichSlides local snapshot", "GIT_COMMITTER_EMAIL": "local-snapshot@invalid"}
         # Equal source/tree inputs need equal identities across separate build/consumer calls.
         timestamp = git(root, "show", "-s", "--format=%ct", head, environment=environment)
         commit_environment.update(GIT_AUTHOR_DATE="@" + timestamp + " +0000",
                                   GIT_COMMITTER_DATE="@" + timestamp + " +0000")
         commit = git(root, "commit-tree", tree, "-p", head, environment=commit_environment,
                      input=b"Temporary local test snapshot\n")
-        checkout = (directory / "source").resolve()
         git(root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--quiet", "--detach", str(checkout), commit,
             environment=environment)
         try:
@@ -93,12 +134,28 @@ def snapshot(root, *, strict=False):
             yield checkout, {"schema_version": 1, "mode": "strict" if strict else "snapshot",
                              "source_commit_sha": head, "source_dirty": dirty,
                              "commit_sha": commit, "tree_sha": tree, "private_configuration": False}
+        except SnapshotCleanupError:
+            retained = True
+            raise
         finally:
-            git(root, "worktree", "remove", "--force", str(checkout), environment=environment)
+            if not retained:
+                try:
+                    git(root, "worktree", "remove", "--force", str(checkout), environment=environment)
+                except BaseException:
+                    retained = True
+                    raise
+    finally:
+        if retained:
+            print("Cleanup unverified; snapshot retained: " + str(checkout), file=sys.stderr, flush=True)
+        else:
+            shutil.rmtree(directory)
 
 
 def absolute_paths(arguments, cwd):
-    result = list(arguments)
+    result = []
+    for argument in arguments:
+        option, separator, value = argument.partition("=")
+        result.append(PATH_ALIASES.get(option, option) + (separator + value if separator else ""))
     for index, argument in enumerate(result[:-1]):
         if argument in PATH_OPTIONS:
             result[index + 1] = str((cwd / result[index + 1]).resolve())
@@ -121,29 +178,85 @@ def option_value(arguments, names):
     return value
 
 
+def process_states():
+    raw = subprocess.check_output(["ps", "-axo", "pid=,ppid=,pgid=,stat="], text=True, timeout=5)
+    return [(int(pid), int(parent), int(group), state) for line in raw.splitlines()
+            for pid, parent, group, state in [line.split()]]
+
+
+def remember_groups(process, groups):
+    states = process_states()
+    groups.intersection_update(group for _, _, group, state in states if not state.startswith("Z"))
+    descendants = {process.pid}
+    while True:
+        found = {pid for pid, parent, _, _ in states if parent in descendants}
+        if found <= descendants:
+            break
+        descendants.update(found)
+    groups.update(group for pid, _, group, _ in states if pid in descendants)
+    return {group for _, _, group, state in states if group in groups and not state.startswith("Z")}
+
+
+def signal_groups(groups, signum):
+    for group in groups:
+        try:
+            os.killpg(group, signum)
+        except ProcessLookupError:
+            pass
+
+
+def wait_for_groups(process, groups, seconds):
+    deadline = time.monotonic() + seconds
+    while True:
+        process.poll()
+        live = remember_groups(process, groups)
+        if not live:
+            process.wait()
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(.1)
+
+
 def run_child(command, root, environment):
     process = subprocess.Popen(command, cwd=root, env=environment, start_new_session=True)
-    def interrupted(signum, frame):
-        raise KeyboardInterrupt
-    previous = signal.signal(signal.SIGTERM, interrupted)
-    try:
-        return process.wait()
-    except KeyboardInterrupt:
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        os.killpg(process.pid, signal.SIGTERM)
+    groups = {process.pid}
+    with cancellation_signals():
         try:
-            process.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
-        return 130
-    finally:
-        signal.signal(signal.SIGTERM, previous)
+            while True:
+                remember_groups(process, groups)
+                try:
+                    code = process.wait(timeout=1)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+        except KeyboardInterrupt as error:
+            # Let entry-point finally blocks and xcodebuild finalize private results first.
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            try:
+                remember_groups(process, groups)
+                signal_groups({process.pid}, signal.SIGINT)
+                if not wait_for_groups(process, groups, INTERRUPT_GRACE_SECONDS):
+                    signal_groups(groups, signal.SIGTERM)
+                    if not wait_for_groups(process, groups, 15):
+                        signal_groups(groups, signal.SIGKILL)
+                        if not wait_for_groups(process, groups, 15):
+                            raise SnapshotCleanupError("child process groups did not exit after cancellation")
+            except (OSError, subprocess.SubprocessError) as cleanup_error:
+                raise SnapshotCleanupError("child cleanup could not be verified") from cleanup_error
+            return 128 + getattr(error, "signum", signal.SIGINT)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            signal_groups({process.pid}, signal.SIGINT)
+            raise SnapshotCleanupError("child process state could not be verified") from error
+        if not wait_for_groups(process, groups, 5):
+            raise SnapshotCleanupError("entry point exited with live child process groups")
+        return code
 
 
 def launch(script, arguments):
     root = script.resolve().parent.parent
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--strict-ci", action="store_true")
     parser.add_argument("--allow-private-config", action="store_true")
     parser.add_argument("--config", action="append", default=[])
@@ -152,22 +265,19 @@ def launch(script, arguments):
     mode = select_mode([flag for flag, enabled in (("--strict-ci", options.strict_ci),
                        ("--allow-private-config", options.allow_private_config)) if enabled])
     if script.name == "run_offline_unit_tests.py":
-        remaining = ["--prepare-example-config" if len(argument) >= len("--pre")
-                     and "--prepare-example-config".startswith(argument) else argument for argument in remaining]
         if "--prepare-example-config" in remaining:
             # Setup may affect the caller's checkout, but must never start a build there.
-            if any(argument != "--prepare-example-config" and not (
-                    len(argument) >= len("--ch") and "--check".startswith(argument)) for argument in remaining):
+            if any(argument not in {"--prepare-example-config", "--check"} for argument in remaining):
                 raise ValueError("prepare local configuration separately before a CI-equivalent run")
             mode = "private"
     environment = clean_environment(os.environ, options.config)
     environment.pop(CONTEXT, None)
     environment.pop(MODE_CONTEXT, None)
+    environment.pop(SOURCE_CONTEXT, None)
     remaining = absolute_paths(remaining, Path.cwd())
     for index, argument in enumerate(remaining):
         option, separator, inline = argument.partition("=")
-        # The offline parser also accepts unambiguous long-option abbreviations.
-        if len(option) >= len("--pro") and "--project".startswith(option) and (separator or index + 1 < len(remaining)):
+        if option == "--project" and (separator or index + 1 < len(remaining)):
             project = (Path.cwd() / (inline if separator else remaining[index + 1])).resolve()
             if root not in project.parents:
                 raise ValueError("--project must belong to the source checkout being snapshotted")
@@ -191,14 +301,17 @@ def launch(script, arguments):
     def execute(checkout, receipt):
         environment[CONTEXT] = str(checkout.resolve())
         environment[MODE_CONTEXT] = receipt["mode"]
+        environment[SOURCE_CONTEXT] = str(root)
         target = checkout / script.relative_to(root)
         child_arguments = list(remaining)
-        if target.name == "run_offline_unit_tests.py" and "--derived-data-path" not in child_arguments and not any(
-                argument.startswith("--derived-data-path=") for argument in child_arguments):
-            child_arguments += ["--derived-data-path", str(checkout / ".derivedData/offline-local")]
+        if target.name == "run_offline_unit_tests.py" and option_value(child_arguments, {"--derived-data-path"}) is None:
+            platform = option_value(child_arguments, {"--platform"}) or "local"
+            child_arguments += ["--derived-data-path", str(root / (".derivedData/offline-" + platform))]
         command = (["bash", str(target)] if target.suffix == ".sh" else [sys.executable, "-B", str(target)]) + child_arguments
         print("Local mode: " + receipt["mode"] + "; tested tree: " + (receipt["tree_sha"] or "unrecorded (original checkout)"), flush=True)
         code = run_child(command, checkout, environment)
+        if receipt["mode"] != "private" and (checkout.parent / "cleanup-failed").exists():
+            raise SnapshotCleanupError("entry-point cleanup failed")
         receipt.update(exit_code=code, explicit_configuration_keys=[entry.partition("=")[0] for entry in options.config])
         if record_path:
             record_path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,7 +336,13 @@ def local_main(main, filename):
     if nested and os.environ.get(MODE_CONTEXT) != "private" and any(os.path.lexists(root / path) for path in PRIVATE_PATHS):
         nested = False
     if hosted or nested:
-        return main()
+        with cancellation_signals():
+            try:
+                return main()
+            except SnapshotCleanupError:
+                if nested and os.environ.get(MODE_CONTEXT) != "private":
+                    (root.parent / "cleanup-failed").touch()
+                raise
     if "--help" in sys.argv or "-h" in sys.argv:
         print("Local defaults: isolated working-tree snapshot; no ambient/private configuration.\n"
               "  --strict-ci              Refuse a dirty working tree.\n"
@@ -232,15 +351,21 @@ def local_main(main, filename):
               "  --snapshot-record PATH   Keep the tested tree receipt outside the checkout.\n")
         return main()
     try:
-        return launch(script, sys.argv[1:])
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        with cancellation_signals():
+            return launch(script, sys.argv[1:])
+    except KeyboardInterrupt as error:
+        return 128 + getattr(error, "signum", signal.SIGINT)
+    except (OSError, ValueError, subprocess.SubprocessError, SnapshotCleanupError) as error:
         print("Local preflight refused: " + (str(error) if isinstance(error, ValueError) else type(error).__name__), file=sys.stderr)
         return 2
 
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(launch(Path(sys.argv[1]), sys.argv[2:]))
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        with cancellation_signals():
+            raise SystemExit(launch(Path(sys.argv[1]), sys.argv[2:]))
+    except KeyboardInterrupt as error:
+        raise SystemExit(128 + getattr(error, "signum", signal.SIGINT))
+    except (OSError, ValueError, subprocess.SubprocessError, SnapshotCleanupError) as error:
         print("Local preflight refused: " + (str(error) if isinstance(error, ValueError) else type(error).__name__), file=sys.stderr)
         raise SystemExit(2)

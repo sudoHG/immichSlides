@@ -13,10 +13,11 @@ an external directory for the existing scene-presentation contract collectors.
 
 ## Commands
 
-Use an isolated checkout with no `Config/env.xcconfig`. On a managed local
-worktree, park only that worktree's read-only symlink and restore it in an EXIT
-trap, checking its `readlink` target. Do not read or copy its contents. Device
-runs use a dedicated simulator and a bounded command; iPhone and iPad runs are
+Local entry points create a recorded working-tree snapshot that excludes
+`Config/env.xcconfig`, including a private or dangling symlink, without reading,
+copying or parking it. Hosted entry points require a configuration-free checkout.
+See [local mode](../CONTRIBUTING.md#setup). Device runs use a dedicated simulator
+and a bounded command; iPhone and iPad runs are
 serial. Before every Xcode invocation the
 runner uses the shared archive disk guard with `--min-free-gib` (default 80).
 Only GitHub-hosted runners may lower this threshold. For their approximately

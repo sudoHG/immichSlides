@@ -4,14 +4,73 @@ import os
 import json
 from pathlib import Path
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 
-from ci_local import clean_environment, select_mode, snapshot
+from ci_local import SnapshotCleanupError, clean_environment, select_mode, snapshot
 
 
 class LocalModeTests(unittest.TestCase):
+    def test_interrupt_finalizes_detached_build_before_disposing_the_snapshot(self):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=signum), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory, "repo")
+                scripts = root / "scripts"
+                scripts.mkdir(parents=True)
+                for name in ("ci_local.py", "run_offline_unit_tests.py"):
+                    shutil.copyfile(Path(__file__).with_name(name), scripts / name)
+                runner = scripts / "run_fixture_ui_tests.py"
+                runner.write_text("import json, sys\nfrom pathlib import Path\n"
+                                  "from ci_local import local_main\n"
+                                  "from run_offline_unit_tests import default_run\n"
+                                  "def main():\n"
+                                  "    output = Path(sys.argv[2])\n"
+                                  "    code = \"import json, os, time; from pathlib import Path\\n\"\n"
+                                  "    code += \"root = Path.cwd(); output = Path(\" + repr(str(output)) + \")\\n\"\n"
+                                  "    code += \"(output / 'ready.json').write_text(json.dumps({'pid': os.getpid(), 'root': str(root)}))\\n\"\n"
+                                  "    code += \"try: time.sleep(300)\\nfinally: (output / 'finalized.json').write_text(json.dumps({'snapshot_present': root.exists()}))\\n\"\n"
+                                  "    return default_run([sys.executable, '-c', code], grace_seconds=2)\n"
+                                  "if __name__ == '__main__': raise SystemExit(local_main(main, __file__))\n")
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                for key, value in (("user.name", "immichSlides local snapshot"), ("user.email", "local-snapshot@invalid")):
+                    subprocess.run(["git", "config", key, value], cwd=root, check=True)
+                subprocess.run(["git", "add", "."], cwd=root, check=True)
+                subprocess.run(["git", "commit", "-qm", "initial"], cwd=root, check=True)
+                output = Path(directory, "output")
+                output.mkdir()
+                with (output / "runner.log").open("w") as log:
+                    process = subprocess.Popen([sys.executable, "-B", str(runner), "--output-dir", str(output)],
+                                               cwd=root, env=clean_environment(os.environ), stdout=log,
+                                               stderr=subprocess.STDOUT, start_new_session=True)
+                    try:
+                        deadline = time.monotonic() + 15
+                        while not (output / "ready.json").exists() and time.monotonic() < deadline:
+                            if process.poll() is not None:
+                                break
+                            time.sleep(.05)
+                        self.assertTrue((output / "ready.json").exists(), (output / "runner.log").read_text())
+                        ready = json.loads((output / "ready.json").read_text())
+                        process.send_signal(signum)
+                        self.assertEqual(process.wait(timeout=15), 128 + signum, (output / "runner.log").read_text())
+                        self.assertTrue(json.loads((output / "finalized.json").read_text())["snapshot_present"])
+                        self.assertFalse(Path(ready["root"]).exists())
+                        with self.assertRaises(ProcessLookupError):
+                            os.kill(ready["pid"], 0)
+                    finally:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait()
+                        if (output / "ready.json").exists():
+                            build_pid = json.loads((output / "ready.json").read_text())["pid"]
+                            try:
+                                os.killpg(build_pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+
     def test_entry_point_tests_the_snapshot_and_explicit_mode_without_recursing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory, "repo")
@@ -22,14 +81,17 @@ class LocalModeTests(unittest.TestCase):
             runner.write_text("import argparse, os\nfrom pathlib import Path\nfrom ci_local import local_main\n"
                               "def main():\n"
                               "    root = Path(__file__).resolve().parent.parent\n"
-                              "    parser = argparse.ArgumentParser()\n"
+                              "    parser = argparse.ArgumentParser(allow_abbrev=False)\n"
                               "    parser.add_argument('--project')\n"
                               "    parser.add_argument('--derived-data-path')\n"
+                              "    parser.add_argument('--result-bundle-path')\n"
                               "    parser.add_argument('--prepare-example-config', action='store_true')\n"
                               "    parser.add_argument('--platform')\n"
                               "    parser.add_argument('--full-plan', action='store_true')\n"
                               "    parser.add_argument('--check', action='store_true')\n"
                               "    args = parser.parse_args()\n"
+                              "    print('DERIVED_DATA=' + str(args.derived_data_path))\n"
+                              "    print('RESULT_BUNDLE=' + str(args.result_bundle_path))\n"
                               "    if args.prepare_example_config and (args.platform or args.full_plan):\n"
                               "        return 71\n"
                               "    if args.project and Path(args.project).resolve() != root / 'immichSlides.xcodeproj':\n"
@@ -42,17 +104,16 @@ class LocalModeTests(unittest.TestCase):
             (root / "immichSlides.xcodeproj").mkdir()
             (root / "immichSlides.xcodeproj/project.pbxproj").write_text("synthetic project")
             subprocess.run(["git", "init", "-q", str(root)], check=True)
-            for key, value in (("user.name", "sudoHG"), ("user.email", "by331works@gmail.com")):
+            for key, value in (("user.name", "immichSlides local snapshot"), ("user.email", "local-snapshot@invalid")):
                 subprocess.run(["git", "config", key, value], cwd=root, check=True)
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "initial"], cwd=root, check=True)
             (root / "Config").mkdir()
             (root / "Config/env.xcconfig").symlink_to(root / "never-open-this")
             (root / "untracked").write_text("working-tree change")
-            import sys
             test_environment = {**clean_environment(os.environ), "IMMICH_TEST_API_KEY": "ambient"}
-            for mode, flag in (("snapshot", None), ("strict", "--strict-ci"), ("strict", "--strict"),
-                               ("private", "--allow-private-config"), ("private", "--allow-private")):
+            for mode, flag in (("snapshot", None), ("strict", "--strict-ci"),
+                               ("private", "--allow-private-config")):
                 with self.subTest(mode=mode, flag=flag):
                     record = Path(directory, (flag or mode).replace("-", "") + ".json")
                     args = [sys.executable, "-B", str(runner), "--config", "IMMICH_TEST_API_KEY=explicit",
@@ -75,21 +136,19 @@ class LocalModeTests(unittest.TestCase):
                         self.assertEqual(record.read_bytes(), original_record)
             self.assertTrue((root / "Config/env.xcconfig").is_symlink())
             for project_args in (["--project", str(root / "immichSlides.xcodeproj")],
-                                 ["--project=" + str(root / "immichSlides.xcodeproj")],
-                                 ["--proj=" + str(root / "immichSlides.xcodeproj")]):
+                                 ["--project=" + str(root / "immichSlides.xcodeproj")]):
                 with self.subTest(project_args=project_args):
                     completed = subprocess.run([sys.executable, "-B", str(runner), "--config",
                                                 "IMMICH_TEST_API_KEY=explicit", *project_args], cwd=root,
                                                env=test_environment, capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 0, completed.stderr)
             for project_args in (["--project", str(Path(directory, "outside.xcodeproj"))],
-                                 ["--project=" + str(Path(directory, "outside.xcodeproj"))],
-                                 ["--proj=" + str(Path(directory, "outside.xcodeproj"))]):
+                                 ["--project=" + str(Path(directory, "outside.xcodeproj"))]):
                 with self.subTest(outside_project=project_args):
                     completed = subprocess.run([sys.executable, "-B", str(runner), *project_args], cwd=root,
                                                env=test_environment, capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 2, completed.stderr)
-            for setup_args in (["--prepare-example-config"], ["--prepare-example", "--check"]):
+            for setup_args in (["--prepare-example-config"], ["--prepare-example-config", "--check"]):
                 with self.subTest(setup_only=setup_args):
                     completed = subprocess.run([sys.executable, "-B", str(runner), *setup_args,
                                                 "--config", "IMMICH_TEST_API_KEY=explicit", "--config",
@@ -97,18 +156,27 @@ class LocalModeTests(unittest.TestCase):
                                                capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 0, completed.stderr)
             for setup_args in (["--prepare-example-config", "--platform=ios"],
-                               ["--prepare-example-config", "--platf", "ios"],
-                               ["--prepare-example", "--platform", "ios"],
-                               ["--prepare-example-config", "--full-pl"]):
+                               ["--prepare-example-config", "--platform", "ios"],
+                               ["--prepare-example-config", "--full-plan"]):
                 with self.subTest(setup_build=setup_args):
                     completed = subprocess.run([sys.executable, "-B", str(runner), *setup_args], cwd=root,
                                                env=test_environment, capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 2, completed.stderr)
+            for flags in (["--derived-data-path", "cache", "--result-bundle-path", "results.xcresult"],
+                          ["--derived-data=cache", "--result-bundle=results.xcresult"]):
+                with self.subTest(paths=flags):
+                    completed = subprocess.run([sys.executable, "-B", str(runner), "--config",
+                                                "IMMICH_TEST_API_KEY=explicit", *flags], cwd=root,
+                                               env=test_environment, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertIn("DERIVED_DATA=" + str((root / "cache").resolve()), completed.stdout)
+                    self.assertIn("RESULT_BUNDLE=" + str((root / "results.xcresult").resolve()), completed.stdout)
+            completed = subprocess.run([sys.executable, "-B", str(runner), "--config",
+                                        "IMMICH_TEST_API_KEY=explicit"], cwd=root, env=test_environment,
+                                       capture_output=True, text=True, timeout=15)
+            self.assertIn("DERIVED_DATA=" + str((root / ".derivedData/offline-local").resolve()), completed.stdout)
 
     def test_private_configuration_requires_explicit_opt_in(self):
-        self.assertEqual(select_mode([]), "snapshot")
-        self.assertEqual(select_mode(["--strict-ci"]), "strict")
-        self.assertEqual(select_mode(["--allow-private-config"]), "private")
         with self.assertRaises(ValueError):
             select_mode(["--strict-ci", "--allow-private-config"])
 
@@ -132,14 +200,16 @@ class LocalModeTests(unittest.TestCase):
             def git(*args):
                 return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
             git("init", "-q")
-            git("config", "user.name", "sudoHG")
-            git("config", "user.email", "by331works@gmail.com")
-            (root / ".gitignore").write_text("Config/env.xcconfig\nignored\n")
+            git("config", "user.name", "immichSlides local snapshot")
+            git("config", "user.email", "local-snapshot@invalid")
+            (root / ".gitignore").write_text("Config/env.xcconfig\nignored\nforced\n")
             (root / "tracked").write_text("committed")
             (root / "deleted").write_text("committed")
             git("add", ".")
             git("commit", "-qm", "initial")
             head = git("rev-parse", "HEAD")
+            (root / "forced").write_text("force-added working content")
+            git("add", "--force", "forced")
             (root / "tracked").write_text("staged")
             git("add", "tracked")
             (root / "tracked").write_text("uncommitted failure")
@@ -157,6 +227,10 @@ class LocalModeTests(unittest.TestCase):
             with snapshot(root) as (checkout, receipt):
                 self.assertEqual((checkout / "tracked").read_text(), "uncommitted failure")
                 self.assertEqual((checkout / "new file").read_text(), "new")
+                self.assertEqual((checkout / "forced").read_text(), "force-added working content")
+                self.assertEqual(subprocess.check_output(["git", "show", "-s", "--format=%an <%ae>"],
+                                                         cwd=checkout, text=True).strip(),
+                                 "immichSlides local snapshot <local-snapshot@invalid>")
                 self.assertFalse((checkout / "deleted").exists())
                 self.assertFalse((checkout / "staged then deleted").exists())
                 self.assertFalse((checkout / "ignored").exists())
@@ -175,6 +249,17 @@ class LocalModeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 with snapshot(root, strict=True):
                     self.fail("strict mode accepted a dirty tree")
+            retained = None
+            try:
+                with self.assertRaises(SnapshotCleanupError):
+                    with snapshot(root) as (retained, _):
+                        raise SnapshotCleanupError("synthetic unverified cleanup")
+                self.assertTrue(retained.is_dir())
+                self.assertIn(str(retained), git("worktree", "list", "--porcelain"))
+            finally:
+                if retained is not None:
+                    git("worktree", "remove", "--force", str(retained))
+                    shutil.rmtree(retained.parent)
 
 
 if __name__ == "__main__":

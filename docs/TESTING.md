@@ -15,6 +15,12 @@ Use `--config NAME=VALUE` for explicit runtime inputs. Run example-config setup
 alone or with `--check` before starting tests. All existing runner flags remain available. This does not change
 Xcode GUI/direct commands or hosted producer contracts. The full mode/command
 policy is in [CONTRIBUTING](../CONTRIBUTING.md#setup).
+Cancellation forwards SIGINT to the runner first so Xcode and private-bundle
+finalizers can finish, then escalates if needed. A snapshot is removed only after
+its child process groups exit; unverifiable cleanup retains its path for diagnosis.
+DerivedData remains in the original checkout or an explicit stable path, outside
+the disposable snapshot. Local nightly plan, tracer and aggregate identities must
+match; see [the nightly guide](CI_NIGHTLY.md).
 
 ## 0. When to write a test
 

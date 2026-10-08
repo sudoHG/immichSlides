@@ -74,7 +74,6 @@ class ConfigInspection:
     env_xcconfig_exists: bool
     example_xcconfig_exists: bool
     example_is_placeholder: bool
-    env_is_placeholder: bool | None
     report: str
 
 
@@ -113,7 +112,6 @@ def inspect_config(repo_root: Path) -> ConfigInspection:
     example_exists = example_path.is_file()
     example_placeholder = example_exists and is_placeholder_config(parse_xcconfig(example_path))
     # Presence is sufficient; never open a private file or follow its symlink.
-    env_placeholder = None
 
     lines = [
         f"env.xcconfig: {'present' if env_exists else 'missing'}.",
@@ -137,7 +135,6 @@ def inspect_config(repo_root: Path) -> ConfigInspection:
         env_xcconfig_exists=env_exists,
         example_xcconfig_exists=example_exists,
         example_is_placeholder=example_placeholder,
-        env_is_placeholder=env_placeholder,
         report="\n".join(lines),
     )
 
@@ -342,18 +339,21 @@ def check_repo(repo_root: Path, stdout: TextIO, stderr: TextIO) -> None:
 
 
 def _stop_process_group(process: subprocess.Popen, grace_seconds: float) -> None:
+    from ci_local import (SnapshotCleanupError, ignored_cancellation_signals, remember_groups,
+                          signal_groups, wait_for_groups)
+    groups = {process.pid}
     try:
-        os.killpg(process.pid, signal.SIGINT)
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=grace_seconds)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
+        with ignored_cancellation_signals():
+            remember_groups(process, groups)
+            signal_groups(groups, signal.SIGINT)
+            if not wait_for_groups(process, groups, grace_seconds):
+                signal_groups(groups, signal.SIGTERM)
+                if not wait_for_groups(process, groups, 5):
+                    signal_groups(groups, signal.SIGKILL)
+                    if not wait_for_groups(process, groups, 5):
+                        raise SnapshotCleanupError("xcodebuild process groups did not exit")
+    except (OSError, subprocess.SubprocessError) as error:
+        raise SnapshotCleanupError("xcodebuild cleanup could not be verified") from error
 
 
 def default_run(
@@ -522,12 +522,13 @@ def main(
     data_available_gib = default_data_available_gib if data_available_gib is None else data_available_gib
     read_summary = read_official_test_results_summary if read_summary is None else read_summary
     parser = argparse.ArgumentParser(
-        description="Run offline business unit tests without private credentials; business targets by default, with live tests enabled according to configuration."
+        description="Run offline business unit tests without private credentials; business targets by default, with live tests enabled according to configuration.",
+        allow_abbrev=False,
     )
     parser.add_argument("--platform", help="ios or tvos")
     parser.add_argument("--destination", help="Actual simulator destination passed to xcodebuild")
-    parser.add_argument("--derived-data-path")
-    parser.add_argument("--result-bundle-path")
+    parser.add_argument("--derived-data-path", "--derived-data")
+    parser.add_argument("--result-bundle-path", "--result-bundle")
     parser.add_argument("--full-plan", action="store_true", help="Use the full platform test plan, including UI")
     parser.add_argument("--only-testing", action="append", help="Override default business targets; repeatable")
     parser.add_argument("--suite", help="Named offline suite; currently only access-lifecycle")
