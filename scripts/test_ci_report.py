@@ -11,8 +11,9 @@ from ci_report import (daily_rollup, identity_token, issue_decision, registry_ch
 from test_ci_summary import valid_summary
 
 
-IDENTITY = test_identity("strict", "ExampleUITests/testPlayback", device="iphone",
-                         configuration="Debug", suite="smoke", scenario="normal", fixture="a")
+IDENTITY = {"kind": "strict", "key": "ExampleUITests/testPlayback",
+            "dimensions": {"device": "iphone", "configuration": "Debug", "suite": "smoke",
+                           "scenario": "normal", "fixture": "a"}}
 
 
 def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
