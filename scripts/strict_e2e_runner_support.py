@@ -59,6 +59,7 @@ from strict_e2e_photo_identity import (
 )
 from access_lifecycle_contract import logical_bytes_contain
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
+from ci_flaky import SERVER_SWITCH_DISPLAY_SUITES
 
 
 EXAMPLE_XCCONFIG = Path("Config/env.example.xcconfig")
@@ -200,7 +201,6 @@ SUCCESS_SUITES = (
 )
 DUAL_SERVER_SUITES = ("filter-switch", "tvos-switch", "server-switch-display", "tvos-server-switch-display")
 ALBUM_EMPTY_SUITES = ("album-empty", "tvos-album-empty")
-SERVER_SWITCH_DISPLAY_SUITES = ("server-switch-display", "tvos-server-switch-display")
 DISPLAY_POLICY_SUITES = ("display-policy", "tvos-display-policy")
 # The test selects fixture A ids and the Python evaluator checks marks against fixture A.
 FIXTURE_A_ONLY_FILTER_SUITES = ("tvos-album",)

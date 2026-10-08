@@ -11,7 +11,7 @@ from ci_summary import ContractError
 from ci_publish import (admission_identity, approval_context, approval_plan, authoritative_run,
                         check_credential_context, match_producer, publication_plan, verify_workflow,
                         producer_evidence, record_approval, write_publication, ArtifactRedirect, mint_app, approved_status)
-from ci_publish_git import derive_record, base_reader, BASE_MODULES, evaluate_records
+from ci_publish_git import derive_record, base_reader, BASE_MODULES, OPTIONAL_BASE_MODULES, evaluate_records
 from pathlib import Path
 from test_ci_summary import valid_summary
 from ci_summary import observation, test_identity
@@ -166,6 +166,8 @@ class PublisherTests(unittest.TestCase):
         for bad in (declared + declared[:1], [test_identity("ui", "VisualUITests/testFlow", platform="tvos")]):
             with self.subTest(bad=bad), self.assertRaises(ContractError):
                 shard_populations(bad, UI_PLAN, UI_MANIFEST, "iphone")
+        with self.assertRaisesRegex(ContractError, "shard visual has no tests on iphone; update scripts/ci-ui-shards.json"):
+            shard_populations(declared[:1], UI_PLAN, UI_MANIFEST, "iphone")
 
     def test_ui_workflow_binds_literal_device_and_shard_to_each_uploading_job(self):
         names, _, _, metadata = workflow_contract(FIXTURE_UI, RUN, metadata=True)
@@ -188,15 +190,22 @@ class PublisherTests(unittest.TestCase):
         files = {"scripts/ci-ui-shards.json": json.dumps(UI_MANIFEST),
                  "immichSlides-iOS.xctestplan": json.dumps(UI_PLAN)}
         listing = [{"path": path, "type": "blob", "mode": "100644"} for path in files]
+        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
         with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
-            admitted = ui_inputs(MERGE, listing)
+            admitted = ui_inputs(MERGE, listing, populations={"ui-ios": population},
+                                 base_populations={"ui-ios": population}, workflow=FIXTURE_UI, run=RUN, modules=modules)
+        self.assertEqual(admitted["populations"]["iphone"], shard_populations(population, UI_PLAN, UI_MANIFEST, "iphone"))
+        with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]), \
+                self.assertRaisesRegex(ContractError, "shard visual has no tests on iphone; update scripts/ci-ui-shards.json"):
+            ui_inputs(MERGE, listing, populations={"ui-ios": population[:1]},
+                      base_populations={"ui-ios": population}, workflow=FIXTURE_UI, run=RUN, modules=modules)
         record = {"identity": identity, "populations": {"ui-ios": population},
                   "base_populations": {"ui-ios": population}, "ui_inputs": {"base": admitted, "candidate": admitted},
                   "workflows": {".github/workflows/ci-ui.yml": {"base": FIXTURE_UI, "candidate": FIXTURE_UI}},
                   "base_policy": {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []},
                   "classification": {"app_affected": True, "ci_changing": False}}
         record["candidate_policy"] = record["base_policy"]
-        run = dict(RUN, path=".github/workflows/ci-ui.yml")
+        run = dict(RUN, path=".github/workflows/ci-ui.yml", run_started_at="2026-10-08T10:00:00Z")
         names, _, _, metadata = workflow_contract(FIXTURE_UI, run, metadata=True)
         shards = shard_populations(population, UI_PLAN, UI_MANIFEST, "iphone")
         jobs = [{"name": name, "status": "completed", "conclusion": "success", "evidence_attempt": 1} for name in names]
@@ -215,9 +224,26 @@ class PublisherTests(unittest.TestCase):
                                          observed=[observation(entry, "passed", 0) for entry in expected],
                                          deselected=[], removed_by_pr=[])
             summaries.append(summary)
-        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + ("ci_flaky.py",)}
+        from ci_flaky import ASSERTION_FAILURE, merge_retry
+        from test_ci_flaky import registry
+        record["base_registry"] = json.loads(Path(__file__).with_name("ci-known-flaky.json").read_text())
+        entry = registry()["entries"][0]
+        entry["identity"] = test_identity("ui", "NewUITests/testNew", platform="ios")
+        record["base_registry"]["entries"].append(entry)
         with patch("ci_publish_git.trusted_reader", return_value=modules):
             self.assertEqual(evaluate_records(record, run, jobs, summaries, approved=False, fork=False)["state"], "success")
+            retried = copy.deepcopy(summaries)
+            retried[1]["population"]["observed"] = [merge_retry(
+                observation(shards["default"][0], "failed", 1, reason=ASSERTION_FAILURE, exit_code=65),
+                observation(shards["default"][0], "passed", 1))]
+            self.assertEqual(evaluate_records(record, run, jobs, retried, approved=False, fork=False)["state"], "success")
+            entry["review_by"] = "2026-10-07"
+            self.assertEqual(evaluate_records(record, run, jobs, retried, approved=False, fork=False)["state"], "failure")
+            entry["review_by"] = "2026-10-28"
+            # Admission contains the exact population; late publication does not
+            # recalculate it using the publisher's current shard implementation.
+            with patch("ci_publish_git.shard_populations", side_effect=AssertionError("late re-derivation")):
+                self.assertEqual(evaluate_records(record, run, jobs, summaries, approved=False, fork=False)["state"], "success")
             skipped = copy.deepcopy(summaries)
             skipped[1]["population"]["observed"] = [observation(shards["default"][0], "skipped", 0, reason="device prerequisite")]
             record["base_policy"]["expected_skips"] = [{"kind": "ui", "key_pattern": "NewUITests/testNew",
@@ -275,6 +301,65 @@ class PublisherTests(unittest.TestCase):
                 patch("ci_publish_git.base_reader", return_value=derived):
             record = derive_record(identity, RUN)
         self.assertEqual(record["workflows"][".github/workflows/ci-ui.yml"], {"base": None, "candidate": FIXTURE_UI})
+        ui_run = dict(RUN, path=".github/workflows/ci-ui.yml")
+        record.update(workflow_id=ui_run["workflow_id"], workflow_path=ui_run["path"])
+        class RecordedAPI:
+            repository = REPOSITORY
+            def repo(self, path):
+                return PR
+            def pages(self, path, collection=None, **filters):
+                return [ui_run]
+        with patch("ci_publish.workflows", return_value={"ci-ui": dict(WORKFLOW, path=ui_run["path"])}), \
+                patch("ci_publish.approval_requests", return_value=[]), patch("ci_publish.approved_status", return_value=False), \
+                patch("ci_publish.trusted_admissions", return_value={RUN["id"]: record}), \
+                patch("ci_publish.producer_evidence", return_value=([], [])) as evidence, \
+                patch("ci_publish.evaluate_records", return_value={"state": "success", "description": "verified"}) as evaluate:
+            _, statuses, approval = compute(RecordedAPI(), 7, "", "generic-app[bot]")
+            self.assertEqual(statuses["ci-ui"]["state"], "failure")
+            self.assertEqual(statuses["ci-ui"]["description"], "workflow is absent on the base; exact-head approval required")
+            self.assertEqual(approval["request"], HEAD)
+            evidence.assert_not_called()
+            evaluate.assert_not_called()
+            with patch("ci_publish.approved_status", return_value=True):
+                _, statuses, approval = compute(RecordedAPI(), 7, "", "generic-app[bot]")
+            self.assertEqual(statuses["ci-ui"]["state"], "success")
+            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI)
+            self.assertIsNone(approval["request"])
+
+        candidate_tree += [{"path": path, "mode": "100644", "type": "blob"} for path in
+                           ("scripts/ci-ui-shards.json", "immichSlides-iOS.xctestplan")]
+        original_blob = blob
+        for invalid_path in ("scripts/ci-ui-shards.json", "immichSlides-iOS.xctestplan"):
+            def invalid_blob(revision, path):
+                if path == ".github/workflows/ci-ui.yml":
+                    return FIXTURE_UI
+                if path == "scripts/ci-ui-shards.json":
+                    return "{broken" if path == invalid_path else json.dumps(UI_MANIFEST)
+                if path == "immichSlides-iOS.xctestplan":
+                    return "{broken" if path == invalid_path else json.dumps(UI_PLAN)
+                return original_blob(revision, path)
+            with self.subTest(invalid_path=invalid_path), \
+                    patch("ci_publish_git.read_blob", side_effect=invalid_blob), \
+                    patch("ci_publish_git.git", return_value="workflow changed"), \
+                    patch("ci_publish_git.tree_inputs", side_effect=[(candidate_tree, {}), (base_tree, {})]), \
+                    patch("ci_publish_git.base_reader", return_value=derived):
+                malformed = derive_record(identity, RUN)
+                self.assertEqual(malformed["ui_inputs"]["candidate"], {"error": "candidate UI inputs are invalid"})
+                self.assertEqual(malformed["classification"], derived["classification"])
+            gate, gate_jobs, gate_summaries = gate_fixture(units=True)
+            gate["ui_inputs"] = malformed["ui_inputs"]
+            modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+            with patch("ci_publish_git.trusted_reader", return_value=modules):
+                self.assertEqual(evaluate_records(gate, RUN, gate_jobs, gate_summaries, approved=True, fork=False)["state"], "success")
+            malformed.update(identity=identity)
+            with self.assertRaisesRegex(ContractError, "candidate UI inputs are invalid"):
+                evaluate_records(malformed, ui_run, [dict(name=name, status="completed", conclusion="success")
+                    for name in workflow_contract(FIXTURE_UI, ui_run)[0]], [], approved=True, fork=False)
+            with patch("ci_publish_git.read_blob", side_effect=invalid_blob), \
+                    patch("ci_publish_git.git", return_value="workflow changed"), \
+                    patch("ci_publish_git.tree_inputs", return_value=(candidate_tree, {})), \
+                    patch("ci_publish_git.base_reader", return_value=derived), self.assertRaises(ContractError):
+                derive_record(identity, RUN)
 
     def test_admission_uses_github_merge_parents_and_preserves_original_on_rerun(self):
         identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
@@ -354,7 +439,7 @@ class PublisherTests(unittest.TestCase):
         def blob(revision, path):
             self.assertEqual(revision, BASE)
             return modules[path.removeprefix("scripts/")]
-        with patch("ci_publish_git.git", return_value="scripts/ci_flaky.py"), \
+        with patch("ci_publish_git.git", side_effect=lambda *args: args[-1] if args[-1].endswith("ci_flaky.py") else ""), \
                 patch("ci_publish_git.read_blob", side_effect=blob):
             loaded = revision_modules(BASE)
         self.assertEqual(loaded, modules)

@@ -73,4 +73,6 @@ def shard_populations(population, plan, raw_manifest, device):
         name = entry["key"].split("/")[0]
         shard = assignment.get(name, manifest["default_shard"])
         result[shard].append(test_identity("ui", entry["key"], platform=DEVICES[device], device=device))
+    for shard, entries in result.items():
+        require(entries, f"shard {shard} has no tests on {device}; update {MANIFEST_PATH}")
     return {shard: sorted(entries, key=identity_key) for shard, entries in result.items()}

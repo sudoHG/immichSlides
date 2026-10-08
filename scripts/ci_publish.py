@@ -119,6 +119,8 @@ def publication_plan(pr, runs, admissions, evaluations, *, approved, needs_appro
         run = runs.get(context)
         if needs_approval and not approved:
             state = {"state": "failure", "description": "Exact head approval required"}
+            if run and admissions.get(run["id"], {}).get("workflows", {}).get(run["path"], {}).get("base", "") is None:
+                state["description"] = "workflow is absent on the base; exact-head approval required"
         elif not run or run["id"] not in admissions:
             state = {"state": "pending", "description": "Waiting for producer and trusted admission"}
         elif run["status"] != "completed":
@@ -433,6 +435,7 @@ def compute(api, pr_number, pushed, login):
             require((identity["pull_request"] == pr_number and identity["head_sha"] == head) if pr else identity["pushed_sha"] == head,
                     "admission does not name current head")
             source = record["workflows"][run["path"]]["candidate" if approved else "base"]
+            require(source is not None, "workflow is absent on the base; exact-head approval required")
             jobs, summaries = producer_evidence(api, run, source)
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)

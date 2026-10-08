@@ -28,11 +28,14 @@ FORBIDDEN_FLAGS = {"-retry-tests-on-failure", "-run-tests-until-failure", "-test
                    "-maximum-test-iterations", "-test-repetition-relaunch-enabled"}
 METHOD = re.compile(r"[A-Za-z_]\w*/test[A-Za-z_]\w*")
 ASSERTION_FAILURE = "Official XCTest assertion failure"
+# Keep recording eligibility dependency-free for the isolated base reader.
+# The strict runner and P2 contract import these same suite declarations.
+SERVER_SWITCH_DISPLAY_SUITES = ("server-switch-display", "tvos-server-switch-display")
+P2_RECORDING_SUITES = frozenset({"p2-reduce-motion", "p2-rotation"})
 
 
 def require_retryable_strict_suite(suite):
-    from strict_e2e_runner_support import P2_CASES, SERVER_SWITCH_DISPLAY_SUITES
-    require(suite not in SERVER_SWITCH_DISPLAY_SUITES and not (suite in P2_CASES and P2_CASES[suite].video),
+    require(suite not in SERVER_SWITCH_DISPLAY_SUITES and suite not in P2_RECORDING_SUITES,
             "recording suites cannot use listed-only retry")
 
 
