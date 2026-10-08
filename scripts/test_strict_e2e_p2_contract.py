@@ -210,6 +210,8 @@ class ReviewPackageTests(unittest.TestCase):
             changes = [("context.run_id", "456"), ("context.run_attempt", 2), ("context.run_attempt", True), ("case.fixture", "b"),
                        ("case_sha256", "0" * 64), ("package_sha256", "0" * 64), ("signature", ""),
                        ("review.reviewer", "agent"), ("review", None), ("review", []), ("review", "PASS"),
+                       ("review.artifacts", ["cache-before-confirm.png", "cache-cleared.png", "cache-returned.png"]),
+                       ("review.artifacts", None),
                        ("reviewed_at", "yesterday"),
                        ("review.artifacts.cache-returned.png.conclusion", "FAIL")]
             for key, value in changes:
@@ -224,6 +226,13 @@ class ReviewPackageTests(unittest.TestCase):
                     target[parts[-1]] = value
                 with self.subTest(key=key), self.assertRaises((ValueError, P2ContractError)):
                     validate_record(altered, package)
+                if key == "review.artifacts":
+                    from ci_review_packages import main
+                    from contextlib import redirect_stderr
+                    malformed = Path(directory) / "malformed-record.json"
+                    _write_json(malformed, altered)
+                    with redirect_stderr(io.StringIO()):
+                        self.assertEqual(main(["validate-record", "--record", str(malformed), "--package", str(package)]), 2)
             del record["review"]["artifacts"]["cache-returned.png"]
             with self.assertRaises((ValueError, P2ContractError)):
                 validate_record(record, package)

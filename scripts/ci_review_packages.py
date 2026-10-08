@@ -283,6 +283,7 @@ def validate_record(record, package=None):
     case, raw = manifest["case"], manifest["facts"]["raw"]
     review = record["review"]
     require(review.get("schema") == REVIEW_SCHEMA and review.get("verdict") in {"PASS", "FAIL", "PARTIAL"}, "invalid human verdict")
+    require(isinstance(review.get("artifacts"), dict), "review artifacts must be an object")
     require(set(review.get("artifacts", {})) == set(raw["artifacts"]), "review artifact set differs")
     decisions = []
     for name, entry in review["artifacts"].items():
