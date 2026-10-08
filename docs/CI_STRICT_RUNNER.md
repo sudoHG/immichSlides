@@ -105,7 +105,8 @@ Only a complete observed set with every automated check passing permits a non-fa
 status. Cancellation and unexpected exceptions record failed status, an `interrupted`
 infrastructure entry and every unfinished case as `not-run`. Each runner starts in
 its own process group; timeout/cancellation terminates and waits for that whole group
-before deleting build inputs. The runner's final `CommandError` is printed in the job log.
+before deleting build inputs. Shared group-probe behavior is documented in the
+[host contract](CI_SUMMARY.md). The runner's final `CommandError` is printed in the job log.
 Official summary and selected-method exports are read even after runner failure;
 nonzero exits remain failures. Filter-person combines its three session exports
 and requires all three passes. Exit 0 means all automated tracer checks completed,

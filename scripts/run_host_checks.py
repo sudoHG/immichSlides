@@ -148,7 +148,17 @@ def clean_environment():
 
 def group_has_live_members(group_id):
     # killpg(..., 0) can return EPERM for an adopted zombie on macOS.
-    states = subprocess.check_output(["ps", "-axo", "pgid=,stat="], text=True, timeout=5)
+    targeted = sys.platform == "darwin"
+    command = (["ps", "-g", str(group_id), "-o", "pgid=,stat="] if targeted
+               else ["ps", "-axo", "pgid=,stat="])
+    try:
+        # Bound the probe to the runner's group without querying every simulator process.
+        states = subprocess.check_output(command, text=True, timeout=5, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as error:
+        # macOS ps reports an absent selected group with empty output and exit 1.
+        if targeted and error.returncode == 1 and error.output == "" and error.stderr == "":
+            return False
+        raise
     return any(parts[0] == str(group_id) and not parts[1].startswith("Z")
                for line in states.splitlines() if len(parts := line.split()) == 2)
 

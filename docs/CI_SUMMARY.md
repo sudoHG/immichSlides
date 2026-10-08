@@ -36,6 +36,14 @@ empty Python suite or infrastructure problem; invalid arguments
 exit 2. `--timeout-seconds` sets the total
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
+
+The shared host/strict group probe on macOS uses `ps -g <group> -o pgid=,stat=`
+to select the runner's process group instead of inspecting every simulator process.
+Its existing five-second deadline remains unchanged. Empty stdout/stderr with exit 1
+means the selected group is absent; other errors and timeouts propagate. Zombie-only
+groups are stopped, while live descendants still require termination. Other platforms
+retain the full-system query. The existing descendant/pipe-EOF regressions cover this
+guarantee, and targeted-query/error regressions live in `test_ci_summary.py`.
 An interruption records remaining checks as `not-run` with "not run after interruption".
 If final record validation fails after the initial placeholder is written, the producer
 rewrites a `failed` record with `record-invalid` infrastructure evidence and retains

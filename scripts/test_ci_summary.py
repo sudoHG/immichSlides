@@ -618,6 +618,46 @@ while True:
             with self.subTest(states=states), patch.object(run_host_checks.subprocess, "check_output", return_value=states):
                 self.assertEqual(run_host_checks.group_has_live_members(42), alive)
 
+    def test_macos_group_probe_avoids_a_slow_full_system_query_without_widening_the_deadline(self):
+        def probe(command, **kwargs):
+            self.assertEqual(kwargs["timeout"], 5)
+            if "-axo" in command:
+                raise subprocess.TimeoutExpired(command, 5)
+            self.assertEqual(command, ["ps", "-g", "42", "-o", "pgid=,stat="])
+            return "42 Z\n42 S\n"
+
+        with patch.object(run_host_checks.sys, "platform", "darwin"), \
+                patch.object(run_host_checks.subprocess, "check_output", side_effect=probe):
+            self.assertTrue(run_host_checks.group_has_live_members(42))
+
+    def test_macos_absent_group_is_stopped_but_probe_errors_are_not_hidden(self):
+        command = ["ps", "-g", "42", "-o", "pgid=,stat="]
+        missing = subprocess.CalledProcessError(1, command, output="", stderr="")
+        with patch.object(run_host_checks.sys, "platform", "darwin"), \
+                patch.object(run_host_checks.subprocess, "check_output", side_effect=missing):
+            self.assertFalse(run_host_checks.group_has_live_members(42))
+        errors = [subprocess.CalledProcessError(1, command, output="42 S\n", stderr=""),
+                  subprocess.CalledProcessError(1, command, output="", stderr="permission denied"),
+                  subprocess.CalledProcessError(2, command, output="", stderr=""),
+                  subprocess.TimeoutExpired(command, 5)]
+        for error in errors:
+            with self.subTest(error=error), patch.object(run_host_checks.sys, "platform", "darwin"), \
+                    patch.object(run_host_checks.subprocess, "check_output", side_effect=error):
+                with self.assertRaises(type(error)):
+                    run_host_checks.group_has_live_members(42)
+
+    def test_non_macos_probe_keeps_full_query_and_propagates_empty_exit_one(self):
+        with patch.object(run_host_checks.sys, "platform", "linux"), \
+                patch.object(run_host_checks.subprocess, "check_output", return_value="42 S\n") as probe:
+            self.assertTrue(run_host_checks.group_has_live_members(42))
+            self.assertEqual(probe.call_args.args[0], ["ps", "-axo", "pgid=,stat="])
+            self.assertEqual(probe.call_args.kwargs["timeout"], 5)
+        with patch.object(run_host_checks.sys, "platform", "linux"), \
+                patch.object(run_host_checks.subprocess, "check_output", side_effect=
+                             subprocess.CalledProcessError(1, ["ps"], output="", stderr="")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                run_host_checks.group_has_live_members(42)
+
 
 if __name__ == "__main__":
     unittest.main()
