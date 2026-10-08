@@ -374,6 +374,9 @@ def producer_evidence(api, run, source):
     summaries = []
     for name in expected:
         job = jobs[name]
+        if (run["event"] == "push" and metadata[name]["tier"] == "ui"
+                and job["status"] == "completed" and job["conclusion"] == "skipped"):
+            continue
         attempt_run = dict(run, run_attempt=job["evidence_attempt"])
         _, _, names = workflow_contract(source, attempt_run, details=True)
         for artifact_name in names[name]:
@@ -444,7 +447,16 @@ def compute(api, pr_number, pushed, login):
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)
                 require(mismatch is None, mismatch or "identity mismatch")
-            evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
+            if context == "ci-ui" and not pr and any(job["conclusion"] == "skipped" for job in jobs):
+                from ci_ui_reuse import evaluate_reused_push
+                evaluations[context] = evaluate_reused_push(api, record, run, jobs, summaries)
+            else:
+                evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
+                if context == "ci-ui":
+                    from ci_ui_reuse import make_verdict
+                    receipt = make_verdict(record, run, summaries, evaluations[context])
+                    if receipt is not None:
+                        evaluations[context]["reuse_verdict"] = receipt
         except (ContractError, KeyError, ValueError, TypeError) as error:
             evaluations[context] = {"state": "failure", "description": ui_failure_hint(error) or
                                    "Missing, invalid or mismatched admitted evidence"}
@@ -486,6 +498,13 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
         return
     if pr_number:
         require(api.repo(f"pulls/{pr_number}")["head"]["sha"] == head, "PR head changed before publication")
+    receipt = plan.get("ci-ui", {}).get("reuse_verdict")
+    if receipt is not None:
+        directory = Path(os.environ["RUNNER_TEMP"], "ci-ui-verdict")
+        directory.mkdir(mode=0o700, exist_ok=False)
+        (directory / "verdict.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+        with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
+            handle.write("ui_verdict_tree=" + receipt["identity"]["tree_sha"] + "\n")
     for context, status in plan.items():
         app.status(head, context, status["state"], status["description"], status.get("target_url", target))
         if status.get("mismatch"):

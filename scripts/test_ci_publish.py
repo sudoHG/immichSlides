@@ -149,6 +149,104 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_ui_reuse_requires_complete_plain_pr_verdict_and_identical_inputs(self):
+        from ci_ui_reuse import validate_reuse
+        push = {"repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
+                "pushed_sha": MERGE, "tree_sha": TREE}
+        inputs = {"manifest": "a" * 64, "policy": "b" * 64, "pins": "c" * 64}
+        shards = sorted(["iphone/default", "ipad/default", "appletv/default"])
+        receipt = {"schema_version": 1, "identity": admission_identity(REPOSITORY, RUN, PR, COMMIT),
+                   "source": {"repository": REPOSITORY, "workflow_path": ".github/workflows/ci-ui.yml",
+                              "run_id": RUN["id"], "attempt": 1, "fork_originated": False,
+                              "ci_changing": False, "approval_based": False},
+                   "status": "passed", "inputs": inputs, "device_shards": shards,
+                   "toolchains": {name: {"versions": {"xcode": "27.0 (27A266a)", "python": "3.9.6",
+                                                          "pillow": "11.3.0", "zstd": "zstd 1.5.7"},
+                                            "signing_mode": "not-applicable"} for name in shards}}
+        pins = json.loads(Path(__file__).with_name("ci-pins.json").read_text())
+        ui_run = dict(RUN, path=".github/workflows/ci-ui.yml")
+        validate_reuse(receipt, push, inputs, shards, pins, ui_run)
+        mutations = [lambda r: r.update(schema_version=2), lambda r: r.update(status="failed"),
+                     lambda r: r["identity"].update(tree_sha="e" * 40),
+                     lambda r: r["source"].update(fork_originated=True),
+                     lambda r: r["source"].update(ci_changing=True),
+                     lambda r: r["source"].update(approval_based=True),
+                     lambda r: r["inputs"].update(policy="f" * 64),
+                     lambda r: r["inputs"].update(manifest="f" * 64),
+                     lambda r: r["inputs"].update(pins="f" * 64),
+                     lambda r: r["device_shards"].pop(),
+                     lambda r: r["toolchains"].pop("ipad/default"),
+                     lambda r: r["toolchains"]["ipad/default"]["versions"].update(xcode="26.0 (other)")]
+        for mutate in mutations:
+            bad = copy.deepcopy(receipt)
+            mutate(bad)
+            with self.subTest(mutate=mutate), self.assertRaises((ContractError, KeyError)):
+                validate_reuse(bad, push, inputs, shards, pins, ui_run)
+        for change in ({"conclusion": "failure"}, {"conclusion": "cancelled"},
+                       {"status": "in_progress"}, {"run_attempt": 2}, {"id": 102},
+                       {"head_repository": {"full_name": "fork/photos"}}):
+            with self.subTest(change=change), self.assertRaises(ContractError):
+                validate_reuse(receipt, push, inputs, shards, pins, dict(ui_run, **change))
+
+    def test_ui_skipped_shards_need_independent_trusted_reuse_proof(self):
+        from ci_ui_reuse import evaluate_reused_push
+        from types import SimpleNamespace
+        api = SimpleNamespace(repository=REPOSITORY)
+        push = {"repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
+                "pushed_sha": MERGE, "tree_sha": TREE}
+        run = dict(RUN, event="push", path=".github/workflows/ci-ui.yml")
+        manifest_hash = "e" * 64
+        record = {"identity": push, "workflows": {run["path"]: {"base": FIXTURE_UI}},
+                  "ui_inputs": {"base": {"manifest_sha256": manifest_hash}}}
+        names, _, _, metadata = workflow_contract(FIXTURE_UI, run, metadata=True)
+        jobs = [{"name": name, "status": "completed", "conclusion": "success" if name == "ui-archive" else "skipped"}
+                for name in names]
+        summary = valid_summary()
+        expected = [test_identity("host", "UI archive selection")]
+        summary.update(identity=push, status="passed", infrastructure=[])
+        summary["run"].update(tier="ui-infrastructure", job="ui-archive", shard=None)
+        summary["hashes"]["manifests"] = {"ui-shards": manifest_hash}
+        summary["population"].update(declared=expected, compiled=expected, deselected=[],
+                                     observed=[observation(expected[0], "passed", 0)])
+        receipt = {"source": {"run_id": 101, "attempt": 1}, "artifact_id": 22, "identity": {"tree_sha": TREE}}
+        with patch("ci_ui_reuse.find_reuse", return_value=receipt):
+            self.assertEqual(evaluate_reused_push(api, record, run, jobs, [summary])["state"], "success")
+            for mutate in (lambda j, s: j[0].update(conclusion="skipped"),
+                           lambda j, s: j[1].update(conclusion="cancelled"),
+                           lambda j, s: j[1].update(conclusion="success"),
+                           lambda j, s: s["population"].update(compiled=[]),
+                           lambda j, s: s["population"]["observed"][0].update(outcome="failed"),
+                           lambda j, s: s["hashes"]["manifests"].update({"ui-shards": "f" * 64})):
+                bad_jobs, bad_summary = copy.deepcopy(jobs), copy.deepcopy(summary)
+                mutate(bad_jobs, bad_summary)
+                with self.subTest(mutate=mutate), self.assertRaises(ContractError):
+                    evaluate_reused_push(api, record, run, bad_jobs, [bad_summary])
+        with patch("ci_ui_reuse.find_reuse", return_value=None), self.assertRaises(ContractError):
+            evaluate_reused_push(api, record, run, jobs, [summary])
+
+    def test_ui_verdict_artifact_must_come_from_main_publisher_history(self):
+        from ci_ui_reuse import trusted_uploader
+        from types import SimpleNamespace
+        workflow = {"id": 43, "path": ".github/workflows/ci-publish.yml"}
+        artifact = {"workflow_run": {"id": 201}}
+        uploader = dict(RUN, id=201, workflow_id=43, path=workflow["path"], event="workflow_run", head_branch="main")
+        class RecordedAPI:
+            repository = REPOSITORY
+            def repo(self, path):
+                return uploader
+        with patch("ci_ui_reuse.subprocess.run", return_value=SimpleNamespace(returncode=0)):
+            trusted_uploader(RecordedAPI(), artifact, workflow)
+            for change in ({"workflow_id": 42}, {"path": ".github/workflows/ci-ui.yml"},
+                           {"head_branch": "feature"}, {"event": "pull_request"},
+                           {"head_repository": {"full_name": "fork/photos"}}):
+                original = copy.deepcopy(uploader)
+                uploader.update(change)
+                with self.subTest(change=change), self.assertRaises(ContractError):
+                    trusted_uploader(RecordedAPI(), artifact, workflow)
+                uploader = original
+        with patch("ci_ui_reuse.subprocess.run", return_value=SimpleNamespace(returncode=1)), self.assertRaises(ContractError):
+            trusted_uploader(RecordedAPI(), artifact, workflow)
+
     def test_shards_put_new_classes_in_default_and_partition_the_default_plan(self):
         declared = [test_identity("ui", key, platform="ios") for key in
                     ("NewUITests/testNew", "VisualUITests/testFlow", "VisualUITests/testCapture",

@@ -147,6 +147,31 @@ The manifest and both default `immichSlides-iOS.xctestplan` /
 `immichSlides-tvOS.xctestplan` files are CI-trusted classification inputs;
 changing selections or exclusions requires exact-head approval.
 The reader accepts no dynamic matrices or alternate manifest paths.
+The post-merge reader additionally accepts skipped device shards on a main push
+only after independently finding a complete trusted identical-tree PR verdict.
+The archive-selection job must still succeed and supply its identity-bound,
+manifest-bound summary; skipping that job or only part of the device matrix fails.
+Every ordinary run retains the existing successful-job and complete-population checks.
+
+After publishing a complete PR UI success, the main publisher retains
+`ci-ui-verdict-<tree-sha>` for 30 days. Its `verdict.json` version 1 stores the
+admitted identity, producer run/attempt, fork/CI-change/approval provenance, exact
+manifest/default-plan/policy/registry/classification/workflow/pins hashes, covered
+device shards and observed toolchains. This is publisher output, never a producer
+claim or a matching artifact name alone. The reuse reader verifies the uploader's
+workflow ID/path, event, both repositories, main branch and main-history revision,
+then verifies that the upstream UI producer is still its head's newest completed
+successful run and exact attempt. A rerun in progress invalidates the receipt.
+Unknown versions, missing/expired proof, red/cancelled runs, forks, CI changes,
+approval-based verdicts, different trees or inputs, incomplete device coverage,
+or observed toolchains that disagree with current pins all mean run the UI tier.
+The publisher repeats this decision before accepting skipped shards and links
+the status to the original successful UI run.
+
+This reader lands before a producer starts skipping shards. Existing iPhone
+producers keep running normally; the separate iPad/Apple TV and reuse producer
+rollout activates the new path after the reader is on main. A CI-changing reader
+PR still requires maintainer approval of its exact head and cannot approve itself.
 The [iPhone UI producer](CI_UI.md) uses this contract with a Linux archive-selection
 job and three literal iPhone shards. iPad and Apple TV producer rollout remains
 separate; publisher trust and exact-head approval rules apply to every device.
