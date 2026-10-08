@@ -35,6 +35,7 @@ class LocalModeTests(unittest.TestCase):
             (root / "Config/env.xcconfig").symlink_to(root / "never-open-this")
             (root / "untracked").write_text("working-tree change")
             import sys
+            test_environment = {**clean_environment(os.environ), "IMMICH_TEST_API_KEY": "ambient"}
             for mode in ("snapshot", "strict", "private"):
                 with self.subTest(mode=mode):
                     record = Path(directory, mode + ".json")
@@ -44,7 +45,7 @@ class LocalModeTests(unittest.TestCase):
                         args += ["--strict-ci"]
                     elif mode == "private":
                         args += ["--allow-private-config", "--config", "IMMICH_TEST_EXPECT_PRIVATE=1"]
-                    completed = subprocess.run(args, cwd=root, env={**os.environ, "IMMICH_TEST_API_KEY": "ambient"},
+                    completed = subprocess.run(args, cwd=root, env=test_environment,
                                                capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 2 if mode == "strict" else 0, completed.stderr)
                     if mode != "strict":
@@ -53,7 +54,7 @@ class LocalModeTests(unittest.TestCase):
                         self.assertEqual(receipt["exit_code"], 0)
                         self.assertNotIn("explicit", record.read_text().replace("explicit_configuration_keys", ""))
                         original_record = record.read_bytes()
-                        repeated = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=15)
+                        repeated = subprocess.run(args, cwd=root, env=test_environment, capture_output=True, text=True, timeout=15)
                         self.assertEqual(repeated.returncode, 2)
                         self.assertEqual(record.read_bytes(), original_record)
             self.assertTrue((root / "Config/env.xcconfig").is_symlink())
@@ -69,7 +70,8 @@ class LocalModeTests(unittest.TestCase):
         source = {"PATH": "/bin", "IMMICH_TEST_API_KEY": "ambient",
                   "TEST_RUNNER_SIMCTL_CHILD_IMMICH_SERVER_URL": "ambient",
                   "STRICT_E2E_REVIEWED_SCREENSHOTS": "/ambient", "ENABLE_DEBUG_AUTO_SERVER": "1",
-                  "UI_TEST_EVIDENCE_DIR": "/ambient", "XCODE_XCCONFIG_FILE": "/private"}
+                  "UI_TEST_EVIDENCE_DIR": "/ambient", "XCODE_XCCONFIG_FILE": "/private",
+                  "GITHUB_ACTIONS": "true", "GITHUB_OUTPUT": "/ambient"}
         self.assertEqual(clean_environment(source), {"PATH": "/bin"})
         self.assertEqual(clean_environment(source, ["IMMICH_TEST_API_KEY=explicit"]),
                          {"PATH": "/bin", "IMMICH_TEST_API_KEY": "explicit"})
