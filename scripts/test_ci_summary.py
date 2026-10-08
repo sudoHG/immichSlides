@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import select
 import signal
 import subprocess
@@ -16,6 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import ci_summary
+import ci_verdict
 import run_host_checks
 import run_python_tests
 
@@ -39,6 +41,22 @@ def valid_summary():
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_source_free_archive_tooling_does_not_require_host_population_modules(self):
+        root = Path(__file__).resolve().parent.parent
+        workflow = (root / ".github/workflows/ci-gate.yml").read_text(encoding="utf-8")
+        copied = re.search(r"for file in ([^;]+); do", workflow).group(1).split()
+        with tempfile.TemporaryDirectory() as directory:
+            tools = Path(directory)
+            for name in copied:
+                (tools / name).write_bytes((root / "scripts" / name).read_bytes())
+            completed = subprocess.run([sys.executable, "-I", "-B", "-c",
+                                       "import sys, runpy; sys.path.insert(0, sys.argv.pop(1)); "
+                                       "runpy.run_module('ci_build_archive', run_name='__main__')",
+                                       str(tools), "--help"],
+                                       capture_output=True, text=True, timeout=30, cwd=tools)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("proof", completed.stdout)
+
     def test_current_summary_round_trips_and_names_failures_in_markdown(self):
         summary = valid_summary()
         self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
@@ -467,7 +485,7 @@ class HostResultTests(unittest.TestCase):
             with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
                     patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]) as identity_call, \
                     patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
-                    patch.object(run_host_checks, "python_identities", return_value=[identity]), \
+                    patch("ci_population.python_identities", return_value=[identity]), \
                     patch.object(run_host_checks, "run_steps", side_effect=steps), \
                     contextlib.redirect_stdout(io.StringIO()):
                 code = run_host_checks.main()
@@ -484,6 +502,7 @@ class HostResultTests(unittest.TestCase):
 
     def test_host_policy_distinguishes_proposed_and_approved_expected_skips(self):
         identity = ci_summary.test_identity("python", "calibration.Sample.test_photo")
+        parse_policy = ci_verdict.parse_policy
         for state, outcome in (("proposed", "unverified"), ("approved", "passed")):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "output"
@@ -500,8 +519,8 @@ class HostResultTests(unittest.TestCase):
                 with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
-                        patch.object(run_host_checks, "python_identities", return_value=[identity]), \
-                        patch.object(run_host_checks, "parse_policy", return_value=policy), \
+                        patch("ci_population.python_identities", return_value=[identity]), \
+                        patch("ci_verdict.parse_policy", side_effect=lambda raw: policy if isinstance(raw, str) else parse_policy(raw)), \
                         patch.object(run_host_checks, "run_steps", side_effect=steps), \
                         contextlib.redirect_stdout(io.StringIO()):
                     code = run_host_checks.main()
@@ -528,7 +547,8 @@ class HostResultTests(unittest.TestCase):
                 with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
-                        patch.object(run_host_checks, invalid, side_effect=ci_summary.ContractError("unsupported test base")), \
+                        patch(("ci_population." if invalid == "python_identities" else "ci_verdict.") + invalid,
+                              side_effect=ci_summary.ContractError("unsupported test base")), \
                         patch.object(run_host_checks, "run_steps", side_effect=steps) as run, \
                         contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     code = run_host_checks.main()

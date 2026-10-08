@@ -21,8 +21,6 @@ from urllib.parse import urlsplit
 
 from ci_summary import (ContractError, identity_key, observation, parse_identity, parse_summary,
                         render_markdown, test_identity, validate_observation, validate_test_identity, write_summary)
-from ci_population import python_identities, python_sources
-from ci_verdict import evaluate_population, parse_policy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GROUP_TERM_GRACE_SECONDS = 5
@@ -312,14 +310,19 @@ def main():
         # or prevent their results from replacing the interruption placeholder.
         policy = None
         try:
+            # Archive consumers import metadata helpers without the host libraries.
+            from ci_verdict import evaluate_population, parse_policy
+
             policy_bytes = policy_path.read_bytes()
             summary["hashes"]["policies"]["test-policy"] = hashlib.sha256(policy_bytes).hexdigest()
             policy = parse_policy(policy_bytes.decode("utf-8"))
-        except (ContractError, OSError, ValueError, TypeError) as error:
+        except (ContractError, ImportError, OSError, ValueError, TypeError) as error:
             summary["infrastructure"].append({"code": "population-invalid", "message": f"Test policy: {error}"})
         try:
+            from ci_population import python_identities, python_sources
+
             declared.extend(python_identities(python_sources(REPO_ROOT / "scripts")))
-        except (ContractError, OSError, ValueError, TypeError) as error:
+        except (ContractError, ImportError, OSError, ValueError, TypeError) as error:
             summary["infrastructure"].append({"code": "population-invalid", "message": f"Static inventory: {error}"})
         steps = [(name, command + (["--output", str(output / "python-results.json")] if name == "python tests" else []))
                  for name, command in HOST_CHECKS]

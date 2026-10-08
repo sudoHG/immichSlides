@@ -47,6 +47,9 @@ Immich/test-runner configuration. They run the intended working files directly.
 Local dirty runs record the HEAD commit and tree with `dirty: true`; that tree is
 explicitly not proof of the changed working files. Snapshot builds belong to the
 separate build entry point.
+Metadata helpers remain importable by source-free archive tooling without the
+population/verdict libraries. The host producer loads those libraries after
+writing its interruption placeholder; archive consumers do not run host checks.
 Without `--workflow-path`, the entry point always records a local identity, even
 inside GitHub Actions. Only that explicit flag enables CI identity and the associated
 GitHub event, workflow and run metadata. `check_all.sh` does not enable CI identity.
