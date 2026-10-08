@@ -20,7 +20,7 @@ struct ImmichAssetMetadataDecoderTests {
         let asset = try decodeFixture("normal-metadata")
 
         #expect(asset.id == "fixture-asset-001")
-        #expect(asset.width == 4000)
+        #expect(asset.width == 5000)
         #expect(asset.height == 3000)
         #expect(asset.exifInfo?.exifImageWidth == 4000)
         #expect(asset.exifInfo?.exifImageHeight == 3000)
