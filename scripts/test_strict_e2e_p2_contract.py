@@ -201,7 +201,8 @@ class ReviewPackageTests(unittest.TestCase):
             self.assertEqual(record_path(record), Path(SOURCE_SHA) / "p2-cache/iphone/a.json")
             changes = [("context.run_id", "456"), ("context.run_attempt", 2), ("context.run_attempt", True), ("case.fixture", "b"),
                        ("case_sha256", "0" * 64), ("package_sha256", "0" * 64), ("signature", ""),
-                       ("review.reviewer", "agent"), ("reviewed_at", "yesterday"),
+                       ("review.reviewer", "agent"), ("review", None), ("review", []), ("review", "PASS"),
+                       ("reviewed_at", "yesterday"),
                        ("review.artifacts.cache-returned.png.conclusion", "FAIL")]
             for key, value in changes:
                 altered = copy.deepcopy(record)

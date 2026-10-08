@@ -211,6 +211,7 @@ def validate_record(record, package):
     record = decode(record)
     fields(record, {"schema_version", "context", "case", "case_sha256", "package_sha256", "reviewed_at", "signature", "review"}, "review record")
     require(type(record["schema_version"]) is int and record["schema_version"] == 1, "unknown review schema")
+    require(isinstance(record["review"], dict), "review must be an object")
     validate_key(record["context"], record["case"])
     manifest = read_package(package)
     for key in ("context", "case", "case_sha256", "package_sha256"):
