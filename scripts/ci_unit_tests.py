@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import plistlib
 import re
@@ -29,6 +30,42 @@ TOOL_FILES = ("ci_unit_tests.py", "ci_build_archive.py", "ci_summary.py", "run_h
               "strict_e2e_filter_manifest.py", "strict_e2e_out_of_order_contract.py",
               "strict_e2e_p2_contract.py", "album_server_narrow_contract.py", "access_lifecycle_contract.py",
               "ci-pins.json")
+
+# Interrupted samples provide lower bounds for their unknown true duration, excluding shutdown grace.
+HOSTED_ENUMERATION_SAMPLES = {
+    "ios": {"completed_seconds": [166.58, 293.18], "censored_samples": [
+        {"limit_seconds": 300, "wall_seconds": 352.58}, {"limit_seconds": 300, "wall_seconds": 304.47}]},
+    "tvos": {"completed_seconds": [63.16, 95.22, 89.32], "censored_samples": []},
+}
+
+
+def enumeration_budget(profile, platform):
+    require(profile in {"local", "ci"} and platform in HOSTED_ENUMERATION_SAMPLES, "unknown enumeration profile or platform")
+    budget = {"profile": profile, "timeout_seconds": 300, "test_timeout_seconds": 900,
+              "job_timeout_seconds": None}
+    if profile == "ci":
+        samples = HOSTED_ENUMERATION_SAMPLES[platform]
+        bounds = sorted([*samples["completed_seconds"], *(item["limit_seconds"] for item in samples["censored_samples"])])
+        p95_floor = bounds[math.ceil(0.95 * len(bounds)) - 1]
+        budget.update(samples, p95_lower_bound_seconds=p95_floor, margin_multiplier=2,
+                      timeout_seconds=max(300, math.ceil(p95_floor * 2 / 60) * 60), job_timeout_seconds=2100,
+                      method="nearest-rank sample p95 lower bound; censored durations are unknown above their limit")
+    return budget
+
+
+def write_unit_summary(summary, path, budget):
+    write_summary(summary, path)
+    with (path / "summary.md").open("a", encoding="utf-8") as handle:
+        handle.write(f"\nEnumeration infrastructure budget ({budget['profile']}): {budget['timeout_seconds']} s; "
+                     f"execution: {budget['test_timeout_seconds']} s.\n")
+        if budget["profile"] == "ci":
+            handle.write(f"Completed hosted samples: {budget['completed_seconds']} s; "
+                         f"right-censored samples (limit and wall including shutdown): {budget['censored_samples']}. "
+                         f"Nearest-rank p95 lower bound: {budget['p95_lower_bound_seconds']} s; "
+                         f"margin: {budget['margin_multiplier']}x, rounded up to whole minutes with a 300 s minimum. "
+                         f"Combined script phase bounds: {budget['timeout_seconds'] + budget['test_timeout_seconds']} s; "
+                         f"job bound: {budget['job_timeout_seconds']} s. "
+                         "The censored sample does not estimate the true p95; local defaults and product assertions are unchanged.\n")
 
 
 def enumeration_keys(payload):
@@ -157,7 +194,8 @@ def run_units(args):
     summary = archive.record(ctx, platform, "unit-" + platform)
     summary["run"]["tier"] = "unit"
     summary["hashes"]["policies"]["unit-consumer"] = archive.file_hash(Path(__file__))
-    write_summary(summary, args.output_dir)
+    budget = enumeration_budget(args.enumeration_profile, platform)
+    write_unit_summary(summary, args.output_dir, budget)
     # This precedes archive validation and Xcode: failed tests must not lose their provenance.
     provenance = {"artifact_id": ctx["artifact_id"], "producer_run_id": ctx["run_id"],
                   "producer_attempt": ctx["producer_attempt"], "consumer_attempt": ctx["attempt"],
@@ -165,12 +203,14 @@ def run_units(args):
     archive.write_json(args.output_dir / "archive-consumption.json", provenance)
     started = time.monotonic()
     measurements = {"setup_seconds": args.setup_seconds, "transfer_seconds": args.transfer_seconds,
+                    "enumeration_budget": budget,
                     "enumeration_seconds": None, "enumeration_exit_code": None,
                     "test_seconds": None, "test_exit_code": None}
     disk = None
     simulator, owns_simulator = args.simulator_id, False
     result_bundle = enumeration_bundle = None
     digest = None
+    compiled = set()
     code = 1
     export_complete = False
     try:
@@ -223,7 +263,7 @@ def run_units(args):
         phase = time.monotonic()
         code = default_run([*base, "-resultBundlePath", str(enumeration_bundle), "-enumerate-tests",
                             "-test-enumeration-format", "json", "-test-enumeration-output-path", str(enumeration_path)],
-                           timeout_seconds=300)
+                           timeout_seconds=budget["timeout_seconds"])
         measurements["enumeration_seconds"] = time.monotonic() - phase
         measurements["enumeration_exit_code"] = code
         require(code == 0, f"unit enumeration failed (exit {code})")
@@ -235,7 +275,7 @@ def run_units(args):
         result_bundle = prepare_private_result_bundle_path("unit-" + platform)
         archive.disk_check(args.min_free_gib)
         phase = time.monotonic()
-        code = default_run([*base, "-resultBundlePath", str(result_bundle)], timeout_seconds=900)
+        code = default_run([*base, "-resultBundlePath", str(result_bundle)], timeout_seconds=budget["test_timeout_seconds"])
         measurements["test_seconds"] = time.monotonic() - phase
         measurements["test_exit_code"] = code
         # Do not raise on xcodebuild failure until official results have been exported.
@@ -278,21 +318,21 @@ def run_units(args):
         provenance["test_exit_code"] = measurements["test_exit_code"]
         archive.write_json(args.output_dir / "archive-consumption.json", provenance)
         try:
-            write_summary(summary, args.output_dir)
+            write_unit_summary(summary, args.output_dir, budget)
             write_sensitive_scan(args.output_dir, [PUBLIC_API_KEY])
         except Exception as error:
             code = code or 1
             export_complete = False
             summary["status"] = "failed"
             summary["infrastructure"].append({"code": "unit-finalization-failed", "message": type(error).__name__})
-            write_summary(summary, args.output_dir)
+            write_unit_summary(summary, args.output_dir, budget)
         if result_bundle:
             failures = finalize_private_result_bundle(result_bundle, args.output_dir, digest, successful=export_complete and code == 0)
             if failures:
                 code = code or 1
                 summary["status"] = "failed"
                 summary["infrastructure"].extend({"code": "unit-disposal-failed", "message": failure} for failure in failures)
-                write_summary(summary, args.output_dir)
+                write_unit_summary(summary, args.output_dir, budget)
         # Successful enumeration has no execution activity; failed enumeration stays private.
         if enumeration_bundle and enumeration_bundle != result_bundle:
             shutil.rmtree(enumeration_bundle.parent)
@@ -303,7 +343,7 @@ def run_units(args):
                 code = code or 1
                 summary["status"] = "failed"
                 summary["infrastructure"].append({"code": "simulator-cleanup-failed", "message": "consumer simulator deletion failed"})
-                write_summary(summary, args.output_dir)
+                write_unit_summary(summary, args.output_dir, budget)
         try:
             write_sensitive_scan(args.output_dir, [PUBLIC_API_KEY])
             archive.output("records_safe", "true")
@@ -311,7 +351,7 @@ def run_units(args):
             code = code or 1
             summary["status"] = "failed"
             summary["infrastructure"].append({"code": "unit-publication-refused", "message": "publishable records failed the sensitive scan"})
-            write_summary(summary, args.output_dir)
+            write_unit_summary(summary, args.output_dir, budget)
     print(f"Unit {platform}: {summary['status']}; artifact {ctx['artifact_id']}, producer attempt {ctx['producer_attempt']}; exit {code}", flush=True)
     return code
 
@@ -333,6 +373,7 @@ def main(argv=None):
         run.add_argument("--" + name, type=Path, required=True)
     run.add_argument("--min-free-gib", type=int, default=80)
     run.add_argument("--simulator-id")
+    run.add_argument("--enumeration-profile", choices=("local", "ci"), default="local")
     run.add_argument("--setup-seconds", type=float)
     run.add_argument("--transfer-seconds", type=float)
     args = parser.parse_args(argv)

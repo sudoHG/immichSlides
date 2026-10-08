@@ -194,7 +194,7 @@ jobs:
     name: unit-${{ matrix.platform }}
     needs: [build-ios, build-tvos]
     runs-on: xcode-27
-    timeout-minutes: 25
+    timeout-minutes: 35
     permissions:
       contents: read
       actions: read
@@ -257,7 +257,7 @@ jobs:
             --selection-path "$RUNNER_TEMP/archive-selection.json" \
             --archive-dir "$RUNNER_TEMP/archive-download" \
             --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ matrix.platform }}" \
-            --output-dir "$RUNNER_TEMP/unit-records" --min-free-gib 30 \
+            --output-dir "$RUNNER_TEMP/unit-records" --min-free-gib 30 --enumeration-profile ci \
             --setup-seconds "$UNIT_SETUP_SECONDS" --transfer-seconds "$TRANSFER_SECONDS"
       - name: Publish only unit records and official exports, including failures
         if: always() && (steps.units.outcome == 'skipped' || steps.units.outputs.records_safe == 'true')

@@ -21,9 +21,12 @@ flowchart LR
 Host checks, iOS build and tvOS build start independently. The unit matrix waits for
 both builds, uses at most two hosted runners, and does not fail-fast across platforms.
 The critical path is the longer build plus the longer consumer, with queue time
-reported separately. Script bounds are 30 minutes for a build, 5 minutes for bundle
-enumeration and 15 minutes for unit execution; job bounds are 40/25 minutes, leaving
-time for records and cleanup. There is no automatic test retry or silent rebuild.
+reported separately. Script bounds are 30 minutes for a build and 15 minutes for
+unit execution. CI enumeration uses the measured profile below: 10 minutes on iOS
+and 5 minutes on tvOS; the local default remains 5 minutes on both. Job bounds are
+40/35 minutes, leaving 10 minutes beyond the longest combined consumer script phases
+for setup, interruption grace, official exports, upload and cleanup. There is no
+automatic test retry or silent rebuild.
 
 The publisher in [#89](https://github.com/sudoHG/immichSlides/issues/89) owns the future
 trusted `ci-pr-gate` status. This producer does not create it, set a required status,
@@ -50,7 +53,8 @@ python3 -B scripts/ci_unit_tests.py stage --path /tmp/archive-tools
 # In CI, remove the disposable checkout after selection and staging.
 python3 -B /tmp/archive-tools/scripts/ci_unit_tests.py run \
   --selection-path /tmp/archive-selection.json --archive-dir /tmp/archive-download \
-  --relocated-path /tmp/consumer-relocated-ios --output-dir /tmp/unit-records
+  --relocated-path /tmp/consumer-relocated-ios --output-dir /tmp/unit-records \
+  --enumeration-profile ci
 ```
 
 Use fresh paths and `tvos` selection for Apple TV. Local verification uses the
@@ -103,6 +107,24 @@ activity on the same volume; it is not an estimate from final Products size alon
 Local runs require 80 GiB before every Xcode invocation. Hosted runs retain the
 existing 30 GiB allowance and record the reserve. Queue measurements come from
 GitHub's run-created and job-start timestamps, separately from job execution.
+
+The explicit `--enumeration-profile ci` budget is computed from hosted observations
+in the consumer; omitting it keeps the local 300-second default. iOS completed
+enumeration in 166.58 seconds ([initial run](https://github.com/sudoHG/immichSlides/actions/runs/37705159130))
+and 293.18 seconds ([negative attempt 2](https://github.com/sudoHG/immichSlides/actions/runs/37706340184)).
+Two other iOS runs were interrupted at 300 seconds; their observed wall durations
+were 352.58 and 304.47 seconds including shutdown grace, which are **not** completed
+enumeration durations. These right-censored samples make the nearest-rank sample
+p95 only a lower bound of 300 seconds. A 2x margin (100% above that bound), rounded
+up to whole minutes with a 300-second minimum, selects **600 seconds** for CI iOS.
+tvOS completed in 63.16, 95.22 and 89.32 seconds, so the same rule retains 300 seconds.
+The small, censored sample does not estimate the true tail latency or prove capacity.
+
+`measurements.json` records the completed/censored samples, p95 lower bound, margin,
+chosen enumeration bound, unchanged 900-second execution bound and 2100-second job
+bound; the job's Markdown summary presents the same decision. The longest combined
+script phase bounds are 1500 seconds, shorter than the job's 2100 seconds. This is
+an infrastructure timeout decision; no product assertion or success threshold changes.
 
 Measured hosted timings, queue values, disk samples and the resulting proposed gate
 budget are published in the PR with run links. These initial samples do not prove

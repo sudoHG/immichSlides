@@ -287,10 +287,6 @@ class BuildArchiveTests(unittest.TestCase):
                "pins_sha256": archive.file_hash(pins_path)}
         selection = self.root / "selection.json"
         selection.write_text(json.dumps(ctx))
-        relocated, output = self.root / "relocated", self.root / "records"
-        bundle = self.root / "private/enumeration.xcresult"
-        bundle.mkdir(parents=True)
-
         def extract(_tar, destination, _manifest):
             products = destination / "Products"
             (products / "Debug-iphonesimulator/immichSlides.app").mkdir(parents=True)
@@ -300,32 +296,62 @@ class BuildArchiveTests(unittest.TestCase):
         device_types = {"devicetypes": [{"name": pins["device_types"]["iphone"], "identifier": device_type}]}
         devices = {"devices": {pins["simulators"]["ios"]["runtime"]: [
             {"udid": simulator, "deviceTypeIdentifier": device_type}]}}
-        with patch.object(units, "ROOT", workspace), patch.dict(archive.os.environ, {"DEVELOPER_DIR": str(developer)}), \
-                patch.object(archive, "workspace_preflight"), patch.object(archive, "validate_manifest"), \
-                patch.object(archive, "disk_check"), patch.object(archive, "DiskMeasurement"), \
-                patch.object(archive, "extract_products", side_effect=extract), \
-                patch.object(archive, "measure_signing", return_value="adhoc"), \
-                patch.object(archive, "checked_command", side_effect=[json.dumps(device_types), json.dumps(devices)]), \
-                patch.object(units, "toolchain", return_value={"versions": {}, "signing_mode": "not-applicable"}), \
-                patch.object(units, "prepare_private_result_bundle_path", return_value=bundle), \
-                patch.object(units, "default_run", return_value=124), \
-                patch.object(units, "export_private_result_bundle", side_effect=units.CommandError(
-                    "Enumeration has no readable official results")) as export:
-            archive.DiskMeasurement.return_value.finish.return_value = {}
-            self.assertEqual(units.main(["run", "--selection-path", str(selection), "--archive-dir", str(archive_dir),
-                                        "--relocated-path", str(relocated), "--output-dir", str(output),
-                                        "--simulator-id", simulator]), 124)
-            export.assert_called_once_with(bundle, output.resolve(), [units.PUBLIC_API_KEY])
-        self.assertTrue(bundle.is_dir())
-        self.assertFalse(json.loads((output / "result-bundle-quarantine.json").read_text())["result_bundle_disposed"])
-        provenance = json.loads((output / "archive-consumption.json").read_text())
-        self.assertEqual((provenance["artifact_id"], provenance["producer_attempt"], provenance["consumer_attempt"]), (7, 1, 2))
-        self.assertEqual(provenance["enumeration_exit_code"], 124)
-        self.assertIsNone(provenance["test_exit_code"])
-        self.assertEqual(json.loads((output / "summary.json").read_text())["status"], "failed")
+        for readable in (False, True):
+            with self.subTest(readable=readable):
+                case = self.root / ("readable" if readable else "unreadable")
+                relocated, output = case / "relocated", case / "records"
+                bundle = case / "private/enumeration.xcresult"
+                bundle.mkdir(parents=True)
+
+                def export_empty(_bundle, records, _sensitive):
+                    if not readable:
+                        raise units.CommandError("Enumeration has no readable official results")
+                    (records / "official-tests.json").write_text(json.dumps({"testNodes": []}))
+                    (records / "official-summary.json").write_text(json.dumps({"totalTestCount": 0, "passedTests": 0,
+                        "failedTests": 0, "skippedTests": 0, "result": "unknown"}))
+                    return archive.file_hash(records / "official-tests.json")
+
+                with patch.object(units, "ROOT", workspace), patch.dict(archive.os.environ, {"DEVELOPER_DIR": str(developer)}), \
+                        patch.object(archive, "workspace_preflight"), patch.object(archive, "validate_manifest"), \
+                        patch.object(archive, "disk_check"), patch.object(archive, "DiskMeasurement"), \
+                        patch.object(archive, "extract_products", side_effect=extract), \
+                        patch.object(archive, "measure_signing", return_value="adhoc"), \
+                        patch.object(archive, "checked_command", side_effect=[json.dumps(device_types), json.dumps(devices)]), \
+                        patch.object(units, "toolchain", return_value={"versions": {}, "signing_mode": "not-applicable"}), \
+                        patch.object(units, "prepare_private_result_bundle_path", return_value=bundle), \
+                        patch.object(units, "default_run", return_value=124), \
+                        patch.object(units, "export_private_result_bundle", side_effect=export_empty) as export:
+                    archive.DiskMeasurement.return_value.finish.return_value = {}
+                    self.assertEqual(units.main(["run", "--selection-path", str(selection), "--archive-dir", str(archive_dir),
+                                                "--relocated-path", str(relocated), "--output-dir", str(output),
+                                                "--simulator-id", simulator]), 124)
+                    export.assert_called_once_with(bundle, output.resolve(), [units.PUBLIC_API_KEY])
+                self.assertTrue(bundle.is_dir())
+                self.assertFalse(json.loads((output / "result-bundle-quarantine.json").read_text())["result_bundle_disposed"])
+                provenance = json.loads((output / "archive-consumption.json").read_text())
+                self.assertEqual((provenance["artifact_id"], provenance["producer_attempt"], provenance["consumer_attempt"]), (7, 1, 2))
+                self.assertEqual(provenance["enumeration_exit_code"], 124)
+                self.assertIsNone(provenance["test_exit_code"])
+                summary = json.loads((output / "summary.json").read_text())
+                self.assertEqual(summary["status"], "failed")
+                if readable:
+                    self.assertEqual(provenance["official_tests_sha256"], archive.file_hash(output / "official-tests.json"))
+                    self.assertEqual(summary["infrastructure"][-1]["message"], "official unit tests failed or were empty")
 
 
 class ArchiveUnitResultTests(unittest.TestCase):
+    def test_hosted_budget_keeps_local_default_and_records_censored_samples_and_margin(self):
+        from ci_unit_tests import enumeration_budget
+        self.assertEqual(enumeration_budget("local", "ios")["timeout_seconds"], 300)
+        self.assertEqual(enumeration_budget("local", "tvos")["timeout_seconds"], 300)
+        budget = enumeration_budget("ci", "ios")
+        self.assertEqual(budget["p95_lower_bound_seconds"], 300)
+        self.assertEqual(len(budget["completed_seconds"]), 2)
+        self.assertEqual(len(budget["censored_samples"]), 2)
+        self.assertGreaterEqual(budget["timeout_seconds"], budget["p95_lower_bound_seconds"] * budget["margin_multiplier"])
+        self.assertLess(budget["timeout_seconds"] + 900, budget["job_timeout_seconds"])
+        self.assertEqual(enumeration_budget("ci", "tvos")["timeout_seconds"], 300)
+
     def test_enumeration_errors_or_empty_unit_population_cannot_pass(self):
         from ci_unit_tests import enumeration_keys
         for payload in ({"errors": ["bootstrap failed"], "values": []}, {"values": []},
