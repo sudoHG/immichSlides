@@ -19,13 +19,21 @@ class LocalModeTests(unittest.TestCase):
             scripts.mkdir(parents=True)
             shutil.copyfile(Path(__file__).with_name("ci_local.py"), scripts / "ci_local.py")
             runner = scripts / "run.py"
-            runner.write_text("import os\nfrom pathlib import Path\nfrom ci_local import local_main\n"
+            runner.write_text("import argparse, os\nfrom pathlib import Path\nfrom ci_local import local_main\n"
                               "def main():\n"
-                              "    private = os.path.lexists(Path(__file__).resolve().parent.parent / 'Config/env.xcconfig')\n"
+                              "    root = Path(__file__).resolve().parent.parent\n"
+                              "    parser = argparse.ArgumentParser()\n"
+                              "    parser.add_argument('--project')\n"
+                              "    args = parser.parse_args()\n"
+                              "    if args.project and Path(args.project).resolve() != root / 'immichSlides.xcodeproj':\n"
+                              "        return 3\n"
+                              "    private = os.path.lexists(root / 'Config/env.xcconfig')\n"
                               "    return 0 if private == (os.environ.get('IMMICH_TEST_EXPECT_PRIVATE') == '1') "
                               "and os.environ.get('IMMICH_TEST_API_KEY') == 'explicit' else 1\n"
                               "if __name__ == '__main__':\n    raise SystemExit(local_main(main, __file__))\n")
             (root / ".gitignore").write_text("Config/env.xcconfig\n")
+            (root / "immichSlides.xcodeproj").mkdir()
+            (root / "immichSlides.xcodeproj/project.pbxproj").write_text("synthetic project")
             subprocess.run(["git", "init", "-q", str(root)], check=True)
             for key, value in (("user.name", "sudoHG"), ("user.email", "by331works@gmail.com")):
                 subprocess.run(["git", "config", key, value], cwd=root, check=True)
@@ -58,6 +66,19 @@ class LocalModeTests(unittest.TestCase):
                         self.assertEqual(repeated.returncode, 2)
                         self.assertEqual(record.read_bytes(), original_record)
             self.assertTrue((root / "Config/env.xcconfig").is_symlink())
+            for project_args in (["--project", str(root / "immichSlides.xcodeproj")],
+                                 ["--project=" + str(root / "immichSlides.xcodeproj")]):
+                with self.subTest(project_args=project_args):
+                    completed = subprocess.run([sys.executable, "-B", str(runner), "--config",
+                                                "IMMICH_TEST_API_KEY=explicit", *project_args], cwd=root,
+                                               env=test_environment, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+            for project_args in (["--project", str(Path(directory, "outside.xcodeproj"))],
+                                 ["--project=" + str(Path(directory, "outside.xcodeproj"))]):
+                with self.subTest(outside_project=project_args):
+                    completed = subprocess.run([sys.executable, "-B", str(runner), *project_args], cwd=root,
+                                               env=test_environment, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(completed.returncode, 2, completed.stderr)
 
     def test_private_configuration_requires_explicit_opt_in(self):
         self.assertEqual(select_mode([]), "snapshot")

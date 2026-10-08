@@ -159,12 +159,17 @@ def launch(script, arguments):
     environment.pop(CONTEXT, None)
     environment.pop(MODE_CONTEXT, None)
     remaining = absolute_paths(remaining, Path.cwd())
-    for index, argument in enumerate(remaining[:-1]):
-        if argument == "--project":
-            project = (Path.cwd() / remaining[index + 1]).resolve()
+    for index, argument in enumerate(remaining):
+        option, separator, inline = argument.partition("=")
+        if option == "--project" and (separator or index + 1 < len(remaining)):
+            project = (Path.cwd() / (inline if separator else remaining[index + 1])).resolve()
             if root not in project.parents:
                 raise ValueError("--project must belong to the source checkout being snapshotted")
-            remaining[index + 1] = str(project.relative_to(root))
+            relative = str(project.relative_to(root))
+            if separator:
+                remaining[index] = option + "=" + relative
+            else:
+                remaining[index + 1] = relative
     record_path = options.snapshot_record.resolve() if options.snapshot_record else None
     output_value = option_value(remaining, {"--output-dir", "--evidence-dir"})
     output = Path(output_value) if output_value else None
