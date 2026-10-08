@@ -3,7 +3,7 @@
 `ci-gate` builds the default iOS and tvOS test plans once per platform, tested commit
 and producer attempt, with **Sign to Run Locally** simulator signing and both locked
 package-resolution flags. The [full unit consumers](CI_UNIT_TESTS.md) reuse these
-archives; UI consumers remain a separate ticket. Host
+archives; the [iPhone UI tracer](CI_UI.md) selects the iOS archive across runs. Host
 and privacy jobs are unchanged. [`scripts/ci_build_archive.py`](../scripts/ci_build_archive.py)
 uses the existing [identity/summary contract](CI_SUMMARY.md) and [toolchain pins](CI_TOOLCHAIN.md).
 Its summaries describe host checks of archives, not a full Swift population or a
@@ -76,7 +76,8 @@ base, head, merge commit and merge tree. Main pushes compare the full push ident
 Inside `ci-gate`, consumers accept only artifacts from the same `github.run_id`,
 using producer job outputs; a different-base archive cannot arise by construction.
 Python checks still guard full-identity comparisons. The real-run same-head/different-base
-refusal is deferred to the first cross-run consumer, the [UI tier tracer (#94)](https://github.com/sudoHG/immichSlides/issues/94).
+refusal is exercised by the cross-run [UI tier tracer](CI_UI.md), which records
+the refused and admitted identities before downloading an exact-identity archive.
 
 ```bash
 # CI supplies GH_TOKEN through a step environment, never a command argument.
@@ -87,7 +88,8 @@ refusal is deferred to the first cross-run consumer, the [UI tier tracer (#94)](
 
 Artifact selection runs in CI with GitHub's run/event metadata and an actions-read token.
 These candidate records are claims, not trusted attestations. Fork code can forge
-them; the epic's later trusted publisher and approval tickets own that boundary.
+them; the [trusted publisher and exact-head approval](CI_PUBLISHER.md) independently
+verify admission and producer evidence before publishing an informational status.
 
 The [unit-test consumers](CI_UNIT_TESTS.md) run on separate GitHub-hosted runners.
 Producers check out `source-build`; consumers check out `consumer-source`. After

@@ -203,16 +203,17 @@ def prepare_private_result_bundle_path(suite: str) -> Path:
 def export_private_result_bundle(
     bundle: Path, evidence_dir: Path, sensitive_values: list[str], *, suffix: str = "",
     summary_timeout_seconds: float | None = None,
+    export_timeout_seconds: float = OFFICIAL_EXPORT_TIMEOUT_SECONDS,
 ) -> str:
     try:
         completed = subprocess.run(
             ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
-            capture_output=True, check=False, timeout=OFFICIAL_EXPORT_TIMEOUT_SECONDS,
+            capture_output=True, check=False, timeout=export_timeout_seconds,
         )
     except subprocess.TimeoutExpired as error:
         if summary_timeout_seconds is not None:
             raise
-        raise InfrastructureTimeout("official-tests-export", OFFICIAL_EXPORT_TIMEOUT_SECONDS) from error
+        raise InfrastructureTimeout("official-tests-export", export_timeout_seconds) from error
     if completed.returncode != 0:
         raise CommandError(f"Official test export failed with exit {completed.returncode}.")
     payload = json.loads(completed.stdout)
@@ -223,7 +224,7 @@ def export_private_result_bundle(
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(completed.stdout)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
     if not summary_path.exists():
-        # Unit consumers classify their explicit export timeout; strict runs use the phase wrapper.
+        # Unit/UI consumers classify explicit export timeouts; strict runs use the phase wrapper.
         summary = (read_unit_official_test_results_summary(bundle, timeout_seconds=summary_timeout_seconds)
                    if summary_timeout_seconds is not None else read_official_test_results_summary(bundle))
         summary_path.write_text(json.dumps({

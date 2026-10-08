@@ -72,10 +72,15 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Naming and SwiftUI conventions (View / ViewModel / Store / Service roles, `@MainActor` for UI-driving types, no network or credential access in views) are in [AGENTS.md](AGENTS.md). Code comments are written in English and explain why, not what.
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+The [informational iPhone UI tier](docs/CI_UI.md) reuses exact-identity gate archives
+and runs class-manifest shards against public loopback fixtures. Its guide includes
+one-command shard reproduction by Git revision, listed-only retry, artifact
+retention and the remaining iPad/Apple TV boundary.
+
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
 run on pull requests and pushes to `main`. Separate hosted runners execute the
 [complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
-The UI consumer tier remains separate work.
+The [iPhone UI tier](docs/CI_UI.md) consumes the iOS archive across runs.
 Release archive preparation and the maintainer-gated App Store Connect steps are in
 [Xcode Cloud to internal TestFlight](docs/XCODE_CLOUD_TESTFLIGHT.md). Its first upload
 is manual, the Default workflow stays disabled, and tag starts need later approval.
