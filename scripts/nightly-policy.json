@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "live_tier_in_scope": false,
+  "built_tiers": ["strict"]
+}

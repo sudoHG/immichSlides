@@ -67,6 +67,9 @@ TASK_XCCONFIG = Path("Config/env.xcconfig")
 MIN_DATA_GIB = 80
 # xcodebuild timeout for compile plus one UI test. Diagnostic collection is disabled.
 XCODEBUILD_TIMEOUT_SECONDS = 300
+SIMULATOR_RESET_TIMEOUT_SECONDS = 120
+SIMULATOR_COMMAND_TIMEOUT_SECONDS = 60
+SIMULATOR_BOOT_TIMEOUT_SECONDS = 600
 # simctl writes Recording started only after processing the first frame; after SIGINT, wait for in-flight frames to write the moov atom.
 RECORDING_START_TIMEOUT_SECONDS = 15
 RECORDING_STOP_TIMEOUT_SECONDS = 30
@@ -261,6 +264,26 @@ class CommandError(Exception):
         self.code = code
 
 
+class InfrastructureTimeout(CommandError):
+    """Retain the phase without exposing subprocess arguments or captured output."""
+
+    def __init__(self, phase: str, timeout_seconds: float) -> None:
+        message = f"{phase} timed out after {timeout_seconds:.1f}s."
+        super().__init__(message, code=124)
+        self.entry = {"code": phase + "-timeout", "message": message}
+
+
+def simulator_command(command: list[str], phase: str, *, deadline: float | None = None,
+                      timeout_seconds: int = SIMULATOR_COMMAND_TIMEOUT_SECONDS):
+    budget = min(timeout_seconds, deadline - time.monotonic()) if deadline is not None else timeout_seconds
+    if budget <= 0:
+        raise InfrastructureTimeout(phase, 0)
+    try:
+        return subprocess.run(command, capture_output=True, text=True, check=False, timeout=budget)
+    except subprocess.TimeoutExpired as error:
+        raise InfrastructureTimeout(phase, budget) from error
+
+
 def parse_xcconfig(content: str) -> dict[str, str]:
     values: dict[str, str] = {}
     for raw_line in content.splitlines():
@@ -406,52 +429,48 @@ def _is_already_booted(stderr: str) -> bool:
     return "current state: booted" in text or "already booted" in text
 
 
+def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None = None) -> str:
+    """Give cold boot its own deadline before any app-reset clock starts."""
+    started = time.monotonic()
+    deadline = started + SIMULATOR_BOOT_TIMEOUT_SECONDS
+    lines = []
+    for step, cap in (("boot", SIMULATOR_COMMAND_TIMEOUT_SECONDS), ("bootstatus", SIMULATOR_BOOT_TIMEOUT_SECONDS)):
+        phase = "simulator-" + step
+        phase_started = time.monotonic()
+        outcome = "failed"
+        try:
+            completed = simulator_command(["xcrun", "simctl", step, simulator_udid, *(["-b"] if step == "bootstatus" else [])],
+                                          phase, deadline=deadline, timeout_seconds=cap)
+            lines.append(f"{step}_exit={completed.returncode}")
+            if completed.returncode and not (step == "boot" and _is_already_booted(completed.stderr)):
+                message = "Simulator boot failed" if step == "boot" else "Simulator did not become available"
+                raise CommandError(f"{message} (exit {completed.returncode}); cannot continue with a clean install.")
+            outcome = "passed"
+        finally:
+            line = (f"{phase}: {outcome}; elapsed={time.monotonic() - phase_started:.1f}s; "
+                    f"total={time.monotonic() - started:.1f}s; total budget={SIMULATOR_BOOT_TIMEOUT_SECONDS}s")
+            lines.append(line)
+            if report is not None:
+                report(line)
+    return "\n".join(lines) + "\n"
+
+
 def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides") -> str:
-    # The fixed sleep waits for simctl to release the container lock; Booted is not a boot failure, but a second uninstall failure must stop the run.
-    lines = [f"simulator_id={simulator_udid}"]
-    boot = subprocess.run(
-        ["xcrun", "simctl", "boot", simulator_udid],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    lines.append(f"boot_exit={boot.returncode}")
-    if boot.stderr.strip():
-        lines.append(f"boot_stderr={boot.stderr.strip()}")
-    if boot.returncode != 0 and not _is_already_booted(boot.stderr):
-        raise CommandError("Simulator boot failed; cannot continue with a clean install.\n" + "\n".join(lines))
-    bootstatus = subprocess.run(
-        ["xcrun", "simctl", "bootstatus", simulator_udid, "-b"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    lines.append(f"bootstatus_exit={bootstatus.returncode}")
-    if bootstatus.returncode != 0:
-        if bootstatus.stderr.strip():
-            lines.append(f"bootstatus_stderr={bootstatus.stderr.strip()}")
-        raise CommandError("Simulator did not become available; cannot continue with a clean install.\n" + "\n".join(lines))
-    terminate = subprocess.run(
-        ["xcrun", "simctl", "terminate", simulator_udid, bundle_id],
-        capture_output=True,
-        text=True,
-        check=False,
+    # The fixed sleep waits for simctl to release the container lock; a second uninstall failure must stop the run.
+    lines = [f"simulator_id={simulator_udid}", *boot_simulator(simulator_udid).splitlines()]
+    deadline = time.monotonic() + SIMULATOR_RESET_TIMEOUT_SECONDS
+    terminate = simulator_command(
+        ["xcrun", "simctl", "terminate", simulator_udid, bundle_id], "simulator-terminate", deadline=deadline,
     )
     lines.append(f"terminate_exit={terminate.returncode}")
-    uninstall = subprocess.run(
-        ["xcrun", "simctl", "uninstall", simulator_udid, bundle_id],
-        capture_output=True,
-        text=True,
-        check=False,
+    uninstall = simulator_command(
+        ["xcrun", "simctl", "uninstall", simulator_udid, bundle_id], "simulator-uninstall", deadline=deadline,
     )
     lines.append(f"uninstall_exit={uninstall.returncode}")
     if uninstall.returncode != 0:
         time.sleep(1)
-        retry = subprocess.run(
-            ["xcrun", "simctl", "uninstall", simulator_udid, bundle_id],
-            capture_output=True,
-            text=True,
-            check=False,
+        retry = simulator_command(
+            ["xcrun", "simctl", "uninstall", simulator_udid, bundle_id], "simulator-uninstall-retry", deadline=deadline,
         )
         lines.append(f"uninstall_retry_exit={retry.returncode}")
         if retry.stderr.strip():
@@ -461,7 +480,7 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
     if uninstall.stderr.strip():
         lines.append(f"uninstall_stderr={uninstall.stderr.strip()}")
     time.sleep(1)
-    container = simulator_app_container(simulator_udid, bundle_id)
+    container = simulator_app_container(simulator_udid, bundle_id, deadline=deadline)
     if container:
         lines.append(f"app_container={container}")
         raise CommandError(
@@ -473,19 +492,16 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
         ("keychain", ["xcrun", "simctl", "keychain", simulator_udid, "reset"]),
         ("privacy", ["xcrun", "simctl", "privacy", simulator_udid, "reset", "all"]),
     ):
-        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=60)
+        completed = simulator_command(command, f"simulator-{step}-reset", deadline=deadline)
         lines.append(f"{step}_reset_exit={completed.returncode}")
         if completed.returncode != 0:
             raise CommandError(f"Simulator {step} reset failed; cannot continue with isolated state.\n" + "\n".join(lines))
     return "\n".join(lines) + "\n"
 
 
-def simulator_app_container(simulator_udid: str, bundle_id: str) -> str | None:
-    completed = subprocess.run(
-        ["xcrun", "simctl", "get_app_container", simulator_udid, bundle_id],
-        capture_output=True,
-        text=True,
-        check=False,
+def simulator_app_container(simulator_udid: str, bundle_id: str, *, deadline: float | None = None) -> str | None:
+    completed = simulator_command(
+        ["xcrun", "simctl", "get_app_container", simulator_udid, bundle_id], "simulator-container", deadline=deadline,
     )
     path = completed.stdout.strip()
     if completed.returncode == 0 and path:

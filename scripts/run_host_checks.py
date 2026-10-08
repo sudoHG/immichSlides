@@ -79,14 +79,14 @@ def run_identity(env, *, ci=False):
         if commit != env.get("GITHUB_SHA"):
             raise ContractError("checkout does not match pushed GITHUB_SHA")
         identity.update(ref=env.get("GITHUB_REF"), pushed_sha=commit)
-    elif event == "workflow_dispatch":
+    elif event in {"workflow_dispatch", "schedule"}:
         if commit != env.get("GITHUB_SHA"):
             raise ContractError("checkout does not match dispatched GITHUB_SHA")
         identity.update(ref=env.get("GITHUB_REF"), commit_sha=commit)
     elif event == "local":
         identity.update(commit_sha=commit, dirty=bool(git("status", "--porcelain")))
     else:
-        raise ContractError("CI identity supports pull_request, main push and workflow_dispatch only")
+        raise ContractError("CI identity supports pull_request, main push, schedule and workflow_dispatch only")
     return parse_identity(identity)
 
 
@@ -148,7 +148,17 @@ def clean_environment():
 
 def group_has_live_members(group_id):
     # killpg(..., 0) can return EPERM for an adopted zombie on macOS.
-    states = subprocess.check_output(["ps", "-axo", "pgid=,stat="], text=True, timeout=5)
+    targeted = sys.platform == "darwin"
+    command = (["ps", "-g", str(group_id), "-o", "pgid=,stat="] if targeted
+               else ["ps", "-axo", "pgid=,stat="])
+    try:
+        # Bound the probe to the runner's group without querying every simulator process.
+        states = subprocess.check_output(command, text=True, timeout=5, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as error:
+        # macOS ps reports an absent selected group with empty output and exit 1.
+        if targeted and error.returncode == 1 and error.output == "" and error.stderr == "":
+            return False
+        raise
     return any(parts[0] == str(group_id) and not parts[1].startswith("Z")
                for line in states.splitlines() if len(parts := line.split()) == 2)
 

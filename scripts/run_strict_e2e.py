@@ -24,7 +24,7 @@ from run_offline_unit_tests import (
     CommandError as OfflineCommandError,
     TestResultsSummary,
     parse_non_negative_int,
-    read_official_test_results_summary,
+    read_official_test_results_summary as read_unit_official_test_results_summary,
 )
 from album_server_narrow_contract import (
     AlbumServerContractError,
@@ -96,6 +96,7 @@ from strict_e2e_runner_support import (
     SETTINGS_RESUME_SUITES,
     CASE_E2E_IDS,
     CommandError,
+    InfrastructureTimeout,
     parse_xcconfig,
     prepare_task_xcconfig,
     cleanup_task_xcconfig,
@@ -129,6 +130,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # First-boot interaction can place even public fixture keys in XCTest's private activity archive.
 PRIVATE_RESULT_BUNDLE_SUITES = RUNNER_SUITES
+OFFICIAL_EXPORT_TIMEOUT_SECONDS = 60
+
+
+def read_official_test_results_summary(bundle: Path) -> TestResultsSummary:
+    try:
+        return read_unit_official_test_results_summary(bundle, timeout_seconds=OFFICIAL_EXPORT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise InfrastructureTimeout("official-summary-export", OFFICIAL_EXPORT_TIMEOUT_SECONDS) from error
 
 
 def reserve_unreachable_server_url() -> tuple[str, socket.socket]:
@@ -195,10 +204,15 @@ def export_private_result_bundle(
     bundle: Path, evidence_dir: Path, sensitive_values: list[str], *, suffix: str = "",
     summary_timeout_seconds: float | None = None,
 ) -> str:
-    completed = subprocess.run(
-        ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
-        capture_output=True, check=False, timeout=60,
-    )
+    try:
+        completed = subprocess.run(
+            ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
+            capture_output=True, check=False, timeout=OFFICIAL_EXPORT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        if summary_timeout_seconds is not None:
+            raise
+        raise InfrastructureTimeout("official-tests-export", OFFICIAL_EXPORT_TIMEOUT_SECONDS) from error
     if completed.returncode != 0:
         raise CommandError(f"Official test export failed with exit {completed.returncode}.")
     payload = json.loads(completed.stdout)
@@ -209,7 +223,8 @@ def export_private_result_bundle(
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(completed.stdout)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
     if not summary_path.exists():
-        summary = (read_official_test_results_summary(bundle, timeout_seconds=summary_timeout_seconds)
+        # Unit consumers classify their explicit export timeout; strict runs use the phase wrapper.
+        summary = (read_unit_official_test_results_summary(bundle, timeout_seconds=summary_timeout_seconds)
                    if summary_timeout_seconds is not None else read_official_test_results_summary(bundle))
         summary_path.write_text(json.dumps({
             "totalTestCount": summary.total_test_count, "passedTests": summary.passed_tests,
@@ -568,10 +583,7 @@ def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str]
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as error:
-            raise CommandError(
-                f"xcodebuild timed out after {timeout_seconds}s without exiting.",
-                code=2,
-            ) from error
+            raise CommandError(f"xcodebuild timed out after {timeout_seconds:.1f}s.") from error
     return completed.returncode
 
 
@@ -676,6 +688,15 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     private_bundles: list[tuple[Path, str]] = []
     private_test_runs: list[Path] = []
     official_tests_digests: dict[str, str] = {}
+
+    def record_timeout(error: InfrastructureTimeout) -> None:
+        nonlocal primary_exit_code
+        primary_exit_code = primary_exit_code or error.code
+        if case_manifest is not None:
+            case_manifest.setdefault("infrastructure", []).append(error.entry)
+            case_manifest.update(result="FAILED", exit_code=primary_exit_code)
+            write_case_manifest(arguments.evidence_dir, case_manifest)
+
     try:
         ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
         if "Simulator" not in arguments.destination:
@@ -1104,6 +1125,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         print(json.dumps(summary_payload, sort_keys=True), file=stdout)
         did_complete_checks = True
     except (CommandError, OfflineCommandError, ValueError) as error:
+        if isinstance(error, InfrastructureTimeout):
+            record_timeout(error)
         print(f"{type(error).__name__}: {error}", file=stderr)
         primary_exit_code = primary_exit_code or getattr(error, "code", 2)
         if owns_evidence_directory and case_manifest is not None:
@@ -1124,9 +1147,13 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 if primary_exit_code == 0:
                     raise CommandError("Missing private result bundle; cannot finalize a successful run.")
                 return
-            digest = export_private_result_bundle(
-                bundle, arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=suffix
-            )
+            try:
+                digest = export_private_result_bundle(
+                    bundle, arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=suffix
+                )
+            except InfrastructureTimeout as error:
+                record_timeout(error)
+                raise
             official_tests_digests[suffix] = digest
             if case_manifest is not None:
                 if bundle == result_bundle_path:

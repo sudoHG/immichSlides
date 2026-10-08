@@ -1,0 +1,143 @@
+# Skeleton nightly
+
+`ci-nightly` schedules at 21:15 UTC on the default branch
+and supports `workflow_dispatch` on a selected branch. PRs touching its entry points
+run planning only; full execution is proven by dispatch before merge. It has read-only
+permissions, no secrets/environments and no publisher, reporter or release authority.
+
+```bash
+gh workflow run ci-nightly.yml --ref <branch>
+gh run list --workflow ci-nightly.yml --branch <branch>
+gh workflow run ci-nightly.yml --ref <branch> -f shard=ipad-immichSlides-iOS-debug-3
+python3 -B scripts/ci_nightly.py plan --output-dir '<fresh-outside-repo>/plan'
+python3 -B scripts/run_strict_ci_tracer.py --manifest scripts/nightly-matrix.json \
+    --shard iphone-immichSlides-iOS-debug-0 --platform ios \
+    --destination 'platform=iOS Simulator,id=<UDID>' \
+    --output-dir '<fresh-outside-repo>/shard'
+```
+
+Use a configuration-free checkout, dedicated simulator and workspace device-slot/
+watchdog wrappers. Preflight rejects files, links and dangling private-config links
+without reading them. There is no SHA override: dispatch a ref at the desired commit.
+Checkout, workflow, matrix, policy, tree, run or attempt mismatches fail. Schedule
+identities require `refs/heads/main`.
+The optional dispatch `shard` input diagnoses one known shard exactly once. It retains
+the complete scheduling record; missing shards and the diagnostic marker make aggregate
+equality fail. This run cannot substitute for a complete nightly, and does not retry cases.
+
+## Population and capacity
+
+[`nightly-matrix.json`](../scripts/nightly-matrix.json) explicitly versions device,
+configuration, suite, scenario and fixture. Planning validates the complete population
+against current selector/scenario/fixture/scheme contracts; duplicates and missing
+cases fail. Runtime discovery cannot silently change the scheduled list. Inapplicable
+platforms/scenarios and P2 devices are outside the supported population.
+
+The initial 135 cases comprise 54 iPhone, 50 iPad and 31 Apple TV combinations.
+All 77 distinct device/suite/scenario identities in the historical local report remain.
+Repeat attempts are not new identities. New identities are iPhone/iPad image-failure-recovery.
+Both frozen fixtures run wherever permitted. The 25 explicit exclusions comprise two
+device exclusions and 23 fixture exclusions. iPad smoke is unsupported: the selected
+`StrictE2ESmokeUITests.testIOSStrictE2EConnectionSmoke` guards
+`userInterfaceIdiom == .phone` and skips iPad. The validator checks that guard against
+Swift code with comments/strings removed and fails when it changes, requiring a device
+scope review. The fixture exclusions require A: lifecycle, display policy, image-failure recovery,
+tvOS album selection and dual-server suites. Reasons come from existing contracts.
+No assertions, thresholds, App behavior or visual modes change.
+
+Standalone access-protection runners remain excluded: iOS main is unstable, and tvOS
+uses a transient Release scheme. Small strict lifecycle suites do run. Offline unit
+bundles, manual album/server commands and the iPad pause diagnostic are not strict
+matrix inputs or scanned evidence. Filter-vision runs informationally until the
+separate simulator Vision contract lands. The tvOS person suite retains normal/no-face
+coverage; its existing simulator limitation does not establish verified Vision coverage.
+
+Shards group by device/platform/scheme/configuration, then split into chunks of at most
+six, retaining ordinary Debug and settings-resume Release. The [warm tracer](CI_STRICT_RUNNER.md)
+builds once per shard, resets app/keychain/privacy and uses `test-without-building`
+with immutable Products checks. Case directories are unique across repeated suites.
+The 25 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS slots.
+Cold warm-up has 1,200 seconds; each warm invocation has 600. Each case adds a 240-second
+reset/export/cleanup allowance; filter-person receives three invocation budgets.
+Both workflows and local reset callers use the shared boot helper. The workflow
+boots each new simulator in a separate step with a shared 600-second
+deadline (boot command capped at 60 seconds). It records both phase and total elapsed
+times in logs and the job summary. Before the reset bound, the hosted first iOS smoke
+completed in 457.7 seconds including preparation and test execution
+([run](https://github.com/sudoHG/immichSlides/actions/runs/37726829510)); 600 seconds
+gives cold boot its own budget above that measured complete-case duration.
+Local reset callers also finish boot before starting the reset clock. App/keychain/privacy
+resets share a separate 120-second deadline, with individual reset commands
+capped at 60 seconds. Bootstatus uses the remaining 600-second boot budget. Official
+tests and summary exports each have a 60-second deadline. Preparation/export timeouts name the phase in
+compact infrastructure entries without command arguments/output, preserve a failed
+case record, finish cleanup and quarantine raw bundles privately. Existing cold/warm
+and outer deadlines are unchanged. The tracer retains these entries even when official
+exports are unavailable, so application/test execution and infrastructure hangs remain
+distinguishable. An xcodebuild test-execution timeout remains a failure of that case,
+without an infrastructure entry.
+The person shard contains both fixtures: two three-session cases and four single-session
+cases require ten invocations. Its conservative outer allowances total 148 minutes
+(24 cold plus 124 warm). The 165-minute job cap leaves 17 minutes for initial boot, setup/upload/cleanup
+so a slow shard can publish its failed records before runner teardown. Individual
+runner, test and infrastructure deadlines are unchanged; reaching the job cap is a
+failure. Planning/aggregate have 15-minute caps.
+Hosted disk floor stays 30 GiB; local default stays 80 GiB.
+
+## Results, scope and eligibility
+
+After finalization, the tracer reads official summary and test identity exports whatever
+the runner exit code. It validates integer counts, their sum/result and selected method.
+Filter-person combines three session exports, keeps partial counts on failure and checks
+any suite total. Valid failed exports still record compilation and official counts.
+Nonzero exits remain failures even with passing XCTest counts. Missing/malformed exports
+fail. Timeouts/interruptions preserve completed outcomes; unfinished cases are `not-run`.
+
+The always-run aggregate downloads only this attempt's compact records. It validates
+every expected shard's identity, run, hashes and declared population, then checks
+compilation per entry and compares executed identities with scheduling. A missing
+compiled identity fails only that entry as `declared-not-compiled`; other observed
+outcomes remain available. Attempted failures count as execution. A failed entry whose
+attempts are all `not-run` does not count, just like a synthetic `not-run` placeholder.
+Every entry has an outcome. Missing artifacts, failed/cancelled jobs,
+infrastructure failures and matrix discrepancies are red. There is no automatic retry.
+Only Actions **Re-run all jobs** is supported: artifact provenance is bound to one
+run attempt. Re-running only failed jobs cannot reuse successful shards from an earlier
+attempt, and the aggregate fails for their missing artifacts.
+
+The aggregate entry point is:
+
+```bash
+python3 -B scripts/ci_nightly.py aggregate --plan '<outside-repo>/plan.json' \
+    --records-dir '<outside-repo>/shard-artifacts' \
+    --output-dir '<fresh-outside-repo>/aggregate' --matrix-job-result success
+```
+
+Run it in the same event/run/attempt context as planning; the hosted workflow supplies
+that context. Shard directories are named `nightly-strict-<shard>-<run-id>-<attempt>`.
+For a local plan the run ID is `None` and attempt is 1. Downloaded CI records must not
+be relabeled as a local run. The matrix job result comes from Actions, not its artifacts.
+
+[`nightly-policy.json`](../scripts/nightly-policy.json) builds only strict and starts
+with `live_tier_in_scope: false`. UI, offline performance, live and live performance are
+**not yet in scope**, without making the skeleton red. Setting live scope without live
+results fails; enabling it is a separate maintainer decision. Automated cases must pass
+or flaky-pass. P2 contract success is `needs-human-review`; contracts gate without visual
+PASS. Informational Vision outcomes are listed separately and excluded from health.
+
+`nightly.json` records health/equality, every outcome, exclusions, source/run/attempt,
+hashes, shard intervals, start-order waves and wall time from planning through aggregate.
+Actions job timestamps show queue delay and teardown separately. Start-order waves batch
+two starts without claiming reservations. `nightly.md` exposes this in the job summary.
+The embedded rollup entry always records `release_eligible: false` and the skeleton reason,
+even when green. The separate trusted reporter will write 90-day rollups. No release
+policy is enabled; skeletons are never release-eligible.
+
+Only compact records upload, retained seven days (PR planning: 30 days). Raw bundles
+use existing private export/disposal; products, packages, simulator contents, screenshots,
+recordings and logs do not upload. P2 review packages/signed promotion are separate work.
+Cleanup waits for the runner group; failed cleanup retains inputs until runner teardown.
+Existing Python test files guard equality, scope/eligibility, provenance, P2 separation,
+failed/malformed official exports and partial person execution under [Testing section 0](TESTING.md#0-when-to-write-a-test).
+Wiring and simulator behavior are verified by real runs. No repository settings,
+rulesets, credentials, approvals or environments change.

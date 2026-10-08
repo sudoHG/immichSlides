@@ -192,6 +192,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         failure_session: str | None = None,
         warm: bool = False,
         retry: bool = False,
+        timeout_phase: str | None = None,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -228,6 +229,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
         def fake_subprocess(command: list[str], **_: object) -> subprocess.CompletedProcess[object]:
             if command[:2] == ["xcrun", "xcresulttool"]:
+                if timeout_phase == "official-tests-export":
+                    raise subprocess.TimeoutExpired(["private-test-input"], 60, output=b"private-test-input")
                 return subprocess.CompletedProcess(command, export_exit, b'{"testNodes":[]}', b"")
             return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -252,11 +255,15 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "run_strict_e2e.prepare_task_xcconfig", return_value={}
         ), mock.patch("run_strict_e2e.cleanup_task_xcconfig"), mock.patch(
             "run_strict_e2e.subprocess.run", side_effect=fake_subprocess
-        ), mock.patch("run_strict_e2e.reset_simulator_app", return_value="reset\n"), mock.patch(
+        ), mock.patch("run_strict_e2e.reset_simulator_app", return_value="reset\n",
+                      side_effect=strict_runner.InfrastructureTimeout(timeout_phase, 60)
+                      if timeout_phase == "simulator-bootstatus" else None), mock.patch(
             "run_strict_e2e.run_command", side_effect=fake_run_command
         ), mock.patch(
             "run_strict_e2e.read_official_test_results_summary",
             return_value=TestResultsSummary(1, 1, 0, 0, "Passed"),
+            side_effect=strict_runner.InfrastructureTimeout(timeout_phase, 60)
+            if timeout_phase == "official-summary-export" else None,
         ), mock.patch(
             "run_strict_e2e.read_xcresult_facts",
             return_value=_p2_facts(suite, platform, model, facts_device_id) if suite in P2_CASES else {},
@@ -321,6 +328,68 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             self.assertEqual(code, 0, stderr)
             self.assertEqual(list((root / "private").iterdir()), [])
 
+    def test_inner_timeout_records_its_phase_and_finishes_private_cleanup(self):
+        for phase in ("simulator-bootstatus", "official-tests-export", "official-summary-export"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                evidence = root / "evidence"
+                code, _, stderr, _ = self._run_p2_main(
+                    evidence, suite="smoke", platform="ios", model="iPhone", warm=True,
+                    timeout_phase=phase,
+                )
+                self.assertNotEqual(code, 0, stderr)
+                record = json.loads((evidence / "case-manifest.json").read_text())
+                self.assertEqual(record["result"], "FAILED")
+                self.assertEqual(record["infrastructure"][0]["code"], phase + "-timeout")
+                self.assertNotIn("private-test-input", json.dumps(record) + stderr)
+                self.assertEqual(json.loads((evidence / "sensitive-scan.json").read_text())["result"], "PASS")
+                self.assertEqual(list((root / "derived").glob("strict-case-*/case.xctestrun")), [])
+                if phase.startswith("official-"):
+                    quarantine = json.loads((evidence / "result-bundle-quarantine.json").read_text())
+                    self.assertFalse(quarantine["result_bundle_disposed"])
+                    self.assertTrue(Path(quarantine["private_path"]).is_dir())
+
+    def test_xcode_execution_timeout_remains_a_case_failure_without_infrastructure_diagnostics(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with mock.patch("run_strict_e2e.subprocess.run", side_effect=subprocess.TimeoutExpired(
+                    ["private-test-input"], 600, output=b"private-test-input")), self.assertRaises(CommandError) as raised:
+                run_command(["xcodebuild"], cwd=root, environment={}, log_path=root / "xcodebuild.log", timeout_seconds=600)
+            self.assertNotIsInstance(raised.exception, strict_runner.InfrastructureTimeout)
+            self.assertNotIn("private-test-input", str(raised.exception))
+            self.assertNotEqual(raised.exception.code, 0)
+
+    def test_simulator_and_summary_timeouts_name_the_hung_phase_without_command_output(self):
+        commands = {
+            "boot": "simulator-boot", "bootstatus": "simulator-bootstatus",
+            "terminate": "simulator-terminate", "uninstall": "simulator-uninstall",
+            "get_app_container": "simulator-container", "keychain": "simulator-keychain-reset",
+            "privacy": "simulator-privacy-reset",
+        }
+        for step, phase in commands.items():
+            with self.subTest(step=step):
+                def run(command, **kwargs):
+                    if command[2] == step:
+                        self.assertGreater(kwargs.get("timeout", 0), 0)
+                        raise subprocess.TimeoutExpired(["private-test-input"], kwargs["timeout"],
+                                                        output=b"private-test-input")
+                    return subprocess.CompletedProcess(command, 2 if command[2] == "get_app_container" else 0, "", "")
+                with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=run), mock.patch(
+                    "strict_e2e_runner_support.time.sleep"
+                ), self.assertRaises(CommandError) as raised:
+                    reset_simulator_app("SIM-UDID")
+                self.assertEqual(raised.exception.entry["code"], phase + "-timeout")
+                self.assertNotIn("private-test-input", str(raised.exception))
+        with tempfile.TemporaryDirectory() as raw:
+            bundle = Path(raw) / "result.xcresult"
+            bundle.mkdir()
+            def export(command, **kwargs):
+                self.assertEqual(kwargs.get("timeout"), 60)
+                raise subprocess.TimeoutExpired(["private-test-input"], 60, output=b"private-test-input")
+            with mock.patch("run_offline_unit_tests.subprocess.run", side_effect=export), self.assertRaises(CommandError) as raised:
+                strict_runner.read_official_test_results_summary(bundle)
+            self.assertEqual(raised.exception.entry["code"], "official-summary-export-timeout")
+
     def test_ordinary_and_person_results_never_expose_raw_bundles(self) -> None:
         # Raw XCTest activities may retain UI-entered credentials even in failed sessions.
         for suite, count in (("smoke", 1), ("filter-person", 3)):
@@ -367,6 +436,94 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def test_failed_runner_keeps_official_counts_and_compilation_without_becoming_passed(self):
+        import run_strict_ci_tracer as tracer
+        case = {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "smoke", "scenario": "normal", "fixture": "a"}
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        timeout = {"code": "official-tests-export-timeout", "message": "official-tests-export timed out after 60.0s."}
+        for official_result, infrastructure in (("Passed", []), ("Failed", []), ("Failed", [timeout])):
+            with self.subTest(result=official_result, infrastructure=infrastructure), tempfile.TemporaryDirectory() as raw:
+                output = Path(raw) / "trace"
+                manifest = Path(raw) / "manifest.json"
+                manifest.write_text(json.dumps({"cases": [case], "exclusions": []}))
+
+                def runner(command, *_args, **_kwargs):
+                    derived = Path(command[command.index("--derived-data-path") + 1])
+                    evidence = Path(command[command.index("--evidence-dir") + 1])
+                    if "--warm-up-only" in command:
+                        derived.mkdir(parents=True)
+                        (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
+                        return 0
+                    evidence.mkdir(parents=True)
+                    (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": infrastructure}))
+                    (evidence / "xcodebuild.log").write_text("test-without-building\n")
+                    (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
+                    counts = {"totalTestCount": 1, "passedTests": int(official_result == "Passed"),
+                              "failedTests": int(official_result == "Failed"), "skippedTests": 0, "result": official_result}
+                    (evidence / "official-summary.json").write_text(json.dumps(counts))
+                    (evidence / "official-tests.json").write_text(json.dumps({"testNodes": [{
+                        "nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [{
+                            "nodeType": "Test Case", "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()",
+                            "result": official_result}]}]}))
+                    return 124 if infrastructure else 65
+
+                with mock.patch.object(tracer, "run_runner", side_effect=runner), mock.patch.object(tracer, "workspace_preflight"), \
+                        mock.patch.object(tracer, "run_identity", return_value=identity), \
+                        mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                        mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
+                    self.assertEqual(tracer.main(["--platform", "ios", "--destination", "unused", "--manifest", str(manifest),
+                                                  "--output-dir", str(output)]), 1)
+                summary = json.loads((output / "records/summary.json").read_text())
+                trace = json.loads((output / "records/trace.json").read_text())
+                self.assertEqual(summary["population"]["compiled"], summary["population"]["declared"])
+                self.assertEqual(summary["population"]["observed"][0]["outcome"], "failed")
+                self.assertEqual(trace["warm"][0]["official_summary"]["totalTestCount"], 1)
+                self.assertEqual(trace["warm"][0]["exit_code"], 124 if infrastructure else 65)
+                self.assertEqual(summary["infrastructure"], infrastructure)
+                self.assertEqual(trace["warm"][0]["infrastructure"], infrastructure)
+
+    def test_official_export_rejects_another_selected_test_even_when_counts_match(self):
+        from run_strict_ci_tracer import validate_case_export
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
+                {"nodeType": "Test Case", "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()", "result": "Failed"}]}]}
+            (evidence / "official-tests.json").write_text(json.dumps(payload))
+            validate_case_export(evidence, "ios", "smoke")
+            with self.assertRaises(ValueError):
+                validate_case_export(evidence, "ios", "smoke", {
+                    "totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0})
+            payload["testNodes"][0]["children"][0]["nodeIdentifier"] = "OtherTests/testWrong()"
+            (evidence / "official-tests.json").write_text(json.dumps(payload))
+            with self.assertRaises(ValueError):
+                validate_case_export(evidence, "ios", "smoke")
+
+    def test_official_exports_survive_runner_failure_and_malformed_counts_fail_closed(self):
+        from run_strict_ci_tracer import read_case_official
+        good = {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0, "result": "Failed"}
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            (evidence / "official-summary.json").write_text(json.dumps(good))
+            self.assertEqual(read_case_official(evidence, "smoke"), good)
+            for counts in (dict(good, totalTestCount=True), dict(good, failedTests=-1),
+                           dict(good, totalTestCount=2), dict(good, result="Passed")):
+                with self.subTest(counts=counts):
+                    (evidence / "official-summary.json").write_text(json.dumps(counts))
+                    with self.assertRaises(ValueError):
+                        read_case_official(evidence, "smoke")
+
+    def test_person_official_exports_preserve_partial_execution_and_three_session_counts(self):
+        from run_strict_ci_tracer import read_case_official
+        good = {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0, "result": "Passed"}
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            for session in ("normal", "conflict-normal", "nofaces"):
+                (evidence / f"official-summary-{session}.json").write_text(json.dumps(good))
+            self.assertEqual(read_case_official(evidence, "filter-person")["totalTestCount"], 3)
+            (evidence / "official-summary-nofaces.json").unlink()
+            self.assertEqual(read_case_official(evidence, "filter-person")["totalTestCount"], 2)
+
     def test_tracer_rejects_incomplete_or_failed_checks(self):
         from ci_summary import test_identity
         from run_strict_ci_tracer import evaluate_tracer

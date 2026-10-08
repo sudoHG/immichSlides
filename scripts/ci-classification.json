@@ -39,6 +39,7 @@
     "immichSlides-tvOS.xctestplan",
     "scripts/ci-classification.json",
     "scripts/strict-tracer.json",
+    "scripts/nightly-*.json",
     "scripts/test_conventions_allowlist.json",
     "scripts/test_ci_*.py",
     "scripts/test_run_offline_unit_tests.py",

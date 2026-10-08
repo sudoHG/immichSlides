@@ -14,6 +14,157 @@ from ci_verdict import (classify_changes, evaluate_gate, evaluate_population, pa
 from test_ci_summary import valid_summary
 
 
+class NightlyVerdictTests(unittest.TestCase):
+    def test_ipad_smoke_exclusions_follow_the_selected_tests_phone_guard(self):
+        from ci_nightly import contract_population
+        cases, exclusions = contract_population()
+        self.assertEqual([case for case in cases if case["device"] == "ipad" and case["suite"] == "smoke"], [])
+        device_exclusions = [entry for entry in exclusions if entry["case"]["device"] == "ipad"
+                             and entry["case"]["suite"] == "smoke"]
+        self.assertEqual({entry["case"]["fixture"] for entry in device_exclusions}, {"a", "b"})
+        from ci_nightly import require_smoke_phone_guard
+        source = (Path(__file__).parent.parent / "immichSlidesUITests/StrictE2ESmokeUITests.swift").read_text()
+        require_smoke_phone_guard(source)
+        for changed in (source.replace("== .phone", "== .pad"),
+                        source.replace("guard UIDevice", "// guard UIDevice"),
+                        source.replace("throw XCTSkip", "XCTFail")):
+            with self.subTest(source=changed), self.assertRaises(ci_summary.ContractError):
+                require_smoke_phone_guard(changed)
+
+    def test_informational_outcomes_are_reported_without_hiding_execution_or_infrastructure_failure(self):
+        from ci_nightly import aggregate_nightly
+        identity = ci_summary.test_identity("strict", "filter-vision", device="iphone", configuration="Debug",
+                                            suite="filter-vision", scenario="normal", fixture="a")
+        for outcome, infrastructure, expected in (("failed", [], "passed"), ("not-run", [], "failed"),
+                ("passed", [{"code": "interrupted", "message": "cancelled"}], "failed")):
+            with self.subTest(outcome=outcome, infrastructure=infrastructure):
+                summary = valid_summary()
+                summary["population"].update(declared=[identity], compiled=[identity],
+                    observed=[ci_summary.observation(identity, outcome, 1)])
+                summary["infrastructure"] = infrastructure
+                result = aggregate_nightly([identity], [summary], live_in_scope=False, informational=["filter-vision"])
+                self.assertEqual(result["status"], expected)
+                self.assertEqual(len(result["informational"]), 1)
+
+    def test_matrix_requires_exact_execution_without_duplicates_or_unrun_placeholders(self):
+        from ci_nightly import matrix_equality
+        identity = ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
+                                            suite="smoke", scenario="normal", fixture="a")
+        good = ci_summary.observation(identity, "passed", 1)
+        for entries, expected in (([good], True), ([], False), ([good, good], False),
+                                  ([ci_summary.observation(identity, "not-run", 0)], False),
+                                  ([dict(good, identity=dict(identity, key="unexpected"))], False)):
+            with self.subTest(entries=entries):
+                self.assertEqual(matrix_equality([identity], entries)["equal"], expected)
+
+    def test_nightly_rules_keep_unbuilt_tiers_green_and_skeletons_ineligible(self):
+        from ci_nightly import aggregate_nightly
+        identity = ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
+                                            suite="smoke", scenario="normal", fixture="a")
+        summary = valid_summary()
+        summary["population"] = dict(summary["population"], declared=[identity], compiled=[identity],
+                                     observed=[ci_summary.observation(identity, "passed", 1)])
+        summary["run"].update(tier="strict", job="nightly-strict", shard="iphone-debug-0")
+        for outcome, infrastructure, live, expected in (
+                ("passed", [], False, "passed"), ("flaky-passed", [], False, "passed"),
+                ("needs-human-review", [], False, "failed"), ("failed", [], False, "failed"),
+                ("skipped", [], False, "failed"), ("not-run", [], False, "failed"),
+                ("passed", [{"code": "interrupted", "message": "cancelled"}], False, "failed"),
+                ("passed", [], True, "failed")):
+            with self.subTest(outcome=outcome, live=live, infrastructure=infrastructure):
+                changed = copy.deepcopy(summary)
+                entry = ci_summary.observation(identity, outcome, 1, reason="unexpected skip")
+                if outcome == "flaky-passed":
+                    entry["attempts"] = [dict(entry["attempts"][0], number=1, outcome="failed", duration_seconds=.5),
+                                          dict(entry["attempts"][0], number=2, outcome="passed", duration_seconds=.5)]
+                changed["population"]["observed"] = [entry]
+                changed["infrastructure"] = infrastructure
+                changed["status"] = "unverified" if outcome == "needs-human-review" else "passed"
+                result = aggregate_nightly([identity], [changed], live_in_scope=live)
+                self.assertEqual(result["status"], expected)
+                self.assertFalse(result["release_eligible"])
+                self.assertEqual(result["tiers"]["ui"], "not yet in scope")
+        summary["status"] = "unverified"
+        self.assertEqual(aggregate_nightly([identity], [summary], live_in_scope=False)["status"], "failed")
+
+    def test_p2_contracts_allow_review_pending_but_never_a_failed_producer(self):
+        from ci_nightly import aggregate_nightly
+        identity = ci_summary.test_identity("strict", "p2-rotation", device="iphone", configuration="Debug",
+                                            suite="p2-rotation", scenario="normal", fixture="a")
+        summary = valid_summary()
+        summary["population"].update(declared=[identity], compiled=[identity],
+                                     observed=[ci_summary.observation(identity, "needs-human-review", 1)])
+        summary["status"] = "unverified"
+        self.assertEqual(aggregate_nightly([identity], [summary], live_in_scope=False)["status"], "passed")
+        summary["status"] = "failed"
+        self.assertEqual(aggregate_nightly([identity], [summary], live_in_scope=False)["status"], "failed")
+
+    def test_aggregate_rejects_wrong_provenance_and_declared_population(self):
+        from ci_nightly import validate_shard
+        summary = valid_summary()
+        expected = summary["population"]["declared"]
+        summary["run"].update(tier="strict", job="nightly-strict", shard="s")
+        summary["hashes"] = {"manifests": {"nightly-matrix": "a" * 64},
+                              "policies": {"nightly": "b" * 64}}
+        for path, value in (("identity.tree_sha", "c" * 40), ("run.attempt", 2),
+                            ("run.shard", "other"), ("hashes.manifests.nightly-matrix", "c" * 64),
+                            ("population.declared", [])):
+            with self.subTest(path=path):
+                changed = copy.deepcopy(summary)
+                target = changed
+                parts = path.split(".")
+                for part in parts[:-1]:
+                    target = target[part]
+                target[parts[-1]] = value
+                with self.assertRaises(ci_summary.ContractError):
+                    validate_shard(changed, summary["identity"], summary["run"], summary["hashes"], expected)
+
+    def test_missing_compilation_fails_only_that_case_and_preserves_completed_results(self):
+        from ci_nightly import aggregate_nightly, validate_shard
+        identities = [ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
+                      suite="smoke", scenario="normal", fixture=str(number)) for number in range(6)]
+        for outcome, executed in (("failed", 6), ("passed", 6), ("not-run", 5)):
+            with self.subTest(outcome=outcome):
+                summary = valid_summary()
+                summary["run"].update(tier="strict", job="nightly-strict", shard="partial")
+                summary["status"] = "failed"
+                summary["population"].update(declared=identities, compiled=identities[:5], observed=[
+                    *[ci_summary.observation(identity, "passed", 1) for identity in identities[:5]],
+                    ci_summary.observation(identities[5], outcome, 2 if executed == 6 else 0,
+                        reason="original result", exit_code=124 if outcome == "failed" else None)])
+                original = copy.deepcopy(summary)
+                accepted = validate_shard(summary, summary["identity"], summary["run"], summary["hashes"], identities)
+                result = aggregate_nightly(identities, [accepted], live_in_scope=False)
+                self.assertEqual(result["status"], "failed")
+                expected_outcome = "not-run" if outcome == "not-run" else "failed"
+                self.assertEqual([entry["outcome"] for entry in result["observed"]], ["passed"] * 5 + [expected_outcome])
+                self.assertEqual(result["observed"][:5], original["population"]["observed"][:5])
+                failed = result["observed"][5]
+                if outcome == "not-run":
+                    self.assertEqual(failed, original["population"]["observed"][5])
+                else:
+                    self.assertIn("declared-not-compiled", failed["attempts"][-1]["reason"])
+                self.assertEqual(failed["duration_seconds"], original["population"]["observed"][5]["duration_seconds"])
+                self.assertEqual(failed["attempts"][-1]["exit_code"], original["population"]["observed"][5]["attempts"][-1]["exit_code"])
+                ci_summary.validate_observation(failed)
+                self.assertEqual(result["matrix"]["executed"], executed)
+                self.assertEqual(result["matrix"]["equal"], executed == 6)
+                self.assertEqual(summary, original)
+
+    def test_manifest_rejects_unknown_missing_and_duplicate_cases(self):
+        from ci_nightly import parse_manifest
+        raw = json.loads((Path(__file__).parent / "nightly-matrix.json").read_text())
+        parse_manifest(raw)
+        for mutation in (lambda x: x["cases"].pop(), lambda x: x["cases"].append(x["cases"][0]),
+                         lambda x: x["cases"][0].update(suite="unknown"),
+                         lambda x: x.update(schema_version=99)):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(raw)
+                mutation(changed)
+                with self.assertRaises(ci_summary.ContractError):
+                    parse_manifest(changed)
+
+
 def policy():
     return {"schema_version": 1, "approval_records": [approval_record("host")], "expected_skips": [], "deselections": []}
 

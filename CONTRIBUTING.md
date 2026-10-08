@@ -47,6 +47,8 @@ Thanks for helping out. immichSlides is a SwiftUI photo slideshow client for [Im
 - **Strict end-to-end tests** run the real app against a local public fixture server that `scripts/run_strict_e2e.py` starts for you, so they do not touch anyone's Immich server. See [Running controlled integration and end-to-end tests](docs/TESTING.md#running-controlled-integration-and-end-to-end-tests) and `python3 scripts/run_strict_e2e.py --help`.
   Explicit warm-build reuse and the informational hosted tracer are documented in
   [Strict runner warm-build tracer](docs/CI_STRICT_RUNNER.md).
+  Versioned matrix reproduction and on-demand hosted runs are documented in
+  [Skeleton nightly](docs/CI_NIGHTLY.md); a skeleton run is never release-eligible.
 - Optional, once per clone: `scripts/install_git_privacy_hooks.sh` installs the hooks that block secrets and private data from being committed or pushed.
 
 ## Using AI coding agents

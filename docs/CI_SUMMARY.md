@@ -36,6 +36,14 @@ empty Python suite or infrastructure problem; invalid arguments
 exit 2. `--timeout-seconds` sets the total
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
+
+The shared host/strict group probe on macOS uses `ps -g <group> -o pgid=,stat=`
+to select the runner's process group instead of inspecting every simulator process.
+Its existing five-second deadline remains unchanged. Empty stdout/stderr with exit 1
+means the selected group is absent; other errors and timeouts propagate. Zombie-only
+groups are stopped, while live descendants still require termination. Other platforms
+retain the full-system query. The existing descendant/pipe-EOF regressions cover this
+guarantee, and targeted-query/error regressions live in `test_ci_summary.py`.
 An interruption records remaining checks as `not-run` with "not run after interruption".
 If final record validation fails after the initial placeholder is written, the producer
 rewrites a `failed` record with `record-invalid` infrastructure evidence and retains
@@ -113,6 +121,7 @@ origin is absent or cannot be interpreted), and lowercase Git
 | `pull_request` | Positive integer `pull_request`, `merge_sha`, `base_sha`, `head_sha` |
 | `push` | `ref` equal to `refs/heads/main`, `pushed_sha` |
 | `workflow_dispatch` | `ref` under `refs/heads/` or `refs/tags/`, `commit_sha` |
+| `schedule` | `ref` equal to `refs/heads/main`, `commit_sha` |
 | `local` | `commit_sha`, boolean `dirty` |
 
 For a PR, the producer requires checkout HEAD to equal `GITHUB_SHA` and reads exactly
@@ -120,7 +129,8 @@ two parents from that commit: first parent is base, second parent is head. It ne
 substitutes the trigger payload's base/head claims. The tree comes from that merge
 commit. A push requires HEAD to equal `GITHUB_SHA` and the main ref. A manual dispatch
 requires HEAD to equal `GITHUB_SHA` and records the selected branch or tag's full
-`GITHUB_REF`; it does not claim to be a PR merge or a main push. A later trusted
+`GITHUB_REF`; a schedule records its exact SHA and main ref. Neither claims to be
+a PR merge or a main push. A later trusted
 publisher compares these claims with its own admission record/API observations.
 
 ### Population and observations
@@ -216,6 +226,8 @@ venv made from `/usr/bin/python3` and uses it
 for the host entry point and validators. Contributor interpreter setup is described in
 [CONTRIBUTING](../CONTRIBUTING.md#setup).
 
-The generic identity schema also supports `workflow_dispatch`. Under the `ci-gate`
+The generic identity schema also supports `workflow_dispatch` and `schedule`.
+The strict matrix and skeleton aggregate are described in [Skeleton nightly](CI_NIGHTLY.md).
+Under the `ci-gate`
 consumer policy, readers must accept only `pull_request` and `push` events from its expected workflow. A structurally
 valid manual-dispatch record is not admissible as a `ci-gate` result.

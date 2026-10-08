@@ -21,7 +21,7 @@ jobs:
   tracer:
     name: strict-tracer-${{ matrix.platform }}
     runs-on: xcode-27
-    timeout-minutes: 100
+    timeout-minutes: 110
     permissions:
       contents: read
     strategy:
@@ -51,6 +51,20 @@ jobs:
           echo "STRICT_SIMULATOR=$udid" >> "$GITHUB_ENV"
           os_name=$([ "$platform" = ios ] && echo iOS || echo tvOS)
           echo "STRICT_DESTINATION=platform=$os_name Simulator,id=$udid" >> "$GITHUB_ENV"
+      - name: Boot the dedicated simulator before bounded case resets
+        timeout-minutes: 11
+        run: |
+          "$RUNNER_TEMP/strict-python/bin/python3" -B - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          from strict_e2e_runner_support import boot_simulator
+          def report(line):
+              print(line, flush=True)
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+                  summary.write(line + "\n")
+          boot_simulator(os.environ["STRICT_SIMULATOR"], report=report)
+          PY
       - name: Measure cold build and run warm cases
         run: |
           "$RUNNER_TEMP/strict-python/bin/python3" -B scripts/run_strict_ci_tracer.py \

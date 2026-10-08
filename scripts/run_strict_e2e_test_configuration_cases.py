@@ -804,6 +804,28 @@ class StrictE2ERunnerTestsCasesConfiguration:
         self.assertIn("app_container=absent", log)
         self.assertIn("boot_exit=149", log)
 
+        clock = [0.0]
+        budgets = {}
+
+        def slow_boot(command, **kwargs):
+            step = command[2]
+            budgets[step] = kwargs["timeout"]
+            if step == "bootstatus":
+                duration = 135
+                clock[0] += min(duration, kwargs["timeout"])
+                if duration > kwargs["timeout"]:
+                    raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return subprocess.CompletedProcess(command, 2 if step == "get_app_container" else 0, "", "")
+
+        with mock.patch("run_strict_e2e.subprocess.run", side_effect=slow_boot), mock.patch(
+            "run_strict_e2e.time.monotonic", side_effect=lambda: clock[0]
+        ), mock.patch("run_strict_e2e.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            log = reset_simulator_app("SIM-UDID")
+        self.assertIn("app_container=absent", log)
+        self.assertGreater(budgets["bootstatus"], 120)
+        self.assertEqual(budgets["terminate"], 60)
+        self.assertEqual(budgets["privacy"], 60)
+
 
     def test_case_manifest_records_source_sha(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:

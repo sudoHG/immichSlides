@@ -160,7 +160,8 @@ class SummaryContractTests(unittest.TestCase):
                 "ref": "refs/heads/main", "pushed_sha": "a" * 40, "tree_sha": "b" * 40}
         dispatch = {"schema_version": 1, "event": "workflow_dispatch", "repository": "sudoHG/immichSlides",
                     "ref": "refs/heads/feature", "commit_sha": "a" * 40, "tree_sha": "b" * 40}
-        for identity in (pr, push, dispatch):
+        schedule = dict(dispatch, event="schedule", ref="refs/heads/main")
+        for identity in (pr, push, dispatch, schedule):
             self.assertEqual(ci_summary.parse_identity(json.dumps(identity)), identity)
             for key in identity:
                 broken = dict(identity)
@@ -173,6 +174,8 @@ class SummaryContractTests(unittest.TestCase):
         for ref in (None, "", "main", "refs/pull/120/merge"):
             with self.subTest(ref=ref), self.assertRaises(ci_summary.ContractError):
                 ci_summary.parse_identity(dict(dispatch, ref=ref))
+        with self.assertRaises(ci_summary.ContractError):
+            ci_summary.parse_identity(dict(schedule, ref="refs/heads/feature"))
 
 
 class HostResultTests(unittest.TestCase):
@@ -252,6 +255,7 @@ class HostResultTests(unittest.TestCase):
                 with self.assertRaises(ci_summary.ContractError):
                     run_host_checks.run_identity(env, ci=True)
                 for event, ref, field in (("push", "refs/heads/main", "pushed_sha"),
+                                          ("schedule", "refs/heads/main", "commit_sha"),
                                           ("workflow_dispatch", "refs/heads/feature", "commit_sha")):
                     with self.subTest(event=event):
                         trigger = dict(env, GITHUB_EVENT_NAME=event, GITHUB_REF=ref)
@@ -613,6 +617,46 @@ while True:
         for states, alive in (("42 Z\n99 S\n", False), ("42 Z\n42 S\n", True), ("99 S\n", False)):
             with self.subTest(states=states), patch.object(run_host_checks.subprocess, "check_output", return_value=states):
                 self.assertEqual(run_host_checks.group_has_live_members(42), alive)
+
+    def test_macos_group_probe_avoids_a_slow_full_system_query_without_widening_the_deadline(self):
+        def probe(command, **kwargs):
+            self.assertEqual(kwargs["timeout"], 5)
+            if "-axo" in command:
+                raise subprocess.TimeoutExpired(command, 5)
+            self.assertEqual(command, ["ps", "-g", "42", "-o", "pgid=,stat="])
+            return "42 Z\n42 S\n"
+
+        with patch.object(run_host_checks.sys, "platform", "darwin"), \
+                patch.object(run_host_checks.subprocess, "check_output", side_effect=probe):
+            self.assertTrue(run_host_checks.group_has_live_members(42))
+
+    def test_macos_absent_group_is_stopped_but_probe_errors_are_not_hidden(self):
+        command = ["ps", "-g", "42", "-o", "pgid=,stat="]
+        missing = subprocess.CalledProcessError(1, command, output="", stderr="")
+        with patch.object(run_host_checks.sys, "platform", "darwin"), \
+                patch.object(run_host_checks.subprocess, "check_output", side_effect=missing):
+            self.assertFalse(run_host_checks.group_has_live_members(42))
+        errors = [subprocess.CalledProcessError(1, command, output="42 S\n", stderr=""),
+                  subprocess.CalledProcessError(1, command, output="", stderr="permission denied"),
+                  subprocess.CalledProcessError(2, command, output="", stderr=""),
+                  subprocess.TimeoutExpired(command, 5)]
+        for error in errors:
+            with self.subTest(error=error), patch.object(run_host_checks.sys, "platform", "darwin"), \
+                    patch.object(run_host_checks.subprocess, "check_output", side_effect=error):
+                with self.assertRaises(type(error)):
+                    run_host_checks.group_has_live_members(42)
+
+    def test_non_macos_probe_keeps_full_query_and_propagates_empty_exit_one(self):
+        with patch.object(run_host_checks.sys, "platform", "linux"), \
+                patch.object(run_host_checks.subprocess, "check_output", return_value="42 S\n") as probe:
+            self.assertTrue(run_host_checks.group_has_live_members(42))
+            self.assertEqual(probe.call_args.args[0], ["ps", "-axo", "pgid=,stat="])
+            self.assertEqual(probe.call_args.kwargs["timeout"], 5)
+        with patch.object(run_host_checks.sys, "platform", "linux"), \
+                patch.object(run_host_checks.subprocess, "check_output", side_effect=
+                             subprocess.CalledProcessError(1, ["ps"], output="", stderr="")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                run_host_checks.group_has_live_members(42)
 
 
 if __name__ == "__main__":
