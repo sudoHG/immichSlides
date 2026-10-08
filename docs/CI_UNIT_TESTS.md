@@ -37,6 +37,8 @@ then removes its entire checkout, extracts to another absolute path, checks that
 build-time source and Products are absent, and measures `Signature=adhoc` again.
 The device type, runtime and Xcode build come from `scripts/ci-pins.json`.
 Consumer simulators disable clone-process parallelism; signing stays **Sign to Run Locally**.
+Automatic simulator diagnostic collection is disabled, as in the strict runner;
+official function/parameter results and failures are still exported.
 
 The shared entry points are:
 

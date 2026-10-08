@@ -215,7 +215,8 @@ def run_units(args):
         base = ["xcodebuild", "test-without-building", "-xctestrun", str(xctestrun),
                 "-destination", f"platform={archive.DESTINATIONS[platform]},id={simulator}",
                 "-derivedDataPath", str(args.relocated_path / "consumer-derived"),
-                "-parallel-testing-enabled", "NO", "-only-testing:" + UNIT_TARGET]
+                "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
+                "-only-testing:" + UNIT_TARGET]
         enumeration_bundle = prepare_private_result_bundle_path("unit-enumeration-" + platform)
         enumeration_path = enumeration_bundle.parent / "enumeration.json"
         archive.disk_check(args.min_free_gib)
