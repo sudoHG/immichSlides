@@ -221,7 +221,8 @@ def export_private_result_bundle(
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(completed.stdout)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
     if not summary_path.exists():
-        summary = (read_official_test_results_summary(bundle, timeout_seconds=summary_timeout_seconds)
+        # Unit consumers classify their explicit export timeout; strict runs use the phase wrapper.
+        summary = (read_unit_official_test_results_summary(bundle, timeout_seconds=summary_timeout_seconds)
                    if summary_timeout_seconds is not None else read_official_test_results_summary(bundle))
         summary_path.write_text(json.dumps({
             "totalTestCount": summary.total_test_count, "passedTests": summary.passed_tests,
