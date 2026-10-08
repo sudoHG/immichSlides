@@ -749,6 +749,11 @@ class TimeoutLiteralTests(unittest.TestCase):
         source = "func poll() { f(TestWait.seconds(.product(3)), timeout: 5) }"
         self.assertEqual(1, len(conv.timeout_literal_inventory("TestSupport/A.swift", source)))
 
+    def test_test_time_limit_is_owned_by_its_function(self):
+        source = "struct Flow { @Test(.timeLimit(.minutes(1)))\nfunc `finishes before its deadline`() {} }"
+        entries = conv.timeout_literal_inventory("immichSlidesTests/A.swift", source)
+        self.assertEqual("Flow.finishes before its deadline", entries[0]["function"])
+
     def test_timeout_inventory_tracks_calls_defaults_constants_and_nested_scopes(self):
         source = '''
         enum Timing { static let timeoutSeconds: TimeInterval = 8 }

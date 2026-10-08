@@ -783,7 +783,16 @@ def timeout_literal_inventory(path: str, source: str) -> list[dict]:
             continue
         closing = find_matching(code, opening, "{", "}")
         if closing >= 0:
-            scopes.append((match.start(), closing, match.group(1), raw_identifier_text(match.group(2))))
+            start = match.start()
+            if match.group(1) == "func":
+                for attribute in re.compile(r"@\w+").finditer(code, 0, start):
+                    end = attribute.end()
+                    if code[end:end + 1] == "(":
+                        end = find_matching(code, end, "(", ")") + 1
+                    if end and re.fullmatch(r"\s*(?:@\w+\s+)*(?:(?:private|public|internal|static|final|override|nonisolated)\s+)*", code[end:start]):
+                        start = attribute.start()
+                        break
+            scopes.append((start, closing, match.group(1), raw_identifier_text(match.group(2))))
 
     def owner(index):
         containing = [(kind, name) for start, end, kind, name in scopes if start <= index <= end]

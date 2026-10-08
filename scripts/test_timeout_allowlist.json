@@ -13,12 +13,6 @@
   },
   {
     "path": "immichSlidesTests/AsyncTestWaitTests.swift",
-    "function": "AsyncTestWaitTests.<scope>",
-    "literal": ".minutes(1",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/AsyncTestWaitTests.swift",
     "function": "AsyncTestWaitTests.polls with sleep when an interval is given",
     "literal": ".milliseconds(20",
     "count": 1
@@ -27,6 +21,12 @@
     "path": "immichSlidesTests/AsyncTestWaitTests.swift",
     "function": "AsyncTestWaitTests.polls with sleep when an interval is given",
     "literal": "pollInterval:.milliseconds(1)",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesTests/AsyncTestWaitTests.swift",
+    "function": "AsyncTestWaitTests.returns false instead of hanging when the condition never holds",
+    "literal": ".minutes(1",
     "count": 1
   },
   {
