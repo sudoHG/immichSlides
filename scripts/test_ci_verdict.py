@@ -400,7 +400,10 @@ class AdmissionVerdictTests(unittest.TestCase):
         for workflow in (root / ".github/workflows").glob("*.yml"):
             source = workflow.read_text(encoding="utf-8")
             host_paths += re.findall(r"\bscripts/[A-Za-z0-9_./-]+", source)
-            host_paths += re.findall(r"\buses:\s*['\"]?\./([A-Za-z0-9_./-]+)", source)
+            for action in re.findall(r"\buses:\s*['\"]?\./([A-Za-z0-9_./-]+)", source):
+                action_files = [str(path.relative_to(root)) for path in (root / action).rglob("*") if path.is_file()]
+                self.assertTrue(action_files, f"local action path has no files: {action}")
+                host_paths += action_files
             # Bare names in the source-free consumer toolset are CI inputs too.
             for copied in re.findall(r"for file in ([^;]+); do", source):
                 host_paths += ["scripts/" + name for name in copied.split()]
