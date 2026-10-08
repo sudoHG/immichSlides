@@ -29,8 +29,9 @@ remain in the base evaluation; raw skips never imply policy acceptance.
 
 Nightly records require the exact workflow ID/path, repository, main ancestry,
 latest attempt and aggregate identity. Scheduled and main-dispatched nightlies
-are included; PR planning and branch diagnostic nightlies are excluded. Tiers
-that are not yet in scope create no failure issues. Informational cases do not
+are included; PR planning and branch diagnostic nightlies are excluded.
+Branch nightly completions skip the report job before checkout or artifact uploads.
+Tiers that are not yet in scope create no failure issues. Informational cases do not
 open issues. The current skeleton remains **not release eligible**; the reporter
 does not grant release authority or replace the fixed nightly aggregate.
 

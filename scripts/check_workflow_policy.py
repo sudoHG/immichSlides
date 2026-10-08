@@ -275,9 +275,11 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if path == REPORT_WORKFLOW:
             if (permissions != {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"}
                     or job.get("runs-on") != "ubuntu-24.04" or "environment" in job
-                    or job.get("if") != "github.ref == 'refs/heads/main'"
+                    or job.get("if") != "github.ref == 'refs/heads/main' && "
+                    "(github.event_name != 'workflow_run' || github.event.workflow_run.name != 'ci-nightly' || "
+                    "github.event.workflow_run.head_branch == 'main')"
                     or job.get("concurrency") != {"group": "ci-report-state", "cancel-in-progress": False}):
-                flag(location, "report-contract", "Reporter is serialized, main-only, environment-free and has only issue write")
+                flag(location, "report-contract", "Reporter is serialized, main-only, excludes branch nightly, is environment-free and has only issue write")
         timeout = job.get("timeout-minutes")
         if type(timeout) is not int or not 1 <= timeout <= 360:
             flag(location, "timeout", "Job needs a literal timeout-minutes from 1 to 360")

@@ -217,7 +217,9 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_reporter_rejects_write_grants_environments_branch_code_and_unbounded_retention(self):
         document = {"name": "ci-report", "on": {"schedule": [{"cron": "30 8 * * *"}],
                     "workflow_dispatch": None, "workflow_run": {"workflows": ["ci-nightly"], "types": ["completed"]}},
-                    "permissions": {}, "jobs": {"report": {"if": "github.ref == 'refs/heads/main'",
+                    "permissions": {}, "jobs": {"report": {"if": "github.ref == 'refs/heads/main' && "
+                    "(github.event_name != 'workflow_run' || github.event.workflow_run.name != 'ci-nightly' || "
+                    "github.event.workflow_run.head_branch == 'main')",
                     "runs-on": "ubuntu-24.04", "timeout-minutes": 30,
                     "permissions": {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"},
                     "concurrency": {"group": "ci-report-state", "cancel-in-progress": False},
@@ -227,6 +229,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(set(), self.rules(document, policy.REPORT_WORKFLOW))
         for mutate in (lambda job: job["permissions"].update(actions="write"),
                        lambda job: job.update(environment="ci-publisher"),
+                       lambda job: job.update({"if": "github.ref == 'refs/heads/main'"}),
                        lambda job: job["steps"][0]["with"].update(ref="${{ github.event.workflow_run.head_sha }}"),
                        lambda job: job.update(concurrency={"group": "ci-report-state", "cancel-in-progress": True})):
             changed = copy.deepcopy(document)
