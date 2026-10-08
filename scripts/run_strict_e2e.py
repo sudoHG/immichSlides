@@ -752,7 +752,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         def execute_case(command, log_path):
             started = time.monotonic()
             code = run_command(command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
-                               timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else arguments.cold_timeout_seconds)
+                               timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else XCODEBUILD_TIMEOUT_SECONDS)
             if warm_receipt is not None:
                 validate_warm_products(derived_data_path, warm_receipt)
                 from strict_e2e_build import write_json

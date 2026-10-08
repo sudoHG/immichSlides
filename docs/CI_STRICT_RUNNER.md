@@ -46,8 +46,9 @@ stay empty. Every warm invocation uses `test-without-building`; Products are has
 before and after. Recordings begin after that preparation and contain no build.
 The existing filter-person sessions each reuse this build and still reset separately.
 
-Cold and warm budgets are per Xcode invocation. The runner's local defaults remain
-300 seconds for both, and the default mode remains the existing single `test` call
+The cold budget applies only to warm-up; the warm budget applies per reused Xcode
+invocation. The runner's local defaults remain 300 seconds for both, and the
+default mode remains the existing single `test` call with its fixed 300-second limit
 with disposable DerivedData in evidence. Explicit shard DerivedData is retained
 until its owner finishes all cases. Package resolution stays locked and simulator
 signing stays **Sign to Run Locally**, verified as `adhoc` by `codesign` after warm-up.
