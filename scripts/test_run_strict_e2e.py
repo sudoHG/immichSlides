@@ -349,6 +349,16 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     self.assertFalse(quarantine["result_bundle_disposed"])
                     self.assertTrue(Path(quarantine["private_path"]).is_dir())
 
+    def test_xcode_execution_timeout_remains_a_case_failure_without_infrastructure_diagnostics(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with mock.patch("run_strict_e2e.subprocess.run", side_effect=subprocess.TimeoutExpired(
+                    ["private-test-input"], 600, output=b"private-test-input")), self.assertRaises(CommandError) as raised:
+                run_command(["xcodebuild"], cwd=root, environment={}, log_path=root / "xcodebuild.log", timeout_seconds=600)
+            self.assertNotIsInstance(raised.exception, strict_runner.InfrastructureTimeout)
+            self.assertNotIn("private-test-input", str(raised.exception))
+            self.assertNotEqual(raised.exception.code, 0)
+
     def test_simulator_and_summary_timeouts_name_the_hung_phase_without_command_output(self):
         commands = {
             "boot": "simulator-boot", "bootstatus": "simulator-bootstatus",
@@ -431,7 +441,7 @@ class StrictCITracerTests(unittest.TestCase):
         case = {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "smoke", "scenario": "normal", "fixture": "a"}
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
-        timeout = {"code": "xcodebuild-timeout", "message": "xcodebuild timed out after 600.0s."}
+        timeout = {"code": "official-tests-export-timeout", "message": "official-tests-export timed out after 60.0s."}
         for official_result, infrastructure in (("Passed", []), ("Failed", []), ("Failed", [timeout])):
             with self.subTest(result=official_result, infrastructure=infrastructure), tempfile.TemporaryDirectory() as raw:
                 output = Path(raw) / "trace"

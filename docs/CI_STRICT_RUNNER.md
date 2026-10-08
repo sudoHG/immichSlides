@@ -89,7 +89,11 @@ The hosted workflow uses an initial 1,200-second cold budget, 600-second warm bu
 and a 30 GiB disk preflight. Each runner segment has an additional 240-second outer
 allowance for reset/export/cleanup. iOS allows two cold and three warm segments
 (90 minutes total); tvOS allows one of each (38 minutes total). The literal
-100-minute job timeout covers the larger shard plus setup, uploads and final cleanup.
+110-minute job timeout covers the larger shard, a separate 10-minute initial simulator
+boot budget, and setup, uploads and final cleanup. Initial boot phases and elapsed times
+are logged before the first case, so cold boot does not consume the 120-second case-reset
+budget. The [nightly capacity policy](CI_NIGHTLY.md#population-and-capacity) records the
+hosted measurement used for this boot allowance.
 The initial allowance follows
 the archive producer's [measured hosted disk use](CI_BUILD_ARCHIVE.md); the tracer
 reports its own measurements for review. These settings never change local defaults.

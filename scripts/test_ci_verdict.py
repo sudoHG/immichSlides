@@ -31,15 +31,6 @@ class NightlyVerdictTests(unittest.TestCase):
             with self.subTest(source=changed), self.assertRaises(ci_summary.ContractError):
                 require_smoke_phone_guard(changed)
 
-    def test_single_shard_diagnostics_keep_the_complete_scheduling_population(self):
-        from ci_nightly import select_dispatch_shards
-        planned = [{"id": "first", "cases": ["a"]}, {"id": "second", "cases": ["b"]}]
-        self.assertEqual(select_dispatch_shards(planned, None), planned)
-        self.assertEqual(select_dispatch_shards(planned, "second"), [planned[1]])
-        self.assertEqual(len(planned), 2)
-        with self.assertRaises(ValueError):
-            select_dispatch_shards(planned, "unknown")
-
     def test_informational_outcomes_are_reported_without_hiding_execution_or_infrastructure_failure(self):
         from ci_nightly import aggregate_nightly
         identity = ci_summary.test_identity("strict", "filter-vision", device="iphone", configuration="Debug",
@@ -108,7 +99,7 @@ class NightlyVerdictTests(unittest.TestCase):
         summary["status"] = "failed"
         self.assertEqual(aggregate_nightly([identity], [summary], live_in_scope=False)["status"], "failed")
 
-    def test_aggregate_rejects_wrong_identity_hash_and_missing_shard(self):
+    def test_aggregate_rejects_wrong_provenance_and_declared_population(self):
         from ci_nightly import validate_shard
         summary = valid_summary()
         expected = summary["population"]["declared"]
@@ -117,7 +108,7 @@ class NightlyVerdictTests(unittest.TestCase):
                               "policies": {"nightly": "b" * 64}}
         for path, value in (("identity.tree_sha", "c" * 40), ("run.attempt", 2),
                             ("run.shard", "other"), ("hashes.manifests.nightly-matrix", "c" * 64),
-                            ("population.compiled", [])):
+                            ("population.declared", [])):
             with self.subTest(path=path):
                 changed = copy.deepcopy(summary)
                 target = changed
@@ -127,6 +118,34 @@ class NightlyVerdictTests(unittest.TestCase):
                 target[parts[-1]] = value
                 with self.assertRaises(ci_summary.ContractError):
                     validate_shard(changed, summary["identity"], summary["run"], summary["hashes"], expected)
+
+    def test_missing_compilation_fails_only_that_case_and_preserves_completed_results(self):
+        from ci_nightly import aggregate_nightly, validate_shard
+        identities = [ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
+                      suite="smoke", scenario="normal", fixture=str(number)) for number in range(6)]
+        for outcome, executed in (("failed", 6), ("passed", 6), ("not-run", 5)):
+            with self.subTest(outcome=outcome):
+                summary = valid_summary()
+                summary["run"].update(tier="strict", job="nightly-strict", shard="partial")
+                summary["status"] = "failed"
+                summary["population"].update(declared=identities, compiled=identities[:5], observed=[
+                    *[ci_summary.observation(identity, "passed", 1) for identity in identities[:5]],
+                    ci_summary.observation(identities[5], outcome, 2 if executed == 6 else 0,
+                        reason="original result", exit_code=124 if outcome == "failed" else None)])
+                original = copy.deepcopy(summary)
+                accepted = validate_shard(summary, summary["identity"], summary["run"], summary["hashes"], identities)
+                result = aggregate_nightly(identities, [accepted], live_in_scope=False)
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual([entry["outcome"] for entry in result["observed"]], ["passed"] * 5 + ["failed"])
+                self.assertEqual(result["observed"][:5], original["population"]["observed"][:5])
+                failed = result["observed"][5]
+                self.assertIn("declared-not-compiled", failed["attempts"][-1]["reason"])
+                self.assertEqual(failed["duration_seconds"], original["population"]["observed"][5]["duration_seconds"])
+                self.assertEqual(failed["attempts"][-1]["exit_code"], original["population"]["observed"][5]["attempts"][-1]["exit_code"])
+                ci_summary.validate_observation(failed)
+                self.assertEqual(result["matrix"]["executed"], executed)
+                self.assertEqual(result["matrix"]["equal"], executed == 6)
+                self.assertEqual(summary, original)
 
     def test_manifest_rejects_unknown_missing_and_duplicate_cases(self):
         from ci_nightly import parse_manifest

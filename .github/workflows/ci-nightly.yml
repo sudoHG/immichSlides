@@ -21,8 +21,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-nightly-${{ github.ref }}
-  cancel-in-progress: false
+  group: ci-nightly-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
@@ -97,6 +97,37 @@ jobs:
           echo "NIGHTLY_SIMULATOR=$udid" >> "$GITHUB_ENV"
           os_name=$([ "$NIGHTLY_PLATFORM" = ios ] && echo iOS || echo tvOS)
           echo "NIGHTLY_DESTINATION=platform=$os_name Simulator,id=$udid" >> "$GITHUB_ENV"
+      - name: Boot the dedicated simulator before bounded case resets
+        timeout-minutes: 11
+        run: |
+          "$RUNNER_TEMP/nightly-python/bin/python3" -B - <<'PY'
+          import os, subprocess, time
+          from pathlib import Path
+          started = time.monotonic()
+          deadline = started + 600
+          for phase, arguments, cap in (
+              ("initial-simulator-boot", ["boot", os.environ["NIGHTLY_SIMULATOR"]], 60),
+              ("initial-simulator-bootstatus", ["bootstatus", os.environ["NIGHTLY_SIMULATOR"], "-b"], 600),
+          ):
+              phase_started = time.monotonic()
+              budget = min(cap, deadline - phase_started)
+              print(f"{phase}: starting; budget={budget:.1f}s", flush=True)
+              result = "failed"
+              try:
+                  if budget <= 0:
+                      raise SystemExit(f"{phase}: initial boot deadline exhausted")
+                  completed = subprocess.run(["xcrun", "simctl", *arguments], capture_output=True, timeout=budget)
+                  if completed.returncode:
+                      raise SystemExit(f"{phase}: exit={completed.returncode}")
+                  result = "passed"
+              except subprocess.TimeoutExpired:
+                  raise SystemExit(f"{phase}: timed out after {budget:.1f}s") from None
+              finally:
+                  line = f"{phase}: {result}; elapsed={time.monotonic() - phase_started:.1f}s; total={time.monotonic() - started:.1f}s; total budget=600s"
+                  print(line, flush=True)
+                  with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+                      summary.write(line + "\n")
+          PY
       - name: Warm the shard once and execute every scheduled case
         env:
           NIGHTLY_SHARD: ${{ matrix.id }}

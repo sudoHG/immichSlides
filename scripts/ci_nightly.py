@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -144,7 +145,8 @@ def shards(manifest):
 
 def matrix_equality(scheduled, observed):
     wanted = tokens(scheduled)
-    executed = [identity_key(entry["identity"]) for entry in observed if entry["outcome"] != "not-run"]
+    executed = [identity_key(entry["identity"]) for entry in observed
+                if any(attempt["outcome"] != "not-run" for attempt in entry["attempts"])]
     counts = Counter(executed)
     return {"equal": bool(wanted) and set(wanted) == set(counts) and all(n == 1 for n in counts.values()),
             "scheduled": len(wanted), "executed": len(executed),
@@ -163,7 +165,29 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=()):
         require(type(live_in_scope) is bool, "live scope must be explicit")
         for raw in summaries:
             summary = parse_summary(raw)
-            result["observed"].extend(summary["population"]["observed"])
+            population = summary["population"]
+            declared, compiled = tokens(population["declared"]), tokens(population["compiled"])
+            missing = set(declared) - set(compiled)
+            if set(compiled) - set(declared):
+                result["errors"].append("compiled identities outside declared shard: " + str(sorted(set(compiled) - set(declared))))
+            if population["deselected"]:
+                result["errors"].append("strict shard must not deselect cases")
+            observed = copy.deepcopy(population["observed"])
+            observed_keys = {identity_key(entry["identity"]) for entry in observed}
+            if observed_keys - set(declared):
+                result["errors"].append("observed identities outside declared shard: " + str(sorted(observed_keys - set(declared))))
+            observed.extend(observation(declared[key], "not-run", 0, exit_code=None)
+                            for key in sorted(missing - observed_keys))
+            for entry in observed:
+                key = identity_key(entry["identity"])
+                if key in missing:
+                    result["errors"].append("declared-not-compiled: " + key)
+                    entry["outcome"] = "failed"
+                    attempt = entry["attempts"][-1]
+                    if attempt["outcome"] in {"passed", "needs-human-review"}:
+                        attempt["outcome"] = "failed"
+                    attempt["reason"] = "declared-not-compiled" + (": " + attempt["reason"] if attempt["reason"] else "")
+            result["observed"].extend(observed)
             if summary["infrastructure"]:
                 result["errors"].append("producer infrastructure failure: " + str(summary["infrastructure"]))
             if summary["status"] == "failed":
@@ -202,9 +226,7 @@ def validate_shard(raw, identity, run, hashes, expected):
         require(summary["source"]["workflow_path"] == WORKFLOW and summary["source"]["fork_originated"] is False,
                 "unexpected shard workflow/source")
     wanted = set(tokens(expected))
-    for name in ("declared", "compiled"):
-        require(set(tokens(summary["population"][name])) == wanted, name + " matrix differs from scheduled shard")
-    require(not summary["population"]["deselected"], "strict shard must not deselect cases")
+    require(set(tokens(summary["population"]["declared"])) == wanted, "declared matrix differs from scheduled shard")
     return summary
 
 

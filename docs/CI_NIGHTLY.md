@@ -1,6 +1,6 @@
 # Skeleton nightly
 
-`ci-nightly` schedules at 21:15 UTC (05:15 Singapore time) on the default branch
+`ci-nightly` schedules at 21:15 UTC on the default branch
 and supports `workflow_dispatch` on a selected branch. PRs touching its entry points
 run planning only; full execution is proven by dispatch before merge. It has read-only
 permissions, no secrets/environments and no publisher, reporter or release authority.
@@ -59,17 +59,24 @@ with immutable Products checks. Case directories are unique across repeated suit
 The 25 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS slots.
 Cold warm-up has 1,200 seconds; each warm invocation has 600. Each case adds a 240-second
 reset/export/cleanup allowance; filter-person receives three invocation budgets.
-Simulator preparation shares a 120-second deadline, with individual reset commands
+The workflow boots each new simulator in a separate step with a shared 600-second
+deadline (boot command capped at 60 seconds). It records both phase and total elapsed
+times in logs and the job summary. Before the reset bound, the hosted first iOS smoke
+completed in 457.7 seconds including preparation and test execution
+([run](https://github.com/sudoHG/immichSlides/actions/runs/37726829510)); 600 seconds
+gives cold boot its own budget above that measured complete-case duration.
+Case resets on the already-booted simulator share a 120-second deadline, with individual reset commands
 capped at 60 seconds and bootstatus using the remaining preparation budget. Official
-tests and summary exports each have a 60-second deadline. Timeouts name the phase in
+tests and summary exports each have a 60-second deadline. Preparation/export timeouts name the phase in
 compact infrastructure entries without command arguments/output, preserve a failed
 case record, finish cleanup and quarantine raw bundles privately. Existing cold/warm
 and outer deadlines are unchanged. The tracer retains these entries even when official
 exports are unavailable, so application/test execution and infrastructure hangs remain
-distinguishable.
+distinguishable. An xcodebuild test-execution timeout remains a failure of that case,
+without an infrastructure entry.
 The person shard contains both fixtures: two three-session cases and four single-session
 cases require ten invocations. Its conservative outer allowances total 148 minutes
-(24 cold plus 124 warm). The 165-minute job cap leaves 17 minutes for setup/upload/cleanup
+(24 cold plus 124 warm). The 165-minute job cap leaves 17 minutes for initial boot, setup/upload/cleanup
 so a slow shard can publish its failed records before runner teardown. Individual
 runner, test and infrastructure deadlines are unchanged; reaching the job cap is a
 failure. Planning/aggregate have 15-minute caps.
@@ -85,10 +92,16 @@ Nonzero exits remain failures even with passing XCTest counts. Missing/malformed
 fail. Timeouts/interruptions preserve completed outcomes; unfinished cases are `not-run`.
 
 The always-run aggregate downloads only this attempt's compact records. It validates
-every expected shard's identity, hashes and declared/compiled population, then compares
-executed identities with scheduling. Every entry has an outcome; synthetic `not-run`
-placeholders never count as execution. Missing artifacts, failed/cancelled jobs,
+every expected shard's identity, run, hashes and declared population, then checks
+compilation per entry and compares executed identities with scheduling. A missing
+compiled identity fails only that entry as `declared-not-compiled`; other observed
+outcomes remain available. Attempted failures count as execution. A failed entry whose
+attempts are all `not-run` does not count, just like a synthetic `not-run` placeholder.
+Every entry has an outcome. Missing artifacts, failed/cancelled jobs,
 infrastructure failures and matrix discrepancies are red. There is no automatic retry.
+Only Actions **Re-run all jobs** is supported: artifact provenance is bound to one
+run attempt. Re-running only failed jobs cannot reuse successful shards from an earlier
+attempt, and the aggregate fails for their missing artifacts.
 
 The aggregate entry point is:
 

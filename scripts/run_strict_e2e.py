@@ -580,7 +580,7 @@ def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str]
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as error:
-            raise InfrastructureTimeout("xcodebuild", timeout_seconds) from error
+            raise CommandError(f"xcodebuild timed out after {timeout_seconds:.1f}s.") from error
     return completed.returncode
 
 
