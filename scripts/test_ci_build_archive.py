@@ -368,7 +368,7 @@ class BuildArchiveTests(unittest.TestCase):
                 if owns_simulator:
                     cleanup = [call for call in processes.call_args_list if call.args[0][1] == "simctl"]
                     self.assertEqual([call.args[0][2] for call in cleanup], ["shutdown", "delete"])
-                    self.assertEqual([call.kwargs["timeout"] for call in cleanup], [15, 15])
+                    self.assertEqual([call.kwargs["timeout"] for call in cleanup], [15, 60])
                     self.assertFalse(enumeration_bundle.parent.exists())
                 if phase == "summary":
                     exports = [call for call in processes.call_args_list if call.args[0][1] == "xcresulttool"]

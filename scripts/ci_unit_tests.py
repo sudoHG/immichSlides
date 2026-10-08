@@ -44,7 +44,9 @@ HOSTED_BOOT_MAX_SECONDS = 110.186966041
 HOSTED_JOB_OVERHEAD_SECONDS = 556 - (110.186966041 + 251.284679625 + 70.472742334)
 OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS = 60
 OFFICIAL_EXPORT_TIMEOUT_SECONDS = 60 + OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS
-SIMULATOR_CLEANUP_TIMEOUT_SECONDS = 15
+SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS = 15
+# A hosted delete exceeded its former 15-second bound; allow recovery before recording failure.
+SIMULATOR_DELETE_TIMEOUT_SECONDS = 60
 
 
 def measured_timeout(samples, *, margin, minimum):
@@ -73,10 +75,10 @@ def enumeration_budget(profile, platform):
                       measured_job_overhead_seconds=HOSTED_JOB_OVERHEAD_SECONDS,
                       official_export_timeout_seconds=OFFICIAL_EXPORT_TIMEOUT_SECONDS,
                       official_summary_export_timeout_seconds=OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS,
-                      simulator_shutdown_timeout_seconds=SIMULATOR_CLEANUP_TIMEOUT_SECONDS,
-                      simulator_delete_timeout_seconds=SIMULATOR_CLEANUP_TIMEOUT_SECONDS,
+                      simulator_shutdown_timeout_seconds=SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS,
+                      simulator_delete_timeout_seconds=SIMULATOR_DELETE_TIMEOUT_SECONDS,
                       overhead_allowance_seconds=math.ceil((HOSTED_JOB_OVERHEAD_SECONDS + OFFICIAL_EXPORT_TIMEOUT_SECONDS +
-                                                           2 * SIMULATOR_CLEANUP_TIMEOUT_SECONDS) / 60) * 60)
+                                                           SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS + SIMULATOR_DELETE_TIMEOUT_SECONDS) / 60) * 60)
     return budget
 
 
@@ -261,15 +263,16 @@ def read_results(records, platform):
 def cleanup_simulator(simulator, measurements):
     failures = []
     for operation in ("shutdown", "delete"):
+        timeout_seconds = SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS if operation == "shutdown" else SIMULATOR_DELETE_TIMEOUT_SECONDS
         started = time.monotonic()
         code, message = 1, "consumer simulator " + operation + " failed"
         try:
             completed = subprocess.run(["xcrun", "simctl", operation, simulator], capture_output=True,
-                                       timeout=SIMULATOR_CLEANUP_TIMEOUT_SECONDS, check=False)
+                                       timeout=timeout_seconds, check=False)
             code = completed.returncode
         except subprocess.TimeoutExpired:
             code = 124
-            message = f"consumer simulator {operation} timed out after {SIMULATOR_CLEANUP_TIMEOUT_SECONDS} s"
+            message = f"consumer simulator {operation} timed out after {timeout_seconds} s"
         except OSError as error:
             message += ": " + type(error).__name__
         measurements["simulator_" + operation + "_seconds"] = time.monotonic() - started

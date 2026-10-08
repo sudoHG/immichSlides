@@ -29,7 +29,7 @@ bound. Unit consumers have separate boot, enumeration and execution bounds:
 | Bundle enumeration, after boot | 660 s | 300 s | 300 s |
 | Unit execution | 900 s | 900 s | 900 s |
 | Official tests / summary exports | 60 / 60 s | 60 / 60 s | 60 / 60 s |
-| Owned simulator shutdown / delete | 15 / 15 s | 15 / 15 s | 15 / 15 s |
+| Owned simulator shutdown / delete | 15 / 60 s | 15 / 60 s | 15 / 60 s |
 
 There is no automatic test retry or silent rebuild. The [trusted publisher](https://github.com/sudoHG/immichSlides/issues/89)
 owns the `ci-pr-gate` status and required-status enforcement. A failing unit test fails
@@ -101,7 +101,7 @@ Finalization attempts official export even after Xcode failure, with separate
 60-second bounds for tests and summary. Execution exits other than 0 or 65 record
 `unit-execution-timed-out` (124) or `unit-execution-failed` before result comparison.
 An export timeout records `unit-results-timed-out`. Owned-simulator shutdown and delete
-each have a 15-second bound; deletion still runs after shutdown failure. Their durations
+have 15- and 60-second bounds; deletion still runs after shutdown failure. Their durations
 and exit codes are measured. Cleanup failure makes the summary failed, and scanning
 continues. Failed runs or
 export/scan errors retain a private quarantine record; successful export and sensitive
@@ -143,20 +143,22 @@ The [recovery calibration](https://github.com/sudoHG/immichSlides/actions/runs/3
 measured maximum boot at **110.19 s**; 2x and upward minute rounding choose **240 s**.
 Its iOS job lasted 556 s, with 110.19 + 251.28 + 70.47 s in the three phases, leaving
 **124.06 s** measured job overhead. Adding separate 60-second tests and summary export
-bounds, plus 15 seconds each for simulator shutdown and delete, and rounding upward
-gives a conservative **300-second overhead allowance**. The runner's shared
+bounds, plus 15 seconds for simulator shutdown and 60 seconds for delete, and rounding upward
+gives a conservative **360-second overhead allowance**. A hosted delete exceeded its
+former 15-second bound; the 60-second recovery allowance remains bounded. The runner's shared
 interrupt grace is **120 s**. The longest combined bound is therefore
-`240 + 660 + 900 + 120 + 300 = 2220 s < 2400 s`.
+`240 + 660 + 900 + 120 + 360 = 2280 s < 2400 s`.
 The guard reads actual workflow `timeout-minutes`; measurements and Markdown record
 phase limits, grace, measured overhead and allowance. These are infrastructure budgets;
 product assertions and success thresholds do not change.
 
-The provisional feedback budget is **45 minutes (2700 s)**. Its calibration includes
-[success](https://github.com/sudoHG/immichSlides/actions/runs/37730804080) at 1554 s and
-[failure](https://github.com/sudoHG/immichSlides/actions/runs/37728068592) at 1788 s,
-including queueing through the last completed job. Nearest-rank sample p95 is rank 2
-of 2 (1788 s); a **1.5x margin** and upward minute rounding give
-`ceil(1788 * 1.5 / 60) = 45`, leaving 912 s above the maximum observation.
+The provisional feedback budget is **72 minutes (4320 s)**. The method uses
+nearest-rank sample p95 across completed hosted success and failure paths, including
+queueing through the last completed job, a **1.5x margin** and upward minute rounding.
+The [recovery measurement](https://github.com/sudoHG/immichSlides/actions/runs/37741604879)
+of 2876 s establishes a conservative floor: `ceil(2876 * 1.5 / 60) = 72`, leaving
+1444 s above that observation. Final-configuration paired measurements and the retained
+margin are published with [the consumer PR](https://github.com/sudoHG/immichSlides/pull/131).
 This budget is **provisional until #93 promotion**. Enforcement belongs to #89;
 concurrent PR/nightly capacity and the promotion sample remain unverified.
 Script/job timeouts are cancellation bounds, not promises of runner capacity.
