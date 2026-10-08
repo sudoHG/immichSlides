@@ -306,8 +306,14 @@ def verify_reproduction_pins(source, destination, environment):
     from strict_e2e_runner_support import destination_udid
     from setup_ci_python import load_pins
     pins = load_pins(source / "scripts/ci-pins.json")
-    environment["DEVELOPER_DIR"] = pins["xcode"]["developer_dir"]
-    observed = subprocess.check_output(["xcodebuild", "-version"], env=environment, text=True, timeout=60).strip()
+    # A local installation may have a different bundle path from hosted macOS.
+    # Freeze the selected path, then verify its pinned version/build.
+    try:
+        environment["DEVELOPER_DIR"] = environment.get("DEVELOPER_DIR") or subprocess.check_output(
+            ["xcode-select", "-p"], env=environment, text=True, timeout=60).strip()
+        observed = subprocess.check_output(["xcodebuild", "-version"], env=environment, text=True, timeout=60).strip()
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ContractError("reproduction Xcode pin check failed: selected toolchain unavailable") from error
     expected = f"Xcode {pins['xcode']['version']}\nBuild version {pins['xcode']['build']}"
     require(observed == expected, f"reproduction Xcode pin mismatch: expected {expected!r}, observed {observed!r}")
     require(destination.startswith("platform=iOS Simulator,"), "reproduction needs an iOS Simulator destination")

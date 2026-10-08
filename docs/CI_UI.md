@@ -128,9 +128,10 @@ delay every tier. Gate completion never depends on UI completion.
 From a checkout containing the producer, this one command reads the specified
 manifest revision from a disposable clean checkout, builds once without private
 configuration, starts the fixture server and runs the selected shard. Before
-building it reads that revision's pins, selects the pinned Xcode, verifies its
+building it reads that revision's pins, freezes the locally selected Xcode path, verifies its
 version/build, and checks the assigned UDID's exact runtime version/build and
-device type. A missing or mismatched pin fails before any build:
+device type. The local Xcode bundle path may differ from hosted macOS; version
+and build must still match. A missing or mismatched pin fails before any build:
 
 ```bash
 python3 -B scripts/ci_ui_tests.py reproduce --manifest-revision COMMIT_SHA \

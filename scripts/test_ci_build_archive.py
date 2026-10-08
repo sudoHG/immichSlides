@@ -217,14 +217,14 @@ class BuildArchiveTests(unittest.TestCase):
                     actual["devices"]["other-runtime"] = actual["devices"].pop(runtime["runtime"])
                 if mismatch == "device-type":
                     actual["devices"][runtime["runtime"]][0]["deviceTypeIdentifier"] = "ipad"
-                environment = {}
+                environment = {"DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"}
                 with patch.object(ui.subprocess, "check_output", side_effect=["Xcode other" if mismatch == "xcode" else version, json.dumps(actual)]):
                     if mismatch:
                         with self.assertRaisesRegex(ContractError, "pin mismatch"):
                             ui.verify_reproduction_pins(source, destination, environment)
                     else:
                         ui.verify_reproduction_pins(source, destination, environment)
-                self.assertEqual(environment["DEVELOPER_DIR"], pins["xcode"]["developer_dir"])
+                self.assertEqual(environment["DEVELOPER_DIR"], "/Applications/Xcode.app/Contents/Developer")
 
     def test_ui_archive_retains_successful_job_attempt_but_never_falls_back_for_a_rerun_job(self):
         runs = {1: [{"name": "build-ios", "started_at": "first", "completed_at": "done", "runner_id": 1,
