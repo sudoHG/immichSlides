@@ -31,7 +31,7 @@ private configuration or remove another worktree's symlink.
 ```
 
 Use `--platform tvos` and fresh paths for tvOS. Local runs keep the 80 GiB default
-on `/System/Volumes/Data` and use the workspace device-slot/watchdog wrappers.
+on `/System/Volumes/Data`.
 Only GitHub-hosted CI can pass a smaller `--min-free-gib`; the workflow uses 30 GiB.
 Initial hosted inventory was about 39 GiB. Each build records space before/after,
 product bytes, archive bytes and threshold in `records/disk.json`. The CI allowance
