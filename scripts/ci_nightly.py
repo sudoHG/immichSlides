@@ -7,6 +7,7 @@ import argparse
 import json
 import math
 import os
+import re
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -25,6 +26,24 @@ CASE_FIELDS = {"platform", "device", "configuration", "suite", "scenario", "fixt
 UNBUILT_TIERS = ("ui", "offline-performance", "live", "live-performance")
 
 
+SMOKE_DEVICE_REASON = ("StrictE2ESmokeUITests.testIOSStrictE2EConnectionSmoke guards "
+                       "userInterfaceIdiom == .phone and skips iPad.")
+
+
+def require_smoke_phone_guard(source):
+    from ci_population import conditional_code
+    from ui_test_inventory import matching_brace
+    code = conditional_code(source, "ios")
+    methods = list(re.finditer(r"\bfunc\s+testIOSStrictE2EConnectionSmoke\s*\(\s*\)\s*throws\s*\{", code))
+    require(len(methods) == 1, "smoke method changed; review device population")
+    opening = methods[0].end() - 1
+    body = code[opening + 1:matching_brace(code, opening)]
+    # Strings/comments are blanked before checking the selected method's first statement.
+    require(re.match(r"\s*guard\s+UIDevice\s*\.\s*current\s*\.\s*userInterfaceIdiom\s*==\s*\.\s*phone\s+else\s*"
+                     r"\{\s*throw\s+XCTSkip\s*\(\s*\)\s*\}", body) is not None,
+            "smoke phone-only skip guard changed; review device population")
+
+
 def contract_population():
     """Enumerate only combinations supported by the current runner contracts."""
     from run_strict_e2e import CommandError, resolve_suite_selector
@@ -33,6 +52,7 @@ def contract_population():
     from strict_e2e_runner_support import (DUAL_SERVER_SUITES, RUNNER_SCENARIOS, RUNNER_SUITES,
                                            validate_suite_fixture, validate_suite_scenario)
     cases, exclusions = [], []
+    require_smoke_phone_guard((ROOT / "immichSlidesUITests/StrictE2ESmokeUITests.swift").read_text())
     for device, platform in (("iphone", "ios"), ("ipad", "ios"), ("tv", "tvos")):
         for suite in sorted(set(RUNNER_SUITES)):
             try:
@@ -51,6 +71,8 @@ def contract_population():
                     case = dict(platform=platform, device=device, configuration=configuration,
                                 suite=suite, scenario=scenario, fixture=fixture)
                     try:
+                        if device == "ipad" and suite == "smoke":
+                            raise CommandError(SMOKE_DEVICE_REASON)
                         validate_suite_fixture(suite, fixture)
                         if suite in DUAL_SERVER_SUITES and fixture != "a":
                             raise CommandError("Dual-server suites must start from fixture A.")
@@ -85,7 +107,10 @@ def parse_manifest(raw):
     require(Counter(identity_key(case) for case in manifest["cases"]) == Counter(identity_key(case) for case in expected),
             "matrix does not equal current runner population (missing, duplicate or unsupported case)")
     require(Counter(identity_key(entry) for entry in manifest["exclusions"]) == Counter(identity_key(entry) for entry in exclusions),
-            "matrix exclusions do not equal unsupported fixture combinations")
+            "matrix exclusions do not equal unsupported device/fixture combinations")
+    require(all(entry["reason"] == SMOKE_DEVICE_REASON for entry in manifest["exclusions"]
+                if entry["case"]["device"] == "ipad" and entry["case"]["suite"] == "smoke"),
+            "iPad smoke exclusions must cite the selected method's phone guard")
     runners = []
     for entry in manifest["runner_exclusions"]:
         fields(entry, {"runner", "reason"}, "runner exclusion")

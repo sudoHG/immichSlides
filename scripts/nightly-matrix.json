@@ -106,8 +106,6 @@
     {"platform":"ios","device":"ipad","configuration":"Debug","suite":"pause-window","scenario":"normal","fixture":"a"},
     {"platform":"ios","device":"ipad","configuration":"Debug","suite":"pause-window","scenario":"normal","fixture":"b"},
     {"platform":"ios","device":"ipad","configuration":"Debug","suite":"server-switch-display","scenario":"normal","fixture":"a"},
-    {"platform":"ios","device":"ipad","configuration":"Debug","suite":"smoke","scenario":"normal","fixture":"a"},
-    {"platform":"ios","device":"ipad","configuration":"Debug","suite":"smoke","scenario":"normal","fixture":"b"},
     {"platform":"tvos","device":"tv","configuration":"Debug","suite":"late-image","scenario":"out-of-order","fixture":"a"},
     {"platform":"tvos","device":"tv","configuration":"Debug","suite":"late-image","scenario":"out-of-order","fixture":"b"},
     {"platform":"tvos","device":"tv","configuration":"Debug","suite":"p2-cache","scenario":"normal","fixture":"a"},
@@ -141,6 +139,8 @@
     {"platform":"tvos","device":"tv","configuration":"Release","suite":"tvos-switch","scenario":"normal","fixture":"a"}
   ],
   "exclusions": [
+    {"case":{"platform":"ios","device":"ipad","configuration":"Debug","suite":"smoke","scenario":"normal","fixture":"a"},"reason":"StrictE2ESmokeUITests.testIOSStrictE2EConnectionSmoke guards userInterfaceIdiom == .phone and skips iPad."},
+    {"case":{"platform":"ios","device":"ipad","configuration":"Debug","suite":"smoke","scenario":"normal","fixture":"b"},"reason":"StrictE2ESmokeUITests.testIOSStrictE2EConnectionSmoke guards userInterfaceIdiom == .phone and skips iPad."},
     {"case":{"platform":"ios","device":"iphone","configuration":"Release","suite":"display-policy","scenario":"normal","fixture":"b"},"reason":"display-policy must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"ios","device":"iphone","configuration":"Release","suite":"filter-switch","scenario":"normal","fixture":"b"},"reason":"Dual-server suites must start from fixture A."},
     {"case":{"platform":"ios","device":"iphone","configuration":"Debug","suite":"image-failure-recovery","scenario":"normal","fixture":"b"},"reason":"image-failure-recovery must use public fixture A; data from different servers cannot be mixed."},

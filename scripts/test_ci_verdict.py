@@ -15,6 +15,22 @@ from test_ci_summary import valid_summary
 
 
 class NightlyVerdictTests(unittest.TestCase):
+    def test_ipad_smoke_exclusions_follow_the_selected_tests_phone_guard(self):
+        from ci_nightly import contract_population
+        cases, exclusions = contract_population()
+        self.assertEqual([case for case in cases if case["device"] == "ipad" and case["suite"] == "smoke"], [])
+        device_exclusions = [entry for entry in exclusions if entry["case"]["device"] == "ipad"
+                             and entry["case"]["suite"] == "smoke"]
+        self.assertEqual({entry["case"]["fixture"] for entry in device_exclusions}, {"a", "b"})
+        from ci_nightly import require_smoke_phone_guard
+        source = (Path(__file__).parent.parent / "immichSlidesUITests/StrictE2ESmokeUITests.swift").read_text()
+        require_smoke_phone_guard(source)
+        for changed in (source.replace("== .phone", "== .pad"),
+                        source.replace("guard UIDevice", "// guard UIDevice"),
+                        source.replace("throw XCTSkip", "XCTFail")):
+            with self.subTest(source=changed), self.assertRaises(ci_summary.ContractError):
+                require_smoke_phone_guard(changed)
+
     def test_single_shard_diagnostics_keep_the_complete_scheduling_population(self):
         from ci_nightly import select_dispatch_shards
         planned = [{"id": "first", "cases": ["a"]}, {"id": "second", "cases": ["b"]}]

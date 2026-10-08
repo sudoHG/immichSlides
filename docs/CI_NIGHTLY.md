@@ -33,11 +33,15 @@ against current selector/scenario/fixture/scheme contracts; duplicates and missi
 cases fail. Runtime discovery cannot silently change the scheduled list. Inapplicable
 platforms/scenarios and P2 devices are outside the supported population.
 
-The initial 137 cases comprise 54 iPhone, 52 iPad and 31 Apple TV combinations.
+The initial 135 cases comprise 54 iPhone, 50 iPad and 31 Apple TV combinations.
 All 77 distinct device/suite/scenario identities in the historical local report remain.
-Repeat attempts are not new identities. New identities are iPad smoke and iPhone/iPad
-image-failure-recovery. Both frozen fixtures run wherever permitted. The 23 explicit
-fixture exclusions require A: lifecycle, display policy, image-failure recovery,
+Repeat attempts are not new identities. New identities are iPhone/iPad image-failure-recovery.
+Both frozen fixtures run wherever permitted. The 25 explicit exclusions comprise two
+device exclusions and 23 fixture exclusions. iPad smoke is unsupported: the selected
+`StrictE2ESmokeUITests.testIOSStrictE2EConnectionSmoke` guards
+`userInterfaceIdiom == .phone` and skips iPad. The validator checks that guard against
+Swift code with comments/strings removed and fails when it changes, requiring a device
+scope review. The fixture exclusions require A: lifecycle, display policy, image-failure recovery,
 tvOS album selection and dual-server suites. Reasons come from existing contracts.
 No assertions, thresholds, App behavior or visual modes change.
 
@@ -52,7 +56,7 @@ Shards group by device/platform/scheme/configuration, then split into chunks of 
 six, retaining ordinary Debug and settings-resume Release. The [warm tracer](CI_STRICT_RUNNER.md)
 builds once per shard, resets app/keychain/privacy and uses `test-without-building`
 with immutable Products checks. Case directories are unique across repeated suites.
-The 26 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS slots.
+The 25 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS slots.
 Cold warm-up has 1,200 seconds; each warm invocation has 600. Each case adds a 240-second
 reset/export/cleanup allowance; filter-person receives three invocation budgets.
 Simulator preparation shares a 120-second deadline, with individual reset commands
