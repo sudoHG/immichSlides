@@ -79,14 +79,14 @@ def run_identity(env, *, ci=False):
         if commit != env.get("GITHUB_SHA"):
             raise ContractError("checkout does not match pushed GITHUB_SHA")
         identity.update(ref=env.get("GITHUB_REF"), pushed_sha=commit)
-    elif event == "workflow_dispatch":
+    elif event in {"workflow_dispatch", "schedule"}:
         if commit != env.get("GITHUB_SHA"):
             raise ContractError("checkout does not match dispatched GITHUB_SHA")
         identity.update(ref=env.get("GITHUB_REF"), commit_sha=commit)
     elif event == "local":
         identity.update(commit_sha=commit, dirty=bool(git("status", "--porcelain")))
     else:
-        raise ContractError("CI identity supports pull_request, main push and workflow_dispatch only")
+        raise ContractError("CI identity supports pull_request, main push, schedule and workflow_dispatch only")
     return parse_identity(identity)
 
 

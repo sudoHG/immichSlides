@@ -77,6 +77,7 @@ def validate_identity_v1(payload):
         "pull_request": {"pull_request", "merge_sha", "base_sha", "head_sha"},
         "push": {"ref", "pushed_sha"},
         "workflow_dispatch": {"ref", "commit_sha"},
+        "schedule": {"ref", "commit_sha"},
         "local": {"commit_sha", "dirty"},
     }
     require(event in variants, "unsupported identity event")
@@ -92,6 +93,8 @@ def validate_identity_v1(payload):
         integer(payload["pull_request"], 1, "pull_request")
     elif event == "push":
         require(payload["ref"] == "refs/heads/main", "push identity requires refs/heads/main")
+    elif event == "schedule":
+        require(payload["ref"] == "refs/heads/main", "schedule identity requires refs/heads/main")
     elif event == "workflow_dispatch":
         require(isinstance(payload["ref"], str) and re.fullmatch(r"refs/(heads|tags)/[^\s]+", payload["ref"]) is not None,
                 "workflow_dispatch identity requires a branch or tag ref")

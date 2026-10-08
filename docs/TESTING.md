@@ -311,6 +311,8 @@ Run serially within a checkout because the runner manages temporary test configu
 For explicit shard warm-up, build reuse, cold/warm budgets, full simulator resets and
 the informational CI tracer, see [Strict runner warm-build tracer](CI_STRICT_RUNNER.md).
 The default local invocation and timeouts are unchanged.
+Versioned nightly shards, exclusions and aggregate rules are documented in
+[Skeleton nightly](CI_NIGHTLY.md).
 
 ### Known-flaky registry and listed-only retries
 

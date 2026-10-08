@@ -1,0 +1,180 @@
+name: ci-nightly
+
+on:
+  schedule:
+    - cron: '15 21 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/ci-nightly.yml
+      - scripts/ci_nightly.py
+      - scripts/nightly-*.json
+      - scripts/run_strict_ci_tracer.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Reject private configuration before setup
+        run: |
+          /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
+      - name: Select and verify pinned toolchain
+        run: |
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
+      - name: Validate the full versioned matrix and record this attempt
+        id: matrix
+        run: |
+          matrix=$("$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_nightly.py plan \
+            --output-dir "$RUNNER_TEMP/nightly-plan")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+      - name: Publish the scheduling record
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-plan/plan.json
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+
+  strict:
+    if: github.event_name != 'pull_request'
+    needs: plan
+    name: nightly-strict-${{ matrix.id }}
+    runs-on: xcode-27
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Reject private configuration before setup
+        run: |
+          /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
+      - name: Select and verify pinned toolchain
+        run: |
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
+      - name: Create a dedicated simulator for this shard
+        env:
+          NIGHTLY_DEVICE: ${{ matrix.device }}
+          NIGHTLY_PLATFORM: ${{ matrix.platform }}
+        run: |
+          device=$(/usr/bin/python3 -c 'import json,os; p=json.load(open("scripts/ci-pins.json")); d=os.environ["NIGHTLY_DEVICE"]; print(p["device_types"]["appletv" if d=="tv" else d])')
+          runtime=$(/usr/bin/python3 -c 'import json,os; print(json.load(open("scripts/ci-pins.json"))["simulators"][os.environ["NIGHTLY_PLATFORM"]]["runtime"])')
+          udid=$(xcrun simctl create immichSlides-nightly "$device" "$runtime")
+          echo "NIGHTLY_SIMULATOR=$udid" >> "$GITHUB_ENV"
+          os_name=$([ "$NIGHTLY_PLATFORM" = ios ] && echo iOS || echo tvOS)
+          echo "NIGHTLY_DESTINATION=platform=$os_name Simulator,id=$udid" >> "$GITHUB_ENV"
+      - name: Warm the shard once and execute every scheduled case
+        env:
+          NIGHTLY_SHARD: ${{ matrix.id }}
+          NIGHTLY_PLATFORM: ${{ matrix.platform }}
+        run: |
+          "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/run_strict_ci_tracer.py \
+            --manifest scripts/nightly-matrix.json --shard "$NIGHTLY_SHARD" \
+            --platform "$NIGHTLY_PLATFORM" --destination "$NIGHTLY_DESTINATION" \
+            --output-dir "$RUNNER_TEMP/nightly-strict" --min-free-gib 30 \
+            --cold-timeout-seconds 1200 --warm-timeout-seconds 600
+      - name: Publish compact records even after failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-strict-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-strict/records
+          retention-days: 7
+          if-no-files-found: error
+      - name: Display records and clean task outputs
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/nightly-strict/records/summary.md"; then
+            cat "$RUNNER_TEMP/nightly-strict/records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f "$RUNNER_TEMP/nightly-strict/runner-group-cleanup-failed"; then
+            echo 'Runner descendants could not be stopped; retaining inputs until runner teardown.' >&2
+            exit 1
+          fi
+          if test -n "$NIGHTLY_SIMULATOR"; then
+            xcrun simctl shutdown "$NIGHTLY_SIMULATOR" || true
+            xcrun simctl delete "$NIGHTLY_SIMULATOR"
+          fi
+          rm -rf "$RUNNER_TEMP/nightly-strict"
+
+  aggregate:
+    if: always() && github.event_name != 'pull_request'
+    needs: [plan, strict]
+    name: nightly-aggregate
+    runs-on: xcode-27
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Reject private configuration before setup
+        run: |
+          /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
+      - name: Select and verify pinned toolchain
+        run: |
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
+      - name: Download this attempt's scheduling record
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nightly-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-plan
+      - name: Download this attempt's shard records
+        if: always()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: nightly-strict-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-records
+      - name: Validate provenance, matrix equality and the fixed nightly aggregate
+        if: always()
+        env:
+          NIGHTLY_MATRIX_JOB_RESULT: ${{ needs.strict.result }}
+        run: |
+          "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_nightly.py aggregate \
+            --plan "$RUNNER_TEMP/nightly-plan/plan.json" --records-dir "$RUNNER_TEMP/nightly-records" \
+            --output-dir "$RUNNER_TEMP/nightly-aggregate" --matrix-job-result "$NIGHTLY_MATRIX_JOB_RESULT"
+      - name: Publish the aggregate and non-eligible rollup entry
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-aggregate
+          retention-days: 7
+          if-no-files-found: error
+      - name: Display aggregate and clean downloads
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/nightly-aggregate/nightly.md"; then
+            cat "$RUNNER_TEMP/nightly-aggregate/nightly.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          rm -rf "$RUNNER_TEMP/nightly-plan" "$RUNNER_TEMP/nightly-records" "$RUNNER_TEMP/nightly-aggregate"
