@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+// This temporary CI classification control preserves app behavior.
 @main
 struct ImmichSlidesApp: App {
     private let forcedColorScheme: ColorScheme?
