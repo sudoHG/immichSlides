@@ -202,3 +202,5 @@ GitHub's [workflow-run API](https://docs.github.com/en/rest/actions/workflow-run
 documents environment review history; [rerun behavior](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)
 preserves the original SHA/ref. [Static population and verdict policy](CI_POPULATION.md)
 and [the summary contract](CI_SUMMARY.md) define the evidence checks.
+
+<!-- CI acceptance probe: docs-only change; this PR is closed without merging. -->
