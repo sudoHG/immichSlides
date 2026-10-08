@@ -67,9 +67,13 @@ case record, finish cleanup and quarantine raw bundles privately. Existing cold/
 and outer deadlines are unchanged. The tracer retains these entries even when official
 exports are unavailable, so application/test execution and infrastructure hangs remain
 distinguishable.
-Six cases can require eight invocations, giving a worst shard allowance of 128 minutes.
-The job timeout is 150 minutes including setup/upload/cleanup; planning/aggregate have
-15-minute caps. Hosted disk floor stays 30 GiB; local default stays 80 GiB.
+The person shard contains both fixtures: two three-session cases and four single-session
+cases require ten invocations. Its conservative outer allowances total 148 minutes
+(24 cold plus 124 warm). The 165-minute job cap leaves 17 minutes for setup/upload/cleanup
+so a slow shard can publish its failed records before runner teardown. Individual
+runner, test and infrastructure deadlines are unchanged; reaching the job cap is a
+failure. Planning/aggregate have 15-minute caps.
+Hosted disk floor stays 30 GiB; local default stays 80 GiB.
 
 ## Results, scope and eligibility
 
