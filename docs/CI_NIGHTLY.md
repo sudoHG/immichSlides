@@ -70,6 +70,19 @@ executed identities with scheduling. Every entry has an outcome; synthetic `not-
 placeholders never count as execution. Missing artifacts, failed/cancelled jobs,
 infrastructure failures and matrix discrepancies are red. There is no automatic retry.
 
+The aggregate entry point is:
+
+```bash
+python3 -B scripts/ci_nightly.py aggregate --plan '<outside-repo>/plan.json' \
+    --records-dir '<outside-repo>/shard-artifacts' \
+    --output-dir '<fresh-outside-repo>/aggregate' --matrix-job-result success
+```
+
+Run it in the same event/run/attempt context as planning; the hosted workflow supplies
+that context. Shard directories are named `nightly-strict-<shard>-<run-id>-<attempt>`.
+For a local plan the run ID is `None` and attempt is 1. Downloaded CI records must not
+be relabeled as a local run. The matrix job result comes from Actions, not its artifacts.
+
 [`nightly-policy.json`](../scripts/nightly-policy.json) builds only strict and starts
 with `live_tier_in_scope: false`. UI, offline performance, live and live performance are
 **not yet in scope**, without making the skeleton red. Setting live scope without live
