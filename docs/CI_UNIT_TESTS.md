@@ -136,12 +136,12 @@ The guard reads actual workflow `timeout-minutes`; measurements and Markdown rec
 phase limits, grace, measured overhead and allowance. These are infrastructure budgets;
 product assertions and success thresholds do not change.
 
-The provisional feedback budget is **22 minutes (1320 s)**. Its calibration includes
-[success](https://github.com/sudoHG/immichSlides/actions/runs/37719766131) at 638 s and
-[failure](https://github.com/sudoHG/immichSlides/actions/runs/37717972490) at 872 s,
+The provisional feedback budget is **45 minutes (2700 s)**. Its calibration includes
+[success](https://github.com/sudoHG/immichSlides/actions/runs/37730804080) at 1554 s and
+[failure](https://github.com/sudoHG/immichSlides/actions/runs/37728068592) at 1788 s,
 including queueing through the last completed job. Nearest-rank sample p95 is rank 2
-of 2 (872 s); a **1.5x margin** and upward minute rounding give
-`ceil(872 * 1.5 / 60) = 22`, leaving 448 s above the maximum observation.
+of 2 (1788 s); a **1.5x margin** and upward minute rounding give
+`ceil(1788 * 1.5 / 60) = 45`, leaving 912 s above the maximum observation.
 This budget is **provisional until #93 promotion**. Enforcement belongs to #89;
 concurrent PR/nightly capacity and the promotion sample remain unverified.
 Script/job timeouts are cancellation bounds, not promises of runner capacity.
