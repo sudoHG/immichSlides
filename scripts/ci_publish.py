@@ -23,7 +23,7 @@ from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ci_summary import ContractError, parse_identity, parse_summary, require, sha
-from ci_publish_git import derive_record, evaluate_records, git, workflow_contract
+from ci_publish_git import derive_record, evaluate_records, git, ui_failure_hint, workflow_contract
 
 PUBLISH_PATH = ".github/workflows/ci-publish.yml"
 APPROVAL_PATH = ".github/workflows/ci-approval.yml"
@@ -119,6 +119,8 @@ def publication_plan(pr, runs, admissions, evaluations, *, approved, needs_appro
         run = runs.get(context)
         if needs_approval and not approved:
             state = {"state": "failure", "description": "Exact head approval required"}
+            if run and admissions.get(run["id"], {}).get("workflows", {}).get(run["path"], {}).get("base", "") is None:
+                state["description"] = "workflow is absent on the base; exact-head approval required"
         elif not run or run["id"] not in admissions:
             state = {"state": "pending", "description": "Waiting for producer and trusted admission"}
         elif run["status"] != "completed":
@@ -433,13 +435,19 @@ def compute(api, pr_number, pushed, login):
             require((identity["pull_request"] == pr_number and identity["head_sha"] == head) if pr else identity["pushed_sha"] == head,
                     "admission does not name current head")
             source = record["workflows"][run["path"]]["candidate" if approved else "base"]
+            require(source is not None, "workflow is absent on the base; exact-head approval required")
+            if context == "ci-ui":
+                ui = record.get("ui_inputs", {}).get("candidate" if approved else "base")
+                if ui is not None:
+                    require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
             jobs, summaries = producer_evidence(api, run, source)
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)
                 require(mismatch is None, mismatch or "identity mismatch")
             evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
-        except (ContractError, KeyError, ValueError, TypeError):
-            evaluations[context] = {"state": "failure", "description": "Missing, invalid or mismatched admitted evidence"}
+        except (ContractError, KeyError, ValueError, TypeError) as error:
+            evaluations[context] = {"state": "failure", "description": ui_failure_hint(error) or
+                                   "Missing, invalid or mismatched admitted evidence"}
             # The infrastructure advice is deterministic, without candidate text.
             if any(match_producer(s["identity"], record["identity"]) for s in summaries):
                 previous = prior_mismatch(api.pages("commits/" + head + "/statuses"), run, login)

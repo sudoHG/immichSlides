@@ -7,6 +7,7 @@ reader modules are ever materialized as executable Python.
 from __future__ import annotations
 
 import ast
+import hashlib
 import itertools
 import json
 import os
@@ -15,15 +16,17 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 
 import yaml
 
-from ci_summary import require, sha, test_identity
+from ci_summary import ContractError, decode, require, sha, test_identity
+from ci_ui_shards import DEVICES, MANIFEST_PATH, default_plan_population, parse_shard_manifest, shard_populations
 
 BASE_MODULES = ("ci_summary.py", "ci_population.py", "ci_verdict.py", "ui_test_inventory.py",
                 "run_host_checks.py")
-OPTIONAL_BASE_MODULES = ("ci_flaky.py",)
+OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py")
 BRIDGE = '''import json,sys
 sys.path.insert(0, sys.argv[1])
 from ci_population import python_identities,swift_identities,ui_identities
@@ -42,7 +45,24 @@ if p['operation']=='derive':
         population['ui-'+platform]=ui_identities(ui,platform)
     classification=classify_changes(p['paths'],p['classification_policy'],build_target_paths=p['build_target_paths'])
     result={'populations':population,'classification':classification}
+elif p['operation']=='ui':
+    from ci_ui_shards import DEVICES,default_plan_population,shard_populations
+    result={'populations':{},'base_populations':{}}
+    for device in p['devices']:
+        platform=DEVICES[device]
+        plan=p['plans'][platform]['plan']
+        result['base_populations'][device]=[test_identity('ui',entry['key'],platform=platform,device=device)
+            for entry in default_plan_population(p['base_populations']['ui-'+platform],plan)]
+    try:
+        for device in p['shard_devices']:
+            platform=DEVICES[device]
+            result['populations'][device]=shard_populations(p['populations']['ui-'+platform],p['plans'][platform]['plan'],p['manifest'],device)
+    except Exception as error:
+        result['error']=str(error)
 else:
+    if 'evaluated_on' in p['inputs']:
+        from datetime import date
+        p['inputs']['evaluated_on']=date.fromisoformat(p['inputs']['evaluated_on'])
     result=evaluate_gate(p['summaries'],**p['inputs'])
 print(json.dumps(result))
 '''
@@ -87,7 +107,9 @@ def base_reader(modules, payload):
         result = subprocess.run([sys.executable, "-I", "-B", "-c", BRIDGE, directory],
                                 input=json.dumps(payload), capture_output=True, text=True,
                                 env=environment, timeout=120)
-        require(result.returncode == 0, "base reader refused static inputs")
+        empty_shard = re.search(r"^ci_summary.ContractError: (shard [a-z][a-z0-9-]* has no tests on "
+                               r"(?:iphone|ipad|appletv); update scripts/ci-ui-shards\.json)$", result.stderr, re.MULTILINE)
+        require(result.returncode == 0, empty_shard.group(1) if empty_shard else "base reader refused static inputs")
         return json.loads(result.stdout)
 
 
@@ -135,8 +157,11 @@ def derive_record(identity, run, *, before=None):
     base_derived = base_reader(modules, payload)
     workflows = {}
     for path in (".github/workflows/ci-gate.yml", ".github/workflows/ci-ui.yml"):
-        if any(entry["path"] == path for entry in base_listing):
-            workflows[path] = {"base": read_blob(base, path), "candidate": read_blob(commit, path)}
+        present_base = any(entry["path"] == path for entry in base_listing)
+        present_candidate = any(entry["path"] == path for entry in listing)
+        if present_base or present_candidate:
+            workflows[path] = {"base": read_blob(base, path) if present_base else None,
+                               "candidate": read_blob(commit, path) if present_candidate else None}
     operational = {}
     syntax = ast.parse(read_blob(base, "scripts/ci_build_archive.py"))
     for function in syntax.body:
@@ -150,13 +175,68 @@ def derive_record(identity, run, *, before=None):
                                  and isinstance(keyword.value, ast.Constant))
             operational[function.name] = {platform: [test_identity(call.args[0].value, call.args[1].value,
                                          platform=platform, configuration=configuration)] for platform in ("ios", "tvos")}
+    ui = {}
+    for side, revision, entries in (("base", base, base_listing), ("candidate", commit, listing)):
+        try:
+            ui[side] = ui_inputs(revision, entries, populations=derived["populations"],
+                                 base_populations=base_derived["populations"],
+                                 workflow=workflows.get(".github/workflows/ci-ui.yml", {}).get(side), run=run, modules=modules)
+        except Exception as error:
+            if side == "base":
+                raise
+            # Bad candidate UI data cannot suppress a separate gate admission.
+            ui[side] = {"error": ui_failure_hint(error) or "candidate UI inputs are invalid"}
     return {"schema_version": 1, "run_id": run["id"], "workflow_id": run["workflow_id"],
             "workflow_path": run["path"], "identity": identity, "tree_listing": listing,
             "populations": derived["populations"], "base_populations": base_derived["populations"],
             "operational_populations": operational,
+            "ui_inputs": ui,
             "classification": derived["classification"], "reader_revision": base, "workflows": workflows,
+            "base_registry": json.loads(read_blob(base, "scripts/ci-known-flaky.json"))
+                             if any(entry["path"] == "scripts/ci-known-flaky.json" for entry in base_listing) else None,
             "base_policy": json.loads(read_blob(base, "scripts/ci-test-policy.json")),
             "candidate_policy": json.loads(read_blob(commit, "scripts/ci-test-policy.json"))}
+
+
+def ui_failure_hint(error):
+    message = str(error)
+    if message == "workflow is absent on the base; exact-head approval required":
+        return message
+    if re.fullmatch(r"shard [a-z][a-z0-9-]* has no tests on (?:iphone|ipad|appletv); "
+                    r"update scripts/ci-ui-shards\.json", message):
+        return message
+    return None
+
+
+def ui_inputs(revision, listing, *, populations=None, base_populations=None, workflow=None, run=None, modules=None):
+    paths = {entry["path"] for entry in listing if entry["type"] == "blob" and entry["mode"] in {"100644", "100755"}}
+    if MANIFEST_PATH not in paths:
+        return None
+    raw = read_blob(revision, MANIFEST_PATH)
+    result = {"manifest": parse_shard_manifest(raw), "manifest_sha256": hashlib.sha256(raw.encode()).hexdigest(), "plans": {}}
+    for platform, suffix in (("ios", "iOS"), ("tvos", "tvOS")):
+        path = "immichSlides-" + suffix + ".xctestplan"
+        if path in paths:
+            raw_plan = read_blob(revision, path)
+            default_plan_population([], raw_plan)
+            result["plans"][platform] = {"plan": decode(raw_plan), "sha256": hashlib.sha256(raw_plan.encode()).hexdigest()}
+    result.update(populations={}, base_populations={})
+    devices = []
+    if workflow is not None:
+        _, _, _, metadata = workflow_contract(workflow, run, metadata=True)
+        devices = sorted({meta["device"] for meta in metadata.values() if meta["tier"] == "ui"})
+        require(all(DEVICES[device] in result["plans"] for device in devices), "UI workflow device has no default plan")
+    if modules is not None:
+        computed = base_reader(modules, {"operation": "ui", "shard_devices": devices,
+                      "devices": sorted(device for device, platform in DEVICES.items() if platform in result["plans"]), "populations": populations,
+                      "base_populations": base_populations, "plans": result["plans"], "manifest": result["manifest"]})
+        if "error" in computed:
+            # Keep the base's own filtered population for an approved replacement
+            # manifest; only the tested-tree shard computation failed.
+            return {"error": ui_failure_hint(computed["error"]) or "UI shard populations are invalid",
+                    "base_populations": computed["base_populations"]}
+        result.update(computed)
+    return result
 
 
 def render_expression(value, bindings):
@@ -186,7 +266,9 @@ def workflow_contract(source, run, *, details=False, metadata=False):
     # The workflow is data from the admitted trusted base (or exact-head approved
     # metadata), never an executable candidate workflow in this process.
     from check_workflow_policy import WorkflowLoader
+    require(isinstance(source, str), "workflow is absent on the base; exact-head approval required")
     workflow = yaml.load(source, Loader=WorkflowLoader)
+    require(isinstance(workflow, dict) and isinstance(workflow.get("jobs"), dict), "workflow needs literal jobs")
     jobs, artifacts, artifacts_by_job, evidence = [], [], {}, {}
     for key, job in workflow["jobs"].items():
         matrix = job.get("strategy", {}).get("matrix", {})
@@ -208,6 +290,20 @@ def workflow_contract(source, run, *, details=False, metadata=False):
             producers = []
             if any(script == "run_host_checks.py" for script, _ in commands):
                 producers.append({"tier": "host", "job": "host-checks", "shard": None, "population": "host"})
+            ui_operations = [(arguments[0], arguments) for script, arguments in commands
+                             if script == "ci_ui_tests.py" and arguments and arguments[0] in {"wait-archive", "run"}]
+            for operation, arguments in ui_operations:
+                if operation == "wait-archive":
+                    producers.append({"tier": "ui-infrastructure", "job": "ui-archive", "shard": None, "population": "ui-archive"})
+                else:
+                    def option(name):
+                        indexes = [index for index, item in enumerate(arguments) if item == name]
+                        require(len(indexes) == 1 and indexes[0] + 1 < len(arguments), "literal UI device/shard required")
+                        return arguments[indexes[0] + 1]
+                    device, shard = option("--device"), option("--shard")
+                    require(device in DEVICES and re.fullmatch(r"[a-z][a-z0-9-]*", shard), "unknown UI device/shard")
+                    producers.append({"tier": "ui", "job": "ui-" + device, "shard": shard,
+                                      "population": "ui-" + DEVICES[device], "device": device})
             operations = {arguments[0] for script, arguments in commands
                           if script == "ci_build_archive.py" and arguments and arguments[0] in {"build", "proof"}}
             unit = any(script == "ci_unit_tests.py" and arguments and arguments[0] == "run"
@@ -244,15 +340,45 @@ def workflow_contract(source, run, *, details=False, metadata=False):
 
 
 def evaluate_records(record, run, jobs, summaries, *, approved, fork):
+    context = "gate" if run["path"].endswith("ci-gate.yml") else "ui"
+    ui = record.get("ui_inputs", {}).get("candidate" if approved else "base") if context == "ui" else None
+    if ui is not None:
+        require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
     source = record["workflows"][run["path"]]["candidate" if approved else "base"]
     expected_jobs, _, _, metadata = workflow_contract(source, run, metadata=True)
     actual = {job["name"]: job for job in jobs}
     require(set(actual) == set(expected_jobs) and len(jobs) == len(actual), "required workflow jobs differ")
     require(all(job["status"] == "completed" and job["conclusion"] == "success" for job in jobs),
             "a required job failed, skipped or was cancelled")
-    context = "gate" if run["path"].endswith("ci-gate.yml") else "ui"
     tree = record["identity"]["tree_sha"]
+    ui_devices = {meta["device"] for meta in metadata.values() if meta["tier"] == "ui"}
+    ui_populations, ui_base = {}, []
+    if context == "ui":
+        require(ui is not None and ui_devices, "UI manifest and device populations are not admitted")
+        require(all(meta["tier"] in {"ui", "ui-infrastructure"} for meta in metadata.values())
+                and sum(meta["population"] == "ui-archive" for meta in metadata.values()) == 1,
+                "UI workflow needs one archive selection producer and device shards")
+        for device in ui_devices:
+            platform = DEVICES[device]
+            ui_populations[device] = ui["populations"][device]
+            assigned = [meta["shard"] for meta in metadata.values() if meta.get("device") == device]
+            require(len(assigned) == len(set(assigned)) and set(assigned) == set(ui_populations[device]),
+                    "workflow shard union differs from the admitted manifest")
+            base_ui = record["ui_inputs"]["base"] or ui
+            ui_base.extend(base_ui["base_populations"][device])
+        for summary in summaries:
+            require(summary["hashes"]["manifests"].get("ui-shards") == ui["manifest_sha256"], "UI manifest hash differs")
+            meta = next((item for item in metadata.values() if all(item[key] == summary["run"][key]
+                        for key in ("tier", "job", "shard"))), None)
+            require(meta is not None, "unsupported UI summary job")
+            if meta["tier"] == "ui":
+                require(summary["hashes"]["manifests"].get("test-plan") == ui["plans"][DEVICES[meta["device"]]]["sha256"],
+                        "UI default-plan hash differs")
     def population(meta):
+        if meta["population"] == "ui-archive":
+            return [test_identity("host", "UI archive selection")]
+        if meta["tier"] == "ui":
+            return ui_populations[meta["device"]][meta["shard"]]
         return (record["operational_populations"][meta["population"]][meta["shard"]]
                 if meta["tier"] == "build" else record["populations"][meta["population"]])
     required_jobs = [{"tier": meta["tier"], "job": meta["job"], "shard": meta["shard"],
@@ -260,7 +386,7 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
                       "workflow_paths": [run["path"]], "expected": {"tree_sha": tree, "identities": population(meta)},
                       "status": actual[name]["status"], "conclusion": actual[name]["conclusion"]}
                      for name, meta in metadata.items()]
-    parts = ["host", "unit-ios", "unit-tvos"] if context == "gate" else ["ui-ios", "ui-tvos"]
+    parts = ["host", "unit-ios", "unit-tvos"] if context == "gate" else []
     expected = [identity for part in parts for identity in record["populations"][part]]
     base_expected = [identity for part in parts for identity in record["base_populations"][part]]
     if context == "gate":
@@ -269,12 +395,19 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
                       for identities in platforms.values() for identity in identities]
         expected += operations
         base_expected += operations
+    else:
+        expected = [entry for job in required_jobs for entry in job["expected"]["identities"]]
+        base_expected = ui_base + [test_identity("host", "UI archive selection")]
     inputs = {"expected": {"tree_sha": tree, "identities": expected}, "admission_identity": record["identity"],
               "required_jobs": required_jobs, "base_policy": record["base_policy"], "candidate_policy": record["candidate_policy"],
-              "environment": "hermetic", "approved_head": record["identity"].get("head_sha") if approved else None,
+              "environment": "fixture" if context == "ui" else "hermetic", "approved_head": record["identity"].get("head_sha") if approved else None,
               "fork_originated": fork, "ci_changing": record["classification"]["ci_changing"],
               "app_affected": record["classification"]["app_affected"], "context": context,
               "base_population": {"base_sha": record["identity"].get("base_sha"), "identities": base_expected}}
+    if context == "ui" and record.get("base_registry") is not None:
+        evaluated_on = run.get("run_started_at", run.get("created_at", ""))[:10]
+        require(date.fromisoformat(evaluated_on).isoformat() == evaluated_on, "trusted UI evaluation date is missing")
+        inputs.update(base_registry=record["base_registry"], evaluated_on=evaluated_on)
     modules = trusted_reader(record)
     verdict = base_reader(modules, {"operation": "gate", "summaries": summaries, "inputs": inputs})
     missing_units = context == "gate" and {meta["population"] for meta in metadata.values() if meta["tier"] == "unit"} != {"unit-ios", "unit-tvos"}

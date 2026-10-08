@@ -27,6 +27,7 @@ from source text. The trusted `ci-admission-<producer-run-id>` artifact stores:
 - the repository, PR number, GitHub merge/base/head/tree identity (or main push identity);
 - producer workflow ID and path;
 - the complete tree listing, populations and base populations;
+- default-plan UI populations by device/shard, the base UI population, and manifest/plan hashes;
 - the trusted base reader revision, classification, workflow metadata and policies.
 
 The artifact is kept 30 days. Readers query its exact name, verify the producing
@@ -39,7 +40,10 @@ and read only the bounded JSON member; no ZIP is extracted and no artifact code
 is executed. Base-reader modules are loaded from Git objects at the verified
 main first parent, rechecked against main history, and run in a temporary isolated
 subprocess without credentials. Evaluator dependencies, including `ci_flaky.py`
-when present, come from the same base; older bases without it remain supported.
+and `ci_ui_shards.py` when present, come from the same base; older bases without
+them remain supported. Recording-suite eligibility is declared in `ci_flaky.py`
+and shared with the strict runner/P2 contract, so parsing a mixed strict/UI
+registry needs no image processing or strict-runner imports in the isolated reader.
 Main retains that base; late approval does not
 require fetching the old merge commit again.
 Reruns preserve the first record because GitHub re-tests the original SHA/ref.
@@ -85,6 +89,65 @@ attempt; an actual new execution requires its new artifact. This retains earlier
 successful jobs' artifacts and refuses older artifacts for a job that actually reran.
 Unknown matrices, shards or tiers fail closed until a supported reader is landed
 on main before the producer starts emitting them.
+
+The UI reader supports a Linux `ci_ui_tests.py wait-archive` job and literal
+`ci_ui_tests.py run --device DEVICE --shard SHARD` jobs. Each still requires one
+bound summary artifact and a successful GitHub job. Supported devices are
+`iphone`, `ipad` and `appletv`; the producer determines which device matrix is
+currently in scope. A device's shard names must exactly equal the admitted
+manifest's names, without duplicate assignments. Each shard's independently
+derived default-plan population includes its platform and device. The gate
+checks this complete union, including declared, compiled and observed identities.
+
+The producer must emit these literal summary fields and hash logical names:
+
+| Producer | `run.tier` | `run.job` | `run.shard` | Required identities / hashes |
+| --- | --- | --- | --- | --- |
+| `wait-archive` | `ui-infrastructure` | `ui-archive` | `null` | One `host` identity with key `UI archive selection` and empty dimensions; `hashes.manifests.ui-shards` |
+| `run --device DEVICE --shard SHARD` | `ui` | `ui-<device>` | The literal manifest shard | Complete shard UI identities with `platform` and `device`; `hashes.manifests.ui-shards` and `hashes.manifests.test-plan` |
+
+The archive-selection summary still carries the consumer's complete PR
+merge/base/head/tree identity (or main push identity). An archive's producer run
+ID cannot replace the consumer's `run.id`. Upload artifact names bind the
+GitHub job and its actual evidence attempt through the admitted workflow.
+
+Admission retains the base and candidate `scripts/ci-ui-shards.json`, default
+plans and their SHA-256 hashes as data. It calls the isolated base revision's
+shard rules at admission and stores both rule selections' complete device/shard
+populations; publication reads these stored populations without recalculating
+them using a later publisher's rules. Candidate-side parsing errors are retained
+as an invalid UI input and fail only `ci-ui`. Invalid base manifest, plan or
+workflow data refuses admission. Errors computing shards from the tested tree,
+including an empty shard after a class rename/removal, are recorded for either
+rule selection and fail only `ci-ui`; the gate admission still completes. The
+base's filtered source population remains available for an approved replacement
+manifest to account for removed tests. Only the fixed empty-shard and missing-base-workflow
+hints reach status descriptions; other parsing details stay generic.
+A new workflow absent on the base is
+retained only as candidate metadata; exact-head approval is still required before
+it is selected. Before approval the context reports
+`workflow is absent on the base; exact-head approval required`, and the approval
+request is still created. Candidate files are never imported. Every UI summary binds the
+manifest hash; device shards also bind their default-plan hash. The base's
+known-flaky registry remains authoritative, with eligibility checked against the
+producer's GitHub run start date, including reruns. Fixture UI is hermetic for
+registry scope; platform-method entries apply to verified devices on that
+platform. Device dimensions remain in coverage and expected-skip accounting.
+
+Shard manifest version 1 contains `schema_version`, a named `revision`,
+`default_shard` and `shards` (a map from shard names to exact XCTest class names).
+Unknown classes go to the default shard, including tests in extensions. A class
+cannot appear twice. The default test plan's class/method selections and
+exclusions apply before assignment; Evidence and strict tests stay outside this
+population. Every required shard must contain tests on every device in the
+producer's literal matrix. An empty shard reports
+`shard X has no tests on DEVICE; update scripts/ci-ui-shards.json`; update the
+partition before adding a device whose platform would leave a shard empty.
+The manifest and both default `immichSlides-iOS.xctestplan` /
+`immichSlides-tvOS.xctestplan` files are CI-trusted classification inputs;
+changing selections or exclusions requires exact-head approval.
+The reader accepts no dynamic matrices or alternate manifest paths.
+This reader compatibility step creates no UI workflow; its producer is separate.
 
 The bridge calls the admitted base revision's `evaluate_gate`, including per-job
 expectations and the complete context population. `ci-pr-gate` includes host,

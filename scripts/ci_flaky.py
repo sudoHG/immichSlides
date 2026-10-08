@@ -28,11 +28,14 @@ FORBIDDEN_FLAGS = {"-retry-tests-on-failure", "-run-tests-until-failure", "-test
                    "-maximum-test-iterations", "-test-repetition-relaunch-enabled"}
 METHOD = re.compile(r"[A-Za-z_]\w*/test[A-Za-z_]\w*")
 ASSERTION_FAILURE = "Official XCTest assertion failure"
+# Keep recording eligibility dependency-free for the isolated base reader.
+# The strict runner and P2 contract import these same suite declarations.
+SERVER_SWITCH_DISPLAY_SUITES = ("server-switch-display", "tvos-server-switch-display")
+P2_RECORDING_SUITES = frozenset({"p2-reduce-motion", "p2-rotation"})
 
 
 def require_retryable_strict_suite(suite):
-    from strict_e2e_runner_support import P2_CASES, SERVER_SWITCH_DISPLAY_SUITES
-    require(suite not in SERVER_SWITCH_DISPLAY_SUITES and not (suite in P2_CASES and P2_CASES[suite].video),
+    require(suite not in SERVER_SWITCH_DISPLAY_SUITES and suite not in P2_RECORDING_SUITES,
             "recording suites cannot use listed-only retry")
 
 
@@ -110,6 +113,14 @@ def validate_registry_population(registry, populations):
 
 def eligible_entry(registry, identity, *, tier, environment, today):
     entries = parse_registry(registry)["entries"]
+    if identity["kind"] == "ui" and "device" in identity["dimensions"]:
+        device = identity["dimensions"]["device"]
+        platform = {"iphone": "ios", "ipad": "ios", "appletv": "tvos"}.get(device)
+        if platform is None or identity["dimensions"].get("platform") != platform:
+            return None
+        identity = dict(identity, dimensions={key: value for key, value in identity["dimensions"].items() if key != "device"})
+    if tier == "ui" and environment == "fixture":
+        environment = "hermetic"
     return next((entry for entry in entries if entry["identity"] == identity
                  and entry["scope"] == {"tier": tier, "environment": environment}
                  and calendar_date(entry["review_by"]) >= today), None)

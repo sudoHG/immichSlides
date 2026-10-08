@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping, TextIO
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
 from strict_e2e_photo_identity import MARKS, IdentityAssertionError, classify_screenshot
 from strict_e2e_server import fixture_manifest
+from ci_flaky import P2_RECORDING_SUITES
 
 
 UI_BUNDLE = "immichSlidesUITests"
@@ -106,7 +107,7 @@ P2_CASES = {
             "motion-on-single",
             "motion-on-single-next",
         ),
-        video=True,
+        video="p2-reduce-motion" in P2_RECORDING_SUITES,
         sequence=(
             "motion-system-original",
             "motion-off-single",
@@ -137,7 +138,7 @@ P2_CASES = {
             "rotation-landscape-stable": "landscape",
             "rotation-portrait-stable": "portrait",
         },
-        video=True,
+        video="p2-rotation" in P2_RECORDING_SUITES,
         sequence=(
             "rotation-start-portrait",
             "rotate-to-landscape",
