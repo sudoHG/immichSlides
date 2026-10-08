@@ -7,7 +7,7 @@ import re
 import subprocess
 
 from ci_publish_git import git, read_blob, workflow_contract
-from ci_summary import ContractError, decode, fields, parse_identity, require
+from ci_summary import ContractError, decode, fields, parse_identity, parse_summary, require
 
 UI_WORKFLOW = ".github/workflows/ci-ui.yml"
 PUBLISH_WORKFLOW = ".github/workflows/ci-publish.yml"
@@ -137,10 +137,11 @@ def evaluate_reused_push(api, record, run, jobs, summaries):
         require(job["status"] == "completed" and job["conclusion"] ==
                 ("skipped" if metadata[job["name"]]["tier"] == "ui" else "success"), "reuse skipped an infrastructure job or ran an incomplete shard")
     require(len(summaries) == 1, "reuse needs one bound archive-selection summary")
-    summary = summaries[0]
+    summary = parse_summary(summaries[0])
     from ci_summary import test_identity
     expected = [test_identity("host", "UI archive selection")]
     require(summary["identity"] == record["identity"] and summary["status"] == "passed" and not summary["infrastructure"]
+            and summary["source"]["workflow_path"] == UI_WORKFLOW and summary["source"]["fork_originated"] is False
             and summary["run"]["tier"] == "ui-infrastructure" and summary["run"]["job"] == "ui-archive"
             and summary["run"]["shard"] is None and summary["population"]["declared"] == expected
             and summary["population"]["compiled"] == expected and not summary["population"]["deselected"]

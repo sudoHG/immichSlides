@@ -151,7 +151,7 @@ def gate_fixture(*, units):
 class PublisherTests(unittest.TestCase):
     def test_ui_reuse_requires_complete_plain_pr_verdict_and_identical_inputs(self):
         from ci_ui_reuse import validate_reuse
-        push = {"repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
+        push = {"schema_version": 1, "repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
                 "pushed_sha": MERGE, "tree_sha": TREE}
         inputs = {"manifest": "a" * 64, "policy": "b" * 64, "pins": "c" * 64}
         shards = sorted(["iphone/default", "ipad/default", "appletv/default"])
@@ -192,7 +192,7 @@ class PublisherTests(unittest.TestCase):
         from ci_ui_reuse import evaluate_reused_push
         from types import SimpleNamespace
         api = SimpleNamespace(repository=REPOSITORY)
-        push = {"repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
+        push = {"schema_version": 1, "repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
                 "pushed_sha": MERGE, "tree_sha": TREE}
         run = dict(RUN, event="push", path=".github/workflows/ci-ui.yml")
         manifest_hash = "e" * 64
@@ -204,7 +204,8 @@ class PublisherTests(unittest.TestCase):
         summary = valid_summary()
         expected = [test_identity("host", "UI archive selection")]
         summary.update(identity=push, status="passed", infrastructure=[])
-        summary["run"].update(tier="ui-infrastructure", job="ui-archive", shard=None)
+        summary["source"].update(repository=REPOSITORY, event="push", workflow_path=run["path"], fork_originated=False)
+        summary["run"].update(id=str(run["id"]), tier="ui-infrastructure", job="ui-archive", shard=None)
         summary["hashes"]["manifests"] = {"ui-shards": manifest_hash}
         summary["population"].update(declared=expected, compiled=expected, deselected=[],
                                      observed=[observation(expected[0], "passed", 0)])
@@ -216,6 +217,7 @@ class PublisherTests(unittest.TestCase):
                            lambda j, s: j[1].update(conclusion="success"),
                            lambda j, s: s["population"].update(compiled=[]),
                            lambda j, s: s["population"]["observed"][0].update(outcome="failed"),
+                           lambda j, s: s["source"].update(workflow_path=".github/workflows/other.yml"),
                            lambda j, s: s["hashes"]["manifests"].update({"ui-shards": "f" * 64})):
                 bad_jobs, bad_summary = copy.deepcopy(jobs), copy.deepcopy(summary)
                 mutate(bad_jobs, bad_summary)
