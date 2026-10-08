@@ -393,6 +393,10 @@ def synchronize_issues(api, entries, registry, *, label=LABEL):
         state = decision["state"]
         payload = {"body": issue_body(issue, state, api.repository), "state": "closed" if state["closed"] else "open"}
         if issue:
+            labels = [item["name"] for item in issue.get("labels", [])]
+            if label not in labels:
+                # A reused registry issue must remain discoverable after removal.
+                payload["labels"] = labels + [label]
             api.repo(f"issues/{issue['number']}", method="PATCH", payload=payload)
         else:
             payload.pop("state")

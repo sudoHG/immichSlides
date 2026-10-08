@@ -58,13 +58,15 @@ Monthly health calculation belongs to its separate ticket.
 
 ## Issue lifecycle
 
-The `ci-reported-failure` label identifies reporter-created issues. Each failing
+The `ci-reported-failure` label identifies reporter-managed issues. Each failing
 nightly identity has one tracking issue. UI method/platform identities share
 their registry issue across iPhone/iPad shards; strict identities retain device,
 configuration, suite, scenario and fixture. A registry issue is reused even if
 it is closed or its review date has expired. Missing or conflicting registry
 issues fail reporting instead of creating duplicates. Existing issue prose is
 preserved, and only an appended managed section changes.
+Adopted registry issues receive the reporter label while retaining existing labels,
+so removing a registry entry preserves tracking and allows eventual closure.
 The reporter filters the repository's issue collection locally because GitHub's
 label index can lag a create, fetches issue bodies directly and waits up to
 60 seconds for a newly created issue to become visible before further writes.

@@ -134,10 +134,11 @@ class ReporterTests(unittest.TestCase):
         class API:
             repository = "sudoHG/immichSlides"
             def __init__(self):
-                self.issues = {135: {"number": 135, "body": "Existing maintainer diagnosis.", "state": "open"}}
+                self.issues = {135: {"number": 135, "body": "Existing maintainer diagnosis.", "state": "open",
+                                     "labels": [{"name": "known-flaky"}]}}
                 self.created = 0
             def pages(self, path, **filters):
-                return []
+                return list(self.issues.values())
             def repo(self, path, method="GET", payload=None, missing=False):
                 if path.startswith("labels/"):
                     return {"name": "ci-reported-failure"}
@@ -146,7 +147,10 @@ class ReporterTests(unittest.TestCase):
                     return {"number": 136, **payload}
                 number = int(path.rsplit("/", 1)[-1])
                 if method == "PATCH":
-                    self.issues[number].update(payload)
+                    updated = copy.deepcopy(payload)
+                    if "labels" in updated:
+                        updated["labels"] = [{"name": name} for name in updated["labels"]]
+                    self.issues[number].update(updated)
                 return self.issues[number]
         api = API()
         registry = {"entries": [{"identity": IDENTITY, "issue": "https://github.com/sudoHG/immichSlides/issues/135"}]}
@@ -160,6 +164,14 @@ class ReporterTests(unittest.TestCase):
         receipts, _ = synchronize_issues(api, [entry("2026-10-02", run=11)], registry)
         self.assertEqual("reopen", receipts[0]["action"])
         self.assertFalse(read_state(api.issues[135])["closed"])
+        for day, run in (("2026-10-03", 12), ("2026-10-04", 13), ("2026-10-05", 14)):
+            synchronize_issues(api, [entry(day, "passed", run)], registry)
+        self.assertEqual("open", api.issues[135]["state"])
+        receipts, _ = synchronize_issues(api, [entry("2026-10-06", "passed", 15)], {"entries": []})
+        self.assertEqual(["close"], [receipt["action"] for receipt in receipts])
+        self.assertEqual(135, receipts[0]["issue"])
+        self.assertEqual(0, api.created)
+        self.assertEqual({"known-flaky", "ci-reported-failure"}, {label["name"] for label in api.issues[135]["labels"]})
 
     def test_failed_main_push_without_admission_still_has_a_verified_notification_sha(self):
         run = {"id": 12, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z", "head_sha": "a" * 40,
