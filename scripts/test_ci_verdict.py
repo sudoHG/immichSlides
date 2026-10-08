@@ -38,7 +38,7 @@ class PopulationVerdictTests(unittest.TestCase):
         args = {"environment": "hermetic", "base_registry": base, "evaluated_on": date(2026, 10, 8)}
         self.assertEqual(evaluate_population(summary, [identity], policy(), **args)["status"], "passed")
         for override in ({"base_registry": None}, {"base_registry": dict(base, entries=[])},
-                         {"evaluated_on": date(2026, 11, 8)}, {"environment": "live"}):
+                         {"evaluated_on": date(2026, 11, 8)}, {"evaluated_on": None}, {"environment": "live"}):
             with self.subTest(override=override):
                 self.assertEqual(evaluate_population(summary, [identity], policy(), **(args | override))["status"], "failed")
         summary["run"]["tier"] = "host"

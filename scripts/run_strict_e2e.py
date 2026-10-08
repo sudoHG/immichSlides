@@ -532,6 +532,25 @@ class StrictRetryEvidence:
             target = "redacted-request.log" if index == 0 else "request-log-b.log"
             (self.evidence / target).write_bytes(path.read_bytes()[self.offsets[path.name]:])
 
+    def audit(self, *, suite, scenario, fixture_set, fixture_hash, server_url):
+        from strict_e2e_filter_contract import (FilterContractError, assert_request_log_contract,
+                                                assert_foreign_server_ids_absent, _extract_ids_from_request_log)
+        for index, path in enumerate(self.service_logs):
+            first = self.evidence / "attempt-1" / self.case / path.name
+            segments = ([first.read_text(encoding="utf-8")] if first.is_file() else [])
+            segments.append(path.read_bytes()[self.offsets[path.name]:].decode("utf-8"))
+            for log_text in segments:
+                if scenario == "out-of-order":
+                    audit_out_of_order_runner_inputs(fixture_set=fixture_set, observed_hash=fixture_hash,
+                                                    service_log=log_text, server_url=server_url)
+                if suite in DUAL_SERVER_SUITES:
+                    try:
+                        assert_request_log_contract(log_text, forbidden=(PUBLIC_API_KEY, "x-api-key"))
+                        assert_foreign_server_ids_absent(_extract_ids_from_request_log(log_text),
+                                                         fixture_set if index == 0 else "b")
+                    except FilterContractError as error:
+                        raise CommandError(str(error), code=2) from error
+
 
 def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str], log_path: Path,
                 timeout_seconds: int = XCODEBUILD_TIMEOUT_SECONDS) -> int:
@@ -586,6 +605,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         parser.error("listed-only retry requires --test-without-building")
     if arguments.listed_retry_device and (arguments.platform == "tvos") != (arguments.listed_retry_device == "tv"):
         parser.error("listed retry device does not match platform")
+    if arguments.listed_retry_device:
+        from ci_flaky import require_retryable_strict_suite
+        try:
+            require_retryable_strict_suite(arguments.suite)
+        except ValueError as error:
+            parser.error(str(error))
     if not (arguments.warm_up_only or arguments.test_without_building) and (arguments.cold_timeout_seconds is not None or arguments.warm_timeout_seconds is not None):
         parser.error("cold/warm timeout options require explicit warm-up/reuse")
     arguments.cold_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.cold_timeout_seconds is None else arguments.cold_timeout_seconds
@@ -800,6 +825,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             case_manifest["warm_build_identity"] = warm_receipt["identity"]
 
         effective_result_bundle = result_bundle_path
+        retry_sessions = {}
         def execute_case(command, log_path):
             nonlocal effective_result_bundle
             from ci_flaky import check_retry_flags
@@ -828,9 +854,25 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         private_bundles.append((attempt_bundle, "-" + log_path.stem + "-attempt-2"))
                     ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
                     started = time.monotonic()
-                    code = run_command(call, cwd=REPO_ROOT, environment=environment, log_path=log_path,
-                                       timeout_seconds=arguments.warm_timeout_seconds)
-                    validate_warm_products(derived_data_path, warm_receipt)
+                    code = None
+                    products_unchanged = False
+                    try:
+                        code = run_command(call, cwd=REPO_ROOT, environment=environment, log_path=log_path,
+                                           timeout_seconds=arguments.warm_timeout_seconds)
+                    except CommandError as error:
+                        code = 124 if isinstance(error.__cause__, subprocess.TimeoutExpired) else error.code
+                        raise
+                    finally:
+                        from strict_e2e_build import write_json
+                        try:
+                            validate_warm_products(derived_data_path, warm_receipt)
+                            products_unchanged = True
+                        finally:
+                            write_json(arguments.evidence_dir / (log_path.stem + "-reuse.json"), {
+                                "duration_seconds": time.monotonic() - started, "exit_code": code,
+                                "timeout_seconds": arguments.warm_timeout_seconds,
+                                "action": "test-without-building", "products_unchanged": products_unchanged,
+                            })
                     return code, time.monotonic() - started
                 def case_identity(key):
                     return test_identity("strict", key, device=retry_device_class,
@@ -844,12 +886,16 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 from strict_e2e_build import write_json
                 write_json(arguments.evidence_dir / (log_path.stem + "-attempts.json"),
                            dict(retry_result, registry_revision=registry_ref, registry_sha256=registry_hash))
-                write_json(arguments.evidence_dir / "retry-invocations.json", dict(retry_result, registry_revision=registry_ref))
+                retry_sessions[log_path.stem] = dict(retry_result, registry_revision=registry_ref)
+                write_json(arguments.evidence_dir / "retry-invocations.json", {"sessions": retry_sessions})
                 effective_result_bundle = Path(retry_result["effective_bundle"])
                 if case_manifest is not None:
                     case_manifest.setdefault("retry_observations", []).extend(retry_result["observed"])
                     case_manifest["flaky_registry_sha256"] = registry_hash
                     case_manifest["flaky_registry_revision"] = registry_ref
+                attempt_evidence.audit(suite=arguments.suite, scenario=arguments.scenario,
+                                       fixture_set=arguments.fixture_set,
+                                       fixture_hash=str(fixture_payload["fixture_sha256"]), server_url=server_url)
                 for record in retry_result["observed"]:
                     if len(record["attempts"]) > 1:
                         print(f"{record['identity']['key']}: {record['outcome']}, attempts=2", file=stdout, flush=True)

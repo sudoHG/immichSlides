@@ -30,6 +30,12 @@ METHOD = re.compile(r"[A-Za-z_]\w*/test[A-Za-z_]\w*")
 ASSERTION_FAILURE = "Official XCTest assertion failure"
 
 
+def require_retryable_strict_suite(suite):
+    from strict_e2e_runner_support import P2_CASES, SERVER_SWITCH_DISPLAY_SUITES
+    require(suite not in SERVER_SWITCH_DISPLAY_SUITES and not (suite in P2_CASES and P2_CASES[suite].video),
+            "recording suites cannot use listed-only retry")
+
+
 def calendar_date(value):
     string(value, "calendar date")
     try:
@@ -59,6 +65,7 @@ def parse_registry(raw):
         else:
             require(identity["dimensions"]["device"] in {"iphone", "ipad", "tv"}, "unknown strict device")
             require(identity["dimensions"]["configuration"] in {"Debug", "Release"}, "unknown strict configuration")
+            require_retryable_strict_suite(identity["dimensions"]["suite"])
         fields(entry["scope"], {"tier", "environment"}, "flaky scope")
         require(entry["scope"]["tier"] == identity["kind"], "flaky tier must match identity kind")
         require(entry["scope"]["environment"] in {"hermetic", "live"}, "unknown flaky environment")
@@ -106,19 +113,6 @@ def eligible_entry(registry, identity, *, tier, environment, today):
     return next((entry for entry in entries if entry["identity"] == identity
                  and entry["scope"] == {"tier": tier, "environment": environment}
                  and calendar_date(entry["review_by"]) >= today), None)
-
-
-def nightly_findings(registry, *, today, issue_states):
-    findings = []
-    for entry in parse_registry(registry)["entries"]:
-        if calendar_date(entry["review_by"]) < today:
-            findings.append({"code": "expired", "issue": entry["issue"], "identity": entry["identity"]})
-        number = int(entry["issue"].rsplit("/", 1)[1])
-        state = issue_states.get(number)
-        if state != "open":
-            findings.append({"code": "issue-closed" if state == "closed" else "issue-state-unknown",
-                             "issue": entry["issue"], "identity": entry["identity"]})
-    return findings
 
 
 def merge_retry(first, second):
@@ -387,6 +381,7 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
 
 
 def main(argv=None):
+    from run_offline_unit_tests import MIN_DATA_GIB, parse_non_negative_int
     parser = argparse.ArgumentParser(description="Validate the candidate known-flaky registry; dates and issue state do not gate PRs")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--xctestrun", type=Path, help="Run a built UI target with listed-only retries")
@@ -396,6 +391,8 @@ def main(argv=None):
     parser.add_argument("--only-testing", action="append", default=[])
     parser.add_argument("--registry-ref", help="Explicit local registry commit; forbidden in CI")
     parser.add_argument("--timeout-seconds", type=int, default=300)
+    parser.add_argument("--min-free-gib", type=parse_non_negative_int, default=MIN_DATA_GIB,
+                        help="minimum free GiB before each Xcode call; only GitHub-hosted CI may lower the default 80")
     args = parser.parse_args(argv)
     if args.xctestrun:
         if not args.destination or not args.platform or not args.output_dir or args.timeout_seconds <= 0:
@@ -420,9 +417,9 @@ def run_ui(args):
     from run_host_checks import run_identity, source_metadata, toolchain
     from ci_summary import write_summary
     from run_strict_e2e import (run_command, export_private_result_bundle, finalize_private_result_bundle,
-                                prepare_private_result_bundle_path, ensure_disk_for_xcodebuild, data_available_gib)
+                                prepare_private_result_bundle_path)
     from strict_e2e_runner_support import CommandError, destination_udid, reset_simulator_app
-    from ci_build_archive import workspace_preflight
+    from ci_build_archive import workspace_preflight, disk_check
     from strict_e2e_server import PUBLIC_API_KEY
     from run_strict_e2e import WRONG_PUBLIC_API_KEY, write_sensitive_scan
     output = args.output_dir.resolve()
@@ -463,7 +460,7 @@ def run_ui(args):
         for selector in args.only_testing:
             command.append("-only-testing:" + selector)
         def execute(call):
-            ensure_disk_for_xcodebuild(data_available_gib)
+            disk_check(args.min_free_gib)
             path = Path(call[call.index("-resultBundlePath") + 1])
             invocations.append(path)
             started = time.monotonic()
@@ -481,7 +478,7 @@ def run_ui(args):
         (output / "retry-invocations.json").write_text(json.dumps(dict(result, registry_revision=revision), indent=2) + "\n")
         # The shard owner supplies independently compiled and declared selections.
         # This local adapter enumerates the selected compiled bundle below.
-        ensure_disk_for_xcodebuild(data_available_gib)
+        disk_check(args.min_free_gib)
         subprocess.run(["xcodebuild", "test-without-building", "-xctestrun", str(args.xctestrun.resolve()),
                                       "-destination", args.destination, "-enumerate-tests", "-test-enumeration-format", "json",
                                       "-test-enumeration-output-path", str(output / "compiled.json"),

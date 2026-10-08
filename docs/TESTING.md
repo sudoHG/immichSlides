@@ -319,8 +319,7 @@ do not open a second issue for the same identity.
 The host gate runs `python3 -B scripts/ci_flaky.py`. It checks the candidate file's
 format, duplicates and static test existence on the relevant platform, including
 strict-suite membership. It does not contact GitHub or gate on calendar age/issue
-state. `ci_flaky.nightly_findings` accepts trusted issue states and reports expired,
-closed or unknown entries for the future nightly reporter. A review date is
+state. Expiration and issue-state reporting belong to the future nightly reporter. A review date is
 inclusive; an entry past that date simply loses retry eligibility. Ordinary passes
 stay passes and expiration cannot fail unrelated tests.
 
@@ -330,8 +329,9 @@ The PR's candidate entries cannot excuse its own failures. CI cannot override th
 registry revision. Main push/dispatch/schedule consumers use their tested main revision;
 local runs use `HEAD`, with an explicit local `--registry-ref <commit>` available
 for isolated acceptance probes. Both the revision and exact policy hash are kept.
-Trusted verdict callers supply `base_registry` and the trusted evaluation date to
-`ci_verdict`; producer-provided entries do not select that policy.
+Trusted verdict callers supplying `base_registry` must also supply `evaluated_on`
+as the trusted producer run's calendar date, rather than the later verdict date.
+`ci_verdict` rejects a missing date; producer-provided entries do not select that policy.
 
 Only an official first-call assertion failure (Xcode exit 65) with an exact active
 entry may obtain one retry. Official typed failure summaries must classify every
@@ -356,7 +356,10 @@ python3 -B scripts/ci_flaky.py --xctestrun '<Products>/tests.xctestrun' \
 ```
 
 The UI adapter enumerates the selected compiled tests and compares them with
-observations. Its local declared list is that compiled selection; the future UI
+observations. Each test invocation and the enumeration use `--min-free-gib N`
+(default 80). Only GitHub-hosted Actions runners may lower that threshold; their
+consumer command can pass `--min-free-gib 30`, using the shared archive disk guard.
+Its local declared list is that compiled selection; the future UI
 shard owner must independently compare against the admitted static population.
 This adapter does not implement shard assignment, fixture selection or trusted
 publication. Pass fixture inputs explicitly through the per-run xctestrun; ambient
@@ -371,12 +374,21 @@ second `timed-out` attempt and returns failure.
 Strict warm runs opt in with `--listed-retry-device iphone`, `ipad` or `tv`, together
 with `--test-without-building`. This preserves the existing cold/default runner and
 informational tracer behavior. It uses the same executor and retains per-session
-attempt exports, including `filter-person`. Existing visual/evidence validators
+attempt exports, including `filter-person`. `retry-invocations.json` has a `sessions`
+map keyed by Xcode log stem, so later sessions retain earlier retries. Every warm
+attempt writes `<stem>-reuse.json` with duration, exit code, timeout budget and
+Products immutability; a first attempt's receipt moves with its archived outputs.
+Recording suites (P2 cases with `video=True`, `server-switch-display` and
+`tvos-server-switch-display`) are refused by registry validation and the retry CLI.
+Existing visual/evidence validators
 still run on the final attempt and must pass. The target UDID's simulator device
 type determines the device class; the argument and every official result device
 must agree. A retry moves the case's first outputs to `attempt-1/<case>/`, records
 service-log byte offsets, and exports only the final attempt's request segment for
-validation. Reset logs are appended across sessions and attempts. An image-validator
+timeline validation. Request invariants (unknown paths, 400 bodies, forbidden key
+fields and cross-server IDs, as applicable) are audited on every attempt's segment;
+any violation fails the run even when the final test passes. Reset logs are appended
+across sessions and attempts. An image-validator
 failure outside XCTest does not authorize a retry. The hosted shard demonstration
 remains an open acceptance criterion of #97 until #94 supplies the UI shards;
 standalone access-lifecycle warm conversion remains excluded. #140 tracks its

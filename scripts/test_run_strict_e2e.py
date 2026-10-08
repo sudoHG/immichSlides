@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -93,6 +94,54 @@ from run_strict_e2e_test_configuration_cases import StrictE2ERunnerTestsCasesCon
 from run_strict_e2e_test_evidence_cases import StrictE2ERunnerTestsCasesEvidence
 
 class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunnerTestsCasesEvidence, unittest.TestCase):
+    def test_clean_retry_cannot_hide_first_attempt_request_contract_violation(self):
+        from run_strict_e2e import StrictRetryEvidence
+        for violation in (
+            "",
+            "request elapsed_ms=10 method=GET path=/unknown status=200 range=absent fixture_asset_id=none\n",
+            "request elapsed_ms=10 method=GET path=/healthz status=400 range=absent fixture_asset_id=none\n",
+            "x-api-key: forbidden\n",
+            "request elapsed_ms=10 method=GET path=/api/assets/<fixture-id>/thumbnail status=200 range=absent fixture_asset_id=asset-a-1\n",
+        ):
+            with self.subTest(violation=violation), tempfile.TemporaryDirectory() as directory:
+                evidence = Path(directory)
+                service = evidence / "service.log"
+                service_b = evidence / "service-b.log"
+                service.write_text("")
+                service_b.write_text("")
+                dual_server = not violation or "asset-a-1" in violation
+                state = StrictRetryEvidence(evidence, "xcodebuild", [service, service_b] if dual_server else [service])
+                clean = "request elapsed_ms=20 method=GET path=/healthz status=200 range=absent fixture_asset_id=none\n"
+                service.write_text(clean if "asset-a-1" in violation else clean + violation)
+                service_b.write_text(clean + violation if "asset-a-1" in violation else clean)
+                state.before_retry()
+                for path in (service, service_b):
+                    with path.open("a") as log:
+                        log.write(clean)
+                state.finish()
+                arguments = dict(suite="filter-switch" if dual_server else "late-image",
+                    scenario="normal" if dual_server else "out-of-order", fixture_set="a",
+                    fixture_hash=FROZEN_FIXTURE_SHA256["a"], server_url="http://127.0.0.1:1234/api")
+                if violation:
+                    with self.assertRaises(CommandError):
+                        state.audit(**arguments)
+                else:
+                    state.audit(**arguments)
+
+    def test_recording_retry_is_rejected_before_any_device_or_evidence_work(self):
+        from contextlib import redirect_stderr
+        from strict_e2e_runner_support import SERVER_SWITCH_DISPLAY_SUITES
+        suites = [suite for suite, case in P2_CASES.items() if case.video] + list(SERVER_SWITCH_DISPLAY_SUITES)
+        for suite in suites:
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory, redirect_stderr(io.StringIO()):
+                evidence = Path(directory) / "evidence"
+                with self.assertRaises(SystemExit) as error:
+                    runner_main(["--platform", "ios", "--destination", "platform=iOS Simulator,id=" + P2_UDID,
+                        "--suite", suite, "--test-without-building", "--listed-retry-device", "iphone",
+                        "--derived-data-path", str(Path(directory) / "derived"), "--evidence-dir", str(evidence)])
+                self.assertEqual(error.exception.code, 2)
+                self.assertFalse(evidence.exists())
+
     def test_retry_cannot_borrow_first_attempt_out_of_order_timeline_or_screenshots(self):
         from run_strict_e2e import StrictRetryEvidence
         from strict_e2e_out_of_order_contract import assert_out_of_order_timeline, OutOfOrderContractError
@@ -142,6 +191,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         export_exit: int = 0,
         failure_session: str | None = None,
         warm: bool = False,
+        retry: bool = False,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -149,9 +199,18 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             else strict_runner.resolve_suite_selector(platform, suite)
         )
         recording_process = mock.Mock(pid=9876)
+        invocations = []
+        from test_ci_flaky import registry
+        from ci_summary import test_identity
+        retry_registry = registry()
+        retry_registry["entries"][0]["scope"]["tier"] = "strict"
+        retry_registry["entries"][0]["identity"] = test_identity("strict",
+            FILTER_PERSON_SESSIONS[0]["selector"].split("/", 1)[1], device="iphone", configuration="Debug",
+            suite="filter-person", scenario="normal", fixture="a")
 
         def fake_run_command(command: list[str], **kwargs: object) -> int:
             kwargs["log_path"].write_text("test run\n", encoding="utf-8")
+            invocations.append(command)
             if suite != "filter-person":
                 self.assertEqual([item for item in command if item.startswith("-only-testing:")], [f"-only-testing:{selector}"])
             if suite in P2_CASES:
@@ -163,6 +222,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 (bundle / "raw.bin").write_bytes(b"raw diagnostics")
             if failure_session is not None and kwargs["log_path"].name != f"xcodebuild-{failure_session}.log":
                 return 0
+            if retry:
+                return 65 if len(invocations) == 1 else 0
             return xcodebuild_exit
 
         def fake_subprocess(command: list[str], **_: object) -> subprocess.CompletedProcess[object]:
@@ -174,6 +235,13 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             run = directory / "case.xctestrun"
             run.write_bytes(b"private test inputs")
             return run
+
+        def retry_results(bundle, identity_for_key, elapsed, code, **kwargs):
+            from ci_summary import observation
+            key = next(item.split(":", 1)[1].split("/", 1)[1] for item in invocations[-1]
+                       if item.startswith("-only-testing:"))
+            return [observation(identity_for_key(key), "failed" if code == 65 else "passed", elapsed,
+                                reason="Official XCTest assertion failure" if code == 65 else None, exit_code=code)]
 
         stdout, stderr = io.StringIO(), io.StringIO()
         with mock.patch("run_strict_e2e.PRIVATE_RESULT_BUNDLE_ROOT", evidence.parent / "private"), mock.patch(
@@ -195,10 +263,14 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         ) as facts, mock.patch("run_strict_e2e.require_visual_identity", return_value={}), mock.patch(
             "run_strict_e2e.start_screen_recording", return_value=(recording_process, 900.0)
         ) as start, mock.patch("run_strict_e2e.stop_screen_recording", return_value=0) as stop, mock.patch(
-            "strict_e2e_build.load_warm_build", return_value=({"identity": {}}, Path("warm.xctestrun"))
+            "strict_e2e_build.load_warm_build", return_value=({"identity": {"configuration": "Debug"}}, Path("warm.xctestrun"))
         ), mock.patch("strict_e2e_build.validate_warm_products"), mock.patch(
             "strict_e2e_build.prepare_test_run", side_effect=fake_test_run
-        ):
+        ), ExitStack() as stack:
+            stack.enter_context(mock.patch("ci_flaky.simulator_device_class", return_value="iphone"))
+            stack.enter_context(mock.patch("ci_flaky.read_xcode_observations", side_effect=retry_results))
+            stack.enter_context(mock.patch("ci_flaky.registry_revision", return_value="b" * 40))
+            stack.enter_context(mock.patch("ci_flaky.load_registry", return_value=(retry_registry, "a" * 64)))
             exit_code = runner_main(
                 [
                     "--platform",
@@ -210,6 +282,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     "--suite",
                     suite,
                     *(["--test-without-building", "--derived-data-path", str(evidence.parent / "derived")] if warm else []),
+                    *(["--listed-retry-device", "iphone"] if retry else []),
                 ],
                 stdout=stdout,
                 stderr=stderr,
@@ -221,6 +294,24 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "stop": stop,
             "recording_process": recording_process,
         }
+
+    def test_retry_records_keep_all_person_sessions_and_each_warm_receipt(self):
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw) / "evidence"
+            code, _, stderr, _ = self._run_p2_main(evidence, suite="filter-person", platform="ios",
+                                                  model="iPhone", warm=True, retry=True)
+            self.assertEqual(code, 0, stderr)
+            sessions = json.loads((evidence / "retry-invocations.json").read_text())["sessions"]
+            self.assertEqual({key: len(value["invocations"]) for key, value in sessions.items()},
+                             {"xcodebuild-normal": 2, "xcodebuild-conflict-normal": 1, "xcodebuild-nofaces": 1})
+            receipts = [evidence / (key + "-reuse.json") for key in sessions]
+            receipts.append(evidence / "attempt-1/xcodebuild-normal/xcodebuild-normal-reuse.json")
+            for path in receipts:
+                receipt = json.loads(path.read_text())
+                self.assertTrue(receipt["products_unchanged"])
+                self.assertEqual(receipt["timeout_seconds"], 300)
+                self.assertGreaterEqual(receipt["duration_seconds"], 0)
+            self.assertEqual([json.loads(path.read_text())["exit_code"] for path in receipts], [0, 0, 0, 65])
 
     def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
         with tempfile.TemporaryDirectory() as raw:

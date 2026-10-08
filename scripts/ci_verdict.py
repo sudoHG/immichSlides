@@ -137,6 +137,8 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
         summary = parse_summary(raw)
         policy = parse_policy(policy)
         from ci_flaky import ASSERTION_FAILURE, eligible_entry, parse_registry
+        require(base_registry is None or type(evaluated_on) is date,
+                "base_registry requires the trusted producer evaluation date")
         registry = parse_registry(base_registry) if base_registry is not None else {"schema_version": 1, "entries": []}
         expected_by_function = tokens(expected, functions=True)
         tokens(expected)
@@ -196,7 +198,7 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
             elif (entry["outcome"] == "flaky-passed" and entry["attempts"][0]["exit_code"] == 65
                   and entry["attempts"][0]["reason"] == ASSERTION_FAILURE
                   and entry["attempts"][1]["exit_code"] == 0 and eligible_entry(
-                    registry, identity, tier=tier, environment=environment, today=evaluated_on or date.today())):
+                    registry, identity, tier=tier, environment=environment, today=evaluated_on)):
                 result["flaky_passed"].append(identity)
             elif entry["outcome"] != "passed":
                 errors.append(f"{entry['outcome']}: {label}")

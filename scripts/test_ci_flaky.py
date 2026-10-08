@@ -15,7 +15,7 @@ from unittest import mock
 
 from ci_summary import ContractError, observation, test_identity
 from ci_flaky import (eligible_entry, enumerated_ui_keys, load_registry, merge_retry, parse_registry, registry_revision, retry_command, run_xcode_attempts,
-                      retry_observations, validate_registry_population, nightly_findings)
+                      retry_observations, validate_registry_population)
 
 
 def registry():
@@ -41,8 +41,8 @@ class RegistryTests(unittest.TestCase):
     def test_pr_uses_merge_base_parent_and_never_candidate_or_ci_override(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            environment = dict(os.environ, GIT_AUTHOR_NAME="sudoHG", GIT_AUTHOR_EMAIL="by331works@gmail.com",
-                               GIT_COMMITTER_NAME="sudoHG", GIT_COMMITTER_EMAIL="by331works@gmail.com")
+            environment = dict(os.environ, GIT_AUTHOR_NAME="CI Flaky", GIT_AUTHOR_EMAIL="ci-flaky@example.invalid",
+                               GIT_COMMITTER_NAME="CI Flaky", GIT_COMMITTER_EMAIL="ci-flaky@example.invalid")
             def git(*args):
                 return subprocess.check_output(["git", *args], cwd=root, env=environment, text=True, stderr=subprocess.DEVNULL).strip()
             git("init", "-q")
@@ -106,10 +106,20 @@ class RegistryTests(unittest.TestCase):
             with self.subTest(dimension=dimension):
                 changed = dict(strict_identity, dimensions=strict_identity["dimensions"] | {dimension: value})
                 self.assertIsNone(eligible_entry(strict, changed, **strict_args))
-        # Age and issue state belong to nightly, not PR format validation.
+        # Calendar age belongs to the reporter, not PR format validation.
         validate_registry_population(payload, {"ios": [identity], "tvos": []})
-        findings = nightly_findings(payload, today=date(2026, 11, 8), issue_states={123: "closed"})
-        self.assertEqual({finding["code"] for finding in findings}, {"expired", "issue-closed"})
+
+    def test_recording_suites_cannot_be_registered_for_retry(self):
+        from strict_e2e_runner_support import P2_CASES, SERVER_SWITCH_DISPLAY_SUITES
+        suites = [suite for suite, case in P2_CASES.items() if case.video] + list(SERVER_SWITCH_DISPLAY_SUITES)
+        for suite in suites:
+            with self.subTest(suite=suite):
+                payload = registry()
+                payload["entries"][0]["scope"]["tier"] = "strict"
+                payload["entries"][0]["identity"] = test_identity("strict", "ExampleTests/testNavigation",
+                    device="iphone", configuration="Debug", suite=suite, scenario="normal", fixture="a")
+                with self.assertRaisesRegex(ContractError, "recording"):
+                    parse_registry(payload)
 
 
 class RetryTests(unittest.TestCase):
@@ -195,7 +205,16 @@ class RetryTests(unittest.TestCase):
             checkout.mkdir()
             output = root / "output"
             stack.enter_context(mock.patch("run_strict_e2e.PRIVATE_RESULT_BUNDLE_ROOT", root / "private"))
+            stack.enter_context(mock.patch.dict(os.environ,
+                {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}, clear=True))
+            stack.enter_context(mock.patch("ci_build_archive.default_data_available_gib", return_value=39))
             executed = []
+            disk_checks = []
+            def subprocess_run(call, **kwargs):
+                if call[0] == "df":
+                    disk_checks.append(call)
+                    return subprocess.CompletedProcess(call, 0)
+                raise subprocess.CalledProcessError(1, "enumeration")
             def execute(call, **kwargs):
                 Path(call[call.index("-resultBundlePath") + 1]).mkdir()
                 executed.append(call)
@@ -207,7 +226,7 @@ class RetryTests(unittest.TestCase):
                 "ci_flaky.registry_revision": {"return_value": "b" * 40},
                 "ci_flaky.load_registry": {"return_value": (registry(), "a" * 64)},
                 "ci_flaky.simulator_device_class": {"return_value": "iphone"},
-                "ci_flaky.subprocess.run": {"side_effect": subprocess.CalledProcessError(1, "enumeration")},
+                "ci_flaky.subprocess.run": {"side_effect": subprocess_run},
                 "ci_flaky.read_xcode_observations": {"return_value": [observation(
                     registry()["entries"][0]["identity"], "failed", 1, reason="Official XCTest assertion failure", exit_code=65)]},
                 "run_host_checks.run_identity": {"return_value": {"schema_version": 1, "event": "local",
@@ -215,7 +234,6 @@ class RetryTests(unittest.TestCase):
                 "run_host_checks.source_metadata": {"return_value": (None, False)},
                 "run_host_checks.toolchain": {"return_value": {"versions": {"python": "test"}}},
                 "strict_e2e_runner_support.reset_simulator_app": {"return_value": "reset"},
-                "run_strict_e2e.ensure_disk_for_xcodebuild": {"return_value": None},
                 "run_strict_e2e.run_command": {"side_effect": execute},
                 "run_strict_e2e.export_private_result_bundle": {"side_effect": CommandError("Official test export failed")},
             }
@@ -223,12 +241,13 @@ class RetryTests(unittest.TestCase):
                 stack.enter_context(mock.patch(target, **options))
             args = Namespace(root=checkout, output_dir=output, registry_ref=None, platform="ios", only_testing=[],
                 xctestrun=root / "built.xctestrun", destination="platform=iOS Simulator,id=00000000-0000-0000-0000-000000000000",
-                timeout_seconds=300)
+                timeout_seconds=300, min_free_gib=30)
             with redirect_stderr(io.StringIO()):
                 self.assertEqual(run_ui(args), 1)
             summary = json.loads((output / "summary.json").read_text())
             attempts = json.loads((output / "retry-invocations.json").read_text())
             self.assertEqual(len(attempts["invocations"]), 2)
+            self.assertEqual(len(disk_checks), 3)
             self.assertEqual(attempts["invocations"][0]["exit_code"], 65)
             self.assertEqual(attempts["invocations"][1]["outcome"], "timed-out")
             self.assertEqual(summary["population"]["observed"][0]["attempts"][1]["outcome"], "timed-out")
