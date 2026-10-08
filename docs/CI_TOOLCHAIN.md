@@ -50,11 +50,12 @@ map keeps nightly and P2 release review on Xcode 27. Leave the nightly/release m
 their runner entries, shared packages and policies unchanged during the PR switch.
 Reverse the same edits to return to GA. No repository variable or setting is involved.
 
-The publisher still evaluates summaries using its admitted base reader and pins-blob
-hashes. That reader does not compare recorded Xcode versions against root-level pins;
+The publisher still evaluates summaries using its admitted base reader. That reader
+does not compare recorded Xcode versions or pins hashes against toolchain profiles;
 the version dictionary accepts the added `ci_tier`, `ci_profile` and `pinned_*` strings.
 Summary and archive schema versions, job names and artifact names remain unchanged,
-so no separate reader rollout is needed. Archive consumers still compare exact profile
+so no separate reader rollout is needed. No publisher-level toolchain comparison is
+introduced here. Archive consumers still compare exact profile
 Xcode builds and full pins-file hashes; a profile switch cannot reuse the old archive.
 At this baseline post-merge UI reuse is not yet implemented; its future toolchain
 comparison must use the selected PR profile as well as observed versions.
