@@ -101,23 +101,23 @@ def downloaded_archive(api, artifact):
         return manifest, hashlib.sha256(manifest_raw).hexdigest()
 
 
-def check_cross_run_identity(manifest, identity, run, attempt, pins, pins_hash):
+def check_cross_run_identity(manifest, identity, run, attempt, pins, pins_hash, *, platform_name="ios"):
     require(parse_identity(manifest["identity"]) == parse_identity(identity), "archive-identity-mismatch: same head has another base or tree")
     require(manifest["producer"] == {"run_id": str(run["id"]), "attempt": attempt, "workflow_path": GATE_WORKFLOW,
-                                     "artifact_name": artifact_name("ios", str(run["id"]), attempt)}, "archive producer differs")
-    require(manifest["platform"] == "ios" and manifest["configuration"] == "Debug", "archive platform/configuration differs")
+                                     "artifact_name": artifact_name(platform_name, str(run["id"]), attempt)}, "archive producer differs")
+    require(manifest["platform"] == platform_name and manifest["configuration"] == "Debug", "archive platform/configuration differs")
     require(manifest["xcode_build"] == pins["xcode"]["build"] and manifest["pins_sha256"] == pins_hash,
             "archive toolchain/pins differ")
     require(manifest["signing_mode"] == "adhoc" and manifest["private_configuration_present"] is False,
             "archive is not secret-free and locally signed")
 
 
-def build_job_attempt(api, run):
+def build_job_attempt(api, run, *, platform_name="ios"):
     retained = None
     require(0 < run["run_attempt"] <= 100, "gate attempts exceed bound")
     for attempt in range(1, run["run_attempt"] + 1):
-        matches = [job for job in api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs") if job["name"] == "build-ios"]
-        require(len(matches) <= 1, "duplicate gate iOS producer job")
+        matches = [job for job in api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs") if job["name"] == "build-" + platform_name]
+        require(len(matches) <= 1, "duplicate gate platform producer job")
         if not matches:
             continue
         job = matches[0]
@@ -126,7 +126,8 @@ def build_job_attempt(api, run):
     return retained
 
 
-def select_archive(api, identity, *, timeout_seconds, poll_seconds=20, record_refusals=None):
+def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_seconds=20, record_refusals=None):
+    require(platform_name in {"ios", "tvos"}, "unsupported UI archive platform")
     workflow = api.repo("actions/workflows/ci-gate.yml")
     require(workflow["path"] == GATE_WORKFLOW and workflow["state"] == "active", "gate workflow is not active at its expected path")
     head = identity.get("head_sha", identity.get("pushed_sha"))
@@ -155,10 +156,10 @@ def select_archive(api, identity, *, timeout_seconds, poll_seconds=20, record_re
             if run["head_repository"]["full_name"] != head_repository:
                 refuse(run, "archive-head-repository-mismatch", producer_head_repository=run["head_repository"]["full_name"])
                 continue
-            job = build_job_attempt(api, run)
+            job = build_job_attempt(api, run, platform_name=platform_name)
             attempt = job["evidence_attempt"] if job else run["run_attempt"]
             artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
-            name = f"build-ios-records-{run['id']}-{attempt}"
+            name = f"build-{platform_name}-records-{run['id']}-{attempt}"
             records = [artifact for artifact in artifacts if artifact["name"] == name and not artifact["expired"]]
             if not records:
                 # A cancelled build may have no summary; its recorded PR base can
@@ -175,26 +176,26 @@ def select_archive(api, identity, *, timeout_seconds, poll_seconds=20, record_re
                     and build["source"]["event"] == identity["event"]
                     and build["source"]["fork_originated"] == (head_repository != api.repository)
                     and build["identity"].get("head_sha", build["identity"].get("pushed_sha")) == head
-                    and build["run"] == {"id": str(run["id"]), "attempt": attempt, "tier": "build", "job": "build-ios", "shard": "ios"},
+                    and build["run"] == {"id": str(run["id"]), "attempt": attempt, "tier": "build", "job": "build-" + platform_name, "shard": platform_name},
                     "invalid gate build record provenance")
             if build["identity"] != identity:
                 refuse(run, "archive-identity-mismatch", producer_attempt=attempt, producer_identity=build["identity"])
                 continue
             if job is None or job["status"] != "completed":
                 break
-            require(job["conclusion"] == "success" and build["status"] == "passed", "newest exact-identity gate iOS build did not succeed")
-            archives = [artifact for artifact in artifacts if artifact["name"] == artifact_name("ios", str(run["id"]), attempt)]
+            require(job["conclusion"] == "success" and build["status"] == "passed", "newest exact-identity gate " + platform_name + " build did not succeed")
+            archives = [artifact for artifact in artifacts if artifact["name"] == artifact_name(platform_name, str(run["id"]), attempt)]
             require(len(archives) == 1, "matching archive is missing or duplicated")
             archive = archives[0]
-            validate_artifact(archive, identity, str(run["id"]), attempt, "ios", archive["id"])
+            validate_artifact(archive, identity, str(run["id"]), attempt, platform_name, archive["id"])
             manifest, manifest_hash = downloaded_archive(api, archive)
-            check_cross_run_identity(manifest, identity, run, attempt, pins, file_hash(ROOT / "scripts/ci-pins.json"))
+            check_cross_run_identity(manifest, identity, run, attempt, pins, file_hash(ROOT / "scripts/ci-pins.json"), platform_name=platform_name)
             require(build["hashes"]["manifests"]["build"] == manifest_hash, "gate record and downloaded manifest differ")
-            return {"schema_version": 1, "identity": identity, "producer_run_id": str(run["id"]),
+            return {"schema_version": 1, "identity": identity, "platform": platform_name, "producer_run_id": str(run["id"]),
                     "producer_attempt": attempt, "artifact_id": archive["id"], "artifact_name": archive["name"],
                     "build_manifest_sha256": manifest_hash, "pins_sha256": file_hash(ROOT / "scripts/ci-pins.json"),
                     "wait_seconds": time.monotonic() - started, "refusals": refusals}
-        print("Waiting for the matching ci-gate iOS archive", flush=True)
+        print("Waiting for the matching ci-gate " + platform_name + " archive", flush=True)
         time.sleep(min(poll_seconds, max(0, timeout_seconds - (time.monotonic() - started))))
     error = "archive-identity-mismatch" if refusals else "archive-unavailable"
     raise ContractError(error + ": no exact-identity gate archive before timeout")
@@ -216,12 +217,24 @@ def wait_archive(args):
         output("selection_artifact", f"ui-archive-{ctx['run']['id']}-{ctx['run']['attempt']}")
         if affected:
             api = GitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"])
-            selection = select_archive(api, ctx["identity"], timeout_seconds=args.timeout_minutes * 60,
-                                       record_refusals=lambda rows: write_json(records / "archive-refusals.json", rows))
-            for key in ("artifact_id", "producer_run_id", "producer_attempt"):
-                output(key, selection[key])
-            write_json(records / "archive-selection.json", selection)
+            from ci_ui_reuse import find_reuse
+            reuse = find_reuse(api, ctx["identity"]) if ctx["identity"]["event"] == "push" else None
+            output("run_ui", str(reuse is None).lower())
+            if reuse is not None:
+                write_json(records / "archive-selection.json", {"schema_version": 1, "identity": ctx["identity"],
+                           "status": "reused", "verdict": reuse})
+                print(f"Reused trusted UI verdict from run {reuse['source']['run_id']}", flush=True)
+            else:
+                deadline = started + args.timeout_minutes * 60
+                for platform_name in ("ios", "tvos"):
+                    selection = select_archive(api, ctx["identity"], timeout_seconds=max(0, deadline - time.monotonic()),
+                                               platform_name=platform_name,
+                                               record_refusals=lambda rows, name=platform_name: write_json(records / ("archive-refusals-" + name + ".json"), rows))
+                    for key in ("artifact_id", "producer_run_id", "producer_attempt"):
+                        output(platform_name + "_" + key, selection[key])
+                    write_json(records / ("archive-selection-" + platform_name + ".json"), selection)
         else:
+            output("run_ui", "false")
             write_json(records / "archive-selection.json", {"schema_version": 1, "identity": ctx["identity"], "status": "not-applicable"})
         summary["status"], code = "passed", 0
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
@@ -253,8 +266,8 @@ def run_shard(args):
         manifest_path = Path(manifest_directory, "manifest.json")
         manifest_path.write_bytes(manifest_raw)
         if args.archive_dir:
-            require(args.device == "iphone", "archive producer currently supports iPhone only")
             selection = decode(args.selection_path.read_text())
+            require(selection["platform"] == platform_name, "UI archive selection platform differs from device")
             require(parse_identity(selection["identity"]) == ctx["identity"], "UI selection differs from the consumer identity")
             manifest_build_path = args.archive_dir / "manifest.json"
             require(file_hash(manifest_build_path) == selection["build_manifest_sha256"], "selected build manifest changed")
@@ -305,7 +318,7 @@ def failed_shard(args, error):
     write_summary(summary, directory)
 
 
-def verify_reproduction_pins(source, destination, environment):
+def verify_reproduction_pins(source, destination, environment, device="iphone"):
     from strict_e2e_runner_support import destination_udid
     from setup_ci_python import load_pins
     pins = load_pins(source / "scripts/ci-pins.json")
@@ -319,15 +332,17 @@ def verify_reproduction_pins(source, destination, environment):
         raise ContractError("reproduction Xcode pin check failed: selected toolchain unavailable") from error
     expected = f"Xcode {pins['xcode']['version']}\nBuild version {pins['xcode']['build']}"
     require(observed == expected, f"reproduction Xcode pin mismatch: expected {expected!r}, observed {observed!r}")
-    require(destination.startswith("platform=iOS Simulator,"), "reproduction needs an iOS Simulator destination")
+    platform_name = DEVICES[device]
+    destination_platform = "iOS Simulator" if platform_name == "ios" else "tvOS Simulator"
+    require(destination.startswith("platform=" + destination_platform + ","), "reproduction destination platform differs from device")
     udid = destination_udid(destination)
     inventory = decode(subprocess.check_output(["xcrun", "simctl", "list", "--json"], env=environment, text=True, timeout=60))
-    pin = pins["simulators"]["ios"]
+    pin = pins["simulators"][platform_name]
     runtimes = [runtime for runtime in inventory["runtimes"] if runtime["identifier"] == pin["runtime"]
                 and runtime.get("isAvailable") and runtime["version"] == pin["version"] and runtime["buildversion"] == pin["build"]]
     require(len(runtimes) == 1, "reproduction simulator runtime pin mismatch")
     devices = [(runtime, device) for runtime, devices in inventory["devices"].items() for device in devices if device["udid"] == udid]
-    types = [device["identifier"] for device in inventory["devicetypes"] if device["name"] == pins["device_types"]["iphone"]]
+    types = [entry["identifier"] for entry in inventory["devicetypes"] if entry["name"] == pins["device_types"][device]]
     require(len(devices) == 1 and devices[0][0] == pin["runtime"] and devices[0][1].get("isAvailable") is True,
             "reproduction destination runtime pin mismatch or unavailable simulator")
     require(len(types) == 1 and devices[0][1].get("deviceTypeIdentifier") == types[0], "reproduction destination device type pin mismatch")
@@ -367,7 +382,7 @@ def reproduce(args):
         # The selected source is already isolated, including explicit historical reproduction.
         from ci_local import CONTEXT
         environment[CONTEXT] = str(source)
-        verify_reproduction_pins(source, args.destination, environment)
+        verify_reproduction_pins(source, args.destination, environment, args.device)
         from strict_e2e_runner_support import wait_for_service, stop_exact_process
         ready = Path(directory, "fixture-preflight.json")
         service = subprocess.Popen([sys.executable, "-B", str(source / "scripts/strict_e2e_server.py"),
@@ -381,7 +396,7 @@ def reproduce(args):
             stop_exact_process(service)
         derived = Path(directory, "derived")
         build_records = Path(directory, "build")
-        build_command = [sys.executable, "-B", str(source / "scripts/ci_build_archive.py"), "build", "--platform", "ios",
+        build_command = [sys.executable, "-B", str(source / "scripts/ci_build_archive.py"), "build", "--platform", DEVICES[args.device],
                          "--derived-data-path", str(derived), "--output-dir", str(build_records)]
         print("Reproduction build command: " + shlex.join(build_command), flush=True)
         completed = subprocess.run(build_command, cwd=source, env=environment, check=False)
@@ -389,7 +404,7 @@ def reproduce(args):
             return completed.returncode
         runs = list((derived / "Build/Products").glob("*.xctestrun"))
         require(len(runs) == 1, "reproduction build needs one default plan")
-        shard_command = [sys.executable, "-B", str(source / "scripts/ci_ui_tests.py"), "run", "--device", "iphone",
+        shard_command = [sys.executable, "-B", str(source / "scripts/ci_ui_tests.py"), "run", "--device", args.device,
                          "--shard", args.shard, "--manifest-revision", revision, "--destination", args.destination,
                          "--xctestrun", str(runs[0]), "--output-dir", str(output_root / "records")] + wait_arguments
         print("Reproduction shard command: " + shlex.join(shard_command), flush=True)
@@ -423,12 +438,14 @@ def main(argv=None):
     run.add_argument("--wait-factor", type=float, default=1)
     run.add_argument("--min-free-gib", type=int, default=80)
     local = commands.add_parser("reproduce")
+    local.add_argument("--device", choices=DEVICES, default="iphone")
     local.add_argument("--manifest-revision", help="Explicit historical commit; default tests the current working-tree snapshot")
     local.add_argument("--shard", required=True)
     local.add_argument("--destination", required=True)
     local.add_argument("--output-dir", type=Path, required=True)
     local.add_argument("--wait-factor", type=float, default=1)
     simulator = commands.add_parser("simulator")
+    simulator.add_argument("--device", choices=DEVICES, required=True)
     simulator.add_argument("--shard", required=True)
     upload = commands.add_parser("check-upload")
     upload.add_argument("--output-dir", type=Path, required=True)
@@ -446,10 +463,12 @@ def main(argv=None):
             require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
                     "automatic simulator creation is hosted-only")
             pins = decode((ROOT / "scripts/ci-pins.json").read_text())
-            udid = subprocess.check_output(["xcrun", "simctl", "create", "ui-iphone-" + args.shard,
-                    pins["device_types"]["iphone"], pins["simulators"]["ios"]["runtime"]], text=True, timeout=60).strip()
+            platform_name = DEVICES[args.device]
+            udid = subprocess.check_output(["xcrun", "simctl", "create", "ui-" + args.device + "-" + args.shard,
+                    pins["device_types"][args.device], pins["simulators"][platform_name]["runtime"]], text=True, timeout=60).strip()
+            destination_platform = "tvOS Simulator" if platform_name == "tvos" else "iOS Simulator"
             with open(os.environ["GITHUB_ENV"], "a") as handle:
-                handle.write(f"UI_SIMULATOR={udid}\nUI_DESTINATION=platform=iOS Simulator,id={udid}\n")
+                handle.write(f"UI_SIMULATOR={udid}\nUI_DESTINATION=platform={destination_platform},id={udid}\n")
             return 0
         if args.command == "check-upload":
             from run_strict_e2e import write_sensitive_scan

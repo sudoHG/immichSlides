@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "revision": "iphone-v1",
+  "revision": "multidevice-v1",
   "default_shard": "default",
   "shards": {
     "default": [],
-    "navigation": ["immichSlidesUITests"],
-    "visual": ["FilterSummaryIOSVisualUITests"]
+    "navigation": ["immichSlidesUITests", "ServerConfigFormTVOSUITests"],
+    "visual": ["FilterSummaryIOSVisualUITests", "FilterSummaryTVOSVisualUITests"]
   }
 }

@@ -1,10 +1,10 @@
-# iPhone UI tier tracer
+# UI tier: iPhone, iPad and Apple TV
 
 `ci-ui` runs on pull requests and pushes to `main`, independently of `ci-gate`.
 It is informational: only the [trusted publisher](CI_PUBLISHER.md) writes its
-commit status. No required check or repository setting changes here. iPad and
-Apple TV producers are a separate rollout; the reader supports their device
-dimensions but this workflow schedules only iPhone.
+commit status. No required check or repository setting changes here. All three
+devices use the same archive validation, fixture runner, selection and verdict
+path. The trusted reuse reader must land on main before this producer is activated.
 
 ## Classification and archive selection
 
@@ -13,9 +13,10 @@ change outside build membership selects no archive and starts no macOS shard.
 The publisher independently derives this classification from admission before
 displaying `not applicable`. Unknown paths, CI changes and main pushes run.
 
-For an app-affecting change, Linux waits up to 45 minutes for `ci-gate`'s iOS
-build. It verifies GitHub's repository, workflow ID/path, event, PR and head; the
-successful `build-ios` job's execution attempt; its bound build record; immutable
+For an app-affecting change, Linux shares one 45-minute deadline while selecting
+`ci-gate`'s iOS and tvOS builds. iPhone and iPad share the iOS archive; Apple TV
+uses the tvOS archive. It verifies GitHub's repository, workflow ID/path, event,
+PR and head; the successful platform build job's execution attempt; its bound build record; immutable
 artifact ID/name; and the downloaded manifest and tar hash. The manifest must
 match the full consumer identity, including base, head, merge commit and merge
 tree. Runs from another head repository or base are refused and recorded even
@@ -37,12 +38,12 @@ the UI target; the shards never build the app again.
 ## Manifest and union
 
 [`scripts/ci-ui-shards.json`](../scripts/ci-ui-shards.json) is the version 1
-class-assignment manifest, currently named revision `iphone-v1`:
+class-assignment manifest, currently named revision `multidevice-v1`:
 
 | Shard | Assigned classes |
 | --- | --- |
-| `navigation` | `immichSlidesUITests` |
-| `visual` | `FilterSummaryIOSVisualUITests` |
+| `navigation` | `immichSlidesUITests`, `ServerConfigFormTVOSUITests` |
+| `visual` | `FilterSummaryIOSVisualUITests`, `FilterSummaryTVOSVisualUITests` |
 | `default` | Every other or newly introduced class |
 
 The named revision describes the assignment. The exact Git revision and
@@ -60,6 +61,36 @@ checks that stored shard union and each summary's manifest/default-plan hashes.
 A candidate manifest or policy
 is effective in the trusted verdict only after exact-head approval.
 
+Both default plans are unchanged. Platform compilation selects the applicable
+classes; the partition remains nonempty on every device. Device-scope expected
+skips use the existing approved `ui` policy, with exact identity and skip reason.
+
+## Post-merge reuse
+
+On a main push, Linux first looks for the [trusted publisher's UI verdict
+receipt](CI_PUBLISHER.md). UI is skipped only for a complete successful
+same-repository, non-CI-changing PR verdict on an identical tree, with identical
+manifest, default-plan, policy, registry, classification, workflow and pins hashes
+and observed toolchains matching those pins. All currently scheduled device
+shards must be covered. Fork or approval-based verdicts never qualify; missing,
+expired, malformed, red, cancelled, superseded or rerunning verdicts run UI.
+Ordinary PRs do not use this reuse path.
+The receipt must name the one same-repository PR actually merged by the pushed
+SHA and that PR's final head. A different green head with the same tree cannot
+authorize reuse. Linux archive selection receives only `contents: read`,
+`actions: read` and `pull-requests: read`; the last permission supports the
+commit-to-merged-PR lookup without granting any write authority.
+
+The archive-selection job still runs and publishes its bound summary and
+`archive-selection.json` with `status: reused` and the original verdict provenance.
+Its `run_ui` output suppresses the entire macOS matrix. The publisher independently
+repeats the reuse decision before accepting those skipped jobs; an arbitrary
+producer skip, partial skip or failed selection job cannot become green.
+For execution, `archive-selection-ios.json` and `archive-selection-tvos.json`
+bind each platform's immutable artifact ID, producer run/attempt and manifest.
+Real identical-tree green/red post-merge exercises require maintainer-controlled
+merges; unit contract fixtures do not replace those acceptance runs.
+
 ## Fixture execution, retry and public output
 
 The workflow passes an explicit infrastructure wait factor and publishes its
@@ -69,7 +100,7 @@ scanned configuration record. Product timing never scales; see
 The shards use [fixture set C and the existing UI runner](CI_FIXTURE_UI.md),
 without a real server, private configuration or changed test assertions. They
 retain default simulator signing, pinned toolchains and runtime fixture inputs.
-Only this job's pinned iPhone simulator is created and deleted.
+Only each job's pinned device simulator is created and deleted.
 
 `--listed-only-retry` reads the PR's first-parent registry, never the candidate
 registry. Only a listed, unexpired assertion failure can receive a second,
@@ -99,7 +130,7 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 
 ## Capacity, timeouts and measurement
 
-The iPhone matrix has `max-parallel: 2` and `fail-fast: false`. Superseded runs
+The nine device/shard jobs share `max-parallel: 2` and `fail-fast: false`. Superseded runs
 cancel only within the same PR; main pushes and unrelated PRs are not cancelled.
 The Linux selection timeout is 45 minutes inside a 50-minute job. Xcode calls
 have a 65-minute timeout and share an 85-minute shard budget inside a 110-minute
@@ -120,10 +151,12 @@ records its per-attempt total in `export-read-timing.json`. Shard timing also re
 the bound. Local disk checks retain 80 GiB; only hosted jobs pass the existing 30 GiB
 allowance. No simulator runtime is downloaded or installed.
 
-`archive-selection.json` records selection wait, producer run/attempt and refused
+The platform selection records include selection wait, producer run/attempt and refused
 identities. `shard-timing.json` records shard wall time, caps, timeouts and exit
 code. The PR links final real runs and reports workflow wall time and gate
-latency, with job queue time separately, including overlapping PRs. These are
+latency, with job queue time separately, including overlapping PRs. Platform wall
+time is the span from its first shard start to its last shard finish; shard wall
+and queue times are reported separately. These are
 measurements, not a promise of reserved capacity: the shared macOS queue can
 delay every tier. Gate completion never depends on UI completion.
 
@@ -141,7 +174,7 @@ and build must still match. A missing or mismatched pin fails before any build:
 
 ```bash
 python3 -B scripts/ci_ui_tests.py reproduce \
-  --shard visual --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
+  --device ipad --shard visual --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
   --wait-factor 2 --output-dir '<fresh-outside-repo>'
 ```
 
@@ -155,6 +188,10 @@ build products are removed after the command; public records remain for review.
 Clean those records and any task-owned quarantined failure bundle after recording
 the necessary results in the PR. An output directory must be fresh and outside
 the source checkout. A revision must contain the producer and manifest.
+Use `--device iphone` for iPhone (also the backward-compatible default), or
+`--device appletv` with `platform=tvOS Simulator,id=<assigned-UDID>` for Apple TV.
+Reproduction builds only the selected device's platform and verifies that device's
+exact runtime and device-type pins before the build.
 
 Pass `--manifest-revision COMMIT_SHA` to explicitly reproduce that historical
 tree instead of the working tree. Use `--strict-ci` to refuse local changes.
