@@ -131,7 +131,8 @@ def select_archive(api, identity, *, timeout_seconds, poll_seconds=20, record_re
     head_repository = (api.repo(f"pulls/{identity['pull_request']}")["head"]["repo"]["full_name"]
                        if identity["event"] == "pull_request" else api.repository)
     started, refusals = time.monotonic(), []
-    pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+    from setup_ci_python import load_pins
+    pins = load_pins(ROOT / "scripts/ci-pins.json", tier="pr")
     def refuse(run, outcome, **details):
         refusal = {"run_id": run["id"], "head_sha": head, "consumer_identity": identity,
                    "outcome": outcome, **details}
@@ -257,7 +258,8 @@ def run_shard(args):
             manifest_build_path = args.archive_dir / "manifest.json"
             require(file_hash(manifest_build_path) == selection["build_manifest_sha256"], "selected build manifest changed")
             build = decode(manifest_build_path.read_text())
-            pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+            from setup_ci_python import load_pins
+            pins = load_pins(ROOT / "scripts/ci-pins.json", tier="pr")
             validate_manifest(build, ctx["identity"], selection["producer_run_id"], selection["producer_attempt"],
                               platform_name, pins["xcode"]["build"], file_hash(ROOT / "scripts/ci-pins.json"))
             require(not os.path.lexists(build["source_path"]) and not os.path.lexists(build["products_path"]),
@@ -305,7 +307,7 @@ def failed_shard(args, error):
 def verify_reproduction_pins(source, destination, environment):
     from strict_e2e_runner_support import destination_udid
     from setup_ci_python import load_pins
-    pins = load_pins(source / "scripts/ci-pins.json")
+    pins = load_pins(source / "scripts/ci-pins.json", tier="pr")
     # A local installation may have a different bundle path from hosted macOS.
     # Freeze the selected path, then verify its pinned version/build.
     try:
@@ -404,7 +406,8 @@ def main(argv=None):
         if args.command == "simulator":
             require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
                     "automatic simulator creation is hosted-only")
-            pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+            from setup_ci_python import load_pins
+            pins = load_pins(ROOT / "scripts/ci-pins.json", tier="pr")
             udid = subprocess.check_output(["xcrun", "simctl", "create", "ui-iphone-" + args.shard,
                     pins["device_types"]["iphone"], pins["simulators"]["ios"]["runtime"]], text=True, timeout=60).strip()
             with open(os.environ["GITHUB_ENV"], "a") as handle:

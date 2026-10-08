@@ -20,6 +20,7 @@ from ci_summary import (ContractError, decode, fields, observation, parse_summar
                         validate_test_identity, write_summary)
 from ci_verdict import expected_skip_verdict, identity_label, parse_policy, tier_approved
 from run_host_checks import git, toolchain
+from setup_ci_python import load_pins
 from run_offline_unit_tests import (CommandError, INTERRUPT_GRACE_SECONDS, classify_test_results,
                                     default_run, parse_official_test_results_summary)
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
@@ -34,7 +35,7 @@ TOOL_FILES = ("ci_unit_tests.py", "ci_build_archive.py", "ci_summary.py", "run_h
               "strict_e2e_filter_manifest.py", "strict_e2e_out_of_order_contract.py",
               "strict_e2e_p2_contract.py", "album_server_narrow_contract.py", "access_lifecycle_contract.py",
               "ci-pins.json", "ci_verdict.py", "ci_population.py", "ui_test_inventory.py", "ci-test-policy.json",
-              "ci_flaky.py", "ci_live_tests.py")
+              "ci_flaky.py", "ci_live_tests.py", "setup_ci_python.py")
 
 # Post-boot enumeration calibration is distinct from the separately measured simulator startup.
 HOSTED_ENUMERATION_SAMPLES = {
@@ -337,9 +338,10 @@ def run_units(args):
         manifest_path = args.archive_dir / "manifest.json"
         manifest = decode(manifest_path.read_text())
         pins_path = Path(__file__).with_name("ci-pins.json")
-        pins = decode(pins_path.read_text())
+        pins = load_pins(pins_path)
         developer = Path(os.environ.get("DEVELOPER_DIR") or archive.checked_command(["xcode-select", "-p"]))
         xcode_build = plistlib.loads((developer.parent / "version.plist").read_bytes())["ProductBuildVersion"]
+        require(xcode_build == pins["xcode"]["build"], "consumer Xcode differs from tier pins")
         require(archive.file_hash(pins_path) == ctx["pins_sha256"], "consumer pins changed after selection")
         archive.validate_manifest(manifest, ctx["identity"], ctx["run_id"] or "local", ctx["producer_attempt"],
                                   platform, xcode_build, ctx["pins_sha256"])

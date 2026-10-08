@@ -20,6 +20,7 @@ import ci_unit_tests as units
 from ci_summary import decode, duration, observation, parse_summary, render_markdown, require, test_identity
 from ci_verdict import function_identity, tokens
 from run_host_checks import git, toolchain
+from setup_ci_python import load_pins
 from run_offline_unit_tests import _stop_process_group
 
 WORKFLOW = ".github/workflows/ci-nightly.yml"
@@ -228,9 +229,10 @@ def execute_live(args, selection):
         population["observed"] = sanitized_outcomes(declared, [])
         manifest = decode((args.archive_dir / "manifest.json").read_text())
         pins_path = Path(__file__).with_name("ci-pins.json")
-        pins = decode(pins_path.read_text())
+        pins = load_pins(pins_path, tier="nightly")
         developer = Path(clean["DEVELOPER_DIR"])
         xcode_build = plistlib.loads((developer.parent / "version.plist").read_bytes())["ProductBuildVersion"]
+        require(xcode_build == pins["xcode"]["build"], "live consumer Xcode differs from nightly pins")
         archive.validate_manifest(manifest, identity, selection["run_id"], selection["producer_attempt"], platform,
                                   xcode_build, archive.file_hash(pins_path))
         require(selection["pins_sha256"] == archive.file_hash(pins_path), "live selection pins mismatch")

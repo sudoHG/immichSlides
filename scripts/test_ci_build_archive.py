@@ -124,7 +124,9 @@ class BuildArchiveTests(unittest.TestCase):
     def test_cross_run_ui_selection_refuses_same_head_other_base_and_binds_build_record_hash(self):
         from ci_summary import observation, test_identity
         manifest = self.manifest()
-        pins = {"xcode": {"build": "27A266a"}}
+        from setup_ci_python import load_pins
+        pins = load_pins(tier="pr")
+        manifest["xcode_build"] = pins["xcode"]["build"]
         run = {"id": 123, "run_attempt": 1, "workflow_id": 42, "path": ui.GATE_WORKFLOW,
                "event": "pull_request", "head_sha": self.identity["head_sha"],
                "head_repository": {"full_name": "owner/repo"},
@@ -196,10 +198,11 @@ class BuildArchiveTests(unittest.TestCase):
                         ui.select_archive(API(), self.identity, timeout_seconds=1)
 
     def test_ui_reproduction_checks_revision_pins_and_exact_destination_before_build(self):
-        pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
+        from setup_ci_python import load_pins
+        pins = load_pins(ui.ROOT / "scripts/ci-pins.json", tier="pr")
         source = self.root / "source"
         (source / "scripts").mkdir(parents=True)
-        (source / "scripts/ci-pins.json").write_text(json.dumps(pins))
+        (source / "scripts/ci-pins.json").write_bytes((ui.ROOT / "scripts/ci-pins.json").read_bytes())
         runtime = pins["simulators"]["ios"]
         udid = "00000000-0000-0000-0000-000000000000"
         type_id = "com.apple.CoreSimulator.SimDeviceType.iPhone-17e"
@@ -441,14 +444,15 @@ class BuildArchiveTests(unittest.TestCase):
     def test_consumer_timeouts_preserve_scanned_failed_records_and_finish_cleanup(self):
         import ci_unit_tests as units
         pins_path = Path(units.__file__).with_name("ci-pins.json")
-        pins = json.loads(pins_path.read_text())
+        from setup_ci_python import load_pins
+        pins = load_pins(pins_path)
         workspace = self.root / "tooling"
         workspace.mkdir()
         (workspace / "unit-declarations.json").write_text(json.dumps({"identity": self.identity, "platform": "ios",
             "declared": [{"kind": "swift", "key": "A/a", "dimensions": {"platform": "ios"}}]}))
         developer = self.root / "Xcode/Contents/Developer"
         developer.mkdir(parents=True)
-        (developer.parent / "version.plist").write_bytes(plistlib.dumps({"ProductBuildVersion": "27A266a"}))
+        (developer.parent / "version.plist").write_bytes(plistlib.dumps({"ProductBuildVersion": pins["xcode"]["build"]}))
         archive_dir = self.root / "archive"
         archive_dir.mkdir()
         (archive_dir / "manifest.json").write_text(json.dumps({

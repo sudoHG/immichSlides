@@ -48,7 +48,7 @@ settings, not a claim about the current App Store Connect configuration.
 | Start Conditions, after acceptance and release-policy approval | Replace Manual Start with **Tag Changes**, Custom Tags: enter `v` and select **Tags beginning with v** (the `v*` namespace) |
 | Other start conditions | No Branch Changes, Pull Request Changes, or schedule; no file/folder filters |
 | Auto-cancel Builds | Off; one release run must not cancel another release run |
-| Environment: Xcode | Fixed **27.0 (27A266a)**, matching `scripts/ci-pins.json`; never “Latest” |
+| Environment: Xcode | Fixed **27.0 (27A266a)**, matching the release profile in `scripts/ci-pins.json`; never “Latest” |
 | Environment: macOS | Fixed **27.0**, the successful #80 cloud environment; never “Latest” |
 | Environment: Clean | Enabled for both archives |
 | Environment variables | No custom or shared variables, no Immich URL/key, no debug overrides, no signing credentials |

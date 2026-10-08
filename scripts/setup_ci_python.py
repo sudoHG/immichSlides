@@ -20,9 +20,25 @@ def run(command, *, env=None, timeout=120):
     return completed.stdout.strip()
 
 
-def load_pins(path):
+def load_pins(path=PINS_PATH, *, tier=None):
     pins = json.loads(path.read_text(encoding="utf-8"))
-    if pins.get("schema_version") != 1:
+    selected_tier = tier or os.environ.get("CI_TOOLCHAIN_TIER", "pr")
+    if selected_tier not in {"pr", "nightly", "release"}:
+        raise ValueError("Unknown CI toolchain tier")
+    if pins.get("schema_version") == 2:
+        if set(pins["tiers"]) != {"pr", "nightly", "release"}:
+            raise ValueError("Expected complete CI toolchain tier mappings")
+        name = pins["tiers"][selected_tier]
+        if not isinstance(name, str) or name not in pins["profiles"]:
+            raise ValueError("Unknown CI toolchain profile")
+        profile = pins["profiles"][name]
+        if set(profile) != {"runner", "xcode", "simulators", "device_types"}:
+            raise ValueError("Expected complete CI toolchain profile")
+        if profile["runner"] not in {"macos-26", "xcode-27"}:
+            raise ValueError("Unreviewed CI runner label")
+        pins = {"schema_version": 2, **{key: pins[key] for key in ("python", "python_packages", "zstd")},
+                **profile, "tier": selected_tier, "profile": name}
+    elif pins.get("schema_version") != 1:
         raise ValueError("Unsupported CI pins schema")
     versions = [pins["python"], pins["zstd"]]
     if not all(isinstance(value, str) and re.fullmatch(r"\d+\.\d+\.\d+", value) for value in versions):

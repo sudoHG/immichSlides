@@ -44,6 +44,9 @@ concurrency:
   group: ci-nightly-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  CI_TOOLCHAIN_TIER: nightly
+
 jobs:
   plan:
     if: ${{ !inputs.probe_environment_refusal }}
@@ -63,7 +66,7 @@ jobs:
           /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
       - name: Select and verify pinned toolchain
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
       - name: Validate the full versioned matrix and record this attempt
@@ -104,7 +107,7 @@ jobs:
           /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
       - name: Select and verify pinned toolchain
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
       - name: Create a dedicated simulator for this shard
@@ -112,8 +115,8 @@ jobs:
           NIGHTLY_DEVICE: ${{ matrix.device }}
           NIGHTLY_PLATFORM: ${{ matrix.platform }}
         run: |
-          device=$(/usr/bin/python3 -c 'import json,os; p=json.load(open("scripts/ci-pins.json")); d=os.environ["NIGHTLY_DEVICE"]; print(p["device_types"]["appletv" if d=="tv" else d])')
-          runtime=$(/usr/bin/python3 -c 'import json,os; print(json.load(open("scripts/ci-pins.json"))["simulators"][os.environ["NIGHTLY_PLATFORM"]]["runtime"])')
+          device=$(/usr/bin/python3 -c 'import os,sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; p=load_pins(); d=os.environ["NIGHTLY_DEVICE"]; print(p["device_types"]["appletv" if d=="tv" else d])')
+          runtime=$(/usr/bin/python3 -c 'import os,sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print(load_pins()["simulators"][os.environ["NIGHTLY_PLATFORM"]]["runtime"])')
           udid=$(xcrun simctl create immichSlides-nightly "$device" "$runtime")
           echo "NIGHTLY_SIMULATOR=$udid" >> "$GITHUB_ENV"
           os_name=$([ "$NIGHTLY_PLATFORM" = ios ] && echo iOS || echo tvOS)
@@ -200,7 +203,7 @@ jobs:
           /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
       - name: Select and verify pinned toolchain
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
       - name: Download this attempt's scheduling record
@@ -270,7 +273,7 @@ jobs:
       - name: Select pinned Xcode and Python without credentials
         working-directory: live-consumer
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/live-python" --verify-toolchain
       - name: Choose the latest unexpired iOS producer attempt
         id: archive
@@ -364,7 +367,7 @@ jobs:
       - name: Select pinned Xcode and Python
         working-directory: live-producer
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/live-python" --verify-toolchain
       - name: Build one secret-free archive per platform
         id: build
@@ -411,7 +414,7 @@ jobs:
       - name: Select pinned Xcode and Python
         working-directory: live-consumer
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/live-python" --verify-toolchain
       - name: Select immutable artifact ID and stage declarations from the tested tree
         id: archive

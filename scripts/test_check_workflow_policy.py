@@ -24,6 +24,32 @@ def workflow():
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_runner_and_consumer_tier_must_match_the_selected_pins(self):
+        pins = {"pr": {"runner": "macos-26"}, "nightly": {"runner": "xcode-27"},
+                "release": {"runner": "xcode-27"}}
+        for path, tier in (("ci-gate.yml", "pr"), ("ci-ui.yml", "pr"),
+                           ("ci-strict-tracer.yml", "pr"), ("ci-toolchain.yml", "pr"),
+                           ("ci-nightly.yml", "nightly"), ("ci-p2-review.yml", "release")):
+            document = {"env": {"CI_TOOLCHAIN_TIER": tier}, "jobs": {
+                "check": {"runs-on": pins[tier]["runner"]}}}
+            with self.subTest(path=path):
+                self.assertEqual([], policy.check_tier_toolchain(".github/workflows/" + path, document, pins))
+                for change in ("runner", "tier", "job-tier"):
+                    changed = copy.deepcopy(document)
+                    if change == "runner":
+                        changed["jobs"]["check"]["runs-on"] = "macos-latest"
+                    elif change == "tier":
+                        changed["env"]["CI_TOOLCHAIN_TIER"] = "unknown"
+                    else:
+                        changed["jobs"]["check"]["env"] = {"CI_TOOLCHAIN_TIER": "unknown"}
+                    self.assertTrue(policy.check_tier_toolchain(".github/workflows/" + path, changed, pins))
+        document = {"jobs": {"probe": {"runs-on": "${{ matrix.runner }}",
+            "env": {"CI_TOOLCHAIN_TIER": "${{ matrix.tier }}"}, "strategy": {"matrix": {
+                "include": [{"tier": tier, "runner": pins[tier]["runner"]} for tier in ("pr", "nightly")]}}}}}
+        self.assertEqual([], policy.check_tier_toolchain(".github/workflows/ci-probe.yml", document, pins))
+        document["jobs"]["probe"]["strategy"]["matrix"]["include"][0]["runner"] = "xcode-27"
+        self.assertTrue(policy.check_tier_toolchain(".github/workflows/ci-probe.yml", document, pins))
+
     def test_live_environment_and_credentials_are_bound_to_guarded_nightly_jobs(self):
         root = Path(__file__).resolve().parent.parent
         source = (root / ".github/workflows/ci-nightly.yml").read_text()

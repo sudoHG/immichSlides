@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 from ci_summary import (ContractError, decode, fields, integer, observation, parse_identity,
                         require, sha, test_identity, write_summary)
 from run_host_checks import run_identity, source_metadata, toolchain
+from setup_ci_python import load_pins
 from run_offline_unit_tests import (CommandError, default_data_available_gib,
                                     default_run, ensure_disk_for_xcodebuild)
 
@@ -458,6 +459,7 @@ def run_build(args):
         architectures = checked_command(["xcrun", "lipo", "-archs", str(binary)]).split()
         developer = Path(os.environ.get("DEVELOPER_DIR") or checked_command(["xcode-select", "-p"]))
         xcode_build = plistlib.loads((developer.parent / "version.plist").read_bytes())["ProductBuildVersion"]
+        require(xcode_build == load_pins(pins_path)["xcode"]["build"], "build Xcode differs from tier pins")
         archive_dir = args.output_dir / "archive"
         archive_dir.mkdir()
         archive_path = archive_dir / "build.tar.gz"

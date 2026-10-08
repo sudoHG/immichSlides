@@ -26,7 +26,7 @@ class XcodeCloudArchiveTests(unittest.TestCase):
         self.version.write_bytes(plistlib.dumps(self.xcode))
         pins = self.root / "scripts/ci-pins.json"
         pins.parent.mkdir()
-        pins.write_text(json.dumps({"xcode": {"version": "27.0", "build": "27A266a"}}))
+        pins.write_bytes(cloud.ROOT.joinpath("scripts/ci-pins.json").read_bytes())
         self.lock = self.root / cloud.LOCK_PATH
         self.lock.parent.mkdir(parents=True)
         self.lock.write_text('{"pins": []}\n')

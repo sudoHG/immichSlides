@@ -18,8 +18,20 @@ concurrency:
 
 jobs:
   probe:
-    runs-on: xcode-27
+    name: probe-${{ matrix.tier }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - tier: pr
+            runner: macos-26
+          - tier: nightly
+            runner: xcode-27
+    env:
+      CI_TOOLCHAIN_TIER: ${{ matrix.tier }}
     permissions:
       contents: read
       issues: write

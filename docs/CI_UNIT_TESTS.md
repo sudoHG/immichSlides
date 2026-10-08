@@ -43,7 +43,8 @@ them to the full selected identity and platform. It retains only these declarati
 and the tools. The consumer removes its entire
 checkout, extracts to another absolute path, rejects existing build-time source and
 Products paths, and remeasures `Signature=adhoc`. Device type, runtime and Xcode build
-come from `scripts/ci-pins.json`. Signing stays **Sign to Run Locally**, clone-process
+come from the PR profile in `scripts/ci-pins.json` through the shared loader; nightly
+live consumers select the nightly profile. Signing stays **Sign to Run Locally**, clone-process
 parallelism is disabled, and automatic simulator diagnostic collection is disabled.
 Official function/parameter results and failures are still exported.
 

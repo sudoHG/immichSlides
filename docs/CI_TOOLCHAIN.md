@@ -5,7 +5,60 @@ Xcode version/build/path, simulator versions/builds/runtime identifiers, device 
 Python, Python packages and zstd. Consumers must compare exact versions and fail when a
 pin is unavailable; they must not select the latest installed version as a fallback.
 
-The Xcode and simulator pins match the [hosted Vision probe](https://github.com/sudoHG/immichSlides/actions/runs/37592421181).
+Schema 2 separates shared Python/package/zstd pins from named toolchain `profiles` and
+the `tiers` mapping. `load_pins(..., tier="pr" | "nightly" | "release")` selects an
+exact profile; otherwise it uses `CI_TOOLCHAIN_TIER`, defaulting to `pr`. Unknown
+tiers, profiles or runner labels fail closed. Consumers never infer a tier from the
+installed Xcode. Hosted workflows set the tier explicitly; UI reproduction selects
+the revision's PR profile, live consumers select nightly, and the Cloud archive
+preflight always selects release. Relocated unit tooling includes the shared loader.
+
+The maintainer's temporary PR capacity decision uses the GA `macos-26` arm64 image.
+Nightly and release retain the [hosted Vision probe](https://github.com/sudoHG/immichSlides/actions/runs/37592421181)
+Xcode 27 pins. The [GA image inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)
+and [hosted inventory run](https://github.com/sudoHG/immichSlides/actions/runs/37861124816)
+establish the following exact PR pins (the inventory succeeded; that temporary run's
+later setup failed against the then-unchanged Xcode 27 pin):
+
+| Tier | Runner | Xcode | iOS runtime | tvOS runtime |
+| --- | --- | --- | --- | --- |
+| PR, including pushes to main through gate/UI | `macos-26` | 26.6 / 17F113 | 26.5 / 23F77 | 26.5 / 23L470 |
+| Nightly and release | `xcode-27` | 27.0 / 27A266a | 27.0 / 24A434 | 27.0 / 24J360 |
+
+Both profiles retain iPhone 17e, iPad Air 11-inch (M4), and Apple TV 4K (3rd generation).
+The hosted Xcode 26.6 inventory contains all three; no device substitution was needed.
+Deployment targets remain iOS/tvOS 18.6; this switch changes CI coverage, not App APIs.
+Expected-skip policy remains keyed by device/platform and is unchanged. Runtime-specific
+product or visual failures must be reported, not accommodated by weakening assertions.
+
+### Switching the PR tier back
+
+GitHub schedules jobs before checking out repository files. To preserve the existing
+trusted reader's job/summary contract, workflows keep literal runner labels; no resolver
+job or new evidence schema is added. The maintainer accepted one coherent, checked edit:
+
+1. Set `tiers.pr` to `"xcode-27"` in `scripts/ci-pins.json`.
+2. Change the PR macOS `runs-on: macos-26` entries to `runs-on: xcode-27` in
+   `ci-gate.yml` (five jobs), `ci-ui.yml` (shards), `ci-strict-tracer.yml` (tracer),
+   and `ci-toolchain.yml` (toolchain), under `.github/workflows/`.
+3. In `ci-probe.yml`, change only the `tier: pr` include row's runner to `xcode-27`.
+4. Run `scripts/check_all.sh` and the hosted gate/UI/toolchain workflows on the PR.
+
+`check_workflow_policy.py` rejects mismatched runner labels, missing tier bindings,
+job/step tier overrides, and mismatched probe matrix rows. Its fixed workflow-to-tier
+map keeps nightly and P2 release review on Xcode 27. Leave the nightly/release mappings,
+their runner entries, shared packages and policies unchanged during the PR switch.
+Reverse the same edits to return to GA. No repository variable or setting is involved.
+
+The publisher still evaluates summaries using its admitted base reader and pins-blob
+hashes. That reader does not compare recorded Xcode versions against root-level pins;
+the version dictionary accepts the added `ci_tier`, `ci_profile` and `pinned_*` strings.
+Summary and archive schema versions, job names and artifact names remain unchanged,
+so no separate reader rollout is needed. Archive consumers still compare exact profile
+Xcode builds and full pins-file hashes; a profile switch cannot reuse the old archive.
+At this baseline post-merge UI reuse is not yet implemented; its future toolchain
+comparison must use the selected PR profile as well as observed versions.
+
 Python 3.9.6 and Pillow 11.3.0 match the contributor verification baseline. The workflow
 uses Xcode's `/usr/bin/python3` explicitly and verifies its version; a different version
 fails rather than falling back to the Homebrew interpreter. For contributor interpreter
@@ -20,9 +73,10 @@ Python, Xcode, simulator runtimes or zstd and never changes system packages. Run
 repository root, with a new task-owned environment path outside the repository:
 
 ```bash
+export CI_TOOLCHAIN_TIER=pr # choose nightly for local Xcode 27 inventory checks
 python3 scripts/setup_ci_python.py --python /path/to/pinned/python3 --venv /tmp/immichslides-ci-python
 source /tmp/immichslides-ci-python/bin/activate
-export DEVELOPER_DIR="$(python3 -c 'import json; print(json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])')"
+export DEVELOPER_DIR="$(python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print(load_pins()["xcode"]["developer_dir"])')"
 python3 -B scripts/setup_ci_python.py --venv /tmp/immichslides-ci-python --check
 python3 -B scripts/check_workflow_policy.py
 python3 -B -m unittest discover -s scripts -p test_check_workflow_policy.py
@@ -45,16 +99,16 @@ or installs platform resources. The repository's 80 GiB pre-build rule still app
 builds; inventory does not require build space. Ordinary Python setup does not require Xcode.
 
 The bounded [CI toolchain workflow](../.github/workflows/ci-toolchain.yml) proves setup,
-inventory, policy, its unit tests and the existing host checks on `xcode-27` for relevant pull requests and manual
-dispatches. Its runner selector must match the pins file; GitHub chooses a runner before
-it can read repository files. This workflow is separate from the PR gate and the scheduled
+inventory, policy, its unit tests and the existing host checks on the PR profile for relevant
+pull requests and manual dispatches. Its literal runner selector is checked against the
+pins file. This workflow is separate from the PR gate and the scheduled
 toolchain probe below.
 
 ## Scheduled Xcode probe
 
-[ci-probe](../.github/workflows/ci-probe.yml) runs daily at 08:17 UTC on the pinned
-`xcode-27` runner, with a 20-minute job deadline. Its runner selector must follow
-`scripts/ci-pins.json`. It checks out the repository's default branch with persisted
+[ci-probe](../.github/workflows/ci-probe.yml) runs daily at 08:17 UTC for both PR and
+nightly profiles, with a 20-minute deadline per job and `max-parallel: 1`. Its literal
+matrix rows must follow `scripts/ci-pins.json`. It checks out the repository's default branch with persisted
 checkout credentials disabled and reuses `scripts/setup_ci_python.py`. It never builds,
 boots a simulator, installs platform resources or chooses another Xcode.
 
@@ -68,7 +122,8 @@ boots a simulator, installs platform resources or chooses another Xcode.
   inventory opens or updates a high-confidence `pinned toolchain missing` issue per
   runner/Xcode version/build. The probe reports it before attempting upstream reads.
 - **Possible toolchain change - please check:** anonymous reads of the official
-  [arm64 image toolset](https://github.com/actions/runner-images/blob/main/images/macos/toolsets/toolset-xcode-27.json)
+  [Xcode 27 arm64 image toolset](https://github.com/actions/runner-images/blob/main/images/macos/toolsets/toolset-xcode-27.json)
+  or [macOS 26 arm64 image toolset](https://github.com/actions/runner-images/blob/main/images/macos/toolsets/toolset-26.json)
   check whether the exact `version+build` Xcode pin is still listed. This verified
   machine-readable source describes image build configuration, not the deployed runner;
   its `install_runtimes: default` does not specify exact runtime builds. Separately, any

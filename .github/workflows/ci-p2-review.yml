@@ -15,6 +15,9 @@ concurrency:
   group: ci-p2-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+env:
+  CI_TOOLCHAIN_TIER: release
+
 jobs:
   review-package:
     name: review-package (iphone, ios)
@@ -30,13 +33,13 @@ jobs:
       - name: Reject private configuration and select pinned tools
         run: |
           /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/review-python" --verify-toolchain
       - name: Collect a real public fixture cache review
         run: |
-          device=$(/usr/bin/python3 -c 'import json; print(json.load(open("scripts/ci-pins.json"))["device_types"]["iphone"])')
-          runtime=$(/usr/bin/python3 -c 'import json; print(json.load(open("scripts/ci-pins.json"))["simulators"]["ios"]["runtime"])')
+          device=$(/usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print(load_pins()["device_types"]["iphone"])')
+          runtime=$(/usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print(load_pins()["simulators"]["ios"]["runtime"])')
           udid=$(xcrun simctl create immichSlides-review-probe "$device" "$runtime")
           echo "REVIEW_SIMULATOR=$udid" >> "$GITHUB_ENV"
           /usr/bin/python3 -B - "$udid" <<'PY'

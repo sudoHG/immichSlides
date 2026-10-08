@@ -26,7 +26,15 @@ PROBE_COMMANDS = {
 PROBE_ENVIRONMENT = {
     "CI_PROBE_TOKEN": "${{ github.token }}",
     "CI_PROBE_SIMULATE_MISSING_PIN": "${{ inputs.simulate_missing_pin || false }}",
+    "CI_TOOLCHAIN_TIER": "${{ matrix.tier }}",
 }
+TOOLCHAIN_TIERS = {
+    ".github/workflows/ci-gate.yml": "pr", ".github/workflows/ci-ui.yml": "pr",
+    ".github/workflows/ci-strict-tracer.yml": "pr", ".github/workflows/ci-toolchain.yml": "pr",
+    ".github/workflows/ci-nightly.yml": "nightly", ".github/workflows/ci-p2-review.yml": "release",
+}
+LINUX_TOOLCHAIN_JOBS = {".github/workflows/ci-ui.yml": {"archive"},
+                        ".github/workflows/ci-nightly.yml": {"live-environment-refusal"}}
 WORKFLOW_RUN_SOURCES = {
     ".github/workflows/ci-publish.yml": {"ci-gate", "ci-ui"},
     ".github/workflows/ci-report.yml": {"ci-nightly", "ci-gate"},
@@ -114,6 +122,35 @@ class Violation:
 
     def __str__(self):
         return f"{self.path}:{self.location}: [{self.rule}] {self.message}"
+
+
+def check_tier_toolchain(path, document, pins):
+    violations = []
+    def flag(location):
+        violations.append(Violation(path, location, "toolchain-tier", "Runner and consumer tier must match CI pins"))
+    if path == PROBE_WORKFLOW:
+        expected = [{"tier": tier, "runner": pins[tier]["runner"]} for tier in ("pr", "nightly")]
+        for name, job in document.get("jobs", {}).items():
+            if (job.get("runs-on") != "${{ matrix.runner }}"
+                    or job.get("env", {}).get("CI_TOOLCHAIN_TIER") != "${{ matrix.tier }}"
+                    or job.get("strategy", {}).get("matrix") != {"include": expected}):
+                flag("jobs." + name)
+        return violations
+    tier = TOOLCHAIN_TIERS.get(path)
+    if tier is None:
+        return violations
+    if document.get("env", {}).get("CI_TOOLCHAIN_TIER") != tier:
+        flag("env")
+    for name, job in document.get("jobs", {}).items():
+        if job.get("env", {}).get("CI_TOOLCHAIN_TIER", tier) != tier:
+            flag("jobs." + name + ".env")
+        expected = "ubuntu-24.04" if name in LINUX_TOOLCHAIN_JOBS.get(path, set()) else pins[tier]["runner"]
+        if job.get("runs-on") != expected:
+            flag("jobs." + name + ".runs-on")
+        for step in job.get("steps", []):
+            if step.get("env", {}).get("CI_TOOLCHAIN_TIER", tier) != tier:
+                flag("jobs." + name + ".steps.env")
+    return violations
 
 
 def pinned_action(value):
@@ -431,7 +468,15 @@ def main(argv=None):
             if path.is_symlink():
                 raise ValueError("Workflow symlinks are unsupported")
             violations.extend(check_workflow(relative, path.read_text(encoding="utf-8")))
-        except (OSError, UnicodeError, ValueError):
+            if (relative in TOOLCHAIN_TIERS or relative == PROBE_WORKFLOW) and not any(
+                    violation.path == relative for violation in violations):
+                from setup_ci_python import load_pins
+                pins = {tier: load_pins(args.root / "scripts/ci-pins.json", tier=tier)
+                        for tier in ("pr", "nightly", "release")}
+                document = yaml.load(path.read_text(encoding="utf-8"), Loader=WorkflowLoader)
+                if isinstance(document, dict):
+                    violations.extend(check_tier_toolchain(relative, document, pins))
+        except (OSError, UnicodeError, ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError):
             violations.append(Violation(relative, "workflow", "workflow-format", "Cannot read a regular UTF-8 workflow"))
     for violation in violations:
         print(violation, file=sys.stderr)

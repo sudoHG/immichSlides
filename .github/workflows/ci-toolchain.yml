@@ -14,6 +14,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CI_TOOLCHAIN_TIER: pr
+
 jobs:
   toolchain:
     runs-on: macos-26
@@ -23,18 +26,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Inventory the GA runner before locking its runtime builds
-        run: |
-          export DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer
-          /usr/bin/python3 --version
-          /usr/bin/python3 -c 'import os,plistlib; from pathlib import Path; print(plistlib.loads((Path(os.environ["DEVELOPER_DIR"]).parent / "version.plist").read_bytes()))'
-          xcrun simctl list runtimes --json
-          xcrun simctl list devicetypes --json
-
       - name: Select Xcode and inspect its Python
         run: |
           /usr/bin/python3 --version
-          python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
 
       - name: Verify pins and create isolated Python environment
         run: |
