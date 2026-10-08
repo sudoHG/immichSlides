@@ -14,6 +14,10 @@ import yaml
 
 PRIVACY_WORKFLOW = ".github/workflows/privacy-preflight.yml"
 PROBE_WORKFLOW = ".github/workflows/ci-probe.yml"
+LIVE_WORKFLOW = ".github/workflows/ci-nightly.yml"
+LIVE_ENVIRONMENT = "immich-test-server"
+LIVE_BINDINGS = {"CI_LIVE_URL": "${{ secrets.IMMICH_TEST_SERVER_URL }}",
+                 "CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}
 ISSUE_WRITE_WORKFLOWS = {PROBE_WORKFLOW, ".github/workflows/ci-report.yml"}
 PROBE_COMMANDS = {
     '/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"',
@@ -137,6 +141,17 @@ def walk_mappings(value, location="workflow"):
             yield from walk_mappings(child, f"{location}[{index}]")
 
 
+def string_scalars(value, location='workflow'):
+    if isinstance(value, str):
+        yield location, value
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            yield from string_scalars(child, f'{location}.{key}')
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from string_scalars(child, f'{location}[{index}]')
+
+
 def artifact_path(value):
     if not isinstance(value, str):
         return False
@@ -242,6 +257,37 @@ def check_workflow(path: str, source: str) -> list[Violation]:
     approval_workflow = path in {".github/workflows/ci-approval.yml", ".github/workflows/ci-approve.yml"}
     if approval_workflow and "concurrency" in document:
         flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
+    # Live consumers intentionally execute test bundles; publisher-only trusted command rules do not apply.
+    # Their environment and test-time credentials instead have this separate admission contract.
+    allowed_secret_locations = {'workflow.jobs.live-unit.steps[' + str(index) + '].env.' + key
+        for index, step in enumerate(jobs.get('live-unit', {}).get('steps', []))
+        if step.get('id') == 'live' and step.get('env') == LIVE_BINDINGS for key in LIVE_BINDINGS}
+    for location, value in string_scalars(document):
+        if re.search(r"secrets\s*(?:\.\s*IMMICH_TEST_SERVER_|\[\s*['\"]IMMICH_TEST_SERVER_)", value):
+            if path != LIVE_WORKFLOW or location not in allowed_secret_locations:
+                flag(location, 'live-credential', 'Live secret references belong only to the guarded injection environment')
+    for location, item in walk_mappings(document):
+        name = item.get("environment")
+        name = name.get("name") if isinstance(name, dict) else name
+        if isinstance(name, str) and '${{' in name:
+            flag(location, 'live-credential', 'Environment names must be literal to verify credential isolation')
+        if isinstance(name, str) and name.casefold() in {LIVE_ENVIRONMENT, "test-server"}:
+            refusal = (location == "workflow.jobs.live-environment-refusal" and
+                       item.get("if") == "github.event_name == 'workflow_dispatch' && inputs.probe_environment_refusal && github.ref != 'refs/heads/main'" and
+                       item.get("permissions") == {} and item.get("steps") == [{"run": "/usr/bin/false"}])
+            consumer = (location == "workflow.jobs.live-unit" and item.get("needs") == ["live-admission", "live-build"] and
+                        item.get("if") == "needs.live-admission.outputs.admitted == 'true'")
+            if path != LIVE_WORKFLOW or name != LIVE_ENVIRONMENT or not (refusal or consumer):
+                flag(location, "live-credential", "Live environment belongs only to guarded nightly units or the credential-free refusal probe")
+        env = item.get("env", {})
+        if isinstance(env, dict) and any("secrets.IMMICH_TEST_SERVER_" in str(value) or key in LIVE_BINDINGS for key, value in env.items()):
+            consumer = jobs.get("live-unit", {})
+            steps = consumer.get("steps", [])
+            if (path != LIVE_WORKFLOW or env != LIVE_BINDINGS or item.get("id") != "live" or item not in steps
+                    or consumer.get("environment") != LIVE_ENVIRONMENT
+                    or consumer.get("if") != "needs.live-admission.outputs.admitted == 'true'"
+                    or not any(step.get("run") == "/usr/bin/python3 -B scripts/ci_live_tests.py admit" for step in steps[:steps.index(item)])):
+                flag(location, "live-credential", "Live secrets belong only to test-time injection after credential-free admission")
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
     if path in PUBLISHER_COMMANDS and isinstance(document.get("env"), dict):
         if any(isinstance(key, str) and key.startswith("CI_APP_") for key in document["env"]):

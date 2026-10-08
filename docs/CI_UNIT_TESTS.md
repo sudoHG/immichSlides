@@ -102,6 +102,8 @@ The [unit approval conditions](https://github.com/sudoHG/immichSlides/pull/131#i
 assign live tests to the nightly live tier. Until that tier runs nightly, networking
 or filtering changes require a manual live run before merge. Hermetic skips do not
 establish live membership, deduplication or performance coverage.
+The [live unit runner](CI_LIVE_TESTS.md) implements main-only execution and documents
+its pre-merge refusal and post-merge acceptance boundary.
 
 The [summary contract](CI_SUMMARY.md) keeps successful Swift rows in JSON and displays
 failures/skips in Markdown. Parameter rows retain official arguments and outcomes.

@@ -6,6 +6,8 @@ package-resolution flags. The [full unit consumers](CI_UNIT_TESTS.md) reuse thes
 archives; the [iPhone UI tracer](CI_UI.md) selects the iOS archive across runs. Host
 and privacy jobs are unchanged. [`scripts/ci_build_archive.py`](../scripts/ci_build_archive.py)
 uses the existing [identity/summary contract](CI_SUMMARY.md) and [toolchain pins](CI_TOOLCHAIN.md).
+The [nightly live producer](CI_LIVE_TESTS.md) reuses this entry point with schedule/dispatch
+identity and PR canary builds, exact nightly workflow provenance and the same secret-free checks.
 Its summaries describe host checks of archives, not a full Swift population or a
 trusted required verdict.
 

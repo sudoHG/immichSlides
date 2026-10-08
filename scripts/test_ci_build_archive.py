@@ -2,6 +2,7 @@
 import copy
 import io
 import json
+import base64
 import plistlib
 import platform
 import subprocess
@@ -9,7 +10,7 @@ import tarfile
 import tempfile
 import unittest
 import urllib.error
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -240,9 +241,17 @@ class BuildArchiveTests(unittest.TestCase):
         self.assertEqual(ui.build_job_attempt(API(), {"id": 123, "run_attempt": 2})["conclusion"], "failure")
 
     def test_artifact_selection_requires_id_run_and_producer_attempt(self):
+        import ci_live_tests as live
         metadata = {"id": 7, "name": archive.artifact_name("ios", "123", 1), "expired": False,
                     "workflow_run": {"id": 123, "head_sha": self.identity["head_sha"]}}
         archive.validate_artifact(metadata, self.identity, "123", 1, "ios", 7)
+        second = dict(metadata, id=8, name=archive.artifact_name('ios', '123', 2))
+        future = dict(metadata, id=9, name=archive.artifact_name('ios', '123', 4))
+        self.assertEqual(live.latest_artifact([metadata, second, future], 'ios', '123', 3), (8, 2))
+        self.assertEqual(live.latest_artifact([metadata, dict(second, expired=True)], 'ios', '123', 3), (7, 1))
+        for entries in ([], [future], [metadata, metadata], [dict(metadata, expired=True)]):
+            with self.subTest(entries=entries), self.assertRaises(ContractError):
+                live.latest_artifact(entries, 'ios', '123', 3)
         for field, value in (("id", 8), ("name", archive.artifact_name("ios", "123", 2)), ("expired", True)):
             with self.subTest(field=field):
                 candidate = dict(metadata, **{field: value})
@@ -742,6 +751,172 @@ class ArchiveUnitResultTests(unittest.TestCase):
         self.assertEqual((code, summary["status"], summary["infrastructure"]), (65, "failed", []))
         with self.assertRaisesRegex(ContractError, "skip reason"):
             result_observations(payload, "ios", {})
+
+
+class LiveBoundaryTests(unittest.TestCase):
+    def test_live_scope_selects_from_the_full_catalog_but_refuses_unowned_or_missing_live_tests(self):
+        import ci_live_tests as live
+        from ci_summary import test_identity
+        suite = live.SUITES[0]
+        declared = [test_identity('swift', suite+'/works', platform='ios')]
+        classes = [{'kind': 'class', 'name': suite, 'children': [{'kind': 'test', 'name': 'works()'}]},
+                   {'kind': 'class', 'name': 'OfflineTests', 'children': [{'kind': 'test', 'name': 'offline()'}]}]
+        def catalog(children):
+            return {'errors': [], 'values': [{'kind': 'target', 'name': 'immichSlidesTests', 'children': children}]}
+        self.assertEqual(live.compiled_live_keys(catalog(classes), declared), {suite+'/works()'})
+        for children in (classes[1:], classes+[{'kind': 'class', 'name': 'UnownedLiveTests',
+                                              'children': [{'kind': 'test', 'name': 'extra()'}]}]):
+            with self.subTest(children=children), self.assertRaises(ContractError):
+                live.compiled_live_keys(catalog(children), declared)
+
+    def test_failed_canary_preparation_keeps_a_scanned_shared_failure_summary(self):
+        import argparse
+        import ci_live_tests as live
+        from ci_summary import parse_summary
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            identity = {'schema_version': 1, 'event': 'pull_request', 'repository': 'owner/repo',
+                        'pull_request': 2, 'merge_sha': 'a' * 40, 'base_sha': 'b' * 40,
+                        'head_sha': 'c' * 40, 'tree_sha': 'd' * 40}
+            selection = {'identity': identity, 'source': {'repository': 'owner/repo', 'event': 'pull_request',
+                'workflow_path': live.WORKFLOW, 'fork_originated': False, 'ci_changing': None},
+                'run_id': '123', 'attempt': 2, 'platform': 'ios', 'artifact_id': 7, 'producer_attempt': 1}
+            args = argparse.Namespace(canary=True, output_dir=root/'public', private_dir=root/'private',
+                                      relocated_path=root/'relocated', archive_dir=root/'archive', min_free_gib=80)
+            url, key = live.canary_values('123', 2)
+            env = {'CI_LIVE_URL': url, 'CI_LIVE_KEY': key, 'GITHUB_OUTPUT': str(root/'outputs')}
+            with patch.dict('os.environ', env), patch.object(live.archive, 'workspace_preflight',
+                    side_effect=ContractError(key)), redirect_stdout(io.StringIO()), self.assertRaises(ContractError):
+                live.execute_live(args, selection)
+            record = parse_summary((args.output_dir/'live-summary.json').read_text())
+            self.assertEqual(record['status'], 'failed')
+            self.assertEqual(record['infrastructure'][0]['code'], 'live-archive-failed')
+            self.assertIn('records_safe=true', (root/'outputs').read_text())
+            self.assertFalse((args.output_dir/'canary.json').exists())
+            self.assertFalse(args.private_dir.exists())
+            live.scan_tree(args.output_dir, live.secret_forms(url, key))
+
+    def test_nightly_archive_provenance_and_live_suite_ownership_fail_closed(self):
+        import ci_live_tests as live
+        from ci_summary import test_identity
+        self.assertEqual(archive.producer_workflow({"event": "schedule"}), live.WORKFLOW)
+        self.assertEqual(archive.producer_workflow({"event": "pull_request"}), archive.WORKFLOW)
+        with patch.dict('os.environ', {'GITHUB_WORKFLOW_REF': 'owner/repo/' + live.WORKFLOW + '@refs/pull/2/merge'}):
+            self.assertEqual(archive.producer_workflow({'event': 'pull_request', 'repository': 'owner/repo'}), live.WORKFLOW)
+        with patch.dict('os.environ', {'GITHUB_WORKFLOW_REF': 'other/repo/' + live.WORKFLOW + '@refs/pull/2/merge'}):
+            self.assertEqual(archive.producer_workflow({'event': 'pull_request', 'repository': 'owner/repo'}), archive.WORKFLOW)
+        declared = [test_identity("swift", suite + "/works", platform="ios")
+                    for suite in (*live.SUITES, "PerformanceLiveIntegrationTests")]
+        self.assertEqual(len(live.live_declarations(declared)), len(live.SUITES))
+        for changed in (declared[:-2], declared + [test_identity("swift", "UnownedLiveTests/works", platform="ios")]):
+            with self.subTest(count=len(changed)), self.assertRaises(ContractError):
+                live.live_declarations(changed)
+
+    def test_live_admission_refuses_events_actors_refs_and_non_main_ancestry(self):
+        import ci_live_tests as live
+        env = {"GITHUB_REPOSITORY": "sudoHG/immichSlides", "GITHUB_EVENT_NAME": "workflow_dispatch",
+               "GITHUB_REF": "refs/heads/main", "GITHUB_ACTOR": "sudoHG", "GITHUB_TRIGGERING_ACTOR": "sudoHG",
+               "GITHUB_WORKFLOW_REF": "sudoHG/immichSlides/.github/workflows/ci-nightly.yml@refs/heads/main",
+               "GITHUB_SHA": "a" * 40}
+        self.assertEqual(live.admission(env, {}, "a" * 40, True), "admitted")
+        for key, value in (("GITHUB_EVENT_NAME", "push"), ("GITHUB_ACTOR", "outsider"),
+                           ("GITHUB_TRIGGERING_ACTOR", "outsider"), ("GITHUB_REF", "refs/heads/branch"),
+                           ("GITHUB_WORKFLOW_REF", "sudoHG/immichSlides/.github/workflows/other.yml@refs/heads/main"),
+                           ("GITHUB_REPOSITORY", "fork/immichSlides")):
+            with self.subTest(key=key), self.assertRaises(ContractError):
+                live.admission(dict(env, **{key: value}), {}, "a" * 40, True)
+        for head, ancestor in (("b" * 40, True), ("a" * 40, False)):
+            with self.subTest(head=head, ancestor=ancestor), self.assertRaises(ContractError):
+                live.admission(env, {}, head, ancestor)
+        for fork in (False, True):
+            event = {"pull_request": {"head": {"repo": {"full_name": "fork/repo" if fork else "sudoHG/immichSlides"}}}}
+            self.assertEqual(live.admission(dict(env, GITHUB_EVENT_NAME="pull_request"), event, None, False),
+                             "fork-skipped" if fork else "pr-skipped")
+
+    def test_live_secret_scan_rejects_raw_and_transformed_bytes_across_chunk_boundaries(self):
+        import ci_live_tests as live
+        values = ("https://canary.invalid/a path?x=\"quoted\"", "canary-key-abcdefghijklmnop")
+        needles = live.secret_forms(*values)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture"
+            for value in values:
+                for offset in range(3):
+                    for encode in (base64.b64encode, base64.urlsafe_b64encode):
+                        with self.subTest(offset=offset, alphabet=encode.__name__), self.assertRaises(ContractError):
+                            path.write_bytes(encode(b'x' * offset + value.encode() + b'tail'))
+                            live.scan_file(path, needles)
+            path.write_bytes(b"safe compact record")
+            live.scan_file(path, needles)
+            for needle in needles:
+                with self.subTest(length=len(needle)), self.assertRaises(ContractError):
+                    path.write_bytes(b"x" * (1024 * 1024 - 2) + needle)
+                    live.scan_file(path, needles)
+
+    def test_canary_audit_requires_nonempty_logs_and_matching_run_attempt_results(self):
+        import ci_live_tests as live
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in (root / 'missing', root):
+                with self.subTest(path=path), self.assertRaises(ContractError):
+                    live.audit_canary(path, '123', 2)
+            logs = root / 'logs'
+            logs.mkdir()
+            (logs / 'job.txt').write_text('complete public job log')
+            results = root / 'artifacts' / 'live-canary-ios-123-2'
+            results.mkdir(parents=True)
+            verdict = {'schema_version': 1, 'status': 'passed', 'run_id': '123', 'attempt': 2,
+                       'platform': 'ios', 'execution_failed': True}
+            (results / 'canary.json').write_text(json.dumps(verdict))
+            with self.assertRaises(ContractError):
+                live.audit_canary(root, '123', 2)
+            identity = {'schema_version': 1, 'event': 'pull_request', 'repository': 'owner/repo',
+                        'pull_request': 2, 'merge_sha': 'a' * 40, 'base_sha': 'b' * 40,
+                        'head_sha': 'c' * 40, 'tree_sha': 'd' * 40}
+            summary = archive.record({'identity': identity, 'source': {
+                'repository': 'owner/repo', 'event': 'pull_request', 'workflow_path': live.WORKFLOW,
+                'fork_originated': False, 'ci_changing': None}, 'run_id': '123', 'attempt': 2}, 'ios', 'live-canary')
+            from ci_summary import observation, test_identity
+            test = test_identity('swift', 'ExampleLiveTests/works', platform='ios')
+            summary['run']['tier'] = 'live-unit'
+            summary['population'].update(declared=[test], compiled=[test], observed=[observation(test, 'failed', 1, exit_code=65)])
+            summary.update(status='failed')
+            (results / 'live-summary.json').write_text(json.dumps(summary))
+            (results / 'live-summary.md').write_text('Failed live pipeline summary')
+            live.audit_canary(root, '123', 2)
+            for mutation in ('attempt', 'empty-log', 'leak'):
+                with self.subTest(mutation=mutation), self.assertRaises(ContractError):
+                    if mutation == 'attempt':
+                        live.audit_canary(root, '123', 3)
+                    else:
+                        (logs / 'job.txt').write_text('' if mutation == 'empty-log' else live.canary_values('123', 2)[1])
+                        live.audit_canary(root, '123', 2)
+
+    def test_live_summary_requires_complete_passing_function_and_parameter_outcomes(self):
+        import ci_live_tests as live
+        from ci_summary import observation, test_identity, validate_observation
+        from run_offline_unit_tests import TestResultsSummary
+        declared = [test_identity("swift", "ExampleLiveTests/works", platform="ios")]
+        row = observation(test_identity("swift", "immichSlidesTests/ExampleLiveTests/works()", platform="ios"), "passed", 1)
+        counts = TestResultsSummary(1, 1, 0, 0, "Passed")
+        self.assertEqual(live.public_outcomes(declared, {"ExampleLiveTests/works()"}, [row], counts, 0)[0]["outcome"], "passed")
+        parameter = copy.deepcopy(row)
+        parameter["identity"]["dimensions"]["parameter"] = "private URL-bearing arguments"
+        self.assertNotIn("private", json.dumps(live.public_outcomes(declared, {"ExampleLiveTests/works()"}, [row, parameter], counts, 0)))
+        outcomes = live.public_outcomes(declared, {'ExampleLiveTests/works()'}, [row, parameter], counts, 0)
+        for entry in outcomes:
+            validate_observation(entry)
+        self.assertEqual(outcomes[1]['identity']['dimensions']['parameter'], 'case-0')
+        for rows, compiled, code, result in (([], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row], set(), 0, counts), ([row], {"ExampleLiveTests/works()"}, 65, counts),
+                                            ([dict(row, outcome="skipped", reason="missing server")], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row, dict(parameter, outcome="failed")], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row, parameter, parameter], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row, dict(row, identity=test_identity('swift', 'immichSlidesTests/OtherTests/extra()', platform='ios'))],
+                                             {'ExampleLiveTests/works()'}, 0, TestResultsSummary(2, 2, 0, 0, 'Passed')),
+                                            ([dict(row, duration_seconds=float("inf"))], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row], {"ExampleLiveTests/works()"}, 0, TestResultsSummary(1, 1, 0, 0, "Failed"))):
+            with self.subTest(code=code, rows=len(rows)), self.assertRaises(ContractError):
+                live.public_outcomes(declared, compiled, rows, result, code)
 
 
 if __name__ == "__main__":
