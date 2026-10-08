@@ -70,6 +70,9 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
 run on pull requests and pushes to `main`. Separate hosted runners prove source-free
 relocation with fixture tests; the full unit/UI consumer tiers are separate work.
+Release archive preparation and the maintainer-gated App Store Connect steps are in
+[Xcode Cloud to internal TestFlight](docs/XCODE_CLOUD_TESTFLIGHT.md). Its first upload
+is manual, the Default workflow stays disabled, and tag starts need later approval.
 To keep its JSON and short Markdown records locally, run
 `"${PYTHON:-python3}" -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run`.
 `check_all.sh` uses the same checks. `--output-dir` keeps records in `DIR/host-records`
