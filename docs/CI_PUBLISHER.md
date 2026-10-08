@@ -86,6 +86,33 @@ successful jobs' artifacts and refuses older artifacts for a job that actually r
 Unknown matrices, shards or tiers fail closed until a supported reader is landed
 on main before the producer starts emitting them.
 
+The UI reader supports a Linux `ci_ui_tests.py wait-archive` job and literal
+`ci_ui_tests.py run --device DEVICE --shard SHARD` jobs. Each still requires one
+bound summary artifact and a successful GitHub job. Supported devices are
+`iphone`, `ipad` and `appletv`; the producer determines which device matrix is
+currently in scope. A device's shard names must exactly equal the admitted
+manifest's names, without duplicate assignments. Each shard's independently
+derived default-plan population includes its platform and device. The gate
+checks this complete union, including declared, compiled and observed identities.
+
+Admission retains the base and candidate `scripts/ci-ui-shards.json`, default
+plans and their SHA-256 hashes as data. A new workflow absent on the base is
+retained only as candidate metadata; exact-head approval is still required before
+it is selected. Candidate files are never imported. Every UI summary binds the
+manifest hash; device shards also bind their default-plan hash. The base's
+known-flaky registry remains authoritative, with eligibility checked against the
+producer's GitHub run start date, including reruns. Fixture UI is hermetic for
+registry scope; platform-method entries apply to verified devices on that
+platform. Device dimensions remain in coverage and expected-skip accounting.
+
+Shard manifest version 1 contains `schema_version`, a named `revision`,
+`default_shard` and `shards` (a map from shard names to exact XCTest class names).
+Unknown classes go to the default shard, including tests in extensions. A class
+cannot appear twice. The default test plan's class/method selections and
+exclusions apply before assignment; Evidence and strict tests stay outside this
+population. The reader accepts no dynamic matrices or alternate manifest paths.
+This reader compatibility step creates no UI workflow; its producer is separate.
+
 The bridge calls the admitted base revision's `evaluate_gate`, including per-job
 expectations and the complete context population. `ci-pr-gate` includes host,
 unit iOS, unit tvOS, both build operations and any supported additional build

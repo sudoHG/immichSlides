@@ -110,6 +110,14 @@ def validate_registry_population(registry, populations):
 
 def eligible_entry(registry, identity, *, tier, environment, today):
     entries = parse_registry(registry)["entries"]
+    if identity["kind"] == "ui" and "device" in identity["dimensions"]:
+        device = identity["dimensions"]["device"]
+        platform = {"iphone": "ios", "ipad": "ios", "appletv": "tvos"}.get(device)
+        if platform is None or identity["dimensions"].get("platform") != platform:
+            return None
+        identity = dict(identity, dimensions={key: value for key, value in identity["dimensions"].items() if key != "device"})
+    if tier == "ui" and environment == "fixture":
+        environment = "hermetic"
     return next((entry for entry in entries if entry["identity"] == identity
                  and entry["scope"] == {"tier": tier, "environment": environment}
                  and calendar_date(entry["review_by"]) >= today), None)
