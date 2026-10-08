@@ -103,6 +103,13 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("publisher-credential", self.rules(document, TRUSTED))
         document["jobs"]["check"]["steps"][0]["run"] = '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py publish'
         self.assertNotIn("publisher-credential", self.rules(document, TRUSTED))
+        for scope in ("workflow", "job"):
+            for binding in ("CI_APP_ID", "CI_APP_PRIVATE_KEY"):
+                with self.subTest(scope=scope, binding=binding):
+                    modified = copy.deepcopy(document)
+                    owner = modified if scope == "workflow" else modified["jobs"]["check"]
+                    owner["env"] = {binding: policy.PUBLISHER_BINDINGS[binding]}
+                    self.assertIn("publisher-credential", self.rules(modified, TRUSTED))
 
     def test_publisher_history_runner_and_approval_queue_contracts_fail_closed(self):
         root = Path(__file__).parents[1]

@@ -29,14 +29,18 @@ from source text. The trusted `ci-admission-<producer-run-id>` artifact stores:
 - the complete tree listing, populations and base populations;
 - the trusted base reader revision, classification, workflow metadata and policies.
 
-The artifact is kept 30 days. Readers first select the **trusted uploading workflow**
-runs and verify each uploader's head SHA is an ancestor of current main through
-GitHub's comparison API. A tag named `main` is insufficient. They then select
-artifacts only from those uploaders, ignoring untrusted same-name objects,
+The artifact is kept 30 days. Readers query its exact name, verify the producing
+run's workflow ID/path, event, branch and both repository identities, then verify
+the uploader's head SHA against fetched main with local `git merge-base --is-ancestor`.
+A tag named `main` is insufficient. This lookup does not list publisher history;
+API cost depends on matching artifacts rather than newer unrelated runs. Readers
+ignore untrusted same-name objects before reading any artifact bytes,
 and read only the bounded JSON member; no ZIP is extracted and no artifact code
 is executed. Base-reader modules are loaded from Git objects at the verified
 main first parent, rechecked against main history, and run in a temporary isolated
-subprocess without credentials. Main retains that base; late approval does not
+subprocess without credentials. Evaluator dependencies, including `ci_flaky.py`
+when present, come from the same base; older bases without it remain supported.
+Main retains that base; late approval does not
 require fetching the old merge commit again.
 Reruns preserve the first record because GitHub re-tests the original SHA/ref.
 If that record expires, the context stays pending; push an updated branch to get
@@ -44,7 +48,8 @@ a new admission. For a fork, closing and reopening also starts fresh runs.
 
 A producer identity must match the record exactly. A mismatch reports
 **base moved; push again or update the branch**. An App-created success receipt
-`ci-base-mismatch/run-<run-id>/attempt-<attempt>` persists each mismatch; a later
+`ci-base-mismatch/run-<run-id>/attempt-<attempt>` persists each mismatch as
+bookkeeping, explicitly not a test result; a later
 attempt is marked repeated only if an earlier receipt exists. Attempt number
 alone proves no previous mismatch. Rerunning cannot fix a different admitted merge. Conflicting
 PRs do not get producer runs from GitHub and cannot become green.
@@ -99,9 +104,11 @@ approved CI-changing/fork verdicts are labeled **approval-based**.
 ## Approval and credentials
 
 Fork and CI-changing heads require the maintainer's approval of that exact SHA.
-The publisher reserves `ci-approval-request/pr-<number>/<head>` as a success
-receipt, so the bookkeeping context never leaves a permanent pending state, and dispatches
-`ci-approval` at most once for that head. Existing requests for older heads are
+The publisher reserves `ci-approval-request/pr-<number>/<head>` as pending and
+marks it successful only after GitHub accepts the dispatch. This context says
+bookkeeping, not a test result. A pending receipt with no existing approval run
+is retried by a later publication; an accepted dispatch or an existing run prevents
+another dispatch for that head. Existing requests for older heads are
 cancelled as obsolete. The request run contains two jobs:
 
 1. `wait` has `permissions: {}`, no checkout and no secrets. Its `ci-approval`
@@ -114,13 +121,18 @@ Only the approval job and the maintainer-only `ci-approve` fallback write the
 immutable approval context. `ci-publish` only reads it, checking the App bot's
 identity. It never includes that context in its display writes, so a publisher's
 read/approve/write interleaving cannot erase approval. The display context's
-Details link points to the existing approval run.
+Details link points to the existing approval run. The reservation also links to
+that run when visible. After dispatch, lookup waits at most ten seconds; if GitHub
+has not exposed the run yet, the accepted receipt links to the approval workflow
+until the next publication can replace it with the run link.
 
 Request reservation and workflow dispatch are two GitHub API operations. If the
-job is forcibly interrupted after reservation but before dispatch, it preserves
-the reservation and does not dispatch a duplicate. The maintainer uses
-`ci-approve` for this receipt, or for an expired/rejected approval run. This is a
-fail-closed availability limitation, not permission to auto-approve. Agents
+job is forcibly interrupted after reservation but before dispatch, a later
+publication retries only if no approval run exists. If GitHub accepted the dispatch
+before interruption, discovery of its run repairs the pending receipt without
+dispatching again. An accepted dispatch whose run is not yet visible retains a
+success receipt to prevent duplicate requests. The maintainer uses `ci-approve`
+for an expired/rejected approval run. These receipts never grant approval. Agents
 must never invoke an approval, approve a deployment, or grant fork/release approval.
 
 The publisher App is generic: its ID comes from `CI_APP_ID`, its slug is read

@@ -23,6 +23,7 @@ from ci_summary import require, sha, test_identity
 
 BASE_MODULES = ("ci_summary.py", "ci_population.py", "ci_verdict.py", "ui_test_inventory.py",
                 "run_host_checks.py")
+OPTIONAL_BASE_MODULES = ("ci_flaky.py",)
 BRIDGE = '''import json,sys
 sys.path.insert(0, sys.argv[1])
 from ci_population import python_identities,swift_identities,ui_identities
@@ -74,7 +75,8 @@ def tree_inputs(commit):
 
 
 def base_reader(modules, payload):
-    require(set(modules) == set(BASE_MODULES), "incomplete trusted base reader")
+    require(set(BASE_MODULES) <= set(modules) <= set(BASE_MODULES + OPTIONAL_BASE_MODULES),
+            "incomplete or unreviewed trusted base reader")
     with tempfile.TemporaryDirectory(prefix="ci-base-reader-") as directory:
         for name, source in modules.items():
             Path(directory, name).write_text(source, encoding="utf-8")
@@ -89,6 +91,16 @@ def base_reader(modules, payload):
         return json.loads(result.stdout)
 
 
+def revision_modules(revision):
+    modules = {name: read_blob(revision, "scripts/" + name) for name in BASE_MODULES}
+    # These dependencies were introduced after the original verdict library.
+    # Missing historical files are allowed; present files come from that base.
+    for name in OPTIONAL_BASE_MODULES:
+        if git("ls-tree", "--name-only", revision, "--", "scripts/" + name):
+            modules[name] = read_blob(revision, "scripts/" + name)
+    return modules
+
+
 def trusted_reader(record):
     revision = record["reader_revision"]
     identity = record["identity"]
@@ -99,13 +111,13 @@ def trusted_reader(record):
                            capture_output=True, timeout=30).returncode == 0, "historical reader is not on main")
     # Read modules from verified Git history, never from an artifact. Main's
     # history retains this base even after the ephemeral PR merge ref expires.
-    return {name: read_blob(revision, "scripts/" + name) for name in BASE_MODULES}
+    return revision_modules(revision)
 
 
 def derive_record(identity, run, *, before=None):
     commit = identity.get("merge_sha", identity.get("pushed_sha"))
     base = identity.get("base_sha", commit)
-    modules = {name: read_blob(base, "scripts/" + name) for name in BASE_MODULES}
+    modules = revision_modules(base)
     listing, sources = tree_inputs(commit)
     if identity["event"] == "pull_request":
         paths = git("diff", "--name-only", "--no-renames", base + "..." + identity["head_sha"]).splitlines()

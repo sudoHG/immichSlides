@@ -242,31 +242,30 @@ def trusted_admissions(api, run_ids):
     records = {}
     if workflow is None:
         return records
-    # Establish the trusted uploaders before inspecting any named artifact.
-    # A PR can upload the same name, but cannot make its run trusted this way.
-    from datetime import datetime, timedelta, timezone
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=31)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    main = api.repo("git/ref/heads/main")["object"]["sha"]
-    sha(main)
-    trusted, ancestry = set(), {}
-    for run in api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", branch="main", created=">=" + cutoff):
-        if not (run["path"] == PUBLISH_PATH and run["workflow_id"] == workflow["id"]
-                and run["event"] in {"workflow_run", "workflow_dispatch"} and run["head_branch"] == "main"
-                and run["head_repository"]["full_name"] == api.repository
-                and run["repository"]["full_name"] == api.repository):
-            continue
-        revision = run["head_sha"]
-        sha(revision)
-        if revision not in ancestry:
-            comparison = api.repo("compare/" + revision + "..." + main)
-            ancestry[revision] = comparison["merge_base_commit"]["sha"] == revision and comparison["status"] in {"ahead", "identical"}
-        if ancestry[revision]:
-            trusted.add(positive(run["id"]))
+    # Locate the exact name without enumerating publisher history. Validate
+    # each producing run before reading bytes; PR name collisions are ignored.
+    git("fetch", "--no-tags", "origin", "refs/heads/main")
+    trusted, ancestry = {}, {}
     for run_id in run_ids:
         for artifact in api.pages("actions/artifacts", "artifacts", name=f"ci-admission-{positive(run_id)}"):
-            if (artifact["name"] == f"ci-admission-{run_id}" and not artifact["expired"]
-                    and artifact["workflow_run"]["id"] in trusted):
-                positive(artifact["workflow_run"]["id"])
+            if artifact["name"] != f"ci-admission-{run_id}" or artifact["expired"]:
+                continue
+            uploader = positive(artifact["workflow_run"]["id"])
+            if uploader not in trusted:
+                run = api.repo(f"actions/runs/{uploader}")
+                trusted[uploader] = False
+                if (run["id"] == uploader and run["path"] == PUBLISH_PATH and run["workflow_id"] == workflow["id"]
+                        and run["event"] in {"workflow_run", "workflow_dispatch"} and run["head_branch"] == "main"
+                        and run["head_repository"]["full_name"] == api.repository
+                        and run["repository"]["full_name"] == api.repository):
+                    revision = run["head_sha"]
+                    sha(revision)
+                    if revision not in ancestry:
+                        ancestry[revision] = subprocess.run(
+                            ["git", "merge-base", "--is-ancestor", revision, "FETCH_HEAD"],
+                            capture_output=True, timeout=30).returncode == 0
+                    trusted[uploader] = ancestry[revision]
+            if trusted[uploader]:
                 record = json_member(api, artifact, "record.json")
                 require(type(record.get("schema_version")) is int and record["schema_version"] == 1, "unsupported admission version")
                 require(artifact["name"] == f"ci-admission-{record['run_id']}", "admission run ID mismatch")
@@ -482,19 +481,33 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
         if status.get("mismatch"):
             mismatch = status["mismatch"]
             app.status(head, f"ci-base-mismatch/run-{mismatch['run_id']}/attempt-{mismatch['attempt']}",
-                       "success", "Producer identity mismatch recorded", target)
+                       "success", "Bookkeeping: mismatch recorded; not a test result", target)
     if approval:
         for run_id in approval["obsolete"]:
             api.repo(f"actions/runs/{run_id}/cancel", method="POST")
-        if approval["request"]:
-            # Serialized reservation is an immutable outbox receipt. A crash
-            # after reservation is recovered through the maintainer fallback;
-            # it never generates two one-click requests for the same head.
-            request_context = f"ci-approval-request/pr-{pr_number}/{head}"
-            statuses = api.pages("commits/" + head + "/statuses")
-            if not any(s["context"] == request_context and s["creator"]["login"] == login for s in statuses):
-                app.status(head, request_context, "success", "Approval request reserved; fallback available if interrupted", target)
-                api.dispatch(APPROVAL_PATH, {"pull_request": str(pr_number), "head_sha": head})
+        request_context = f"ci-approval-request/pr-{pr_number}/{head}"
+        statuses = api.pages("commits/" + head + "/statuses")
+        reservation = next((s for s in statuses if s["context"] == request_context and s["creator"]["login"] == login), None)
+        requests = approval_requests(api, {"number": pr_number})
+        request = next((r for r in requests if r["head_sha"] == head), None)
+        dispatched = False
+        if approval["request"] and not request and (not reservation or reservation["state"] != "success"):
+            app.status(head, request_context, "pending", "Bookkeeping: approval dispatch pending; not a test result", target)
+            api.dispatch(APPROVAL_PATH, {"pull_request": str(pr_number), "head_sha": head})
+            dispatched = True
+            # The accepted receipt survives a delay before the new run becomes
+            # visible. Pending receipts with no run are retried on publication.
+            app.status(head, request_context, "success", "Bookkeeping: approval dispatch accepted; not a test result",
+                       f"https://github.com/{api.repository}/actions/workflows/ci-approval.yml")
+            for _ in range(10):
+                requests = approval_requests(api, {"number": pr_number})
+                request = next((r for r in requests if r["head_sha"] == head), None)
+                if request:
+                    break
+                time.sleep(1)
+        if request and (reservation or dispatched):
+            app.status(head, request_context, "success", "Bookkeeping: approval request created; not a test result",
+                       f"https://github.com/{api.repository}/actions/runs/{request['run_id']}")
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:
         with open(step_summary, "a") as handle:
@@ -580,8 +593,9 @@ def main():
             finally:
                 app.request("/installation/token", method="DELETE")
         return 0
-    except (ContractError, KeyError, ValueError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
-        print("Trusted publisher refused missing, stale or invalid input; inspect the workflow and admission records.")
+    except (ContractError, KeyError, ValueError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
+        detail = str(error) if isinstance(error, ContractError) else type(error).__name__
+        print("Trusted publisher refused: " + detail)
         return 1
 
 

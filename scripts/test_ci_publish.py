@@ -176,6 +176,9 @@ class PublisherTests(unittest.TestCase):
 
     def test_complete_gate_requires_both_unit_populations_and_refuses_host_impersonation(self):
         modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES}
+        dependency = Path(__file__).parent / "ci_flaky.py"
+        if dependency.exists():
+            modules[dependency.name] = dependency.read_text()
         with patch("ci_publish_git.trusted_reader", return_value=modules):
             record, jobs, summaries = gate_fixture(units=False)
             self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False),
@@ -188,6 +191,27 @@ class PublisherTests(unittest.TestCase):
                 summary["population"].update(declared=expected, compiled=expected,
                                              observed=[observation(value, "passed", 0) for value in expected])
             self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "failure")
+
+    def test_base_reader_carries_same_revision_dependencies_and_tolerates_older_bases(self):
+        from ci_publish_git import revision_modules
+        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES}
+        dependency = Path(__file__).parent / "ci_flaky.py"
+        modules["ci_flaky.py"] = dependency.read_text() if dependency.exists() else "from ci_summary import require\n"
+        # Old evaluators do not import ci_flaky; retain the dependency seam on
+        # old checkouts as well as the current evaluator used by PR merge CI.
+        modules["ci_verdict.py"] += "\nimport ci_flaky\n"
+        def blob(revision, path):
+            self.assertEqual(revision, BASE)
+            return modules[path.removeprefix("scripts/")]
+        with patch("ci_publish_git.git", return_value="scripts/ci_flaky.py"), \
+                patch("ci_publish_git.read_blob", side_effect=blob):
+            loaded = revision_modules(BASE)
+        self.assertEqual(loaded, modules)
+        record, jobs, summaries = gate_fixture(units=True)
+        with patch("ci_publish_git.trusted_reader", return_value=loaded):
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "success")
+        with patch("ci_publish_git.git", return_value=""), patch("ci_publish_git.read_blob", side_effect=blob):
+            self.assertEqual(set(revision_modules(BASE)), set(BASE_MODULES))
 
     def test_real_workflow_contract_ignores_copied_script_names_and_binds_producer_platforms(self):
         source = (Path(__file__).parent.parent / ".github/workflows/ci-gate.yml").read_text()
@@ -217,21 +241,60 @@ class PublisherTests(unittest.TestCase):
             def repo(self, path, **options):
                 if path == "actions/workflows/ci-publish.yml":
                     return {"id": 201}
-                if path == "git/ref/heads/main":
-                    return {"object": {"sha": MERGE}}
-                if path.startswith("compare/"):
-                    return {"merge_base_commit": {"sha": BASE}, "status": "ahead" if BASE in path else "diverged"}
+                if path.startswith("actions/runs/"):
+                    return {500: uploader, 502: tagged, 101: RUN}[int(path.rsplit("/", 1)[1])]
                 raise AssertionError(path)
             def pages(self, path, collection, **filters):
-                if path == "actions/workflows/201/runs":
-                    return [uploader, tagged, RUN]
-                self.assert_trusted_first = True
+                if path != "actions/artifacts" or filters != {"name": "ci-admission-101"}:
+                    raise AssertionError("Expected an exact artifact lookup")
                 return [dict(legitimate, id=2, workflow_run={"id": 101}), legitimate,
                         dict(legitimate, id=3, workflow_run={"id": 502})]
-        with patch("ci_publish.json_member", return_value=record) as read:
+        def ancestry(command, **options):
+            return type("Completed", (), {"returncode": 0 if command[-2] == BASE else 1})()
+        with patch("ci_publish.git"), patch("ci_publish.subprocess.run", side_effect=ancestry), \
+                patch("ci_publish.json_member", return_value=record) as read:
             self.assertEqual(trusted_admissions(RecordedAPI(), [101]), {101: record})
             self.assertEqual(read.call_args.args[1]["id"], 1)
             self.assertEqual(read.call_count, 1)
+
+    def test_admission_lookup_cost_is_independent_of_publisher_history_length(self):
+        uploader = dict(RUN, id=500, workflow_id=201, path=".github/workflows/ci-publish.yml",
+                        head_sha=BASE, head_branch="main", event="workflow_run")
+        record = {"schema_version": 1, "run_id": 101, "identity": admission_identity(REPOSITORY, RUN, PR, COMMIT)}
+        class RecordedAPI:
+            repository = REPOSITORY
+            def __init__(self, newer_runs):
+                self.newer_runs, self.calls = newer_runs, []
+            def repo(self, path, **options):
+                self.calls.append(path)
+                if path == "actions/workflows/ci-publish.yml":
+                    return {"id": 201, "path": uploader["path"]}
+                if path == "actions/runs/500":
+                    return uploader
+                if path == "git/ref/heads/main":
+                    return {"object": {"sha": BASE}}
+                if path.startswith("compare/"):
+                    return {"merge_base_commit": {"sha": BASE}, "status": "identical"}
+                raise AssertionError(path)
+            def pages(self, path, collection, **filters):
+                self.calls.append((path, collection, filters))
+                if path == "actions/artifacts" and filters == {"name": "ci-admission-101"}:
+                    return [{"id": 1, "name": "ci-admission-101", "expired": False, "workflow_run": {"id": 500}}]
+                if path == "actions/workflows/201/runs":
+                    # GitHub's workflow-run search cap excludes uploader 500
+                    # when more than 1000 newer runs match the old query.
+                    return [dict(uploader, id=501 + index) for index in range(min(self.newer_runs, 1000))]
+                raise AssertionError(path)
+        counts = []
+        with patch("ci_publish.git"), patch("ci_publish.subprocess.run") as ancestry, \
+                patch("ci_publish.json_member", return_value=record):
+            ancestry.return_value.returncode = 0
+            for newer_runs in (1001, 10000):
+                api = RecordedAPI(newer_runs)
+                self.assertEqual(trusted_admissions(api, [101]), {101: record})
+                counts.append(len(api.calls))
+                self.assertEqual(ancestry.call_args.args[0], ["git", "merge-base", "--is-ancestor", BASE, "FETCH_HEAD"])
+        self.assertEqual(counts, [3, 3])
 
     def test_docs_only_approved_fork_is_not_applicable_and_missing_classification_stays_pending(self):
         fork = copy.deepcopy(PR)
@@ -371,6 +434,19 @@ class PublisherTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ContractError):
                 check_credential_context(dict(valid, **change), ".github/workflows/ci-publish.yml")
 
+    def test_refusal_diagnostics_explain_contract_guards_without_printing_exception_payloads(self):
+        from ci_publish import main
+        for error, expected in ((ContractError("historical reader is not on main"), "historical reader is not on main"),
+                                (OSError("private response body"), "OSError"),
+                                (ValueError("private subprocess output"), "ValueError")):
+            with self.subTest(error=type(error).__name__), \
+                    patch("sys.argv", ["ci_publish.py", "dry-run", "--repository", REPOSITORY,
+                                       "--pr", "7", "--app-login", "generic-app[bot]"]), \
+                    patch("ci_publish.os.environ", {}), patch("ci_publish.write_publication", side_effect=error), \
+                    patch("builtins.print") as output:
+                self.assertEqual(main(), 1)
+                output.assert_called_once_with("Trusted publisher refused: " + expected)
+
     def test_admission_persists_derived_tree_population_and_base_reader_for_late_approval(self):
         identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
         tree = [{"path": "scripts/test_probe.py", "mode": "100644", "type": "blob", "sha": TREE}]
@@ -452,37 +528,51 @@ class PublisherTests(unittest.TestCase):
             wrong = RecordedAPI("outsider")
             record_approval(wrong, wrong, event, environment, "generic-app[bot]", ".github/workflows/ci-approval.yml")
 
-    def test_reserved_approval_is_not_dispatched_twice_and_dry_run_never_writes(self):
+    def test_approval_reservation_retries_failed_dispatch_and_links_the_created_run(self):
         class RecordedAPI:
             repository = REPOSITORY
             def __init__(self):
-                self.writes, self.dispatches = [], []
+                self.writes, self.dispatches, self.requests = [], [], []
+                self.fail_dispatch = True
             def repo(self, path):
                 return PR
             def pages(self, path):
-                return [{"context": f"ci-approval-request/pr-7/{HEAD}", "creator": {"login": "generic-app[bot]"}}]
+                return [{"context": row[1], "state": row[2], "creator": {"login": "generic-app[bot]"}}
+                        for row in reversed(self.writes)]
             def status(self, *args):
                 self.writes.append(args)
             def dispatch(self, *args):
                 self.dispatches.append(args)
+                if self.fail_dispatch:
+                    raise ContractError("GitHub API POST refused request (HTTP 503)")
+                self.requests = [{"head_sha": HEAD, "run_id": 200, "status": "waiting"}]
         plan = {context: {"state": "pending", "description": "pending"} for context in ("ci-pr-gate", "ci-ui", "ci-approval-state")}
         api = RecordedAPI()
         with patch("ci_publish.compute", return_value=(HEAD, plan, {"request": HEAD, "obsolete": []})), \
-                patch("ci_publish.os.environ", {}):
+                patch("ci_publish.os.environ", {}), \
+                patch("ci_publish.approval_requests", side_effect=lambda *args: api.requests):
+            with self.assertRaises(ContractError):
+                write_publication(api, api, 7, "", "generic-app[bot]")
+            self.assertEqual(api.writes[-1][2], "pending")
+            self.assertIn("Bookkeeping", api.writes[-1][3])
+            self.assertEqual(len(api.dispatches), 1)
+            api.fail_dispatch = False
             write_publication(api, api, 7, "", "generic-app[bot]")
-            self.assertEqual(len(api.writes), 3)
-            self.assertEqual(api.dispatches, [])
+            self.assertEqual(len(api.dispatches), 2)
+            self.assertEqual(api.writes[-1][2], "success")
+            self.assertEqual(api.writes[-1][4], "https://github.com/example/photos/actions/runs/200")
+            write_publication(api, api, 7, "", "generic-app[bot]")
+            self.assertEqual(len(api.dispatches), 2)
+            writes = len(api.writes)
             with patch("builtins.print"):
                 write_publication(api, api, 7, "", "generic-app[bot]", dry_run=True)
-            self.assertEqual(len(api.writes), 3)
-            class FreshAPI(RecordedAPI):
-                def pages(self, path):
-                    return [{"context": row[1], "state": row[2], "creator": {"login": "generic-app[bot]"}} for row in self.writes]
-            fresh = FreshAPI()
-            write_publication(fresh, fresh, 7, "", "generic-app[bot]")
-            self.assertEqual(fresh.writes[-1][2], "success")
-            write_publication(fresh, fresh, 7, "", "generic-app[bot]")
-            self.assertEqual(len(fresh.dispatches), 1)
+            self.assertEqual(len(api.writes), writes)
+            # A pending receipt plus an already-created run is recovered without
+            # another dispatch, including interruption after the HTTP response.
+            api.status(HEAD, f"ci-approval-request/pr-7/{HEAD}", "pending", "Bookkeeping", "")
+            write_publication(api, api, 7, "", "generic-app[bot]")
+            self.assertEqual(len(api.dispatches), 2)
+            self.assertEqual(api.writes[-1][2], "success")
 
     def test_artifact_redirect_never_forwards_installation_credentials_to_storage(self):
         from urllib.request import Request

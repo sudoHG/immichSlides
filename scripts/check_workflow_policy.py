@@ -243,6 +243,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
     if approval_workflow and "concurrency" in document:
         flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
+    if path in PUBLISHER_COMMANDS and isinstance(document.get("env"), dict):
+        if any(isinstance(key, str) and key.startswith("CI_APP_") for key in document["env"]):
+            flag("env", "publisher-credential", "App credentials cannot be inherited from workflow environment")
     for job_id, job in jobs.items():
         location = f"jobs.{job_id}"
         if not isinstance(job, dict):
@@ -250,6 +253,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             continue
         if path in PUBLISHER_COMMANDS and job.get("runs-on") != "ubuntu-24.04":
             flag(location, "publisher-runner", "Publisher and approval jobs use the pinned Linux runner")
+        if path in PUBLISHER_COMMANDS and isinstance(job.get("env"), dict):
+            if any(isinstance(key, str) and key.startswith("CI_APP_") for key in job["env"]):
+                flag(location, "publisher-credential", "App credentials cannot be inherited from job environment")
         if approval_workflow and "concurrency" in job:
             flag(location, "approval-queue", "Approval jobs cannot enter a replaceable concurrency queue")
         permissions = job.get("permissions", document.get("permissions"))
