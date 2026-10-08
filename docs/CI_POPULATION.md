@@ -250,10 +250,13 @@ localization catalog/usage, Python prerequisites and workflow-policy checks, plu
 `test_conventions_allowlist.json`, `check_all.sh`, the privacy gate/trusted runner,
 their tests and privacy fixture modules, and `scripts/__init__.py`. It also covers
 the source-free consumer's copied `run_offline_unit_tests.py` and its test modules.
+The strict tracer's `run_strict_ci_tracer.py` and `strict-tracer.json` are CI inputs;
+its warm-build dependencies and tests belong to the same import closure.
 The recursive local-import closure is trusted too: the excluded-UI check imports
 access-lifecycle and strict runners, so their contracts, fixture support and own
 tests are CI inputs. The formatting policy changes the lint verdict.
-Regressions derive every `HOST_CHECKS` and workflow `scripts/...` reference,
+Regressions derive every `HOST_CHECKS` and workflow `scripts/...` reference (expanding
+workflow path globs to actual files),
 local-action `uses: ./...` paths, bare filenames in workflow `for file in ...; do` toolsets, and the recursive
 local-import closure of every trusted Python script. They require CI-trusted
 coverage; every exact classification entry must exist.

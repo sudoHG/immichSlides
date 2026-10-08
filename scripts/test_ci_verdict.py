@@ -399,7 +399,13 @@ class AdmissionVerdictTests(unittest.TestCase):
         root = Path(__file__).resolve().parent.parent
         for workflow in (root / ".github/workflows").glob("*.yml"):
             source = workflow.read_text(encoding="utf-8")
-            host_paths += re.findall(r"\bscripts/[A-Za-z0-9_./-]+", source)
+            for reference in re.findall(r"\bscripts/[A-Za-z0-9_./*?\[\]-]+", source):
+                if any(character in reference for character in "*?["):
+                    matches = [str(path.relative_to(root)) for path in root.glob(reference) if path.is_file()]
+                    self.assertTrue(matches, f"workflow path pattern has no files: {reference}")
+                    host_paths += matches
+                else:
+                    host_paths.append(reference)
             for action in re.findall(r"\buses:\s*['\"]?\./([A-Za-z0-9_./-]+)", source):
                 action_files = [str(path.relative_to(root)) for path in (root / action).rglob("*") if path.is_file()]
                 self.assertTrue(action_files, f"local action path has no files: {action}")
