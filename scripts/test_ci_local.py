@@ -67,14 +67,16 @@ class LocalModeTests(unittest.TestCase):
                         self.assertEqual(record.read_bytes(), original_record)
             self.assertTrue((root / "Config/env.xcconfig").is_symlink())
             for project_args in (["--project", str(root / "immichSlides.xcodeproj")],
-                                 ["--project=" + str(root / "immichSlides.xcodeproj")]):
+                                 ["--project=" + str(root / "immichSlides.xcodeproj")],
+                                 ["--proj=" + str(root / "immichSlides.xcodeproj")]):
                 with self.subTest(project_args=project_args):
                     completed = subprocess.run([sys.executable, "-B", str(runner), "--config",
                                                 "IMMICH_TEST_API_KEY=explicit", *project_args], cwd=root,
                                                env=test_environment, capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 0, completed.stderr)
             for project_args in (["--project", str(Path(directory, "outside.xcodeproj"))],
-                                 ["--project=" + str(Path(directory, "outside.xcodeproj"))]):
+                                 ["--project=" + str(Path(directory, "outside.xcodeproj"))],
+                                 ["--proj=" + str(Path(directory, "outside.xcodeproj"))]):
                 with self.subTest(outside_project=project_args):
                     completed = subprocess.run([sys.executable, "-B", str(runner), *project_args], cwd=root,
                                                env=test_environment, capture_output=True, text=True, timeout=15)

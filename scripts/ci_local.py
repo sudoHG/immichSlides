@@ -161,7 +161,8 @@ def launch(script, arguments):
     remaining = absolute_paths(remaining, Path.cwd())
     for index, argument in enumerate(remaining):
         option, separator, inline = argument.partition("=")
-        if option == "--project" and (separator or index + 1 < len(remaining)):
+        # The offline parser also accepts unambiguous long-option abbreviations.
+        if len(option) >= len("--pro") and "--project".startswith(option) and (separator or index + 1 < len(remaining)):
             project = (Path.cwd() / (inline if separator else remaining[index + 1])).resolve()
             if root not in project.parents:
                 raise ValueError("--project must belong to the source checkout being snapshotted")
