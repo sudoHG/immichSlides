@@ -138,6 +138,8 @@ the eight check definitions; Python declaration uses the AST and follows mixins,
 while `compiled` records dynamic unittest discovery. These are separate inputs to
 the population comparison. The [static library](CI_POPULATION.md) also enumerates
 Swift unit and UI tests from supplied source text without candidate imports.
+The [unit archive consumer](CI_UNIT_TESTS.md) binds declarations from the selected
+Git tree before removing its checkout; the publisher independently derives that set.
 `removed_by_pr` contains identities for reporting only; host checks leave it empty.
 
 An observed entry contains `identity`, `outcome`, `duration_seconds` and a nonempty
@@ -150,8 +152,10 @@ Outcomes are `passed`, `failed`, `skipped`, `crashed`, `timed-out`, `not-run`,
 `flaky-passed` requires exactly two attempts, failed then passed; the host runner
 never retries. A failed retry retains all attempts and a nonpassing final attempt;
 other entries have one matching attempt. Parameterized producers
-can use the optional `parameter` dimension for per-parameter evidence while retaining
-the function key used by static enumeration. Subtest failures in Python fail the
+can use the optional `parameter` dimension for per-parameter evidence. Swift unit
+coverage maps official Xcode keys to static function keys and checks compilation
+at the parent function, retaining original argument identities and failures.
+Subtest failures in Python fail the
 parent identity and retain each failing subtest's parameter identity and failure
 message. Every subtest skip retains its parameter identity and reason in
 the parent's attempt reason. When both occur, JSON and Markdown retain both the
@@ -186,13 +190,25 @@ then can producers emit the successor. A version number alone never enables pars
 contents permission, bounded job/script budgets, PR-specific cancellation, and no
 secrets or status-writing identity. It uploads only `summary.json`, `summary.md` and
 `run-identity.json`, with run/attempt-specific names, retained 30 days for PRs and
-7 days for pushes. Successful Python identities are kept in JSON; the short Markdown
-shows every host check and all nonpassing Python identities.
+7 days for pushes. Successful Python and Swift identities are kept in JSON; the short
+Markdown shows every host check and all nonpassing Python/Swift identities. Unit failure
+rows retain the first official failure-message line, capped at 200 characters, including
+parameter outcomes. Plain assertion failures fail the producer without being relabeled
+as infrastructure failures.
 
 This job is informational and does not configure required statuses. The workflow also
-produces [secret-free build archives and relocation checks](CI_BUILD_ARCHIVE.md).
-Relocation checks do not prove full unit coverage. Static population, skip/deselection
-policy and the verdict evaluator are libraries; trusted publication and approval
+produces [secret-free build archives](CI_BUILD_ARCHIVE.md) and independent
+[complete iOS/tvOS unit consumers](CI_UNIT_TESTS.md), each depending only on its own
+platform's build. Unit artifacts and step summaries require the independent always-run
+scan, including early-stage failures. Missing records and refused publication each
+emit a distinct fixed message, and cleanup runs separately. Unit verdicts use the
+offline runner's official overall-result classification and the
+`policy-proposed` diagnostic for unapproved unit skips, labeled `Policy` and excluded
+from infrastructure health accounting.
+Static population, skip/deselection
+policy and the verdict evaluator are libraries. Unit consumers apply their recorded
+per-tier policy approval to exact hermetic skips; host approval never activates
+unit or UI exceptions. Trusted publication and approval
 enforcement are separate from producer claims. The workflow consumes the merged
 [pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone
 workflow-policy check as a distinct host identity. CI sets `PYTHON` to the pinned

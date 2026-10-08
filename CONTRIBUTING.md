@@ -71,8 +71,9 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
-run on pull requests and pushes to `main`. Separate hosted runners prove source-free
-relocation with fixture tests; the full unit/UI consumer tiers are separate work.
+run on pull requests and pushes to `main`. Separate hosted runners execute the
+[complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
+The UI consumer tier remains separate work.
 Release archive preparation and the maintainer-gated App Store Connect steps are in
 [Xcode Cloud to internal TestFlight](docs/XCODE_CLOUD_TESTFLIGHT.md). Its first upload
 is manual, the Default workflow stays disabled, and tag starts need later approval.

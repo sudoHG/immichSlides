@@ -81,12 +81,15 @@ as fixture-covered. Device or build applicability limits stay separate from
 server/fixture gaps. The `proposed` section uses the same entry grammar as
 the approved lists and **never affects execution or verdicts**. The maintainer
 must promote approved proposals to the active lists; agents cannot approve them.
-Device, build and diagnostic opt-in skips belong in `proposed.expected_skips`,
-with an exact key, platform/device dimensions and the official reason. Live data
-cannot fix these prerequisites. The debug-fill button cannot run in any hosted
-tier: the shared archive check forbids `ENABLE_DEBUG_*=1`. The maintainer must
-decide whether to approve that expected skip or move the test out of the default
-plan. Product failures remain failures, tracked separately without an exclusion
+The [maintainer-approved UI policy](https://github.com/sudoHG/immichSlides/issues/96#issuecomment-6056730461)
+contains 28 active `ui` / `fixture` expected skips: 24 device-scope, two manual EXIF
+diagnostics and two debug-fill tests. Identity, platform/device dimensions and
+official reason must match exactly; another device or changed reason fails.
+The separate UI approval record activates this tier without granting another tier's
+exceptions. Future proposals stay in `proposed` until explicitly promoted.
+Live data cannot fix these prerequisites. Debug fill stays in the default plan as
+an approved skip: the shared archive check forbids `ENABLE_DEBUG_*=1` in hosted tiers.
+Product failures remain failures, tracked separately without an exclusion
 proposal; they must not be attributed to fixture gaps without evidence.
 Only demonstrated fixture/server gaps may become `nightly-live` deselections.
 

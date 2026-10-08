@@ -106,7 +106,7 @@ def gate_fixture(*, units):
       - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with: {{name: 'unit-{platform}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}', path: records/summary.json}}
 '''
-    policy = {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []}
+    policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
     record = {"identity": identity, "reader_revision": BASE, "populations": population, "base_populations": population,
               "operational_populations": operations, "classification": {"ci_changing": False, "app_affected": True},
               "base_policy": policy, "candidate_policy": policy, "workflows": {RUN["path"]: {"base": source, "candidate": source}}}
@@ -186,6 +186,29 @@ class PublisherTests(unittest.TestCase):
                              {"state": "pending", "description": "unit tier not yet produced"})
             record, jobs, summaries = gate_fixture(units=True)
             self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "success")
+            units = [summary for summary in summaries if summary["run"]["tier"] == "unit"]
+            for summary in units:
+                static = summary["population"]["declared"][0]
+                owner, _, function = static["key"].rpartition("/")
+                compiled = dict(static, key="immichSlidesTests/" + owner + "/`" + function + "`(value:)")
+                parameter = dict(compiled, dimensions={**compiled["dimensions"], "parameter": "argument:1"})
+                summary["population"].update(compiled=[compiled], observed=[observation(value, "passed", 0)
+                                                                           for value in (compiled, parameter)])
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "success")
+            for case in ("missing declaration", "failed parameter", "duplicate parameter", "unknown parent"):
+                changed = copy.deepcopy(summaries)
+                unit = next(summary for summary in changed if summary["run"]["tier"] == "unit")
+                rows = unit["population"]["observed"]
+                if case == "missing declaration":
+                    unit["population"]["declared"] = []
+                elif case == "failed parameter":
+                    rows[1] = observation(rows[1]["identity"], "failed", 0, message="Expectation failed")
+                elif case == "duplicate parameter":
+                    rows.append(copy.deepcopy(rows[1]))
+                else:
+                    rows[1]["identity"]["key"] = "immichSlidesTests/Unknown/`works`(value:)"
+                with self.subTest(case=case):
+                    self.assertEqual(evaluate_records(record, RUN, jobs, changed, approved=False, fork=False)["state"], "failure")
             for summary in summaries:
                 summary["run"]["tier"] = "host"
                 expected = record["populations"]["host"]

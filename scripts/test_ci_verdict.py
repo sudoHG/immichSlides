@@ -15,7 +15,12 @@ from test_ci_summary import valid_summary
 
 
 def policy():
-    return {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []}
+    return {"schema_version": 1, "approval_records": [approval_record("host")], "expected_skips": [], "deselections": []}
+
+
+def approval_record(tier):
+    return {"approver": "maintainer example", "date": "2026-10-08", "tier": tier,
+            "link": "https://github.com/example/project/issues/1#issuecomment-1"}
 
 
 def expected_population(identities, tree_sha):
@@ -80,6 +85,20 @@ class PopulationVerdictTests(unittest.TestCase):
                 self.policy["expected_skips"][0][field] = original
         self.summary["population"]["observed"] = [ci_summary.observation(identity, "passed", 0)]
         self.assertEqual(self.verdict()["status"], "failed")
+        for tier, environment, test in (("unit", "hermetic", ci_summary.test_identity("swift", "Tests/skipped()", platform="ios")),
+                                        ("ui", "fixture", ci_summary.test_identity("ui", "Tests/testSkipped", platform="ios", device="iphone"))):
+            self.summary["run"]["tier"] = tier
+            self.expected = self.summary["population"]["declared"] = self.summary["population"]["compiled"] = [test]
+            self.summary["population"]["observed"] = [ci_summary.observation(test, "skipped", 0, reason="no fixture")]
+            self.policy["expected_skips"] = [{"kind": test["kind"], "key_pattern": test["key"], "dimensions": test["dimensions"],
+                                              "tier": tier, "environment": environment, "reason": "no fixture"}]
+            for records, status in (([approval_record("host"), approval_record(tier)], "passed"),
+                                    ([approval_record("host")], "failed")):
+                with self.subTest(tier=tier, approval_tiers=[record["tier"] for record in records]):
+                    self.policy["approval_records"] = records
+                    verdict = evaluate_population(self.summary, self.expected, self.policy, environment=environment)
+                    self.assertEqual(verdict["status"], status)
+                    self.assertEqual(verdict["expected_skips"], [test] if status == "passed" else [])
 
     def test_deselections_require_compilation_reason_owner_and_exclusive_accounting(self):
         entry = {"identity": self.expected[0], "tier": "host", "environment": "hermetic",
@@ -109,6 +128,26 @@ class PopulationVerdictTests(unittest.TestCase):
         self.assertEqual(self.verdict()["status"], "passed")
         self.summary["population"]["observed"].pop()
         self.assertEqual(self.verdict()["status"], "failed")
+        # Xcode enumerates functions and exports their individual arguments separately.
+        compiled = ci_summary.test_identity("swift", "immichSlidesTests/Tests/`works`(value:)", platform="ios")
+        parameters = [dict(compiled, dimensions={"platform": "ios", "parameter": p}) for p in ("a", "b")]
+        self.summary["population"]["compiled"] = [compiled]
+        rows = [ci_summary.observation(p, "passed", 0) for p in [compiled, *parameters]]
+        self.summary["population"]["observed"] = rows
+        self.assertEqual(self.verdict()["status"], "passed")
+        for case in ("failed argument", "duplicate argument", "unknown parent", "no function result"):
+            with self.subTest(case=case):
+                changed = copy.deepcopy(rows)
+                if case == "failed argument":
+                    changed[1] = ci_summary.observation(parameters[0], "failed", 0, message="Expectation failed")
+                elif case == "duplicate argument":
+                    changed.append(copy.deepcopy(changed[1]))
+                elif case == "unknown parent":
+                    changed[1]["identity"]["key"] = "immichSlidesTests/Other/`works`(value:)"
+                else:
+                    changed.pop(0)
+                self.summary["population"]["observed"] = changed
+                self.assertEqual(self.verdict()["status"], "failed")
 
     def test_failures_infrastructure_partial_results_and_unregistered_retries_stay_red(self):
         for outcome in ("failed", "crashed", "timed-out", "not-run", "needs-human-review", "skipped"):
@@ -130,7 +169,7 @@ class PopulationVerdictTests(unittest.TestCase):
         self.assertEqual(self.verdict()["status"], "failed")
 
     def test_proposed_or_ambiguous_policy_cannot_authorize_an_exception(self):
-        self.policy["approval_state"] = "proposed"
+        self.policy["approval_records"] = []
         self.assertEqual(self.verdict()["status"], "passed")
         self.policy["expected_skips"] = [{"kind": "host", "key_pattern": "format", "dimensions": {},
                                           "tier": "host", "environment": "hermetic", "reason": "missing"}]
@@ -139,6 +178,10 @@ class PopulationVerdictTests(unittest.TestCase):
         self.policy = policy()
         rule = {"kind": "host", "key_pattern": "*", "dimensions": {}, "tier": "host",
                 "environment": "hermetic", "reason": "missing"}
+        self.policy["proposed"] = {"expected_skips": [rule], "deselections": []}
+        self.assertEqual(parse_policy(self.policy)["proposed"], self.policy["proposed"])
+        self.assertEqual(self.verdict()["status"], "failed")
+        self.assertEqual(self.verdict()["errors"], ["skipped: format"])
         self.policy["expected_skips"] = [rule, dict(rule, key_pattern="format")]
         self.assertEqual(self.verdict()["status"], "failed")
 
@@ -161,16 +204,19 @@ class PopulationVerdictTests(unittest.TestCase):
     def test_malformed_policy_versions_duplicate_rules_and_owner_are_rejected(self):
         record = {"approver": "maintainer example", "date": "2026-10-08", "tier": "host",
                   "link": "https://github.com/example/project/issues/1#issuecomment-1"}
-        recorded = dict(policy(), approval_record=record)
+        recorded = dict(policy(), approval_records=[record])
         self.assertEqual(parse_policy(recorded), recorded)
         for field, value in (("approver", ""), ("date", "2026-02-30"), ("date", "20261008"),
                              ("tier", ""), ("link", "http://github.com/example/project/issues/1#issuecomment-1"),
                              ("link", "https://example.com/approval"), ("unknown", "value")):
             with self.subTest(approval_field=field, value=value), self.assertRaises(ci_summary.ContractError):
-                parse_policy(dict(recorded, approval_record=dict(record, **{field: value})))
+                parse_policy(dict(recorded, approval_records=[dict(record, **{field: value})]))
         for malformed in (None, [], {}, {key: value for key, value in record.items() if key != "tier"}):
             with self.subTest(approval_record=malformed), self.assertRaises(ci_summary.ContractError):
-                parse_policy(dict(recorded, approval_record=malformed))
+                parse_policy(dict(recorded, approval_records=[malformed]))
+        for records in (None, {}, [record, record]):
+            with self.subTest(approval_records=records), self.assertRaises(ci_summary.ContractError):
+                parse_policy(dict(recorded, approval_records=records))
         for version in (2, True, "1", None):
             with self.subTest(version=version), self.assertRaises(ci_summary.ContractError):
                 parse_policy(dict(policy(), schema_version=version))
@@ -283,8 +329,7 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.summary["run"]["id"] = "42"
         self.jobs[0].update(run_id="42", workflow_paths=[".github/workflows/ci-gate.yml"])
         candidate = policy()
-        candidate["approval_record"] = {"approver": "maintainer example", "date": "2026-10-08", "tier": "host",
-                                        "link": "https://github.com/example/project/issues/1#issuecomment-1"}
+        candidate["approval_records"] = [approval_record("host")]
         candidate["expected_skips"] = [{"kind": "host", "key_pattern": "format", "dimensions": {},
                                         "tier": "host", "environment": "hermetic", "reason": "fixture unavailable"}]
         self.summary["status"] = "unverified"

@@ -47,12 +47,24 @@ class SummaryContractTests(unittest.TestCase):
             summary["population"]["declared"][0], "failed", 0.2, message="format exited 1", exit_code=1)
         summary["status"] = "failed"
         self.assertIn("format exited 1", ci_summary.render_markdown(ci_summary.parse_summary(summary)))
-        for code, category in (("policy-proposed", "Policy"), ("population-invalid", "Population"),
-                               ("coverage-failed", "Coverage"), ("step-timeout", "Infrastructure")):
+        from ci_unit_tests import judge_execution
+        from run_offline_unit_tests import TestResultsSummary
+        unit = valid_summary()
+        skipped = ci_summary.observation(ci_summary.test_identity("swift", "immichSlidesTests/A/a()", platform="ios"),
+                                         "skipped", 0, reason="Test skipped")
+        proposed = {"schema_version": 1, "approval_records": [], "deselections": [], "expected_skips": [
+            {"kind": "swift", "key_pattern": skipped["identity"]["key"], "dimensions": {"platform": "ios"},
+             "tier": "unit", "environment": "hermetic", "reason": "Test skipped"}]}
+        self.assertEqual(judge_execution(unit, {"A/a()"}, [skipped], TestResultsSummary(1, 0, 0, 1, "Passed"), 0, proposed), 0)
+        diagnostics = [(code, category, "diagnostic detail") for code, category in
+                       (("policy-proposed", "Policy"), ("population-invalid", "Population"),
+                        ("coverage-failed", "Coverage"), ("step-timeout", "Infrastructure"))]
+        diagnostics.append((unit["infrastructure"][0]["code"], "Policy", unit["infrastructure"][0]["message"]))
+        for code, category, message in diagnostics:
             with self.subTest(code=code):
-                summary["infrastructure"] = [{"code": code, "message": "diagnostic detail"}]
+                summary["infrastructure"] = [{"code": code, "message": message}]
                 markdown = ci_summary.render_markdown(summary)
-                self.assertIn(f"{category}: {code}: diagnostic detail", markdown)
+                self.assertIn(f"{category}: {code}: {message}", markdown)
                 if category != "Infrastructure":
                     self.assertNotIn("Infrastructure:", markdown)
 
@@ -489,7 +501,9 @@ class HostResultTests(unittest.TestCase):
         for state, outcome in (("proposed", "unverified"), ("approved", "passed")):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "output"
-                policy = {"schema_version": 1, "approval_state": state, "deselections": [],
+                record = {"approver": "maintainer example", "date": "2026-10-08", "tier": "host",
+                          "link": "https://github.com/example/project/issues/1#issuecomment-1"}
+                policy = {"schema_version": 1, "approval_records": [record] if state == "approved" else [], "deselections": [],
                           "expected_skips": [{"kind": "python", "key_pattern": identity["key"], "dimensions": {},
                                               "tier": "host", "environment": "hermetic", "reason": "no fixture"}]}
 

@@ -449,7 +449,7 @@ def format_test_results_summary(
     )
 
 
-def read_official_test_results_summary(bundle_path: Path) -> TestResultsSummary:
+def read_official_test_results_summary(bundle_path: Path, *, timeout_seconds: float | None = None) -> TestResultsSummary:
     if not bundle_path.exists():
         raise CommandError(
             f"The test command succeeded, but this run's separate xcresult does not exist: {bundle_path}. Missing results cannot be treated as a pass."
@@ -468,6 +468,7 @@ def read_official_test_results_summary(bundle_path: Path) -> TestResultsSummary:
         capture_output=True,
         text=True,
         check=False,
+        **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"

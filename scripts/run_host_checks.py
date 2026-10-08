@@ -312,7 +312,7 @@ def main():
         policy = None
         try:
             # Archive consumers import metadata helpers without the host libraries.
-            from ci_verdict import evaluate_population, parse_policy
+            from ci_verdict import evaluate_population, expected_skip_verdict, identity_label, parse_policy, tier_approved
 
             policy_bytes = policy_path.read_bytes()
             summary["hashes"]["policies"]["test-policy"] = hashlib.sha256(policy_bytes).hexdigest()
@@ -342,8 +342,13 @@ def main():
         summary["status"] = "passed" if command_passed else "failed"
         if command_passed:
             coverage = evaluate_population(summary, declared, policy, environment="hermetic")
-            if policy["approval_state"] == "proposed" and evaluate_population(
-                    summary, declared, dict(policy, approval_state="approved"), environment="hermetic")["status"] == "passed" and coverage["errors"]:
+            skipped = [entry for entry in summary["population"]["observed"] if entry["outcome"] == "skipped"]
+            proposed_skips_only = (bool(skipped) and coverage["errors"] == [
+                "skipped: " + identity_label(entry["identity"]) for entry in skipped] and all(
+                    expected_skip_verdict(entry, policy["expected_skips"], tier="host", environment="hermetic") ==
+                    ((True, None) if entry["outcome"] == "skipped" else (False, None))
+                    for entry in summary["population"]["observed"]))
+            if not tier_approved(policy, "host") and proposed_skips_only:
                 summary["status"] = "unverified"
                 summary["infrastructure"].append({"code": "policy-proposed", "message":
                     "Only proposed exceptions explain coverage; maintainer approval is still required"})

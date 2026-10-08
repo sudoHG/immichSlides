@@ -18,21 +18,19 @@ from ci_population import removed_tests
 
 def parse_policy(raw):
     policy = decode(raw)
-    names = {"schema_version", "approval_state", "expected_skips", "deselections"}
-    if isinstance(policy, dict) and "approval_record" in policy:
-        names.add("approval_record")
+    names = {"schema_version", "approval_records", "expected_skips", "deselections"}
     if isinstance(policy, dict) and "proposed" in policy:
         names.add("proposed")
     fields(policy, names, "test policy")
     require(type(policy["schema_version"]) is int and policy["schema_version"] == 1, "unsupported test policy version")
-    require(policy["approval_state"] in {"proposed", "approved"}, "invalid policy approval state")
     if "proposed" in policy:
         fields(policy["proposed"], {"expected_skips", "deselections"}, "proposed policy")
-        # Proposals use the same grammar, but never enter the active policy lists.
-        parse_policy(dict(policy["proposed"], schema_version=1, approval_state="proposed"))
-    if "approval_record" in policy:
+        # Keep proposal grammar separate from the active lists, regardless of tier records.
+        parse_policy(dict(policy["proposed"], schema_version=1, approval_records=[]))
+    require(isinstance(policy["approval_records"], list), "approval records must be an array")
+    approved_tiers = set()
+    for record in policy["approval_records"]:
         # Historical metadata does not authenticate approval or approve a new head.
-        record = policy["approval_record"]
         fields(record, {"approver", "date", "tier", "link"}, "approval record")
         for key in record:
             string(record[key], "approval " + key)
@@ -42,6 +40,8 @@ def parse_policy(raw):
             raise ContractError("approval date must be ISO calendar date") from error
         require(re.fullmatch(r"https://github\.com/[^/\s]+/[^/\s]+/(?:issues|pull)/[1-9][0-9]*#issuecomment-[1-9][0-9]*",
                              record["link"]) is not None, "approval link must name a GitHub issue or PR comment")
+        require(record["tier"] not in approved_tiers, "duplicate tier approval record")
+        approved_tiers.add(record["tier"])
     for collection in ("expected_skips", "deselections"):
         require(isinstance(policy[collection], list), f"{collection} must be an array")
         seen = set()
@@ -104,7 +104,13 @@ def select_policy(base_policy, candidate_policy, admission_identity, approved_he
 def function_identity(identity):
     # Only Swift Testing parameters expand a statically declared function.
     if identity["kind"] == "swift":
-        return dict(identity, dimensions={key: value for key, value in identity["dimensions"].items() if key != "parameter"})
+        key = identity["key"]
+        if key.startswith("immichSlidesTests/"):
+            owner, separator, name = key.removeprefix("immichSlidesTests/").rpartition("/")
+            signature = re.fullmatch(r"(`[^`]+`|[^()`]+)\([^()]*\)", name)
+            require(signature is not None, "unsupported official Swift function identity")
+            key = owner + separator + signature[1].strip("`")
+        return dict(identity, key=key, dimensions={key: value for key, value in identity["dimensions"].items() if key != "parameter"})
     return identity
 
 
@@ -128,6 +134,22 @@ def skip_matches(rule, identity, tier, environment):
     return (rule["tier"] == tier and rule["environment"] == environment and rule["kind"] == identity["kind"]
             and fnmatch.fnmatchcase(identity["key"], rule["key_pattern"])
             and rule["dimensions"] == identity["dimensions"])
+
+
+def tier_approved(policy, tier):
+    return any(record["tier"] == tier for record in policy["approval_records"])
+
+
+def expected_skip_verdict(entry, rules, *, tier, environment):
+    identity = entry["identity"]
+    matches = [rule for rule in rules if skip_matches(rule, identity, tier, environment)]
+    if len(matches) > 1:
+        return False, f"ambiguous expected skip: {identity_label(identity)}"
+    if matches:
+        if entry["outcome"] == "skipped" and entry["attempts"][0]["reason"] == matches[0]["reason"]:
+            return True, None
+        return False, f"expected skip ran or reason differed: {identity_label(identity)}"
+    return False, None
 
 
 def evaluate_population(raw, expected, policy, *, environment, base_registry=None, evaluated_on=None):
@@ -156,7 +178,7 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
         observed = {identity_key(entry["identity"]): entry for entry in population["observed"]}
         deselected = {identity_key(entry["identity"]): entry for entry in population["deselected"]}
         tier = summary["run"]["tier"]
-        approved = policy["approval_state"] == "approved"
+        approved = tier_approved(policy, tier)
         skips = policy["expected_skips"] if approved else []
         deselections = policy["deselections"] if approved else []
         errors = result["errors"]
@@ -191,16 +213,15 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
         for token, entry in observed.items():
             identity = entry["identity"]
             label = identity_label(identity)
-            if token not in compiled:
+            parent = identity_key(function_identity(identity))
+            if token not in compiled and not (identity["kind"] == "swift" and "parameter" in identity["dimensions"]
+                                               and parent in compiled_functions):
                 errors.append(f"observed without compilation: {label}")
-            matches = [rule for rule in skips if skip_matches(rule, identity, tier, environment)]
-            if len(matches) > 1:
-                errors.append(f"ambiguous expected skip: {label}")
-            elif matches:
-                if entry["outcome"] == "skipped" and entry["attempts"][0]["reason"] == matches[0]["reason"]:
-                    result["expected_skips"].append(identity)
-                else:
-                    errors.append(f"expected skip ran or reason differed: {label}")
+            expected_skip, skip_error = expected_skip_verdict(entry, skips, tier=tier, environment=environment)
+            if skip_error:
+                errors.append(skip_error)
+            elif expected_skip:
+                result["expected_skips"].append(identity)
             elif (entry["outcome"] == "flaky-passed" and entry["attempts"][0]["exit_code"] == 65
                   and entry["attempts"][0]["reason"] == ASSERTION_FAILURE
                   and entry["attempts"][1]["exit_code"] == 0 and eligible_entry(

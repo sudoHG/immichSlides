@@ -163,27 +163,29 @@ ios_ui_methods = ui_identities(ui_sources, "ios")
 
 ## Expected skips and tier deselections
 
-`scripts/ci-test-policy.json` is version 1, with `approval_state`,
-`expected_skips` and `deselections`. Approval states are `proposed` and `approved`.
-An optional `approval_record` records the `approver`, ISO calendar `date`, owning
-`tier` and GitHub comment `link`. It is historical metadata, not approval
-authentication or authorization for later entries/heads; the trusted caller still
-selects policy using the admitted base and exact-head approval.
+`scripts/ci-test-policy.json` is version 1, with `approval_records`,
+`expected_skips` and `deselections`. Each approval record has an `approver`, ISO
+calendar `date`, owning `tier` and GitHub comment `link`. There is at most one record
+per tier. Exceptions are active only when their tier has a record; entries for
+other tiers remain proposed and inactive, so host approval cannot activate unit
+or UI exceptions. Records are historical metadata, not approval authentication
+or authorization for later entries/heads; the trusted caller still selects policy
+using the admitted base and exact-head approval.
 Policy approval is a maintainer gate; agents must not perform it.
 Proposed entries never authorize passing exceptions in the verdict library.
-An optional `proposed` section contains `expected_skips` and `deselections` arrays
-with the same entry grammar. It is validated but never activated, even when the
-file's top-level state is `approved` or its exact head is approved. This allows
-fixture coverage proposals to coexist with the approved host policy; the
-maintainer must explicitly promote accepted entries to the active arrays.
+An optional `proposed` section contains `expected_skips` and `deselections` with the
+same entry grammar. Its lists are validated but never participate in the active
+verdict, even when that tier has an approval record or the exact head is approved.
+Approval requires explicitly promoting the granted entries
+to the active lists; an approval record does not move proposals automatically.
 
 When adding a test that needs a skip or deselection, include the policy entry in
 the same PR as the test. Record its tier, environment and exact reason, and the
 other owning tier for a deselection. This is a CI-trusted policy change: the
 maintainer must approve the PR's exact head SHA before candidate exceptions can
-apply in the trusted verdict, and a later push requires fresh approval. Add entries
-to an approved file without resetting its whole-file `approval_state`: the trusted verdict keeps using the admitted
-base policy until the exact head is approved. Candidate host checks read their
+apply in the trusted verdict, and a later push requires fresh approval. Keep existing
+tier records when proposing exceptions in another tier: the trusted verdict keeps
+using the admitted base policy until the exact head is approved. Candidate host checks read their
 own policy and may pass with a new entry before approval; that result is
 informational. Approval covers only the registered tier/environment: host approval
 does not authorize unit, UI or other tier entries. Each tier needs its own measured
@@ -216,8 +218,11 @@ Measure fixture coverage and the owning tier before proposing a deselection.
 `environment` keyword argument and returns
 `status`, all `errors`, expected skip identities, deselections, missing compiled
 and missing executed identities. Declared and compiled function populations must
-equal the independently supplied expected population. Swift parameter rows can
-expand one function, but every compiled parameter must have its own observation
+equal the independently supplied expected population. Xcode unit keys normalize
+their bundle prefix, raw identifier quoting and argument-label signature to static
+Swift function keys only for coverage comparisons; original result and policy
+identities remain intact. Swift parameter rows can expand a compiled function,
+but every explicitly compiled parameter must have its own observation
 or approved deselection. Extra observations, failed/cancelled/incomplete results,
 human-review outcomes and unregistered retries are failures. Retry eligibility
 and the retry executor are described in [Testing conventions](TESTING.md#known-flaky-registry-and-listed-only-retries).
