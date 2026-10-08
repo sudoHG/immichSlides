@@ -274,7 +274,7 @@ class BuildArchiveTests(unittest.TestCase):
         self.assertEqual(summary["infrastructure"][0]["code"], "archive-unavailable")
         self.assertIn("use Re-run all jobs", summary["infrastructure"][0]["message"])
 
-    def test_enumeration_timeout_exports_or_quarantines_its_bundle_without_losing_archive_identity(self):
+    def test_consumer_timeouts_preserve_scanned_failed_records_and_finish_cleanup(self):
         import ci_unit_tests as units
         pins_path = Path(units.__file__).with_name("ci-pins.json")
         pins = json.loads(pins_path.read_text())
@@ -304,19 +304,47 @@ class BuildArchiveTests(unittest.TestCase):
         device_types = {"devicetypes": [{"name": pins["device_types"]["iphone"], "identifier": device_type}]}
         devices = {"devices": {pins["simulators"]["ios"]["runtime"]: [
             {"udid": simulator, "deviceTypeIdentifier": device_type}]}}
-        for readable in (False, True):
-            with self.subTest(readable=readable):
-                case = self.root / ("readable" if readable else "unreadable")
+        for phase, readable in (("enumeration", False), ("enumeration", True),
+                                ("execution", False), ("execution", True),
+                                ("summary", False), ("shutdown", True), ("delete", True)):
+            with self.subTest(phase=phase, readable=readable):
+                case = self.root / (phase + ("-readable" if readable else "-unreadable"))
                 relocated, output = case / "relocated", case / "records"
-                bundle = case / "private/enumeration.xcresult"
-                bundle.mkdir(parents=True)
+                enumeration_bundle = case / "private/enumeration/enumeration.xcresult"
+                execution_bundle = case / "private/execution/execution.xcresult"
+                enumeration_bundle.mkdir(parents=True)
+                execution_bundle.mkdir(parents=True)
+                bundle = enumeration_bundle if phase == "enumeration" else execution_bundle
+                owns_simulator = phase in {"summary", "shutdown", "delete"}
+                codes = iter([0, 124] if phase == "enumeration" else [0, 0, 124 if phase == "execution" else 0])
 
-                def export_empty(_bundle, records, _sensitive):
+                def run(command, **_kwargs):
+                    if "-enumerate-tests" in command:
+                        enumeration_path = Path(command[command.index("-test-enumeration-output-path") + 1])
+                        enumeration_path.write_text(json.dumps({"errors": [], "values": [
+                            {"kind": "target", "name": "immichSlidesTests", "children": [
+                                {"kind": "class", "name": "A", "children": [{"kind": "test", "name": "a()"}]}]}]}))
+                    return next(codes)
+
+                def process(command, **kwargs):
+                    operation = command[2] if command[1] == "simctl" else command[4]
+                    if operation == phase:
+                        raise subprocess.TimeoutExpired(command, kwargs.get("timeout", 0))
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"testNodes": []}).encode(), b"")
+
+                def export_empty(_bundle, records, _sensitive, **kwargs):
+                    self.assertEqual(kwargs["summary_timeout_seconds"], 60)
+                    if phase == "summary":
+                        from run_strict_e2e import export_private_result_bundle
+                        return export_private_result_bundle(_bundle, records, _sensitive, **kwargs)
                     if not readable:
                         raise units.CommandError("Enumeration has no readable official results")
-                    (records / "official-tests.json").write_text(json.dumps({"testNodes": []}))
-                    (records / "official-summary.json").write_text(json.dumps({"totalTestCount": 0, "passedTests": 0,
-                        "failedTests": 0, "skippedTests": 0, "result": "unknown"}))
+                    complete = phase in {"shutdown", "delete"}
+                    children = [{"nodeType": "Test Case", "nodeIdentifier": "A/a()", "result": "Passed", "duration": "0s"}] if complete else []
+                    (records / "official-tests.json").write_text(json.dumps({"testNodes": [
+                        {"nodeType": "Unit test bundle", "name": "immichSlidesTests", "children": children}]}))
+                    (records / "official-summary.json").write_text(json.dumps({"totalTestCount": int(complete), "passedTests": int(complete),
+                        "failedTests": 0, "skippedTests": 0, "result": "Passed" if complete else "unknown"}))
                     return archive.file_hash(records / "official-tests.json")
 
                 with patch.object(units, "ROOT", workspace), patch.dict(archive.os.environ, {"DEVELOPER_DIR": str(developer)}), \
@@ -324,27 +352,45 @@ class BuildArchiveTests(unittest.TestCase):
                         patch.object(archive, "disk_check"), patch.object(archive, "DiskMeasurement"), \
                         patch.object(archive, "extract_products", side_effect=extract), \
                         patch.object(archive, "measure_signing", return_value="adhoc"), \
-                        patch.object(archive, "checked_command", side_effect=[json.dumps(device_types), json.dumps(devices)]), \
+                        patch.object(archive, "checked_command", side_effect=[json.dumps(device_types), simulator if owns_simulator else json.dumps(devices)]), \
                         patch.object(units, "toolchain", return_value={"versions": {}, "signing_mode": "not-applicable"}), \
-                        patch.object(units, "prepare_private_result_bundle_path", return_value=bundle), \
-                        patch.object(units, "default_run", side_effect=[0, 124]), \
+                        patch.object(units, "prepare_private_result_bundle_path", side_effect=[enumeration_bundle, execution_bundle]), \
+                        patch.object(units, "default_run", side_effect=run), \
+                        patch.object(subprocess, "run", side_effect=process) as processes, \
+                        patch.dict(archive.os.environ, {"GITHUB_OUTPUT": str(case / "step-output")}), \
                         patch.object(units, "export_private_result_bundle", side_effect=export_empty) as export:
                     archive.DiskMeasurement.return_value.finish.return_value = {}
                     self.assertEqual(units.main(["run", "--selection-path", str(selection), "--archive-dir", str(archive_dir),
                                                 "--relocated-path", str(relocated), "--output-dir", str(output),
-                                                "--simulator-id", simulator]), 124)
-                    export.assert_called_once_with(bundle, output.resolve(), [units.PUBLIC_API_KEY])
+                                                *([] if owns_simulator else ["--simulator-id", simulator])]),
+                                     124 if phase in {"enumeration", "execution"} else 1)
+                    export.assert_called_once_with(bundle, output.resolve(), [units.PUBLIC_API_KEY], summary_timeout_seconds=60)
+                if owns_simulator:
+                    cleanup = [call for call in processes.call_args_list if call.args[0][1] == "simctl"]
+                    self.assertEqual([call.args[0][2] for call in cleanup], ["shutdown", "delete"])
+                    self.assertEqual([call.kwargs["timeout"] for call in cleanup], [15, 15])
+                    self.assertFalse(enumeration_bundle.parent.exists())
+                if phase == "summary":
+                    exports = [call for call in processes.call_args_list if call.args[0][1] == "xcresulttool"]
+                    self.assertEqual([call.args[0][4] for call in exports], ["tests", "summary"])
+                    self.assertEqual([call.kwargs["timeout"] for call in exports], [60, 60])
                 self.assertTrue(bundle.is_dir())
                 self.assertFalse(json.loads((output / "result-bundle-quarantine.json").read_text())["result_bundle_disposed"])
                 provenance = json.loads((output / "archive-consumption.json").read_text())
                 self.assertEqual((provenance["artifact_id"], provenance["producer_attempt"], provenance["consumer_attempt"]), (7, 1, 2))
-                self.assertEqual(provenance["enumeration_exit_code"], 124)
-                self.assertIsNone(provenance["test_exit_code"])
+                self.assertEqual(provenance["enumeration_exit_code"], 124 if phase == "enumeration" else 0)
+                self.assertEqual(provenance["test_exit_code"], None if phase == "enumeration" else 124 if phase == "execution" else 0)
                 summary = json.loads((output / "summary.json").read_text())
                 self.assertEqual(summary["status"], "failed")
-                if readable:
+                self.assertEqual(json.loads((output / "sensitive-scan.json").read_text())["result"], "PASS")
+                self.assertIn("records_safe=true", (case / "step-output").read_text())
+                if readable and phase != "summary":
                     self.assertEqual(provenance["official_tests_sha256"], archive.file_hash(output / "official-tests.json"))
+                if readable and phase == "enumeration":
                     self.assertEqual(summary["infrastructure"][-1]["message"], "official unit tests were empty")
+                if phase in {"execution", "summary", "shutdown", "delete"}:
+                    code = "unit-execution-timed-out" if phase == "execution" else "unit-results-timed-out" if phase == "summary" else "simulator-cleanup-timed-out"
+                    self.assertIn(code, [entry["code"] for entry in summary["infrastructure"]])
 
 
 class ArchiveUnitResultTests(unittest.TestCase):
@@ -354,7 +400,8 @@ class ArchiveUnitResultTests(unittest.TestCase):
         import yaml
         workflow = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/ci-gate.yml").read_text())
         for platform, case in ((p, c) for p in ("ios", "tvos") for c in
-                               ("no-record", "scan-refused", "preflight-failure", "select-failure", "download-failure")):
+                               ("no-record", "scan-refused", "preflight-failure", "select-failure", "download-failure",
+                                "stage-failure", "units-failure", "units-reported-failure")):
             with self.subTest(platform=platform, case=case), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 records = root / "unit-records"
@@ -375,7 +422,10 @@ class ArchiveUnitResultTests(unittest.TestCase):
                             "--producer-attempt", "1", "--selection-path", str(root / "selection.json"),
                             "--output-dir", str(records)]), 1)
                 elif case != "no-record":
-                    archive.write_summary(archive.record(ctx, platform, "artifact-selection"), records)
+                    record = archive.record(ctx, platform, "unit-" + platform if case == "units-reported-failure" else "artifact-selection")
+                    if case == "units-reported-failure":
+                        record["status"] = "failed"
+                    archive.write_summary(record, records)
                     if case == "scan-refused":
                         with (records / "summary.md").open("a") as handle:
                             handle.write(marker)
@@ -392,9 +442,10 @@ class ArchiveUnitResultTests(unittest.TestCase):
                     self.assertEqual(step["if"], "always()")
                     command = step["run"].replace("${{ env.UNIT_PLATFORM }}", platform).replace(
                         "${{ steps.download.outcome }}", "failure" if case == "download-failure" else "skipped")
-                    for stage in ("preflight", "select"):
+                    for stage in ("preflight", "select", "stage", "units"):
+                        failed = case == stage + "-failure" or stage == "units" and case == "units-reported-failure"
                         command = command.replace("${{ steps." + stage + ".outcome }}",
-                                                  "failure" if case == stage + "-failure" else "skipped")
+                                                  "failure" if failed else "success" if stage in {"stage", "units"} else "skipped")
                     for key in ("records_safe", "records_produced"):
                         command = command.replace("${{ steps.record_scan.outputs." + key + " }}", scan_outputs.get(key, ""))
                     completed = subprocess.run(["bash", "-eo", "pipefail", "-c", command], capture_output=True,
@@ -418,8 +469,15 @@ class ArchiveUnitResultTests(unittest.TestCase):
                     self.assertEqual(summary.read_text().strip(), "Unit records were not produced; publication is unavailable."
                         if case == "no-record" else "Unit record scanning refused publication.")
                 else:
-                    self.assertIn("workspace-preflight-failed" if case == "preflight-failure" else "archive-unavailable", summary.read_text())
-                    self.assertIn("use Re-run all jobs", summary.read_text())
+                    failure = json.loads((records / "summary.json").read_text())
+                    self.assertEqual((failure["run"]["job"], failure["status"]), ("unit-" + platform, "failed"))
+                    if case == "units-reported-failure":
+                        self.assertEqual(failure["infrastructure"], [])
+                    else:
+                        self.assertIn("workspace-preflight-failed" if case == "preflight-failure" else
+                                      "unit-stage-failed" if case == "stage-failure" else
+                                      "unit-execution-failed" if case == "units-failure" else "archive-unavailable", summary.read_text())
+                        self.assertIn("use Re-run all jobs", summary.read_text())
                 self.assertFalse(relocated.exists())
                 self.assertFalse((root / "archive-download").exists())
 

@@ -42,7 +42,9 @@ HOSTED_ENUMERATION_SAMPLES = {
 # Job overhead is the failed iOS job duration minus its independently measured phases.
 HOSTED_BOOT_MAX_SECONDS = 110.186966041
 HOSTED_JOB_OVERHEAD_SECONDS = 556 - (110.186966041 + 251.284679625 + 70.472742334)
-OFFICIAL_EXPORT_TIMEOUT_SECONDS = 60
+OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS = 60
+OFFICIAL_EXPORT_TIMEOUT_SECONDS = 60 + OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS
+SIMULATOR_CLEANUP_TIMEOUT_SECONDS = 15
 
 
 def measured_timeout(samples, *, margin, minimum):
@@ -70,7 +72,11 @@ def enumeration_budget(profile, platform):
                       interrupt_grace_seconds=INTERRUPT_GRACE_SECONDS,
                       measured_job_overhead_seconds=HOSTED_JOB_OVERHEAD_SECONDS,
                       official_export_timeout_seconds=OFFICIAL_EXPORT_TIMEOUT_SECONDS,
-                      overhead_allowance_seconds=math.ceil((HOSTED_JOB_OVERHEAD_SECONDS + OFFICIAL_EXPORT_TIMEOUT_SECONDS) / 60) * 60)
+                      official_summary_export_timeout_seconds=OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS,
+                      simulator_shutdown_timeout_seconds=SIMULATOR_CLEANUP_TIMEOUT_SECONDS,
+                      simulator_delete_timeout_seconds=SIMULATOR_CLEANUP_TIMEOUT_SECONDS,
+                      overhead_allowance_seconds=math.ceil((HOSTED_JOB_OVERHEAD_SECONDS + OFFICIAL_EXPORT_TIMEOUT_SECONDS +
+                                                           2 * SIMULATOR_CLEANUP_TIMEOUT_SECONDS) / 60) * 60)
     return budget
 
 
@@ -89,7 +95,9 @@ def write_unit_summary(summary, path, budget):
                          f"stop grace: {budget['interrupt_grace_seconds']} s; "
                          f"overhead allowance: {budget['overhead_allowance_seconds']} s "
                          f"(measured job overhead {budget['measured_job_overhead_seconds']:.2f} s plus "
-                         f"{budget['official_export_timeout_seconds']} s export bound, rounded up to whole minutes). "
+                         f"{budget['official_export_timeout_seconds']} s for tests and summary exports plus "
+                         f"{budget['simulator_shutdown_timeout_seconds']} / {budget['simulator_delete_timeout_seconds']} s "
+                         "for simulator shutdown / delete, rounded up to whole minutes). "
                          f"job bound: {budget['job_timeout_seconds']} s. "
                          "The small calibration sample does not estimate population tail latency; local defaults and product assertions are unchanged.\n")
 
@@ -210,7 +218,7 @@ def judge_execution(summary, compiled, rows, counts, code):
             "The official overall result does not establish passing unit tests."})
         return 1
     if counts.skipped_tests:
-        summary["infrastructure"].append({"code": "skip-policy-pending", "message":
+        summary["infrastructure"].append({"code": "policy-proposed", "message":
             "Measured unit skips remain proposed for maintainer approval; no expected-skip policy is applied."})
     return code
 
@@ -250,6 +258,27 @@ def read_results(records, platform):
     return rows, counts
 
 
+def cleanup_simulator(simulator, measurements):
+    failures = []
+    for operation in ("shutdown", "delete"):
+        started = time.monotonic()
+        code, message = 1, "consumer simulator " + operation + " failed"
+        try:
+            completed = subprocess.run(["xcrun", "simctl", operation, simulator], capture_output=True,
+                                       timeout=SIMULATOR_CLEANUP_TIMEOUT_SECONDS, check=False)
+            code = completed.returncode
+        except subprocess.TimeoutExpired:
+            code = 124
+            message = f"consumer simulator {operation} timed out after {SIMULATOR_CLEANUP_TIMEOUT_SECONDS} s"
+        except OSError as error:
+            message += ": " + type(error).__name__
+        measurements["simulator_" + operation + "_seconds"] = time.monotonic() - started
+        measurements["simulator_" + operation + "_exit_code"] = code
+        if code:
+            failures.append({"code": "simulator-cleanup-timed-out" if code == 124 else "simulator-cleanup-failed", "message": message})
+    return failures
+
+
 def run_units(args):
     ctx = decode(args.selection_path.read_text())
     platform = ctx["platform"]
@@ -268,7 +297,9 @@ def run_units(args):
                     "enumeration_budget": budget,
                     "simulator_boot_seconds": None, "simulator_boot_exit_code": None,
                     "enumeration_seconds": None, "enumeration_exit_code": None,
-                    "test_seconds": None, "test_exit_code": None}
+                    "test_seconds": None, "test_exit_code": None,
+                    "simulator_shutdown_seconds": None, "simulator_shutdown_exit_code": None,
+                    "simulator_delete_seconds": None, "simulator_delete_exit_code": None}
     disk = None
     simulator, owns_simulator = args.simulator_id, False
     result_bundle = enumeration_bundle = None
@@ -350,6 +381,9 @@ def run_units(args):
         code = default_run([*base, "-resultBundlePath", str(result_bundle)], timeout_seconds=budget["test_timeout_seconds"])
         measurements["test_seconds"] = time.monotonic() - phase
         measurements["test_exit_code"] = code
+        if code not in {0, 65}:
+            summary["infrastructure"].append({"code": "unit-execution-timed-out" if code == 124 else "unit-execution-failed",
+                                               "message": f"unit execution {'timed out' if code == 124 else 'failed'} (exit {code})"})
         # Do not raise on xcodebuild failure until official results have been exported.
     except Exception as error:
         code = code or 1
@@ -362,14 +396,21 @@ def run_units(args):
     finally:
         if result_bundle is not None:
             try:
-                digest = export_private_result_bundle(result_bundle, args.output_dir, [PUBLIC_API_KEY])
+                digest = export_private_result_bundle(result_bundle, args.output_dir, [PUBLIC_API_KEY],
+                                                      summary_timeout_seconds=OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS)
                 rows, counts = read_results(args.output_dir, platform)
                 code = judge_execution(summary, compiled, rows, counts, code)
                 export_complete = True
             except Exception as error:
                 code = code or 1
-                summary["infrastructure"].append({"code": "unit-results-failed", "message": str(error) if isinstance(error, (ContractError, CommandError))
-                                                   else type(error).__name__})
+                summary["infrastructure"].append({"code": "unit-results-timed-out" if isinstance(error, subprocess.TimeoutExpired) else "unit-results-failed",
+                                                   "message": f"official result export timed out after {error.timeout} s" if isinstance(error, subprocess.TimeoutExpired)
+                                                   else str(error) if isinstance(error, (ContractError, CommandError)) else type(error).__name__})
+        if owns_simulator:
+            failures = cleanup_simulator(simulator, measurements)
+            if failures:
+                code = code or 1
+                summary["infrastructure"].extend(failures)
         if code != 0 or summary["infrastructure"] and not export_complete:
             summary["status"] = "failed"
         if disk:
@@ -400,14 +441,6 @@ def run_units(args):
         # Successful enumeration has no execution activity; failed enumeration stays private.
         if enumeration_bundle and enumeration_bundle != result_bundle:
             shutil.rmtree(enumeration_bundle.parent)
-        if owns_simulator:
-            subprocess.run(["xcrun", "simctl", "shutdown", simulator], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            deleted = subprocess.run(["xcrun", "simctl", "delete", simulator], capture_output=True)
-            if deleted.returncode:
-                code = code or 1
-                summary["status"] = "failed"
-                summary["infrastructure"].append({"code": "simulator-cleanup-failed", "message": "consumer simulator deletion failed"})
-                write_unit_summary(summary, args.output_dir, budget)
         try:
             write_sensitive_scan(args.output_dir, [PUBLIC_API_KEY])
             archive.output("records_safe", "true")
@@ -436,13 +469,17 @@ def scan_records(path, *, failed_step=None):
         return 0
     try:
         summary = parse_summary(decode((path / "summary.json").read_text()))
-        if failed_step and summary["status"] != "failed":
-            step = test_identity("host", "consumer " + failed_step, platform=summary["run"]["shard"])
-            summary["population"]["declared"] = summary["population"]["compiled"] = [step]
-            error = (archive.WorkspacePreflightError("consumer preflight or toolchain setup failed")
-                     if failed_step == "preflight" else archive.ArchiveUnavailableError("selected archive " + failed_step + " failed"))
-            archive.record_failure(summary, step, error,
-                                   1, time.monotonic(), "archive-consumption-failed")
+        if failed_step and (summary["status"] != "failed" or summary["run"]["job"] != "unit-" + summary["run"]["shard"]):
+            summary["run"].update(job="unit-" + summary["run"]["shard"], tier="unit")
+            if summary["status"] != "failed":
+                step = test_identity("host", "consumer " + failed_step, platform=summary["run"]["shard"])
+                summary["population"]["declared"] = summary["population"]["compiled"] = [step]
+                error = (archive.WorkspacePreflightError("consumer preflight or toolchain setup failed")
+                         if failed_step == "preflight" else CommandError("consumer " + failed_step + " failed")
+                         if failed_step in {"stage", "units"} else archive.ArchiveUnavailableError("selected archive " + failed_step + " failed"))
+                archive.record_failure(summary, step, error, 1, time.monotonic(),
+                                       "unit-stage-failed" if failed_step == "stage" else "unit-execution-failed"
+                                       if failed_step == "units" else "archive-consumption-failed")
             write_summary(summary, path)
         require((path / "summary.md").is_file() and (path / "run-identity.json").is_file(), "incomplete unit records")
         write_sensitive_scan(path, [PUBLIC_API_KEY])
@@ -460,7 +497,7 @@ def main(argv=None):
     stage.add_argument("--path", type=Path, required=True)
     scan = commands.add_parser("scan")
     scan.add_argument("--output-dir", type=Path, required=True)
-    scan.add_argument("--failed-step", choices=("preflight", "select", "download"))
+    scan.add_argument("--failed-step", choices=("preflight", "select", "download", "stage", "units"))
     run = commands.add_parser("run")
     for name in ("selection-path", "archive-dir", "relocated-path", "output-dir"):
         run.add_argument("--" + name, type=Path, required=True)

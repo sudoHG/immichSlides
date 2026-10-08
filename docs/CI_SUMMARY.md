@@ -198,8 +198,9 @@ produces [secret-free build archives](CI_BUILD_ARCHIVE.md) and independent
 platform's build. Unit artifacts and step summaries require the independent always-run
 scan, including early-stage failures. Missing records and refused publication each
 emit a distinct fixed message, and cleanup runs separately. Unit verdicts use the
-offline runner's official overall-result classification and the shared
-`skip-policy-pending` code for unapproved skips.
+offline runner's official overall-result classification and the
+`policy-proposed` diagnostic for unapproved unit skips, labeled `Policy` and excluded
+from infrastructure health accounting.
 Static population, skip/deselection
 policy and the verdict evaluator are libraries; trusted publication and approval
 enforcement are separate from producer claims. The workflow consumes the merged

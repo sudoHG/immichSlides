@@ -191,7 +191,8 @@ def prepare_private_result_bundle_path(suite: str) -> Path:
 
 
 def export_private_result_bundle(
-    bundle: Path, evidence_dir: Path, sensitive_values: list[str], *, suffix: str = ""
+    bundle: Path, evidence_dir: Path, sensitive_values: list[str], *, suffix: str = "",
+    summary_timeout_seconds: float | None = None,
 ) -> str:
     completed = subprocess.run(
         ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
@@ -207,7 +208,8 @@ def export_private_result_bundle(
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(completed.stdout)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
     if not summary_path.exists():
-        summary = read_official_test_results_summary(bundle)
+        summary = (read_official_test_results_summary(bundle, timeout_seconds=summary_timeout_seconds)
+                   if summary_timeout_seconds is not None else read_official_test_results_summary(bundle))
         summary_path.write_text(json.dumps({
             "totalTestCount": summary.total_test_count, "passedTests": summary.passed_tests,
             "failedTests": summary.failed_tests, "skippedTests": summary.skipped_tests,

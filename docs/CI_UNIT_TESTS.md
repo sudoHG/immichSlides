@@ -28,6 +28,8 @@ bound. Unit consumers have separate boot, enumeration and execution bounds:
 | Simulator boot (`simctl bootstatus -b`) | 240 s | 240 s | 600 s |
 | Bundle enumeration, after boot | 660 s | 300 s | 300 s |
 | Unit execution | 900 s | 900 s | 900 s |
+| Official tests / summary exports | 60 / 60 s | 60 / 60 s | 60 / 60 s |
+| Owned simulator shutdown / delete | 15 / 15 s | 15 / 15 s | 15 / 15 s |
 
 There is no automatic test retry or silent rebuild. The [trusted publisher](https://github.com/sudoHG/immichSlides/issues/89)
 owns the `ci-pr-gate` status and required-status enforcement. A failing unit test fails
@@ -72,10 +74,13 @@ Until unit integration, `declared` remains empty.
 
 The official overall `result` is classified with the offline runner's rules.
 `Failed` fails even when function counts look successful; unknown overall results
-cannot pass. Otherwise successful results with skips remain `unverified`, using the
-shared `skip-policy-pending` code until policy approval. No expected skip is approved
-or applied by this consumer. Exception proposals belong in the PR body; the policy's
-proposed section is populated in a separate follow-up.
+cannot pass. Otherwise successful results with skips remain `unverified`, using
+`policy-proposed`, a non-infrastructure `Policy` diagnostic. No expected skip is
+approved or applied by this consumer. Exception proposals belong in the PR body.
+The current policy has a single file-level `approval_state`; it cannot represent
+approved host exceptions and proposed unit exceptions separately. Unit integration
+requires a maintainer decision between per-tier approval state and a separate unit
+policy file. The consumer does not change the schema or the approved host policy.
 
 The [summary contract](CI_SUMMARY.md) keeps successful Swift rows in JSON and displays
 failures/skips in Markdown. Parameter rows retain official arguments and outcomes.
@@ -92,16 +97,25 @@ Archive validation failures reuse `archive-identity-mismatch` or `archive-unavai
 with **use Re-run all jobs**. Simulator/enum failures use `unit-archive-failed`.
 
 Raw bundles stay outside publishable records in the existing private-result storage.
-Finalization attempts official export even after Xcode failure. Failed runs or
+Finalization attempts official export even after Xcode failure, with separate
+60-second bounds for tests and summary. Execution exits other than 0 or 65 record
+`unit-execution-timed-out` (124) or `unit-execution-failed` before result comparison.
+An export timeout records `unit-results-timed-out`. Owned-simulator shutdown and delete
+each have a 15-second bound; deletion still runs after shutdown failure. Their durations
+and exit codes are measured. Cleanup failure makes the summary failed, and scanning
+continues. Failed runs or
 export/scan errors retain a private quarantine record; successful export and sensitive
 scan precede disposal. A failed enumeration attempts export and retains both process
 exits and archive identity, even when no executable test results exist.
 
 An independent `always()` scan runs after the consumer, including when preflight,
-selection or download failed and execution was skipped. It reuses the sensitive scanner
+selection, download or staging failed, or execution failed before saving its own failed
+record. It reuses the sensitive scanner
 through the system Python without requiring a completed environment setup or units step.
-Download/setup failures replace otherwise successful earlier stage records with a
-classified failure and rerun advice. Artifact and step-summary publication require
+Failed steps require a `unit-<platform>` failed record. Earlier selection records are
+relabeled, and otherwise successful records become classified failures with rerun advice;
+an existing failed unit record keeps its original diagnostic and official evidence.
+Artifact and step-summary publication require
 this scan's `records_safe` output. No records produces **Unit records were not produced;
 publication is unavailable.** A refused scan produces only **Unit record scanning refused
 publication.** Neither case prints raw diagnostics. Relocated-product cleanup is a
@@ -128,10 +142,11 @@ calibration set does not estimate population tail latency or prove capacity.
 The [recovery calibration](https://github.com/sudoHG/immichSlides/actions/runs/37717972490)
 measured maximum boot at **110.19 s**; 2x and upward minute rounding choose **240 s**.
 Its iOS job lasted 556 s, with 110.19 + 251.28 + 70.47 s in the three phases, leaving
-**124.06 s** measured job overhead. Adding the 60-second official-export bound and
-rounding upward gives a **240-second overhead allowance**. The runner's shared
+**124.06 s** measured job overhead. Adding separate 60-second tests and summary export
+bounds, plus 15 seconds each for simulator shutdown and delete, and rounding upward
+gives a conservative **300-second overhead allowance**. The runner's shared
 interrupt grace is **120 s**. The longest combined bound is therefore
-`240 + 660 + 900 + 120 + 240 = 2160 s < 2400 s`.
+`240 + 660 + 900 + 120 + 300 = 2220 s < 2400 s`.
 The guard reads actual workflow `timeout-minutes`; measurements and Markdown record
 phase limits, grace, measured overhead and allowance. These are infrastructure budgets;
 product assertions and success thresholds do not change.
