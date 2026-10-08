@@ -468,8 +468,8 @@ def compute(api, pr_number, pushed, login):
 
 
 def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
-    # Serialize this caller per PR in the workflow. Re-read the head and current
-    # state; approval writes are serialized in this same short group, after wait.
+    # Serialize display publication per PR and re-read current state. Approval
+    # records write independently, then dispatch a fresh publication.
     head, plan, approval = compute(api, pr_number, pushed, login)
     target = f"https://github.com/{api.repository}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     if dry_run:
