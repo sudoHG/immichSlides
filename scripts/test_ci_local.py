@@ -18,13 +18,20 @@ class LocalModeTests(unittest.TestCase):
             scripts = root / "scripts"
             scripts.mkdir(parents=True)
             shutil.copyfile(Path(__file__).with_name("ci_local.py"), scripts / "ci_local.py")
-            runner = scripts / "run.py"
+            runner = scripts / "run_offline_unit_tests.py"
             runner.write_text("import argparse, os\nfrom pathlib import Path\nfrom ci_local import local_main\n"
                               "def main():\n"
                               "    root = Path(__file__).resolve().parent.parent\n"
                               "    parser = argparse.ArgumentParser()\n"
                               "    parser.add_argument('--project')\n"
+                              "    parser.add_argument('--derived-data-path')\n"
+                              "    parser.add_argument('--prepare-example-config', action='store_true')\n"
+                              "    parser.add_argument('--platform')\n"
+                              "    parser.add_argument('--full-plan', action='store_true')\n"
+                              "    parser.add_argument('--check', action='store_true')\n"
                               "    args = parser.parse_args()\n"
+                              "    if args.prepare_example_config and (args.platform or args.full_plan):\n"
+                              "        return 71\n"
                               "    if args.project and Path(args.project).resolve() != root / 'immichSlides.xcodeproj':\n"
                               "        return 3\n"
                               "    private = os.path.lexists(root / 'Config/env.xcconfig')\n"
@@ -80,6 +87,21 @@ class LocalModeTests(unittest.TestCase):
                                  ["--proj=" + str(Path(directory, "outside.xcodeproj"))]):
                 with self.subTest(outside_project=project_args):
                     completed = subprocess.run([sys.executable, "-B", str(runner), *project_args], cwd=root,
+                                               env=test_environment, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(completed.returncode, 2, completed.stderr)
+            for setup_args in (["--prepare-example-config"], ["--prepare-example", "--check"]):
+                with self.subTest(setup_only=setup_args):
+                    completed = subprocess.run([sys.executable, "-B", str(runner), *setup_args,
+                                                "--config", "IMMICH_TEST_API_KEY=explicit", "--config",
+                                                "IMMICH_TEST_EXPECT_PRIVATE=1"], cwd=root, env=test_environment,
+                                               capture_output=True, text=True, timeout=15)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+            for setup_args in (["--prepare-example-config", "--platform=ios"],
+                               ["--prepare-example-config", "--platf", "ios"],
+                               ["--prepare-example", "--platform", "ios"],
+                               ["--prepare-example-config", "--full-pl"]):
+                with self.subTest(setup_build=setup_args):
+                    completed = subprocess.run([sys.executable, "-B", str(runner), *setup_args], cwd=root,
                                                env=test_environment, capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 2, completed.stderr)
 

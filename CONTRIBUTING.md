@@ -29,7 +29,7 @@ into the original checkout's private configuration for local testing. That mode
 does not snapshot, can compile private values, and must never produce public
 evidence. Fixture/archive entry points continue to refuse private files even
 with this flag. `--prepare-example-config` remains an explicit setup operation in
-the original checkout; run setup separately from a test command. Xcode's own GUI
+the original checkout; run it alone or with `--check`, separately from a test command. Xcode's own GUI
 and direct `xcodebuild` commands retain their existing configuration behavior.
 
 ```bash

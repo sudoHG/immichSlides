@@ -151,11 +151,15 @@ def launch(script, arguments):
     options, remaining = parser.parse_known_args(arguments)
     mode = select_mode([flag for flag, enabled in (("--strict-ci", options.strict_ci),
                        ("--allow-private-config", options.allow_private_config)) if enabled])
-    if "--prepare-example-config" in remaining:
-        # This explicit setup operation must affect the caller's checkout.
-        if any(flag in remaining for flag in ("--platform", "--full-plan")):
-            raise ValueError("prepare local configuration separately before a CI-equivalent run")
-        mode = "private"
+    if script.name == "run_offline_unit_tests.py":
+        remaining = ["--prepare-example-config" if len(argument) >= len("--pre")
+                     and "--prepare-example-config".startswith(argument) else argument for argument in remaining]
+        if "--prepare-example-config" in remaining:
+            # Setup may affect the caller's checkout, but must never start a build there.
+            if any(argument != "--prepare-example-config" and not (
+                    len(argument) >= len("--ch") and "--check".startswith(argument)) for argument in remaining):
+                raise ValueError("prepare local configuration separately before a CI-equivalent run")
+            mode = "private"
     environment = clean_environment(os.environ, options.config)
     environment.pop(CONTEXT, None)
     environment.pop(MODE_CONTEXT, None)

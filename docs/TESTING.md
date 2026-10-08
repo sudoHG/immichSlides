@@ -11,8 +11,8 @@ no link is parked, followed or copied. The tested tree SHA is printed and record
 in `local-snapshot.json` beside output/evidence records, or an explicit
 `--snapshot-record` path. `--strict-ci` refuses dirty trees;
 `--allow-private-config` opts into the original checkout for local private testing.
-Use `--config NAME=VALUE` for explicit runtime inputs and run example-config setup
-separately. All existing runner flags remain available. This does not change
+Use `--config NAME=VALUE` for explicit runtime inputs. Run example-config setup
+alone or with `--check` before starting tests. All existing runner flags remain available. This does not change
 Xcode GUI/direct commands or hosted producer contracts. The full mode/command
 policy is in [CONTRIBUTING](../CONTRIBUTING.md#setup).
 
