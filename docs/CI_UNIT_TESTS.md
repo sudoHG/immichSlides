@@ -37,7 +37,10 @@ the producer job; a job conclusion alone is not evidence of that trusted status.
 
 ## Execution and records
 
-Selection and identity checks precede tooling staging. The consumer removes its entire
+Selection and identity checks precede tooling staging. Staging statically enumerates
+unit declarations from committed Swift source blobs in the selected tree, binding
+them to the full selected identity and platform. It retains only these declarations
+and the tools. The consumer removes its entire
 checkout, extracts to another absolute path, rejects existing build-time source and
 Products paths, and remeasures `Signature=adhoc`. Device type, runtime and Xcode build
 come from `scripts/ci-pins.json`. Signing stays **Sign to Run Locally**, clone-process
@@ -48,7 +51,8 @@ Official function/parameter results and failures are still exported.
 python3 -B scripts/ci_build_archive.py select --platform ios \
   --artifact-id ID --producer-attempt ATTEMPT --selection-path /tmp/archive-selection.json \
   --output-dir /tmp/unit-records
-python3 -B scripts/ci_unit_tests.py stage --path /tmp/archive-tools
+python3 -B scripts/ci_unit_tests.py stage --path /tmp/archive-tools \
+  --selection-path /tmp/archive-selection.json
 # In CI, remove the disposable checkout after selection and staging.
 python3 -B /tmp/archive-tools/scripts/ci_unit_tests.py run \
   --selection-path /tmp/archive-selection.json --archive-dir /tmp/archive-download \
@@ -69,8 +73,15 @@ Enumeration and execution use `xcodebuild test-without-building -xctestrun ...` 
 No unit identity is deselected. Enumeration errors fail even on process exit zero.
 Empty/duplicate identities, missing/extra execution, unparseable results, disagreeing
 official counts and failing parameter runs fail the consumer. Compilation is compared
-with execution; independent source declarations use the [population library](CI_POPULATION.md).
-Until unit integration, `declared` remains empty.
+with execution. The consumer validates the staged declaration identity/platform,
+records their hash and fills `population.declared` using the
+[population library](CI_POPULATION.md). The trusted publisher independently derives
+the expected declarations from the admitted tree; enumeration never supplies that set.
+Coverage comparisons normalize Xcode's bundle prefix, raw identifier quoting and
+argument-label signature to static function keys. Parameter rows retain their full
+official identities; their parent function must be compiled, and failures, duplicates
+or missing function observations fail coverage. Explicitly enumerated parameters
+still require their own observations.
 
 The official overall `result` is classified with the offline runner's rules.
 `Failed` fails even when function counts look successful; unknown overall results
@@ -101,7 +112,7 @@ timeouts, unavailable results and export failures remain infrastructure failures
 
 `archive-consumption.json` precedes Xcode and records artifact ID, producer run/attempt,
 consumer attempt, identity, archive/manifest hashes, signing, source/Products absence,
-process exits and official export hash. `bundle-enumeration.json`, `official-tests.json`
+process exits, staged declaration hash and official export hash. `bundle-enumeration.json`, `official-tests.json`
 and `official-summary.json` preserve independent enumeration, outcomes and counts.
 Archive validation failures reuse `archive-identity-mismatch` or `archive-unavailable`
 with **use Re-run all jobs**. Simulator/enum failures use `unit-archive-failed`.

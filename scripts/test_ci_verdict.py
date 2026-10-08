@@ -128,6 +128,26 @@ class PopulationVerdictTests(unittest.TestCase):
         self.assertEqual(self.verdict()["status"], "passed")
         self.summary["population"]["observed"].pop()
         self.assertEqual(self.verdict()["status"], "failed")
+        # Xcode enumerates functions and exports their individual arguments separately.
+        compiled = ci_summary.test_identity("swift", "immichSlidesTests/Tests/`works`(value:)", platform="ios")
+        parameters = [dict(compiled, dimensions={"platform": "ios", "parameter": p}) for p in ("a", "b")]
+        self.summary["population"]["compiled"] = [compiled]
+        rows = [ci_summary.observation(p, "passed", 0) for p in [compiled, *parameters]]
+        self.summary["population"]["observed"] = rows
+        self.assertEqual(self.verdict()["status"], "passed")
+        for case in ("failed argument", "duplicate argument", "unknown parent", "no function result"):
+            with self.subTest(case=case):
+                changed = copy.deepcopy(rows)
+                if case == "failed argument":
+                    changed[1] = ci_summary.observation(parameters[0], "failed", 0, message="Expectation failed")
+                elif case == "duplicate argument":
+                    changed.append(copy.deepcopy(changed[1]))
+                elif case == "unknown parent":
+                    changed[1]["identity"]["key"] = "immichSlidesTests/Other/`works`(value:)"
+                else:
+                    changed.pop(0)
+                self.summary["population"]["observed"] = changed
+                self.assertEqual(self.verdict()["status"], "failed")
 
     def test_failures_infrastructure_partial_results_and_unregistered_retries_stay_red(self):
         for outcome in ("failed", "crashed", "timed-out", "not-run", "needs-human-review", "skipped"):

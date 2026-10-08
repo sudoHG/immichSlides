@@ -83,6 +83,41 @@ class BuildArchiveTests(unittest.TestCase):
             with self.subTest(run=run, attempt=attempt, platform=platform):
                 with self.assertRaises(ContractError):
                     archive.validate_manifest(manifest, self.identity, run, attempt, platform, "27A266a", "f" * 64)
+        import ci_unit_tests as units
+        from ci_verdict import evaluate_population
+        selection = self.root / "selection.json"
+        selection.write_text(json.dumps({"identity": self.identity, "platform": "ios"}))
+        sources = {"immichSlidesTests/ExampleTests.swift": "import Testing\nstruct ExampleTests { @Test func `works`() {} }"}
+        staged = self.root / "staged"
+        def git(*args):
+            self.assertIn(self.identity["tree_sha"], args[3] if args[0] == "ls-tree" else args[1])
+            return next(iter(sources)) if args[0] == "ls-tree" else next(iter(sources.values()))
+        with patch.object(archive, "context", return_value={"identity": self.identity}), patch.object(units, "git", side_effect=git):
+            units.stage_tools(staged, selection)
+        # Declarations survive without any source; they cannot be copied from enumeration.
+        declared = units.read_declarations(staged, {"identity": self.identity, "platform": "ios"})
+        self.assertEqual(declared, [{"kind": "swift", "key": "ExampleTests/works", "dimensions": {"platform": "ios"}}])
+        for field, value in (("platform", "tvos"), ("identity", dict(self.identity, tree_sha="e" * 40))):
+            with self.subTest(field=field), self.assertRaisesRegex(ContractError, "declaration.*mismatch"):
+                units.read_declarations(staged, {"identity": self.identity, "platform": "ios", field: value})
+        with patch.object(archive, "context", return_value={"identity": dict(self.identity, tree_sha="e" * 40)}), \
+                patch.object(units, "git") as source, self.assertRaisesRegex(ContractError, "checkout identity mismatch"):
+            units.stage_tools(self.root / "mismatched", selection)
+        source.assert_not_called()
+        record = json.loads((staged / "unit-declarations.json").read_text())
+        for values in ([], declared * 2):
+            with self.subTest(declarations=values), self.assertRaises(ContractError):
+                (staged / "unit-declarations.json").write_text(json.dumps(dict(record, declared=values)))
+                units.read_declarations(staged, {"identity": self.identity, "platform": "ios"})
+        from test_ci_summary import valid_summary
+        summary = valid_summary()
+        summary["run"]["tier"] = "unit"
+        summary["population"].update(declared=declared, compiled=declared, observed=[])
+        empty_policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        self.assertEqual(evaluate_population(summary, declared, empty_policy, environment="hermetic")["status"], "failed")
+        from ci_summary import observation
+        summary["population"]["observed"] = [observation(declared[0], "passed", 0)]
+        self.assertEqual(evaluate_population(summary, declared, empty_policy, environment="hermetic")["status"], "passed")
 
     def test_artifact_selection_requires_id_run_and_producer_attempt(self):
         metadata = {"id": 7, "name": archive.artifact_name("ios", "123", 1), "expired": False,
@@ -280,6 +315,8 @@ class BuildArchiveTests(unittest.TestCase):
         pins = json.loads(pins_path.read_text())
         workspace = self.root / "tooling"
         workspace.mkdir()
+        (workspace / "unit-declarations.json").write_text(json.dumps({"identity": self.identity, "platform": "ios",
+            "declared": [{"kind": "swift", "key": "A/a", "dimensions": {"platform": "ios"}}]}))
         developer = self.root / "Xcode/Contents/Developer"
         developer.mkdir(parents=True)
         (developer.parent / "version.plist").write_bytes(plistlib.dumps({"ProductBuildVersion": "27A266a"}))
@@ -382,6 +419,9 @@ class BuildArchiveTests(unittest.TestCase):
                 self.assertEqual(provenance["test_exit_code"], None if phase == "enumeration" else 124 if phase == "execution" else 0)
                 summary = json.loads((output / "summary.json").read_text())
                 self.assertEqual(summary["status"], "failed")
+                self.assertEqual(summary["population"]["declared"], [{"kind": "swift", "key": "A/a", "dimensions": {"platform": "ios"}}])
+                self.assertEqual(summary["hashes"]["manifests"]["unit-declarations"],
+                                 archive.file_hash(workspace / "unit-declarations.json"))
                 self.assertEqual(json.loads((output / "sensitive-scan.json").read_text())["result"], "PASS")
                 self.assertIn("records_safe=true", (case / "step-output").read_text())
                 if readable and phase != "summary":

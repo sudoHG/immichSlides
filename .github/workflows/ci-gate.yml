@@ -246,7 +246,7 @@ jobs:
         run: |
           echo "TRANSFER_SECONDS=$(( $(date +%s) - TRANSFER_START ))" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/consumer-python/bin/python3" -B consumer-source/scripts/ci_unit_tests.py stage \
-            --path "$RUNNER_TEMP/archive-tools"
+            --path "$RUNNER_TEMP/archive-tools" --selection-path "$RUNNER_TEMP/archive-selection.json"
           rm -rf "$GITHUB_WORKSPACE/consumer-source"
           test ! -e "$GITHUB_WORKSPACE/source-build"
           test ! -e "$GITHUB_WORKSPACE/consumer-source"
@@ -377,7 +377,7 @@ jobs:
         run: |
           echo "TRANSFER_SECONDS=$(( $(date +%s) - TRANSFER_START ))" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/consumer-python/bin/python3" -B consumer-source/scripts/ci_unit_tests.py stage \
-            --path "$RUNNER_TEMP/archive-tools"
+            --path "$RUNNER_TEMP/archive-tools" --selection-path "$RUNNER_TEMP/archive-selection.json"
           rm -rf "$GITHUB_WORKSPACE/consumer-source"
           test ! -e "$GITHUB_WORKSPACE/source-build"
           test ! -e "$GITHUB_WORKSPACE/consumer-source"

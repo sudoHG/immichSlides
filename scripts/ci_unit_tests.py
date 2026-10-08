@@ -15,9 +15,11 @@ import time
 from pathlib import Path
 
 import ci_build_archive as archive
-from ci_summary import ContractError, decode, observation, parse_summary, require, test_identity, write_summary
+from ci_population import swift_identities
+from ci_summary import (ContractError, decode, fields, observation, parse_summary, require, test_identity,
+                        validate_test_identity, write_summary)
 from ci_verdict import expected_skip_verdict, identity_label, parse_policy, tier_approved
-from run_host_checks import toolchain
+from run_host_checks import git, toolchain
 from run_offline_unit_tests import (CommandError, INTERRUPT_GRACE_SECONDS, classify_test_results,
                                     default_run, parse_official_test_results_summary)
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
@@ -340,6 +342,11 @@ def run_units(args):
         require(archive.file_hash(pins_path) == ctx["pins_sha256"], "consumer pins changed after selection")
         archive.validate_manifest(manifest, ctx["identity"], ctx["run_id"] or "local", ctx["producer_attempt"],
                                   platform, xcode_build, ctx["pins_sha256"])
+        summary["population"]["declared"] = read_declarations(ROOT, ctx)
+        declarations_hash = archive.file_hash(ROOT / "unit-declarations.json")
+        summary["hashes"]["manifests"]["unit-declarations"] = declarations_hash
+        provenance["unit_declarations_sha256"] = declarations_hash
+        write_unit_summary(summary, args.output_dir, budget)
         policy_path = Path(__file__).with_name("ci-test-policy.json")
         policy = parse_policy(policy_path.read_text(encoding="utf-8"))
         summary["hashes"]["policies"]["test-policy"] = archive.file_hash(policy_path)
@@ -354,7 +361,7 @@ def run_units(args):
         summary["toolchain"] = toolchain()
         archive.record_signing(summary, signature)
         summary["toolchain"]["versions"]["simulator_runtime"] = pins["simulators"][platform]["runtime"]
-        summary["hashes"]["manifests"] = {"ci-pins": ctx["pins_sha256"], "build": archive.file_hash(manifest_path)}
+        summary["hashes"]["manifests"].update({"ci-pins": ctx["pins_sha256"], "build": archive.file_hash(manifest_path)})
         provenance.update(manifest_sha256=archive.file_hash(manifest_path), archive_sha256=manifest["archive_sha256"],
                           signing_mode=signature, build_source_absent=True, build_products_absent=True)
         archive.write_json(args.output_dir / "archive-consumption.json", provenance)
@@ -476,11 +483,38 @@ def run_units(args):
     return code
 
 
-def stage_tools(path):
+def read_declarations(path, context):
+    record = decode((path / "unit-declarations.json").read_text(encoding="utf-8"))
+    fields(record, {"identity", "platform", "declared"}, "unit declarations")
+    require(record["identity"] == context["identity"], "unit declaration identity mismatch")
+    require(record["platform"] == context["platform"], "unit declaration platform mismatch")
+    require(isinstance(record["declared"], list) and bool(record["declared"]), "empty unit declarations")
+    for identity in record["declared"]:
+        validate_test_identity(identity)
+        require(identity["kind"] == "swift" and identity["dimensions"] == {"platform": context["platform"]},
+                "invalid unit declaration identity")
+    require(len({json.dumps(identity, sort_keys=True) for identity in record["declared"]}) == len(record["declared"]),
+            "duplicate unit declarations")
+    return record["declared"]
+
+
+def stage_tools(path, selection_path):
     require(not os.path.lexists(path), "staged tooling path must be fresh")
+    selection = decode(selection_path.read_text(encoding="utf-8"))
+    context = archive.context()
+    require(context["identity"] == selection["identity"], "unit declaration checkout identity mismatch")
+    # Read only committed source text from the selected tree, never execute test code.
+    tree = selection["identity"]["tree_sha"]
+    files = {name: git("show", tree + ":" + name)
+             for name in git("ls-tree", "-r", "--name-only", tree, "--", UNIT_TARGET).splitlines()
+             if name.endswith(".swift")}
+    declared = swift_identities(files, selection["platform"])
+    require(bool(declared), "empty unit declarations")
     (path / "scripts").mkdir(parents=True)
     for name in TOOL_FILES:
         shutil.copy2(ROOT / "scripts" / name, path / "scripts" / name)
+    archive.write_json(path / "unit-declarations.json", {"identity": selection["identity"],
+                                                       "platform": selection["platform"], "declared": declared})
 
 
 def scan_records(path, *, failed_step=None):
@@ -518,6 +552,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     stage = commands.add_parser("stage")
     stage.add_argument("--path", type=Path, required=True)
+    stage.add_argument("--selection-path", type=Path, required=True)
     scan = commands.add_parser("scan")
     scan.add_argument("--output-dir", type=Path, required=True)
     scan.add_argument("--failed-step", choices=("preflight", "select", "download", "stage", "units"))
@@ -537,7 +572,7 @@ def main(argv=None):
                 require(ROOT != path and ROOT not in path.parents, "unit outputs must be outside tooling/source")
                 setattr(args, name, path)
         if args.command == "stage":
-            stage_tools(args.path)
+            stage_tools(args.path, args.selection_path)
             return 0
         if args.command == "scan":
             return scan_records(args.output_dir, failed_step=args.failed_step)

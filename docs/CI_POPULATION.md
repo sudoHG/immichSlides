@@ -218,8 +218,11 @@ Measure fixture coverage and the owning tier before proposing a deselection.
 `environment` keyword argument and returns
 `status`, all `errors`, expected skip identities, deselections, missing compiled
 and missing executed identities. Declared and compiled function populations must
-equal the independently supplied expected population. Swift parameter rows can
-expand one function, but every compiled parameter must have its own observation
+equal the independently supplied expected population. Xcode unit keys normalize
+their bundle prefix, raw identifier quoting and argument-label signature to static
+Swift function keys only for coverage comparisons; original result and policy
+identities remain intact. Swift parameter rows can expand a compiled function,
+but every explicitly compiled parameter must have its own observation
 or approved deselection. Extra observations, failed/cancelled/incomplete results,
 human-review outcomes and unregistered retries are failures. Retry eligibility
 and the retry executor are described in [Testing conventions](TESTING.md#known-flaky-registry-and-listed-only-retries).

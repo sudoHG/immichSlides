@@ -138,6 +138,8 @@ the eight check definitions; Python declaration uses the AST and follows mixins,
 while `compiled` records dynamic unittest discovery. These are separate inputs to
 the population comparison. The [static library](CI_POPULATION.md) also enumerates
 Swift unit and UI tests from supplied source text without candidate imports.
+The [unit archive consumer](CI_UNIT_TESTS.md) binds declarations from the selected
+Git tree before removing its checkout; the publisher independently derives that set.
 `removed_by_pr` contains identities for reporting only; host checks leave it empty.
 
 An observed entry contains `identity`, `outcome`, `duration_seconds` and a nonempty
@@ -150,8 +152,10 @@ Outcomes are `passed`, `failed`, `skipped`, `crashed`, `timed-out`, `not-run`,
 `flaky-passed` requires exactly two attempts, failed then passed; the host runner
 never retries. A failed retry retains all attempts and a nonpassing final attempt;
 other entries have one matching attempt. Parameterized producers
-can use the optional `parameter` dimension for per-parameter evidence while retaining
-the function key used by static enumeration. Subtest failures in Python fail the
+can use the optional `parameter` dimension for per-parameter evidence. Swift unit
+coverage maps official Xcode keys to static function keys and checks compilation
+at the parent function, retaining original argument identities and failures.
+Subtest failures in Python fail the
 parent identity and retain each failing subtest's parameter identity and failure
 message. Every subtest skip retains its parameter identity and reason in
 the parent's attempt reason. When both occur, JSON and Markdown retain both the

@@ -104,7 +104,13 @@ def select_policy(base_policy, candidate_policy, admission_identity, approved_he
 def function_identity(identity):
     # Only Swift Testing parameters expand a statically declared function.
     if identity["kind"] == "swift":
-        return dict(identity, dimensions={key: value for key, value in identity["dimensions"].items() if key != "parameter"})
+        key = identity["key"]
+        if key.startswith("immichSlidesTests/"):
+            owner, separator, name = key.removeprefix("immichSlidesTests/").rpartition("/")
+            signature = re.fullmatch(r"(`[^`]+`|[^()`]+)\([^()]*\)", name)
+            require(signature is not None, "unsupported official Swift function identity")
+            key = owner + separator + signature[1].strip("`")
+        return dict(identity, key=key, dimensions={key: value for key, value in identity["dimensions"].items() if key != "parameter"})
     return identity
 
 
@@ -207,7 +213,9 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
         for token, entry in observed.items():
             identity = entry["identity"]
             label = identity_label(identity)
-            if token not in compiled:
+            parent = identity_key(function_identity(identity))
+            if token not in compiled and not (identity["kind"] == "swift" and "parameter" in identity["dimensions"]
+                                               and parent in compiled_functions):
                 errors.append(f"observed without compilation: {label}")
             expected_skip, skip_error = expected_skip_verdict(entry, skips, tier=tier, environment=environment)
             if skip_error:
