@@ -2,8 +2,10 @@
 
 `ci-nightly` schedules at 21:15 UTC on the default branch
 and supports `workflow_dispatch` on a selected branch. PRs touching its entry points
-run planning only; full execution is proven by dispatch before merge. It has read-only
-permissions, no secrets/environments and no publisher, reporter or release authority.
+run planning and credential-free live probes. Strict execution is proven by dispatch
+before merge. It has read-only permissions and no publisher, reporter or release
+authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
+`immich-test-server` environment after credential-free admission.
 
 ```bash
 gh workflow run ci-nightly.yml --ref <branch>
@@ -19,6 +21,7 @@ python3 -B scripts/run_strict_ci_tracer.py --manifest scripts/nightly-matrix.jso
 Use a configuration-free checkout, dedicated simulator and workspace device-slot/
 watchdog wrappers. Preflight rejects files, links and dangling private-config links
 without reading them. There is no SHA override: dispatch a ref at the desired commit.
+Live execution requires `main`; `live_only` diagnoses live boundaries without strict shards.
 Checkout, workflow, matrix, policy, tree, run or attempt mismatches fail. Schedule
 identities require `refs/heads/main`.
 The optional dispatch `shard` input diagnoses one known shard exactly once. It retains
@@ -120,7 +123,9 @@ be relabeled as a local run. The matrix job result comes from Actions, not its a
 
 [`nightly-policy.json`](../scripts/nightly-policy.json) builds only strict and starts
 with `live_tier_in_scope: false`. UI, offline performance, live and live performance are
-**not yet in scope**, without making the skeleton red. Setting live scope without live
+**not yet in scope**, without making the skeleton red. Supplemental live unit jobs
+now run independently; mandatory scope/aggregate integration belongs to the separate
+scope ticket. Setting live scope without live
 results fails; enabling it is a separate maintainer decision. Automated cases must pass
 or flaky-pass. P2 contract success is `needs-human-review`; contracts gate without visual
 PASS. Informational Vision outcomes are listed separately and excluded from health.

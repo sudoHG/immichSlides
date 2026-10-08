@@ -28,6 +28,7 @@ from run_offline_unit_tests import (CommandError, default_data_available_gib,
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-gate.yml"
+NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
 SCHEMES = {"ios": "immichSlides-iOS", "tvos": "immichSlides-tvOS"}
 DESTINATIONS = {"ios": "iOS Simulator", "tvos": "tvOS Simulator"}
 MANIFEST_FIELDS = {"schema_version", "identity", "producer", "platform", "configuration", "architectures",
@@ -180,7 +181,7 @@ def record_signing(summary, signature):
 def make_manifest(products, *, identity, run_id, attempt, platform, architecture, xcode_build,
                   source_path, archive_sha, pins_sha, signing_mode):
     return {"schema_version": 1, "identity": parse_identity(identity),
-            "producer": {"run_id": run_id, "attempt": attempt, "workflow_path": WORKFLOW,
+            "producer": {"run_id": run_id, "attempt": attempt, "workflow_path": producer_workflow(identity),
                          "artifact_name": artifact_name(platform, run_id, attempt)},
             "platform": platform, "configuration": "Debug", "architectures": architecture,
             "xcode_build": xcode_build, "pins_sha256": pins_sha, "signing_mode": signing_mode,
@@ -194,7 +195,7 @@ def validate_manifest(manifest, expected_identity, run_id, attempt, platform, xc
     require(type(manifest["schema_version"]) is int and manifest["schema_version"] == 1,
             "unsupported build manifest version")
     require(parse_identity(manifest["identity"]) == parse_identity(expected_identity), "build identity mismatch")
-    require(manifest["producer"] == {"run_id": run_id, "attempt": attempt, "workflow_path": WORKFLOW,
+    require(manifest["producer"] == {"run_id": run_id, "attempt": attempt, "workflow_path": producer_workflow(expected_identity),
                                      "artifact_name": artifact_name(platform, run_id, attempt)},
             "producer run or attempt mismatch")
     integer(manifest["producer"]["attempt"], 1, "producer attempt")
@@ -248,7 +249,7 @@ def validate_artifact(metadata, identity, run_id, attempt, platform, artifact_id
     run = metadata.get("workflow_run", {})
     require(str(run.get("id")) == run_id, "artifact run mismatch")
     # The artifact API records a PR head; checkout/build identity records its merge.
-    commit = identity.get("head_sha", identity.get("pushed_sha"))
+    commit = identity.get("head_sha", identity.get("pushed_sha", identity.get("commit_sha")))
     require(commit is not None and run.get("head_sha") == commit, "artifact commit mismatch")
 
 
@@ -332,13 +333,17 @@ def output(key, value):
             handle.write(f"{key}={value}\n")
 
 
+def producer_workflow(identity):
+    return NIGHTLY_WORKFLOW if identity["event"] in {"schedule", "workflow_dispatch"} else WORKFLOW
+
+
 def context(*, require_clean=True):
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
     identity = run_identity(os.environ, ci=ci)
-    require(identity["event"] in {"pull_request", "push", "local"}, "ci-gate accepts only PR/main push identities")
+    require(identity["event"] in {"pull_request", "push", "local", "schedule", "workflow_dispatch"}, "unsupported archive event")
     if require_clean:
         require(identity.get("dirty") is not True, "build archives require a clean committed tree")
-    workflow, fork = source_metadata(identity, os.environ, WORKFLOW if ci else None)
+    workflow, fork = source_metadata(identity, os.environ, producer_workflow(identity) if ci else None)
     return {"identity": identity, "source": {"repository": identity["repository"], "event": identity["event"],
             "workflow_path": workflow, "fork_originated": fork, "ci_changing": None},
             "run_id": os.environ.get("GITHUB_RUN_ID") if ci else None,

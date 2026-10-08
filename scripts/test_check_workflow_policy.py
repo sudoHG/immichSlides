@@ -24,6 +24,28 @@ def workflow():
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_live_environment_and_credentials_are_bound_to_guarded_nightly_jobs(self):
+        root = Path(__file__).resolve().parent.parent
+        source = (root / ".github/workflows/ci-nightly.yml").read_text()
+        document = yaml.load(source, Loader=policy.WorkflowLoader)
+        self.assertEqual(self.rules(document, ".github/workflows/ci-nightly.yml"), set())
+        for mutation in ("other-workflow", "unconditional", "job-secret", "early-secret", "wrong-environment"):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(document)
+                job = changed["jobs"]["live-unit"]
+                path = ".github/workflows/ci-nightly.yml"
+                if mutation == "other-workflow":
+                    path = ".github/workflows/other.yml"
+                elif mutation == "unconditional":
+                    job.pop("if")
+                elif mutation == "job-secret":
+                    job["env"] = {"CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}
+                elif mutation == "early-secret":
+                    job["steps"][0]["env"] = {"CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}
+                else:
+                    job["environment"] = "test-server"
+                self.assertIn("live-credential", self.rules(changed, path))
+
     def rules(self, document, path=".github/workflows/example.yml"):
         return {item.rule for item in policy.check_workflow(path, yaml.safe_dump(document))}
 

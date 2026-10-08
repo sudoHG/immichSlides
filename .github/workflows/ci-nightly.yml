@@ -10,12 +10,25 @@ on:
         required: false
         default: ''
         type: string
+      live_only:
+        description: Diagnose live boundaries only; cannot establish a complete nightly
+        required: false
+        default: false
+        type: boolean
+      probe_environment_refusal:
+        description: Credential-free negative probe of the main-only live environment
+        required: false
+        default: false
+        type: boolean
   pull_request:
     paths:
       - .github/workflows/ci-nightly.yml
       - scripts/ci_nightly.py
       - scripts/nightly-*.json
       - scripts/run_strict_ci_tracer.py
+      - scripts/ci_live_tests.py
+      - scripts/ci_build_archive.py
+      - scripts/ci_unit_tests.py
 
 permissions:
   contents: read
@@ -62,7 +75,7 @@ jobs:
           if-no-files-found: error
 
   strict:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && !inputs.live_only
     needs: plan
     name: nightly-strict-${{ matrix.id }}
     runs-on: xcode-27
@@ -146,7 +159,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/nightly-strict"
 
   aggregate:
-    if: always() && github.event_name != 'pull_request'
+    if: always() && github.event_name != 'pull_request' && !inputs.live_only
     needs: [plan, strict]
     name: nightly-aggregate
     runs-on: xcode-27
@@ -200,3 +213,184 @@ jobs:
             cat "$RUNNER_TEMP/nightly-aggregate/nightly.md" >> "$GITHUB_STEP_SUMMARY"
           fi
           rm -rf "$RUNNER_TEMP/nightly-plan" "$RUNNER_TEMP/nightly-records" "$RUNNER_TEMP/nightly-aggregate"
+
+  live-admission:
+    runs-on: xcode-27
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      admitted: ${{ steps.admission.outputs.admitted }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check event, actor, ref, workflow, checkout and main ancestry without credentials
+        id: admission
+        run: /usr/bin/python3 -B scripts/ci_live_tests.py admit
+
+  live-canary:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Prepare pinned Python for credential-free canary
+        run: /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/live-python"
+      - name: Exercise private failure and raw and transformed canary scans
+        run: '"$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_live_tests.py canary --output-dir "$RUNNER_TEMP/live-canary"'
+      - name: Exercise fork-style refusal without credentials
+        run: |
+          "$RUNNER_TEMP/live-python/bin/python3" -B - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'scripts')
+          from ci_live_tests import admission
+          event = {'pull_request': {'head': {'repo': {'full_name': 'canary-fork/immichSlides'}}}}
+          outcome = admission(dict(os.environ, GITHUB_EVENT_NAME='pull_request'), event, None, False)
+          assert outcome == 'fork-skipped'
+          print('Fork-style pull request: live skipped; no protected environment or secret bindings.')
+          PY
+      - name: Publish only canary verdict
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: live-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/live-canary/canary.json
+          retention-days: 7
+          if-no-files-found: error
+
+  live-environment-refusal:
+    if: github.event_name == 'workflow_dispatch' && inputs.probe_environment_refusal && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    environment: immich-test-server
+    steps:
+      - run: /usr/bin/false
+
+  live-build:
+    if: needs.live-admission.outputs.admitted == 'true'
+    needs: live-admission
+    runs-on: xcode-27
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        platform: [ios, tvos]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: live-producer
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Repeat admission and reject private configuration before setup
+        working-directory: live-producer
+        run: |
+          /usr/bin/python3 -B scripts/ci_live_tests.py admit
+          /usr/bin/python3 -B -c 'from pathlib import Path; import sys; sys.path.insert(0,"scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
+      - name: Select pinned Xcode and Python
+        working-directory: live-producer
+        run: |
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/live-python" --verify-toolchain
+      - name: Build one secret-free archive per platform
+        id: build
+        working-directory: live-producer
+        env:
+          LIVE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          "$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_build_archive.py build --platform "$LIVE_PLATFORM" \
+            --derived-data-path "$RUNNER_TEMP/live-derived" --output-dir "$RUNNER_TEMP/live-build" --min-free-gib 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/live-build/archive
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+      - name: Remove producer products
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/live-derived" "$RUNNER_TEMP/live-build"
+
+  live-unit:
+    if: needs.live-admission.outputs.admitted == 'true'
+    needs: [live-admission, live-build]
+    runs-on: xcode-27
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    environment: immich-test-server
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        platform: [ios, tvos]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: live-consumer
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Repeat credential-free admission
+        working-directory: live-consumer
+        run: /usr/bin/python3 -B scripts/ci_live_tests.py admit
+      - name: Select pinned Xcode and Python
+        working-directory: live-consumer
+        run: |
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/live-python" --verify-toolchain
+      - name: Select immutable artifact ID and stage declarations from the tested tree
+        working-directory: live-consumer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          artifact_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate \
+            --jq ".artifacts[] | select(.name == \"build-$LIVE_PLATFORM-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\" and .expired == false) | .id")
+          "$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_build_archive.py select --platform "$LIVE_PLATFORM" \
+            --artifact-id "$artifact_id" --producer-attempt "$GITHUB_RUN_ATTEMPT" \
+            --selection-path "$RUNNER_TEMP/live-selection.json" --output-dir "$RUNNER_TEMP/live-selection-records"
+          "$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_unit_tests.py stage \
+            --path "$RUNNER_TEMP/live-tools" --selection-path "$RUNNER_TEMP/live-selection.json"
+          echo "artifact_id=$artifact_id" >> "$GITHUB_OUTPUT"
+        id: select
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ steps.select.outputs.artifact_id }}
+          path: ${{ runner.temp }}/live-download
+          merge-multiple: true
+      - name: Remove source checkout before test-time injection
+        run: rm -rf live-consumer
+      - name: Execute only live suites with private capture
+        id: live
+        env:
+          CI_LIVE_URL: ${{ secrets.IMMICH_TEST_SERVER_URL }}
+          CI_LIVE_KEY: ${{ secrets.IMMICH_TEST_SERVER_API_KEY }}
+        run: |
+          "$RUNNER_TEMP/live-python/bin/python3" -B "$RUNNER_TEMP/live-tools/scripts/ci_live_tests.py" run \
+            --selection-path "$RUNNER_TEMP/live-selection.json" --archive-dir "$RUNNER_TEMP/live-download" \
+            --relocated-path "$RUNNER_TEMP/live-relocated" --output-dir "$RUNNER_TEMP/live-summary" \
+            --private-dir "$RUNNER_TEMP/live-private" --min-free-gib 30
+      - name: Publish only scanned allowlisted live summary
+        if: always() && steps.live.outputs.records_safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: live-unit-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/live-summary/live-summary.json
+            ${{ runner.temp }}/live-summary/live-summary.md
+          retention-days: 7
+          if-no-files-found: error
+      - name: Display only scanned summary
+        if: always() && steps.live.outputs.records_safe == 'true'
+        run: cat "$RUNNER_TEMP/live-summary/live-summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Dispose task-owned live material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/live-private" "$RUNNER_TEMP/live-relocated" "$RUNNER_TEMP/live-download" "$RUNNER_TEMP/live-tools"

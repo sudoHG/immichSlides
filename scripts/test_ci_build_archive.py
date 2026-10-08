@@ -2,6 +2,7 @@
 import copy
 import io
 import json
+import json
 import plistlib
 import platform
 import subprocess
@@ -622,6 +623,73 @@ class ArchiveUnitResultTests(unittest.TestCase):
         self.assertEqual((code, summary["status"], summary["infrastructure"]), (65, "failed", []))
         with self.assertRaisesRegex(ContractError, "skip reason"):
             result_observations(payload, "ios", {})
+
+
+class LiveBoundaryTests(unittest.TestCase):
+    def test_nightly_archive_provenance_and_live_suite_ownership_fail_closed(self):
+        import ci_live_tests as live
+        from ci_summary import test_identity
+        self.assertEqual(archive.producer_workflow({"event": "schedule"}), live.WORKFLOW)
+        self.assertEqual(archive.producer_workflow({"event": "pull_request"}), archive.WORKFLOW)
+        declared = [test_identity("swift", suite + "/works", platform="ios")
+                    for suite in (*live.SUITES, "PerformanceLiveIntegrationTests")]
+        self.assertEqual(len(live.live_declarations(declared)), len(live.SUITES))
+        for changed in (declared[:-2], declared + [test_identity("swift", "UnownedLiveTests/works", platform="ios")]):
+            with self.subTest(count=len(changed)), self.assertRaises(ContractError):
+                live.live_declarations(changed)
+
+    def test_live_admission_refuses_events_actors_refs_and_non_main_ancestry(self):
+        import ci_live_tests as live
+        env = {"GITHUB_REPOSITORY": "sudoHG/immichSlides", "GITHUB_EVENT_NAME": "workflow_dispatch",
+               "GITHUB_REF": "refs/heads/main", "GITHUB_ACTOR": "sudoHG", "GITHUB_TRIGGERING_ACTOR": "sudoHG",
+               "GITHUB_WORKFLOW_REF": "sudoHG/immichSlides/.github/workflows/ci-nightly.yml@refs/heads/main",
+               "GITHUB_SHA": "a" * 40}
+        self.assertEqual(live.admission(env, {}, "a" * 40, True), "admitted")
+        for key, value in (("GITHUB_EVENT_NAME", "push"), ("GITHUB_ACTOR", "outsider"),
+                           ("GITHUB_TRIGGERING_ACTOR", "outsider"), ("GITHUB_REF", "refs/heads/branch"),
+                           ("GITHUB_WORKFLOW_REF", "sudoHG/immichSlides/.github/workflows/other.yml@refs/heads/main"),
+                           ("GITHUB_REPOSITORY", "fork/immichSlides")):
+            with self.subTest(key=key), self.assertRaises(ContractError):
+                live.admission(dict(env, **{key: value}), {}, "a" * 40, True)
+        for head, ancestor in (("b" * 40, True), ("a" * 40, False)):
+            with self.subTest(head=head, ancestor=ancestor), self.assertRaises(ContractError):
+                live.admission(env, {}, head, ancestor)
+        for fork in (False, True):
+            event = {"pull_request": {"head": {"repo": {"full_name": "fork/repo" if fork else "sudoHG/immichSlides"}}}}
+            self.assertEqual(live.admission(dict(env, GITHUB_EVENT_NAME="pull_request"), event, None, False),
+                             "fork-skipped" if fork else "pr-skipped")
+
+    def test_live_secret_scan_rejects_raw_and_transformed_bytes_across_chunk_boundaries(self):
+        import ci_live_tests as live
+        values = ("https://canary.invalid/a path?x=\"quoted\"", "canary-key-abcdefghijklmnop")
+        needles = live.secret_forms(*values)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture"
+            path.write_bytes(b"safe compact record")
+            live.scan_file(path, needles)
+            for needle in needles:
+                with self.subTest(length=len(needle)), self.assertRaises(ContractError):
+                    path.write_bytes(b"x" * (1024 * 1024 - 2) + needle)
+                    live.scan_file(path, needles)
+
+    def test_live_summary_requires_complete_passing_function_and_parameter_outcomes(self):
+        import ci_live_tests as live
+        from ci_summary import observation, test_identity
+        from run_offline_unit_tests import TestResultsSummary
+        declared = [test_identity("swift", "ExampleLiveTests/works", platform="ios")]
+        row = observation(test_identity("swift", "immichSlidesTests/ExampleLiveTests/works()", platform="ios"), "passed", 1)
+        counts = TestResultsSummary(1, 1, 0, 0, "Passed")
+        self.assertEqual(live.public_outcomes(declared, {"ExampleLiveTests/works()"}, [row], counts, 0)[0]["outcome"], "passed")
+        parameter = copy.deepcopy(row)
+        parameter["identity"]["dimensions"]["parameter"] = "private URL-bearing arguments"
+        self.assertNotIn("private", json.dumps(live.public_outcomes(declared, {"ExampleLiveTests/works()"}, [row, parameter], counts, 0)))
+        for rows, compiled, code, result in (([], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row], set(), 0, counts), ([row], {"ExampleLiveTests/works()"}, 65, counts),
+                                            ([dict(row, outcome="skipped", reason="missing server")], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row, dict(parameter, outcome="failed")], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row], {"ExampleLiveTests/works()"}, 0, TestResultsSummary(1, 1, 0, 0, "Failed"))):
+            with self.subTest(code=code, rows=len(rows)), self.assertRaises(ContractError):
+                live.public_outcomes(declared, compiled, rows, result, code)
 
 
 if __name__ == "__main__":
