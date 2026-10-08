@@ -36,6 +36,10 @@ Prefer extending an existing test file. A new test file needs a reason in the pu
 | `StrictE2E` test plans | Strict end-to-end flows against the local fixture server | No, run with `scripts/run_strict_e2e.py` |
 | `TestSupport/` | Helpers shared by several tests | — |
 
+Default-plan server-dependent UI tests can run hermetically through
+[`run_fixture_ui_tests.py`](CI_FIXTURE_UI.md). That entry point uses runtime
+fixture configuration and records per-test coverage; it never uses private config.
+
 A test must be able to fail. Anything that only produces screenshots, logs or numbers without judging them is evidence tooling. It belongs in the `Evidence` test plan.
 
 Unit test fixtures stay under `immichSlidesTests/Fixtures/`. The synchronized unit test target marks

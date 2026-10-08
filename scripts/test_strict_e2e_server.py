@@ -167,6 +167,36 @@ def logged_request_events(log: str, *, size: str) -> list[tuple[str, str, int]]:
 
 
 class StrictE2EServerContractTests(unittest.TestCase):
+    def test_ui_corpus_preserves_frozen_sets_and_supports_album_person_playback(self) -> None:
+        self.assertEqual(fixture_manifest("c")["fixture_sha256"],
+                         "e600a8feadd7f6d142f862698b58cacdaba116164e69bc27f5bc6278d96b087d")
+        with RunningServer(fixture_set="c") as server:
+            albums = json.loads(server.request("/albums")[2])
+            people = json.loads(server.request("/people")[2])["people"]
+            self.assertGreaterEqual(len(people), 2)
+            self.assertEqual(server.request(f"/people/{people[1]['id']}/thumbnail")[0], 200)
+            person = people[0]
+            body = dict(strict_e2e_server.REQUIRED_SEARCH_VALUES, size=100,
+                        albumIds=[albums[0]["id"]], personIds=[person["id"]])
+            status, _, payload = server.request("/search/random", method="POST", body=body)
+            self.assertEqual(status, 200)
+            assets = json.loads(payload)
+            self.assertEqual(len(assets), albums[0]["assetCount"])
+            self.assertGreaterEqual(len(assets), 30)
+            images = [server.request(f"/assets/{asset['id']}/thumbnail?size=thumbnail") for asset in assets]
+            self.assertEqual([response[0] for response in images], [200] * len(assets))
+            self.assertEqual(len({response[2] for response in images}), len(assets))
+            self.assertGreaterEqual(len(albums), 6)
+            seeded = dict(body, albumIds=["ui-test-album-id"])
+            self.assertEqual(len(json.loads(server.request("/search/random", method="POST", body=seeded)[2])),
+                             len(assets))
+            diagnostic = dict(body, albumIds=["album-c-exif"])
+            diagnostic_assets = json.loads(server.request("/search/random", method="POST", body=diagnostic)[2])
+            self.assertEqual(len(diagnostic_assets), 10)
+            self.assertTrue(all(asset["exifInfo"].get("dateTimeOriginal") for asset in diagnostic_assets))
+            self.assertTrue(all(asset["id"].startswith("asset-c-") for asset in assets))
+            self.assertEqual(server.request(f"/assets/{albums[0]['albumThumbnailAssetId']}/thumbnail?size=thumbnail")[0], 200)
+
     def raw_post(self, server: RunningServer, headers: bytes, body: bytes = b"", *, truncate: bool = False) -> bytes:
         with socket.create_connection(server.server.server_address, timeout=2) as connection:
             connection.sendall(
