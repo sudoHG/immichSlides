@@ -73,7 +73,9 @@ missing retry or reset failure remains failed. Reset failures preserve attempt
 The [registry contract](TESTING.md#known-flaky-registry-and-listed-only-retries)
 defines ownership and expiry.
 
-Failed XCTest attachments are exported only from public fixture runs. The
+The prepared UI target requests screenshot capture and retains failed-test
+attachments; the archived `.xctestrun` and unit target stay unchanged. Failed
+XCTest attachments are exported only from public fixture runs. The
 unchanged sensitive scanner checks the records and attachments, and repeats
 immediately before publication. A failed scan prevents both record and screenshot
 uploads. Failure screenshots have 7-day retention; PR records have 30 days and

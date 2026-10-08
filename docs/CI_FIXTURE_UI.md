@@ -59,6 +59,10 @@ retries by default. The [iPhone UI tier](CI_UI.md) explicitly passes
 `--listed-only-retry`, `--shard` and `--shard-manifest`, with a total Xcode budget
 and failure-attachment export. This uses only the base registry, retains both
 official attempts and preserves the first attempt if the retry reset fails.
+`--failure-screenshots` requests screenshot capture with failure-only retention
+in the prepared UI target's temporary `.xctestrun`, overriding the archive's
+default video format. The archived run file and unit target stay unchanged.
+Only failed-test attachments are exported, then scanned before publication.
 
 ## Coverage and policy
 
