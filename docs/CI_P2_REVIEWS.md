@@ -82,9 +82,12 @@ The shard index lists available cases and fixed reasons for unavailable ones;
 failed automated cases are never replaced with misleading review packages.
 Package validation failure makes the export step fail and prevents its upload.
 Other shard packages and compact nightly failures remain independent.
-The bounded `ci-p2-review` PR probe collects real fixture-A cache packages on iPhone
-and Apple TV to verify packaging and upload. It does not claim full P2 coverage or
-human acceptance. Local device runs use the workspace's device-slot queue and
+The bounded `ci-p2-review` PR probe collects a real fixture-A cache package on iPhone
+to verify packaging and upload. The nightly retains its full device matrix.
+The probe does not claim full P2 coverage or human acceptance.
+Its cold build uses the nightly's 1200-second budget; the actual
+test keeps its 300-second budget and the job is bounded to 45 minutes.
+Local device runs use the workspace's device-slot queue and
 watchdog, default simulator signing and at least 80 GiB free before Xcode.
 Only CI-hosted runners use the existing 30 GiB floor. Private configuration must be
 absent before these fixture runs and restored afterward when temporarily parked.

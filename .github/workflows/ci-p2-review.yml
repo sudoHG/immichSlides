@@ -28,8 +28,6 @@ jobs:
         include:
           - device: iphone
             platform: ios
-          - device: tv
-            platform: tvos
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -60,11 +58,11 @@ jobs:
           "$RUNNER_TEMP/review-python/bin/python3" -B scripts/run_strict_e2e.py \
             --platform "$REVIEW_PLATFORM" --destination "platform=$os_name Simulator,id=$udid" \
             --suite p2-cache --warm-up-only --evidence-dir "$RUNNER_TEMP/review-warm-up" \
-            --derived-data-path "$RUNNER_TEMP/review-derived" --min-free-gib 30
+            --derived-data-path "$RUNNER_TEMP/review-derived" --min-free-gib 30 --cold-timeout-seconds 1200
           "$RUNNER_TEMP/review-python/bin/python3" -B scripts/run_strict_e2e.py \
             --platform "$REVIEW_PLATFORM" --destination "platform=$os_name Simulator,id=$udid" \
             --suite p2-cache --test-without-building --evidence-dir "$RUNNER_TEMP/review-evidence" \
-            --derived-data-path "$RUNNER_TEMP/review-derived" --min-free-gib 30
+            --derived-data-path "$RUNNER_TEMP/review-derived" --min-free-gib 30 --warm-timeout-seconds 300
       - name: Validate and scan the review package
         id: package
         env:
