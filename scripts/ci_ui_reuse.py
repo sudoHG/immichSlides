@@ -35,6 +35,7 @@ def parse_verdict(receipt):
     fields(receipt, {"schema_version", "identity", "source", "status", "inputs", "device_shards", "toolchains"},
            "UI verdict receipt")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1, "unknown UI reuse receipt version")
+    require(isinstance(receipt["identity"], dict), "UI verdict identity must be an object")
     parse_identity(receipt["identity"])
     source = receipt["source"]
     fields(source, {"repository", "workflow_path", "run_id", "attempt", "fork_originated", "ci_changing", "approval_based"},

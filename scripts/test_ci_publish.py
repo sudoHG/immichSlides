@@ -181,7 +181,8 @@ class PublisherTests(unittest.TestCase):
                      lambda r: r["toolchains"]["ipad/default"]["versions"].update(xcode="26.0 (other)")]
         # Wrong nested types must be contract failures, never attribute errors
         # escaping the conservative reuse fallback.
-        mutations += [lambda r: r.update(identity=[]), lambda r: r.update(source=[]),
+        mutations += [lambda r: r.update(identity=[]), lambda r: r.update(identity=json.dumps(r["identity"])),
+                      lambda r: r.update(source=[]),
                       lambda r: r.update(inputs=[]), lambda r: r.update(device_shards={}),
                       lambda r: r.update(toolchains=list(shards)),
                       lambda r: r["source"].update(run_id=True),
