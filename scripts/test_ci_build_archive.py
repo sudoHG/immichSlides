@@ -262,9 +262,17 @@ class BuildArchiveTests(unittest.TestCase):
             extract.assert_not_called()
             summary = json.loads((output / "summary.json").read_text())
             self.assertEqual(summary["status"], "failed")
-            self.assertEqual(summary["infrastructure"][0]["code"], "unit-archive-failed")
-            self.assertIn("build identity mismatch", summary["infrastructure"][0]["message"])
+            self.assertEqual(summary["infrastructure"][0]["code"], "archive-identity-mismatch")
+            self.assertIn("use Re-run all jobs", summary["infrastructure"][0]["message"])
             self.assertFalse(relocated.exists())
+        (archive_dir / "manifest.json").unlink()
+        with patch.object(units, "ROOT", workspace), patch.object(units, "default_run") as xcode:
+            self.assertEqual(units.main(["run", "--selection-path", str(selection_path), "--archive-dir", str(archive_dir),
+                                        "--relocated-path", str(relocated), "--output-dir", str(output)]), 1)
+            xcode.assert_not_called()
+        summary = json.loads((output / "summary.json").read_text())
+        self.assertEqual(summary["infrastructure"][0]["code"], "archive-unavailable")
+        self.assertIn("use Re-run all jobs", summary["infrastructure"][0]["message"])
 
     def test_enumeration_timeout_exports_or_quarantines_its_bundle_without_losing_archive_identity(self):
         import ci_unit_tests as units
@@ -342,59 +350,115 @@ class BuildArchiveTests(unittest.TestCase):
 class ArchiveUnitResultTests(unittest.TestCase):
     def test_unscanned_records_never_reach_workflow_summary_and_cleanup_runs(self):
         import os
+        import re
         import yaml
         workflow = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/ci-gate.yml").read_text())
-        for platform in ("ios", "tvos"):
-            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
+        for platform, case in ((p, c) for p in ("ios", "tvos") for c in
+                               ("no-record", "scan-refused", "preflight-failure", "select-failure", "download-failure")):
+            with self.subTest(platform=platform, case=case), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 records = root / "unit-records"
-                records.mkdir()
-                marker = "PROTECTED_SUMMARY_CANARY"
-                (records / "summary.md").write_text(marker)
-                (records / "measurements.json").write_text(marker)
+                (root / "consumer-source").symlink_to(Path(__file__).resolve().parent.parent)
+                from ci_unit_tests import PUBLIC_API_KEY
+                marker = PUBLIC_API_KEY
+                ctx = {"identity": {"schema_version": 1, "event": "pull_request", "repository": "owner/repo",
+                       "pull_request": 2, "merge_sha": "a" * 40, "base_sha": "b" * 40,
+                       "head_sha": "c" * 40, "tree_sha": "d" * 40},
+                       "source": {"repository": "owner/repo", "event": "pull_request", "workflow_path": archive.WORKFLOW,
+                                  "fork_originated": False, "ci_changing": None}, "run_id": "123", "attempt": 2}
+                if case == "select-failure":
+                    missing = urllib.error.HTTPError("https://api.github.com/artifact", 404, "Not Found", None, None)
+                    with patch.object(archive, "context", return_value=ctx), patch.dict(os.environ, {"GH_TOKEN": "dummy"}), \
+                            patch.object(archive, "workspace_preflight"), patch.object(archive.urllib.request, "urlopen", side_effect=missing), \
+                            redirect_stderr(io.StringIO()):
+                        self.assertEqual(archive.main(["select", "--platform", platform, "--artifact-id", "7",
+                            "--producer-attempt", "1", "--selection-path", str(root / "selection.json"),
+                            "--output-dir", str(records)]), 1)
+                elif case != "no-record":
+                    archive.write_summary(archive.record(ctx, platform, "artifact-selection"), records)
+                    if case == "scan-refused":
+                        with (records / "summary.md").open("a") as handle:
+                            handle.write(marker)
+                        (records / "measurements.json").write_text(marker)
                 relocated = root / ("consumer-relocated-" + platform)
                 relocated.mkdir()
                 (root / "archive-download").mkdir()
                 summary = root / "step-summary.md"
+                outputs = root / "step-outputs"
                 job = workflow["jobs"]["unit-" + platform]
-                for name in ("Display only scanned records", "Remove relocated products"):
+                scan_outputs = {}
+                for name in ("Scan available unit records", "Display only scanned records", "Remove relocated products"):
                     step = next(step for step in job["steps"] if step["name"] == name)
-                    command = step["run"].replace("${{ steps.units.outputs.records_safe }}", "false").replace(
-                        "${{ env.UNIT_PLATFORM }}", platform)
+                    self.assertEqual(step["if"], "always()")
+                    command = step["run"].replace("${{ env.UNIT_PLATFORM }}", platform).replace(
+                        "${{ steps.download.outcome }}", "failure" if case == "download-failure" else "skipped")
+                    for stage in ("preflight", "select"):
+                        command = command.replace("${{ steps." + stage + ".outcome }}",
+                                                  "failure" if case == stage + "-failure" else "skipped")
+                    for key in ("records_safe", "records_produced"):
+                        command = command.replace("${{ steps.record_scan.outputs." + key + " }}", scan_outputs.get(key, ""))
                     completed = subprocess.run(["bash", "-eo", "pipefail", "-c", command], capture_output=True,
-                                               env={**os.environ, "RUNNER_TEMP": temporary, "GITHUB_STEP_SUMMARY": str(summary)},
+                                               env={**os.environ, "RUNNER_TEMP": temporary, "GITHUB_WORKSPACE": temporary,
+                                                    "GITHUB_OUTPUT": str(outputs), "GITHUB_STEP_SUMMARY": str(summary)},
                                                text=True, timeout=10)
-                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    expected_code = 1 if name == "Scan available unit records" and case == "scan-refused" else 0
+                    self.assertEqual(completed.returncode, expected_code, completed.stderr)
                     self.assertNotIn(marker, completed.stdout)
+                    self.assertNotIn(marker, completed.stderr)
+                    if outputs.exists():
+                        scan_outputs = dict(line.split("=", 1) for line in outputs.read_text().splitlines())
                 self.assertNotIn(marker, summary.read_text())
-                self.assertEqual(summary.read_text().strip(),
-                                 "Unit records are unavailable or failed the sensitive scan; publication was withheld.")
+                self.assertEqual(scan_outputs["records_safe"], "true" if case.endswith("failure") else "false")
+                upload = next(step for step in job["steps"] if step["name"].startswith("Publish only unit records"))
+                condition = re.sub(r"steps\.([a-z_]+)\.outputs\.records_safe",
+                    lambda match: repr(scan_outputs["records_safe"] if match[1] == "record_scan" else ""),
+                    upload["if"]).replace("always()", "True").replace("&&", "and")
+                self.assertEqual(eval(condition, {"__builtins__": {}}, {}), case.endswith("failure"))
+                if case in {"no-record", "scan-refused"}:
+                    self.assertEqual(summary.read_text().strip(), "Unit records were not produced; publication is unavailable."
+                        if case == "no-record" else "Unit record scanning refused publication.")
+                else:
+                    self.assertIn("workspace-preflight-failed" if case == "preflight-failure" else "archive-unavailable", summary.read_text())
+                    self.assertIn("use Re-run all jobs", summary.read_text())
                 self.assertFalse(relocated.exists())
                 self.assertFalse((root / "archive-download").exists())
 
-    def test_measured_timeout_uses_sample_rank_censoring_margin_rounding_and_floor(self):
+    def test_measured_timeout_uses_sample_rank_margin_rounding_and_floor(self):
         from ci_unit_tests import measured_timeout
-        for completed, censored, minimum, expected in (([40, 80], [], 60, 120),
-                ([40, 80], [{"limit_seconds": 200, "wall_seconds": 999}], 60, 300),
-                ([10], [], 180, 180), ([60 * value for value in range(1, 21)], [], 0, 1740)):
-            with self.subTest(completed=completed, censored=censored):
-                result = measured_timeout({"completed_seconds": completed, "censored_samples": censored},
+        for completed, minimum, expected in (([40, 80], 60, 120),
+                ([10], 180, 180), ([60 * value for value in range(1, 21)], 0, 1740)):
+            with self.subTest(completed=completed):
+                result = measured_timeout({"completed_seconds": completed},
                                           margin=1.5, minimum=minimum)
                 self.assertEqual(result["timeout_seconds"], expected)
-                self.assertGreaterEqual(result["timeout_seconds"], result["p95_lower_bound_seconds"] * 1.5)
+                self.assertGreaterEqual(result["timeout_seconds"], result["p95_seconds"] * 1.5)
         with self.assertRaises(ContractError):
-            measured_timeout({"completed_seconds": [], "censored_samples": []}, margin=1.5, minimum=60)
+            measured_timeout({"completed_seconds": []}, margin=1.5, minimum=60)
 
     def test_consumer_phase_bounds_leave_room_in_actual_workflow_jobs(self):
         import yaml
         from ci_unit_tests import enumeration_budget
+        from run_offline_unit_tests import INTERRUPT_GRACE_SECONDS
         workflow = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/ci-gate.yml").read_text())
         for platform in ("ios", "tvos"):
             budget = enumeration_budget("ci", platform)
             job_seconds = workflow["jobs"]["unit-" + platform]["timeout-minutes"] * 60
             self.assertEqual(budget["job_timeout_seconds"], job_seconds)
             self.assertLess(budget["simulator_boot_timeout_seconds"] + budget["timeout_seconds"] +
-                            budget["test_timeout_seconds"], job_seconds)
+                            budget["test_timeout_seconds"] + INTERRUPT_GRACE_SECONDS +
+                            budget["overhead_allowance_seconds"], job_seconds)
+
+    def test_official_overall_result_cannot_be_hidden_by_passing_function_counts(self):
+        from ci_unit_tests import judge_execution
+        from ci_summary import observation, test_identity
+        from run_offline_unit_tests import TestResultsSummary
+        rows = [observation(test_identity("swift", "immichSlidesTests/A/a()", platform="ios"), "passed", 0)]
+        for overall, expected_status, expected_code in (("Failed", "failed", 1), ("Unknown", "unverified", 1),
+                                                        ("Passed", "passed", 0)):
+            with self.subTest(overall=overall):
+                summary = {"population": {}, "infrastructure": [], "status": "unverified"}
+                code = judge_execution(summary, {"A/a()"}, rows, TestResultsSummary(1, 1, 0, 0, overall), 0)
+                self.assertEqual((code, summary["status"]), (expected_code, expected_status))
 
     def test_enumeration_errors_or_empty_unit_population_cannot_pass(self):
         from ci_unit_tests import enumeration_keys

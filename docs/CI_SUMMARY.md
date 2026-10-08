@@ -178,8 +178,11 @@ as infrastructure failures.
 This job is informational and does not configure required statuses. The workflow also
 produces [secret-free build archives](CI_BUILD_ARCHIVE.md) and independent
 [complete iOS/tvOS unit consumers](CI_UNIT_TESTS.md), each depending only on its own
-platform's build. Unit artifacts and step summaries require scanned records; refused
-summary publication emits only a fixed message, and cleanup runs separately.
+platform's build. Unit artifacts and step summaries require the independent always-run
+scan, including early-stage failures. Missing records and refused publication each
+emit a distinct fixed message, and cleanup runs separately. Unit verdicts use the
+offline runner's official overall-result classification and the shared
+`skip-policy-pending` code for unapproved skips.
 Expected populations, skip policy, trusted publication
 and approval enforcement are separate tickets. The workflow consumes the merged
 [pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone

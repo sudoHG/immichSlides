@@ -210,6 +210,7 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
       - name: Preflight and verify consumer pins
+        id: preflight
         working-directory: consumer-source
         run: |
           echo "UNIT_SETUP_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -219,6 +220,7 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/consumer-python" --verify-toolchain
       - name: Select the exact artifact ID and producer attempt
+        id: select
         working-directory: consumer-source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,6 +232,7 @@ jobs:
           echo "TRANSFER_START=$(date +%s)" >> "$GITHUB_ENV"
           echo "UNIT_SETUP_SECONDS=$(( $(date +%s) - UNIT_SETUP_START ))" >> "$GITHUB_ENV"
       - name: Download the selected artifact, including earlier successful attempts
+        id: download
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ env.ARCHIVE_ID }}
@@ -255,8 +258,30 @@ jobs:
             --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ env.UNIT_PLATFORM }}" \
             --output-dir "$RUNNER_TEMP/unit-records" --min-free-gib 30 --enumeration-profile ci \
             --setup-seconds "$UNIT_SETUP_SECONDS" --transfer-seconds "$TRANSFER_SECONDS"
+      - name: Scan available unit records
+        id: record_scan
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/archive-tools/scripts/ci_unit_tests.py"; then
+            unit_tools="$RUNNER_TEMP/archive-tools/scripts/ci_unit_tests.py"
+          elif test -f "$GITHUB_WORKSPACE/consumer-source/scripts/ci_unit_tests.py"; then
+            unit_tools="$GITHUB_WORKSPACE/consumer-source/scripts/ci_unit_tests.py"
+          else
+            echo 'records_produced=false' >> "$GITHUB_OUTPUT"
+            echo 'records_safe=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          scan_args=()
+          if test '${{ steps.preflight.outcome }}' = failure; then
+            scan_args=(--failed-step preflight)
+          elif test '${{ steps.select.outcome }}' = failure; then
+            scan_args=(--failed-step select)
+          elif test '${{ steps.download.outcome }}' = failure; then
+            scan_args=(--failed-step download)
+          fi
+          /usr/bin/python3 -B "$unit_tools" scan --output-dir "$RUNNER_TEMP/unit-records" "${scan_args[@]}"
       - name: Publish only unit records and official exports, including failures
-        if: always() && steps.units.outputs.records_safe == 'true'
+        if: always() && steps.record_scan.outputs.records_safe == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unit-${{ env.UNIT_PLATFORM }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -275,15 +300,17 @@ jobs:
       - name: Display only scanned records
         if: always()
         run: |
-          if test '${{ steps.units.outputs.records_safe }}' = true; then
+          if test '${{ steps.record_scan.outputs.records_safe }}' = true; then
             if test -f "$RUNNER_TEMP/unit-records/summary.md"; then
               cat "$RUNNER_TEMP/unit-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
             fi
             if test -f "$RUNNER_TEMP/unit-records/measurements.json"; then
               cat "$RUNNER_TEMP/unit-records/measurements.json"
             fi
+          elif test '${{ steps.record_scan.outputs.records_produced }}' != true; then
+            printf '%s\n' 'Unit records were not produced; publication is unavailable.' >> "$GITHUB_STEP_SUMMARY"
           else
-            printf '%s\n' 'Unit records are unavailable or failed the sensitive scan; publication was withheld.' >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' 'Unit record scanning refused publication.' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Remove relocated products
         if: always()
@@ -309,6 +336,7 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
       - name: Preflight and verify consumer pins
+        id: preflight
         working-directory: consumer-source
         run: |
           echo "UNIT_SETUP_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -318,6 +346,7 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/consumer-python" --verify-toolchain
       - name: Select the exact artifact ID and producer attempt
+        id: select
         working-directory: consumer-source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -329,6 +358,7 @@ jobs:
           echo "TRANSFER_START=$(date +%s)" >> "$GITHUB_ENV"
           echo "UNIT_SETUP_SECONDS=$(( $(date +%s) - UNIT_SETUP_START ))" >> "$GITHUB_ENV"
       - name: Download the selected artifact, including earlier successful attempts
+        id: download
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ env.ARCHIVE_ID }}
@@ -354,8 +384,30 @@ jobs:
             --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ env.UNIT_PLATFORM }}" \
             --output-dir "$RUNNER_TEMP/unit-records" --min-free-gib 30 --enumeration-profile ci \
             --setup-seconds "$UNIT_SETUP_SECONDS" --transfer-seconds "$TRANSFER_SECONDS"
+      - name: Scan available unit records
+        id: record_scan
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/archive-tools/scripts/ci_unit_tests.py"; then
+            unit_tools="$RUNNER_TEMP/archive-tools/scripts/ci_unit_tests.py"
+          elif test -f "$GITHUB_WORKSPACE/consumer-source/scripts/ci_unit_tests.py"; then
+            unit_tools="$GITHUB_WORKSPACE/consumer-source/scripts/ci_unit_tests.py"
+          else
+            echo 'records_produced=false' >> "$GITHUB_OUTPUT"
+            echo 'records_safe=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          scan_args=()
+          if test '${{ steps.preflight.outcome }}' = failure; then
+            scan_args=(--failed-step preflight)
+          elif test '${{ steps.select.outcome }}' = failure; then
+            scan_args=(--failed-step select)
+          elif test '${{ steps.download.outcome }}' = failure; then
+            scan_args=(--failed-step download)
+          fi
+          /usr/bin/python3 -B "$unit_tools" scan --output-dir "$RUNNER_TEMP/unit-records" "${scan_args[@]}"
       - name: Publish only unit records and official exports, including failures
-        if: always() && steps.units.outputs.records_safe == 'true'
+        if: always() && steps.record_scan.outputs.records_safe == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unit-${{ env.UNIT_PLATFORM }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -374,15 +426,17 @@ jobs:
       - name: Display only scanned records
         if: always()
         run: |
-          if test '${{ steps.units.outputs.records_safe }}' = true; then
+          if test '${{ steps.record_scan.outputs.records_safe }}' = true; then
             if test -f "$RUNNER_TEMP/unit-records/summary.md"; then
               cat "$RUNNER_TEMP/unit-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
             fi
             if test -f "$RUNNER_TEMP/unit-records/measurements.json"; then
               cat "$RUNNER_TEMP/unit-records/measurements.json"
             fi
+          elif test '${{ steps.record_scan.outputs.records_produced }}' != true; then
+            printf '%s\n' 'Unit records were not produced; publication is unavailable.' >> "$GITHUB_STEP_SUMMARY"
           else
-            printf '%s\n' 'Unit records are unavailable or failed the sensitive scan; publication was withheld.' >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' 'Unit record scanning refused publication.' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Remove relocated products
         if: always()

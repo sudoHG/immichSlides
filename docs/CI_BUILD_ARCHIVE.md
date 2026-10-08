@@ -98,7 +98,7 @@ complete unit bundle and run the entire unit target with `test-without-building`
 The temporary five-selector proof job and entry point are removed. Both execution
 and its failure path retain official identities/outcomes and archive provenance
 before successful disposal or private quarantine. See CI_UNIT_TESTS for commands,
-measurements, job graph, upload rules and the separately proposed unit skip policy.
+measurements, job graph, upload rules and unit verdicts.
 
 **Rerun failed jobs** retains successful producer outputs. Consumers download by
 artifact ID from the same run, including earlier producer attempts, and record the
@@ -116,7 +116,10 @@ always-run upload/display steps. The preflight records no private values and sta
 neither setup nor Xcode. Failures use `workspace-preflight-failed`,
 `archive-unavailable` (expired/missing artifacts, including API 404/410), or
 `archive-identity-mismatch`; consumer/build errors retain their respective failure codes.
-Archive selection/build failures include **use Re-run all jobs**. There is no silent rebuild
+Archive selection/build/validation failures include **use Re-run all jobs**. Early
+consumer failures pass through an independent always-run sensitive scan before
+upload/display. Download failures retain a failed `archive-unavailable` record.
+There is no silent rebuild
 or cross-run fallback. An invalid CLI/output location or unparseable run identity
 fails before a valid record can be constructed.
 

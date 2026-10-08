@@ -1,12 +1,11 @@
 # Unit tests from the build archive
 
-`ci-gate` runs the entire `immichSlidesTests` target on the pinned iPhone and Apple TV.
-Each consumer uses the [existing build archive](CI_BUILD_ARCHIVE.md), artifact-ID
-selection and full manifest checks. It has no app source checkout, project, scheme,
-package checkout or build step. The temporary five-test relocation proof is removed.
-Host/privacy jobs, App behavior, assertions and test-plan membership are unchanged.
+`ci-gate` runs the complete `immichSlidesTests` target on the pinned iPhone and Apple TV.
+Each consumer uses the [build archive](CI_BUILD_ARCHIVE.md), immutable artifact-ID
+selection and manifest checks. It removes its source checkout before enumeration and
+execution, with no project, scheme, package checkout or rebuild available.
 
-## Job graph and bounds
+## Job graph and limits
 
 ```mermaid
 flowchart LR
@@ -19,34 +18,29 @@ flowchart LR
     V --> R
 ```
 
-Host checks, iOS build and tvOS build start independently. Each unit job waits only
-for its own platform's build; a slow or failed sibling does not block it. The critical
-path is the longer complete platform path or host checks, with queue time reported
-separately. Script bounds are 30 minutes for a build and 15 minutes for unit execution.
-Simulator startup is a separate `simctl bootstatus <UDID> -b` phase, bounded at
-10 minutes and recorded as `simulator_boot_seconds` and `simulator_boot_exit_code`.
-The local enumeration default remains 5 minutes. Both build and consumer jobs have
-40-minute bounds, with combined boot/enumeration/execution script bounds shorter
-than the consumer job. There is no automatic test retry or silent rebuild.
+Each unit job waits only for its own platform's build. The critical path is the longer
+complete platform path or host checks; queue time is measured separately.
+Both build and consumer jobs are bounded at 40 minutes. Builds have a 30-minute script
+bound. Unit consumers have separate boot, enumeration and execution bounds:
 
-The publisher in [#89](https://github.com/sudoHG/immichSlides/issues/89) owns the future
-trusted `ci-pr-gate` status. This producer does not create it, set a required status,
-approve a policy or implement a trusted verdict. A failing unit test fails the job
-and the workflow, and its official results remain available in the compact records.
-This PR is **Part of #91**, not its closure: the acceptance criterion requiring a
-deliberate unit failure to turn `ci-pr-gate` red remains open until #89 is available.
+| Phase | CI iOS | CI tvOS | Local default |
+| --- | ---: | ---: | ---: |
+| Simulator boot (`simctl bootstatus -b`) | 240 s | 240 s | 600 s |
+| Bundle enumeration, after boot | 660 s | 300 s | 300 s |
+| Unit execution | 900 s | 900 s | 900 s |
+
+There is no automatic test retry or silent rebuild. The [trusted publisher](https://github.com/sudoHG/immichSlides/issues/89)
+owns the `ci-pr-gate` status and required-status enforcement. A failing unit test fails
+the producer job; a job conclusion alone is not evidence of that trusted status.
 
 ## Execution and records
 
-Checkout identity and artifact selection run before staging tooling. The consumer
-then removes its entire checkout, extracts to another absolute path, checks that
-build-time source and Products are absent, and measures `Signature=adhoc` again.
-The device type, runtime and Xcode build come from `scripts/ci-pins.json`.
-Consumer simulators disable clone-process parallelism; signing stays **Sign to Run Locally**.
-Automatic simulator diagnostic collection is disabled, as in the strict runner;
-official function/parameter results and failures are still exported.
-
-The shared entry points are:
+Selection and identity checks precede tooling staging. The consumer removes its entire
+checkout, extracts to another absolute path, rejects existing build-time source and
+Products paths, and remeasures `Signature=adhoc`. Device type, runtime and Xcode build
+come from `scripts/ci-pins.json`. Signing stays **Sign to Run Locally**, clone-process
+parallelism is disabled, and automatic simulator diagnostic collection is disabled.
+Official function/parameter results and failures are still exported.
 
 ```sh
 python3 -B scripts/ci_build_archive.py select --platform ios \
@@ -58,183 +52,96 @@ python3 -B /tmp/archive-tools/scripts/ci_unit_tests.py run \
   --selection-path /tmp/archive-selection.json --archive-dir /tmp/archive-download \
   --relocated-path /tmp/consumer-relocated-ios --output-dir /tmp/unit-records \
   --enumeration-profile ci
+python3 -B /tmp/archive-tools/scripts/ci_unit_tests.py scan --output-dir /tmp/unit-records
 ```
 
-Use fresh paths and `tvos` selection for Apple TV. Local verification uses the
-workspace watchdog/device-slot wrappers and `--simulator-id <assigned-UDID>`; no
-other simulator is created, changed or deleted. Artifact selection requires CI
-event metadata and an actions-read token in the environment. Local archived-build
-experiments use a temporary selection record derived from that build's real local
-identity; their artifact ID is null, never an invented GitHub ID. The future local
-reproduction ticket owns a complete local build-and-select entry point.
+Use fresh paths and `tvos` selection for Apple TV. Artifact selection requires CI event
+metadata and an actions-read token. `--simulator-id <UDID>` selects an existing matching
+simulator; otherwise the consumer creates and deletes its own pinned device. Local
+archive experiments use real local identity and a null artifact ID, never an invented
+GitHub artifact ID. Local runs require 80 GiB free before each Xcode invocation;
+hosted runs retain the 30 GiB reserve.
 
-Both enumeration and execution call `xcodebuild test-without-building -xctestrun ...`
-with `-only-testing:immichSlidesTests`, a dedicated DerivedData path and private
-result path. No unit test is deselected. Enumeration errors are rejected even if
-Xcode exits zero. Empty/duplicate identities, missing/extra execution, unparseable
-results, disagreeing official counts and failing parameter runs fail the consumer.
-The 05b cross-check is compiled versus observed; independent static declarations
-belong to [#130](https://github.com/sudoHG/immichSlides/pull/130), so `declared` stays
-empty rather than relabeling compilation as source enumeration.
+Enumeration and execution use `xcodebuild test-without-building -xctestrun ...` with
+`-only-testing:immichSlidesTests`, dedicated DerivedData and private result paths.
+No unit identity is deselected. Enumeration errors fail even on process exit zero.
+Empty/duplicate identities, missing/extra execution, unparseable results, disagreeing
+official counts and failing parameter runs fail the consumer. Compilation is compared
+with execution; independent source declarations belong to the [static population policy](https://github.com/sudoHG/immichSlides/pull/130).
+Until integrated, `declared` remains empty.
 
-The consumer writes the existing [summary contract](CI_SUMMARY.md). Successful Swift
-rows stay in JSON; Markdown displays failures and skips. Parameter runs retain
-their official argument identity and outcome under the function-level identity.
-Exact `Skip Message` diagnostics are retained, including Xcode's generic `Test skipped`.
-Failed functions and parameter runs retain the first official `Failure Message` line,
-capped at 200 characters. A plain assertion failure fails the producer without adding
-an infrastructure failure; missing results, process timeouts and export errors remain
-infrastructure failures.
+The official overall `result` is classified with the offline runner's rules.
+`Failed` fails even when function counts look successful; unknown overall results
+cannot pass. Otherwise successful results with skips remain `unverified`, using the
+shared `skip-policy-pending` code until policy approval. No expected skip is approved
+or applied by this consumer. Exception proposals belong in the PR body; the policy's
+proposed section is populated separately after its owning change merges.
 
-`archive-consumption.json` is written before Xcode and updated after export. It records
-artifact ID, producer run/attempt, consumer attempt, full identity, manifest/archive
-hashes, signing measurement, source/Products absence, process exit and official export
-hash. `bundle-enumeration.json`, `official-tests.json` and `official-summary.json`
-preserve the independent enumeration, function/parameter outcomes and official counts.
-`measurements.json` records setup, transfer, separate simulator boot, enumeration,
-test and total seconds. Enumeration starts only after boot status succeeds.
-Producer records add setup/build/pack timings and sampled disk use.
+The [summary contract](CI_SUMMARY.md) keeps successful Swift rows in JSON and displays
+failures/skips in Markdown. Parameter rows retain official arguments and outcomes.
+Skip reasons preserve the exact emitted `Skip Message`, including generic `Test skipped`.
+Failed functions and parameters retain the first official `Failure Message` line,
+capped at 200 characters. Plain assertion failures do not add infrastructure entries;
+timeouts, unavailable results and export failures remain infrastructure failures.
 
-Raw results use the existing owner-only private result-bundle helpers from the strict
-runner, outside publishable records. Finalization exports official results even after
-Xcode failure. A failed enumeration also attempts official export and quarantines
-its private bundle when export is unavailable; records distinguish enumeration from
-execution and retain both process exits. Successful export, record writing and the unchanged sensitive scan
-precede disposal; failed runs or export/scan errors retain the private bundle with a
-quarantine record. Upload uses an explicit compact-file allowlist and a successful
-sensitive-scan output. Step-summary publication requires the same `records_safe`
-output; otherwise it displays only a fixed message, without raw diagnostics or
-measurements. Relocated-product cleanup is a separate `always()` step. Raw bundles,
-activities, logs, screenshots and quarantine paths are never uploaded. Records expire
-after 30 days for PRs and 7 days for other runs.
+`archive-consumption.json` precedes Xcode and records artifact ID, producer run/attempt,
+consumer attempt, identity, archive/manifest hashes, signing, source/Products absence,
+process exits and official export hash. `bundle-enumeration.json`, `official-tests.json`
+and `official-summary.json` preserve independent enumeration, outcomes and counts.
+Archive validation failures reuse `archive-identity-mismatch` or `archive-unavailable`
+with **use Re-run all jobs**. Simulator/enum failures use `unit-archive-failed`.
 
-## Measurements and budget
+Raw bundles stay outside publishable records in the existing private-result storage.
+Finalization attempts official export even after Xcode failure. Failed runs or
+export/scan errors retain a private quarantine record; successful export and sensitive
+scan precede disposal. A failed enumeration attempts export and retains both process
+exits and archive identity, even when no executable test results exist.
 
-Setup and transfer are measured by workflow timestamps around their steps. Build,
-packing, enumeration and execution use monotonic clocks. Producer and consumer disk
-tracers sample free volume space every second, recording minimum free space and peak
-growth from the start. Growth includes transient simulator/Xcode files and other
-activity on the same volume; it is not an estimate from final Products size alone.
-Local runs require 80 GiB before every Xcode invocation. Hosted runs retain the
-existing 30 GiB allowance and record the reserve. Queue measurements come from
-GitHub's run-created and job-start timestamps, separately from job execution.
+An independent `always()` scan runs after the consumer, including when preflight,
+selection or download failed and execution was skipped. It reuses the sensitive scanner
+through the system Python without requiring a completed environment setup or units step.
+Download/setup failures replace otherwise successful earlier stage records with a
+classified failure and rerun advice. Artifact and step-summary publication require
+this scan's `records_safe` output. No records produces **Unit records were not produced;
+publication is unavailable.** A refused scan produces only **Unit record scanning refused
+publication.** Neither case prints raw diagnostics. Relocated-product cleanup is a
+separate `always()` step. The upload allowlist contains only compact records and official
+exports; raw bundles, logs, screenshots, activities and quarantine paths never upload.
+Records expire after 30 days for PRs and 7 days for other runs.
 
-The explicit `--enumeration-profile ci` budget is computed from hosted observations
-in the consumer; omitting it keeps the local 300-second default. Post-boot calibration
-[run 37716498397](https://github.com/sudoHG/immichSlides/actions/runs/37716498397)
-measured iOS boot at 53.77 s and enumeration at 307.10 s; tvOS boot was 25.74 s and
-enumeration 41.62 s. Enumeration excludes boot, so a 300-second CI iOS bound would
-still interrupt this successful sample.
+## Measurements and budgets
 
-The initial post-boot calibration uses nearest-rank sample p95 per platform, a **2x
-margin**, rounding up to whole minutes, and a 300-second floor. With one completed
-sample per platform, this chooses **660 s for iOS and 300 s for tvOS**. The calibration
-run ID, boot samples, enumeration samples and method are versioned in the consumer.
-This small calibration set does not estimate population tail latency or prove capacity.
-The rule supports censored samples as lower bounds, excluding shutdown grace; older
-implicit-boot samples are historical and are not mixed into the post-boot calibration.
+Workflow timestamps measure setup and transfer. Monotonic clocks measure build,
+packing, separate simulator boot, post-boot enumeration, execution and consumer total.
+Producer/consumer disk tracers sample free volume space every second, retaining minimum
+free space and peak growth. These shared-volume samples include transient simulator
+files and other activity; they are not estimates from final Products size. Queue times
+come from workflow-created and job-start timestamps; a unit queue starts after its own
+build completes. Full per-run measurements and acceptance history belong in PR records.
 
-`measurements.json` records the completed/censored samples, p95 lower bound, margin,
-chosen enumeration bound, separate 600-second boot bound, unchanged 900-second
-execution bound and 2400-second job bound; the Markdown summary presents the same
-decision. The longest combined script phase bounds are **2160 seconds**, shorter
-than the job's 2400 seconds. The regression compares these bounds to the actual
-workflow `timeout-minutes`, rather than only comparing Python constants. This is
-an infrastructure timeout decision; no product assertion or success threshold changes.
+`--enumeration-profile ci` uses [post-boot calibration](https://github.com/sudoHG/immichSlides/actions/runs/37716498397):
+iOS 307.10 s and tvOS 41.62 s. Nearest-rank sample p95, a **2x margin**, upward rounding
+to whole minutes and a 300-second floor choose **660 / 300 s**. Omitting the profile
+keeps the local 300-second default. Only completed measurements are used. The small
+calibration set does not estimate population tail latency or prove capacity.
 
-Measured hosted timings, queue values, disk samples and the resulting proposed gate
-budget are published in the PR with run links. These initial samples do not prove
-latency under overlapping PR/nightly load; that capacity acceptance remains with the
-later UI tracer and publisher tickets. Workflow bounds are cancellation limits, not
-a passing gate or a promise of reserved capacity.
+The [recovery calibration](https://github.com/sudoHG/immichSlides/actions/runs/37717972490)
+measured maximum boot at **110.19 s**; 2x and upward minute rounding choose **240 s**.
+Its iOS job lasted 556 s, with 110.19 + 251.28 + 70.47 s in the three phases, leaving
+**124.06 s** measured job overhead. Adding the 60-second official-export bound and
+rounding upward gives a **240-second overhead allowance**. The runner's shared
+interrupt grace is **120 s**. The longest combined bound is therefore
+`240 + 660 + 900 + 120 + 240 = 2160 s < 2400 s`.
+The guard reads actual workflow `timeout-minutes`; measurements and Markdown record
+phase limits, grace, measured overhead and allowance. These are infrastructure budgets;
+product assertions and success thresholds do not change.
 
-Final-consumer deliberate-failure proof:
-[run 37717972490](https://github.com/sudoHG/immichSlides/actions/runs/37717972490),
-head `1410563`, tested merge `f91a248`, tree `13061b9`, producer/consumer attempt 1.
-The existing metadata fixture temporarily expected width 5000 instead of 4000.
-Both unit jobs failed with Xcode exit 65, complete official execution exports and
-summary `FAILED`; upload, scanned step-summary publication and cleanup succeeded.
-iOS had 617 passed + 1 intended failure + 19 skipped functions; tvOS had
-615 passed + 1 intended failure + 18 skipped, with 41 parameter outcomes each.
-The summary shows `Expectation failed: asset.width == 5000` and no infrastructure
-entry. Both archived records retain immutable artifact ID, producer/consumer attempt,
-source/Products absence, `adhoc` signing and the official export digest.
-
-Restored-success [run 37719766131](https://github.com/sudoHG/immichSlides/actions/runs/37719766131),
-head `4e0c7ca`, tested merge `e17d957`, tree `f571667`, used identical scripts/workflow
-and the restored 4000 assertion. All five jobs succeeded, with iOS 618 passed +
-19 skipped functions and tvOS 616 passed + 18 skipped, plus 41 parameter rows each.
-Both producer summaries remain `unverified` solely for the unapproved skips.
-iOS started at 02:52:54 UTC while tvOS build completed at 02:54:36 UTC, demonstrating
-that a consumer does not wait for the other platform's build.
-
-| Final-configuration phase / measurement | Success iOS | Success tvOS | Failure iOS | Failure tvOS |
-| --- | ---: | ---: | ---: | ---: |
-| Producer setup | 11 s | 17 s | 15 s | 18 s |
-| Build-for-testing | 138.53 s | 226.39 s | 220.39 s | 262.63 s |
-| Archive packing | 14.51 s | 21.21 s | 20.26 s | 22.90 s |
-| Consumer setup | 16 s | 12 s | 18 s | 19 s |
-| Archive download | 3 s | 3 s | 5 s | 3 s |
-| Simulator boot | 68.40 s | 23.44 s | 110.19 s | 29.91 s |
-| Bundle enumeration, after boot | 246.20 s | 33.22 s | 251.28 s | 61.50 s |
-| Unit execution | 44.32 s | 29.08 s | 70.47 s | 39.48 s |
-| Consumer total, excluding setup/download | 394.81 s | 94.14 s | 489.68 s | 145.24 s |
-| Build runner queue, from workflow creation | 7 s | 10 s | 29 s | 131 s |
-| Consumer runner queue, after own build completed | 10 s | 6 s | 9 s | 7 s |
-| Producer peak volume growth / minimum free | 1.30 / 37.61 GiB | 1.23 / 37.62 GiB | 2.23 / 36.60 GiB | 1.28 / 37.39 GiB |
-| Consumer peak volume growth / minimum free | 2.22 / 36.71 GiB | 1.48 / 37.22 GiB | 1.82 / 37.34 GiB | 1.15 / 38.16 GiB |
-
-GitHub timestamps give **10m38s (638 s)** for success and **14m32s (872 s)** for the
-final-configuration failure path, from workflow creation through the last completed
-job, including queueing. The provisional feedback budget uses these two complete
-workflow samples, nearest-rank sample p95 (rank 2 of 2, **872 s**), a **1.5x margin**
-and rounding up to whole minutes: `ceil(872 * 1.5 / 60) = 22 minutes` (**1320 s**).
-The margin after rounding is **448 s above the maximum observation**. This is a
-coordinator-set technical value, **provisional until #93 promotion**, not a maintainer
-approval operation. Two samples do not estimate population tail latency or prove
-concurrent capacity. Enforcement belongs to #89; concurrent PR/nightly capacity and
-the required promotion sample remain unverified. Script/job timeouts remain larger
-failure-recovery bounds.
-
-The former 20-minute target is superseded: an older success took 19m51s and the
-diagnostic-enabled failure path took 29m29s. That historical budget miss is retained
-as such, separate from the new configuration.
-An earlier tvOS upload hit GitHub's `FinalizeArtifact: ETIMEDOUT`; the single corrected
-retry [37712546629](https://github.com/sudoHG/immichSlides/actions/runs/37712546629)
-uploaded successfully. Infrastructure failures are not assertion-failure acceptance.
-
-## Proposed unit skip policy
-
-[`scripts/ci-unit-skip-proposal.json`](../scripts/ci-unit-skip-proposal.json) is a
-separate **proposed** inventory, not the unmerged `scripts/ci-test-policy.json` policy
-from #130. Neither workflow nor consumer reads or applies this proposal. No agent
-approval is performed; the maintainer must approve the exact entries before they
-become trusted expected-skip or deselection policy.
-
-Each entry records its exact measured identity/reason, platform and unit/hermetic
-scope; the table below records conditions and proposed owners. Generic `Test skipped` is a real measured diagnostic,
-not proof that the proposed source condition was the cause. Until approved,
-otherwise successful execution with any skip returns process exit 0 but producer
-status **unverified**, with `unit-skips-unapproved`. Actual failures, omissions,
-export errors and timeouts remain nonzero failures. There are no active deselections
-and no wildcard that silently covers a future test.
-
-Baseline `36f3655` has 21 conditional attributes in six unit files: three suite traits
-and 18 test traits, plus the shared Evidence switch. This reconciles the review's
-approximate 23-site backlog without treating attribute sites as test identities.
-The actual compiled/executed population contains 19 skipped functions on iOS and
-18 on tvOS; the iOS-only EXIF performance function explains the difference.
-
-| Suite | Skips iOS / tvOS | Measured reason | Proposed condition / owner |
-| --- | ---: | --- | --- |
-| ExifForegroundAnalyzerPerformanceIOSTests | 1 / 0 | `Test skipped` | Evidence switch unset; nightly offline performance |
-| FaceBoxLiveProbeTests | 1 / 1 | `Test skipped` | Evidence and live configuration absent; nightly live probes |
-| PerformanceLiveIntegrationTests | 3 / 3 | `Test skipped` | Evidence and live configuration absent; nightly live performance |
-| PlaybackPoolResolverLiveIntegrationTests | 6 / 6 | `Test skipped: No local live config; a skip does not mean live membership was verified` | Live configuration absent; nightly live unit tests |
-| PlaybackRuntimeEvidenceManifestTests | 1 / 1 | `Test skipped` | External runtime JSONL input absent; manually collected runtime evidence |
-| SlideShowViewModelLiveIntegrationTests | 7 / 7 | Six `Test skipped`; one `Test skipped: No local live config; a skip does not mean live dedup was verified` | Live configuration absent; nightly live unit tests |
-
-The proposal follows #130's entry shape but stays in a separate file. These owners
-describe where the coverage belongs; they do not declare a nightly tier in scope or
-claim that it has executed. The exact 37 entries are also presented in the PR body
-for approval; the empty deselection list means every compiled unit identity still runs.
+The provisional feedback budget is **22 minutes (1320 s)**. Its calibration includes
+[success](https://github.com/sudoHG/immichSlides/actions/runs/37719766131) at 638 s and
+[failure](https://github.com/sudoHG/immichSlides/actions/runs/37717972490) at 872 s,
+including queueing through the last completed job. Nearest-rank sample p95 is rank 2
+of 2 (872 s); a **1.5x margin** and upward minute rounding give
+`ceil(872 * 1.5 / 60) = 22`, leaving 448 s above the maximum observation.
+This budget is **provisional until #93 promotion**. Enforcement belongs to #89;
+concurrent PR/nightly capacity and the promotion sample remain unverified.
+Script/job timeouts are cancellation bounds, not promises of runner capacity.

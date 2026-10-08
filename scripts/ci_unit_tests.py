@@ -15,9 +15,10 @@ import time
 from pathlib import Path
 
 import ci_build_archive as archive
-from ci_summary import ContractError, decode, observation, require, test_identity, write_summary
+from ci_summary import ContractError, decode, observation, parse_summary, require, test_identity, write_summary
 from run_host_checks import toolchain
-from run_offline_unit_tests import CommandError, default_run, parse_official_test_results_summary
+from run_offline_unit_tests import (CommandError, INTERRUPT_GRACE_SECONDS, classify_test_results,
+                                    default_run, parse_official_test_results_summary)
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
                             prepare_private_result_bundle_path, write_sensitive_scan)
 from strict_e2e_server import PUBLIC_API_KEY
@@ -33,22 +34,26 @@ TOOL_FILES = ("ci_unit_tests.py", "ci_build_archive.py", "ci_summary.py", "run_h
 
 # Post-boot enumeration calibration is distinct from the separately measured simulator startup.
 HOSTED_ENUMERATION_SAMPLES = {
-    "ios": {"completed_seconds": [307.096293334], "censored_samples": [],
+    "ios": {"completed_seconds": [307.096293334],
             "calibration_run_id": "37716498397", "calibration_boot_seconds": [53.769112167]},
-    "tvos": {"completed_seconds": [41.619890792], "censored_samples": [],
+    "tvos": {"completed_seconds": [41.619890792],
              "calibration_run_id": "37716498397", "calibration_boot_seconds": [25.735431]},
 }
+# Job overhead is the failed iOS job duration minus its independently measured phases.
+HOSTED_BOOT_MAX_SECONDS = 110.186966041
+HOSTED_JOB_OVERHEAD_SECONDS = 556 - (110.186966041 + 251.284679625 + 70.472742334)
+OFFICIAL_EXPORT_TIMEOUT_SECONDS = 60
 
 
 def measured_timeout(samples, *, margin, minimum):
-    bounds = sorted([*samples["completed_seconds"], *(item["limit_seconds"] for item in samples["censored_samples"])])
+    bounds = sorted(samples["completed_seconds"])
     require(bool(bounds) and all(isinstance(value, (int, float)) and math.isfinite(value) and value > 0 for value in bounds),
             "timeout calibration needs positive measured samples")
     require(margin > 1 and minimum >= 0, "timeout calibration needs a margin and nonnegative floor")
-    p95_floor = bounds[math.ceil(0.95 * len(bounds)) - 1]
-    return {**samples, "p95_lower_bound_seconds": p95_floor, "margin_multiplier": margin,
-            "timeout_seconds": max(minimum, math.ceil(p95_floor * margin / 60) * 60),
-            "method": "nearest-rank sample p95 lower bound; censored durations are unknown above their limit"}
+    p95 = bounds[math.ceil(0.95 * len(bounds)) - 1]
+    return {**samples, "p95_seconds": p95, "margin_multiplier": margin,
+            "timeout_seconds": max(minimum, math.ceil(p95 * margin / 60) * 60),
+            "method": "nearest-rank sample p95; completed post-boot enumerations"}
 
 
 def enumeration_budget(profile, platform):
@@ -59,7 +64,13 @@ def enumeration_budget(profile, platform):
     if profile == "ci":
         samples = HOSTED_ENUMERATION_SAMPLES[platform]
         budget.update(measured_timeout(samples, margin=2, minimum=300), job_timeout_seconds=2400,
-                      sample_configuration="separate boot; calibration run " + samples["calibration_run_id"])
+                      sample_configuration="separate boot; calibration run " + samples["calibration_run_id"],
+                      simulator_boot_timeout_seconds=math.ceil(HOSTED_BOOT_MAX_SECONDS * 2 / 60) * 60,
+                      boot_max_seconds=HOSTED_BOOT_MAX_SECONDS, recovery_calibration_run_id="37717972490",
+                      interrupt_grace_seconds=INTERRUPT_GRACE_SECONDS,
+                      measured_job_overhead_seconds=HOSTED_JOB_OVERHEAD_SECONDS,
+                      official_export_timeout_seconds=OFFICIAL_EXPORT_TIMEOUT_SECONDS,
+                      overhead_allowance_seconds=math.ceil((HOSTED_JOB_OVERHEAD_SECONDS + OFFICIAL_EXPORT_TIMEOUT_SECONDS) / 60) * 60)
     return budget
 
 
@@ -72,10 +83,13 @@ def write_unit_summary(summary, path, budget):
         if budget["profile"] == "ci":
             handle.write(f"Sample configuration: {budget['sample_configuration']}. "
                          f"Completed hosted samples: {budget['completed_seconds']} s; "
-                         f"right-censored samples (limit and wall including shutdown): {budget['censored_samples']}. "
-                         f"Nearest-rank p95 lower bound: {budget['p95_lower_bound_seconds']} s; "
+                         f"Nearest-rank sample p95: {budget['p95_seconds']} s; "
                          f"margin: {budget['margin_multiplier']}x, rounded up to whole minutes with a 300 s minimum. "
                          f"Combined script phase bounds: {budget['simulator_boot_timeout_seconds'] + budget['timeout_seconds'] + budget['test_timeout_seconds']} s; "
+                         f"stop grace: {budget['interrupt_grace_seconds']} s; "
+                         f"overhead allowance: {budget['overhead_allowance_seconds']} s "
+                         f"(measured job overhead {budget['measured_job_overhead_seconds']:.2f} s plus "
+                         f"{budget['official_export_timeout_seconds']} s export bound, rounded up to whole minutes). "
                          f"job bound: {budget['job_timeout_seconds']} s. "
                          "The small calibration sample does not estimate population tail latency; local defaults and product assertions are unchanged.\n")
 
@@ -184,14 +198,19 @@ def judge_execution(summary, compiled, rows, counts, code):
                 if "parameter" not in row["identity"]["dimensions"]}
     compare_execution(compiled, observed)
     require(counts.total_test_count > 0, "official unit tests were empty")
-    failed = counts.failed_tests > 0 or any(row["outcome"] == "failed" for row in rows)
+    verdict = classify_test_results(counts)
+    failed = verdict == "failed" or any(row["outcome"] == "failed" for row in rows)
     if failed and code in {0, 65}:
         summary["status"] = "failed"
         return code or 1
     require(code == 0, f"test-without-building failed (exit {code})")
-    summary["status"] = "unverified" if counts.skipped_tests else "passed"
+    summary["status"] = "passed" if verdict == "passed" else "unverified"
+    if counts.result.casefold() != "passed":
+        summary["infrastructure"].append({"code": "unit-results-unverified", "message":
+            "The official overall result does not establish passing unit tests."})
+        return 1
     if counts.skipped_tests:
-        summary["infrastructure"].append({"code": "unit-skips-unapproved", "message":
+        summary["infrastructure"].append({"code": "skip-policy-pending", "message":
             "Measured unit skips remain proposed for maintainer approval; no expected-skip policy is applied."})
     return code
 
@@ -257,6 +276,7 @@ def run_units(args):
     compiled = set()
     code = 1
     export_complete = False
+    archive_ready = False
     try:
         archive.workspace_preflight(ROOT)
         require(not (ROOT / "immichSlides.xcodeproj").exists(), "consumer tooling must not contain an app source checkout")
@@ -284,6 +304,7 @@ def run_units(args):
         provenance.update(manifest_sha256=archive.file_hash(manifest_path), archive_sha256=manifest["archive_sha256"],
                           signing_mode=signature, build_source_absent=True, build_products_absent=True)
         archive.write_json(args.output_dir / "archive-consumption.json", provenance)
+        archive_ready = True
         devices = decode(archive.checked_command(["xcrun", "simctl", "list", "devicetypes", "--json"]))["devicetypes"]
         device_name = pins["device_types"]["iphone" if platform == "ios" else "appletv"]
         device_type = next(item["identifier"] for item in devices if item["name"] == device_name)
@@ -335,8 +356,9 @@ def run_units(args):
         # Enumeration can fail after creating a bundle; export or quarantine it too.
         if result_bundle is None:
             result_bundle = enumeration_bundle
-        summary["infrastructure"].append({"code": "unit-archive-failed", "message": str(error) if isinstance(error, (ContractError, CommandError))
-                                           else type(error).__name__})
+        failure = ({"code": "unit-archive-failed", "message": str(error) if isinstance(error, (ContractError, CommandError))
+                    else type(error).__name__} if archive_ready else archive.classify_archive_failure(error, "archive-consumption-failed"))
+        summary["infrastructure"].append(failure)
     finally:
         if result_bundle is not None:
             try:
@@ -405,11 +427,40 @@ def stage_tools(path):
         shutil.copy2(ROOT / "scripts" / name, path / "scripts" / name)
 
 
+def scan_records(path, *, failed_step=None):
+    produced = (path / "summary.json").is_file()
+    archive.output("records_produced", "true" if produced else "false")
+    archive.output("records_safe", "false")
+    if not produced:
+        print("Unit records were not produced; publication is unavailable.")
+        return 0
+    try:
+        summary = parse_summary(decode((path / "summary.json").read_text()))
+        if failed_step and summary["status"] != "failed":
+            step = test_identity("host", "consumer " + failed_step, platform=summary["run"]["shard"])
+            summary["population"]["declared"] = summary["population"]["compiled"] = [step]
+            error = (archive.WorkspacePreflightError("consumer preflight or toolchain setup failed")
+                     if failed_step == "preflight" else archive.ArchiveUnavailableError("selected archive " + failed_step + " failed"))
+            archive.record_failure(summary, step, error,
+                                   1, time.monotonic(), "archive-consumption-failed")
+            write_summary(summary, path)
+        require((path / "summary.md").is_file() and (path / "run-identity.json").is_file(), "incomplete unit records")
+        write_sensitive_scan(path, [PUBLIC_API_KEY])
+        archive.output("records_safe", "true")
+        return 0
+    except Exception:
+        print("Unit record scanning refused publication.")
+        return 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     stage = commands.add_parser("stage")
     stage.add_argument("--path", type=Path, required=True)
+    scan = commands.add_parser("scan")
+    scan.add_argument("--output-dir", type=Path, required=True)
+    scan.add_argument("--failed-step", choices=("preflight", "select", "download"))
     run = commands.add_parser("run")
     for name in ("selection-path", "archive-dir", "relocated-path", "output-dir"):
         run.add_argument("--" + name, type=Path, required=True)
@@ -428,6 +479,8 @@ def main(argv=None):
         if args.command == "stage":
             stage_tools(args.path)
             return 0
+        if args.command == "scan":
+            return scan_records(args.output_dir, failed_step=args.failed_step)
         require(args.min_free_gib >= 0, "disk threshold must be nonnegative")
         return run_units(args)
     except (OSError, ValueError, CommandError, subprocess.SubprocessError) as error:

@@ -356,22 +356,27 @@ def record(context, platform, job):
             "infrastructure": [], "status": "unverified"}
 
 
-def record_failure(summary, step, error, code, started, infrastructure_code):
+def classify_archive_failure(error, infrastructure_code):
     if isinstance(error, WorkspacePreflightError):
         infrastructure_code = "workspace-preflight-failed"
     elif isinstance(error, (ArchiveUnavailableError, FileNotFoundError)) or (
             isinstance(error, urllib.error.HTTPError) and error.code in {404, 410}):
         infrastructure_code = "archive-unavailable"
-    elif isinstance(error, ContractError) and (infrastructure_code == "archive-selection-failed" or
+    elif isinstance(error, ContractError) and (infrastructure_code in {"archive-selection-failed", "archive-consumption-failed"} or
                                              str(error) == "build identity mismatch"):
         infrastructure_code = "archive-identity-mismatch"
     message = str(error) if isinstance(error, (ContractError, CommandError)) else type(error).__name__
     message += "; " + RERUN_ADVICE
+    return {"code": infrastructure_code, "message": message}
+
+
+def record_failure(summary, step, error, code, started, infrastructure_code):
+    failure = classify_archive_failure(error, infrastructure_code)
     summary["status"] = "failed"
-    summary["infrastructure"] = [{"code": infrastructure_code, "message": message}]
+    summary["infrastructure"] = [failure]
     summary["population"]["observed"] = [observation(step, "timed-out" if code == 124 else "failed",
                                                      time.monotonic() - started, exit_code=code)]
-    print(message, file=sys.stderr)
+    print(failure["message"], file=sys.stderr)
 
 
 def run_preflight(args):
