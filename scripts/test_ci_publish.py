@@ -347,6 +347,11 @@ class PublisherTests(unittest.TestCase):
             evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[])
             self.assertIsNone(approval["request"])
             with patch("ci_publish.approved_status", return_value=True), patch(
+                    "ci_report.summary_diagnostics", side_effect=ContractError("malformed diagnostics")):
+                _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")
+            self.assertEqual("failure", statuses["ci-ui"]["state"])
+            self.assertIn("diagnostics", statuses["ci-ui"])
+            with patch("ci_publish.approved_status", return_value=True), patch(
                     "ci_publish.evaluate_records", side_effect=ContractError(
                         "workflow is absent on the base; exact-head approval required")):
                 _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")

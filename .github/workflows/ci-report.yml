@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows: [ci-nightly, ci-gate, ci-ui]
     types: [completed]
+    branches: [main]
   schedule:
     - cron: '30 8 * * *'
   workflow_dispatch:
@@ -32,9 +33,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
-      - env:
+      - name: Collect verified reporting snapshots
+        id: collect
+        env:
           CI_REPORT_TOKEN: ${{ github.token }}
-        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py'
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect'
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -42,6 +45,11 @@ jobs:
           path: ${{ runner.temp }}/ci-report/daily
           if-no-files-found: error
           retention-days: 90
+      - name: Synchronize issues after the durable rollup upload
+        if: success()
+        env:
+          CI_REPORT_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync'
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

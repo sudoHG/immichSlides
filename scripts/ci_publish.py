@@ -153,9 +153,10 @@ def check_credential_context(environment, path):
 
 
 class GitHub:
-    def __init__(self, repository, token):
+    def __init__(self, repository, token, *, response_headers=None):
         require(re.fullmatch(r"[\w.-]+/[\w.-]+", repository) is not None, "invalid repository")
         self.repository, self.token = repository, token
+        self.response_headers = response_headers
 
     def request(self, path, *, method="GET", payload=None, binary=False, missing=False):
         url = "https://api.github.com" + path
@@ -166,8 +167,12 @@ class GitHub:
         request = Request(url, data=data, method=method, headers=headers)
         try:
             with build_opener(ArtifactRedirect()).open(request, timeout=45) as response:
+                if self.response_headers:
+                    self.response_headers(response.headers)
                 raw = response.read(MAX_JSON_BYTES + 1)
         except HTTPError as error:
+            if self.response_headers:
+                self.response_headers(error.headers)
             if missing and error.code == 404:
                 return None
             # Never echo response bodies, headers, request objects or credentials.
@@ -388,6 +393,10 @@ def producer_evidence(api, run, source, *, diagnostics=None):
         _, _, names = workflow_contract(source, attempt_run, details=True)
         for artifact_name in names[name]:
             try:
+                expired = [artifact for artifact in artifacts if artifact["name"] == artifact_name and artifact["expired"]]
+                if expired and diagnostics is not None:
+                    diagnostics.append("required artifact expired: " + artifact_name)
+                    continue
                 matches = [artifact for artifact in artifacts if artifact["name"] == artifact_name and not artifact["expired"]]
                 require(len(matches) == 1, "required artifact is missing, expired or duplicated")
                 summary = parse_summary(json_member(api, matches[0], "summary.json"))
@@ -462,6 +471,8 @@ def compute(api, pr_number, pushed, login):
                 require(mismatch is None, mismatch or "identity mismatch")
             require(not diagnostic_errors, "missing or invalid artifact evidence")
             evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
+            from ci_report import summary_diagnostics
+            evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
         except (ContractError, KeyError, ValueError, TypeError) as error:
             evaluations[context] = {"state": "failure", "description": ui_failure_hint(error) or
                                    "Missing, invalid or mismatched admitted evidence"}
@@ -470,8 +481,13 @@ def compute(api, pr_number, pushed, login):
                 previous = prior_mismatch(api.pages("commits/" + head + "/statuses"), run, login)
                 evaluations[context]["description"] = "base moved; push again or update the branch" + (" (repeated across reruns)" if previous else "")
                 evaluations[context]["mismatch"] = {"run_id": run["id"], "attempt": run["run_attempt"]}
-        from ci_report import summary_diagnostics
-        evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
+        if "diagnostics" not in evaluations[context]:
+            try:
+                from ci_report import summary_diagnostics
+                evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
+            except (ContractError, KeyError, ValueError, TypeError):
+                evaluations[context]["diagnostics"] = {"counts": {}, "failures": [], "missing": [],
+                    "infrastructure": ["failure diagnostics unavailable"], "skipped": [], "deselected": []}
         evaluations[context]["report_source"] = {
             "repository": api.repository, "workflow_path": run["path"], "event": run["event"],
             "run_id": run["id"], "attempt": run["run_attempt"],

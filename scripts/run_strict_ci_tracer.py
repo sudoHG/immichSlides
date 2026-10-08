@@ -60,7 +60,7 @@ def read_case_official(evidence, suite):
 def validate_case_export(evidence, platform, suite, official=None):
     sessions = [("-" + entry["name"], entry["selector"]) for entry in FILTER_PERSON_SESSIONS] if suite == "filter-person" else [
         ("", resolve_suite_selector(platform, suite))]
-    seen = 0
+    methods = []
     counts = {"totalTestCount": 0, "passedTests": 0, "failedTests": 0, "skippedTests": 0}
     for suffix, selector in sessions:
         path = evidence / f"official-tests{suffix}.json"
@@ -73,9 +73,10 @@ def validate_case_export(evidence, platform, suite, official=None):
         require(facts[0]["result"] in {"Passed", "Failed", "Skipped"}, "unknown official method outcome")
         counts["totalTestCount"] += 1
         counts[{"Passed": "passedTests", "Failed": "failedTests", "Skipped": "skippedTests"}[facts[0]["result"]]] += 1
-        seen += 1
-    require(seen > 0, "official test identity export is missing")
+        methods.append({"identifier": name, "result": facts[0]["result"]})
+    require(methods, "official test identity export is missing")
     require(official is None or counts == {key: official[key] for key in counts}, "official counts differ from exported method outcomes")
+    return methods
 
 
 def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
@@ -258,10 +259,11 @@ def main(argv=None):
                        if case["suite"] == "filter-person" else [evidence / "xcodebuild-reuse.json"])
         unchanged = all(path.is_file() and decode(path.read_text())["products_unchanged"] is True for path in reuse_paths)
         official = None
+        phase["official_methods"] = []
         try:
             official = read_case_official(evidence, case["suite"])
             if official is not None and official["totalTestCount"] > 0:
-                validate_case_export(evidence, args.platform, case["suite"], official)
+                phase["official_methods"] = validate_case_export(evidence, args.platform, case["suite"], official)
         except (ValueError, OSError) as error:
             phase["official_error"] = str(error)
             official = None

@@ -152,7 +152,8 @@ def trusted_run_allowed(script, path, events):
         return False
     script = script.strip()
     if path == REPORT_WORKFLOW and set(events) <= {"schedule", "workflow_dispatch", "workflow_run"}:
-        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py',
+        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect',
+                      '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync',
                       '/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
             return True
     if path in PUBLISHER_COMMANDS:
@@ -247,8 +248,10 @@ def check_workflow(path: str, source: str) -> list[Violation]:
     approval_workflow = path in {".github/workflows/ci-approval.yml", ".github/workflows/ci-approve.yml"}
     if path == REPORT_WORKFLOW and (document.get("name") != "ci-report"
             or set(events) != {"schedule", "workflow_dispatch", "workflow_run"}
+            or not isinstance(events.get("workflow_run"), dict)
+            or events.get("workflow_run", {}).get("branches") != ["main"]
             or document.get("permissions") != {}):
-        flag("workflow", "report-contract", "ci-report needs its exact name, completion/daily/manual triggers and no workflow-level grants")
+        flag("workflow", "report-contract", "ci-report needs main-filtered completion/daily/manual triggers and no workflow-level grants")
     if approval_workflow and "concurrency" in document:
         flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
@@ -296,6 +299,16 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         elif isinstance(steps, list) and any(not isinstance(step, dict) or not ("uses" in step or "run" in step) for step in steps):
             flag(location, "workflow-format", "Each step needs run or uses")
         if trusted and isinstance(steps, list):
+            if path == REPORT_WORKFLOW:
+                collect = [i for i, step in enumerate(steps) if isinstance(step, dict)
+                           and step.get("run", "").endswith("scripts/ci_report.py --phase collect")]
+                sync = [i for i, step in enumerate(steps) if isinstance(step, dict)
+                        and step.get("run", "").endswith("scripts/ci_report.py --phase sync")]
+                daily = [i for i, step in enumerate(steps) if isinstance(step, dict)
+                         and step.get("uses", "").startswith("actions/upload-artifact@")
+                         and step.get("with", {}).get("path") == "${{ runner.temp }}/ci-report/daily"]
+                if not (len(collect) == len(sync) == len(daily) == 1 and collect[0] < daily[0] < sync[0]):
+                    flag(location, "report-contract", "Upload the verified daily rollup before issue synchronization")
             if path in PUBLISHER_COMMANDS and any(step.get("run", "").endswith("scripts/ci_publish.py publish")
                                                  for step in steps if isinstance(step, dict)):
                 checkouts = [step for step in steps if isinstance(step, dict)

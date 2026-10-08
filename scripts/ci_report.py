@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import argparse
 import hashlib
 import json
 import os
@@ -15,7 +16,8 @@ from pathlib import Path
 
 from ci_summary import (ContractError, decode, identity_key, markdown_text, parse_identity,
                         parse_summary, require, validate_observation, validate_test_identity,
-                        NON_INFRASTRUCTURE_DIAGNOSTICS)
+                        NON_INFRASTRUCTURE_DIAGNOSTICS, observation, test_identity)
+from ci_publish import GitHub
 
 REPORT_PATH = ".github/workflows/ci-report.yml"
 NIGHTLY_PATH = ".github/workflows/ci-nightly.yml"
@@ -26,6 +28,94 @@ SECTION = "\n\n<!-- ci-report-managed -->\n"
 APP_LOGIN = "sudohg-ci[bot]"
 FAILURES = {"failed", "crashed", "timed-out"}
 NIGHTLY_INFRASTRUCTURE = {"kind": "host", "key": "Nightly infrastructure", "dimensions": {}}
+EVIDENCE_DAYS = 7
+RATE_RESERVE = 100
+REQUEST_BUDGET = 500
+
+
+class RateLimitLow(RuntimeError):
+    """Stop before exhausting the shared token's API allowance."""
+
+
+class EvidenceExpired(ContractError):
+    """Expired artifacts cannot change a previously verified report."""
+
+
+class ReportGitHub(GitHub):
+    def __init__(self, repository, token, *, dry_run=False):
+        self.request_count, self.remaining, self.dry_run = 0, None, dry_run
+        self.binary_cache = {}
+        super().__init__(repository, token, response_headers=self.check_headers)
+
+    def check_headers(self, headers):
+        remaining = headers.get("X-RateLimit-Remaining")
+        if remaining is not None:
+            self.remaining = int(remaining)
+
+    def request(self, path, *, method="GET", **options):
+        require(not self.dry_run or method == "GET", "dry-run refuses every API write")
+        if method == "GET" and options.get("binary") and path in self.binary_cache:
+            return self.binary_cache[path]
+        if self.request_count >= REQUEST_BUDGET or self.remaining is not None and self.remaining <= RATE_RESERVE:
+            raise RateLimitLow("API budget reserve reached")
+        self.request_count += 1
+        try:
+            result = super().request(path, method=method, **options)
+        except ContractError:
+            if self.remaining is not None and self.remaining <= RATE_RESERVE:
+                raise RateLimitLow("API budget reserve reached") from None
+            raise
+        if method == "GET" and options.get("binary"):
+            self.binary_cache = {path: result}
+        return result
+
+
+def method_observations(raw, trace):
+    """A suite result never substitutes for an officially exported method result."""
+    from run_strict_e2e import FILTER_PERSON_SESSIONS, resolve_suite_selector
+    from strict_e2e_p2_contract import P2_CASES
+    summary = parse_summary(raw)
+    phases = {identity_key(item["identity"]): item for item in trace["warm"]}
+    require(len(phases) == len(trace["warm"]), "duplicate nightly case trace")
+    observed, missing = [], []
+    compiled = {identity_key(item) for item in summary["population"]["compiled"]}
+    outcomes = {identity_key(item["identity"]): item["outcome"] for item in summary["population"]["observed"]}
+    for case in summary["population"]["declared"]:
+        dimensions = case["dimensions"]
+        suite = dimensions["suite"]
+        platform = "tvos" if dimensions["device"] == "tv" else "ios"
+        selectors = ([item["selector"] for item in FILTER_PERSON_SESSIONS] if suite == "filter-person"
+                     else [resolve_suite_selector(platform, suite)])
+        wanted = {selector.split("/", 1)[1]: test_identity("strict", selector.split("/", 1)[1], **dimensions)
+                  for selector in selectors}
+        phase = phases.get(identity_key(case), {})
+        methods = phase.get("official_methods", [])
+        require(isinstance(methods, list), "invalid official method list")
+        seen, counts = set(), Counter()
+        for method in methods:
+            require(set(method) == {"identifier", "result"} and method["identifier"] in wanted
+                    and method["identifier"] not in seen and method["result"] in {"Passed", "Failed", "Skipped"},
+                    "unexpected or duplicate official method")
+            seen.add(method["identifier"])
+            counts[method["result"]] += 1
+        if methods:
+            official = phase["official_summary"]
+            require(official["totalTestCount"] == len(methods) and official["passedTests"] == counts["Passed"]
+                    and official["failedTests"] == counts["Failed"] and official["skippedTests"] == counts["Skipped"],
+                    "official method counts differ from case")
+            require(identity_key(case) in compiled, "official method case was not compiled")
+        for method in methods:
+            outcome = {"Passed": "passed", "Failed": "failed", "Skipped": "skipped"}[method["result"]]
+            if outcome == "passed" and (phase.get("build_operations") != 0 or phase.get("products_unchanged") is not True
+                    or phase.get("log_present") is not True or outcomes.get(identity_key(case)) not in {"passed", "needs-human-review"}
+                    and not counts["Failed"]):
+                outcome = "not-run"
+            if outcome == "passed" and suite in P2_CASES:
+                outcome = "needs-human-review" if outcomes.get(identity_key(case)) == "needs-human-review" else "not-run"
+            observed.append(observation(wanted[method["identifier"]], outcome, 0,
+                exit_code=phase.get("exit_code"), reason="Official test was skipped" if outcome == "skipped" else None))
+        missing.extend({"identity": wanted[key], "reason": "official-method-not-observed"} for key in sorted(wanted.keys() - seen))
+    return observed, missing
 
 
 def iso_day(value):
@@ -103,42 +193,63 @@ def daily_rollup(day, entries):
 
 
 def issue_decision(previous, identity, entries, *, registry_referenced):
-    """Store dates, rather than delivery order, and count at most one pass per night."""
+    """Count verified nights, retain recent replay state, and respect manual closure."""
+    from strict_e2e_p2_contract import P2_CASES
     state = copy.deepcopy(previous) if previous else {"schema_version": 1, "token": identity_token(identity),
              "identity": normalized_identity(identity), "nights": {}, "closed": False,
              "first_failure": None, "last_failure": None, "failure_nights": 0}
     require(state["schema_version"] == 1 and state["token"] == identity_token(identity), "wrong issue identity")
-    for entry in entries:
-        if entry["source"]["workflow_path"] != NIGHTLY_PATH or entry["status"] == "pending":
+    previous_failed = set(state.get("recent_failure_days", [day for day, runs in state["nights"].items()
+                          if any(item["outcome"] == "failed" for item in runs.values())]))
+    if state["last_failure"]:
+        previous_failed.add(state["last_failure"])
+    new_failure = False
+    deliveries = [attempt for report in entries for attempt in report.get("attempt_history", [report])]
+    for entry in deliveries:
+        if entry["source"]["workflow_path"] != NIGHTLY_PATH:
             continue
         matches = [item for item in entry["observed"] if identity_token(item["identity"]) == state["token"]]
         if identity == NIGHTLY_INFRASTRUCTURE:
             outcome = "failed" if entry["diagnostics"]["infrastructure"] else "passed" if entry["status"] == "passed" else "unverified"
             matches = [{"outcome": outcome}]
-        if not matches:
+        day, key = iso_day(entry["day"]), str(entry["run"]["id"])
+        old = state["nights"].get(day, {}).get(key)
+        if not matches and not old:
             continue
         outcomes = {item["outcome"] for item in matches}
-        outcome = "failed" if outcomes & FAILURES else "passed" if outcomes == {"passed"} else "unverified"
+        passes = {"passed"}
+        if identity["kind"] == "strict" and identity["dimensions"].get("suite") in P2_CASES:
+            passes.add("needs-human-review")
+        outcome = "failed" if outcomes & FAILURES else "passed" if outcomes and outcomes <= passes else "unverified"
         if entry["diagnostics"]["infrastructure"] or entry["diagnostics"]["missing"]:
             if outcome == "passed":
                 outcome = "unverified"
-        night = state["nights"].setdefault(iso_day(entry["day"]), {})
-        key = str(entry["run"]["id"])
+        night = state["nights"].setdefault(day, {})
         record = {"attempt": entry["run"]["attempt"], "outcome": outcome}
-        old = night.get(key)
         if old is None or old["attempt"] <= record["attempt"]:
+            if outcome == "failed" and (old is None or old["outcome"] != "failed" or old["attempt"] < record["attempt"]):
+                new_failure |= state["last_failure"] is None or day >= state["last_failure"]
             # A red first attempt cannot become an explicit-pass night by rerunning.
             if old and old["outcome"] == "failed":
                 record["outcome"] = "failed"
             night[key] = record
     failed = sorted(day for day, runs in state["nights"].items() if any(item["outcome"] == "failed" for item in runs.values()))
-    state.update(first_failure=failed[0] if failed else None, last_failure=failed[-1] if failed else None,
-                 failure_nights=len(failed))
-    passes = sorted(day for day, runs in state["nights"].items() if failed and day > failed[-1]
+    if failed:
+        state["first_failure"] = min(filter(None, [state["first_failure"], failed[0]]))
+        state["last_failure"] = max(filter(None, [state["last_failure"], failed[-1]]))
+        state["failure_nights"] += len(set(failed) - previous_failed)
+    passes = sorted(day for day, runs in state["nights"].items() if state["last_failure"] and day > state["last_failure"]
                     and all(item["outcome"] == "passed" for item in runs.values()))
-    state["explicit_pass_nights"] = passes
-    if not failed:
+    state["explicit_pass_nights"] = passes[-3:]
+    if not state["last_failure"]:
         return {"action": "none", "state": previous}
+    if previous and previous["closed"] and not new_failure:
+        return {"action": "none", "state": previous}
+    newest = max(state["nights"], default=state["last_failure"])
+    cutoff = (date.fromisoformat(newest) - timedelta(days=EVIDENCE_DAYS)).isoformat()
+    state["recent_failure_days"] = sorted(day for day in previous_failed | set(failed) if day >= cutoff)
+    state["nights"] = {day: runs for day, runs in state["nights"].items() if day >= state["last_failure"]
+                       and (day >= cutoff or day == state["last_failure"] or day in state["explicit_pass_nights"])}
     should_close = len(passes) >= 3 and not registry_referenced
     state["closed"] = should_close
     if previous is None:
@@ -217,12 +328,69 @@ def report_base(run, repository):
             "release_eligible": False, "observed": [], "diagnostics": summary_diagnostics([])}
 
 
-def read_run(api, run, admissions):
+def nightly_attempt(api, run, attempt, artifacts):
+    from ci_publish import json_member
+    entry = report_base({**run, "run_attempt": attempt}, api.repository)
+    name = f"nightly-aggregate-{run['id']}-{attempt}"
+    matches = [item for item in artifacts if item["name"] == name]
+    require(len(matches) == 1, "missing or duplicate nightly aggregate")
+    if matches[0]["expired"]:
+        raise EvidenceExpired("nightly aggregate expired")
+    raw = json_member(api, matches[0], "nightly.json")
+    identity = parse_identity(raw["identity"])
+    require(raw["schema_version"] == 1 and raw["run"] == {"id": str(run["id"]), "attempt": attempt}, "nightly run mismatch")
+    require(identity["repository"] == api.repository and identity["event"] == run["event"]
+            and identity["ref"] == "refs/heads/main" and identity["commit_sha"] == run["head_sha"], "nightly identity mismatch")
+    require(raw["source"]["workflow_path"] == NIGHTLY_PATH and raw["status"] in {"passed", "failed"}, "invalid nightly source or status")
+    for item in raw["observed"]:
+        validate_observation(item)
+    entry.update(identity=identity, hashes=raw["hashes"], status=raw["status"], tiers=raw["tiers"],
+                 release_ineligible_reasons=raw["release_ineligible_reasons"])
+    observed, missing = [], []
+    case_keys = {identity_key(item["identity"]) for item in raw["observed"]}
+    informational = {identity_key(item["identity"]) for item in raw["informational"]}
+    shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
+    for shard in sorted(shards):
+        name = f"nightly-strict-{shard}-{run['id']}-{attempt}"
+        matches = [item for item in artifacts if item["name"] == name]
+        require(len(matches) == 1, "missing or duplicate nightly shard")
+        if matches[0]["expired"]:
+            raise EvidenceExpired("nightly shard expired")
+        summary = parse_summary(json_member(api, matches[0], "summary.json"))
+        require(summary["identity"] == identity and summary["hashes"] == raw["hashes"]
+                and summary["source"]["workflow_path"] == NIGHTLY_PATH and not summary["source"]["fork_originated"]
+                and summary["run"] == {"id": str(run["id"]), "attempt": attempt, "tier": "strict", "job": "nightly-strict", "shard": shard},
+                "nightly shard provenance mismatch")
+        declared = summary["population"]["declared"]
+        require(all(identity_key(item) in case_keys for item in declared), "shard cases differ from aggregate")
+        summary["population"]["declared"] = [item for item in declared if identity_key(item) not in informational]
+        trace = json_member(api, matches[0], "trace.json")
+        methods, absent = method_observations(summary, trace)
+        observed.extend(methods)
+        missing.extend(absent)
+    counts = Counter(item["outcome"] for item in observed)
+    counts.update(declared=len(observed) + len(missing), observed=len(observed),
+                  scheduled_cases=raw["matrix"].get("scheduled", 0), executed_cases=raw["matrix"].get("executed", 0))
+    infrastructure = [] if raw["matrix"].get("equal") else ["nightly matrix evidence incomplete"]
+    if any(error.startswith(("missing shard", "invalid or missing", "producer infrastructure", "single-shard")) for error in raw["errors"]):
+        infrastructure.append("nightly infrastructure or scheduling failure")
+    if missing:
+        infrastructure.append("nightly official method evidence incomplete")
+    entry.update(observed=observed, diagnostics={"counts": dict(counts), "missing": missing, "infrastructure": infrastructure,
+        "failures": [{"identity": item["identity"], "outcome": item["outcome"],
+                      "exit_codes": [a["exit_code"] for a in item["attempts"]]} for item in observed if item["outcome"] in FAILURES]})
+    return entry
+
+
+def read_run(api, run, admissions, previous=None):
     """Only bounded JSON data is read; artifact files are never extracted or executed."""
     from ci_publish import json_member, producer_evidence, approval_context
     from ci_publish_git import evaluate_records
     entry = report_base(run, api.repository)
     if run["status"] != "completed":
+        if previous and previous.get("attempt_history"):
+            entry["attempt_history"] = [copy.deepcopy(item) for item in previous["attempt_history"]
+                                        if item["run"]["attempt"] < run["run_attempt"]] + [copy.deepcopy(entry)]
         return entry
     try:
         if run["event"] == "push":
@@ -232,33 +400,28 @@ def read_run(api, run, admissions):
         if run["path"] == NIGHTLY_PATH:
             require(run["event"] in {"schedule", "workflow_dispatch"} and run["head_branch"] == "main"
                     and run["head_repository"]["full_name"] == api.repository and on_main(run["head_sha"]), "untrusted nightly source")
-            name = f"nightly-aggregate-{run['id']}-{run['run_attempt']}"
-            matches = [a for a in api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts") if a["name"] == name and not a["expired"]]
-            require(len(matches) == 1, "missing or duplicate nightly aggregate")
-            raw = json_member(api, matches[0], "nightly.json")
-            identity = parse_identity(raw["identity"])
-            require(raw["schema_version"] == 1 and raw["run"] == {"id": str(run["id"]), "attempt": run["run_attempt"]}, "nightly run mismatch")
-            require(identity["repository"] == api.repository and identity["event"] == run["event"]
-                    and identity["ref"] == "refs/heads/main" and identity["commit_sha"] == run["head_sha"], "nightly identity mismatch")
-            require(raw["source"]["workflow_path"] == NIGHTLY_PATH and raw["status"] in {"passed", "failed"}, "invalid nightly source or status")
-            for item in raw["observed"]:
-                validate_observation(item)
-            entry.update(identity=identity, hashes=raw["hashes"], observed=raw["observed"],
-                         status=raw["status"] if run["conclusion"] == "success" else "failed",
-                         tiers=raw["tiers"], release_ineligible_reasons=raw["release_ineligible_reasons"])
-            counts = Counter(item["outcome"] for item in raw["observed"])
-            counts.update(declared=raw["matrix"].get("scheduled", 0), observed=len(raw["observed"]),
-                          executed=raw["matrix"].get("executed", 0))
-            entry["diagnostics"] = {"counts": dict(counts),
-                "failures": [{"identity": item["identity"], "outcome": item["outcome"],
-                              "exit_codes": [a["exit_code"] for a in item["attempts"]]}
-                             for item in raw["observed"] if item["outcome"] in FAILURES],
-                "missing": [{"identity": item["identity"], "reason": "not-observed"} for item in raw["observed"] if item["outcome"] == "not-run"],
-                "infrastructure": [] if raw["matrix"].get("equal") else ["nightly matrix evidence incomplete"]}
-            # Preserve structured categories, without copying producer error/log text.
-            if any(error.startswith(("missing shard", "invalid or missing", "producer infrastructure", "single-shard")) for error in raw["errors"]):
-                entry["diagnostics"]["infrastructure"].append("nightly infrastructure or scheduling failure")
-            entry["observed"] = [item for item in entry["observed"] if item not in raw["informational"]]
+            artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+            history = []
+            cached = {item["run"]["attempt"]: item for item in (previous or {}).get("attempt_history", [])}
+            for attempt in range(1, run["run_attempt"] + 1):
+                try:
+                    value = nightly_attempt(api, run, attempt, artifacts)
+                except EvidenceExpired:
+                    if attempt not in cached:
+                        raise
+                    value = copy.deepcopy(cached[attempt])
+                except RateLimitLow:
+                    raise
+                except (ContractError, KeyError, ValueError, TypeError):
+                    value = report_base({**run, "run_attempt": attempt}, api.repository)
+                    value["diagnostics"]["infrastructure"] = ["nightly attempt evidence unavailable"]
+                history.append(value)
+            if any(item["diagnostics"]["infrastructure"] for item in history):
+                history[-1]["diagnostics"]["infrastructure"].append("nightly attempt history incomplete")
+            entry = copy.deepcopy(history[-1])
+            entry["attempt_history"] = history
+            if run["conclusion"] != "success":
+                entry["status"] = "failed"
         else:
             record = admissions.get(run["id"])
             require(record is not None, "trusted admission missing")
@@ -280,10 +443,15 @@ def read_run(api, run, admissions):
             source = record["workflows"][run["path"]]["candidate" if approved else "base"]
             errors = []
             jobs, summaries = producer_evidence(api, run, source, diagnostics=errors)
+            if any(item.startswith("required artifact expired:") for item in errors):
+                entry["evidence_expired"] = True
             require(all(summary["identity"] == identity for summary in summaries), "summary identity differs from admission")
             entry.update(identity=identity, diagnostics=summary_diagnostics(summaries, errors),
                          observed=[item for summary in summaries for item in summary["population"]["observed"]])
             entry["hashes"] = [summary["hashes"] for summary in summaries]
+            if entry.get("evidence_expired"):
+                entry["status"] = "unverified"
+                entry["diagnostics"]["infrastructure"] = []
             if not errors:
                 if all(job["status"] == "completed" and job["conclusion"] == "success" for job in jobs):
                     result = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
@@ -291,10 +459,16 @@ def read_run(api, run, admissions):
                     entry["status"] = "passed" if result["state"] == "success" and run["conclusion"] == "success" else "failed"
                 elif not entry["diagnostics"]["failures"]:
                     entry["diagnostics"]["infrastructure"].append("required job failed, skipped or cancelled without an official test failure")
-            if (fork or changing) and not approved:
+            if run["event"] == "pull_request" and (fork or changing) and not approved:
                 entry["status"] = "failed"
                 entry["diagnostics"]["infrastructure"].append("exact head approval required; producer evidence is unapproved")
-    except (ContractError, KeyError, ValueError, TypeError) as error:
+    except EvidenceExpired:
+        entry["evidence_expired"] = True
+        entry["status"] = "unverified"
+        entry["diagnostics"]["infrastructure"] = []
+    except RateLimitLow:
+        raise
+    except (ContractError, KeyError, ValueError, TypeError):
         entry["status"] = "failed"
         # Only reporter/base-controlled diagnostics cross this boundary.
         entry["diagnostics"]["infrastructure"].append("missing, invalid or untrusted evidence")
@@ -358,52 +532,73 @@ def wait_for_issue_visibility(api, number, label):
         time.sleep(min(2, max(0, deadline - time.monotonic())))
 
 
-def synchronize_issues(api, entries, registry, *, label=LABEL):
+def sync_identity(api, token, identity, entries, registry_issues, registry_tokens, by_number, by_token, label):
+    issue = by_token.get(token)
+    registered = registry_tokens.get(token)
+    if registered:
+        require(registered in by_number, "registry issue is missing; refusing duplicate issue")
+        require(not issue or issue["number"] == registered, "registry points to another issue; reconciliation required")
+        issue = by_number[registered]
+    state = read_state(issue) if issue else None
+    decision = issue_decision(state, identity, entries, registry_referenced=bool(issue and issue["number"] in registry_issues))
+    if decision["action"] == "none":
+        return None
+    state = decision["state"]
+    payload = {"body": issue_body(issue, state, api.repository), "state": "closed" if state["closed"] else "open"}
+    if issue:
+        labels = [item["name"] for item in issue.get("labels", [])]
+        if label not in labels:
+            payload["labels"] = labels + [label]
+        api.repo(f"issues/{issue['number']}", method="PATCH", payload=payload)
+    else:
+        payload.pop("state")
+        payload.update(title="CI nightly failure: " + identity["key"][:180], labels=[label])
+        issue = api.repo("issues", method="POST", payload=payload)
+        wait_for_issue_visibility(api, issue["number"], label)
+    return {"issue": issue["number"], "action": decision["action"], "token": token}
+
+
+def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inventory=None):
+    raise_errors = errors is None
+    errors = [] if errors is None else errors
     ensure_label(api, label)
-    issues = visible_issues(api, label)
+    issues = visible_issues(api, label) if inventory is None else inventory
     registry_issues = {int(item["issue"].rsplit("/", 1)[-1]) for item in registry["entries"]}
     by_number = {item["number"]: item for item in issues if "pull_request" not in item}
     for number in registry_issues:
         issue = api.repo(f"issues/{number}", missing=True)
         if issue:
             by_number[number] = issue
-    by_token = {}
+    by_token, invalid_tokens = {}, set()
     for issue in by_number.values():
-        state = read_state(issue)
-        if state:
-            require(state["token"] not in by_token, "duplicate tracking issues; reconciliation required")
-            by_token[state["token"]] = issue
+        try:
+            state = read_state(issue)
+            if state:
+                if state["token"] in by_token:
+                    invalid_tokens.add(state["token"])
+                by_token[state["token"]] = issue
+        except (ContractError, KeyError, ValueError, TypeError):
+            errors.append({"issue": issue["number"], "code": "invalid-issue-state"})
     registry_tokens = {identity_token(item["identity"]): int(item["issue"].rsplit("/", 1)[-1]) for item in registry["entries"]}
     identities = {identity_token(item["identity"]): item["identity"] for report in entries
                   if report["source"]["workflow_path"] == NIGHTLY_PATH for item in report["observed"]}
+    # A missing newer observation must still revoke a tracked run's old pass.
+    identities.update({token: read_state(issue)["identity"] for token, issue in by_token.items()})
+    identities.update({identity_token(item["identity"]): item["identity"] for item in registry["entries"]})
     if any(report["source"]["workflow_path"] == NIGHTLY_PATH for report in entries):
         identities[identity_token(NIGHTLY_INFRASTRUCTURE)] = NIGHTLY_INFRASTRUCTURE
     receipts = []
     for token, identity in sorted(identities.items()):
-        issue = by_token.get(token)
-        registered = registry_tokens.get(token)
-        if registered:
-            require(registered in by_number, "registry issue is missing; refusing duplicate issue")
-            require(not issue or issue["number"] == registered, "registry points to another issue; reconciliation required")
-            issue = by_number[registered]
-        state = read_state(issue) if issue else None
-        decision = issue_decision(state, identity, entries, registry_referenced=bool(issue and issue["number"] in registry_issues))
-        if decision["action"] == "none":
-            continue
-        state = decision["state"]
-        payload = {"body": issue_body(issue, state, api.repository), "state": "closed" if state["closed"] else "open"}
-        if issue:
-            labels = [item["name"] for item in issue.get("labels", [])]
-            if label not in labels:
-                # A reused registry issue must remain discoverable after removal.
-                payload["labels"] = labels + [label]
-            api.repo(f"issues/{issue['number']}", method="PATCH", payload=payload)
-        else:
-            payload.pop("state")
-            payload.update(title="CI nightly failure: " + identity["key"][:180], labels=[label])
-            issue = api.repo("issues", method="POST", payload=payload)
-            wait_for_issue_visibility(api, issue["number"], label)
-        receipts.append({"issue": issue["number"], "action": decision["action"], "token": token})
+        try:
+            require(token not in invalid_tokens, "duplicate tracking identity")
+            receipt = sync_identity(api, token, identity, entries, registry_issues, registry_tokens, by_number, by_token, label)
+            if receipt:
+                receipts.append(receipt)
+        except RateLimitLow:
+            errors.append({"code": "api-budget-low"})
+            break
+        except (ContractError, KeyError, ValueError, TypeError, OSError):
+            errors.append({"token": token, "code": "identity-sync-failed"})
     # One notification per failing main push SHA, shared across gate/UI reruns.
     pushes = {}
     for entry in entries:
@@ -413,76 +608,254 @@ def synchronize_issues(api, entries, registry, *, label=LABEL):
                 pushes.setdefault(pushed, []).append(entry)
     for pushed, reports in sorted(pushes.items()):
         marker = "<!-- ci-report-post-merge:" + pushed + " -->"
-        matching = [issue for issue in issues if marker in (issue.get("body") or "")]
-        require(len(matching) <= 1, "duplicate post-merge issues")
-        body = "A post-merge CI aggregate on main failed.\n\n" + marker + "\n\n" + "\n".join(render_entry(item) for item in reports)
-        if matching:
-            issue = matching[0]
-            if issue["body"] != body:
-                api.repo(f"issues/{issue['number']}", method="PATCH", payload={"body": body})
-        else:
-            issue = api.repo("issues", method="POST", payload={"title": "CI post-merge failure: " + pushed[:12], "body": body, "labels": [label]})
-            wait_for_issue_visibility(api, issue["number"], label)
-        receipts.append({"issue": issue["number"], "action": "post-merge", "sha": pushed})
+        try:
+            matching = [issue for issue in issues if marker in (issue.get("body") or "")]
+            require(len(matching) <= 1, "duplicate post-merge issues")
+            body = "A post-merge CI aggregate on main failed.\n\n" + marker + "\n\n" + "\n".join(render_entry(item) for item in reports)
+            require(len(body.encode()) < 65000, "post-merge notification exceeds GitHub limit")
+            if matching:
+                issue = matching[0]
+                if issue["body"] != body:
+                    api.repo(f"issues/{issue['number']}", method="PATCH", payload={"body": body})
+            else:
+                issue = api.repo("issues", method="POST", payload={"title": "CI post-merge failure: " + pushed[:12], "body": body, "labels": [label]})
+                wait_for_issue_visibility(api, issue["number"], label)
+            receipts.append({"issue": issue["number"], "action": "post-merge", "sha": pushed})
+        except RateLimitLow:
+            errors.append({"code": "api-budget-low"})
+            break
+        except (ContractError, KeyError, ValueError, TypeError, OSError):
+            errors.append({"sha": pushed, "code": "notification-sync-failed"})
+    if raise_errors:
+        require(not errors, "issue synchronization failed; unrelated identities were still processed")
     return receipts, {number: issue["state"] for number, issue in by_number.items()}
 
 
-def main():
-    from ci_publish import GitHub, trusted_admissions
-    from ci_flaky import parse_registry
-    check_context(os.environ)
-    repository = os.environ["GITHUB_REPOSITORY"]
-    api = GitHub(repository, os.environ["CI_REPORT_TOKEN"])
-    now = datetime.now(timezone.utc).date()
-    days = {now.isoformat(), (now - timedelta(days=1)).isoformat()}
-    event = decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-    if os.environ["GITHUB_EVENT_NAME"] == "workflow_run":
+def compact_entry(entry, tracked):
+    result = {key: copy.deepcopy(value) for key, value in entry.items() if key in {
+        "schema_version", "day", "source", "run", "identity", "hashes", "status", "release_eligible",
+        "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired"}}
+    result["diagnostics"] = {key: copy.deepcopy(entry["diagnostics"].get(key, [] if key != "counts" else {}))
+                             for key in ("counts", "failures", "missing", "infrastructure")}
+    result["observed"] = [copy.deepcopy(item) for item in entry["observed"]
+                          if entry["source"]["workflow_path"] == NIGHTLY_PATH
+                          and (item["outcome"] in FAILURES or identity_token(item["identity"]) in tracked)]
+    if "evaluation" in entry:
+        result["evaluation"] = {key: entry["evaluation"][key] for key in ("state", "description") if key in entry["evaluation"]}
+    if "attempt_history" in entry:
+        result["attempt_history"] = [compact_entry(value, tracked) for value in entry["attempt_history"]]
+    return result
+
+
+def merge_snapshot(previous, entries, now):
+    snapshot = copy.deepcopy(previous) if previous else {"schema_version": 2, "days": {}, "issue_index": {}}
+    require(snapshot["schema_version"] == 2 and isinstance(snapshot["days"], dict), "invalid prior snapshot")
+    cutoff = (now - timedelta(days=89)).isoformat()
+    snapshot["days"] = {day: value for day, value in snapshot["days"].items() if iso_day(day) >= cutoff}
+    for entry in entries:
+        if entry.get("evidence_expired") or entry["day"] < cutoff:
+            continue
+        day = iso_day(entry["day"])
+        prior = snapshot["days"].get(day, {}).get("entries", [])
+        selected = {item["run"]["id"]: item for item in prior}
+        old = selected.get(entry["run"]["id"])
+        if old and old["run"]["attempt"] > entry["run"]["attempt"]:
+            continue
+        if old and old.get("identity") and entry.get("identity"):
+            require(old["identity"] == entry["identity"], "saved producer identity changed")
+        selected[entry["run"]["id"]] = copy.deepcopy(entry)
+        snapshot["days"][day] = daily_rollup(day, list(selected.values()))
+    snapshot["days"].setdefault(now.isoformat(), daily_rollup(now.isoformat(), []))
+    return snapshot
+
+
+def decision_entries(entries, now):
+    cutoff = (now - timedelta(days=EVIDENCE_DAYS - 1)).isoformat()
+    return [entry for entry in entries if cutoff <= entry["day"] <= now.isoformat() and not entry.get("evidence_expired")]
+
+
+def discover_runs(api, event_name, event, now):
+    if event_name == "workflow_run":
         triggering = api.repo(f"actions/runs/{event['workflow_run']['id']}")
-        require(triggering["repository"]["full_name"] == repository and triggering["path"] in PRODUCER_PATHS, "unknown triggering workflow")
-        # Branch nightly acceptance is diagnostic only, including the existing #158 runs.
-        if triggering["path"] == NIGHTLY_PATH and triggering["head_branch"] != "main":
-            print("Branch nightly is diagnostic; no reporting or issue writes.")
-            return 0
-        days.add(iso_day(triggering["created_at"][:10]))
+        require(triggering["repository"]["full_name"] == api.repository and triggering["path"] in PRODUCER_PATHS
+                and triggering["head_branch"] == "main", "unknown or non-main triggering workflow")
+        return [triggering]
     runs = {}
     for path in PRODUCER_PATHS:
         workflow = api.repo("actions/workflows/" + path.rsplit("/", 1)[-1], missing=True)
         if workflow is None:
             continue
         require(workflow["path"] == path, "producer workflow path mismatch")
-        for day in sorted(days):
-            for run in api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", created=day + "T00:00:00Z.." + day + "T23:59:59Z"):
-                require(run["workflow_id"] == workflow["id"] and run["path"] == path and run["repository"]["full_name"] == repository, "producer ID/path/repository mismatch")
-                if path == NIGHTLY_PATH:
-                    if run["head_branch"] != "main" or run["event"] not in {"schedule", "workflow_dispatch"}:
-                        continue
-                elif run["event"] not in {"pull_request", "push"} or run["event"] == "push" and run["head_branch"] != "main":
+        start = (now - timedelta(days=1)).isoformat()
+        for run in api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs",
+                             created=start + "T00:00:00Z.." + now.isoformat() + "T23:59:59Z"):
+            require(run["workflow_id"] == workflow["id"] and run["path"] == path
+                    and run["repository"]["full_name"] == api.repository, "producer ID/path/repository mismatch")
+            if path == NIGHTLY_PATH:
+                if run["head_branch"] != "main" or run["event"] not in {"schedule", "workflow_dispatch"}:
                     continue
-                runs[run["id"]] = run
-    admissions = trusted_admissions(api, [run["id"] for run in runs.values() if run["path"] != NIGHTLY_PATH])
-    entries = [read_run(api, run, admissions) for run in sorted(runs.values(), key=lambda item: item["id"])]
-    registry = parse_registry(Path("scripts/ci-known-flaky.json").read_text())
-    receipts, states = synchronize_issues(api, entries, registry)
-    checks = registry_checks(registry, now.isoformat(), states)
-    output = Path(os.environ["RUNNER_TEMP"]) / "ci-report"
+            elif run["event"] not in {"pull_request", "push"} or run["event"] == "push" and run["head_branch"] != "main":
+                continue
+            runs[run["id"]] = run
+    return sorted(runs.values(), key=lambda item: item["id"])
+
+
+def read_snapshot(api):
+    from ci_publish import json_member
+    workflow = api.repo("actions/workflows/ci-report.yml", missing=True)
+    if workflow is None:
+        return None
+    require(workflow["path"] == REPORT_PATH, "reporter workflow path mismatch")
+    rows = api.repo(f"actions/workflows/{workflow['id']}/runs?branch=main&status=completed&per_page=10")["workflow_runs"]
+    for run in rows:
+        if not (run["path"] == REPORT_PATH and run["workflow_id"] == workflow["id"] and run["head_branch"] == "main"
+                and run["repository"]["full_name"] == api.repository and run["head_repository"]["full_name"] == api.repository
+                and run["event"] in {"schedule", "workflow_dispatch", "workflow_run"} and on_main(run["head_sha"])):
+            continue
+        name = f"ci-report-daily-{run['id']}-{run['run_attempt']}"
+        artifacts = [item for item in api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+                     if item["name"] == name and not item["expired"]]
+        require(len(artifacts) <= 1, "duplicate reporter snapshot")
+        if artifacts:
+            snapshot = json_member(api, artifacts[0], "history.json")
+            require(snapshot["schema_version"] == 2 and snapshot["producer"] == {
+                "repository": api.repository, "workflow_path": REPORT_PATH,
+                "run": {"id": str(run["id"]), "attempt": run["run_attempt"]}, "commit_sha": run["head_sha"]},
+                "snapshot provenance mismatch")
+            for day, value in snapshot["days"].items():
+                require(daily_rollup(iso_day(day), value["entries"]) == value, "invalid saved daily rollup")
+            return snapshot
+    return None
+
+
+def write_report(output, snapshot, entries, registry, states, *, stopped, now=None):
     for kind in ("daily", "pull-requests", "runs"):
         (output / kind).mkdir(parents=True, exist_ok=True)
-    for day in sorted(days):
-        rollup = daily_rollup(day, entries)
-        rollup.update(registry=checks, issue_actions=receipts)
-        (output / "daily" / (day + ".json")).write_text(json.dumps(rollup, indent=2) + "\n")
+    encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n"
+    require(len(encoded.encode()) <= 16 * 1024 * 1024, "reporter snapshot exceeds readable artifact limit")
+    (output / "daily/history.json").write_text(encoded)
+    for day, rollup in sorted(snapshot["days"].items()):
+        (output / "daily" / (day + ".json")).write_text(json.dumps(rollup, separators=(",", ":")) + "\n")
     for entry in entries:
         kind = "pull-requests" if entry["source"]["event"] == "pull_request" else "runs"
         stem = str(entry["run"]["id"]) + "-" + str(entry["run"]["attempt"])
-        (output / kind / (stem + ".json")).write_text(json.dumps(entry, indent=2) + "\n")
+        (output / kind / (stem + ".json")).write_text(json.dumps(entry, separators=(",", ":")) + "\n")
         (output / kind / (stem + ".md")).write_text(render_entry(entry))
+    now = now or datetime.now(timezone.utc).date()
+    candidates = [entry for rollup in snapshot["days"].values() for entry in rollup["entries"]
+                  if entry["source"]["event"] == "push" or entry["source"]["workflow_path"] == NIGHTLY_PATH]
+    plan = {"schema_version": 2, "entries": [] if stopped else decision_entries(candidates, now),
+            "registry": registry, "budget_stopped": stopped}
+    (output / "sync.json").write_text(json.dumps(plan) + "\n")
+
+
+def collect_report(api, event_name, event, now, output, *, run_ids=()):
+    from ci_publish import trusted_admissions
+    from ci_flaky import parse_registry
+    registry = parse_registry(Path("scripts/ci-known-flaky.json").read_text())
+    snapshot, entries, states, stopped = None, [], {}, False
+    try:
+        api.request("/rate_limit")
+        snapshot = read_snapshot(api)
+        inventory = visible_issues(api, LABEL)
+        tracked = {identity_token(item["identity"]) for item in registry["entries"]}
+        tracked.update(identity_token(item["identity"]) for rollup in (snapshot or {}).get("days", {}).values()
+                       for entry in rollup["entries"] for item in entry["observed"])
+        index = copy.deepcopy((snapshot or {}).get("issue_index", {}))
+        for issue in inventory:
+            state = read_state(issue)
+            if state:
+                tracked.add(state["token"])
+                index[state["token"]] = issue["number"]
+            states[issue["number"]] = issue["state"]
+        for item in registry["entries"]:
+            number = int(item["issue"].rsplit("/", 1)[-1])
+            if number not in states:
+                issue = api.repo(f"issues/{number}", missing=True)
+                states[number] = issue["state"] if issue else "missing"
+        saved = {entry["run"]["id"]: entry for value in (snapshot or {}).get("days", {}).values() for entry in value["entries"]}
+        runs = ([run for run_id in run_ids for run in discover_runs(api, "workflow_run", {"workflow_run": {"id": run_id}}, now)]
+                if run_ids else discover_runs(api, event_name, event, now))
+        if event_name != "workflow_run":
+            ids = {run["id"] for run in runs}
+            for entry in decision_entries(list(saved.values()), now):
+                if entry["status"] == "pending" and entry["run"]["id"] not in ids:
+                    runs.append(api.repo(f"actions/runs/{entry['run']['id']}"))
+        for run in runs:
+            if run["created_at"][:10] < (now - timedelta(days=EVIDENCE_DAYS - 1)).isoformat():
+                continue
+            previous = saved.get(run["id"])
+            if previous and previous["run"]["attempt"] == run["run_attempt"] and previous["status"] != "pending" and previous.get("identity"):
+                continue
+            admissions = trusted_admissions(api, [run["id"]]) if run["path"] != NIGHTLY_PATH else {}
+            report = read_run(api, run, admissions, previous)
+            entries.append(compact_entry(report, tracked))
+        snapshot = merge_snapshot(snapshot, entries, now)
+        snapshot["issue_index"] = index
+    except RateLimitLow:
+        stopped = True
+        snapshot = merge_snapshot(snapshot, entries, now)
+    snapshot["registry"] = registry_checks(registry, now.isoformat(), states)
+    stopped |= api.request_count >= REQUEST_BUDGET or api.remaining is not None and api.remaining <= RATE_RESERVE
+    snapshot["budget_stopped"] = stopped
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        snapshot["producer"] = {"repository": api.repository, "workflow_path": REPORT_PATH,
+            "run": {"id": os.environ["GITHUB_RUN_ID"], "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
+            "commit_sha": os.environ["GITHUB_SHA"]}
+    write_report(output, snapshot, entries, registry, states, stopped=stopped, now=now)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
             handle.write("# CI daily reporting\n\nDaily history: 90 days; PR summaries: 30 days; other summaries: 7 days.\n\n")
             for entry in entries:
                 handle.write(render_entry(entry))
-            handle.write("\nRegistry review: " + text(checks) + "\n\nIssue actions: " + text(receipts) + "\n")
-    print(f"Reported {len(entries)} runs across {len(days)} UTC days; {len(receipts)} issue actions.")
+            handle.write("\nRegistry review: " + text(snapshot["registry"]) + "\n")
+    receipt = {"writes": False, "requests": api.request_count, "rate_remaining": api.remaining,
+               "budget_stopped": stopped, "runs_read": len(entries), "days": len(snapshot["days"]),
+               "rollup_bytes": (output / "daily/history.json").stat().st_size}
+    print(json.dumps(receipt, sort_keys=True))
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--phase", choices=("collect", "sync"), default="collect")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", "sudoHG/immichSlides"))
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--run-id", type=int, action="append", default=[])
+    args = parser.parse_args(argv)
+    require(not args.dry_run or args.phase == "collect", "dry-run cannot synchronize issues")
+    require(not args.run_id or args.dry_run and all(run_id > 0 for run_id in args.run_id), "run selection is dry-run only")
+    if not args.dry_run:
+        check_context(os.environ)
+        require(args.repository == os.environ["GITHUB_REPOSITORY"], "report repository differs from workflow")
+    token = os.environ.get("CI_REPORT_TOKEN")
+    if token is None and args.dry_run:
+        import subprocess
+        token = subprocess.check_output(["gh", "auth", "token"], text=True, stderr=subprocess.DEVNULL, timeout=30).strip()
+    require(bool(token), "missing reporting token")
+    api = ReportGitHub(args.repository, token, dry_run=args.dry_run)
+    output = args.output_dir or Path(os.environ["RUNNER_TEMP"]) / "ci-report"
+    if args.phase == "collect":
+        event_name = "schedule" if args.dry_run else os.environ["GITHUB_EVENT_NAME"]
+        event = {} if args.dry_run else decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+        return collect_report(api, event_name, event, datetime.now(timezone.utc).date(), output, run_ids=args.run_id)
+    plan = decode((output / "sync.json").read_text())
+    require(plan["schema_version"] == 2, "invalid issue synchronization plan")
+    plan["entries"] = decision_entries(plan["entries"], datetime.now(timezone.utc).date())
+    if plan["budget_stopped"] or not plan["entries"]:
+        print("No issue synchronization: no new eligible evidence or API budget reserved.")
+        return 0
+    errors = []
+    try:
+        receipts, states = synchronize_issues(api, plan["entries"], plan["registry"], errors=errors)
+    except RateLimitLow:
+        receipts, states = [], {}
+        errors.append({"code": "api-budget-low"})
+    result = {"schema_version": 2, "actions": receipts, "states": states, "errors": errors,
+              "requests": api.request_count, "rate_remaining": api.remaining}
+    (output / "runs/issue-actions.json").write_text(json.dumps(result, sort_keys=True) + "\n")
+    require(all(item["code"] == "api-budget-low" for item in errors), "issue synchronization failed; rollup was already uploaded")
     return 0
 
 
