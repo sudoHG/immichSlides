@@ -128,5 +128,91 @@ class VerifyCommandLineTests(VerifyCommandLineTestsCases, unittest.TestCase):
 
 
 
+class ReviewPackageTests(unittest.TestCase):
+    def _package(self, root):
+        from ci_review_packages import build_package
+        evidence = build_evidence(root, "p2-cache", "iphone", review=False)
+        (evidence / "strict-p2-cache.xcresult").rmdir()
+        facts = _facts("p2-cache", "iphone")
+        official = {"devices": facts["devices"], "testNodes": [{"nodeType": "Unit test bundle",
+                    "name": "immichSlidesUITests", "children": [{"nodeType": "Test Case",
+                    "nodeIdentifier": facts["test_cases"][0]["identifier"], "result": "Passed"}]}]}
+        _write_json(evidence / "official-tests.json", official)
+        digest = _sha256(evidence / "official-tests.json")
+        _patch_json(evidence / "case-manifest.json", official_tests_sha256=digest)
+        _write_json(evidence / "result-bundle-disposal.json", {
+            "result_bundle_disposed": True, "official_tests_sha256": digest})
+        context = {"source_sha": SOURCE_SHA, "tree_sha": "b" * 40, "repository": "sudoHG/immichSlides",
+                   "workflow_path": ".github/workflows/ci-nightly.yml", "event": "workflow_dispatch",
+                   "ref": "refs/heads/review-candidate", "run_id": "123", "run_attempt": 1,
+                   "shard": "iphone-immichSlides-iOS-debug-7", "matrix_sha256": "c" * 64}
+        case = {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "p2-cache",
+                "scenario": "normal", "fixture": "a"}
+        package = root / "package"
+        build_package(evidence, package, context, case)
+        return evidence, package
+
+    def test_package_rejects_changed_inputs_and_exports_only_fixture_allowlist(self):
+        from ci_review_packages import build_package, read_package
+        with tempfile.TemporaryDirectory() as directory:
+            evidence, package = self._package(Path(directory))
+            manifest = read_package(package)
+            self.assertNotIn("official-tests.json", manifest["files"])
+            self.assertNotIn("case-manifest.json", manifest["files"])
+            self.assertTrue((package / "review.html").is_file())
+            self.assertEqual(manifest["case"]["suite"], "p2-cache")
+            self.assertNotIn(UDID, (package / "case.json").read_text())
+            for filename in ("cache-returned.png", "case.json", "review.html"):
+                path = package / filename
+                original = path.read_bytes()
+                path.write_bytes(original + b"changed")
+                with self.subTest(filename=filename), self.assertRaises((ValueError, P2ContractError)):
+                    read_package(package)
+                path.write_bytes(original)
+            (package / "extra.log").write_text("unexpected")
+            with self.assertRaises(ValueError):
+                read_package(package)
+            (package / "extra.log").unlink()
+            _patch_json(evidence / "case-manifest.json", source_dirty_paths=["changed.py"])
+            with self.assertRaises((ValueError, P2ContractError)):
+                build_package(evidence, Path(directory) / "refused", manifest["context"], manifest["case"])
+            self.assertFalse((Path(directory) / "refused").exists())
+
+    def test_review_record_binds_human_signature_run_case_and_all_artifact_decisions(self):
+        from ci_review_packages import read_package, record_path, validate_record
+        import copy
+        with tempfile.TemporaryDirectory() as directory:
+            evidence, package = self._package(Path(directory))
+            manifest = read_package(package)
+            _write_review(evidence, "p2-cache", "iphone")
+            review = _read_json(evidence / REVIEW_FILE)
+            review["reviewer"] = "sudoHG"
+            record = {"schema_version": 1, "context": manifest["context"], "case": manifest["case"],
+                      "case_sha256": manifest["case_sha256"], "package_sha256": manifest["package_sha256"],
+                      "reviewed_at": "2020-01-01T00:00:00Z", "signature": "I personally reviewed these images and recordings.",
+                      "review": review}
+            self.assertEqual(validate_record(record, package), "PASS")
+            self.assertEqual(record_path(record), Path(SOURCE_SHA) / "p2-cache/iphone/a.json")
+            changes = [("context.run_id", "456"), ("context.run_attempt", 2), ("context.run_attempt", True), ("case.fixture", "b"),
+                       ("case_sha256", "0" * 64), ("package_sha256", "0" * 64), ("signature", ""),
+                       ("review.reviewer", "agent"), ("reviewed_at", "yesterday"),
+                       ("review.artifacts.cache-returned.png.conclusion", "FAIL")]
+            for key, value in changes:
+                altered = copy.deepcopy(record)
+                if key.endswith(".png.conclusion"):
+                    altered["review"]["artifacts"]["cache-returned.png"]["conclusion"] = value
+                else:
+                    target = altered
+                    parts = key.split(".")
+                    for part in parts[:-1]:
+                        target = target[part]
+                    target[parts[-1]] = value
+                with self.subTest(key=key), self.assertRaises((ValueError, P2ContractError)):
+                    validate_record(altered, package)
+            del record["review"]["artifacts"]["cache-returned.png"]
+            with self.assertRaises((ValueError, P2ContractError)):
+                validate_record(record, package)
+
+
 if __name__ == "__main__":
     unittest.main()

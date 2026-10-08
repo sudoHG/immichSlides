@@ -145,9 +145,11 @@ The embedded rollup entry always records `release_eligible: false` and the skele
 even when green. The separate trusted reporter will write 90-day rollups. No release
 policy is enabled; skeletons are never release-eligible.
 
-Only compact records upload, retained seven days (PR planning: 30 days). Raw bundles
-use existing private export/disposal; products, packages, simulator contents, screenshots,
-recordings and logs do not upload. P2 review packages/signed promotion are separate work.
+Compact records are retained seven days (PR planning: 30 days). Separately,
+[P2 review packages](CI_P2_REVIEWS.md) export scanned public-fixture images, recordings
+and redacted records for seven days. Raw bundles use existing private export/disposal;
+products, simulator contents and logs do not upload. Human review never promotes
+automated P2 success or makes the skeleton release-eligible.
 Cleanup waits for the runner group; failed cleanup retains inputs until runner teardown.
 Existing Python test files guard equality, scope/eligibility, provenance, P2 separation,
 failed/malformed official exports and partial person execution under [Testing section 0](TESTING.md#0-when-to-write-a-test).

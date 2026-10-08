@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>P2 visual review</title>
+<style>
+body { font: 17px/1.55 system-ui,sans-serif; color: #17232b; background: #f4f6f7; margin: 0 auto; padding: 24px; max-width: 1000px; }
+h1 { margin-bottom: 8px; } section { background: white; border: 1px solid #ccd6dc; border-radius: 10px; padding: 24px; margin: 22px 0; }
+img,video { max-width: 100%; max-height: 650px; display: block; margin: 12px auto; background: #e7ebee; }
+label { display: block; margin: 10px 0; } input,select,textarea,button { font: inherit; } textarea { width: 95%; height: 65px; }
+button { padding: 10px 18px; cursor: pointer; } .marks { display: flex; flex-wrap: wrap; gap: 14px; } .marks label { margin: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; } .legend img { width: 140px; height: 95px; object-fit: contain; margin: 0; }
+.meta { color: #4b5962; overflow-wrap: anywhere; } .decision { display: flex; gap: 24px; } #message { color: #9d2525; }
+</style>
+<h1>P2 visual review</h1>
+<p id="intro"></p><p class="meta" id="source"></p>
+<p>Look at every original image. Watch each recording at normal speed, including the listed action times. Answer Pass only when you can see the expected result; choose Fail for a visible problem. Blank output, a bad crop, missing photos or an unexpected fallback fail.</p>
+<p>This package passed automated checks. Your visual decision is still pending. A downloaded record is a personal sign-off, not a release approval.</p>
+<details><summary>Public photo reference</summary><div class="legend" id="legend"></div></details>
+<form id="form">
+<div id="items"></div>
+<section>
+<label>GitHub reviewer <input id="reviewer" required placeholder="sudoHG" autocomplete="off"></label>
+<label><input type="checkbox" id="signature" required> I personally reviewed these images and recordings.</label>
+<label>Overall conclusion <select id="verdict" required><option value="">Choose</option><option>PASS</option><option>FAIL</option><option>PARTIAL</option></select></label>
+<p>Save the JSON file, then add it at the path shown below in a pull request. Only the maintainer may sign and submit it. Never add images or recordings to Git.</p>
+<p class="meta" id="record-path"></p>
+<button type="submit">Download my review record</button><p role="alert" id="message"></p>
+</section>
+</form>
+<script>
+const packet = __P2_PACKAGE__;
+const {context,case: testCase,facts} = packet;
+const raw = facts.raw;
+const guidance = {
+  'p2-exif': 'Confirm that EXIF disappears when switched off and returns when enabled. Empty playback has no stale EXIF. In a multi-photo scene the overlay belongs to the visible photo; text stays readable.',
+  'p2-cache': 'Before confirmation, disk usage is above zero. After clearing, usage is zero and success feedback is visible. On return, the public photo is visible and playback works normally.',
+  'p2-cache-smoke': 'Confirm the cache settings page is complete and usable, then the same public photo is visible after returning. This smoke case does not establish disk-usage acceptance.',
+  'p2-reduce-motion': 'With Reduce Motion on, both single-photo and multi-photo playback remain visible with no unwanted movement or jumps. Watch before and after each action. Confirm the original system setting is restored.',
+  'p2-ipad-layout': 'Both orientations show the intended multi-photo layout, with distinct photos, correct crops and no padding or unexpected fallback.',
+  'p2-rotation': 'Watch both rotations. Photos remain visible and settle into the correct layout without blank frames, jumps, a bad crop or an unexpected fallback.',
+  'p2-orientation-selfcheck': 'Each capture has the stated orientation. Portrait, landscape and portrait again settle correctly. This checks evidence capture, not product rotation acceptance.'
+};
+const cacheChecks = {
+  'cache-before-confirm.png': ['disk_usage_nonzero_before_confirm'],
+  'cache-cleared.png': ['disk_usage_zero_after_clear','success_feedback_visible'],
+  'cache-returned.png': ['playback_normal_after_return']
+};
+const descriptions = {
+  'disk_usage_nonzero_before_confirm': 'Disk usage is above zero before confirmation',
+  'disk_usage_zero_after_clear': 'Disk usage is zero after clearing',
+  'success_feedback_visible': 'Success feedback is visible',
+  'playback_normal_after_return': 'The public photo is visible and playback is normal'
+};
+const recordPath = `review-records/${context.source_sha}/${testCase.suite}/${testCase.device}/${testCase.fixture}.json`;
+document.querySelector('#intro').textContent = `${testCase.suite} · ${testCase.device} · public fixture ${testCase.fixture.toUpperCase()}`;
+document.querySelector('#source').textContent = `Commit ${context.source_sha} · run ${context.run_id ?? 'local'} · attempt ${context.run_attempt}`;
+document.querySelector('#record-path').textContent = recordPath;
+for (const mark of Object.keys(packet.fixture_marks)) {
+  const figure = document.createElement('figure');
+  const image = document.createElement('img'); image.src = `fixture-${mark}.png`; image.alt = `Public photo ${mark}`;
+  const caption = document.createElement('figcaption'); caption.textContent = mark;
+  figure.append(image,caption); document.querySelector('#legend').append(figure);
+}
+const widgets = {};
+function decision(container,prompt,name) {
+  const text = document.createElement('p'); text.textContent = prompt; container.append(text);
+  const group = document.createElement('div'); group.className = 'decision';
+  for (const value of ['PASS','FAIL']) {
+    const label = document.createElement('label'); const input = document.createElement('input');
+    input.type = 'radio'; input.name = name; input.value = value; input.required = true;
+    label.append(input,document.createTextNode(value === 'PASS' ? ' Pass' : ' Fail')); group.append(label);
+  }
+  container.append(group);
+  return () => group.querySelector('input:checked')?.value;
+}
+let count = 0;
+for (const [name,artifact] of Object.entries(raw.artifacts)) {
+  const section = document.createElement('section'); const heading = document.createElement('h2');
+  heading.textContent = name.replaceAll('-',' ').replace(/\.(png|mov)$/,''); section.append(heading);
+  const instruction = document.createElement('p'); instruction.textContent = guidance[testCase.suite]; section.append(instruction);
+  const movie = name.endsWith('.mov'); const media = document.createElement(movie ? 'video' : 'img');
+  media.src = name; if (movie) { media.controls = true; media.preload = 'metadata'; } else { media.alt = heading.textContent; }
+  section.append(media);
+  const checks = {};
+  if (testCase.suite === 'p2-cache') {
+    for (const check of cacheChecks[name] ?? []) checks[check] = decision(section,descriptions[check],`check-${count++}`);
+  }
+  const conclusion = decision(section,'Does this item meet the expectations above?',`artifact-${count++}`);
+  const markInputs = [];
+  let controls;
+  if (!movie) {
+    const isCachePage = testCase.suite === 'p2-cache' && ['cache-before-confirm.png','cache-cleared.png'].includes(name);
+    if (!isCachePage) {
+      const title = document.createElement('p'); title.textContent = 'Which public photos can you see? Use the reference above; leave empty if no photo is shown.'; section.append(title);
+      const marks = document.createElement('div'); marks.className = 'marks';
+      for (const mark of Object.keys(packet.fixture_marks)) {
+        const label = document.createElement('label'); const input = document.createElement('input');
+        input.type = 'checkbox'; input.value = mark; markInputs.push(input);
+        label.append(input,document.createTextNode(` ${mark}`)); marks.append(label);
+      }
+      section.append(marks);
+    }
+    const label = document.createElement('label'); label.textContent = 'Controls on screen ';
+    controls = document.createElement('select'); controls.required = true;
+    for (const value of ['','visible','hidden']) { const option = document.createElement('option'); option.value = value; option.textContent = value || 'Choose'; controls.append(option); }
+    label.append(controls); section.append(label);
+  }
+  const slices = [];
+  if (movie) {
+    for (const [mark,offset] of Object.entries(raw.mark_offsets ?? {})) {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = `Watch ${mark.replaceAll('-',' ')} at ${offset.toFixed(1)} s`;
+      button.onclick = () => { media.currentTime = Math.max(0,offset - 0.5); media.playbackRate = 1; media.play(); };
+      section.append(button);
+      const read = decision(section,`At ${offset.toFixed(1)} s: no jump, blank frame, bad crop or unexpected fallback?`,`slice-${count++}`);
+      slices.push({mark,offset,read});
+    }
+  }
+  const noteLabel = document.createElement('label'); noteLabel.textContent = 'What did you see? Optional for Pass; describe every Fail.';
+  const note = document.createElement('textarea'); noteLabel.append(note); section.append(noteLabel);
+  document.querySelector('#items').append(section);
+  widgets[name] = {artifact,conclusion,markInputs,controls,checks,slices,note};
+}
+document.querySelector('#form').onsubmit = event => {
+  event.preventDefault(); const message = document.querySelector('#message'); message.textContent = '';
+  try {
+    if (document.querySelector('#reviewer').value.trim() !== 'sudoHG') throw Error('The maintainer must sign this review as sudoHG.');
+    const artifacts = {}; const decisions = [];
+    for (const [name,w] of Object.entries(widgets)) {
+      const conclusion = w.conclusion(); decisions.push(conclusion);
+      if (conclusion === 'FAIL' && !w.note.value.trim()) throw Error('Describe what failed for each item.');
+      const entry = {sha256:w.artifact.sha256, conclusion, observation:w.note.value.trim() || `${guidance[testCase.suite]} Reviewed visually: ${conclusion}.`};
+      if (w.controls) {
+        entry.controls = w.controls.value;
+        entry.visible_marks = w.markInputs.filter(i => i.checked).map(i => i.value);
+        entry.fixture_sha256 = Object.fromEntries(entry.visible_marks.map(m => [m,packet.fixture_marks[m]]));
+        const target = (raw.cache_clear ?? raw.cache_return)?.target_mark;
+        if (name === 'cache-returned.png' && (entry.visible_marks.length !== 1 || entry.visible_marks[0] !== target)) throw Error('The returned photo label must match the recognized public photo; re-check the reference and image.');
+      }
+      if (Object.keys(w.checks).length) { entry.checks = Object.fromEntries(Object.entries(w.checks).map(([k,read]) => [k,read()])); decisions.push(...Object.values(entry.checks)); }
+      if (w.slices.length) { entry.time_slices = w.slices.map(s => ({start_s:Math.max(0,s.offset-0.5),end_s:s.offset+0.5,observation:`${s.mark}: visually reviewed at normal speed`,conclusion:s.read()})); decisions.push(...entry.time_slices.map(s => s.conclusion)); }
+      artifacts[name] = entry;
+    }
+    const verdict = document.querySelector('#verdict').value;
+    if (decisions.some(v => !v)) throw Error('Answer every image, check and recording time.');
+    if (verdict === 'PASS' && decisions.some(v => v !== 'PASS')) throw Error('Overall Pass requires every answer to be Pass.');
+    const record = {schema_version:1,context,case:testCase,case_sha256:packet.case_sha256,package_sha256:packet.package_sha256,
+      reviewed_at:new Date().toISOString(),signature:'I personally reviewed these images and recordings.',
+      review:{schema:'strict-e2e-visual-review-v1',reviewer:'sudoHG',suite:testCase.suite,device_class:testCase.device,source_sha:context.source_sha,verdict,artifacts}};
+    const url = URL.createObjectURL(new Blob([JSON.stringify(record,null,2)+'\n'],{type:'application/json'}));
+    const link = document.createElement('a'); link.href = url; link.download = `${testCase.fixture}.json`; link.click(); URL.revokeObjectURL(url);
+    message.textContent = 'Saved. Submit this personal review through a pull request at the path above.';
+  } catch (error) { message.textContent = error.message; }
+};
+</script>
+</html>
