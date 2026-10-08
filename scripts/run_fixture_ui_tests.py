@@ -19,7 +19,7 @@ from pathlib import Path
 from ci_build_archive import check_products, disk_check, measure_signing, record_signing
 from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
-from ci_verdict import evaluate_population, parse_policy
+from ci_verdict import evaluate_population, parse_policy, tier_approved
 from run_host_checks import run_identity, source_metadata, toolchain
 from run_offline_unit_tests import CommandError as OfflineCommandError, _stop_process_group
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
@@ -277,7 +277,7 @@ def main(argv=None):
         rows = coverage_rows(declared, None, {"testNodes": []}, args.device)
         policy_path = ROOT / "scripts/ci-test-policy.json"
         policy = parse_policy(policy_path.read_text())
-        deselections = [entry for entry in policy["deselections"] if policy["approval_state"] == "approved"
+        deselections = [entry for entry in policy["deselections"] if tier_approved(policy, "ui")
                        and entry["tier"] == "ui" and entry["environment"] == "fixture"
                        and entry["identity"] in declared] if args.mode == "pr" else []
         summary["hashes"] = {"manifests": {"fixture-c": fixture_manifest("c")["fixture_sha256"],
@@ -365,7 +365,7 @@ def main(argv=None):
                                              for row in rows]
         if code == 0:
             summary["status"] = "unverified" if any(row["outcome"] == "skipped" for row in rows) else "passed"
-        measured_policy = {"schema_version": 1, "approval_state": "approved", "expected_skips": [], "deselections": []}
+        measured_policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
         verdict = evaluate_population(summary, declared, policy if args.mode == "pr" else measured_policy, environment="fixture")
         write_json(output / "coverage-verdict.json", verdict)
         summary["status"] = verdict["status"]

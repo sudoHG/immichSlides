@@ -82,8 +82,9 @@ must match exactly one rule, including platform and emitted reason. Unlisted ski
 changed reasons and an expected-skip test that runs fail coverage. Otherwise passing
 results with approved matching skips are verified. Matching proposed exceptions
 remain `unverified` with the non-infrastructure `policy-proposed` diagnostic.
-Host approval does not activate another tier; UI proposals remain inactive until
-a UI approval record exists. Producer policy checks do not authorize trusted
+Each approval record activates only its own tier's active entries. The fixture UI
+record is separate from unit approval; any future `proposed` entries remain inactive.
+Producer policy checks do not authorize trusted
 publication or approve a later PR head.
 
 The [unit approval conditions](https://github.com/sudoHG/immichSlides/pull/131#issuecomment-6056062100)

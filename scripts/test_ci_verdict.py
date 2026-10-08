@@ -85,18 +85,20 @@ class PopulationVerdictTests(unittest.TestCase):
                 self.policy["expected_skips"][0][field] = original
         self.summary["population"]["observed"] = [ci_summary.observation(identity, "passed", 0)]
         self.assertEqual(self.verdict()["status"], "failed")
-        unit = ci_summary.test_identity("swift", "Tests/skipped()", platform="ios")
-        self.summary["run"]["tier"] = "unit"
-        self.expected = self.summary["population"]["declared"] = self.summary["population"]["compiled"] = [unit]
-        self.summary["population"]["observed"] = [ci_summary.observation(unit, "skipped", 0, reason="no fixture")]
-        self.policy["expected_skips"] = [{"kind": "swift", "key_pattern": unit["key"], "dimensions": unit["dimensions"],
-                                          "tier": "unit", "environment": "hermetic", "reason": "no fixture"}]
-        for records, status in (([approval_record("host"), approval_record("unit")], "passed"),
-                                ([approval_record("host")], "failed")):
-            with self.subTest(approval_tiers=[record["tier"] for record in records]):
-                self.policy["approval_records"] = records
-                self.assertEqual(self.verdict()["status"], status)
-                self.assertEqual(self.verdict()["expected_skips"], [unit] if status == "passed" else [])
+        for tier, environment, test in (("unit", "hermetic", ci_summary.test_identity("swift", "Tests/skipped()", platform="ios")),
+                                        ("ui", "fixture", ci_summary.test_identity("ui", "Tests/testSkipped", platform="ios", device="iphone"))):
+            self.summary["run"]["tier"] = tier
+            self.expected = self.summary["population"]["declared"] = self.summary["population"]["compiled"] = [test]
+            self.summary["population"]["observed"] = [ci_summary.observation(test, "skipped", 0, reason="no fixture")]
+            self.policy["expected_skips"] = [{"kind": test["kind"], "key_pattern": test["key"], "dimensions": test["dimensions"],
+                                              "tier": tier, "environment": environment, "reason": "no fixture"}]
+            for records, status in (([approval_record("host"), approval_record(tier)], "passed"),
+                                    ([approval_record("host")], "failed")):
+                with self.subTest(tier=tier, approval_tiers=[record["tier"] for record in records]):
+                    self.policy["approval_records"] = records
+                    verdict = evaluate_population(self.summary, self.expected, self.policy, environment=environment)
+                    self.assertEqual(verdict["status"], status)
+                    self.assertEqual(verdict["expected_skips"], [test] if status == "passed" else [])
 
     def test_deselections_require_compilation_reason_owner_and_exclusive_accounting(self):
         entry = {"identity": self.expected[0], "tier": "host", "environment": "hermetic",
