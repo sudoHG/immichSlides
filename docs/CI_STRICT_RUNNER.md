@@ -13,6 +13,13 @@ with `--listed-retry-device`; the tracer and skeleton nightly continue to run on
 Signed visual-review promotion remains separate work.
 Simulator preparation and official exports have explicit phase deadlines; timeout
 records and private quarantine follow the [nightly infrastructure policy](CI_NIGHTLY.md#population-and-capacity).
+The shared boot helper caps `simctl boot` at 60 seconds and gives boot plus bootstatus
+600 seconds total. It finishes before the separate 120-second app/keychain/privacy
+reset clock starts; individual reset commands have at most 60 seconds. Local strict,
+fixture UI, listed retry and access-lifecycle runs use these preparation bounds too.
+Official tests and summary exports each have 60 seconds. Unit callers retain
+`unit-results-timed-out` with export phase and elapsed time; strict callers retain
+their preparation/export phase codes. Test-execution budgets are separate.
 
 Strict builds use their own test plans and settings; they do not consume the default
 unit/UI archives. They reuse the [archive workspace preflight](CI_BUILD_ARCHIVE.md),
@@ -73,7 +80,7 @@ Warm mode invokes the existing workspace preflight before setup/build/reuse. It
 rejects regular configuration files, links and dangling links without opening them.
 Use a checkout without local private configuration, a dedicated simulator that is
 not shared with another job, and an outer timeout for device/build commands. The
-80 GiB local disk threshold is unchanged.
+Local disk preflight requires 80 GiB.
 
 ## Tracer, budgets and results
 
@@ -90,13 +97,16 @@ and a 30 GiB disk preflight. Each runner segment has an additional 240-second ou
 allowance for reset/export/cleanup. iOS allows two cold and three warm segments
 (90 minutes total); tvOS allows one of each (38 minutes total). The literal
 110-minute job timeout covers the larger shard, a separate 10-minute initial simulator
-boot budget, and setup, uploads and final cleanup. Initial boot phases and elapsed times
-are logged before the first case, so cold boot does not consume the 120-second case-reset
+boot budget, and setup, uploads and final cleanup. Both workflows call the same boot
+helper as local resets. Initial boot phases and elapsed times are logged before the
+first case, so cold boot does not consume the 120-second case-reset
 budget. The [nightly capacity policy](CI_NIGHTLY.md#population-and-capacity) records the
 hosted measurement used for this boot allowance.
 The initial allowance follows
 the archive producer's [measured hosted disk use](CI_BUILD_ARCHIVE.md); the tracer
-reports its own measurements for review. These settings never change local defaults.
+reports its own measurements for review. Hosted cold/warm budgets and the disk exception
+do not replace the local xcodebuild budget or 80 GiB disk preflight; the shared local
+preparation/export bounds are stated above.
 
 `records/trace.json` is written initially and after every runner segment, including
 timeouts and interruptions. It reports each cold/warm duration, exit code, official counts,
@@ -121,8 +131,8 @@ not release eligibility.
 CI uploads compact records plus the scanned P2 recording, recording timing proof
 and SHA-bound hashes. Screenshots, fixture originals and review-package formats
 belong to the separate visual-review work. It never uploads raw `.xcresult`, DerivedData, package clones,
-simulator contents or unscanned logs. Existing private bundle export, disposal,
-quarantine and the sensitive scanner remain unchanged. Recording evidence is retained
+simulator contents or unscanned logs. Raw bundles follow the existing disposal,
+quarantine and sensitive-scanning rules under the export bounds above. Recording evidence is retained
 for seven days; records use 30 days for PRs and seven days for manual runs.
 The tracer removes its build/package directories after its children exit, and the
 workflow removes its dedicated simulator and remaining task output after upload.

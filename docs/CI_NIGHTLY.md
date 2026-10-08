@@ -59,14 +59,16 @@ with immutable Products checks. Case directories are unique across repeated suit
 The 25 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS slots.
 Cold warm-up has 1,200 seconds; each warm invocation has 600. Each case adds a 240-second
 reset/export/cleanup allowance; filter-person receives three invocation budgets.
-The workflow boots each new simulator in a separate step with a shared 600-second
+Both workflows and local reset callers use the shared boot helper. The workflow
+boots each new simulator in a separate step with a shared 600-second
 deadline (boot command capped at 60 seconds). It records both phase and total elapsed
 times in logs and the job summary. Before the reset bound, the hosted first iOS smoke
 completed in 457.7 seconds including preparation and test execution
 ([run](https://github.com/sudoHG/immichSlides/actions/runs/37726829510)); 600 seconds
 gives cold boot its own budget above that measured complete-case duration.
-Case resets on the already-booted simulator share a 120-second deadline, with individual reset commands
-capped at 60 seconds and bootstatus using the remaining preparation budget. Official
+Local reset callers also finish boot before starting the reset clock. App/keychain/privacy
+resets share a separate 120-second deadline, with individual reset commands
+capped at 60 seconds. Bootstatus uses the remaining 600-second boot budget. Official
 tests and summary exports each have a 60-second deadline. Preparation/export timeouts name the phase in
 compact infrastructure entries without command arguments/output, preserve a failed
 case record, finish cleanup and quarantine raw bundles privately. Existing cold/warm

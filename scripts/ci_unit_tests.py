@@ -426,6 +426,7 @@ def run_units(args):
         summary["infrastructure"].append(failure)
     finally:
         if result_bundle is not None:
+            export_started = time.monotonic()
             try:
                 digest = export_private_result_bundle(result_bundle, args.output_dir, [PUBLIC_API_KEY],
                                                       summary_timeout_seconds=OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS)
@@ -434,8 +435,11 @@ def run_units(args):
                 export_complete = True
             except Exception as error:
                 code = code or 1
+                export_phase = (error.cmd[4] if isinstance(error, subprocess.TimeoutExpired)
+                                and isinstance(error.cmd, (list, tuple)) and len(error.cmd) > 4
+                                and error.cmd[4] in {"tests", "summary"} else "result")
                 summary["infrastructure"].append({"code": "unit-results-timed-out" if isinstance(error, subprocess.TimeoutExpired) else "unit-results-failed",
-                                                   "message": f"official result export timed out after {error.timeout} s" if isinstance(error, subprocess.TimeoutExpired)
+                                                   "message": f"official {export_phase} export timed out (budget={error.timeout:g}s; elapsed={time.monotonic() - export_started:.1f}s)" if isinstance(error, subprocess.TimeoutExpired)
                                                    else str(error) if isinstance(error, (ContractError, CommandError)) else type(error).__name__})
         if owns_simulator:
             failures = cleanup_simulator(simulator, measurements)

@@ -210,6 +210,8 @@ def export_private_result_bundle(
             capture_output=True, check=False, timeout=OFFICIAL_EXPORT_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as error:
+        if summary_timeout_seconds is not None:
+            raise
         raise InfrastructureTimeout("official-tests-export", OFFICIAL_EXPORT_TIMEOUT_SECONDS) from error
     if completed.returncode != 0:
         raise CommandError(f"Official test export failed with exit {completed.returncode}.")

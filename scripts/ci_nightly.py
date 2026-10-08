@@ -180,7 +180,7 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=()):
                             for key in sorted(missing - observed_keys))
             for entry in observed:
                 key = identity_key(entry["identity"])
-                if key in missing:
+                if key in missing and any(attempt["outcome"] != "not-run" for attempt in entry["attempts"]):
                     result["errors"].append("declared-not-compiled: " + key)
                     entry["outcome"] = "failed"
                     attempt = entry["attempts"][-1]

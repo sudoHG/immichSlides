@@ -136,10 +136,14 @@ class NightlyVerdictTests(unittest.TestCase):
                 accepted = validate_shard(summary, summary["identity"], summary["run"], summary["hashes"], identities)
                 result = aggregate_nightly(identities, [accepted], live_in_scope=False)
                 self.assertEqual(result["status"], "failed")
-                self.assertEqual([entry["outcome"] for entry in result["observed"]], ["passed"] * 5 + ["failed"])
+                expected_outcome = "not-run" if outcome == "not-run" else "failed"
+                self.assertEqual([entry["outcome"] for entry in result["observed"]], ["passed"] * 5 + [expected_outcome])
                 self.assertEqual(result["observed"][:5], original["population"]["observed"][:5])
                 failed = result["observed"][5]
-                self.assertIn("declared-not-compiled", failed["attempts"][-1]["reason"])
+                if outcome == "not-run":
+                    self.assertEqual(failed, original["population"]["observed"][5])
+                else:
+                    self.assertIn("declared-not-compiled", failed["attempts"][-1]["reason"])
                 self.assertEqual(failed["duration_seconds"], original["population"]["observed"][5]["duration_seconds"])
                 self.assertEqual(failed["attempts"][-1]["exit_code"], original["population"]["observed"][5]["attempts"][-1]["exit_code"])
                 ci_summary.validate_observation(failed)

@@ -343,7 +343,7 @@ class BuildArchiveTests(unittest.TestCase):
             {"udid": simulator, "deviceTypeIdentifier": device_type}]}}
         for phase, readable in (("enumeration", False), ("enumeration", True),
                                 ("execution", False), ("execution", True),
-                                ("summary", False), ("shutdown", True), ("delete", True)):
+                                ("tests", False), ("summary", False), ("shutdown", True), ("delete", True)):
             with self.subTest(phase=phase, readable=readable):
                 case = self.root / (phase + ("-readable" if readable else "-unreadable"))
                 relocated, output = case / "relocated", case / "records"
@@ -352,7 +352,7 @@ class BuildArchiveTests(unittest.TestCase):
                 enumeration_bundle.mkdir(parents=True)
                 execution_bundle.mkdir(parents=True)
                 bundle = enumeration_bundle if phase == "enumeration" else execution_bundle
-                owns_simulator = phase in {"summary", "shutdown", "delete"}
+                owns_simulator = phase in {"tests", "summary", "shutdown", "delete"}
                 codes = iter([0, 124] if phase == "enumeration" else [0, 0, 124 if phase == "execution" else 0])
 
                 def run(command, **_kwargs):
@@ -371,7 +371,7 @@ class BuildArchiveTests(unittest.TestCase):
 
                 def export_empty(_bundle, records, _sensitive, **kwargs):
                     self.assertEqual(kwargs["summary_timeout_seconds"], 60)
-                    if phase == "summary":
+                    if phase in {"tests", "summary"}:
                         from run_strict_e2e import export_private_result_bundle
                         return export_private_result_bundle(_bundle, records, _sensitive, **kwargs)
                     if not readable:
@@ -407,10 +407,11 @@ class BuildArchiveTests(unittest.TestCase):
                     self.assertEqual([call.args[0][2] for call in cleanup], ["shutdown", "delete"])
                     self.assertEqual([call.kwargs["timeout"] for call in cleanup], [15, 60])
                     self.assertFalse(enumeration_bundle.parent.exists())
-                if phase == "summary":
+                if phase in {"tests", "summary"}:
                     exports = [call for call in processes.call_args_list if call.args[0][1] == "xcresulttool"]
-                    self.assertEqual([call.args[0][4] for call in exports], ["tests", "summary"])
-                    self.assertEqual([call.kwargs["timeout"] for call in exports], [60, 60])
+                    expected_exports = ["tests", "summary"] if phase == "summary" else ["tests"]
+                    self.assertEqual([call.args[0][4] for call in exports], expected_exports)
+                    self.assertEqual([call.kwargs["timeout"] for call in exports], [60] * len(expected_exports))
                 self.assertTrue(bundle.is_dir())
                 self.assertFalse(json.loads((output / "result-bundle-quarantine.json").read_text())["result_bundle_disposed"])
                 provenance = json.loads((output / "archive-consumption.json").read_text())
@@ -428,9 +429,14 @@ class BuildArchiveTests(unittest.TestCase):
                     self.assertEqual(provenance["official_tests_sha256"], archive.file_hash(output / "official-tests.json"))
                 if readable and phase == "enumeration":
                     self.assertEqual(summary["infrastructure"][-1]["message"], "official unit tests were empty")
-                if phase in {"execution", "summary", "shutdown", "delete"}:
-                    code = "unit-execution-timed-out" if phase == "execution" else "unit-results-timed-out" if phase == "summary" else "simulator-cleanup-timed-out"
+                if phase in {"execution", "tests", "summary", "shutdown", "delete"}:
+                    code = "unit-execution-timed-out" if phase == "execution" else "unit-results-timed-out" if phase in {"tests", "summary"} else "simulator-cleanup-timed-out"
                     self.assertIn(code, [entry["code"] for entry in summary["infrastructure"]])
+                if phase in {"tests", "summary"}:
+                    diagnostic = next(entry["message"] for entry in summary["infrastructure"] if entry["code"] == "unit-results-timed-out")
+                    self.assertIn("official " + phase + " export timed out", diagnostic)
+                    self.assertIn("budget=60s", diagnostic)
+                    self.assertIn("elapsed=", diagnostic)
 
 
 class ArchiveUnitResultTests(unittest.TestCase):

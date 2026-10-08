@@ -310,7 +310,13 @@ Run serially within a checkout because the runner manages temporary test configu
 
 For explicit shard warm-up, build reuse, cold/warm budgets, full simulator resets and
 the informational CI tracer, see [Strict runner warm-build tracer](CI_STRICT_RUNNER.md).
-The default local invocation and timeouts are unchanged.
+Local preparation now completes a bounded simulator boot before starting the app-reset
+clock: the boot command has 60 seconds, boot and bootstatus share 600 seconds, and
+app/keychain/privacy reset then has 120 seconds with individual commands capped at
+60 seconds. Official tests and summary exports each have 60 seconds. These bounds
+also apply to fixture UI, listed retries and access-lifecycle runners through the
+shared reset/export helpers. Preparation/export timeouts retain failed records and
+private quarantine; xcodebuild test-execution timeouts remain case failures.
 Versioned nightly shards, exclusions and aggregate rules are documented in
 [Skeleton nightly](CI_NIGHTLY.md).
 
