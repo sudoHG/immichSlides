@@ -75,7 +75,8 @@ function decision(container,prompt,name) {
   return () => group.querySelector('input:checked')?.value;
 }
 let count = 0;
-for (const [name,artifact] of Object.entries(raw.artifacts)) {
+for (const name of packet.review_order) {
+  const artifact = raw.artifacts[name];
   const section = document.createElement('section'); const heading = document.createElement('h2');
   heading.textContent = name.replaceAll('-',' ').replace(/\.(png|mov)$/,''); section.append(heading);
   const instruction = document.createElement('p'); instruction.textContent = guidance[testCase.suite]; section.append(instruction);

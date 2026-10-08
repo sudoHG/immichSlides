@@ -73,11 +73,14 @@ def validate_key(context, case):
 
 
 def scan(directory, *, redact_paths=True):
-    from run_strict_e2e import WRONG_PUBLIC_API_KEY, write_sensitive_scan
+    from run_strict_e2e import CommandError, WRONG_PUBLIC_API_KEY, write_sensitive_scan
     values = [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY]
     if redact_paths:
         values.extend(["/Users/", "/home/"])
-    write_sensitive_scan(directory, values)
+    try:
+        write_sensitive_scan(directory, values)
+    except CommandError:
+        raise ValueError("sensitive scan refused publication") from None
 
 
 def render_page(manifest):
@@ -148,7 +151,9 @@ def build_package(evidence, destination, context, case):
         manifest = {"schema_version": 1, "context": context, "case": case, "case_sha256": digest(case),
                     "facts": facts, "files": {p.name: file_digest(p) for p in sorted(staged.iterdir())},
                     "template_sha256": file_digest(TEMPLATE),
-                    "fixture_marks": {a["label"]: a["sha256"] for a in fixture_manifest(fixture)["assets"]}}
+                    "fixture_marks": {a["label"]: a["sha256"] for a in fixture_manifest(fixture)["assets"]},
+                    "review_order": [*(name + ".png" for name in contract.pngs),
+                                     *(["screen-recording.mov"] if contract.video else [])]}
         manifest["package_sha256"] = digest(manifest)
         write_json(staged / "package.json", manifest)
         (staged / "review.html").write_text(render_page(manifest))
@@ -163,13 +168,16 @@ def read_package(directory):
     file_digest(directory / "package.json")
     manifest = decode((directory / "package.json").read_text())
     fields(manifest, {"schema_version", "context", "case", "case_sha256", "facts", "files",
-                      "template_sha256", "fixture_marks", "package_sha256"}, "package")
+                      "template_sha256", "fixture_marks", "review_order", "package_sha256"}, "package")
     require(type(manifest["schema_version"]) is int and manifest["schema_version"] == 1, "unknown package schema")
     validate_key(manifest["context"], manifest["case"])
     require(manifest["case_sha256"] == digest(manifest["case"]), "case hash differs")
     require(manifest["package_sha256"] == digest({k: v for k, v in manifest.items() if k != "package_sha256"}),
             "package hash differs")
     suite, fixture = manifest["case"]["suite"], manifest["case"]["fixture"]
+    contract = P2_CASES[suite]
+    require(manifest["review_order"] == [*(name + ".png" for name in contract.pngs),
+            *(["screen-recording.mov"] if contract.video else [])], "review order differs from contract")
     raw = validate_raw_evidence(directory, suite, fixture)
     expected_files = set(raw["artifacts"]) | set(raw["records"]) | {"case.json"} | {
         f"fixture-{asset['label']}.png" for asset in fixture_manifest(fixture)["assets"]}

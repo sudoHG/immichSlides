@@ -6,6 +6,7 @@
     ".github/actions/**",
     ".swift-format",
     "scripts/ci_*.py",
+    "scripts/p2-review.html",
     "scripts/__init__.py",
     "scripts/check_all.sh",
     "scripts/git_privacy_gate.py",

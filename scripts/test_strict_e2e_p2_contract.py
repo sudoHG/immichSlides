@@ -177,6 +177,12 @@ class ReviewPackageTests(unittest.TestCase):
             with self.assertRaises((ValueError, P2ContractError)):
                 build_package(evidence, Path(directory) / "refused", manifest["context"], manifest["case"])
             self.assertFalse((Path(directory) / "refused").exists())
+            _patch_json(evidence / "case-manifest.json", source_dirty_paths=[])
+            from strict_e2e_server import PUBLIC_API_KEY
+            (evidence / "xcodebuild.log").write_text(PUBLIC_API_KEY)
+            with self.assertRaises(ValueError):
+                build_package(evidence, Path(directory) / "unsafe", manifest["context"], manifest["case"])
+            self.assertFalse((Path(directory) / "unsafe").exists())
 
     def test_review_record_binds_human_signature_run_case_and_all_artifact_decisions(self):
         from ci_review_packages import read_package, record_path, validate_record
