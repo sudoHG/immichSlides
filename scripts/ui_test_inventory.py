@@ -13,8 +13,9 @@ EXTENSION_RE = re.compile(r"(?:\b(private|fileprivate)\s+)?\bextension\s+([A-Za-
 # XCTest runs `func test…()` with no parameters and no return value; a backtick name counts too.
 TEST_FUNC_RE = re.compile(
     r"\bfunc\s+(`?)(test[A-Za-z0-9_]*)\1\s*\(\s*\)\s*(?:async\s*)?(?:(?:re)?throws\s*)?"
-    r"(\{|->\s*(?:Void|\(\s*\))\s*\{|->)"
+    r"(\{|->\s*(?:(?:Swift\s*\.\s*)?Void|\(\s*\)|\(\s*(?:Swift\s*\.\s*)?Void\s*\))\s*\{)"
 )
+POTENTIAL_TEST_FUNC_RE = re.compile(r"\bfunc\s+(`test[^`]*`|test\w*)")
 # `static`/`class` functions and private functions are not XCTest-discoverable test methods.
 NON_TEST_MODIFIER_RE = re.compile(r"\b(?:static|class|private|fileprivate)\s+(?:[A-Za-z@_()]+\s+)*$")
 OBJC_RENAME_RE = re.compile(r"@objc\s*\(")
@@ -264,8 +265,22 @@ class SwiftFile:
         self.test_funcs = [
             (m.start(), m.group(2), self.code[m.end() - 1 : matching_brace(self.code, m.end() - 1)])
             for m in TEST_FUNC_RE.finditer(self.code)
-            if m.group(3) != "->" and not NON_TEST_MODIFIER_RE.search(self.code[max(0, m.start() - 80) : m.start()])
+            if not NON_TEST_MODIFIER_RE.search(self.code[max(0, m.start() - 80) : m.start()])
         ]
+        classified = {offset for offset, _name, _body in self.test_funcs}
+        self.unclassified_test_funcs: list[tuple[int, str]] = []
+        for candidate in POTENTIAL_TEST_FUNC_RE.finditer(self.code):
+            if candidate.start() in classified or NON_TEST_MODIFIER_RE.search(
+                    self.code[max(0, candidate.start() - 80):candidate.start()]):
+                continue
+            function = FUNC_RE.match(self.code, candidate.start())
+            if function:
+                open_paren = function.end() - 1
+                close = self.parameters_end(open_paren)
+                if close < len(self.code) and (self.code[open_paren + 1:close].strip()
+                                               or "<" in self.code[candidate.end():open_paren]):
+                    continue  # Arguments and generic functions cannot be XCTest methods.
+            self.unclassified_test_funcs.append((candidate.start(), candidate.group(1).strip("`")))
         self.function_bodies: list[tuple[str, str]] = []
         for m in FUNC_RE.finditer(self.code):
             close = self.parameters_end(m.end() - 1)
@@ -371,6 +386,11 @@ def parse_ui_tests(
     strict_names = strict_function_names(parsed)
     strict_tests: set[str] = set()
     for swift_file in parsed:
+        for offset, name in swift_file.unclassified_test_funcs:
+            owner = swift_file.owner(offset)
+            if owner is not None and owner[0] in classes and owner[1] == 1 and not owner[2]:
+                line = bisect.bisect_right(swift_file.line_starts, offset)
+                errors.append(f"{swift_file.name}:{line}: unsupported XCTest test signature for {name}")
         for offset, name, body in swift_file.test_funcs:
             owner = swift_file.owner(offset)
             if owner is not None and owner[0] in classes:

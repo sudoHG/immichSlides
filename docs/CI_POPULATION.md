@@ -47,6 +47,10 @@ reads Python files into a module-name map; it reads no private configuration.
   owning-class platforms, merges same-named classes across conditional branches,
   and keys tests as `Class/testMethod`. Module-qualified `XCTest.XCTestCase` is
   supported; unsupported generic XCTest classes and XCTest base aliases fail explicitly.
+  Zero-argument test returns may be implicit or spelled `Void`, `Swift.Void`,
+  `()`, `(Void)` or `(Swift.Void)`. An unclassifiable direct `test...` signature
+  raises `ContractError`, including unsupported return types. Private/static/class,
+  generic and nonzero-argument functions are classified as nondiscoverable.
 - `removed_tests(base_population, tested_population, base_sha=admitted_base_sha)`
   requires a record `{base_sha, identities}`, with a valid SHA matching admission
   and unique valid identities. It reports the admitted PR base minus the tested
@@ -98,6 +102,8 @@ The callable-preserving decorators `classmethod`, `staticmethod`, `unittest.skip
 skip arguments use the data grammar. `property` is allowed for non-test methods,
 excluding `runTest`.
 Other decorators are unsupported. Class decorators are always rejected.
+Use `with patch(...)` inside method bodies, compile regular expressions inside
+functions, and keep helper classes undecorated in modules governed by this grammar.
 
 Signature defaults accept literals, names, literal containers, name/container
 unpacking and unary literals. Function and variable annotations accept type names, literal arguments,
@@ -208,7 +214,7 @@ build membership for the tested tree and both diff sides. PR changes use
 `base...head`; pushes use `before..after`; include old and new rename paths.
 An allowlisted document can be unaffected only if it is not a build member and
 not CI-trusted. The bundled privacy policy, all unknown paths and every trusted
-path affect the app. CI-trusted paths are `.github/workflows/**`, `.swift-format`,
+path affect the app. CI-trusted paths are `.github/workflows/**`, `.github/actions/**`, `.swift-format`,
 `scripts/ci_*.py`, every script invoked by `run_host_checks.HOST_CHECKS` or a workflow, and the CI
 entry points, policy/data/pins and their own tests listed in
 `scripts/ci-classification.json`. This includes test conventions, release guards,
@@ -220,7 +226,7 @@ The recursive local-import closure is trusted too: the excluded-UI check imports
 access-lifecycle and strict runners, so their contracts, fixture support and own
 tests are CI inputs. The formatting policy changes the lint verdict.
 Regressions derive every `HOST_CHECKS` and workflow `scripts/...` reference,
-the bare filenames in workflow `for file in ...; do` toolsets, and the recursive
+local-action `uses: ./...` paths, bare filenames in workflow `for file in ...; do` toolsets, and the recursive
 local-import closure of every trusted Python script. They require CI-trusted
 coverage; every exact classification entry must exist.
 Other product/runner tests and scripts outside that closure, `AGENTS.md` and `CLAUDE.md` are not CI-trusted;
@@ -232,14 +238,18 @@ authorize `not-applicable`. There is no comment-only classification.
 `evaluate_gate` consumes the required job artifacts and independent static
 `expected`, `admission_identity`, `required_jobs`, `base_policy`, `environment`
 and trusted classification booleans. Every required-job object has `tier`, `job`,
-`shard`, `run_id`, `attempt`, an explicitly supported `workflow_paths` list, and
+`shard`, `run_id`, `attempt`, independently verified `status` and `conclusion`,
+an explicitly supported `workflow_paths` list, and
 independently derived `expected={"tree_sha": admitted_tree_sha, "identities":
 job_identities}`. The overall `expected` uses the same record shape. Both must
 match `admission_identity.tree_sha`; missing, malformed, duplicate or later-main
 population records fail validation. Their identity union must equal
 the overall expected population; one shard cannot cover an omission in another.
 Every artifact must match the admitted run identity, job, run, attempt and workflow;
-missing, duplicate or unexpected jobs fail. Each job accounts for its compiled
+every required job must be independently verified as `status="completed"` and
+`conclusion="success"`. A passing artifact cannot excuse a failed, cancelled,
+timed-out, skipped or incomplete job, including failure after artifact upload.
+Missing, duplicate or unexpected jobs fail. Each job accounts for its compiled
 population, and the aggregate declared/compiled union must equal the tested tree.
 PR evaluation also requires independently derived `base_population={"base_sha":
 admitted_base_sha, "identities": base_identities}`. Missing, malformed, duplicate

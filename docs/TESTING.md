@@ -155,6 +155,9 @@ These are exactly the problems tests exist to catch.
   Entry points and their test-class/mixin providers must follow the
   [Python declaration grammar](CI_POPULATION.md#python-declaration-grammar);
   unsupported discovery-changing forms fail host checks with `population-invalid`.
+  Use `with patch(...)` inside the method body instead of patch decorators,
+  compile regexes inside functions, and use plain helper classes instead of
+  decorating classes in these modules.
 - Flows that are the same on iOS and tvOS live in shared helpers. Platform files contain only the differences.
 
 ## 6. Checklist before submitting

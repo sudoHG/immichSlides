@@ -233,10 +233,14 @@ class StaticPopulationTests(unittest.TestCase):
                       "#else\nclass Tests: XCTestCase { func testTV() {} }\n#endif"
         qualified = "@Test func always() {}\n@Testing.Suite struct Tests {\n" \
                     "@Testing.Test func mustRun() {}\n}"
+        void_cases = [(inventory, "class Tests: XCTestCase { func testPresent() {}\n"
+                      f"func testMustCompile() -> {spelling} {{}} }}", {"ios": "Tests/testMustCompile", "tvos": "Tests/testMustCompile"})
+                      for inventory in (swift_identities, ui_identities)
+                      for spelling in ("Void", "Swift.Void", "()", "(Void)", "(Swift.Void)")]
         for inventory, source, keys in (
                 (swift_identities, conditional, {"ios": "Tests/testPhone", "tvos": "Tests/testTV"}),
                 (ui_identities, conditional, {"ios": "Tests/testPhone", "tvos": "Tests/testTV"}),
-                (swift_identities, qualified, {"ios": "Tests/mustRun", "tvos": "Tests/mustRun"})):
+                (swift_identities, qualified, {"ios": "Tests/mustRun", "tvos": "Tests/mustRun"}), *void_cases):
             for platform, key in keys.items():
                 with self.subTest(inventory=inventory.__name__, platform=platform, key=key):
                     kind = "ui" if inventory is ui_identities else "swift"
@@ -253,6 +257,13 @@ class StaticPopulationTests(unittest.TestCase):
                         environment="hermetic")
                     self.assertEqual(verdict["status"], "failed")
                     self.assertEqual(verdict["missing_compiled"], [missing])
+        for inventory in (swift_identities, ui_identities):
+            for signature in ("() -> Unknown", "() -> Int", "() nonisolated", "() -> Void?", "`test invalid`()", ""):
+                declaration = "func " + (signature if signature.startswith("`") else "testUnsupported" + signature)
+                source = "class Tests: XCTestCase { func testPresent() {}\n" + declaration + " {} }"
+                with self.subTest(inventory=inventory.__name__, signature=signature), self.assertRaisesRegex(
+                        ContractError, r"Tests\.swift:\d+: unsupported XCTest test signature"):
+                    inventory({"Tests.swift": source}, "ios")
 
 
 if __name__ == "__main__":

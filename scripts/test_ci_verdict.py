@@ -149,7 +149,7 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.summary = valid_summary()
         self.identity = self.summary["identity"]
         self.jobs = [{"tier": "host", "job": "host-checks", "shard": None, "run_id": None,
-                      "attempt": 1, "workflow_paths": [None],
+                      "attempt": 1, "workflow_paths": [None], "status": "completed", "conclusion": "success",
                       "expected": expected_population(self.summary["population"]["declared"], self.identity["tree_sha"])}]
         self.expected = self.summary["population"]["declared"]
 
@@ -181,6 +181,22 @@ class AdmissionVerdictTests(unittest.TestCase):
                                 fork_originated=False, ci_changing=False, app_affected=True, allowed_events=("local",))
         self.assertEqual(missing["status"], "failed")
         self.assertTrue(any("missing required job/artifact" in error for error in missing["errors"]))
+        admitted_job = self.jobs[0]
+        for status, conclusion in (("completed", "failure"), ("completed", "cancelled"), ("completed", "timed_out"),
+                                   ("completed", "skipped"), ("in_progress", "success"), ("queued", None),
+                                   (None, None)):
+            with self.subTest(status=status, conclusion=conclusion):
+                self.jobs[0] = dict(admitted_job, status=status, conclusion=conclusion)
+                verdict = self.verdict()
+                self.assertEqual(verdict["status"], "failed")
+                self.assertTrue(any("required job did not complete successfully" in error for error in verdict["errors"]))
+                self.assertEqual(self.verdict(context="ui", app_affected=False)["status"], "failed")
+        for field in ("status", "conclusion"):
+            with self.subTest(missing_job_field=field):
+                self.jobs[0] = {key: value for key, value in admitted_job.items() if key != field}
+                self.assertEqual(self.verdict()["status"], "failed")
+        self.jobs[0] = admitted_job
+        self.assertEqual(self.verdict()["status"], "passed")
         for mutate in (lambda s: s["run"].update(attempt=2),
                        lambda s: s["identity"].update(tree_sha="c" * 40),
                        lambda s: s["source"].update(workflow_path=".github/workflows/renamed.yml")):
@@ -366,6 +382,7 @@ class AdmissionVerdictTests(unittest.TestCase):
                                        (["scripts/ui_test_inventory.py"], set(), True, True),
                                        (["scripts/ci-pins.json"], set(), True, True),
                                        ([".github/workflows/ci-gate.yml"], set(), True, True),
+                                       ([".github/actions/check/action.yml", ".github/actions/check/check.py"], set(), True, True),
                                        ([".swift-format"], set(), True, True),
                                        (["scripts/check_test_conventions.py", "scripts/test_conventions_allowlist.json"], set(), True, True),
                                        (["AGENTS.md", "CLAUDE.md", ".github/ISSUE_TEMPLATE/bug.md"], set(), True, False),
@@ -383,6 +400,7 @@ class AdmissionVerdictTests(unittest.TestCase):
         for workflow in (root / ".github/workflows").glob("*.yml"):
             source = workflow.read_text(encoding="utf-8")
             host_paths += re.findall(r"\bscripts/[A-Za-z0-9_./-]+", source)
+            host_paths += re.findall(r"\buses:\s*['\"]?\./([A-Za-z0-9_./-]+)", source)
             # Bare names in the source-free consumer toolset are CI inputs too.
             for copied in re.findall(r"for file in ([^;]+); do", source):
                 host_paths += ["scripts/" + name for name in copied.split()]

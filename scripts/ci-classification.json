@@ -3,6 +3,7 @@
   "app_unaffected": ["docs/**", "README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md"],
   "ci_trusted": [
     ".github/workflows/**",
+    ".github/actions/**",
     ".swift-format",
     "scripts/ci_*.py",
     "scripts/__init__.py",

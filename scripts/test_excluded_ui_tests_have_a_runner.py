@@ -292,7 +292,6 @@ class ParserTests(unittest.TestCase):
         source = """
         final class ShapeTests: XCTestCase {
             func `testBackticked`() {}
-            func testReturnsValue() -> Int { 1 }
             func testAsync() async throws {}
         }
         private extension ShapeTests {
@@ -302,6 +301,8 @@ class ParserTests(unittest.TestCase):
         _classes, methods, errors, _strict = self.parse(source)
         self.assertEqual(errors, [])
         self.assertEqual(set(methods["ShapeTests"]), {"testBackticked", "testAsync"})
+        _classes, _methods, errors, _strict = self.parse("class ShapeTests: XCTestCase { func testReturnsValue() -> Int { 1 } }")
+        self.assertTrue(any("unsupported XCTest test signature" in error for error in errors))
 
     def test_regex_literals_and_void_returns(self):
         source = """
@@ -310,11 +311,15 @@ class ParserTests(unittest.TestCase):
             func testAfterRegex() -> Void {}
             let close = #/\}/#
             func testUnitReturn() -> () {}
+            func testQualifiedReturn() -> Swift.Void {}
+            func testParenthesizedReturn() -> (Void) {}
+            func testParenthesizedQualifiedReturn() -> (Swift.Void) {}
         }
         """
         _classes, methods, errors, _strict = self.parse(source)
         self.assertEqual(errors, [])
-        self.assertEqual(set(methods["RegexTests"]), {"testAfterRegex", "testUnitReturn"})
+        self.assertEqual(set(methods["RegexTests"]), {"testAfterRegex", "testUnitReturn", "testQualifiedReturn",
+                                                   "testParenthesizedReturn", "testParenthesizedQualifiedReturn"})
 
     def test_objc_rename_in_an_extension_file_is_an_error(self):
         _classes, _methods, errors, _strict = parse_ui_tests(

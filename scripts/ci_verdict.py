@@ -225,6 +225,8 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
 
     required_jobs describe tier/job/shard, run_id/attempt, supported workflow_paths
     and independently derived expected records {tree_sha, identities} for each job.
+    The caller independently verifies each job's status/conclusion; artifacts
+    cannot establish that the uploading job ultimately completed successfully.
     Overall and per-job expected records must name admission_identity's tree_sha.
     For PRs admission_identity names the admitted merge/base/head/tree, not current main.
     base_population is a required PR record {base_sha, identities} from that base.
@@ -251,19 +253,22 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
         result["approval_based"] = approved and (fork_originated or ci_changing or candidate_selected)
         result["removed_by_pr"] = (removed_tests(base_population, expected, base_sha=admission["base_sha"])
                                    if admission["event"] == "pull_request" else [])
-        if context == "ui" and not app_affected:
-            require(not ci_changing, "CI-trusted changes cannot be not applicable")
-            result["status"] = "failed" if result["errors"] else "not-applicable"
-            return result
-        require(bool(required_jobs), "required job set is empty")
         jobs = {}
         for job in required_jobs:
-            fields(job, {"tier", "job", "shard", "run_id", "attempt", "workflow_paths", "expected"}, "required job")
+            fields(job, {"tier", "job", "shard", "run_id", "attempt", "workflow_paths", "expected",
+                         "status", "conclusion"}, "required job")
+            require(job["status"] == "completed" and job["conclusion"] == "success",
+                    "required job did not complete successfully: " + str(job_key(job)))
             integer(job["attempt"], 1, "required attempt")
             require(isinstance(job["workflow_paths"], list) and bool(job["workflow_paths"]), "supported workflow paths required")
             require(job_key(job) not in jobs, "duplicate required job")
             job_expected = admitted_population(job["expected"], admission["tree_sha"])
             jobs[job_key(job)] = dict(job, expected=job_expected)
+        if context == "ui" and not app_affected:
+            require(not ci_changing, "CI-trusted changes cannot be not applicable")
+            result["status"] = "failed" if result["errors"] else "not-applicable"
+            return result
+        require(bool(jobs), "required job set is empty")
         scheduled = [identity for job in jobs.values() for identity in job["expected"]]
         require(set(tokens(scheduled, functions=True)) == set(tokens(expected, functions=True)),
                 "required-job population differs from tested tree")
