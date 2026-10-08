@@ -534,8 +534,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--derived-data-path", type=Path, help="shard-scoped DerivedData outside evidence; retained for reuse")
     parser.add_argument("--cloned-source-packages-path", type=Path, help="shared package downloads outside DerivedData and evidence")
     parser.add_argument("--configuration", choices=("Debug", "Release"), help="explicit shard configuration; defaults to the existing suite setting")
-    parser.add_argument("--cold-timeout-seconds", type=parse_non_negative_int, default=XCODEBUILD_TIMEOUT_SECONDS)
-    parser.add_argument("--warm-timeout-seconds", type=parse_non_negative_int, default=XCODEBUILD_TIMEOUT_SECONDS)
+    parser.add_argument("--cold-timeout-seconds", type=parse_non_negative_int, help="explicit warm-up budget (default: 300 seconds)")
+    parser.add_argument("--warm-timeout-seconds", type=parse_non_negative_int, help="explicit reuse budget (default: 300 seconds)")
     parser.add_argument(
         "--min-free-gib",
         type=parse_non_negative_int,
@@ -544,6 +544,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help=f"minimum free GiB required before xcodebuild (default: {MIN_DATA_GIB})",
     )
     arguments = parser.parse_args(argv)
+    if not (arguments.warm_up_only or arguments.test_without_building) and (arguments.cold_timeout_seconds is not None or arguments.warm_timeout_seconds is not None):
+        parser.error("cold/warm timeout options require explicit warm-up/reuse")
+    arguments.cold_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.cold_timeout_seconds is None else arguments.cold_timeout_seconds
+    arguments.warm_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.warm_timeout_seconds is None else arguments.warm_timeout_seconds
     if not arguments.cold_timeout_seconds or not arguments.warm_timeout_seconds:
         parser.error("cold and warm timeouts must be positive")
     if (arguments.warm_up_only or arguments.test_without_building) and not arguments.derived_data_path:
@@ -558,7 +562,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         if arguments.suite in (*P2_CASES, *LIFECYCLE_SUITES, *IMAGE_FAILURE_RECOVERY_SUITES):
             resolve_suite_selector(arguments.platform, arguments.suite)
     except CommandError as error:
-        print(str(error), file=stderr)
+        print(f"CommandError: {error}", file=stderr)
         return error.code
 
     if arguments.warm_up_only:
@@ -581,7 +585,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             write_sensitive_scan(arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY])
             return 0
         except (CommandError, ValueError, OSError, subprocess.SubprocessError) as error:
-            print(str(error), file=stderr)
+            print(f"CommandError: {error}", file=stderr)
             return getattr(error, "code", 2)
 
     config_path = REPO_ROOT / TASK_XCCONFIG
@@ -950,7 +954,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         print(json.dumps(summary_payload, sort_keys=True), file=stdout)
         did_complete_checks = True
     except (CommandError, OfflineCommandError, ValueError) as error:
-        print(str(error), file=stderr)
+        print(f"{type(error).__name__}: {error}", file=stderr)
         primary_exit_code = primary_exit_code or getattr(error, "code", 2)
         if owns_evidence_directory and case_manifest is not None:
             case_manifest["result"] = "FAILED"

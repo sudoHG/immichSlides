@@ -248,5 +248,93 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 
+class StrictCITracerTests(unittest.TestCase):
+    def test_tracer_rejects_incomplete_or_failed_checks(self):
+        from ci_summary import test_identity
+        from run_strict_ci_tracer import evaluate_tracer
+        from strict_e2e_p2_contract import RAW_VERDICT
+        identity = test_identity("strict", "smoke", configuration="Debug", device="iphone", fixture="a", scenario="normal", suite="smoke")
+        p2 = test_identity("strict", "p2-rotation", configuration="Debug", device="iphone", fixture="a", scenario="normal", suite="p2-rotation")
+        good = {"identity": identity, "duration_seconds": 1, "exit_code": 0, "log_present": True,
+                "build_operations": 0, "products_unchanged": True,
+                "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0, "result": "Passed"}}
+        cases = [
+            ("complete", [identity], [good], False, "passed", ["passed"]),
+            ("empty manifest", [], [], False, "failed", []),
+            ("p2", [p2], [{**good, "identity": p2, "p2_verdict": RAW_VERDICT}], False, "unverified", ["needs-human-review"]),
+            ("build in log", [identity], [{**good, "build_operations": 1}], False, "failed", ["failed"]),
+            ("Products changed", [identity], [{**good, "products_unchanged": False}], False, "failed", ["failed"]),
+            ("log missing", [identity], [{**good, "log_present": False}], False, "failed", ["failed"]),
+            ("P2 verdict mismatch", [p2], [{**good, "identity": p2, "p2_verdict": "passed"}], False, "failed", ["failed"]),
+            ("official results missing", [identity], [{**good, "official_summary": None}], False, "failed", ["failed"]),
+            ("incomplete results", [identity, p2], [good], False, "failed", ["passed", "not-run"]),
+            ("interruption", [identity, p2], [good], True, "failed", ["passed", "not-run"]),
+            ("interruption after checks", [identity], [good], True, "failed", ["passed"]),
+        ]
+        for name, declared, results, interrupted, status, outcomes in cases:
+            with self.subTest(name=name):
+                observed, actual = evaluate_tracer(declared, results, interrupted=interrupted)
+                self.assertEqual(actual, status)
+                self.assertEqual([entry["outcome"] for entry in observed], outcomes)
+
+    def test_tracer_interruptions_record_failed_status_and_unrun_cases(self):
+        import run_strict_ci_tracer as tracer
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        for error in (KeyboardInterrupt(), KeyError("unexpected state")):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as raw, mock.patch(
+                "run_strict_ci_tracer.run_runner", side_effect=error
+            ), mock.patch("run_strict_ci_tracer.workspace_preflight"), mock.patch(
+                "run_strict_ci_tracer.run_identity", return_value=identity
+            ), mock.patch("run_strict_ci_tracer.source_metadata", return_value=(None, False)), mock.patch(
+                "run_strict_ci_tracer.toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}
+            ):
+                output = Path(raw) / "trace"
+                self.assertEqual(tracer.main(["--platform", "ios", "--destination", "unused", "--output-dir", str(output)]), 1)
+                summary = json.loads((output / "records/summary.json").read_text())
+                self.assertEqual(summary["status"], "failed")
+                self.assertEqual(summary["infrastructure"][0]["code"], "interrupted")
+                self.assertEqual(len(summary["population"]["observed"]), 3)
+                self.assertTrue(all(entry["outcome"] == "not-run" for entry in summary["population"]["observed"]))
+                self.assertTrue((output / "records/trace.json").is_file())
+
+    def test_runner_timeout_or_cancellation_stops_its_descendants(self):
+        import contextlib
+        import run_strict_ci_tracer as tracer
+        from run_host_checks import group_has_live_members
+        import time
+        popen = subprocess.Popen
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                marker = root / "group"
+                code = "import os,pathlib,subprocess,sys,time; subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); print('CommandError: fixture failure',flush=True); pathlib.Path(sys.argv[1]).write_text(str(os.getpgrp())); time.sleep(60)"
+                command = [sys.executable, "-c", code, str(marker)]
+
+                def start(*args, **kwargs):
+                    process = popen(*args, **kwargs)
+                    wait = process.wait
+
+                    def interrupt_after_start(*args, **kwargs):
+                        deadline = time.monotonic() + 5
+                        while not marker.exists() and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(marker.exists(), "runner must start its child before cancellation")
+                        process.wait = wait
+                        raise KeyboardInterrupt()
+
+                    if interrupted and args[0] == command:
+                        process.wait = interrupt_after_start
+                    return process
+
+                stderr = io.StringIO()
+                with mock.patch("run_strict_ci_tracer.subprocess.Popen", side_effect=start), contextlib.redirect_stderr(stderr):
+                    with self.assertRaises(KeyboardInterrupt if interrupted else subprocess.TimeoutExpired):
+                        tracer.run_runner(command, root, root / "runner.log", timeout_seconds=2)
+                self.assertTrue(marker.exists())
+                self.assertFalse(group_has_live_members(int(marker.read_text())))
+                self.assertIn("CommandError: fixture failure", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

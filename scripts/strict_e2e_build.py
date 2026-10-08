@@ -34,6 +34,8 @@ def source_fingerprint(root):
     digest = hashlib.sha256()
     for name in sorted(set(names) - {b""}):
         path = root / os.fsdecode(name)
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
         digest.update(name + b"\0")
         if path.is_symlink():
             digest.update(os.fsencode(os.readlink(path)))

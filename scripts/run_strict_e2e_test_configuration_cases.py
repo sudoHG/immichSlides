@@ -84,6 +84,31 @@ from run_strict_e2e_test_fixtures import (
 )
 
 class StrictE2ERunnerTestsCasesConfiguration:
+    def test_inline_mode_rejects_explicit_warm_timeout_options(self):
+        import contextlib
+        for option in ("--cold-timeout-seconds", "--warm-timeout-seconds"):
+            with self.subTest(option=option), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                runner_main(["--platform", "ios", "--destination", "unused", "--evidence-dir", "unused", option, "300"])
+            self.assertEqual(error.exception.code, 2)
+
+    def test_source_fingerprint_ignores_python_caches_but_tracks_source_changes(self):
+        from strict_e2e_build import source_fingerprint
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "__pycache__").mkdir()
+            source = root / "source.swift"
+            cache = root / "__pycache__/source.cpython.pyc"
+            loose_cache = root / "loose.pyc"
+            for path in (source, cache, loose_cache):
+                path.write_text("initial")
+            with mock.patch("strict_e2e_build.subprocess.check_output", return_value=b"source.swift\0__pycache__/source.cpython.pyc\0loose.pyc\0"):
+                initial = source_fingerprint(root)
+                cache.write_text("generated cache changed")
+                loose_cache.unlink()
+                self.assertEqual(source_fingerprint(root), initial)
+                source.write_text("source changed")
+                self.assertNotEqual(source_fingerprint(root), initial)
+
     def test_private_result_bundles_use_the_system_temporary_directory(self) -> None:
         self.assertEqual(
             PRIVATE_RESULT_BUNDLE_ROOT,

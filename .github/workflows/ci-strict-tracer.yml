@@ -2,8 +2,13 @@ name: ci-strict-tracer
 
 on:
   pull_request:
-  push:
-    branches: [main]
+    paths:
+      - .github/workflows/ci-strict-tracer.yml
+      - scripts/run_strict*.py
+      - scripts/strict_e2e_*.py
+      - scripts/test_run_strict_e2e.py
+      - scripts/strict-tracer.json
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,7 +21,7 @@ jobs:
   tracer:
     name: strict-tracer-${{ matrix.platform }}
     runs-on: xcode-27
-    timeout-minutes: 60
+    timeout-minutes: 100
     permissions:
       contents: read
     strategy:
@@ -61,12 +66,12 @@ jobs:
             ${{ runner.temp }}/strict-tracer/records
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
           if-no-files-found: error
-      - name: Publish scanned public fixture P2 material
+      - name: Publish scanned P2 recording timing evidence
         if: success() && matrix.platform == 'ios'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: strict-p2-review-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/strict-tracer/review
+          name: strict-p2-trace-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/strict-tracer/p2-trace
           retention-days: 7
           if-no-files-found: error
       - name: Display records and clean task outputs
@@ -74,6 +79,10 @@ jobs:
         run: |
           if test -f "$RUNNER_TEMP/strict-tracer/records/summary.md"; then
             cat "$RUNNER_TEMP/strict-tracer/records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f "$RUNNER_TEMP/strict-tracer/runner-group-cleanup-failed"; then
+            echo 'Runner descendants could not be stopped; retaining their inputs until runner teardown.' >&2
+            exit 1
           fi
           if test -n "$STRICT_SIMULATOR"; then
             xcrun simctl shutdown "$STRICT_SIMULATOR" || true
