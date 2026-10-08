@@ -8,7 +8,6 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR))
 
 from scan_chinese_strings import bucket_for_hit, extract_string_hits, iter_swift_files  # noqa: E402
 

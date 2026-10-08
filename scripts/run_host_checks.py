@@ -139,9 +139,10 @@ def toolchain():
 
 
 def clean_environment():
-    # Host checks never inherit server/test-runner configuration. No private file is read.
+    # Host checks never inherit server/test-runner or external calibration inputs.
     return {key: value for key, value in os.environ.items()
-            if not key.startswith(("IMMICH", "TEST_RUNNER_IMMICH", "SIMCTL_CHILD_IMMICH"))}
+            if not key.startswith(("IMMICH", "TEST_RUNNER_IMMICH", "SIMCTL_CHILD_IMMICH"))
+            and key != "STRICT_E2E_REVIEWED_SCREENSHOTS"}
 
 
 def group_has_live_members(group_id):
@@ -284,6 +285,8 @@ def main():
         is_ci = identity["event"] != "local"
         workflow_path, fork = source_metadata(identity, os.environ, args.workflow_path)
         print(f"Python interpreter: {sys.executable} ({platform.python_version()})", flush=True)
+        policy_path = REPO_ROOT / "scripts/ci-test-policy.json"
+        declared = [test_identity("host", name) for name, _ in HOST_CHECKS]
         summary = {"schema_version": 1, "identity": identity,
                    "source": {"repository": identity["repository"], "workflow_path": workflow_path,
                               "event": identity["event"], "fork_originated": fork, "ci_changing": None},
@@ -296,18 +299,36 @@ def main():
                        "policies": {"workflow-policy": hashlib.sha256(
                            (REPO_ROOT / "scripts/check_workflow_policy.py").read_bytes()).hexdigest()}},
                    "toolchain": toolchain(),
-                   "population": {"declared": [test_identity("host", name) for name, _ in HOST_CHECKS],
+                   "population": {"declared": declared,
                                   "compiled": [test_identity("host", name) for name, _ in HOST_CHECKS],
                                   "observed": [], "deselected": [], "removed_by_pr": []},
                    "infrastructure": [], "status": "unverified"}
         # An interrupted producer leaves a valid, explicitly unverified record.
         write_summary(summary, output)
         initial = copy.deepcopy(summary)
+        # A broken candidate inventory or policy must not suppress the host checks
+        # or prevent their results from replacing the interruption placeholder.
+        policy = None
+        try:
+            # Archive consumers import metadata helpers without the host libraries.
+            from ci_verdict import evaluate_population, parse_policy
+
+            policy_bytes = policy_path.read_bytes()
+            summary["hashes"]["policies"]["test-policy"] = hashlib.sha256(policy_bytes).hexdigest()
+            policy = parse_policy(policy_bytes.decode("utf-8"))
+        except (ContractError, ImportError, OSError, ValueError, TypeError) as error:
+            summary["infrastructure"].append({"code": "population-invalid", "message": f"Test policy: {error}"})
+        try:
+            from ci_population import python_identities, python_sources
+
+            declared.extend(python_identities(python_sources(REPO_ROOT / "scripts")))
+        except (ContractError, ImportError, OSError, ValueError, TypeError) as error:
+            summary["infrastructure"].append({"code": "population-invalid", "message": f"Static inventory: {error}"})
         steps = [(name, command + (["--output", str(output / "python-results.json")] if name == "python tests" else []))
                  for name, command in HOST_CHECKS]
         records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds)
         summary["population"]["observed"] = list(records)
-        summary["infrastructure"] = infrastructure
+        summary["infrastructure"].extend(infrastructure)
         try:
             python = json.loads((output / "python-results.json").read_text(encoding="utf-8"))
             summary["population"]["compiled"].extend(python["compiled"])
@@ -315,18 +336,22 @@ def main():
         except (OSError, ValueError, KeyError, TypeError):
             summary["infrastructure"].append({"code": "missing-python-results", "message": "Python result identities are missing or malformed"})
         command_passed = not summary["infrastructure"] and all(entry["outcome"] == "passed" for entry in records)
-        outcomes = [entry["outcome"] for entry in summary["population"]["observed"]]
-        if not command_passed:
-            summary["status"] = "failed"
-        elif all(outcome == "passed" for outcome in outcomes):
-            summary["status"] = "passed"
-        else:
-            summary["status"] = "unverified"
-            summary["infrastructure"].append({"code": "skip-policy-pending", "message":
-                "Coverage includes skips or unexecuted tests; expected-skip policy is introduced separately"})
+        # Coverage is evaluated separately from command success. Candidate policy
+        # consumption here is informational; a trusted gate selects its own policy.
+        summary["status"] = "passed" if command_passed else "failed"
+        if command_passed:
+            coverage = evaluate_population(summary, declared, policy, environment="hermetic")
+            if policy["approval_state"] == "proposed" and evaluate_population(
+                    summary, declared, dict(policy, approval_state="approved"), environment="hermetic")["status"] == "passed" and coverage["errors"]:
+                summary["status"] = "unverified"
+                summary["infrastructure"].append({"code": "policy-proposed", "message":
+                    "Only proposed exceptions explain coverage; maintainer approval is still required"})
+            else:
+                summary["status"] = coverage["status"]
+                summary["infrastructure"].extend({"code": "coverage-failed", "message": message} for message in coverage["errors"])
         write_summary(summary, output)
         print_result(summary, output, args.no_summary_path)
-        return 0 if command_passed else 1
+        return 0 if command_passed and summary["status"] != "failed" else 1
     except (subprocess.SubprocessError, ContractError, OSError, ValueError, KeyError, TypeError) as error:
         message = f"Git metadata command failed ({type(error).__name__})" if isinstance(error, subprocess.SubprocessError) else str(error)
         print(f"FAIL: host-check record could not be produced: {message}", file=sys.stderr)

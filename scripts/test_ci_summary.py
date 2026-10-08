@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import ci_summary
+import ci_verdict
 import run_host_checks
 import run_python_tests
 
@@ -46,6 +47,14 @@ class SummaryContractTests(unittest.TestCase):
             summary["population"]["declared"][0], "failed", 0.2, message="format exited 1", exit_code=1)
         summary["status"] = "failed"
         self.assertIn("format exited 1", ci_summary.render_markdown(ci_summary.parse_summary(summary)))
+        for code, category in (("policy-proposed", "Policy"), ("population-invalid", "Population"),
+                               ("coverage-failed", "Coverage"), ("step-timeout", "Infrastructure")):
+            with self.subTest(code=code):
+                summary["infrastructure"] = [{"code": code, "message": "diagnostic detail"}]
+                markdown = ci_summary.render_markdown(summary)
+                self.assertIn(f"{category}: {code}: diagnostic detail", markdown)
+                if category != "Infrastructure":
+                    self.assertNotIn("Infrastructure:", markdown)
 
     def test_malformed_or_unknown_contracts_are_rejected(self):
         changes = [
@@ -445,7 +454,7 @@ class HostResultTests(unittest.TestCase):
                 self.assertIn(name, terminal.getvalue())
             self.assertIn(identity["key"], terminal.getvalue())
 
-    def test_host_class_skip_preserves_cli_success_and_never_labels_summary_passed(self):
+    def test_host_coverage_failures_are_distinct_from_infrastructure(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"
             identity = ci_summary.test_identity("python", "calibration.Sample.test_photo")
@@ -459,14 +468,84 @@ class HostResultTests(unittest.TestCase):
             with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
                     patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]) as identity_call, \
                     patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                    patch("ci_population.python_identities", return_value=[identity]), \
                     patch.object(run_host_checks, "run_steps", side_effect=steps), \
                     contextlib.redirect_stdout(io.StringIO()):
                 code = run_host_checks.main()
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 1)
             identity_call.assert_called_once_with(os.environ, ci=False)
             summary = ci_summary.parse_summary((output / "summary.json").read_text())
-            self.assertEqual(summary["status"], "unverified")
+            self.assertEqual(summary["status"], "failed")
             self.assertEqual(summary["population"]["observed"][-1]["attempts"][0]["reason"], "external screenshots unavailable")
+            self.assertEqual({item["code"] for item in summary["infrastructure"]}, {"coverage-failed"})
+            self.assertTrue(all(identity["key"] in item["message"] for item in summary["infrastructure"]))
+            markdown = ci_summary.render_markdown(summary)
+            self.assertIn("Coverage: coverage-failed: skipped: " + identity["key"], markdown)
+            self.assertNotIn("Infrastructure:", markdown)
+
+    def test_host_policy_distinguishes_proposed_and_approved_expected_skips(self):
+        identity = ci_summary.test_identity("python", "calibration.Sample.test_photo")
+        parse_policy = ci_verdict.parse_policy
+        for state, outcome in (("proposed", "unverified"), ("approved", "passed")):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                policy = {"schema_version": 1, "approval_state": state, "deselections": [],
+                          "expected_skips": [{"kind": "python", "key_pattern": identity["key"], "dimensions": {},
+                                              "tier": "host", "environment": "hermetic", "reason": "no fixture"}]}
+
+                def steps(*args, **kwargs):
+                    (output / "python-results.json").write_text(json.dumps({"compiled": [identity], "observed": [
+                        ci_summary.observation(identity, "skipped", 0, reason="no fixture")]}))
+                    return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                            for name, _ in run_host_checks.HOST_CHECKS], []
+
+                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                        patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                        patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                        patch("ci_population.python_identities", return_value=[identity]), \
+                        patch("ci_verdict.parse_policy", side_effect=lambda raw: policy if isinstance(raw, str) else parse_policy(raw)), \
+                        patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    code = run_host_checks.main()
+                self.assertEqual(code, 0)
+                summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                self.assertEqual(summary["status"], outcome)
+                self.assertEqual(summary["population"]["declared"][-1], identity)
+                self.assertIn("test-policy", summary["hashes"]["policies"])
+
+    def test_invalid_population_or_policy_still_writes_placeholder_and_runs_all_checks(self):
+        for invalid in ("python_identities", "parse_policy"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+
+                def steps(commands, *args, **kwargs):
+                    placeholder = ci_summary.parse_summary((output / "summary.json").read_text())
+                    self.assertEqual(placeholder["status"], "unverified")
+                    self.assertEqual(placeholder["population"]["observed"], [])
+                    self.assertEqual([name for name, _ in commands], [name for name, _ in run_host_checks.HOST_CHECKS])
+                    (output / "python-results.json").write_text(json.dumps({"compiled": [], "observed": []}))
+                    return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                            for name, _ in commands], []
+
+                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                        patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                        patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                        patch(("ci_population." if invalid == "python_identities" else "ci_verdict.") + invalid,
+                              side_effect=ci_summary.ContractError("unsupported test base")), \
+                        patch.object(run_host_checks, "run_steps", side_effect=steps) as run, \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    code = run_host_checks.main()
+                self.assertEqual(code, 1)
+                run.assert_called_once()
+                summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                self.assertEqual(summary["status"], "failed")
+                self.assertEqual(len(summary["population"]["observed"]), len(run_host_checks.HOST_CHECKS))
+                self.assertIn("population-invalid", [item["code"] for item in summary["infrastructure"]])
+
+    def test_host_environment_excludes_external_screenshot_calibration(self):
+        with patch.dict(os.environ, {"STRICT_E2E_REVIEWED_SCREENSHOTS": "/external/reviewed", "PATH": "/bin"}, clear=True):
+            self.assertNotIn("STRICT_E2E_REVIEWED_SCREENSHOTS", run_host_checks.clean_environment())
+            self.assertEqual(run_host_checks.clean_environment()["PATH"], "/bin")
 
     def test_host_failures_and_timeouts_name_the_step_and_continue(self):
         with tempfile.TemporaryDirectory() as directory:

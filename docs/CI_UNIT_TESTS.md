@@ -67,15 +67,15 @@ Enumeration and execution use `xcodebuild test-without-building -xctestrun ...` 
 No unit identity is deselected. Enumeration errors fail even on process exit zero.
 Empty/duplicate identities, missing/extra execution, unparseable results, disagreeing
 official counts and failing parameter runs fail the consumer. Compilation is compared
-with execution; independent source declarations belong to the [static population policy](https://github.com/sudoHG/immichSlides/pull/130).
-Until integrated, `declared` remains empty.
+with execution; independent source declarations use the [population library](CI_POPULATION.md).
+Until unit integration, `declared` remains empty.
 
 The official overall `result` is classified with the offline runner's rules.
 `Failed` fails even when function counts look successful; unknown overall results
 cannot pass. Otherwise successful results with skips remain `unverified`, using the
 shared `skip-policy-pending` code until policy approval. No expected skip is approved
 or applied by this consumer. Exception proposals belong in the PR body; the policy's
-proposed section is populated separately after its owning change merges.
+proposed section is populated in a separate follow-up.
 
 The [summary contract](CI_SUMMARY.md) keeps successful Swift rows in JSON and displays
 failures/skips in Markdown. Parameter rows retain official arguments and outcomes.
