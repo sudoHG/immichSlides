@@ -2,7 +2,7 @@
 import copy
 import io
 import json
-import json
+import base64
 import plistlib
 import platform
 import subprocess
@@ -121,9 +121,17 @@ class BuildArchiveTests(unittest.TestCase):
         self.assertEqual(evaluate_population(summary, declared, empty_policy, environment="hermetic")["status"], "passed")
 
     def test_artifact_selection_requires_id_run_and_producer_attempt(self):
+        import ci_live_tests as live
         metadata = {"id": 7, "name": archive.artifact_name("ios", "123", 1), "expired": False,
                     "workflow_run": {"id": 123, "head_sha": self.identity["head_sha"]}}
         archive.validate_artifact(metadata, self.identity, "123", 1, "ios", 7)
+        second = dict(metadata, id=8, name=archive.artifact_name('ios', '123', 2))
+        future = dict(metadata, id=9, name=archive.artifact_name('ios', '123', 4))
+        self.assertEqual(live.latest_artifact([metadata, second, future], 'ios', '123', 3), (8, 2))
+        self.assertEqual(live.latest_artifact([metadata, dict(second, expired=True)], 'ios', '123', 3), (7, 1))
+        for entries in ([], [future], [metadata, metadata], [dict(metadata, expired=True)]):
+            with self.subTest(entries=entries), self.assertRaises(ContractError):
+                live.latest_artifact(entries, 'ios', '123', 3)
         for field, value in (("id", 8), ("name", archive.artifact_name("ios", "123", 2)), ("expired", True)):
             with self.subTest(field=field):
                 candidate = dict(metadata, **{field: value})
@@ -631,6 +639,10 @@ class LiveBoundaryTests(unittest.TestCase):
         from ci_summary import test_identity
         self.assertEqual(archive.producer_workflow({"event": "schedule"}), live.WORKFLOW)
         self.assertEqual(archive.producer_workflow({"event": "pull_request"}), archive.WORKFLOW)
+        with patch.dict('os.environ', {'GITHUB_WORKFLOW_REF': 'owner/repo/' + live.WORKFLOW + '@refs/pull/2/merge'}):
+            self.assertEqual(archive.producer_workflow({'event': 'pull_request', 'repository': 'owner/repo'}), live.WORKFLOW)
+        with patch.dict('os.environ', {'GITHUB_WORKFLOW_REF': 'other/repo/' + live.WORKFLOW + '@refs/pull/2/merge'}):
+            self.assertEqual(archive.producer_workflow({'event': 'pull_request', 'repository': 'owner/repo'}), archive.WORKFLOW)
         declared = [test_identity("swift", suite + "/works", platform="ios")
                     for suite in (*live.SUITES, "PerformanceLiveIntegrationTests")]
         self.assertEqual(len(live.live_declarations(declared)), len(live.SUITES))
@@ -665,6 +677,12 @@ class LiveBoundaryTests(unittest.TestCase):
         needles = live.secret_forms(*values)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "capture"
+            for value in values:
+                for offset in range(3):
+                    for encode in (base64.b64encode, base64.urlsafe_b64encode):
+                        with self.subTest(offset=offset, alphabet=encode.__name__), self.assertRaises(ContractError):
+                            path.write_bytes(encode(b'x' * offset + value.encode() + b'tail'))
+                            live.scan_file(path, needles)
             path.write_bytes(b"safe compact record")
             live.scan_file(path, needles)
             for needle in needles:
@@ -672,9 +690,48 @@ class LiveBoundaryTests(unittest.TestCase):
                     path.write_bytes(b"x" * (1024 * 1024 - 2) + needle)
                     live.scan_file(path, needles)
 
+    def test_canary_audit_requires_nonempty_logs_and_matching_run_attempt_results(self):
+        import ci_live_tests as live
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in (root / 'missing', root):
+                with self.subTest(path=path), self.assertRaises(ContractError):
+                    live.audit_canary(path, '123', 2)
+            logs = root / 'logs'
+            logs.mkdir()
+            (logs / 'job.txt').write_text('complete public job log')
+            results = root / 'artifacts' / 'live-canary-ios-123-2'
+            results.mkdir(parents=True)
+            verdict = {'schema_version': 1, 'status': 'passed', 'run_id': '123', 'attempt': 2,
+                       'platform': 'ios', 'execution_failed': True}
+            (results / 'canary.json').write_text(json.dumps(verdict))
+            with self.assertRaises(ContractError):
+                live.audit_canary(root, '123', 2)
+            identity = {'schema_version': 1, 'event': 'pull_request', 'repository': 'owner/repo',
+                        'pull_request': 2, 'merge_sha': 'a' * 40, 'base_sha': 'b' * 40,
+                        'head_sha': 'c' * 40, 'tree_sha': 'd' * 40}
+            summary = archive.record({'identity': identity, 'source': {
+                'repository': 'owner/repo', 'event': 'pull_request', 'workflow_path': live.WORKFLOW,
+                'fork_originated': False, 'ci_changing': None}, 'run_id': '123', 'attempt': 2}, 'ios', 'live-canary')
+            from ci_summary import observation, test_identity
+            test = test_identity('swift', 'ExampleLiveTests/works', platform='ios')
+            summary['run']['tier'] = 'live-unit'
+            summary['population'].update(declared=[test], compiled=[test], observed=[observation(test, 'failed', 1, exit_code=65)])
+            summary.update(status='failed')
+            (results / 'live-summary.json').write_text(json.dumps(summary))
+            (results / 'live-summary.md').write_text('Failed live pipeline summary')
+            live.audit_canary(root, '123', 2)
+            for mutation in ('attempt', 'empty-log', 'leak'):
+                with self.subTest(mutation=mutation), self.assertRaises(ContractError):
+                    if mutation == 'attempt':
+                        live.audit_canary(root, '123', 3)
+                    else:
+                        (logs / 'job.txt').write_text('' if mutation == 'empty-log' else live.canary_values('123', 2)[1])
+                        live.audit_canary(root, '123', 2)
+
     def test_live_summary_requires_complete_passing_function_and_parameter_outcomes(self):
         import ci_live_tests as live
-        from ci_summary import observation, test_identity
+        from ci_summary import observation, test_identity, validate_observation
         from run_offline_unit_tests import TestResultsSummary
         declared = [test_identity("swift", "ExampleLiveTests/works", platform="ios")]
         row = observation(test_identity("swift", "immichSlidesTests/ExampleLiveTests/works()", platform="ios"), "passed", 1)
@@ -683,6 +740,10 @@ class LiveBoundaryTests(unittest.TestCase):
         parameter = copy.deepcopy(row)
         parameter["identity"]["dimensions"]["parameter"] = "private URL-bearing arguments"
         self.assertNotIn("private", json.dumps(live.public_outcomes(declared, {"ExampleLiveTests/works()"}, [row, parameter], counts, 0)))
+        outcomes = live.public_outcomes(declared, {'ExampleLiveTests/works()'}, [row, parameter], counts, 0)
+        for entry in outcomes:
+            validate_observation(entry)
+        self.assertEqual(outcomes[1]['identity']['dimensions']['parameter'], 'case-0')
         for rows, compiled, code, result in (([], {"ExampleLiveTests/works()"}, 0, counts),
                                             ([row], set(), 0, counts), ([row], {"ExampleLiveTests/works()"}, 65, counts),
                                             ([dict(row, outcome="skipped", reason="missing server")], {"ExampleLiveTests/works()"}, 0, counts),

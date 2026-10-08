@@ -15,6 +15,11 @@ on:
         required: false
         default: false
         type: boolean
+      strict_only:
+        description: Diagnose strict shards without live jobs or test-server traffic
+        required: false
+        default: false
+        type: boolean
       probe_environment_refusal:
         description: Credential-free negative probe of the main-only live environment
         required: false
@@ -39,7 +44,7 @@ concurrency:
 
 jobs:
   plan:
-    if: github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main'
+    if: ${{ !inputs.probe_environment_refusal }}
     runs-on: xcode-27
     timeout-minutes: 15
     permissions:
@@ -76,7 +81,7 @@ jobs:
           if-no-files-found: error
 
   strict:
-    if: github.event_name != 'pull_request' && !inputs.live_only && (github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main')
+    if: github.event_name != 'pull_request' && !inputs.live_only && !inputs.probe_environment_refusal
     needs: plan
     name: nightly-strict-${{ matrix.id }}
     runs-on: xcode-27
@@ -160,7 +165,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/nightly-strict"
 
   aggregate:
-    if: always() && github.event_name != 'pull_request' && !inputs.live_only && (github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main')
+    if: always() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.probe_environment_refusal
     needs: [plan, strict]
     name: nightly-aggregate
     runs-on: xcode-27
@@ -216,7 +221,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/nightly-plan" "$RUNNER_TEMP/nightly-records" "$RUNNER_TEMP/nightly-aggregate"
 
   live-admission:
-    if: github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main'
+    if: ${{ !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal }}
     runs-on: xcode-27
     timeout-minutes: 5
     permissions:
@@ -233,37 +238,76 @@ jobs:
         run: /usr/bin/python3 -B scripts/ci_live_tests.py admit
 
   live-canary:
-    if: github.event_name != 'workflow_dispatch' || !inputs.probe_environment_refusal || github.ref == 'refs/heads/main'
+    needs: live-build
     runs-on: xcode-27
-    timeout-minutes: 15
+    timeout-minutes: 40
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          path: live-consumer
           persist-credentials: false
-      - name: Prepare pinned Python for credential-free canary
-        run: /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/live-python"
-      - name: Exercise private failure and raw and transformed canary scans
-        run: '"$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_live_tests.py canary --output-dir "$RUNNER_TEMP/live-canary"'
-      - name: Exercise fork-style refusal without credentials
+      - name: Select pinned Xcode and Python without credentials
+        working-directory: live-consumer
         run: |
-          "$RUNNER_TEMP/live-python/bin/python3" -B - <<'PY'
-          import os, sys
-          sys.path.insert(0, 'scripts')
-          from ci_live_tests import admission
-          event = {'pull_request': {'head': {'repo': {'full_name': 'canary-fork/immichSlides'}}}}
-          outcome = admission(dict(os.environ, GITHUB_EVENT_NAME='pull_request'), event, None, False)
-          assert outcome == 'fork-skipped'
-          print('Fork-style pull request: live skipped; no protected environment or secret bindings.')
-          PY
-      - name: Publish only canary verdict
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/live-python" --verify-toolchain
+      - name: Choose the latest unexpired iOS producer attempt
+        id: archive
+        working-directory: live-consumer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate --slurp > "$RUNNER_TEMP/live-artifacts.json"
+          "$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_live_tests.py choose-artifact \
+            --platform ios --metadata "$RUNNER_TEMP/live-artifacts.json"
+      - name: Validate archive provenance and stage the real live runner
+        working-directory: live-consumer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_ARTIFACT_ID: ${{ steps.archive.outputs.artifact_id }}
+          LIVE_PRODUCER_ATTEMPT: ${{ steps.archive.outputs.producer_attempt }}
+        run: |
+          "$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_build_archive.py select --platform ios \
+            --artifact-id "$LIVE_ARTIFACT_ID" --producer-attempt "$LIVE_PRODUCER_ATTEMPT" \
+            --selection-path "$RUNNER_TEMP/live-selection.json" --output-dir "$RUNNER_TEMP/live-selection-records"
+          "$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_unit_tests.py stage \
+            --path "$RUNNER_TEMP/live-tools" --selection-path "$RUNNER_TEMP/live-selection.json"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ steps.archive.outputs.artifact_id }}
+          path: ${{ runner.temp }}/live-download
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+      - name: Remove source before fake test-time configuration
+        run: rm -rf live-consumer
+      - name: Register and inject fake canary configuration
+        run: '"$RUNNER_TEMP/live-python/bin/python3" -B "$RUNNER_TEMP/live-tools/scripts/ci_live_tests.py" prepare-canary'
+      - name: Exercise the real live suites and private failure pipeline
+        id: live
+        run: |
+          "$RUNNER_TEMP/live-python/bin/python3" -B "$RUNNER_TEMP/live-tools/scripts/ci_live_tests.py" run --canary \
+            --selection-path "$RUNNER_TEMP/live-selection.json" --archive-dir "$RUNNER_TEMP/live-download" \
+            --relocated-path "$RUNNER_TEMP/live-relocated" --output-dir "$RUNNER_TEMP/live-summary" \
+            --private-dir "$RUNNER_TEMP/live-private" --min-free-gib 30
+      - name: Publish the normal scanned summaries and canary verdict
+        if: always() && steps.live.outputs.records_safe == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: live-canary-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/live-canary/canary.json
+          name: live-canary-ios-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/live-summary
           retention-days: 7
           if-no-files-found: error
+      - name: Display the normal scanned step summary
+        if: always() && steps.live.outputs.records_safe == 'true'
+        run: cat "$RUNNER_TEMP/live-summary/live-summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Dispose task-owned canary material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/live-private" "$RUNNER_TEMP/live-relocated" "$RUNNER_TEMP/live-download" "$RUNNER_TEMP/live-tools"
 
   live-environment-refusal:
     if: github.event_name == 'workflow_dispatch' && inputs.probe_environment_refusal && github.ref != 'refs/heads/main'
@@ -275,7 +319,7 @@ jobs:
       - run: /usr/bin/false
 
   live-build:
-    if: needs.live-admission.outputs.admitted == 'true'
+    if: github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true'
     needs: live-admission
     runs-on: xcode-27
     timeout-minutes: 40
@@ -285,7 +329,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        platform: [ios, tvos]
+        platform: ${{ fromJSON(github.event_name == 'pull_request' && '["ios"]' || '["ios", "tvos"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -295,7 +339,9 @@ jobs:
       - name: Repeat admission and reject private configuration before setup
         working-directory: live-producer
         run: |
-          /usr/bin/python3 -B scripts/ci_live_tests.py admit
+          if test "$GITHUB_EVENT_NAME" != pull_request; then
+            /usr/bin/python3 -B scripts/ci_live_tests.py admit
+          fi
           /usr/bin/python3 -B -c 'from pathlib import Path; import sys; sys.path.insert(0,"scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
       - name: Select pinned Xcode and Python
         working-directory: live-producer
@@ -350,25 +396,36 @@ jobs:
           /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/live-python" --verify-toolchain
       - name: Select immutable artifact ID and stage declarations from the tested tree
+        id: archive
         working-directory: live-consumer
         env:
           GH_TOKEN: ${{ github.token }}
           LIVE_PLATFORM: ${{ matrix.platform }}
         run: |
-          artifact_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate \
-            --jq ".artifacts[] | select(.name == \"build-$LIVE_PLATFORM-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\" and .expired == false) | .id")
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate --slurp > "$RUNNER_TEMP/live-artifacts.json"
+          "$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_live_tests.py choose-artifact \
+            --platform "$LIVE_PLATFORM" --metadata "$RUNNER_TEMP/live-artifacts.json"
+      - name: Validate the chosen producer attempt and stage declarations
+        working-directory: live-consumer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_PLATFORM: ${{ matrix.platform }}
+          LIVE_ARTIFACT_ID: ${{ steps.archive.outputs.artifact_id }}
+          LIVE_PRODUCER_ATTEMPT: ${{ steps.archive.outputs.producer_attempt }}
+        run: |
           "$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_build_archive.py select --platform "$LIVE_PLATFORM" \
-            --artifact-id "$artifact_id" --producer-attempt "$GITHUB_RUN_ATTEMPT" \
+            --artifact-id "$LIVE_ARTIFACT_ID" --producer-attempt "$LIVE_PRODUCER_ATTEMPT" \
             --selection-path "$RUNNER_TEMP/live-selection.json" --output-dir "$RUNNER_TEMP/live-selection-records"
           "$RUNNER_TEMP/live-python/bin/python3" -B scripts/ci_unit_tests.py stage \
             --path "$RUNNER_TEMP/live-tools" --selection-path "$RUNNER_TEMP/live-selection.json"
-          echo "artifact_id=$artifact_id" >> "$GITHUB_OUTPUT"
-        id: select
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          artifact-ids: ${{ steps.select.outputs.artifact_id }}
+          artifact-ids: ${{ steps.archive.outputs.artifact_id }}
           path: ${{ runner.temp }}/live-download
           merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
       - name: Remove source checkout before test-time injection
         run: rm -rf live-consumer
       - name: Execute only live suites with private capture
@@ -389,6 +446,7 @@ jobs:
           path: |
             ${{ runner.temp }}/live-summary/live-summary.json
             ${{ runner.temp }}/live-summary/live-summary.md
+            ${{ runner.temp }}/live-summary/live-provenance.json
           retention-days: 7
           if-no-files-found: error
       - name: Display only scanned summary

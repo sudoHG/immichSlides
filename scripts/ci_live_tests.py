@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -16,7 +17,7 @@ from urllib.parse import quote, quote_plus, urlsplit
 
 import ci_build_archive as archive
 import ci_unit_tests as units
-from ci_summary import ContractError, decode, duration, require, test_identity
+from ci_summary import decode, duration, observation, parse_summary, render_markdown, require, test_identity
 from ci_verdict import function_identity, tokens
 from run_host_checks import git, toolchain
 from run_offline_unit_tests import _stop_process_group
@@ -31,6 +32,19 @@ def live_declarations(declared):
     live_suites = {item["key"].split("/")[0] for item in declared if "Live" in item["key"].split("/")[0]}
     require(live_suites == set(SUITES) | {"PerformanceLiveIntegrationTests"}, "live suite ownership changed")
     return [item for item in declared if item["key"].split("/")[0] in SUITES]
+
+
+def latest_artifact(entries, platform, run_id, attempt):
+    matches = []
+    for entry in entries:
+        match = re.fullmatch(rf'build-{platform}-{re.escape(run_id)}-([1-9][0-9]*)', entry.get('name', ''))
+        if match and entry.get('expired') is False and int(match[1]) <= attempt:
+            matches.append((int(match[1]), entry['id']))
+    require(bool(matches), 'live archive unavailable; rerun all jobs')
+    newest = max(number for number, _ in matches)
+    chosen = [artifact_id for number, artifact_id in matches if number == newest]
+    require(len(chosen) == 1 and type(chosen[0]) is int and chosen[0] > 0, 'live archive selection ambiguous')
+    return chosen[0], newest
 
 
 def admission(env, event, head, ancestor):
@@ -67,6 +81,11 @@ def secret_forms(url, key):
         forms.update((value, quote(value, safe=""), quote(value), quote_plus(value),
                       json.dumps(value, ensure_ascii=True)[1:-1], value.replace("/", "\\/"),
                       base64.b64encode(value.encode()).decode()))
+        # Ignore boundary quartets: surrounding bytes can change their bits and padding.
+        for offset in range(3):
+            for encode in (base64.b64encode, base64.urlsafe_b64encode):
+                encoded = encode(b'\0' * offset + value.encode()).decode()
+                forms.add(encoded[4 if offset else 0:len(encoded) - (4 if '=' in encoded else 0)])
     return {value.encode(encoding) for value in forms for encoding in ("utf-8", "utf-16-le", "utf-16-be") if value}
 
 
@@ -81,8 +100,11 @@ def scan_file(path, needles):
 
 
 def scan_tree(path, needles):
+    require(path.is_dir() and not path.is_symlink(), "live scan directory missing")
     for item in path.rglob("*"):
         require(not any(needle in str(item.relative_to(path)).encode() for needle in needles), "live sensitive path refused")
+        require(not item.is_symlink() or item.resolve().is_relative_to(path.resolve()), "live scan refuses external links")
+        require(item.is_file() or item.is_dir(), 'live scan refuses unscanned filesystem entries')
         if item.is_file() and not item.is_symlink():
             scan_file(item, needles)
 
@@ -116,10 +138,14 @@ def sanitized_outcomes(declared, rows):
                       and function_identity(row["identity"]) == identity]
         outcome = functions[0]["outcome"] if len(functions) == 1 else "not-run"
         require(outcome in {"passed", "failed", "skipped", "not-run"}, "unknown live outcome")
-        result.append({"identity": identity, "outcome": outcome,
-                       "duration_seconds": functions[0]["duration_seconds"] if len(functions) == 1 else 0,
-                       "parameters": [{"index": index, "outcome": row["outcome"], "duration_seconds": row["duration_seconds"]}
-                                      for index, row in enumerate(parameters)]})
+        entries = [(identity, outcome, functions[0]["duration_seconds"] if len(functions) == 1 else 0)]
+        entries.extend((dict(identity, dimensions=dict(identity["dimensions"], parameter=f"case-{index}")),
+                        row["outcome"], row["duration_seconds"]) for index, row in enumerate(parameters))
+        for test, outcome, seconds in entries:
+            result.append(observation(test, outcome, seconds,
+                          reason="Live test skipped; private reason withheld." if outcome == "skipped" else None,
+                          message="Live test failed; private diagnostic withheld." if outcome == "failed" else None,
+                          exit_code=0 if outcome == "passed" else None if outcome == "not-run" else 1))
     return result
 
 
@@ -141,7 +167,17 @@ def run_live(args):
     require(os.environ.get("GITHUB_ACTIONS") == "true", "real live execution is GitHub-only")
     selection = decode(args.selection_path.read_text())
     identity = selection["identity"]
-    admission(os.environ, {}, identity["commit_sha"], True)
+    if args.canary:
+        require(selection['source']['workflow_path'] == WORKFLOW, "canary workflow refused")
+        require((os.environ.get('CI_LIVE_URL'), os.environ.get('CI_LIVE_KEY')) ==
+                canary_values(selection['run_id'], selection['attempt']), "canary credentials refused")
+    else:
+        admission(os.environ, {}, identity["commit_sha"], True)
+    return execute_live(args, selection)
+
+
+def execute_live(args, selection):
+    identity = selection['identity']
     url = os.environ.pop("CI_LIVE_URL", "")
     key = os.environ.pop("CI_LIVE_KEY", "")
     needles = secret_forms(url, key)
@@ -151,15 +187,15 @@ def run_live(args):
     private = args.private_dir
     private.mkdir(mode=0o700, parents=True, exist_ok=False)
     platform = selection["platform"]
-    record = {"schema_version": 1, "tier": "live-unit", "status": "failed", "identity": identity,
-              "source": selection["source"],
-              "run_id": selection["run_id"], "attempt": selection["attempt"], "platform": platform,
-              "artifact_id": selection["artifact_id"], "producer_attempt": selection["producer_attempt"],
-              "declared": [], "compiled": [], "observed": [], "exit_code": 1,
-              "hashes": {"manifests": {}, "policies": {"live-runner": archive.file_hash(Path(__file__)),
-                         "test-policy": archive.file_hash(Path(__file__).with_name("ci-test-policy.json"))}},
-              "toolchain": {"versions": {}, "signing_mode": "not-applicable"},
-              "diagnostic": "live-infrastructure-failed", "release_eligible": False}
+    record = archive.record(selection, platform, os.environ.get('GITHUB_JOB', 'live-unit'))
+    record['run']['tier'] = 'live-unit'
+    record['status'] = 'failed'
+    record['hashes']['policies'].update({'live-runner': archive.file_hash(Path(__file__)),
+                                       'test-policy': archive.file_hash(Path(__file__).with_name('ci-test-policy.json'))})
+    population = record['population']
+    provenance = {'schema_version': 1, 'run_id': selection['run_id'], 'attempt': selection['attempt'],
+                  'platform': platform, 'artifact_id': selection['artifact_id'],
+                  'producer_attempt': selection['producer_attempt'], 'exit_code': 1, 'release_eligible': False}
     simulator = None
     phase = "archive"
     try:
@@ -168,8 +204,8 @@ def run_live(args):
         declared = live_declarations(units.read_declarations(ROOT, selection))
         require(bool(declared) and all(any(item["key"].startswith(suite + "/") for item in declared) for suite in SUITES),
                 "live suite declarations missing")
-        record["declared"] = declared
-        record["observed"] = sanitized_outcomes(declared, [])
+        population["declared"] = declared
+        population["observed"] = sanitized_outcomes(declared, [])
         manifest = decode((args.archive_dir / "manifest.json").read_text())
         pins_path = Path(__file__).with_name("ci-pins.json")
         pins = decode(pins_path.read_text())
@@ -186,15 +222,12 @@ def run_live(args):
         scan_tree(args.relocated_path, needles)
         products = args.relocated_path / "Products"
         require(archive.measure_signing(next(products.glob("Debug-*simulator/immichSlides.app"))) == "adhoc", "live signing failed")
-        record["archive_sha256"] = manifest["archive_sha256"]
-        record["manifest_sha256"] = archive.file_hash(args.archive_dir / "manifest.json")
-        record["declarations_sha256"] = archive.file_hash(ROOT / "unit-declarations.json")
-        record["hashes"]["manifests"] = {"build": record["manifest_sha256"],
-            "unit-declarations": record["declarations_sha256"], "ci-pins": archive.file_hash(pins_path)}
+        provenance['archive_sha256'] = manifest['archive_sha256']
+        record["hashes"]["manifests"] = {"build": archive.file_hash(args.archive_dir / 'manifest.json'),
+            "unit-declarations": archive.file_hash(ROOT / 'unit-declarations.json'), "ci-pins": archive.file_hash(pins_path)}
         record["toolchain"] = toolchain()
         archive.record_signing(record, "adhoc")
         record["toolchain"]["versions"]["simulator_runtime"] = pins["simulators"][platform]["runtime"]
-        record["signing_mode"] = "sign-to-run-locally"
         runtime = pins["simulators"][platform]["runtime"]
         device = pins["device_types"]["iphone" if platform == "ios" else "appletv"]
         simulator = subprocess.check_output(["xcrun", "simctl", "create", "immichSlides-live-unit", device, runtime],
@@ -215,103 +248,128 @@ def run_live(args):
         compiled = units.enumeration_keys(decode(enum_path.read_text()))
         compiled_ids = [test_identity("swift", "immichSlidesTests/" + name, platform=platform) for name in compiled]
         require(set(tokens(compiled_ids, functions=True)) == set(tokens(declared, functions=True)), "live selection mismatch")
-        record["compiled"] = sorted(tokens(compiled_ids, functions=True).values(), key=lambda item: item["key"])
+        population["compiled"] = sorted(tokens(compiled_ids, functions=True).values(), key=lambda item: item["key"])
         phase = "execution"
         live_env = dict(clean, TEST_RUNNER_IMMICH_TEST_SERVER_URL=url, TEST_RUNNER_IMMICH_TEST_API_KEY=key,
                         TEST_RUNNER_IMMICHSLIDES_EVIDENCE="1")
         bundle = private / "live.xcresult"
         archive.disk_check(args.min_free_gib)
         code = capture([*base, "-resultBundlePath", str(bundle)], private / "execution.log", env=live_env, timeout=900)
-        record["exit_code"] = code
+        provenance["exit_code"] = code
         phase = "official-results"
         for kind in ("tests", "summary"):
             # stderr is private too; malformed or failed exports cannot be used as evidence.
             require(capture(["xcrun", "xcresulttool", "get", "test-results", kind, "--path", str(bundle), "--compact"],
                             private / ("official-" + kind + ".json"), env=clean, timeout=60) == 0, "live export failed")
         rows, counts = units.read_results(private, platform)
-        record["observed"] = sanitized_outcomes(declared, rows)
-        record["official_counts"] = {"total": counts.total_test_count, "passed": counts.passed_tests,
+        population["observed"] = sanitized_outcomes(declared, rows)
+        provenance["official_counts"] = {"total": counts.total_test_count, "passed": counts.passed_tests,
                                      "failed": counts.failed_tests, "skipped": counts.skipped_tests}
-        record["observed"] = public_outcomes(declared, compiled, rows, counts, code)
-        record.update(status="passed", diagnostic=None)
+        population["observed"] = public_outcomes(declared, compiled, rows, counts, code)
+        record['status'] = 'passed'
     except Exception:
         # Never serialize exception text, subprocess output or runtime test arguments.
-        record["diagnostic"] = "live-" + phase + "-failed"
+        record['infrastructure'].append({'code': 'live-' + phase + '-failed',
+                                         'message': 'Live phase failed; private diagnostics withheld.'})
     finally:
         if simulator:
             for action, timeout in (("shutdown", 15), ("delete", 60)):
                 try:
                     if capture(["xcrun", "simctl", action, simulator], private / (action + ".log"), env=clean, timeout=timeout):
-                        record.update(status="failed", diagnostic="live-cleanup-failed")
+                        record.update(status="failed")
+                        record['infrastructure'].append({'code': 'live-cleanup-failed', 'message': 'Live simulator cleanup failed.'})
                 except Exception:
-                    record.update(status="failed", diagnostic="live-cleanup-failed")
+                    record.update(status="failed")
+                    record['infrastructure'].append({'code': 'live-cleanup-failed', 'message': 'Live simulator cleanup failed.'})
         # This runner owns every private input; no raw live material is publishable, even after failure.
         shutil.rmtree(private)
         shutil.rmtree(args.relocated_path, ignore_errors=True)
+        parse_summary(record)
         archive.write_json(args.output_dir / "live-summary.json", record)
-        (args.output_dir / "live-summary.md").write_text(
-            f"Live unit {platform}: {record['status']}; {sum(row['outcome'] == 'passed' for row in record['observed'])}/{len(record['declared'])} functions passed. "
-            f"Process exit: {record['exit_code']}; diagnostic: {record['diagnostic'] or 'none'}.\n"
-            "Real live coverage requires this main-only run; release eligibility remains disabled.\n")
+        archive.write_json(args.output_dir / 'live-provenance.json', provenance)
+        (args.output_dir / "live-summary.md").write_text(render_markdown(record) +
+            f"\nProcess exit: {provenance['exit_code']}; release eligibility remains disabled.\n")
+        if args.canary:
+            require(phase == 'official-results' and provenance['exit_code'] != 0 and
+                    provenance.get('official_counts', {}).get('total', 0) > 0 and
+                    bool(population['compiled']) and record['status'] == 'failed' and
+                    not any(entry['code'] == 'live-cleanup-failed' for entry in record['infrastructure']),
+                    'canary did not exercise a failed live execution')
+            archive.write_json(args.output_dir / 'canary.json', {'schema_version': 1, 'status': 'passed',
+                'run_id': selection['run_id'], 'attempt': selection['attempt'], 'platform': platform, 'execution_failed': True})
         scan_tree(args.output_dir, needles)
         archive.output("records_safe", "true")
-    return 0 if record["status"] == "passed" else 1
+    return 0 if args.canary or record["status"] == "passed" else 1
 
 
-def canary(args):
-    url, key = canary_values(os.environ.get("GITHUB_RUN_ID", "local"))
+def prepare_canary():
+    require(os.environ.get('GITHUB_ACTIONS') == 'true', 'canary preparation is GitHub-only')
+    url, key = canary_values(os.environ['GITHUB_RUN_ID'], int(os.environ['GITHUB_RUN_ATTEMPT']))
     for value in (url, key):
         print("::add-mask::" + value, flush=True)
-    needles = secret_forms(url, key)
-    args.output_dir.mkdir(parents=True, exist_ok=False)
-    private = args.output_dir.parent / (args.output_dir.name + "-private")
-    private.mkdir(mode=0o700)
-    try:
-        # Exercise a failing subprocess through the same private capture used by live Xcode.
-        child = "import os,sys; sys.stdout.buffer.write(bytes.fromhex(os.environ['CANARY_BYTES'])); sys.exit(65)"
-        code = capture([sys.executable, "-c", child], private / "failure.log",
-                       env=dict(os.environ, CANARY_BYTES=b"\n".join(needles).hex()), timeout=30)
-        require(code == 65, "canary failure was not exercised")
-        blocked = False
-        try:
-            scan_file(private / "failure.log", needles)
-        except ContractError:
-            blocked = True
-        require(blocked, "canary scanner missed private failure")
-        archive.write_json(args.output_dir / "canary.json", {"schema_version": 1, "status": "passed",
-                           "captured_failure_exit": code, "raw_and_transformed_capture_refused": True})
-        scan_tree(args.output_dir, needles)
-        print("Live canary: captured failure 65; raw and transformed publication scan PASS.")
-    finally:
-        shutil.rmtree(private)
+    with Path(os.environ['GITHUB_ENV']).open('a') as handle:
+        handle.write(f'CI_LIVE_URL={url}\nCI_LIVE_KEY={key}\n')
     return 0
 
 
-def canary_values(run_id):
-    seed = hashlib.sha256(("immichslides-live-canary:" + run_id).encode()).hexdigest()
+def canary_values(run_id, attempt=1):
+    seed = hashlib.sha256((f"immichslides-live-canary:{run_id}:{attempt}").encode()).hexdigest()
     return "https://" + seed[:24] + ".invalid/a path?quoted=\"x\"", seed[16:]
+
+
+def audit_canary(path, run_id, attempt):
+    require(path.is_dir() and not path.is_symlink(), 'canary audit directory missing')
+    files = list(path.rglob('*'))
+    require(not any(item.is_symlink() for item in files), 'canary audit refuses unscanned links')
+    logs = list((path / 'logs').rglob('*.txt'))
+    require(bool(logs) and all(item.stat().st_size > 0 for item in logs), 'canary extracted logs missing or empty')
+    result = path / 'artifacts' / f'live-canary-ios-{run_id}-{attempt}'
+    verdict = decode((result / 'canary.json').read_text()) if (result / 'canary.json').is_file() else {}
+    require(verdict == {'schema_version': 1, 'status': 'passed', 'run_id': run_id, 'attempt': attempt,
+                       'platform': 'ios', 'execution_failed': True}, 'canary result run or attempt mismatch')
+    require((result / 'live-summary.json').is_file() and (result / 'live-summary.md').is_file() and
+            (result / 'live-summary.md').stat().st_size > 0, 'canary summaries missing or empty')
+    summary = parse_summary((result / 'live-summary.json').read_text())
+    require(summary['run']['id'] == run_id and summary['run']['attempt'] == attempt and
+            summary['run']['tier'] == 'live-unit' and summary['run']['shard'] == 'ios' and summary['status'] == 'failed' and
+            bool(summary['population']['declared']) and bool(summary['population']['compiled']) and
+            any(row['outcome'] == 'failed' for row in summary['population']['observed']), 'canary summary provenance mismatch')
+    scan_tree(path, secret_forms(*canary_values(run_id, attempt)))
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("admit")
-    probe = sub.add_parser("canary")
-    probe.add_argument("--output-dir", type=Path, required=True)
+    sub.add_parser('prepare-canary')
+    choose = sub.add_parser('choose-artifact')
+    choose.add_argument('--metadata', type=Path, required=True)
+    choose.add_argument('--platform', choices=('ios', 'tvos'), required=True)
     audit = sub.add_parser("audit-canary")
     audit.add_argument("--run-id", required=True)
+    audit.add_argument('--attempt', type=int, required=True)
     audit.add_argument("--path", type=Path, required=True)
     run = sub.add_parser("run")
     for name in ("selection-path", "archive-dir", "relocated-path", "output-dir", "private-dir"):
         run.add_argument("--" + name, type=Path, required=True)
     run.add_argument("--min-free-gib", type=float, default=80)
+    run.add_argument('--canary', action='store_true')
     args = parser.parse_args(argv)
     try:
+        if args.command == 'choose-artifact':
+            pages = json.loads(args.metadata.read_text())
+            entries = [entry for page in pages for entry in page['artifacts']]
+            artifact_id, attempt = latest_artifact(entries, args.platform, os.environ['GITHUB_RUN_ID'],
+                                                  int(os.environ['GITHUB_RUN_ATTEMPT']))
+            archive.output('artifact_id', artifact_id)
+            archive.output('producer_attempt', attempt)
+            print(f'Selected immutable live artifact {artifact_id} from producer attempt {attempt}.')
+            return 0
         if args.command == "audit-canary":
-            scan_tree(args.path, secret_forms(*canary_values(args.run_id)))
+            audit_canary(args.path, args.run_id, args.attempt)
             print("Downloaded canary logs, summaries and artifacts: raw and transformed scan PASS.")
             return 0
-        return admit() if args.command == "admit" else canary(args) if args.command == "canary" else run_live(args)
+        return admit() if args.command == "admit" else prepare_canary() if args.command == 'prepare-canary' else run_live(args)
     except Exception:
         print("Live boundary refused; no private diagnostics published.", file=sys.stderr)
         return 1

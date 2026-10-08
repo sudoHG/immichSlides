@@ -334,6 +334,9 @@ def output(key, value):
 
 
 def producer_workflow(identity):
+    if identity['event'] == 'pull_request' and os.environ.get('GITHUB_WORKFLOW_REF', '').partition('@')[0] == (
+            str(identity.get('repository')) + '/' + NIGHTLY_WORKFLOW):
+        return NIGHTLY_WORKFLOW
     return NIGHTLY_WORKFLOW if identity["event"] in {"schedule", "workflow_dispatch"} else WORKFLOW
 
 

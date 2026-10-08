@@ -8,7 +8,7 @@ authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
 `immich-test-server` environment after credential-free admission.
 
 ```bash
-gh workflow run ci-nightly.yml --ref <branch>
+gh workflow run ci-nightly.yml --ref <branch> -f strict_only=true
 gh run list --workflow ci-nightly.yml --branch <branch>
 gh workflow run ci-nightly.yml --ref <branch> -f shard=ipad-immichSlides-iOS-debug-3
 python3 -B scripts/ci_nightly.py plan --output-dir '<fresh-outside-repo>/plan'
@@ -22,6 +22,13 @@ Use a configuration-free checkout, dedicated simulator and workspace device-slot
 watchdog wrappers. Preflight rejects files, links and dangling private-config links
 without reading them. There is no SHA override: dispatch a ref at the desired commit.
 Live execution requires `main`; `live_only` diagnoses live boundaries without strict shards.
+Use `strict_only=true` for full strict diagnostics on a branch. A selected `shard`
+also skips all live admission/build/canary/unit jobs, including on main, so strict
+diagnostics generate no public test Immich server traffic. A plain branch dispatch
+attempts live admission and is refused because live execution requires main; its
+strict results remain diagnostic. `probe_environment_refusal=true` runs only the
+credential-free protected-environment refusal job on a non-main ref. On main it
+intentionally skips every job, including live execution; it is not a live proof.
 Checkout, workflow, matrix, policy, tree, run or attempt mismatches fail. Schedule
 identities require `refs/heads/main`.
 The optional dispatch `shard` input diagnoses one known shard exactly once. It retains

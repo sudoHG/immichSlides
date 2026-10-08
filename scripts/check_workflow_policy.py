@@ -141,6 +141,17 @@ def walk_mappings(value, location="workflow"):
             yield from walk_mappings(child, f"{location}[{index}]")
 
 
+def string_scalars(value, location='workflow'):
+    if isinstance(value, str):
+        yield location, value
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            yield from string_scalars(child, f'{location}.{key}')
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from string_scalars(child, f'{location}[{index}]')
+
+
 def artifact_path(value):
     if not isinstance(value, str):
         return False
@@ -248,9 +259,18 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
     # Live consumers intentionally execute test bundles; publisher-only trusted command rules do not apply.
     # Their environment and test-time credentials instead have this separate admission contract.
+    allowed_secret_locations = {'workflow.jobs.live-unit.steps[' + str(index) + '].env.' + key
+        for index, step in enumerate(jobs.get('live-unit', {}).get('steps', []))
+        if step.get('id') == 'live' and step.get('env') == LIVE_BINDINGS for key in LIVE_BINDINGS}
+    for location, value in string_scalars(document):
+        if re.search(r"secrets\s*(?:\.\s*IMMICH_TEST_SERVER_|\[\s*['\"]IMMICH_TEST_SERVER_)", value):
+            if path != LIVE_WORKFLOW or location not in allowed_secret_locations:
+                flag(location, 'live-credential', 'Live secret references belong only to the guarded injection environment')
     for location, item in walk_mappings(document):
         name = item.get("environment")
         name = name.get("name") if isinstance(name, dict) else name
+        if isinstance(name, str) and '${{' in name:
+            flag(location, 'live-credential', 'Environment names must be literal to verify credential isolation')
         if isinstance(name, str) and name.casefold() in {LIVE_ENVIRONMENT, "test-server"}:
             refusal = (location == "workflow.jobs.live-environment-refusal" and
                        item.get("if") == "github.event_name == 'workflow_dispatch' && inputs.probe_environment_refusal && github.ref != 'refs/heads/main'" and
