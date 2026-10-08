@@ -42,6 +42,8 @@ Thanks for helping out. immichSlides is a SwiftUI photo slideshow client for [Im
   A run that times out (exit 124) or selects zero tests is not a pass.
 - **UI tests** in the default test plans that need a server run the real app against the Immich server set in `Config/env.xcconfig`, and skip when none is set. They only read from that server; tests that start from the filter summary need its first album to contain photos and at least one person. See [docs/TESTING.md](docs/TESTING.md).
 - **Strict end-to-end tests** run the real app against a local public fixture server that `scripts/run_strict_e2e.py` starts for you, so they do not touch anyone's Immich server. See [Running controlled integration and end-to-end tests](docs/TESTING.md#running-controlled-integration-and-end-to-end-tests) and `python3 scripts/run_strict_e2e.py --help`.
+  Explicit warm-build reuse and the informational hosted tracer are documented in
+  [Strict runner warm-build tracer](docs/CI_STRICT_RUNNER.md).
 - Optional, once per clone: `scripts/install_git_privacy_hooks.sh` installs the hooks that block secrets and private data from being committed or pushed.
 
 ## Using AI coding agents
@@ -69,6 +71,9 @@ The informational `ci-gate` host job and [secret-free build archive jobs](docs/C
 run on pull requests and pushes to `main`. Separate hosted runners execute the
 [complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
 The UI consumer tier remains separate work.
+Release archive preparation and the maintainer-gated App Store Connect steps are in
+[Xcode Cloud to internal TestFlight](docs/XCODE_CLOUD_TESTFLIGHT.md). Its first upload
+is manual, the Default workflow stays disabled, and tag starts need later approval.
 To keep its JSON and short Markdown records locally, run
 `"${PYTHON:-python3}" -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run`.
 `check_all.sh` uses the same checks. `--output-dir` keeps records in `DIR/host-records`

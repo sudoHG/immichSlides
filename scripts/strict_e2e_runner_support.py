@@ -73,6 +73,8 @@ WRONG_PUBLIC_API_KEY = "immichslides-public-e2e-wrong-key"
 PRIVATE_RESULT_BUNDLE_ROOT = Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"
 RUNNER_SCENARIOS = ("normal", "auth-401", "html-200", "unreachable", "timeout", "out-of-order")
 FORBIDDEN_EXACT_KEYS = {
+    "IMMICH_SERVER_URL",
+    "IMMICH_API_KEY",
     "IMMICH_TEST_SERVER_URL",
     "IMMICH_TEST_URL",
     "IMMICH_TEST_API_KEY",
@@ -301,6 +303,9 @@ def cleanup_task_xcconfig(example_path: Path, destination_path: Path) -> None:
 
 
 def _is_forbidden_key(key: str) -> bool:
+    for prefix in ("TEST_RUNNER_", "SIMCTL_CHILD_"):
+        if key.startswith(prefix):
+            return _is_forbidden_key(key[len(prefix):])
     return key.startswith("UI_TEST_") or key in FORBIDDEN_EXACT_KEYS
 
 
@@ -463,6 +468,15 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
             "App container is still accessible after uninstall; cannot continue with a clean install.\n" + "\n".join(lines)
         )
     lines.append("app_container=absent")
+    # These devices are dedicated to strict tests: uninstall alone leaves keychain and TCC state.
+    for step, command in (
+        ("keychain", ["xcrun", "simctl", "keychain", simulator_udid, "reset"]),
+        ("privacy", ["xcrun", "simctl", "privacy", simulator_udid, "reset", "all"]),
+    ):
+        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=60)
+        lines.append(f"{step}_reset_exit={completed.returncode}")
+        if completed.returncode != 0:
+            raise CommandError(f"Simulator {step} reset failed; cannot continue with isolated state.\n" + "\n".join(lines))
     return "\n".join(lines) + "\n"
 
 
