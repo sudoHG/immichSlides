@@ -51,10 +51,14 @@ elif p['operation']=='ui':
     for device in p['devices']:
         platform=DEVICES[device]
         plan=p['plans'][platform]['plan']
-        if device in p['shard_devices']:
-            result['populations'][device]=shard_populations(p['populations']['ui-'+platform],plan,p['manifest'],device)
         result['base_populations'][device]=[test_identity('ui',entry['key'],platform=platform,device=device)
             for entry in default_plan_population(p['base_populations']['ui-'+platform],plan)]
+    try:
+        for device in p['shard_devices']:
+            platform=DEVICES[device]
+            result['populations'][device]=shard_populations(p['populations']['ui-'+platform],p['plans'][platform]['plan'],p['manifest'],device)
+    except Exception as error:
+        result['error']=str(error)
 else:
     if 'evaluated_on' in p['inputs']:
         from datetime import date
@@ -177,13 +181,11 @@ def derive_record(identity, run, *, before=None):
             ui[side] = ui_inputs(revision, entries, populations=derived["populations"],
                                  base_populations=base_derived["populations"],
                                  workflow=workflows.get(".github/workflows/ci-ui.yml", {}).get(side), run=run, modules=modules)
-        except (ContractError, KeyError, ValueError, TypeError, yaml.YAMLError) as error:
+        except Exception as error:
             if side == "base":
                 raise
             # Bad candidate UI data cannot suppress a separate gate admission.
-            empty_shard = re.fullmatch(r"shard [a-z][a-z0-9-]* has no tests on (?:iphone|ipad|appletv); "
-                                      r"update scripts/ci-ui-shards\.json", str(error))
-            ui[side] = {"error": str(error) if empty_shard else "candidate UI inputs are invalid"}
+            ui[side] = {"error": ui_failure_hint(error) or "candidate UI inputs are invalid"}
     return {"schema_version": 1, "run_id": run["id"], "workflow_id": run["workflow_id"],
             "workflow_path": run["path"], "identity": identity, "tree_listing": listing,
             "populations": derived["populations"], "base_populations": base_derived["populations"],
@@ -194,6 +196,16 @@ def derive_record(identity, run, *, before=None):
                              if any(entry["path"] == "scripts/ci-known-flaky.json" for entry in base_listing) else None,
             "base_policy": json.loads(read_blob(base, "scripts/ci-test-policy.json")),
             "candidate_policy": json.loads(read_blob(commit, "scripts/ci-test-policy.json"))}
+
+
+def ui_failure_hint(error):
+    message = str(error)
+    if message == "workflow is absent on the base; exact-head approval required":
+        return message
+    if re.fullmatch(r"shard [a-z][a-z0-9-]* has no tests on (?:iphone|ipad|appletv); "
+                    r"update scripts/ci-ui-shards\.json", message):
+        return message
+    return None
 
 
 def ui_inputs(revision, listing, *, populations=None, base_populations=None, workflow=None, run=None, modules=None):
@@ -213,10 +225,17 @@ def ui_inputs(revision, listing, *, populations=None, base_populations=None, wor
     if workflow is not None:
         _, _, _, metadata = workflow_contract(workflow, run, metadata=True)
         devices = sorted({meta["device"] for meta in metadata.values() if meta["tier"] == "ui"})
+        require(all(DEVICES[device] in result["plans"] for device in devices), "UI workflow device has no default plan")
     if modules is not None:
-        result.update(base_reader(modules, {"operation": "ui", "shard_devices": devices,
+        computed = base_reader(modules, {"operation": "ui", "shard_devices": devices,
                       "devices": sorted(device for device, platform in DEVICES.items() if platform in result["plans"]), "populations": populations,
-                      "base_populations": base_populations, "plans": result["plans"], "manifest": result["manifest"]}))
+                      "base_populations": base_populations, "plans": result["plans"], "manifest": result["manifest"]})
+        if "error" in computed:
+            # Keep the base's own filtered population for an approved replacement
+            # manifest; only the tested-tree shard computation failed.
+            return {"error": ui_failure_hint(computed["error"]) or "UI shard populations are invalid",
+                    "base_populations": computed["base_populations"]}
+        result.update(computed)
     return result
 
 
@@ -321,20 +340,21 @@ def workflow_contract(source, run, *, details=False, metadata=False):
 
 
 def evaluate_records(record, run, jobs, summaries, *, approved, fork):
+    context = "gate" if run["path"].endswith("ci-gate.yml") else "ui"
+    ui = record.get("ui_inputs", {}).get("candidate" if approved else "base") if context == "ui" else None
+    if ui is not None:
+        require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
     source = record["workflows"][run["path"]]["candidate" if approved else "base"]
     expected_jobs, _, _, metadata = workflow_contract(source, run, metadata=True)
     actual = {job["name"]: job for job in jobs}
     require(set(actual) == set(expected_jobs) and len(jobs) == len(actual), "required workflow jobs differ")
     require(all(job["status"] == "completed" and job["conclusion"] == "success" for job in jobs),
             "a required job failed, skipped or was cancelled")
-    context = "gate" if run["path"].endswith("ci-gate.yml") else "ui"
     tree = record["identity"]["tree_sha"]
-    ui = record.get("ui_inputs", {}).get("candidate" if approved else "base") if context == "ui" else None
     ui_devices = {meta["device"] for meta in metadata.values() if meta["tier"] == "ui"}
     ui_populations, ui_base = {}, []
     if context == "ui":
         require(ui is not None and ui_devices, "UI manifest and device populations are not admitted")
-        require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
         require(all(meta["tier"] in {"ui", "ui-infrastructure"} for meta in metadata.values())
                 and sum(meta["population"] == "ui-archive" for meta in metadata.values()) == 1,
                 "UI workflow needs one archive selection producer and device shards")

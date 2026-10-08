@@ -37,6 +37,7 @@ def parse_shard_manifest(raw):
 
 def default_plan_population(population, raw_plan):
     plan = decode(raw_plan)
+    require(isinstance(plan, dict), "default UI plan must be an object")
     require(isinstance(plan.get("testTargets"), list), "default UI plan has no targets")
     require(all(isinstance(item, dict) and isinstance(item.get("target"), dict) for item in plan["testTargets"]),
             "invalid default UI plan target")

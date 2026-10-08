@@ -195,10 +195,11 @@ class PublisherTests(unittest.TestCase):
             admitted = ui_inputs(MERGE, listing, populations={"ui-ios": population},
                                  base_populations={"ui-ios": population}, workflow=FIXTURE_UI, run=RUN, modules=modules)
         self.assertEqual(admitted["populations"]["iphone"], shard_populations(population, UI_PLAN, UI_MANIFEST, "iphone"))
-        with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]), \
-                self.assertRaisesRegex(ContractError, "shard visual has no tests on iphone; update scripts/ci-ui-shards.json"):
-            ui_inputs(MERGE, listing, populations={"ui-ios": population[:1]},
-                      base_populations={"ui-ios": population}, workflow=FIXTURE_UI, run=RUN, modules=modules)
+        with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
+            empty = ui_inputs(MERGE, listing, populations={"ui-ios": population[:1]},
+                              base_populations={"ui-ios": population}, workflow=FIXTURE_UI, run=RUN, modules=modules)
+        self.assertEqual(empty["error"], "shard visual has no tests on iphone; update scripts/ci-ui-shards.json")
+        self.assertEqual(empty["base_populations"], admitted["base_populations"])
         record = {"identity": identity, "populations": {"ui-ios": population},
                   "base_populations": {"ui-ios": population}, "ui_inputs": {"base": admitted, "candidate": admitted},
                   "workflows": {".github/workflows/ci-ui.yml": {"base": FIXTURE_UI, "candidate": FIXTURE_UI}},
@@ -325,18 +326,31 @@ class PublisherTests(unittest.TestCase):
             self.assertEqual(statuses["ci-ui"]["state"], "success")
             evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI)
             self.assertIsNone(approval["request"])
+            with patch("ci_publish.approved_status", return_value=True), patch(
+                    "ci_publish.evaluate_records", side_effect=ContractError(
+                        "workflow is absent on the base; exact-head approval required")):
+                _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")
+            self.assertEqual(statuses["ci-ui"]["description"],
+                             "workflow is absent on the base; exact-head approval required; approval-based")
 
         candidate_tree += [{"path": path, "mode": "100644", "type": "blob"} for path in
                            ("scripts/ci-ui-shards.json", "immichSlides-iOS.xctestplan")]
         original_blob = blob
-        for invalid_path in ("scripts/ci-ui-shards.json", "immichSlides-iOS.xctestplan"):
+        for invalid_path, invalid_text in (("scripts/ci-ui-shards.json", "{broken"),
+                                           ("immichSlides-iOS.xctestplan", "{broken"),
+                                           ("immichSlides-iOS.xctestplan", "[]"),
+                                           ("immichSlides-iOS.xctestplan", "null"),
+                                           (".github/workflows/ci-ui.yml", "jobs: {bad: null}"),
+                                           (".github/workflows/ci-ui.yml", "[" * 1500)):
             def invalid_blob(revision, path):
+                if path == invalid_path:
+                    return invalid_text
                 if path == ".github/workflows/ci-ui.yml":
                     return FIXTURE_UI
                 if path == "scripts/ci-ui-shards.json":
-                    return "{broken" if path == invalid_path else json.dumps(UI_MANIFEST)
+                    return json.dumps(UI_MANIFEST)
                 if path == "immichSlides-iOS.xctestplan":
-                    return "{broken" if path == invalid_path else json.dumps(UI_PLAN)
+                    return json.dumps(UI_PLAN)
                 return original_blob(revision, path)
             with self.subTest(invalid_path=invalid_path), \
                     patch("ci_publish_git.read_blob", side_effect=invalid_blob), \
@@ -351,15 +365,63 @@ class PublisherTests(unittest.TestCase):
             modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
             with patch("ci_publish_git.trusted_reader", return_value=modules):
                 self.assertEqual(evaluate_records(gate, RUN, gate_jobs, gate_summaries, approved=True, fork=False)["state"], "success")
-            malformed.update(identity=identity)
+            malformed.update(identity=identity, workflow_id=ui_run["workflow_id"], workflow_path=ui_run["path"])
             with self.assertRaisesRegex(ContractError, "candidate UI inputs are invalid"):
                 evaluate_records(malformed, ui_run, [dict(name=name, status="completed", conclusion="success")
                     for name in workflow_contract(FIXTURE_UI, ui_run)[0]], [], approved=True, fork=False)
+            with patch("ci_publish.workflows", return_value={"ci-ui": dict(WORKFLOW, path=ui_run["path"])}), \
+                    patch("ci_publish.approval_requests", return_value=[]), patch("ci_publish.approved_status", return_value=True), \
+                    patch("ci_publish.trusted_admissions", return_value={RUN["id"]: malformed}), \
+                    patch("ci_publish.producer_evidence", side_effect=AssertionError("invalid UI workflow must not be reparsed")):
+                _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")
+            self.assertEqual(statuses["ci-ui"]["description"],
+                             "Missing, invalid or mismatched admitted evidence; approval-based")
             with patch("ci_publish_git.read_blob", side_effect=invalid_blob), \
                     patch("ci_publish_git.git", return_value="workflow changed"), \
                     patch("ci_publish_git.tree_inputs", return_value=(candidate_tree, {})), \
-                    patch("ci_publish_git.base_reader", return_value=derived), self.assertRaises(ContractError):
+                    patch("ci_publish_git.base_reader", return_value=derived), self.assertRaises(Exception):
                 derive_record(identity, RUN)
+
+        gate, gate_jobs, gate_summaries = gate_fixture(units=True)
+        merge_population = copy.deepcopy(gate["populations"])
+        merge_population["ui-ios"] = [test_identity("ui", "NewUITests/testNew", platform="ios")]
+        base_population = copy.deepcopy(merge_population)
+        base_population["ui-ios"].append(test_identity("ui", "VisualUITests/testFlow", platform="ios"))
+        listing = candidate_tree + [{"path": RUN["path"], "mode": "100644", "type": "blob"}]
+        def populated_blob(revision, path):
+            if path == RUN["path"]:
+                return gate["workflows"][RUN["path"]]["base"]
+            if path == "scripts/ci-test-policy.json":
+                return json.dumps(gate["base_policy"])
+            if path == "scripts/ci_build_archive.py":
+                return '\n'.join('def ' + name + '():\n step = test_identity("host", "' + name +
+                                 '", configuration="Debug")' for name in ("run_build", "run_proof"))
+            if path.startswith("scripts/") and path.endswith(".py"):
+                return (Path(__file__).parent / Path(path).name).read_text()
+            return invalid_blob(revision, path) if path != ".github/workflows/ci-ui.yml" else FIXTURE_UI
+        def static_reader(modules, payload):
+            if payload["operation"] == "derive":
+                population = base_population if payload["sources"] else merge_population
+                return {"populations": population, "classification": {"app_affected": True, "ci_changing": False}}
+            return base_reader(modules, payload)
+        with patch("ci_publish_git.read_blob", side_effect=populated_blob), patch("ci_publish_git.git", return_value="test renamed"), \
+                patch("ci_publish_git.tree_inputs", side_effect=[(listing, {}), (listing, {"base": "source"})]), \
+                patch("ci_publish_git.base_reader", side_effect=static_reader):
+            empty = derive_record(identity, RUN)
+        hint = "shard visual has no tests on iphone; update scripts/ci-ui-shards.json"
+        self.assertEqual(empty["ui_inputs"]["base"]["error"], hint)
+        gate["ui_inputs"] = empty["ui_inputs"]
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            self.assertEqual(evaluate_records(gate, RUN, gate_jobs, gate_summaries, approved=False, fork=False)["state"], "success")
+        empty.update(workflow_id=ui_run["workflow_id"], workflow_path=ui_run["path"])
+        ui_jobs = [dict(name=name, status="completed", conclusion="success") for name in workflow_contract(FIXTURE_UI, ui_run)[0]]
+        with patch("ci_publish.workflows", return_value={"ci-ui": dict(WORKFLOW, path=ui_run["path"])}), \
+                patch("ci_publish.approval_requests", return_value=[]), patch("ci_publish.approved_status", return_value=False), \
+                patch("ci_publish.trusted_admissions", return_value={RUN["id"]: empty}), \
+                patch("ci_publish.producer_evidence", return_value=(ui_jobs, [])):
+            _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")
+        self.assertEqual(statuses["ci-ui"], {"state": "failure", "description": hint,
+                         "target_url": "https://github.com/" + REPOSITORY + "/actions/runs/101"})
 
     def test_admission_uses_github_merge_parents_and_preserves_original_on_rerun(self):
         identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)

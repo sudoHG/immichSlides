@@ -257,6 +257,10 @@ localization catalog/usage, Python prerequisites and workflow-policy checks, plu
 `test_conventions_allowlist.json`, `check_all.sh`, the privacy gate/trusted runner,
 their tests and privacy fixture modules, and `scripts/__init__.py`. It also covers
 the source-free consumer's copied `run_offline_unit_tests.py` and its test modules.
+The UI shard manifest `scripts/ci-ui-shards.json` and both default plans,
+`immichSlides-iOS.xctestplan` and `immichSlides-tvOS.xctestplan`, are CI-trusted.
+Editing default plans or renaming/removing manifest-named classes requires
+maintainer approval of that exact head; update the manifest when a shard becomes empty.
 The strict tracer's `run_strict_ci_tracer.py` and `strict-tracer.json` are CI inputs;
 its warm-build dependencies and tests belong to the same import closure.
 The recursive local-import closure is trusted too: the excluded-UI check imports

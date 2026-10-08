@@ -115,9 +115,15 @@ Admission retains the base and candidate `scripts/ci-ui-shards.json`, default
 plans and their SHA-256 hashes as data. It calls the isolated base revision's
 shard rules at admission and stores both rule selections' complete device/shard
 populations; publication reads these stored populations without recalculating
-them using a later publisher's rules. Candidate-side manifest/plan errors are
-retained as an invalid UI input and fail only `ci-ui`; base-side errors refuse
-admission. A new workflow absent on the base is
+them using a later publisher's rules. Candidate-side parsing errors are retained
+as an invalid UI input and fail only `ci-ui`. Invalid base manifest, plan or
+workflow data refuses admission. Errors computing shards from the tested tree,
+including an empty shard after a class rename/removal, are recorded for either
+rule selection and fail only `ci-ui`; the gate admission still completes. The
+base's filtered source population remains available for an approved replacement
+manifest to account for removed tests. Only the fixed empty-shard and missing-base-workflow
+hints reach status descriptions; other parsing details stay generic.
+A new workflow absent on the base is
 retained only as candidate metadata; exact-head approval is still required before
 it is selected. Before approval the context reports
 `workflow is absent on the base; exact-head approval required`, and the approval
