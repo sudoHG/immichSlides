@@ -337,7 +337,8 @@ def main(argv=None):
         complete = not missing and all(r["verdict"] == "PASS" for r in records)
         require(not records or all({k: v for k, v in r["context"].items() if k != "shard"} ==
                 {k: v for k, v in records[0]["context"].items() if k != "shard"} for r in records), "reviews bind different runs")
-        print(json.dumps({"status": "PASS" if complete else "PARTIAL", "records": records, "missing_fixtures": missing}, indent=2))
+        status = "FAIL" if any(r["verdict"] == "FAIL" for r in records) else "PASS" if complete else "PARTIAL"
+        print(json.dumps({"status": status, "records": records, "missing_fixtures": missing}, indent=2))
         return 0 if complete else 1
     except (ValueError, OSError, KeyError, TypeError, P2ContractError):
         print("P2 package or review validation failed; no human PASS is inferred.", file=sys.stderr)

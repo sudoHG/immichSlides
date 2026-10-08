@@ -219,6 +219,40 @@ class ReviewPackageTests(unittest.TestCase):
             with self.assertRaises((ValueError, P2ContractError)):
                 validate_record(record, package)
 
+    def test_key_reader_preserves_known_failure_when_other_fixture_is_missing(self):
+        from ci_review_packages import main, read_package, record_path
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence, package = self._package(root)
+            manifest = read_package(package)
+            _write_review(evidence, "p2-cache", "iphone")
+            review = _read_json(evidence / REVIEW_FILE)
+            review["reviewer"] = "sudoHG"
+            review["verdict"] = "FAIL"
+            review["artifacts"]["cache-returned.png"]["conclusion"] = "FAIL"
+            record = {"schema_version": 1, "context": manifest["context"], "case": manifest["case"],
+                      "case_sha256": manifest["case_sha256"], "package_sha256": manifest["package_sha256"],
+                      "reviewed_at": "2020-01-01T00:00:00Z", "signature": "I personally reviewed these images and recordings.",
+                      "review": review}
+            key = record_path(record)
+            target = root / "packages" / key.with_suffix("")
+            target.parent.mkdir(parents=True)
+            package.rename(target)
+            record_file = root / "records" / key
+            record_file.parent.mkdir(parents=True)
+            _write_json(record_file, record)
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(["read", "--records-dir", str(root / "records"), "--sha", SOURCE_SHA,
+                                  "--suite", "p2-cache", "--device-class", "iphone",
+                                  "--packages-dir", str(root / "packages")])
+            self.assertEqual(exit_code, 1)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["records"][0]["verdict"], "FAIL")
+            self.assertEqual(result["missing_fixtures"], ["b"])
+            self.assertEqual(result["status"], "FAIL")
+
 
 if __name__ == "__main__":
     unittest.main()

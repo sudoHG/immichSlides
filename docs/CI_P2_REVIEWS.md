@@ -49,7 +49,9 @@ python3 -B scripts/ci_review_packages.py read --sha <sha> \
 Exit 0 means complete passing human evidence for this operation; exit 1 means a
 valid nonpassing decision or incomplete fixture coverage; exit 2 means invalid
 evidence. `read` requires both frozen fixture cases from the same run/attempt/tree,
-while allowing their shards to differ. Missing, mismatched or malformed records
+while allowing their shards to differ. Any known FAIL remains FAIL even when the
+other fixture is missing; incomplete or partially reviewed evidence stays PARTIAL.
+Missing, mismatched or malformed records
 cannot be interpreted as PASS. The release prerequisite evaluator remains separate
 work; local and PR probe packages are diagnostic evidence, never a qualifying nightly.
 Validate a record before the seven-day package expiry. Committed JSON remains
