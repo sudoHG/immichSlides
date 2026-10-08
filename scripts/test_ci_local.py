@@ -52,6 +52,10 @@ class LocalModeTests(unittest.TestCase):
                         self.assertEqual(receipt["mode"], mode)
                         self.assertEqual(receipt["exit_code"], 0)
                         self.assertNotIn("explicit", record.read_text().replace("explicit_configuration_keys", ""))
+                        original_record = record.read_bytes()
+                        repeated = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=15)
+                        self.assertEqual(repeated.returncode, 2)
+                        self.assertEqual(record.read_bytes(), original_record)
             self.assertTrue((root / "Config/env.xcconfig").is_symlink())
 
     def test_private_configuration_requires_explicit_opt_in(self):

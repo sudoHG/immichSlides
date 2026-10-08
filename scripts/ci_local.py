@@ -109,6 +109,18 @@ def absolute_paths(arguments, cwd):
     return result
 
 
+def option_value(arguments, names):
+    value = None
+    for index, argument in enumerate(arguments):
+        option, separator, inline = argument.partition("=")
+        if option in names:
+            if separator:
+                value = inline
+            elif index + 1 < len(arguments):
+                value = arguments[index + 1]
+    return value
+
+
 def run_child(command, root, environment):
     process = subprocess.Popen(command, cwd=root, env=environment, start_new_session=True)
     def interrupted(signum, frame):
@@ -154,13 +166,16 @@ def launch(script, arguments):
                 raise ValueError("--project must belong to the source checkout being snapshotted")
             remaining[index + 1] = str(project.relative_to(root))
     record_path = options.snapshot_record.resolve() if options.snapshot_record else None
-    output = next((Path(remaining[i + 1]) for i, arg in enumerate(remaining[:-1]) if arg in {"--output-dir", "--evidence-dir"}), None)
+    output_value = option_value(remaining, {"--output-dir", "--evidence-dir"})
+    output = Path(output_value) if output_value else None
     if output and (output == root or root in output.parents):
         raise ValueError("output/evidence directory must be outside the source checkout")
     if record_path is None and output:
         record_path = output / "local-snapshot.json"
     if record_path and (record_path == root or root in record_path.parents):
         raise ValueError("snapshot record must be outside the source checkout")
+    if record_path and os.path.lexists(record_path):
+        raise ValueError("snapshot record must be fresh; refusing to overwrite an earlier receipt")
 
     def execute(checkout, receipt):
         environment[CONTEXT] = str(checkout.resolve())
