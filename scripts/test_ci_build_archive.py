@@ -687,6 +687,8 @@ class LiveBoundaryTests(unittest.TestCase):
                                             ([row], set(), 0, counts), ([row], {"ExampleLiveTests/works()"}, 65, counts),
                                             ([dict(row, outcome="skipped", reason="missing server")], {"ExampleLiveTests/works()"}, 0, counts),
                                             ([row, dict(parameter, outcome="failed")], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([row, parameter, parameter], {"ExampleLiveTests/works()"}, 0, counts),
+                                            ([dict(row, duration_seconds=float("inf"))], {"ExampleLiveTests/works()"}, 0, counts),
                                             ([row], {"ExampleLiveTests/works()"}, 0, TestResultsSummary(1, 1, 0, 0, "Failed"))):
             with self.subTest(code=code, rows=len(rows)), self.assertRaises(ContractError):
                 live.public_outcomes(declared, compiled, rows, result, code)

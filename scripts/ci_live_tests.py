@@ -16,10 +16,10 @@ from urllib.parse import quote, quote_plus, urlsplit
 
 import ci_build_archive as archive
 import ci_unit_tests as units
-from ci_summary import ContractError, decode, require, test_identity
+from ci_summary import ContractError, decode, duration, require, test_identity
 from ci_verdict import function_identity, tokens
-from run_host_checks import git, run_identity
-from run_offline_unit_tests import _stop_process_group, parse_official_test_results_summary
+from run_host_checks import git, toolchain
+from run_offline_unit_tests import _stop_process_group
 
 WORKFLOW = ".github/workflows/ci-nightly.yml"
 REPOSITORY = "sudoHG/immichSlides"
@@ -88,6 +88,7 @@ def scan_tree(path, needles):
 
 
 def public_outcomes(declared, compiled, rows, counts, code):
+    tokens([row["identity"] for row in rows])
     expected = tokens(declared, functions=True)
     compiled_ids = [test_identity("swift", units.UNIT_TARGET + "/" + key,
                                   platform=declared[0]["dimensions"]["platform"]) for key in compiled]
@@ -105,6 +106,8 @@ def public_outcomes(declared, compiled, rows, counts, code):
 def sanitized_outcomes(declared, rows):
     # Official arguments, failure messages, skip reasons and URLs never cross this seam.
     expected = tokens(declared, functions=True)
+    for row in rows:
+        duration(row["duration_seconds"])
     result = []
     for identity in sorted(expected.values(), key=lambda item: item["key"]):
         functions = [row for row in rows if "parameter" not in row["identity"]["dimensions"]
@@ -113,8 +116,10 @@ def sanitized_outcomes(declared, rows):
                       and function_identity(row["identity"]) == identity]
         outcome = functions[0]["outcome"] if len(functions) == 1 else "not-run"
         require(outcome in {"passed", "failed", "skipped", "not-run"}, "unknown live outcome")
-        result.append({"identity": identity, "outcome": outcome, "parameters":
-                       [{"index": index, "outcome": row["outcome"]} for index, row in enumerate(parameters)]})
+        result.append({"identity": identity, "outcome": outcome,
+                       "duration_seconds": functions[0]["duration_seconds"] if len(functions) == 1 else 0,
+                       "parameters": [{"index": index, "outcome": row["outcome"], "duration_seconds": row["duration_seconds"]}
+                                      for index, row in enumerate(parameters)]})
     return result
 
 
@@ -147,9 +152,13 @@ def run_live(args):
     private.mkdir(mode=0o700, parents=True, exist_ok=False)
     platform = selection["platform"]
     record = {"schema_version": 1, "tier": "live-unit", "status": "failed", "identity": identity,
+              "source": selection["source"],
               "run_id": selection["run_id"], "attempt": selection["attempt"], "platform": platform,
               "artifact_id": selection["artifact_id"], "producer_attempt": selection["producer_attempt"],
               "declared": [], "compiled": [], "observed": [], "exit_code": 1,
+              "hashes": {"manifests": {}, "policies": {"live-runner": archive.file_hash(Path(__file__)),
+                         "test-policy": archive.file_hash(Path(__file__).with_name("ci-test-policy.json"))}},
+              "toolchain": {"versions": {}, "signing_mode": "not-applicable"},
               "diagnostic": "live-infrastructure-failed", "release_eligible": False}
     simulator = None
     phase = "archive"
@@ -180,6 +189,11 @@ def run_live(args):
         record["archive_sha256"] = manifest["archive_sha256"]
         record["manifest_sha256"] = archive.file_hash(args.archive_dir / "manifest.json")
         record["declarations_sha256"] = archive.file_hash(ROOT / "unit-declarations.json")
+        record["hashes"]["manifests"] = {"build": record["manifest_sha256"],
+            "unit-declarations": record["declarations_sha256"], "ci-pins": archive.file_hash(pins_path)}
+        record["toolchain"] = toolchain()
+        archive.record_signing(record, "adhoc")
+        record["toolchain"]["versions"]["simulator_runtime"] = pins["simulators"][platform]["runtime"]
         record["signing_mode"] = "sign-to-run-locally"
         runtime = pins["simulators"][platform]["runtime"]
         device = pins["device_types"]["iphone" if platform == "ios" else "appletv"]

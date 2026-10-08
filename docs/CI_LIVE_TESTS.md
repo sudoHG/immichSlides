@@ -75,7 +75,8 @@ Live logs, products, screenshots, simulator data, diagnostics and raw results ne
 
 Only scanned `live-summary.json` and `live-summary.md` upload, retained seven days.
 Allowed fields are source/run/archive provenance, static declared/compiled function
-identities, function outcomes, ordinal parameter outcomes, integer official counts,
+identities, manifest/policy hashes, measured toolchain/signing, function outcomes,
+ordinal parameter outcomes and durations, integer official counts,
 process exit and fixed diagnostics. Runtime arguments, failure messages and skip
 reasons are withheld. Missing/extra/duplicate execution, parameter failure, any skip,
 nonzero exit, official result disagreement or failed cleanup fails. Exceptions are
