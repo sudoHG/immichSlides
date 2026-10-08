@@ -335,8 +335,10 @@ Trusted verdict callers supply `base_registry` and the trusted evaluation date t
 
 Only an official first-call assertion failure (Xcode exit 65) with an exact active
 entry may obtain one retry. Official typed failure summaries must classify every
-failure for that method as `Assertion Failure`; crashes, infrastructure errors and
-unclassifiable results are ineligible. The executor resets the app, keychain and simulator
+failure for that method as `Assertion Failure`. When Xcode emits `Uncategorized`,
+official per-test details must instead identify each failure by XCTest's assertion
+message prefix and a positive source line. Crash/unknown messages, missing details
+and infrastructure errors are ineligible. The executor resets the app, keychain and simulator
 privacy state, then calls `test-without-building` with only the failed method.
 Global retry/repetition/iteration flags are rejected. Both calls, official exports,
 exit codes, durations and per-test attempts remain recorded. Failed then passed is

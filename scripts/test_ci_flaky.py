@@ -121,13 +121,17 @@ class RetryTests(unittest.TestCase):
             "children": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
                           "result": "Failed", "durationInSeconds": 1}]}]}
         for issue_types in (["Assertion Failure"], ["Crash"], ["Infrastructure Failure"], [],
-                            ["Unknown"], ["Assertion Failure", "Crash"]):
+                            ["Unknown"], ["Assertion Failure", "Crash"], ["Uncategorized"]):
             with self.subTest(issue_types=issue_types):
                 issues = {"issues": {"testFailureSummaries": {"_values": [
                     {"testCaseName": {"_value": "ExampleTests.testNavigation()"},
                      "issueType": {"_value": kind}} for kind in issue_types]}}}
                 def run(command, **kwargs):
-                    return subprocess.CompletedProcess(command, 0, json.dumps(issues if "--legacy" in command else tests))
+                    details = {"testIdentifier": identity["key"] + "()", "testResult": "Failed", "testRuns": [
+                        {"nodeType": "Test Case Run", "result": "Failed", "name": "failed - Deliberate assertion",
+                         "sourceLocation": {"lineNumber": 12}}]}
+                    return subprocess.CompletedProcess(command, 0, json.dumps(issues if "--legacy" in command else
+                        details if "test-details" in command else tests))
                 with mock.patch("ci_flaky.subprocess.run", side_effect=run):
                     rows = read_xcode_observations(Path("result"), lambda key: identity, 1, 65,
                                                    expected_device=("target", "iphone"))
@@ -135,12 +139,25 @@ class RetryTests(unittest.TestCase):
                     actual = retry_observations(rows, registry(), tier="ui", environment="hermetic",
                         today=date(2026, 10, 8), reset=lambda: resets.append(True),
                         execute=lambda key: observation(identity, "passed", 1))
-                    self.assertEqual(bool(resets), issue_types == ["Assertion Failure"])
+                    self.assertEqual(bool(resets), issue_types in (["Assertion Failure"], ["Uncategorized"]))
                     self.assertEqual(actual[0]["outcome"], "flaky-passed" if resets else
                                      "crashed" if "Crash" in issue_types else "failed")
                     with self.assertRaises(ContractError):
                         read_xcode_observations(Path("result"), lambda key: identity, 1, 65,
                                                 expected_device=("target", "ipad"))
+
+    def test_uncategorized_details_require_assertion_message_and_source_location(self):
+        from ci_flaky import official_assertion_details
+        key = "ExampleTests/testNavigation()"
+        for name, line, expected in (("failed - Deliberate assertion", 12, True),
+                                     ("XCTAssertTrue failed - Navigation missing", 12, True),
+                                     ("Crash: test runner exited unexpectedly", 12, False),
+                                     ("Simulator connection lost", 12, False),
+                                     ("Unknown failure", 12, False), ("failed - Deliberate assertion", 0, False)):
+            with self.subTest(name=name, line=line):
+                payload = {"testIdentifier": key, "testResult": "Failed", "testRuns": [{
+                    "nodeType": "Test Case Run", "result": "Failed", "name": name, "sourceLocation": {"lineNumber": line}}]}
+                self.assertEqual(official_assertion_details(payload, key), expected)
 
     def test_target_udid_refuses_device_class_mismatch(self):
         from ci_flaky import simulator_device_class

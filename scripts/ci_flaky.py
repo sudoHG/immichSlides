@@ -246,7 +246,28 @@ def official_failure_outcomes(payload):
     walk(payload)
     return {key: ("crashed" if any(kind in {"Crash", "Uncaught Exception"} for kind in kinds) else
                   "assertion" if not blocked and kinds and all(kind == "Assertion Failure" for kind in kinds) else
+                  "uncategorized" if not blocked and kinds and all(kind == "Uncategorized" for kind in kinds) else
                   "failed") for key, kinds in keys.items()}
+
+
+def official_assertion_details(payload, raw_key):
+    require(payload.get("testIdentifier") == raw_key and payload.get("testResult") == "Failed",
+            "official failure details do not match test result")
+    failures = []
+    def walk(nodes):
+        require(isinstance(nodes, list), "invalid official failure detail children")
+        for node in nodes:
+            require(isinstance(node, dict), "invalid official failure detail node")
+            if node.get("nodeType") in {"Failure Message", "Test Case Run"}:
+                if node.get("result") == "Failed" or node.get("nodeType") == "Failure Message":
+                    name = node.get("name", "")
+                    location = node.get("sourceLocation", {})
+                    failures.append(isinstance(name, str) and
+                        re.match(r"^(?:failed - |(?:XCTAssert\w+|XCTUnwrap) failed\b)", name) is not None and
+                        isinstance(location, dict) and type(location.get("lineNumber")) is int and location["lineNumber"] > 0)
+            walk(node.get("children", []))
+    walk(payload.get("testRuns", []))
+    return bool(failures) and all(failures)
 
 
 def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, *, expected_device=None):
@@ -287,6 +308,11 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
         key = raw_key[:-2]
         require(METHOD.fullmatch(key) is not None and key not in seen, "invalid or repeated XCTest identity")
         seen.add(key)
+        if case["result"] == "Failed" and failure_outcomes.get(key) == "uncategorized":
+            details = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details", "--path", str(bundle),
+                                      "--test-id", raw_key, "--compact"], capture_output=True, check=True, timeout=60)
+            if official_assertion_details(json.loads(details.stdout), raw_key):
+                failure_outcomes[key] = "assertion"
         outcome = {"Passed": "passed", "Failed": "failed", "Skipped": "skipped"}.get(case["result"])
         require(outcome is not None, "unknown XCTest outcome")
         if outcome == "failed" and failure_outcomes.get(key) == "crashed":
