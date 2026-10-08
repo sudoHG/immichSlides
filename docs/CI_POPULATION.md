@@ -173,6 +173,10 @@ or authorization for later entries/heads; the trusted caller still selects polic
 using the admitted base and exact-head approval.
 Policy approval is a maintainer gate; agents must not perform it.
 Proposed entries never authorize passing exceptions in the verdict library.
+An optional `proposed` section contains `expected_skips` and `deselections` with the
+same entry grammar. Its lists never participate in the active verdict, even when
+that tier has an approval record. Approval requires promoting the granted entries
+to the active lists; an approval record does not move proposals automatically.
 
 When adding a test that needs a skip or deselection, include the policy entry in
 the same PR as the test. Record its tier, environment and exact reason, and the

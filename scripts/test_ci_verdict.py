@@ -156,6 +156,10 @@ class PopulationVerdictTests(unittest.TestCase):
         self.policy = policy()
         rule = {"kind": "host", "key_pattern": "*", "dimensions": {}, "tier": "host",
                 "environment": "hermetic", "reason": "missing"}
+        self.policy["proposed"] = {"expected_skips": [rule], "deselections": []}
+        self.assertEqual(parse_policy(self.policy)["proposed"], self.policy["proposed"])
+        self.assertEqual(self.verdict()["status"], "failed")
+        self.assertEqual(self.verdict()["errors"], ["skipped: format"])
         self.policy["expected_skips"] = [rule, dict(rule, key_pattern="format")]
         self.assertEqual(self.verdict()["status"], "failed")
 

@@ -19,8 +19,14 @@ from ci_population import removed_tests
 def parse_policy(raw):
     policy = decode(raw)
     names = {"schema_version", "approval_records", "expected_skips", "deselections"}
+    if isinstance(policy, dict) and "proposed" in policy:
+        names.add("proposed")
     fields(policy, names, "test policy")
     require(type(policy["schema_version"]) is int and policy["schema_version"] == 1, "unsupported test policy version")
+    if "proposed" in policy:
+        fields(policy["proposed"], {"expected_skips", "deselections"}, "proposed policy")
+        # Keep proposal grammar separate from the active lists, regardless of tier records.
+        parse_policy(dict(policy["proposed"], schema_version=1, approval_records=[]))
     require(isinstance(policy["approval_records"], list), "approval records must be an array")
     approved_tiers = set()
     for record in policy["approval_records"]:
