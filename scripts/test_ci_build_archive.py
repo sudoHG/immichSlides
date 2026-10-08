@@ -470,11 +470,12 @@ class BuildArchiveTests(unittest.TestCase):
         device_types = {"devicetypes": [{"name": pins["device_types"]["iphone"], "identifier": device_type}]}
         devices = {"devices": {pins["simulators"]["ios"]["runtime"]: [
             {"udid": simulator, "deviceTypeIdentifier": device_type}]}}
-        for phase, readable in (("enumeration", False), ("enumeration", True),
+        for phase, readable, export_bound in ((phase, readable, bound) for bound in (60, 180)
+                                for phase, readable in (("enumeration", False), ("enumeration", True),
                                 ("execution", False), ("execution", True),
-                                ("tests", False), ("summary", False), ("shutdown", True), ("delete", True)):
-            with self.subTest(phase=phase, readable=readable):
-                case = self.root / (phase + ("-readable" if readable else "-unreadable"))
+                                ("tests", False), ("summary", False), ("shutdown", True), ("delete", True))):
+            with self.subTest(phase=phase, readable=readable, export_bound=export_bound):
+                case = self.root / (phase + ("-readable" if readable else "-unreadable") + str(export_bound))
                 relocated, output = case / "relocated", case / "records"
                 enumeration_bundle = case / "private/enumeration/enumeration.xcresult"
                 execution_bundle = case / "private/execution/execution.xcresult"
@@ -499,7 +500,7 @@ class BuildArchiveTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"testNodes": []}).encode(), b"")
 
                 def export_empty(_bundle, records, _sensitive, **kwargs):
-                    self.assertEqual(kwargs["summary_timeout_seconds"], 60)
+                    self.assertEqual(kwargs["summary_timeout_seconds"], export_bound)
                     if phase in {"tests", "summary"}:
                         from run_strict_e2e import export_private_result_bundle
                         return export_private_result_bundle(_bundle, records, _sensitive, **kwargs)
@@ -528,9 +529,11 @@ class BuildArchiveTests(unittest.TestCase):
                     archive.DiskMeasurement.return_value.finish.return_value = {}
                     self.assertEqual(units.main(["run", "--selection-path", str(selection), "--archive-dir", str(archive_dir),
                                                 "--relocated-path", str(relocated), "--output-dir", str(output),
+                                                *([] if export_bound == 60 else ["--result-export-timeout-seconds", str(export_bound)]),
                                                 *([] if owns_simulator else ["--simulator-id", simulator])]),
                                      124 if phase in {"enumeration", "execution"} else 1)
-                    export.assert_called_once_with(bundle, output.resolve(), [units.PUBLIC_API_KEY], summary_timeout_seconds=60)
+                    export.assert_called_once_with(bundle, output.resolve(), [units.PUBLIC_API_KEY],
+                                                   summary_timeout_seconds=export_bound, export_timeout_seconds=export_bound)
                 if owns_simulator:
                     cleanup = [call for call in processes.call_args_list if call.args[0][1] == "simctl"]
                     self.assertEqual([call.args[0][2] for call in cleanup], ["shutdown", "delete"])
@@ -540,7 +543,7 @@ class BuildArchiveTests(unittest.TestCase):
                     exports = [call for call in processes.call_args_list if call.args[0][1] == "xcresulttool"]
                     expected_exports = ["tests", "summary"] if phase == "summary" else ["tests"]
                     self.assertEqual([call.args[0][4] for call in exports], expected_exports)
-                    self.assertEqual([call.kwargs["timeout"] for call in exports], [60] * len(expected_exports))
+                    self.assertEqual([call.kwargs["timeout"] for call in exports], [export_bound] * len(expected_exports))
                 self.assertTrue(bundle.is_dir())
                 self.assertFalse(json.loads((output / "result-bundle-quarantine.json").read_text())["result_bundle_disposed"])
                 provenance = json.loads((output / "archive-consumption.json").read_text())
@@ -559,13 +562,16 @@ class BuildArchiveTests(unittest.TestCase):
                 if readable and phase == "enumeration":
                     self.assertEqual(summary["infrastructure"][-1]["message"], "official unit tests were empty")
                 if phase in {"execution", "tests", "summary", "shutdown", "delete"}:
-                    code = "unit-execution-timed-out" if phase == "execution" else "unit-results-timed-out" if phase in {"tests", "summary"} else "simulator-cleanup-timed-out"
+                    code = "unit-execution-timed-out" if phase == "execution" else "xcresult-export-timeout" if phase in {"tests", "summary"} else "simulator-cleanup-timed-out"
                     self.assertIn(code, [entry["code"] for entry in summary["infrastructure"]])
                 if phase in {"tests", "summary"}:
-                    diagnostic = next(entry["message"] for entry in summary["infrastructure"] if entry["code"] == "unit-results-timed-out")
+                    diagnostic = next(entry["message"] for entry in summary["infrastructure"] if entry["code"] == "xcresult-export-timeout")
                     self.assertIn("official " + phase + " export timed out", diagnostic)
-                    self.assertIn("budget=60s", diagnostic)
+                    self.assertIn(f"budget={export_bound}s", diagnostic)
                     self.assertIn("elapsed=", diagnostic)
+                    measurements = json.loads((output / "measurements.json").read_text())
+                    self.assertEqual(measurements["enumeration_budget"]["result_export_timeout_seconds"], export_bound)
+                    self.assertGreaterEqual(measurements["official_export_seconds"], 0)
 
 
 class ArchiveUnitResultTests(unittest.TestCase):
@@ -674,7 +680,7 @@ class ArchiveUnitResultTests(unittest.TestCase):
         from run_offline_unit_tests import INTERRUPT_GRACE_SECONDS
         workflow = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/ci-gate.yml").read_text())
         for platform in ("ios", "tvos"):
-            budget = enumeration_budget("ci", platform)
+            budget = enumeration_budget("ci", platform, result_export_timeout_seconds=180)
             job_seconds = workflow["jobs"]["unit-" + platform]["timeout-minutes"] * 60
             self.assertEqual(budget["job_timeout_seconds"], job_seconds)
             self.assertLess(budget["simulator_boot_timeout_seconds"] + budget["timeout_seconds"] +

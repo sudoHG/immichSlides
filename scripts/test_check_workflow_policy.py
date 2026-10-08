@@ -30,7 +30,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         document = yaml.load(source, Loader=policy.WorkflowLoader)
         self.assertEqual(self.rules(document, ".github/workflows/ci-nightly.yml"), set())
         for mutation in ("other-workflow", "unconditional", "job-secret", "early-secret", "wrong-environment",
-                         "run-secret", "with-secret", "bracket-secret", "expression-environment"):
+                         "run-secret", "with-secret", "bracket-secret", "expression-environment",
+                         "whole-context", "dynamic-secret", "lowercase-secret", "uppercase-context",
+                         "other-secret", "inherited-context", "binding-context"):
             with self.subTest(mutation=mutation):
                 changed = copy.deepcopy(document)
                 job = changed["jobs"]["live-unit"]
@@ -51,6 +53,21 @@ class WorkflowPolicyTests(unittest.TestCase):
                     job["steps"][0]["env"] = {"OTHER": "${{ secrets['IMMICH_TEST_SERVER_URL'] }}"}
                 elif mutation == "expression-environment":
                     job["environment"] = "${{ inputs.environment }}"
+                elif mutation == "whole-context":
+                    job["steps"][0]["env"] = {"OTHER": "${{ toJSON(secrets) }}"}
+                elif mutation == "dynamic-secret":
+                    job["steps"][0]["env"] = {"OTHER": "${{ secrets[format('IMMICH_{0}', 'TEST_SERVER_URL')] }}"}
+                elif mutation == "lowercase-secret":
+                    job["steps"][0]["env"] = {"OTHER": "${{ secrets.immich_test_server_url }}"}
+                elif mutation == "uppercase-context":
+                    job["steps"][0]["env"] = {"OTHER": "${{ toJSON(SeCrEtS) }}"}
+                elif mutation == "other-secret":
+                    job["env"] = {"OTHER": "${{ secrets.UNRELATED }}"}
+                elif mutation == "inherited-context":
+                    changed["env"] = {"OTHER": "${{ toJSON(secrets) }}"}
+                elif mutation == "binding-context":
+                    step = next(step for step in job["steps"] if step.get("id") == "live")
+                    step["env"]["CI_LIVE_URL"] = "${{ toJSON(secrets) }}"
                 else:
                     job["environment"] = "test-server"
                 self.assertIn("live-credential", self.rules(changed, path))

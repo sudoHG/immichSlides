@@ -262,8 +262,20 @@ def check_workflow(path: str, source: str) -> list[Violation]:
     allowed_secret_locations = {'workflow.jobs.live-unit.steps[' + str(index) + '].env.' + key
         for index, step in enumerate(jobs.get('live-unit', {}).get('steps', []))
         if step.get('id') == 'live' and step.get('env') == LIVE_BINDINGS for key in LIVE_BINDINGS}
+    live_job_locations = []
+    for job_id, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        environment = job.get('environment')
+        environment = environment.get('name') if isinstance(environment, dict) else environment
+        if isinstance(environment, str) and environment.casefold() == LIVE_ENVIRONMENT:
+            live_job_locations.append(f'workflow.jobs.{job_id}.')
     for location, value in string_scalars(document):
-        if re.search(r"secrets\s*(?:\.\s*IMMICH_TEST_SERVER_|\[\s*['\"]IMMICH_TEST_SERVER_)", value):
+        live_scope = (any(location.startswith(prefix) for prefix in live_job_locations)
+                      or bool(live_job_locations) and location.startswith('workflow.env.'))
+        if (live_scope and re.search(r'\bsecrets\b', value, re.IGNORECASE)
+                or re.search(r"\bsecrets\s*(?:\.\s*IMMICH_TEST_SERVER_|\[\s*['\"]IMMICH_TEST_SERVER_)",
+                             value, re.IGNORECASE)):
             if path != LIVE_WORKFLOW or location not in allowed_secret_locations:
                 flag(location, 'live-credential', 'Live secret references belong only to the guarded injection environment')
     for location, item in walk_mappings(document):

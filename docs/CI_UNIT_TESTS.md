@@ -20,7 +20,7 @@ flowchart LR
 
 Each unit job waits only for its own platform's build. The critical path is the longer
 complete platform path or host checks; queue time is measured separately.
-Both build and consumer jobs are bounded at 40 minutes. Builds have a 30-minute script
+Build jobs are bounded at 40 minutes and consumer jobs at 45 minutes. Builds have a 30-minute script
 bound. Unit consumers have separate boot, enumeration and execution bounds:
 
 | Phase | CI iOS | CI tvOS | Local default |
@@ -28,7 +28,7 @@ bound. Unit consumers have separate boot, enumeration and execution bounds:
 | Simulator boot (`simctl bootstatus -b`) | 240 s | 240 s | 600 s |
 | Bundle enumeration, after boot | 660 s | 300 s | 300 s |
 | Unit execution | 900 s | 900 s | 900 s |
-| Official tests / summary exports | 60 / 60 s | 60 / 60 s | 60 / 60 s |
+| Official tests / summary exports | 180 / 180 s | 180 / 180 s | 60 / 60 s |
 | Owned simulator shutdown / delete | 15 / 60 s | 15 / 60 s | 15 / 60 s |
 
 There is no automatic test retry or silent rebuild. The [trusted publisher](https://github.com/sudoHG/immichSlides/issues/89)
@@ -57,7 +57,7 @@ python3 -B scripts/ci_unit_tests.py stage --path /tmp/archive-tools \
 python3 -B /tmp/archive-tools/scripts/ci_unit_tests.py run \
   --selection-path /tmp/archive-selection.json --archive-dir /tmp/archive-download \
   --relocated-path /tmp/consumer-relocated-ios --output-dir /tmp/unit-records \
-  --enumeration-profile ci
+  --enumeration-profile ci --result-export-timeout-seconds 180
 python3 -B /tmp/archive-tools/scripts/ci_unit_tests.py scan --output-dir /tmp/unit-records
 ```
 
@@ -120,10 +120,14 @@ Archive validation failures reuse `archive-identity-mismatch` or `archive-unavai
 with **use Re-run all jobs**. Simulator/enum failures use `unit-archive-failed`.
 
 Raw bundles stay outside publishable records in the existing private-result storage.
-Finalization attempts official export even after Xcode failure, with separate
-60-second bounds for tests and summary. Execution exits other than 0 or 65 record
+Finalization attempts official export even after Xcode failure, reusing the UI runner's
+shared export implementation and explicit `--result-export-timeout-seconds` bound for
+each tests and summary export. Omitting the option retains the local 60-second default;
+the hosted workflow passes 180 seconds. Execution exits other than 0 or 65 record
 `unit-execution-timed-out` (124) or `unit-execution-failed` before result comparison.
-An export timeout records `unit-results-timed-out`. Owned-simulator shutdown and delete
+An export timeout records the UI runner's distinct `xcresult-export-timeout` infrastructure
+code, with phase, bound and elapsed time; it cannot count as a product failure or verified
+execution. Owned-simulator shutdown and delete
 have 15- and 60-second bounds; deletion still runs after shutdown failure. Their durations
 and exit codes are measured. Cleanup failure makes the summary failed, and scanning
 continues. Failed runs or
@@ -150,6 +154,9 @@ Records expire after 30 days for PRs and 7 days for other runs.
 
 Workflow timestamps measure setup and transfer. Monotonic clocks measure build,
 packing, separate simulator boot, post-boot enumeration, execution and consumer total.
+`measurements.json` also records combined official tests/summary export time, including
+timeouts, and result parsing/judgment time. Its `enumeration_budget` and `summary.md`
+record the actual per-export bound.
 Producer/consumer disk tracers sample free volume space every second, retaining minimum
 free space and peak growth. These shared-volume samples include transient simulator
 files and other activity; they are not estimates from final Products size. Queue times
@@ -165,12 +172,16 @@ calibration set does not estimate population tail latency or prove capacity.
 The [recovery calibration](https://github.com/sudoHG/immichSlides/actions/runs/37717972490)
 measured maximum boot at **110.19 s**; 2x and upward minute rounding choose **240 s**.
 Its iOS job lasted 556 s, with 110.19 + 251.28 + 70.47 s in the three phases, leaving
-**124.06 s** measured job overhead. Adding separate 60-second tests and summary export
+**124.06 s** measured job overhead. Adding separate 180-second tests and summary export
 bounds, plus 15 seconds for simulator shutdown and 60 seconds for delete, and rounding upward
-gives a conservative **360-second overhead allowance**. A hosted delete exceeded its
+gives a conservative **600-second overhead allowance**. The hosted export bound reuses
+the [UI calibration](CI_UI.md): a unit tests export on
+[PR #169](https://github.com/sudoHG/immichSlides/pull/169) took 62.1 seconds against the
+former 60-second limit, despite zero product failures. This is an infrastructure
+allowance, not a product deadline. A hosted delete exceeded its
 former 15-second bound; the 60-second recovery allowance remains bounded. The runner's shared
 interrupt grace is **120 s**. The longest combined bound is therefore
-`240 + 660 + 900 + 120 + 360 = 2280 s < 2400 s`.
+`240 + 660 + 900 + 120 + 600 = 2520 s < 2700 s`.
 The guard reads actual workflow `timeout-minutes`; measurements and Markdown record
 phase limits, grace, measured overhead and allowance. These are infrastructure budgets;
 product assertions and success thresholds do not change.
