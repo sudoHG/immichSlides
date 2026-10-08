@@ -32,6 +32,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         document["on"] = {"workflow_run": {"workflows": ["ci-gate", "ci-ui"],
                                            "types": ["requested", "in_progress", "completed"]}}
         document["jobs"]["check"]["steps"][0]["with"] = {"ref": "main"}
+        document["jobs"]["check"]["runs-on"] = "ubuntu-24.04"
         return document
 
     def test_remote_actions_and_reusable_workflows_require_full_commit_pins(self):
@@ -81,7 +82,7 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_approval_wait_cannot_acquire_credentials_or_execute_an_action(self):
         document = {"on": {"workflow_dispatch": None}, "permissions": {}, "jobs": {
-            "wait": {"runs-on": "macos-latest", "timeout-minutes": 5, "permissions": {},
+            "wait": {"runs-on": "ubuntu-24.04", "timeout-minutes": 5, "permissions": {},
                      "environment": "ci-approval", "steps": [{"run": "/usr/bin/true"}]}}}
         path = ".github/workflows/ci-approval.yml"
         self.assertEqual(self.rules(document, path), set())
@@ -102,6 +103,25 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("publisher-credential", self.rules(document, TRUSTED))
         document["jobs"]["check"]["steps"][0]["run"] = '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py publish'
         self.assertNotIn("publisher-credential", self.rules(document, TRUSTED))
+
+    def test_publisher_history_runner_and_approval_queue_contracts_fail_closed(self):
+        root = Path(__file__).parents[1]
+        publisher = yaml.load((root / TRUSTED).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual(self.rules(publisher, TRUSTED), set())
+        shallow = copy.deepcopy(publisher)
+        del shallow["jobs"]["publish"]["steps"][0]["with"]["fetch-depth"]
+        self.assertIn("publisher-history", self.rules(shallow, TRUSTED))
+        expensive = copy.deepcopy(publisher)
+        expensive["jobs"]["admission"]["runs-on"] = "xcode-27"
+        self.assertIn("publisher-runner", self.rules(expensive, TRUSTED))
+        redundant = copy.deepcopy(publisher)
+        del redundant["jobs"]["admission"]["steps"][-1]["if"]
+        self.assertIn("publisher-admission", self.rules(redundant, TRUSTED))
+        for path in (".github/workflows/ci-approval.yml", ".github/workflows/ci-approve.yml"):
+            document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
+            self.assertEqual(self.rules(document, path), set())
+            document["jobs"]["record"]["concurrency"] = {"group": "ci-state-pr-${{ inputs.pull_request }}", "cancel-in-progress": False}
+            self.assertIn("approval-queue", self.rules(document, path))
 
     def probe(self):
         document = self.trusted()

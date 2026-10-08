@@ -153,7 +153,7 @@ def trusted_run_allowed(script, path, events):
     if path in PUBLISHER_COMMANDS:
         commands = {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py ' + command
                     for command in PUBLISHER_COMMANDS[path]}
-        commands.add('/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"')
+        commands.add('/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"')
         if path == ".github/workflows/ci-approval.yml":
             commands.add("/usr/bin/true")
         if script in commands:
@@ -239,12 +239,19 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             or set(events) != {"schedule", "workflow_dispatch"}
             or document.get("permissions") != {}):
         flag("workflow", "probe-contract", "ci-probe needs its exact name, scheduled/manual triggers and no workflow-level grants")
+    approval_workflow = path in {".github/workflows/ci-approval.yml", ".github/workflows/ci-approve.yml"}
+    if approval_workflow and "concurrency" in document:
+        flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
     for job_id, job in jobs.items():
         location = f"jobs.{job_id}"
         if not isinstance(job, dict):
             flag(location, "workflow-format", "Expected a job mapping")
             continue
+        if path in PUBLISHER_COMMANDS and job.get("runs-on") != "ubuntu-24.04":
+            flag(location, "publisher-runner", "Publisher and approval jobs use the pinned Linux runner")
+        if approval_workflow and "concurrency" in job:
+            flag(location, "approval-queue", "Approval jobs cannot enter a replaceable concurrency queue")
         permissions = job.get("permissions", document.get("permissions"))
         if not explicit_permissions(permissions):
             flag(location, "permissions", "Job needs explicit permissions, directly or inherited")
@@ -266,10 +273,19 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         elif isinstance(steps, list) and any(not isinstance(step, dict) or not ("uses" in step or "run" in step) for step in steps):
             flag(location, "workflow-format", "Each step needs run or uses")
         if trusted and isinstance(steps, list):
+            if path in PUBLISHER_COMMANDS and any(step.get("run", "").endswith("scripts/ci_publish.py publish")
+                                                 for step in steps if isinstance(step, dict)):
+                checkouts = [step for step in steps if isinstance(step, dict)
+                             and step.get("uses", "").startswith("actions/checkout@")]
+                if len(checkouts) != 1 or checkouts[0].get("with", {}).get("fetch-depth") != 0:
+                    flag(location, "publisher-history", "Publication needs full history for admitted historical readers")
             for index, step in enumerate(steps):
                 if not isinstance(step, dict):
                     continue
                 step_location = f"{location}.steps[{index}]"
+                if (path in PUBLISHER_COMMANDS and step.get("run", "").endswith("scripts/ci_publish.py reevaluate")
+                        and step.get("if") != "steps.admit.outputs.recorded == 'true'"):
+                    flag(step_location, "publisher-admission", "Admission re-evaluates only after recording a new admission")
                 if "run" in step and not trusted_run_allowed(step["run"], path, events):
                     flag(step_location, "trusted-run", "Trusted run must be an allowlisted literal command or entry point")
                 settings = {key: step[key] for key in ("shell", "working-directory") if key in step}

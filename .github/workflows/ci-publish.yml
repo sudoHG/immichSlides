@@ -19,7 +19,7 @@ permissions: {}
 
 jobs:
   route:
-    runs-on: xcode-27
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -35,7 +35,7 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - run: /usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
       - id: route
         env:
           CI_WORKFLOW_TOKEN: ${{ github.token }}
@@ -44,7 +44,7 @@ jobs:
   admission:
     needs: route
     if: github.event_name == 'workflow_run' && github.event.action != 'completed'
-    runs-on: xcode-27
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -59,7 +59,7 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - run: /usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
       - id: admit
         env:
           CI_WORKFLOW_TOKEN: ${{ github.token }}
@@ -71,13 +71,14 @@ jobs:
           path: ${{ runner.temp }}/ci-admission/record.json
           if-no-files-found: error
           retention-days: 30
-      - env:
+      - if: steps.admit.outputs.recorded == 'true'
+        env:
           CI_WORKFLOW_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py reevaluate'
 
   publish:
     needs: route
-    runs-on: xcode-27
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -91,8 +92,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: main
+          fetch-depth: 0
           persist-credentials: false
-      - run: /usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
       - env:
           CI_WORKFLOW_TOKEN: ${{ github.token }}
           CI_APP_ID: ${{ vars.CI_APP_ID }}

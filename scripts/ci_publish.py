@@ -78,10 +78,17 @@ def admission_identity(repository, run, pr, commit, *, existing=None, on_main=Fa
     return parse_identity(identity)
 
 
-def match_producer(producer, admitted, *, attempt):
+def match_producer(producer, admitted, *, previous_mismatch=False):
     if parse_identity(producer) != parse_identity(admitted):
-        return "base moved; push again or update the branch" + (" (repeated across reruns)" if attempt > 1 else "")
+        return "base moved; push again or update the branch" + (" (repeated across reruns)" if previous_mismatch else "")
     return None
+
+
+def prior_mismatch(statuses, run, login):
+    prefix = f"ci-base-mismatch/run-{run['id']}/attempt-"
+    return any(status["creator"]["login"] == login and status["state"] == "success"
+               and status["context"].startswith(prefix) and status["context"][len(prefix):].isdecimal()
+               and int(status["context"][len(prefix):]) < run["run_attempt"] for status in statuses)
 
 
 def authoritative_run(runs, head, workflow, repository):
@@ -229,19 +236,37 @@ def json_member(api, artifact, filename):
 
 
 def trusted_admissions(api, run_ids):
+    if not run_ids:
+        return {}
     workflow = api.repo("actions/workflows/ci-publish.yml", missing=True)
     records = {}
     if workflow is None:
         return records
+    # Establish the trusted uploaders before inspecting any named artifact.
+    # A PR can upload the same name, but cannot make its run trusted this way.
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=31)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    main = api.repo("git/ref/heads/main")["object"]["sha"]
+    sha(main)
+    trusted, ancestry = set(), {}
+    for run in api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", branch="main", created=">=" + cutoff):
+        if not (run["path"] == PUBLISH_PATH and run["workflow_id"] == workflow["id"]
+                and run["event"] in {"workflow_run", "workflow_dispatch"} and run["head_branch"] == "main"
+                and run["head_repository"]["full_name"] == api.repository
+                and run["repository"]["full_name"] == api.repository):
+            continue
+        revision = run["head_sha"]
+        sha(revision)
+        if revision not in ancestry:
+            comparison = api.repo("compare/" + revision + "..." + main)
+            ancestry[revision] = comparison["merge_base_commit"]["sha"] == revision and comparison["status"] in {"ahead", "identical"}
+        if ancestry[revision]:
+            trusted.add(positive(run["id"]))
     for run_id in run_ids:
         for artifact in api.pages("actions/artifacts", "artifacts", name=f"ci-admission-{positive(run_id)}"):
-            if artifact["name"] == f"ci-admission-{run_id}" and not artifact["expired"]:
-                trusted_run_id = positive(artifact["workflow_run"]["id"])
-                run = api.repo(f"actions/runs/{trusted_run_id}")
-                require(run["path"] == PUBLISH_PATH and run["workflow_id"] == workflow["id"]
-                        and run["event"] in {"workflow_run", "workflow_dispatch"} and run["head_branch"] == "main"
-                        and run["head_repository"]["full_name"] == api.repository
-                        and run["repository"]["full_name"] == api.repository, "untrusted admission artifact")
+            if (artifact["name"] == f"ci-admission-{run_id}" and not artifact["expired"]
+                    and artifact["workflow_run"]["id"] in trusted):
+                positive(artifact["workflow_run"]["id"])
                 record = json_member(api, artifact, "record.json")
                 require(type(record.get("schema_version")) is int and record["schema_version"] == 1, "unsupported admission version")
                 require(artifact["name"] == f"ci-admission-{record['run_id']}", "admission run ID mismatch")
@@ -336,8 +361,11 @@ def producer_evidence(api, run, source):
     for attempt in range(1, run["run_attempt"] + 1):
         require(attempt <= 100, "too many producer attempts")
         for job in api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs"):
-            jobs[job["name"]] = dict(job, evidence_attempt=attempt)
-    expected, _, by_job = workflow_contract(source, run, details=True)
+            previous = jobs.get(job["name"])
+            execution = ("started_at", "completed_at", "runner_id")
+            retained = (previous and all(job.get(key) and job[key] == previous.get(key) for key in execution))
+            jobs[job["name"]] = dict(job, evidence_attempt=previous["evidence_attempt"] if retained else attempt)
+    expected, _, by_job, metadata = workflow_contract(source, run, metadata=True)
     require(set(jobs) == set(expected), "required job set mismatch")
     artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
     summaries = []
@@ -351,6 +379,8 @@ def producer_evidence(api, run, source):
             summary = parse_summary(json_member(api, matches[0], "summary.json"))
             require(summary["run"]["id"] == str(run["id"]) and summary["run"]["attempt"] == job["evidence_attempt"],
                     "artifact does not match its job's latest execution attempt")
+            require(all(summary["run"][key] == metadata[name][key] for key in ("tier", "job", "shard")),
+                    "summary tier/job/shard differs from its verified uploading job")
             summaries.append(summary)
     return list(jobs.values()), summaries
 
@@ -385,6 +415,7 @@ def compute(api, pr_number, pushed, login):
     admissions = trusted_admissions(api, [run["id"] for run in runs.values() if run])
     approved = approved_status(api, pr, login) if pr else False
     records = [admissions[run["id"]] for run in runs.values() if run and run["id"] in admissions]
+    classified = bool(records) and all(not run or run["id"] in admissions for run in runs.values())
     fork = bool(pr and pr["head"]["repo"]["full_name"] != api.repository)
     # Missing admission is pending, never success. Do not create an unnecessary
     # docs-only approval request while its classification is still being derived.
@@ -403,26 +434,32 @@ def compute(api, pr_number, pushed, login):
             source = record["workflows"][run["path"]]["candidate" if approved else "base"]
             jobs, summaries = producer_evidence(api, run, source)
             for summary in summaries:
-                mismatch = match_producer(summary["identity"], identity, attempt=run["run_attempt"])
+                mismatch = match_producer(summary["identity"], identity)
                 require(mismatch is None, mismatch or "identity mismatch")
             evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
         except (ContractError, KeyError, ValueError, TypeError):
             evaluations[context] = {"state": "failure", "description": "Missing, invalid or mismatched admitted evidence"}
             # The infrastructure advice is deterministic, without candidate text.
-            if any(match_producer(s["identity"], record["identity"], attempt=run["run_attempt"]) for s in summaries):
-                evaluations[context]["description"] = "base moved; push again or update the branch" + (" (repeated)" if run["run_attempt"] > 1 else "")
+            if any(match_producer(s["identity"], record["identity"]) for s in summaries):
+                previous = prior_mismatch(api.pages("commits/" + head + "/statuses"), run, login)
+                evaluations[context]["description"] = "base moved; push again or update the branch" + (" (repeated across reruns)" if previous else "")
+                evaluations[context]["mismatch"] = {"run_id": run["id"], "attempt": run["run_attempt"]}
     if pr:
         plan = publication_plan(pr, runs, admissions, evaluations, approved=approved, needs_approval=needs_approval)
         # UI has not shipped yet. Docs-only changes may be independently shown as
         # not applicable, but unknown/CI changes never become green without it.
-        if records and not any(r["classification"]["app_affected"] for r in records) and not needs_approval:
+        if classified and not any(r["classification"]["app_affected"] for r in records) and (not needs_approval or approved):
             plan["ci-ui"] = {"state": "success", "description": "Not applicable: trusted classification cannot affect the app"}
+            if fork:
+                plan["ci-ui"]["description"] += "; self-reported; approval-based"
     else:
         synthetic = {"number": 1, "head": {"sha": head, "repo": {"full_name": api.repository}},
                      "base": {"repo": {"full_name": api.repository}}}
         plan = publication_plan(synthetic, runs, admissions, evaluations, approved=False, needs_approval=False)
-        if records and not any(r["classification"]["app_affected"] for r in records):
+        if classified and not any(r["classification"]["app_affected"] for r in records):
             plan["ci-ui"] = {"state": "success", "description": "Not applicable: trusted classification cannot affect the app"}
+    if not classified:
+        plan["ci-approval-state"] = {"state": "pending", "description": "Waiting for trusted classification"}
     requests = approval_requests(api, pr) if pr else []
     current_request = next((request for request in requests if request["head_sha"] == head), None)
     if current_request:
@@ -442,6 +479,10 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
         require(api.repo(f"pulls/{pr_number}")["head"]["sha"] == head, "PR head changed before publication")
     for context, status in plan.items():
         app.status(head, context, status["state"], status["description"], status.get("target_url", target))
+        if status.get("mismatch"):
+            mismatch = status["mismatch"]
+            app.status(head, f"ci-base-mismatch/run-{mismatch['run_id']}/attempt-{mismatch['attempt']}",
+                       "success", "Producer identity mismatch recorded", target)
     if approval:
         for run_id in approval["obsolete"]:
             api.repo(f"actions/runs/{run_id}/cancel", method="POST")
@@ -452,7 +493,7 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
             request_context = f"ci-approval-request/pr-{pr_number}/{head}"
             statuses = api.pages("commits/" + head + "/statuses")
             if not any(s["context"] == request_context and s["creator"]["login"] == login for s in statuses):
-                app.status(head, request_context, "pending", "Approval request reserved; fallback available if interrupted", target)
+                app.status(head, request_context, "success", "Approval request reserved; fallback available if interrupted", target)
                 api.dispatch(APPROVAL_PATH, {"pull_request": str(pr_number), "head_sha": head})
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:
@@ -467,8 +508,10 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                 for population in status.get("population", []):
                     handle.write(f"  {population['tier']} / {population['shard']}: expected {population['expected']}, "
                                  f"compiled {population['compiled']}, observed {population['observed']}, "
-                                 f"expected skips {population['expected_skips']}, deselected {population['deselected']}, "
-                                 f"removed by PR {population['removed_by_pr']}.\n")
+                                 "per-job population.\n")
+                if status.get("source"):
+                    handle.write(f"  Expected skips {len(status['expected_skips'])}, deselected {len(status['deselected'])}, "
+                                 f"removed by PR {len(status['removed_by_pr'])}.\n")
 
 
 def record_approval(api, app, event, environment, login, path):

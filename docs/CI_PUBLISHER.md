@@ -8,7 +8,11 @@ re-evaluation. A manual re-evaluation runs no build or test.
 
 ## Trust and identities
 
-The workflow checks out `main` only. It verifies producer workflow **ID and path**,
+The workflow checks out `main` only, with full history in publication and admission
+so a base remains readable after main advances. Every publisher and approval job
+runs on `ubuntu-24.04`. `setup_ci_publisher_python.py` installs only the central
+`pip` and `PyYAML` pins in a new isolated environment; it does not require Xcode,
+the macOS Python pin, Pillow or zstd. It verifies producer workflow **ID and path**,
 repository, event and current PR mapping through GitHub. Forks with empty
 `pull_requests` arrays are mapped through GitHub's commit-to-PR API and the head
 repository. Workflow names and colliding job names do not establish provenance.
@@ -25,7 +29,10 @@ from source text. The trusted `ci-admission-<producer-run-id>` artifact stores:
 - the complete tree listing, populations and base populations;
 - the trusted base reader revision, classification, workflow metadata and policies.
 
-The artifact is kept 30 days. Readers verify its **trusted uploading workflow**
+The artifact is kept 30 days. Readers first select the **trusted uploading workflow**
+runs and verify each uploader's head SHA is an ancestor of current main through
+GitHub's comparison API. A tag named `main` is insufficient. They then select
+artifacts only from those uploaders, ignoring untrusted same-name objects,
 and read only the bounded JSON member; no ZIP is extracted and no artifact code
 is executed. Base-reader modules are loaded from Git objects at the verified
 main first parent, rechecked against main history, and run in a temporary isolated
@@ -36,8 +43,10 @@ If that record expires, the context stays pending; push an updated branch to get
 a new admission. For a fork, closing and reopening also starts fresh runs.
 
 A producer identity must match the record exactly. A mismatch reports
-**base moved; push again or update the branch**; a mismatch on a later attempt is
-marked repeated. Rerunning cannot fix a different admitted merge. Conflicting
+**base moved; push again or update the branch**. An App-created success receipt
+`ci-base-mismatch/run-<run-id>/attempt-<attempt>` persists each mismatch; a later
+attempt is marked repeated only if an earlier receipt exists. Attempt number
+alone proves no previous mismatch. Rerunning cannot fix a different admitted merge. Conflicting
 PRs do not get producer runs from GitHub and cannot become green.
 
 Push admissions verify repository, `main` and ancestry of the pushed SHA.
@@ -47,27 +56,42 @@ verified. This prevents a multi-commit burst from hiding an earlier app change.
 
 ## Current-state publication
 
-Short publication and approval-record jobs share a `ci-state-pr-<number>`
-concurrency group; waiting for a reviewer uses no such group. Publication always
+Only publication jobs use the `ci-state-pr-<number>` concurrency group. Approval
+wait, record and fallback jobs have no replaceable concurrency queue, so another
+publication cannot cancel a pending approval record. Publication always
 re-reads the current head, selects the highest producer run ID and latest attempt,
 and writes all three display contexts. An older completion cannot supersede a
 newer failure. An in-progress rerun invalidates the previously green context.
-An absent admission is pending even if the producer already completed; admission
-upload dispatches another evaluation. Superseded queued publication jobs can be
+An absent admission is pending even if the producer already completed; the
+approval display is pending until trusted classification exists. Only a newly
+recorded admission dispatches another evaluation. Superseded queued publication jobs can be
 dropped by GitHub without losing their facts: the next job recomputes everything.
 
 Required job names and record artifact names come from the admitted workflow,
-including literal matrix expansion. Exact-head approval permits candidate
+including literal matrix expansion. Producer entry points and literal platform
+arguments bind each uploading job to its tier/job/shard and independently derived
+population; a summary cannot choose its own required population. Exact-head approval permits candidate
 workflow **metadata and policy**, while executable population and verdict readers
 remain from the base. Every required job must finish successfully; missing,
-skipped, failed or cancelled jobs/artifacts are red. Failed-job reruns bind each
-summary to that job's latest execution attempt, retaining earlier successful
-jobs' artifacts and refusing older artifacts for a job that actually reran.
+skipped, failed or cancelled jobs/artifacts are red. GitHub's failed-job rerun API
+can regenerate job IDs while retaining execution timestamps and runner IDs.
+Equal `started_at`, `completed_at` and `runner_id` retain the earlier evidence
+attempt; an actual new execution requires its new artifact. This retains earlier
+successful jobs' artifacts and refuses older artifacts for a job that actually reran.
 Unknown matrices, shards or tiers fail closed until a supported reader is landed
 on main before the producer starts emitting them.
 
+The bridge calls the admitted base revision's `evaluate_gate`, including per-job
+expectations and the complete context population. `ci-pr-gate` includes host,
+unit iOS, unit tvOS, both build operations and any supported additional build
+proof operations in verified workflow metadata. The required-job union must equal
+that population. Before the unit producer ships, valid existing evidence yields
+**pending: unit tier not yet produced**, never success. There is no second
+publisher implementation of population or gate verdicts.
+
 `ci-ui` is pending for app-affecting changes until that producer is available.
-Trusted docs-only classification may display it as not applicable. Unit/archive
+Trusted docs-only classification may display it as not applicable, including an
+exact-head-approved docs-only fork; fork/approval labels still apply. Unit/archive
 producer changes are independent sibling work; this publisher does not create
 or rename their jobs. Fork successes remain explicitly **self-reported**, and
 approved CI-changing/fork verdicts are labeled **approval-based**.
@@ -75,7 +99,8 @@ approved CI-changing/fork verdicts are labeled **approval-based**.
 ## Approval and credentials
 
 Fork and CI-changing heads require the maintainer's approval of that exact SHA.
-The publisher reserves `ci-approval-request/pr-<number>/<head>` and dispatches
+The publisher reserves `ci-approval-request/pr-<number>/<head>` as a success
+receipt, so the bookkeeping context never leaves a permanent pending state, and dispatches
 `ci-approval` at most once for that head. Existing requests for older heads are
 cancelled as obsolete. The request run contains two jobs:
 
@@ -152,8 +177,10 @@ record races, request deduplication, reviewer authentication, retained attempt
 evidence, dry-run non-mutation and credential/redirect boundaries.
 
 Real workflow-run execution begins only after this workflow is merged to the
-default branch. The PR carries the exact post-merge scenario checklist. A real
-fork exercise requires a maintainer-provided fork owner; fixtures do not replace
+default branch. This bootstrap PR is **Part of #89**, and does not close that
+ticket. The PR carries the exact post-merge scenario checklist, including delayed
+approval after main advances. A real fork exercise uses the maintainer-provided
+secondary account under coordinator control; fixtures do not replace
 that acceptance. Credential denial by environment protection is also a real-run
 acceptance requirement, separate from the script guard tests.
 

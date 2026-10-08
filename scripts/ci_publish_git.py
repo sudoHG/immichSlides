@@ -26,8 +26,7 @@ BRIDGE = '''import json,sys
 sys.path.insert(0, sys.argv[1])
 from ci_population import python_identities,swift_identities,ui_identities
 from ci_summary import test_identity
-from ci_verdict import classify_changes,evaluate_population,parse_policy
-from ci_population import removed_tests
+from ci_verdict import classify_changes,evaluate_gate
 from run_host_checks import HOST_CHECKS
 p=json.load(sys.stdin)
 if p['operation']=='derive':
@@ -42,8 +41,7 @@ if p['operation']=='derive':
     classification=classify_changes(p['paths'],p['classification_policy'],build_target_paths=p['build_target_paths'])
     result={'populations':population,'classification':classification}
 else:
-    result=evaluate_population(p['summary'],p['expected'],p['policy'],environment='hermetic')
-    result['removed_by_pr']=removed_tests(p['base_population'],p['expected'],base_sha=p['base_sha']) if p.get('base_sha') else []
+    result=evaluate_gate(p['summaries'],**p['inputs'])
 print(json.dumps(result))
 '''
 
@@ -156,12 +154,12 @@ def render_expression(value, bindings):
     return value
 
 
-def workflow_contract(source, run, *, details=False):
+def workflow_contract(source, run, *, details=False, metadata=False):
     # The workflow is data from the admitted trusted base (or exact-head approved
     # metadata), never an executable candidate workflow in this process.
     from check_workflow_policy import WorkflowLoader
     workflow = yaml.load(source, Loader=WorkflowLoader)
-    jobs, artifacts, artifacts_by_job = [], [], {}
+    jobs, artifacts, artifacts_by_job, evidence = [], [], {}, {}
     for key, job in workflow["jobs"].items():
         matrix = job.get("strategy", {}).get("matrix", {})
         require(not {"include", "exclude"}.intersection(matrix), "matrix inclusion requires a supported reader")
@@ -175,6 +173,25 @@ def workflow_contract(source, run, *, details=False):
             job_name = render_expression(job.get("name", key), bindings)
             jobs.append(job_name)
             artifacts_by_job[job_name] = []
+            scripts = "\n".join(step.get("run", "") for step in job.get("steps", []))
+            for binding, replacement in bindings.items():
+                scripts = re.sub(r"\$\{\{\s*" + re.escape(binding) + r"\s*\}\}", str(replacement), scripts)
+            producers = []
+            if re.search(r"\brun_host_checks\.py\b", scripts):
+                producers.append({"tier": "host", "job": "host-checks", "shard": None, "population": "host"})
+            operations = re.findall(r"\bci_build_archive\.py[\"']?\s+(build|proof)\b", scripts)
+            unit = re.search(r"\bci_unit_tests\.py[\"']?\s+run\b", scripts)
+            if operations or unit:
+                platforms = set(re.findall(r"--platform\s+[\"']?(ios|tvos)\b", scripts))
+                require(len(platforms) == 1, "producer platform must be independently known from workflow metadata")
+                platform = platforms.pop()
+                for operation in set(operations):
+                    producers.append({"tier": "build", "job": "build-" + platform if operation == "build" else "archive-relocation",
+                                      "shard": platform, "population": "run_build" if operation == "build" else "run_proof"})
+                if unit:
+                    producers.append({"tier": "unit", "job": "unit-" + platform, "shard": platform,
+                                      "population": "unit-" + platform})
+            require(len(producers) <= 1, "a workflow job needs one supported evidence producer")
             for step in job.get("steps", []):
                 if step.get("uses", "").startswith("actions/upload-artifact@"):
                     options = step["with"]
@@ -182,57 +199,66 @@ def workflow_contract(source, run, *, details=False):
                         name = render_expression(options["name"], bindings)
                         artifacts.append(name)
                         artifacts_by_job[job_name].append(name)
+            if metadata:
+                require(len(producers) == len(artifacts_by_job[job_name]) == 1,
+                        "each required job needs a supported producer and one bound summary artifact")
+                evidence[job_name] = producers[0]
     require(len(jobs) == len(set(jobs)) and len(artifacts) == len(set(artifacts)), "duplicate workflow job or record name")
+    if metadata:
+        return jobs, artifacts, artifacts_by_job, evidence
     return (jobs, artifacts, artifacts_by_job) if details else (jobs, artifacts)
 
 
 def evaluate_records(record, run, jobs, summaries, *, approved, fork):
     source = record["workflows"][run["path"]]["candidate" if approved else "base"]
-    expected_jobs, _ = workflow_contract(source, run)
+    expected_jobs, _, _, metadata = workflow_contract(source, run, metadata=True)
     actual = {job["name"]: job for job in jobs}
     require(set(actual) == set(expected_jobs) and len(jobs) == len(actual), "required workflow jobs differ")
     require(all(job["status"] == "completed" and job["conclusion"] == "success" for job in jobs),
             "a required job failed, skipped or was cancelled")
-    require(bool(summaries), "missing producer records")
-    seen, covered = set(), set()
-    details = []
+    context = "gate" if run["path"].endswith("ci-gate.yml") else "ui"
+    tree = record["identity"]["tree_sha"]
+    def population(meta):
+        return (record["operational_populations"][meta["population"]][meta["shard"]]
+                if meta["tier"] == "build" else record["populations"][meta["population"]])
+    required_jobs = [{"tier": meta["tier"], "job": meta["job"], "shard": meta["shard"],
+                      "run_id": str(run["id"]), "attempt": actual[name]["evidence_attempt"],
+                      "workflow_paths": [run["path"]], "expected": {"tree_sha": tree, "identities": population(meta)},
+                      "status": actual[name]["status"], "conclusion": actual[name]["conclusion"]}
+                     for name, meta in metadata.items()]
+    parts = ["host", "unit-ios", "unit-tvos"] if context == "gate" else ["ui-ios", "ui-tvos"]
+    expected = [identity for part in parts for identity in record["populations"][part]]
+    base_expected = [identity for part in parts for identity in record["base_populations"][part]]
+    if context == "gate":
+        required_operations = {"run_build"} | {meta["population"] for meta in metadata.values() if meta["tier"] == "build"}
+        operations = [identity for operation, platforms in record["operational_populations"].items() if operation in required_operations
+                      for identities in platforms.values() for identity in identities]
+        expected += operations
+        base_expected += operations
+    inputs = {"expected": {"tree_sha": tree, "identities": expected}, "admission_identity": record["identity"],
+              "required_jobs": required_jobs, "base_policy": record["base_policy"], "candidate_policy": record["candidate_policy"],
+              "environment": "hermetic", "approved_head": record["identity"].get("head_sha") if approved else None,
+              "fork_originated": fork, "ci_changing": record["classification"]["ci_changing"],
+              "app_affected": record["classification"]["app_affected"], "context": context,
+              "base_population": {"base_sha": record["identity"].get("base_sha"), "identities": base_expected}}
     modules = trusted_reader(record)
-    for summary in summaries:
-        require(summary["identity"] == record["identity"], "base moved; push again or update the branch")
-        require(summary["run"]["id"] == str(run["id"]) and 1 <= summary["run"]["attempt"] <= run["run_attempt"], "wrong producer attempt")
-        require(summary["source"]["workflow_path"] == run["path"] and summary["source"]["fork_originated"] == fork,
-                "producer source differs from GitHub")
-        tier, shard = summary["run"]["tier"], summary["run"]["shard"]
-        token = (tier, summary["run"]["job"], shard)
-        require(token not in seen, "duplicate producer summary")
-        seen.add(token)
-        if tier == "host":
-            expected = record["populations"]["host"]
-            base_expected = record["base_populations"]["host"]
-        elif tier in {"unit", "ui"}:
-            require(shard in {"ios", "tvos"}, "unsupported producer shard requires a supported reader")
-            expected = record["populations"][tier + "-" + shard]
-            base_expected = record["base_populations"][tier + "-" + shard]
-        elif tier == "build":
-            require(shard in {"ios", "tvos"}, "unsupported build platform")
-            operation = "run_build" if summary["run"]["job"] == "build-" + shard else "run_proof" if summary["run"]["job"] == "archive-relocation" else None
-            require(operation is not None, "unsupported build operation")
-            expected = record["operational_populations"][operation][shard]
-            base_expected = expected
-        else:
-            require(False, "unsupported producer tier")
-        base_sha = record["identity"].get("base_sha") if tier != "build" else None
-        coverage = base_reader(modules, {"operation": "evaluate", "summary": summary,
-                              "expected": expected, "policy": record["candidate_policy"] if approved else record["base_policy"],
-                              "base_sha": base_sha, "base_population": {"base_sha": base_sha, "identities": base_expected}})
-        require(coverage["status"] == "passed", "; ".join(coverage["errors"]) or "incomplete population")
-        covered.add(tier)
-        details.append({"tier": tier, "shard": shard, "expected": len(expected),
-                        "compiled": len(summary["population"]["compiled"]), "observed": len(summary["population"]["observed"]),
-                        "expected_skips": len(coverage["expected_skips"]), "deselected": len(coverage["deselected"]),
-                        "removed_by_pr": len(coverage["removed_by_pr"])})
-    require(("host" if run["path"].endswith("ci-gate.yml") else "ui") in covered, "missing required tier summary")
-    return {"state": "success", "description": "All required jobs and admitted populations passed",
+    verdict = base_reader(modules, {"operation": "gate", "summaries": summaries, "inputs": inputs})
+    missing_units = context == "gate" and {meta["population"] for meta in metadata.values() if meta["tier"] == "unit"} != {"unit-ios", "unit-tvos"}
+    if missing_units and verdict["errors"] == ["invalid evidence: required-job population differs from tested tree"]:
+        # Validate the existing producer evidence with the same base evaluator;
+        # this partial pipeline can be pending, but can never establish success.
+        partial = dict(inputs, expected={"tree_sha": tree, "identities": [identity for job in required_jobs for identity in job["expected"]["identities"]]})
+        observed = base_reader(modules, {"operation": "gate", "summaries": summaries, "inputs": partial})
+        if observed["status"] == "passed":
+            return {"state": "pending", "description": "unit tier not yet produced"}
+    details = [{"tier": summary["run"]["tier"], "shard": summary["run"]["shard"],
+                "expected": len(job["expected"]["identities"]), "compiled": len(summary["population"]["compiled"]),
+                "observed": len(summary["population"]["observed"])} for job in required_jobs for summary in summaries
+               if all(job[key] == summary["run"][key] for key in ("tier", "job", "shard"))]
+    return {"state": "success" if verdict["status"] in {"passed", "not-applicable"} else "failure",
+            "description": "All required jobs and admitted populations passed" if verdict["status"] == "passed" else
+                           "Not applicable: trusted classification cannot affect the app" if verdict["status"] == "not-applicable" else "Base gate refused incomplete or invalid evidence",
             "source": {"repository": record["identity"]["repository"], "workflow_path": run["path"],
-                       "run_id": run["id"], "attempt": run["run_attempt"], "approval_based": approved, "fork_originated": fork},
-            "population": details}
+                       "run_id": run["id"], "attempt": run["run_attempt"], "approval_based": verdict["approval_based"], "fork_originated": fork},
+            "population": details, "expected_skips": verdict["expected_skips"], "deselected": verdict["deselected"],
+            "removed_by_pr": verdict["removed_by_pr"]}
