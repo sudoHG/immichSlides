@@ -51,6 +51,12 @@ jobs:
           udid=$(xcrun simctl create immichSlides-review-probe "$device" "$runtime")
           echo "REVIEW_SIMULATOR=$udid" >> "$GITHUB_ENV"
           os_name=$([ "$REVIEW_PLATFORM" = ios ] && echo iOS || echo tvOS)
+          /usr/bin/python3 -B - "$udid" <<'PY'
+          import subprocess, sys
+          udid = sys.argv[1]
+          subprocess.run(["xcrun", "simctl", "boot", udid], capture_output=True, timeout=60, check=True)
+          subprocess.run(["xcrun", "simctl", "bootstatus", udid, "-b"], timeout=600, check=True)
+          PY
           "$RUNNER_TEMP/review-python/bin/python3" -B scripts/run_strict_e2e.py \
             --platform "$REVIEW_PLATFORM" --destination "platform=$os_name Simulator,id=$udid" \
             --suite p2-cache --warm-up-only --evidence-dir "$RUNNER_TEMP/review-warm-up" \
