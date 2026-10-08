@@ -149,7 +149,8 @@ def launch(script, arguments):
     parser.add_argument("--config", action="append", default=[])
     parser.add_argument("--snapshot-record", type=Path)
     options, remaining = parser.parse_known_args(arguments)
-    mode = select_mode(arguments)
+    mode = select_mode([flag for flag, enabled in (("--strict-ci", options.strict_ci),
+                       ("--allow-private-config", options.allow_private_config)) if enabled])
     if "--prepare-example-config" in remaining:
         # This explicit setup operation must affect the caller's checkout.
         if any(flag in remaining for flag in ("--platform", "--full-plan")):

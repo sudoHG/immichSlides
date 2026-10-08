@@ -44,15 +44,16 @@ class LocalModeTests(unittest.TestCase):
             (root / "untracked").write_text("working-tree change")
             import sys
             test_environment = {**clean_environment(os.environ), "IMMICH_TEST_API_KEY": "ambient"}
-            for mode in ("snapshot", "strict", "private"):
-                with self.subTest(mode=mode):
-                    record = Path(directory, mode + ".json")
+            for mode, flag in (("snapshot", None), ("strict", "--strict-ci"), ("strict", "--strict"),
+                               ("private", "--allow-private-config"), ("private", "--allow-private")):
+                with self.subTest(mode=mode, flag=flag):
+                    record = Path(directory, (flag or mode).replace("-", "") + ".json")
                     args = [sys.executable, "-B", str(runner), "--config", "IMMICH_TEST_API_KEY=explicit",
                             "--snapshot-record", str(record)]
-                    if mode == "strict":
-                        args += ["--strict-ci"]
-                    elif mode == "private":
-                        args += ["--allow-private-config", "--config", "IMMICH_TEST_EXPECT_PRIVATE=1"]
+                    if flag:
+                        args += [flag]
+                    if mode == "private":
+                        args += ["--config", "IMMICH_TEST_EXPECT_PRIVATE=1"]
                     completed = subprocess.run(args, cwd=root, env=test_environment,
                                                capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 2 if mode == "strict" else 0, completed.stderr)
