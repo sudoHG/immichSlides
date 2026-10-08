@@ -148,37 +148,60 @@ latency under overlapping PR/nightly load; that capacity acceptance remains with
 later UI tracer and publisher tickets. Workflow bounds are cancellation limits, not
 a passing gate or a promise of reserved capacity.
 
-Historical hosted sample, before independent platform jobs and separate boot:
-[run 37705159130](https://github.com/sudoHG/immichSlides/actions/runs/37705159130),
-head `a8fd257`, merge `2b61062`, tree `6bd06c2`, producer/consumer attempt 1.
-Both unit jobs succeeded; function results were iOS 618 passed + 19 skipped and
-tvOS 616 passed + 18 skipped, with 41 parameter outcomes on each platform.
-Both producer summaries remain `unverified` for the unapproved skips.
+Final-consumer deliberate-failure proof:
+[run 37717972490](https://github.com/sudoHG/immichSlides/actions/runs/37717972490),
+head `1410563`, tested merge `f91a248`, tree `13061b9`, producer/consumer attempt 1.
+The existing metadata fixture temporarily expected width 5000 instead of 4000.
+Both unit jobs failed with Xcode exit 65, complete official execution exports and
+summary `FAILED`; upload, scanned step-summary publication and cleanup succeeded.
+iOS had 617 passed + 1 intended failure + 19 skipped functions; tvOS had
+615 passed + 1 intended failure + 18 skipped, with 41 parameter outcomes each.
+The summary shows `Expectation failed: asset.width == 5000` and no infrastructure
+entry. Both archived records retain immutable artifact ID, producer/consumer attempt,
+source/Products absence, `adhoc` signing and the official export digest.
 
-| Phase / measurement | iOS | tvOS |
-| --- | ---: | ---: |
-| Producer setup | 13 s | 11 s |
-| Build-for-testing | 168.93 s | 148.07 s |
-| Archive packing | 16.41 s | 16.13 s |
-| Consumer setup | 13 s | 14 s |
-| Archive download | 1 s | 4 s |
-| Bundle enumeration | 166.58 s | 63.16 s |
-| Unit execution | 147.33 s | 91.33 s |
-| Consumer total, excluding setup/download | 323.46 s | 164.01 s |
-| Build runner queue, from workflow creation | 7 s | 52 s |
-| Consumer runner queue, after both builds completed | 51 s | 294 s |
-| Producer peak volume growth / minimum free | 1.32 / 37.48 GiB | 1.30 / 37.63 GiB |
-| Consumer peak volume growth / minimum free | 2.65 / 36.15 GiB | 1.98 / 36.84 GiB |
+Restored-success [run 37719766131](https://github.com/sudoHG/immichSlides/actions/runs/37719766131),
+head `4e0c7ca`, tested merge `e17d957`, tree `f571667`, used identical scripts/workflow
+and the restored 4000 assertion. All five jobs succeeded, with iOS 618 passed +
+19 skipped functions and tvOS 616 passed + 18 skipped, plus 41 parameter rows each.
+Both producer summaries remain `unverified` solely for the unapproved skips.
+iOS started at 02:52:54 UTC while tvOS build completed at 02:54:36 UTC, demonstrating
+that a consumer does not wait for the other platform's build.
 
-GitHub job timestamps give 12 minutes 10 seconds for that historical configuration.
-Its former 20-minute target is not the current budget: a later success took 19m51s,
-and the old diagnostic-enabled failure path took 29m29s. The current provisional
-gate feedback budget will be derived from final-configuration success and failure
-measurements using nearest-rank sample p95, a documented margin, and rounding up to
-whole minutes. This is a coordinator-set technical value, **provisional until #93
-promotion**, not a maintainer approval operation. Script/job timeouts remain larger
-failure-recovery bounds. Enforcement belongs to #89; concurrent PR/nightly capacity
-and the required promotion sample remain unverified.
+| Final-configuration phase / measurement | Success iOS | Success tvOS | Failure iOS | Failure tvOS |
+| --- | ---: | ---: | ---: | ---: |
+| Producer setup | 11 s | 17 s | 15 s | 18 s |
+| Build-for-testing | 138.53 s | 226.39 s | 220.39 s | 262.63 s |
+| Archive packing | 14.51 s | 21.21 s | 20.26 s | 22.90 s |
+| Consumer setup | 16 s | 12 s | 18 s | 19 s |
+| Archive download | 3 s | 3 s | 5 s | 3 s |
+| Simulator boot | 68.40 s | 23.44 s | 110.19 s | 29.91 s |
+| Bundle enumeration, after boot | 246.20 s | 33.22 s | 251.28 s | 61.50 s |
+| Unit execution | 44.32 s | 29.08 s | 70.47 s | 39.48 s |
+| Consumer total, excluding setup/download | 394.81 s | 94.14 s | 489.68 s | 145.24 s |
+| Build runner queue, from workflow creation | 7 s | 10 s | 29 s | 131 s |
+| Consumer runner queue, after own build completed | 10 s | 6 s | 9 s | 7 s |
+| Producer peak volume growth / minimum free | 1.30 / 37.61 GiB | 1.23 / 37.62 GiB | 2.23 / 36.60 GiB | 1.28 / 37.39 GiB |
+| Consumer peak volume growth / minimum free | 2.22 / 36.71 GiB | 1.48 / 37.22 GiB | 1.82 / 37.34 GiB | 1.15 / 38.16 GiB |
+
+GitHub timestamps give **10m38s (638 s)** for success and **14m32s (872 s)** for the
+final-configuration failure path, from workflow creation through the last completed
+job, including queueing. The provisional feedback budget uses these two complete
+workflow samples, nearest-rank sample p95 (rank 2 of 2, **872 s**), a **1.5x margin**
+and rounding up to whole minutes: `ceil(872 * 1.5 / 60) = 22 minutes` (**1320 s**).
+The margin after rounding is **448 s above the maximum observation**. This is a
+coordinator-set technical value, **provisional until #93 promotion**, not a maintainer
+approval operation. Two samples do not estimate population tail latency or prove
+concurrent capacity. Enforcement belongs to #89; concurrent PR/nightly capacity and
+the required promotion sample remain unverified. Script/job timeouts remain larger
+failure-recovery bounds.
+
+The former 20-minute target is superseded: an older success took 19m51s and the
+diagnostic-enabled failure path took 29m29s. That historical budget miss is retained
+as such, separate from the new configuration.
+An earlier tvOS upload hit GitHub's `FinalizeArtifact: ETIMEDOUT`; the single corrected
+retry [37712546629](https://github.com/sudoHG/immichSlides/actions/runs/37712546629)
+uploaded successfully. Infrastructure failures are not assertion-failure acceptance.
 
 ## Proposed unit skip policy
 
