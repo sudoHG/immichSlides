@@ -247,6 +247,8 @@ including overlaps within one shard. Unassigned classes and methods go to
 cannot silently omit it. The default plan still filters before assignment.
 Version 2 selectors must match the unfiltered iOS/tvOS population union;
 unknown classes, deleted methods and misspellings fail admission and host checks.
+Removing the last test of a shard, or any method assigned by the version 2
+manifest, requires a manifest edit with exact-head approval.
 Changing the manifest or matching workflow shards is a CI-changing change
 that requires exact-head approval. Full-population consumers, including nightly
 UI, must derive their shard names from this manifest. The default plans continue
