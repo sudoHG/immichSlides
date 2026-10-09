@@ -79,7 +79,7 @@ jobs:
       max-parallel: 2
       matrix:
         device: [iphone, ipad]
-        shard: [default, navigation, visual]
+        shard: [default, navigation, visual-a, visual-b, visual-c, visual-d]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -229,7 +229,7 @@ jobs:
       max-parallel: 2
       matrix:
         device: [appletv]
-        shard: [default, navigation, visual]
+        shard: [default, navigation, visual-a, visual-b, visual-c, visual-d]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

@@ -219,22 +219,27 @@ verify in the helper code.
 
 ## Manifest and union
 
-[`scripts/ci-ui-shards.json`](../scripts/ci-ui-shards.json) is the version 1
-class-assignment manifest, currently named revision `multidevice-v1`:
+[`scripts/ci-ui-shards.json`](../scripts/ci-ui-shards.json) is the version 2
+assignment manifest, named revision `multidevice-method-v2`. Exact method
+assignments use the reader shipped in [PR #232](https://github.com/sudoHG/immichSlides/pull/232):
 
-| Shard | Assigned classes |
-| --- | --- |
-| `navigation` | `immichSlidesUITests`, `ServerConfigFormTVOSUITests` |
-| `visual` | `FilterSummaryIOSVisualUITests`, `FilterSummaryTVOSVisualUITests` |
-| `default` | Every other or newly introduced class |
+| Shard | Assignment | iPhone / iPad methods | Apple TV methods |
+| --- | --- | --- | --- |
+| `navigation` | `immichSlidesUITests`, `ServerConfigFormTVOSUITests` | 21 | 6 |
+| `visual-a` | Exact methods in the two filter-summary visual classes | 15 | 22 |
+| `visual-b` | Exact methods in the two filter-summary visual classes | 16 | 21 |
+| `visual-c` | Exact methods in the two filter-summary visual classes | 15 | 22 |
+| `visual-d` | Exact methods in the two filter-summary visual classes | 15 | 21 |
+| `default` | Every unassigned or newly introduced class/method | 21 | 20 |
 
 The named revision describes the assignment. The exact Git revision and
-SHA-256 of the manifest bytes identify a reproduction. Class extensions keep
-their class assignment. Every class has exactly one shard; duplicate class
-assignments, unknown schema versions or a missing default shard fail.
+SHA-256 of the manifest bytes identify a reproduction. Every default-plan
+identity has exactly one shard. iPhone and iPad share the iOS assignments;
+all six shard names remain nonempty on Apple TV. Their complete populations are
+103, 103 and 112 identities, respectively.
 
-The trusted reader also supports successor schema version 2 with the same
-fields. Each shard array may assign exact classes or exact `Class/testMethod`
+The trusted reader supports the historical class-only schema version 1 and
+schema version 2 with the same fields. Each v2 shard array may assign exact classes or exact `Class/testMethod`
 selectors, without parentheses or a target prefix. Duplicate selectors and a
 class assignment overlapping any of its method assignments are rejected,
 including overlaps within one shard. Unassigned classes and methods go to
@@ -242,9 +247,10 @@ including overlaps within one shard. Unassigned classes and methods go to
 cannot silently omit it. The default plan still filters before assignment.
 Version 2 selectors must match the unfiltered iOS/tvOS population union;
 unknown classes, deleted methods and misspellings fail admission and host checks.
-The checked-in manifest remains version 1; switching it to version 2 with
-matching workflow shards is a separate CI-changing change that requires
-exact-head approval.
+Changing the manifest or matching workflow shards is a CI-changing change
+that requires exact-head approval. Full-population consumers, including nightly
+UI, must derive their shard names from this manifest. The default plans continue
+to describe the whole device population independently of its partition.
 
 The default plan filters the statically declared population before assignment.
 Selections plus approved tier deselections must equal that population for the
@@ -330,8 +336,9 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 
 ## Capacity, timeouts and measurement
 
-The six iOS jobs and three Apple TV jobs form sequential matrices, each with
-`max-parallel: 2` and `fail-fast: false`, retaining a two-job maximum per producer.
+The twelve iOS jobs and six Apple TV jobs run in independent matrices, each with
+`max-parallel: 2` and `fail-fast: false`. Together they allow at most four macOS
+jobs per producer, leaving one of the account's five slots for other runs.
 Apple TV still executes after an iOS failure when cloud proof is absent.
 Superseded runs
 cancel only within the same PR. First-attempt main pushes share one group per
@@ -346,7 +353,40 @@ budget and was stopped at 2,715 seconds in [the hosted run](https://github.com/s
 A subsequent control completed all 61 visual cases in 3,097.84 seconds of shard
 wall time, [exit 65 with one EXIF assertion](https://github.com/sudoHG/immichSlides/actions/runs/37798609844/job/113394133806).
 The larger infrastructure budget preserves product assertions and observation
-windows. [Splitting the large visual class](https://github.com/sudoHG/immichSlides/issues/176) is follow-up work.
+windows; partitioning does not change those allowances.
+
+The four visual partitions use completed hosted per-method durations, including
+failures and approved skips. The frozen selectors cover all 61 iOS and 86 Apple TV
+visual methods in those baselines; later unassigned methods go to `default`.
+No assertion, default plan, approved skip or device was removed.
+
+| Hosted run | Device | Complete visual methods | Shard wall (min) | Non-method overhead (min) | Raw exit |
+| --- | --- | --- | --- | --- | --- |
+| [37894467497](https://github.com/sudoHG/immichSlides/actions/runs/37894467497) | iPhone | 61 | 41.04 | 4.73 | 65 |
+| [37878587213](https://github.com/sudoHG/immichSlides/actions/runs/37878587213) | iPad | 61 | 48.69 | 8.52 | 65 |
+| [37943119387](https://github.com/sudoHG/immichSlides/actions/runs/37943119387) | iPhone | 61 | 50.70 | 8.97 | 65 |
+| [37943119387](https://github.com/sudoHG/immichSlides/actions/runs/37943119387) | iPad | 61 | 66.76 | 7.95 | 65 |
+| [37943119387](https://github.com/sudoHG/immichSlides/actions/runs/37943119387) | Apple TV | 86 | 58.26 | 2.79 | 65 |
+
+For each method, take its maximum duration across these runs on its platform.
+Sort by descending duration, then exact method identity; assign to the partition
+with the smallest accumulated duration, breaking ties by shard order. Freeze
+the resulting selectors in the manifest. New methods still go to `default`.
+Apple TV is balanced separately into the same four names; iPhone and iPad share
+the iOS balance. The non-method overhead is shard wall time minus the sum of
+observed method durations.
+
+Four is the smallest shared partition count whose projections stay within
+about 25 minutes on every measured baseline, retaining the entire original
+non-method overhead for each partition. Three projects up to 28.97 minutes on
+the latest iPad baseline. Four projects at most 19.99 minutes on iPhone, 24.22
+on iPad and 16.84 on Apple TV. These are conservative sizing estimates; the
+producer PR reports real partition measurements and complete official results.
+At concurrency two per matrix, the twelve iOS jobs require at least six waves and
+the six Apple TV jobs at least three. The matrices can overlap; only Apple TV
+waits for Cloud selection. Full-matrix feedback remains queue-limited; splitting
+the critical jobs alone cannot bring the whole three-device tier within
+30 minutes. Feature-scoped selection and overflow capacity are separate changes.
 
 The archive wait shares the repository's `GITHUB_TOKEN` budget of 1,000 requests per
 hour with every other workflow, so it polls gently: the first poll comes after 30
@@ -391,7 +431,7 @@ and build must still match. A missing or mismatched pin fails before any build:
 
 ```bash
 python3 -B scripts/ci_ui_tests.py reproduce \
-  --device ipad --shard visual --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
+  --device ipad --shard visual-c --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
   --wait-factor 2 --output-dir '<fresh-outside-repo>'
 ```
 
@@ -420,15 +460,16 @@ before the fixture runner's build/enumeration and fails if it cannot become read
 To reuse a previously verified secret-free build locally:
 
 ```bash
-python3 -B scripts/ci_ui_tests.py run --device iphone --shard visual \
+python3 -B scripts/ci_ui_tests.py run --device iphone --shard visual-b \
   --manifest-revision COMMIT_SHA --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
   --xctestrun '<verified-products>/<default-plan>.xctestrun' \
   --wait-factor 2 --output-dir '<fresh-outside-repo>'
 ```
 
 This direct mode also snapshots the checkout by default, excluding private
-`Config/env.xcconfig` files and symlinks. It selects the manifest revision's classes against the current default
+`Config/env.xcconfig` files and symlinks. It selects the manifest revision's selectors against the current default
 plan; use `reproduce` to reproduce the whole historical tree. CI accepts only its
 admitted current manifest and the verified archive path. Commands exit nonzero
 for failed/incomplete coverage, infrastructure, unapproved skips or privacy
 failure; a policy approval and required-status promotion remain maintainer gates.
+For a historical version 1 manifest, use its original `visual` shard name.
