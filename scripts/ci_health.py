@@ -141,7 +141,7 @@ def health_report(snapshot, registry, month, now):
                          "missing_calendar_days": (end - start).days + 1 - len(days), "runs": len(entries),
                          "statuses": dict(Counter(entry["status"] for entry in entries)),
                          "incomplete_evidence_runs": sum(bool(entry["diagnostics"]["missing"] or entry["diagnostics"]["infrastructure"]
-                                                              or entry["status"] in {"pending", "unverified"}) for entry in entries),
+                                                              or entry["status"] in {"pending", "unverified", "not-run"}) for entry in entries),
                          "diagnostic_runs": sum(bool(entry.get("diagnostic_shard")) for entry in entries)},
             "metrics": metrics,
             "registry": {"as_of": now.isoformat(), "issue_states_as_of": snapshot.get("registry_day"), "entries": checks,

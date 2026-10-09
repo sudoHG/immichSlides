@@ -291,16 +291,25 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
         result["removed_by_pr"] = (removed_tests(base_population, expected, base_sha=admission["base_sha"])
                                    if admission["event"] == "pull_request" else [])
         jobs = {}
+        not_applicable = []
         for job in required_jobs:
             fields(job, {"tier", "job", "shard", "run_id", "attempt", "workflow_paths", "expected",
                          "status", "conclusion"}, "required job")
-            require(job["status"] == "completed" and job["conclusion"] == "success",
+            skipped = (context == "gate" and admission["event"] == "pull_request"
+                       and not app_affected and not ci_changing and job["status"] == "completed"
+                       and job["conclusion"] == "skipped" and job["tier"] in {"build", "unit"}
+                       and job["shard"] in {"ios", "tvos"}
+                       and job["job"] == job["tier"] + "-" + job["shard"])
+            require(skipped or (job["status"] == "completed" and job["conclusion"] == "success"),
                     "required job did not complete successfully: " + str(job_key(job)))
             integer(job["attempt"], 1, "required attempt")
             require(isinstance(job["workflow_paths"], list) and bool(job["workflow_paths"]), "supported workflow paths required")
             require(job_key(job) not in jobs, "duplicate required job")
             job_expected = admitted_population(job["expected"], admission["tree_sha"])
             jobs[job_key(job)] = dict(job, expected=job_expected)
+            if skipped:
+                not_applicable.append({"tier": job["tier"], "job": job["job"], "shard": job["shard"],
+                                       "identities": job_expected})
         if context == "ui" and not app_affected:
             require(not ci_changing, "CI-trusted changes cannot be not applicable")
             result["status"] = "failed" if result["errors"] else "not-applicable"
@@ -309,6 +318,10 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
         scheduled = [identity for job in jobs.values() for identity in job["expected"]]
         require(set(tokens(scheduled, functions=True)) == set(tokens(expected, functions=True)),
                 "required-job population differs from tested tree")
+        skipped_keys = {job_key(job) for job in not_applicable}
+        jobs = {key: job for key, job in jobs.items() if key not in skipped_keys}
+        require(bool(jobs), "app-unaffected gate still requires executed checks")
+        executed_expected = [identity for job in jobs.values() for identity in job["expected"]]
         parsed = [parse_summary(raw) for raw in summaries]
         seen, declared, compiled = set(), [], []
         for summary in parsed:
@@ -330,11 +343,13 @@ def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, bas
             declared.extend(population["declared"])
             compiled.extend(population["compiled"])
         require(seen == set(jobs), "missing required job/artifact (failed or cancelled job)")
-        require(set(tokens(declared, functions=True)) == set(tokens(expected, functions=True)), "aggregate declared population differs from tested tree")
-        require(set(tokens(compiled, functions=True)) == set(tokens(expected, functions=True)), "aggregate compiled population differs from tested tree")
+        require(set(tokens(declared, functions=True)) == set(tokens(executed_expected, functions=True)), "aggregate declared population differs from tested tree")
+        require(set(tokens(compiled, functions=True)) == set(tokens(executed_expected, functions=True)), "aggregate compiled population differs from tested tree")
         # Repeated compiled identities in separate device shards are legitimate; each
         # shard still has to account for every one of its own compiled identities.
         result["status"] = "failed" if result["errors"] else "passed"
+        if not_applicable:
+            result["not_applicable"] = not_applicable
     except (ContractError, TypeError, KeyError, ValueError) as error:
         result["errors"].append(f"invalid evidence: {error}")
     return result

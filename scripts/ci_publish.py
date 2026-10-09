@@ -100,6 +100,61 @@ def authoritative_run(runs, head, workflow, repository):
     return max(admitted, key=lambda run: (run["id"], run["run_attempt"]), default=None)
 
 
+def complete_attempt_jobs(api, run):
+    """Require the API's explicit count, including for an empty attempt."""
+    jobs, seen, total = [], set(), None
+    for page in range(1, 101):
+        response = api.repo(f"actions/runs/{positive(run['id'])}/attempts/{positive(run['run_attempt'])}/jobs?"
+                            + urlencode({"per_page": 100, "page": page}))
+        count, batch = response["total_count"], response["jobs"]
+        require(type(count) is int and 0 <= count <= 10000 and (total is None or count == total),
+                "invalid or changing attempt job count")
+        require(isinstance(batch, list) and len(batch) <= 100, "invalid attempt jobs")
+        total = count
+        for job in batch:
+            job_id = positive(job["id"])
+            require(job_id not in seen and positive(job["run_id"]) == run["id"]
+                    and positive(job["run_attempt"]) == run["run_attempt"], "unexpected attempt job")
+            seen.add(job_id)
+        jobs.extend(batch)
+        require(len(seen) <= total, "attempt jobs exceed total count")
+        if len(batch) < 100 or len(seen) == total:
+            require(len(seen) == total, "incomplete attempt jobs")
+            return jobs
+    raise ContractError("attempt jobs pagination limit reached")
+
+
+def cancelled_unstarted_gate(api, run):
+    """Recognize an unexecuted first-attempt main gate superseded by a push."""
+    try:
+        if (run["path"] != PRODUCERS["ci-pr-gate"] or run["event"] != "push"
+                or run["head_branch"] != "main" or run["head_repository"]["full_name"] != api.repository
+                or run["repository"]["full_name"] != api.repository
+                or run["status"] != "completed" or run["conclusion"] != "cancelled"
+                or type(run["run_attempt"]) is not int or run["run_attempt"] != 1):
+            return False
+        workflow = api.repo("actions/workflows/ci-gate.yml")
+        verify_workflow(run, workflow, api.repository)
+        for job in complete_attempt_jobs(api, run):
+            require(job["status"] == "completed" and job["conclusion"] in {"cancelled", "skipped"}
+                    and (job["runner_id"] is None or type(job["runner_id"]) is int and job["runner_id"] == 0)
+                    and job["steps"] == [], "job may have executed")
+        # main is protected and linear. A bounded recent page is enough to prove
+        # a newer different push exists; missing proof keeps the failure path.
+        response = api.repo(f"actions/workflows/{positive(workflow['id'])}/runs?"
+                            + urlencode({"branch": "main", "event": "push", "per_page": 100}))
+        require(isinstance(response["workflow_runs"], list), "invalid main runs")
+        for newer in response["workflow_runs"]:
+            verify_workflow(newer, workflow, api.repository)
+            if (newer["event"] == "push" and newer["head_branch"] == "main"
+                    and newer["head_repository"]["full_name"] == api.repository
+                    and newer["id"] > run["id"] and newer["head_sha"] != run["head_sha"]):
+                return True
+        return False
+    except (ContractError, KeyError, ValueError, TypeError):
+        return False
+
+
 def approval_context(pr, head):
     positive(pr)
     sha(head)
@@ -239,13 +294,19 @@ def mint_app(environment, path):
     return GitHub(api.repository, token), app["slug"] + "[bot]"
 
 
-def json_member(api, artifact, filename):
+def json_member(api, artifact, filename, *, optional=False):
     require(not artifact["expired"] and artifact["size_in_bytes"] <= MAX_JSON_BYTES, "artifact expired or oversized")
     archive = api.repo(f"actions/artifacts/{positive(artifact['id'])}/zip", binary=True)
     with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
         members = [entry for entry in zipped.infolist() if entry.filename == filename]
+        if optional and not members:
+            require(not any(entry.filename.rsplit("/", 1)[-1] == filename for entry in zipped.infolist()),
+                    "artifact member has an unexpected path")
+            return None
         require(len(members) == 1 and members[0].file_size <= MAX_JSON_BYTES, "artifact member missing, duplicated or oversized")
-        return json.loads(zipped.read(members[0]))
+        value = json.loads(zipped.read(members[0]))
+        require(not optional or value is not None, "optional artifact member cannot be null")
+        return value
 
 
 def trusted_admissions(api, run_ids):
@@ -366,7 +427,7 @@ def approved_status(api, pr, login):
                and status["creator"]["login"] == login for status in statuses)
 
 
-def producer_evidence(api, run, source, *, diagnostics=None):
+def producer_evidence(api, run, source, *, diagnostics=None, admission=None):
     """Bind each retained artifact to its job's latest execution attempt.
 
     Failed-job reruns legitimately retain successful jobs and their old records.
@@ -396,6 +457,8 @@ def producer_evidence(api, run, source, *, diagnostics=None):
     require(all(name in jobs and jobs[name]["evidence_attempt"] >= attempt
                 for name, attempt in minimum_attempts.items()), "UI shard did not execute after skipped matrix")
     expected, _, by_job, metadata = workflow_contract(source, run, metadata=True)
+    from ci_publish_git import gate_not_applicable_jobs
+    allowed_skips = gate_not_applicable_jobs(admission, run, metadata)
     if diagnostics is None:
         require(set(jobs) == set(expected), "required job set mismatch")
     elif set(jobs) != set(expected):
@@ -407,6 +470,8 @@ def producer_evidence(api, run, source, *, diagnostics=None):
             diagnostics.append("required job missing: " + name)
             continue
         job = jobs[name]
+        if (name in allowed_skips and job["status"] == "completed" and job["conclusion"] == "skipped"):
+            continue
         if (run["event"] == "push" and metadata[name]["tier"] == "ui"
                 and job["status"] == "completed" and job["conclusion"] == "skipped"):
             continue
@@ -431,6 +496,69 @@ def producer_evidence(api, run, source, *, diagnostics=None):
                     raise
                 diagnostics.append("required artifact missing or invalid: " + artifact_name)
     return list(jobs.values()), summaries
+
+
+def archive_blocked_ui(api, record, run, jobs, summaries):
+    """Excuse only a bound archive timeout behind a superseded unexecuted gate."""
+    try:
+        if (run["path"] != PRODUCERS["ci-ui"] or run["event"] != "push" or run["head_branch"] != "main"
+                or run["head_repository"]["full_name"] != api.repository or run["status"] != "completed"
+                or run["conclusion"] != "failure" or type(run["run_attempt"]) is not int or run["run_attempt"] != 1):
+            return False
+        if len(summaries) != 1 or summaries[0]["infrastructure"] != [{"code": "archive-selection-failed",
+                "message": "archive-unavailable: no exact-identity gate archive before timeout"}]:
+            return False
+        verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
+        identity = parse_identity(record["identity"])
+        require(record["workflow_id"] == run["workflow_id"] and record["workflow_path"] == run["path"]
+                and identity["repository"] == api.repository and identity["event"] == "push"
+                and identity["pushed_sha"] == run["head_sha"], "UI admission mismatch")
+        source = record["workflows"][run["path"]]["base"]
+        from ci_ui_reuse import expand_skipped_ui_matrix
+        normalized = expand_skipped_ui_matrix(source, run, complete_attempt_jobs(api, run))
+        _, _, artifacts_by_job, metadata = workflow_contract(source, run, metadata=True)
+        require({job["name"] for job in jobs} == {job["name"] for job in normalized}, "UI job set mismatch")
+        archives = [job for job in normalized if metadata[job["name"]]["tier"] == "ui-infrastructure"]
+        shards = [job for job in normalized if metadata[job["name"]]["tier"] == "ui"]
+        require(len(archives) == 1 and archives[0]["name"] == "ui-archive"
+                and archives[0]["status"] == "completed" and archives[0]["conclusion"] == "failure",
+                "UI archive did not fail")
+        require(shards and len(archives) + len(shards) == len(normalized)
+                and all(job["status"] == "completed" and job["conclusion"] == "skipped"
+                        and (job["runner_id"] is None or type(job["runner_id"]) is int and job["runner_id"] == 0)
+                        and job["steps"] == [] for job in shards), "UI shard may have executed")
+        summary = parse_summary(summaries[0])
+        require(summary["identity"] == identity and summary["source"]["workflow_path"] == run["path"]
+                and summary["source"]["fork_originated"] is False and summary["status"] == "failed"
+                and summary["run"]["id"] == str(run["id"]) and summary["run"]["attempt"] == run["run_attempt"]
+                and all(summary["run"][key] == metadata["ui-archive"][key] for key in ("tier", "job", "shard")),
+                "UI archive summary is not bound")
+        ui_inputs = record["ui_inputs"]["base"]
+        require("error" not in ui_inputs and summary["hashes"]["manifests"] == {"ui-shards": ui_inputs["manifest_sha256"]},
+                "UI archive manifest differs from admission")
+        from ci_summary import test_identity
+        population = summary["population"]
+        expected = [test_identity("host", "UI archive selection")]
+        require(population["declared"] == expected and population["compiled"] == expected
+                and not population["deselected"] and not population["removed_by_pr"], "UI archive population differs")
+        observed = population["observed"]
+        require(len(observed) == 1 and observed[0]["identity"] == expected[0] and observed[0]["outcome"] == "failed"
+                and len(observed[0]["attempts"]) == 1 and observed[0]["attempts"][0]["outcome"] == "failed"
+                and observed[0]["attempts"][0]["exit_code"] == 1, "UI archive outcome differs")
+        names = artifacts_by_job["ui-archive"]
+        require(len(names) == 1, "unexpected UI archive artifacts")
+        matches = [artifact for artifact in api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+                   if artifact["name"] == names[0] and not artifact["expired"]]
+        require(len(matches) == 1, "UI archive artifact unavailable or duplicated")
+        refusals = json_member(api, matches[0], "archive-refusals.json", optional=True)
+        require(refusals is None or refusals == [], "UI archive selection had refusals")
+        gate_workflow = api.repo("actions/workflows/ci-gate.yml")
+        candidates = api.pages(f"actions/workflows/{positive(gate_workflow['id'])}/runs", "workflow_runs",
+                               head_sha=run["head_sha"], branch="main", event="push")
+        gate = authoritative_run(candidates, run["head_sha"], gate_workflow, api.repository)
+        return gate is not None and cancelled_unstarted_gate(api, gate)
+    except (ContractError, KeyError, ValueError, TypeError, zipfile.BadZipFile):
+        return False
 
 
 def approval_requests(api, pr):
@@ -460,7 +588,10 @@ def compute(api, pr_number, pushed, login):
                           any(p["number"] == pr_number for p in run["pull_requests"]))
                           and run["head_repository"]["full_name"] == pr["head"]["repo"]["full_name"]]
         runs[context] = authoritative_run(candidates, head, workflow, api.repository)
-    admissions = trusted_admissions(api, [run["id"] for run in runs.values() if run])
+    not_evaluated = {context: {"state": "pending", "description": "Not evaluated: gate cancelled before any job executed",
+        "target_url": f"https://github.com/{api.repository}/actions/runs/{run['id']}"}
+        for context, run in runs.items() if not pr and run and cancelled_unstarted_gate(api, run)}
+    admissions = trusted_admissions(api, [run["id"] for context, run in runs.items() if run and context not in not_evaluated])
     approved = approved_status(api, pr, login) if pr else False
     records = [admissions[run["id"]] for run in runs.values() if run and run["id"] in admissions]
     classified = bool(records) and all(not run or run["id"] in admissions for run in runs.values())
@@ -486,11 +617,15 @@ def compute(api, pr_number, pushed, login):
                 ui = record.get("ui_inputs", {}).get("candidate" if approved else "base")
                 if ui is not None:
                     require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
-            jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors)
+            jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors, admission=record)
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)
                 require(mismatch is None, mismatch or "identity mismatch")
             require(not diagnostic_errors, "missing or invalid artifact evidence")
+            if context == "ci-ui" and not pr and archive_blocked_ui(api, record, run, jobs, summaries):
+                not_evaluated[context] = {"state": "pending", "description": "Not evaluated: archive unavailable for unexecuted gate",
+                    "target_url": f"https://github.com/{api.repository}/actions/runs/{run['id']}"}
+                continue
             if context == "ci-ui" and not pr and any(job["conclusion"] == "skipped" for job in jobs):
                 from ci_ui_reuse import evaluate_reused_push
                 evaluations[context] = evaluate_reused_push(api, record, run, jobs, summaries)
@@ -535,9 +670,10 @@ def compute(api, pr_number, pushed, login):
         synthetic = {"number": 1, "head": {"sha": head, "repo": {"full_name": api.repository}},
                      "base": {"repo": {"full_name": api.repository}}}
         plan = publication_plan(synthetic, runs, admissions, evaluations, approved=False, needs_approval=False)
+        plan.update(not_evaluated)
         if classified and not any(r["classification"]["app_affected"] for r in records):
             plan["ci-ui"] = {"state": "success", "description": "Not applicable: trusted classification cannot affect the app"}
-    if not classified:
+    if pr and not classified:
         plan["ci-approval-state"] = {"state": "pending", "description": "Waiting for trusted classification"}
     requests = approval_requests(api, pr) if pr else []
     current_request = next((request for request in requests if request["head_sha"] == head), None)
@@ -621,6 +757,9 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                     handle.write(f"  {population['tier']} / {population['shard']}: expected {population['expected']}, "
                                  f"compiled {population['compiled']}, observed {population['observed']}, "
                                  "per-job population.\n")
+                for skipped in status.get("not_applicable", []):
+                    handle.write(f"  {skipped['job']}: not applicable; {len(skipped['identities'])} admitted identities; "
+                                 "trusted PR classification cannot affect the app or CI tooling.\n")
                 if status.get("source"):
                     handle.write(f"  Expected skips {len(status['expected_skips'])}, deselected {len(status['deselected'])}, "
                                  f"removed by PR {len(status['removed_by_pr'])}.\n")

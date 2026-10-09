@@ -45,6 +45,8 @@ if p['operation']=='derive':
         population['ui-'+platform]=ui_identities(ui,platform)
     classification=classify_changes(p['paths'],p['classification_policy'],build_target_paths=p['build_target_paths'])
     result={'populations':population,'classification':classification}
+elif p['operation']=='classify':
+    result=classify_changes(p['paths'],p['classification_policy'],build_target_paths=p['build_target_paths'])
 elif p['operation']=='ui':
     from ci_ui_shards import DEVICES,default_plan_population,shard_populations
     result={'populations':{},'base_populations':{}}
@@ -290,6 +292,10 @@ def workflow_contract(source, run, *, details=False, metadata=False):
             producers = []
             if any(script == "run_host_checks.py" for script, _ in commands):
                 producers.append({"tier": "host", "job": "host-checks", "shard": None, "population": "host"})
+            if any(script == "ci_gate.py" and arguments and arguments[0] == "classify"
+                   for script, arguments in commands):
+                producers.append({"tier": "gate-infrastructure", "job": "gate-classification", "shard": None,
+                                  "population": "gate-classification"})
             ui_operations = [(arguments[0], arguments) for script, arguments in commands
                              if script == "ci_ui_tests.py" and arguments and arguments[0] in {"wait-archive", "run"}]
             for operation, arguments in ui_operations:
@@ -339,6 +345,17 @@ def workflow_contract(source, run, *, details=False, metadata=False):
     return (jobs, artifacts, artifacts_by_job) if details else (jobs, artifacts)
 
 
+def gate_not_applicable_jobs(record, run, metadata):
+    # Only independent admission can excuse the four app build/unit jobs.
+    classification = record["classification"] if record is not None else {}
+    unaffected = (run["path"] == ".github/workflows/ci-gate.yml" and run["event"] == "pull_request"
+                  and record is not None and record["identity"]["event"] == "pull_request"
+                  and classification.get("app_affected") is False and classification.get("ci_changing") is False)
+    return {name for name, meta in metadata.items() if unaffected
+            and meta["tier"] in {"build", "unit"} and meta["shard"] in {"ios", "tvos"}
+            and meta["job"] == meta["tier"] + "-" + meta["shard"]}
+
+
 def evaluate_records(record, run, jobs, summaries, *, approved, fork):
     context = "gate" if run["path"].endswith("ci-gate.yml") else "ui"
     ui = record.get("ui_inputs", {}).get("candidate" if approved else "base") if context == "ui" else None
@@ -348,7 +365,9 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
     expected_jobs, _, _, metadata = workflow_contract(source, run, metadata=True)
     actual = {job["name"]: job for job in jobs}
     require(set(actual) == set(expected_jobs) and len(jobs) == len(actual), "required workflow jobs differ")
-    require(all(job["status"] == "completed" and job["conclusion"] == "success" for job in jobs),
+    allowed_skips = gate_not_applicable_jobs(record, run, metadata)
+    require(all(job["status"] == "completed" and (job["conclusion"] == "success"
+                or (job["name"] in allowed_skips and job["conclusion"] == "skipped")) for job in jobs),
             "a required job failed, skipped or was cancelled")
     tree = record["identity"]["tree_sha"]
     ui_devices = {meta["device"] for meta in metadata.values() if meta["tier"] == "ui"}
@@ -375,6 +394,8 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
                 require(summary["hashes"]["manifests"].get("test-plan") == ui["plans"][DEVICES[meta["device"]]]["sha256"],
                         "UI default-plan hash differs")
     def population(meta):
+        if meta["population"] == "gate-classification":
+            return [test_identity("host", "Gate change classification")]
         if meta["population"] == "ui-archive":
             return [test_identity("host", "UI archive selection")]
         if meta["tier"] == "ui":
@@ -395,6 +416,10 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
                       for identities in platforms.values() for identity in identities]
         expected += operations
         base_expected += operations
+        infrastructure = [entry for meta in metadata.values() if meta["population"] == "gate-classification"
+                          for entry in population(meta)]
+        expected += infrastructure
+        base_expected += infrastructure
     else:
         expected = [entry for job in required_jobs for entry in job["expected"]["identities"]]
         base_expected = ui_base + [test_identity("host", "UI archive selection")]
@@ -422,10 +447,14 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
                 "expected": len(job["expected"]["identities"]), "compiled": len(summary["population"]["compiled"]),
                 "observed": len(summary["population"]["observed"])} for job in required_jobs for summary in summaries
                if all(job[key] == summary["run"][key] for key in ("tier", "job", "shard"))]
-    return {"state": "success" if verdict["status"] in {"passed", "not-applicable"} else "failure",
-            "description": "All required jobs and admitted populations passed" if verdict["status"] == "passed" else
+    result = {"state": "success" if verdict["status"] in {"passed", "not-applicable"} else "failure",
+            "description": ("Checks passed; app build and unit jobs not applicable" if verdict.get("not_applicable") else
+                            "All required jobs and admitted populations passed") if verdict["status"] == "passed" else
                            "Not applicable: trusted classification cannot affect the app" if verdict["status"] == "not-applicable" else "Base gate refused incomplete or invalid evidence",
             "source": {"repository": record["identity"]["repository"], "workflow_path": run["path"],
                        "run_id": run["id"], "attempt": run["run_attempt"], "approval_based": verdict["approval_based"], "fork_originated": fork},
             "population": details, "expected_skips": verdict["expected_skips"], "deselected": verdict["deselected"],
             "removed_by_pr": verdict["removed_by_pr"]}
+    if verdict.get("not_applicable"):
+        result["not_applicable"] = verdict["not_applicable"]
+    return result

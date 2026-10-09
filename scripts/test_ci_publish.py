@@ -93,6 +93,120 @@ RUN = {"id": 101, "workflow_id": 42, "path": ".github/workflows/ci-gate.yml", "e
        "status": "completed", "conclusion": "success", "head_sha": HEAD, "run_attempt": 1,
        "head_branch": "feature", "repository": {"full_name": REPOSITORY},
        "head_repository": {"full_name": REPOSITORY}, "pull_requests": [{"number": 7}]}
+# Reduced jobs from cancelled main run 37877002138, attempt 1. GitHub supplied
+# started_at even though no runner or step executed; IDs/repository are normalized.
+UNSTARTED_GATE_JOBS = [
+    {"id": 1, "name": "build-ios", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": 0,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+    {"id": 2, "name": "build-tvos", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": 0,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+    {"id": 3, "name": "host-checks", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": 0,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+    {"id": 4, "name": "unit-ios", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": None,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+    {"id": 5, "name": "unit-tvos", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": None,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+]
+
+
+class UnstartedGateAPI:
+    repository = REPOSITORY
+    workflow = WORKFLOW
+
+    def __init__(self):
+        self.jobs = copy.deepcopy(UNSTARTED_GATE_JOBS)
+        self.newer = [dict(RUN, id=102, event="push", head_branch="main", head_sha="e" * 40)]
+        self.total_count = len(self.jobs)
+
+    def repo(self, path, **options):
+        if "/jobs?" in path:
+            if self.jobs is None:
+                raise ContractError("incomplete API evidence")
+            result = {"jobs": self.jobs}
+            if self.total_count is not None:
+                result["total_count"] = self.total_count
+            return result
+        if "/runs?" in path:
+            return {"workflow_runs": self.newer}
+        return self.workflow
+
+    def pages(self, path, collection=None, **filters):
+        if self.jobs is None:
+            raise ContractError("incomplete API evidence")
+        return self.jobs
+
+
+def unavailable_ui_fixture():
+    # Normalized main run 37877002236: archive failed and the whole matrix skipped.
+    ui = dict(RUN, id=201, workflow_id=43, path=".github/workflows/ci-ui.yml", event="push",
+              head_branch="main", conclusion="failure", created_at="2026-10-09T02:57:13Z")
+    identity = {"schema_version": 1, "event": "push", "repository": REPOSITORY,
+                "ref": "refs/heads/main", "pushed_sha": HEAD, "tree_sha": TREE}
+    record = {"workflow_id": 43, "workflow_path": ui["path"], "identity": identity,
+              "classification": {"app_affected": True, "ci_changing": False},
+              "workflows": {ui["path"]: {"base": FIXTURE_UI}},
+              "ui_inputs": {"base": {"manifest_sha256": "e" * 64}}}
+    jobs = [
+        {"id": 3, "name": "ui-archive", "run_id": 201, "run_attempt": 1,
+         "status": "completed", "conclusion": "failure", "runner_id": 1, "steps": [{"status": "completed"}]},
+        {"id": 4, "name": "ui-${{ matrix.device }}-${{ matrix.shard }}", "run_id": 201, "run_attempt": 1,
+         "status": "completed", "conclusion": "skipped", "runner_id": None, "steps": []},
+    ]
+    summary = valid_summary()
+    step = test_identity("host", "UI archive selection")
+    summary.update(identity=copy.deepcopy(identity), status="failed",
+        infrastructure=[{"code": "archive-selection-failed", "message": "archive-unavailable: no exact-identity gate archive before timeout"}])
+    summary["source"].update(repository=REPOSITORY, event="push", workflow_path=ui["path"], fork_originated=False)
+    summary["run"].update(id="201", attempt=1, tier="ui-infrastructure", job="ui-archive", shard=None)
+    summary["hashes"] = {"manifests": {"ui-shards": "e" * 64}, "policies": {}}
+    summary["population"].update(declared=[step], compiled=[step], observed=[observation(step, "failed", 1, exit_code=1)],
+                                 deselected=[], removed_by_pr=[])
+    return ui, record, jobs, summary
+
+
+class UnavailableUIAPI(UnstartedGateAPI):
+    def __init__(self):
+        super().__init__()
+        self.ui, self.record, self.ui_jobs, self.summary = unavailable_ui_fixture()
+        self.gate = dict(RUN, event="push", head_branch="main", conclusion="cancelled")
+        self.refusals = None
+        self.artifact = {"id": 9, "name": "ui-archive-201-1", "expired": False, "size_in_bytes": 10000}
+
+    def repo(self, path, **options):
+        if path == "actions/workflows/ci-ui.yml":
+            return {"id": 43, "path": self.ui["path"]}
+        if path.startswith("actions/runs/201/") and "/jobs?" in path:
+            return {"jobs": self.ui_jobs, "total_count": len(self.ui_jobs)}
+        if path == "actions/artifacts/9/zip":
+            import io
+            import zipfile
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w") as bundle:
+                bundle.writestr("summary.json", json.dumps(self.summary))
+                if self.refusals is not None:
+                    bundle.writestr("archive-refusals.json", json.dumps(self.refusals))
+            return stream.getvalue()
+        return super().repo(path, **options)
+
+    def pages(self, path, collection=None, **filters):
+        if path.startswith("commits/"):
+            return []
+        if path.startswith("actions/workflows/42/runs"):
+            return [self.gate]
+        if path.startswith("actions/workflows/43/runs"):
+            return [self.ui]
+        if path == "actions/runs/201/artifacts":
+            return [self.artifact]
+        if path == "actions/runs/201/attempts/1/jobs":
+            return self.ui_jobs
+        return super().pages(path, collection, **filters)
+
+
 PR = {"number": 7, "state": "open", "head": {"sha": HEAD, "repo": {"full_name": REPOSITORY}},
       "base": {"ref": "main", "repo": {"full_name": REPOSITORY}}}
 COMMIT = {"sha": MERGE, "parents": [{"sha": BASE}, {"sha": HEAD}], "tree": {"sha": TREE}}
@@ -162,6 +276,224 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_superseded_unexecuted_gate_excuses_only_bound_archive_unavailable_ui(self):
+        from ci_publish import archive_blocked_ui
+        def published(api):
+            with patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW,
+                    "ci-ui": {"id": 43, "path": api.ui["path"]}}), \
+                    patch("ci_publish.trusted_admissions", return_value={201: api.record}):
+                return compute(api, 0, HEAD, "generic-app[bot]")[1]
+        api = UnavailableUIAPI()
+        statuses = published(api)
+        self.assertEqual("pending", statuses["ci-ui"]["state"])
+        self.assertIn("Not evaluated", statuses["ci-ui"]["description"])
+        self.assertEqual(f"https://github.com/{REPOSITORY}/actions/runs/201", statuses["ci-ui"]["target_url"])
+        jobs, summaries = producer_evidence(api, api.ui, FIXTURE_UI, admission=api.record)
+        self.assertTrue(archive_blocked_ui(api, api.record, api.ui, jobs, summaries))
+        for mutation in ("rerun", "executed-shard", "identity"):
+            with self.subTest(direct_guard=mutation):
+                api = UnavailableUIAPI()
+                jobs, summaries = producer_evidence(api, api.ui, FIXTURE_UI, admission=api.record)
+                if mutation == "rerun":
+                    api.ui["run_attempt"] = 2
+                    api.artifact["name"] = "ui-archive-201-2"
+                    api.summary["run"]["attempt"] = 2
+                    summaries[0]["run"]["attempt"] = 2
+                    for job in api.ui_jobs + jobs:
+                        job["run_attempt"] = 2
+                    for job in jobs:
+                        job["evidence_attempt"] = 2
+                elif mutation == "executed-shard":
+                    api.ui_jobs = [api.ui_jobs[0],
+                        dict(api.ui_jobs[1], name="ui-iphone-default", conclusion="failure", runner_id=123,
+                             steps=[{"status": "completed"}]),
+                        dict(api.ui_jobs[1], id=5, name="ui-iphone-visual")]
+                    jobs = api.ui_jobs
+                else:
+                    summaries[0]["identity"]["pushed_sha"] = "f" * 40
+                self.assertFalse(archive_blocked_ui(api, api.record, api.ui, jobs, summaries))
+        for mutation in ("no-newer", "refusal", "unknown-error", "manifest"):
+            with self.subTest(mutation=mutation):
+                api = UnavailableUIAPI()
+                if mutation == "no-newer":
+                    api.newer = []
+                elif mutation == "refusal":
+                    api.refusals = [{"outcome": "archive-identity-mismatch"}]
+                elif mutation == "unknown-error":
+                    api.summary["infrastructure"][0]["message"] = "archive-identity-mismatch: no exact-identity gate archive before timeout"
+                else:
+                    api.summary["hashes"]["manifests"]["ui-shards"] = "f" * 64
+                self.assertEqual("failure", published(api)["ci-ui"]["state"])
+
+    def test_cancelled_unstarted_main_gate_is_pending_without_inventing_a_verdict(self):
+        run = dict(RUN, event="push", head_branch="main", conclusion="cancelled")
+        class API(UnstartedGateAPI):
+            def pages(self, path, collection=None, **filters):
+                if path == f"actions/runs/{run['id']}/attempts/1/jobs":
+                    return self.jobs
+                return [run]
+        with patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                patch("ci_publish.trusted_admissions", return_value={}), \
+                patch("ci_publish.producer_evidence") as evidence:
+            head, statuses, approval = compute(API(), 0, HEAD, "generic-app[bot]")
+        self.assertEqual(HEAD, head)
+        self.assertIsNone(approval)
+        self.assertEqual({"state": "success", "description": "Approval not needed"}, statuses["ci-approval-state"])
+        self.assertEqual("pending", statuses["ci-pr-gate"]["state"])
+        self.assertIn("Not evaluated", statuses["ci-pr-gate"]["description"])
+        self.assertEqual(f"https://github.com/{REPOSITORY}/actions/runs/{run['id']}",
+                         statuses["ci-pr-gate"]["target_url"])
+        evidence.assert_not_called()
+        api = API()
+        api.jobs = [dict(UNSTARTED_GATE_JOBS[0], runner_id=123)]
+        record = {"workflow_id": run["workflow_id"], "workflow_path": run["path"],
+                  "identity": {"repository": REPOSITORY, "event": "push", "pushed_sha": HEAD},
+                  "classification": {"app_affected": True, "ci_changing": False},
+                  "workflows": {run["path"]: {"base": FIXTURE_GATE}}}
+        with patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                patch("ci_publish.trusted_admissions", return_value={run["id"]: record}), \
+                patch("ci_publish.producer_evidence", side_effect=ContractError("interrupted evidence")):
+            _, started, _ = compute(api, 0, HEAD, "generic-app[bot]")
+        self.assertEqual("failure", started["ci-pr-gate"]["state"])
+        api.jobs = UNSTARTED_GATE_JOBS
+        api.newer = []
+        with patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                patch("ci_publish.trusted_admissions", return_value={run["id"]: record}), \
+                patch("ci_publish.producer_evidence", side_effect=ContractError("unverified cancellation")):
+            _, latest, _ = compute(api, 0, HEAD, "generic-app[bot]")
+        self.assertEqual("failure", latest["ci-pr-gate"]["state"])
+
+    def test_unstarted_cancellation_requires_complete_first_attempt_job_and_source_proof(self):
+        from ci_publish import cancelled_unstarted_gate
+        run = dict(RUN, event="push", head_branch="main", conclusion="cancelled")
+        api = UnstartedGateAPI()
+        for jobs in (UNSTARTED_GATE_JOBS, []):
+            api.jobs = jobs
+            api.total_count = len(jobs)
+            self.assertTrue(cancelled_unstarted_gate(api, run))
+        for jobs, count in (([], None), ([], 1), (UNSTARTED_GATE_JOBS, 6),
+                            (UNSTARTED_GATE_JOBS + [UNSTARTED_GATE_JOBS[0]], 6)):
+            api.jobs, api.total_count = jobs, count
+            self.assertFalse(cancelled_unstarted_gate(api, run))
+        api.total_count = 1
+        for mutation in ({"runner_id": 123}, {"steps": [{"status": "completed"}]},
+                         {"status": "queued"}, {"conclusion": "failure"},
+                         {"run_attempt": 2}, {"run_id": 102}, {"runner_id": False}):
+            with self.subTest(job=mutation):
+                api.jobs = [dict(UNSTARTED_GATE_JOBS[0], **mutation)]
+                self.assertFalse(cancelled_unstarted_gate(api, run))
+        for missing in ("runner_id", "steps", "run_id", "run_attempt"):
+            api.jobs = [copy.deepcopy(UNSTARTED_GATE_JOBS[0])]
+            del api.jobs[0][missing]
+            self.assertFalse(cancelled_unstarted_gate(api, run))
+        api.jobs = None
+        self.assertFalse(cancelled_unstarted_gate(api, run))
+        api.jobs = UNSTARTED_GATE_JOBS
+        api.total_count = len(api.jobs)
+        for newer in ([], [dict(RUN, id=102, event="push", head_branch="main")],
+                      [dict(RUN, id=100, event="push", head_branch="main", head_sha="e" * 40)],
+                      [dict(RUN, id=102, event="pull_request", head_branch="main", head_sha="e" * 40)]):
+            api.newer = newer
+            self.assertFalse(cancelled_unstarted_gate(api, run))
+        api.newer = [dict(RUN, id=102, event="push", head_branch="main", head_sha="e" * 40)]
+        for mutation in ({"event": "pull_request"}, {"event": "schedule"}, {"head_branch": "feature"},
+                         {"path": ".github/workflows/ci-ui.yml"}, {"run_attempt": 2},
+                         {"status": "in_progress"}, {"conclusion": "failure"},
+                         {"head_repository": {"full_name": "fork/photos"}}):
+            with self.subTest(run=mutation):
+                self.assertFalse(cancelled_unstarted_gate(api, dict(run, **mutation)))
+        for mutation in ({"id": 43}, {"path": ".github/workflows/ci-ui.yml"}):
+            api.workflow = dict(WORKFLOW, **mutation)
+            self.assertFalse(cancelled_unstarted_gate(api, run))
+
+    def test_gate_classification_infrastructure_requires_its_own_bound_successful_summary(self):
+        record, jobs, summaries = gate_fixture(units=True)
+        classify = '''  classify:
+    name: gate-classification
+    steps:
+      - run: python3 scripts/ci_gate.py classify --output-dir records
+      - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: {name: 'gate-classification-${{ github.run_id }}-${{ github.run_attempt }}', path: records/summary.json}
+'''
+        source = record["workflows"][RUN["path"]]["base"] + classify
+        record["workflows"][RUN["path"]] = {"base": source, "candidate": source}
+        jobs.append(dict(name="gate-classification", status="completed", conclusion="success", evidence_attempt=1))
+        summary = copy.deepcopy(summaries[0])
+        summary["run"].update(tier="gate-infrastructure", job="gate-classification", shard=None)
+        step = test_identity("host", "Gate change classification")
+        summary["population"].update(declared=[step], compiled=[step], observed=[observation(step, "passed", 0)])
+        modules = {name: (Path(__file__).parent / name).read_text()
+                   for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries + [summary], approved=False, fork=False)["state"], "success")
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "failure")
+            record["classification"] = {"app_affected": False, "ci_changing": False}
+            with self.assertRaises(ContractError):
+                evaluate_records(record, RUN, jobs[:-1] + [dict(jobs[-1], conclusion="skipped")],
+                                 summaries, approved=False, fork=False)
+
+    def test_unaffected_gate_skips_only_build_and_unit_population_with_complete_host_evidence(self):
+        modules = {name: (Path(__file__).parent / name).read_text()
+                   for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        record, jobs, summaries = gate_fixture(units=True)
+        # Keep literal jobs in the workflow; GitHub reports them as skipped.
+        record["classification"] = {"app_affected": False, "ci_changing": False}
+        for job in jobs:
+            if job["name"].startswith(("build-", "renamed-unit-")):
+                job["conclusion"] = "skipped"
+        host = [summary for summary in summaries if summary["run"]["job"] in {"host-checks", "archive-relocation"}]
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            result = evaluate_records(record, RUN, jobs, host, approved=False, fork=False)
+            self.assertEqual(result["state"], "success")
+            self.assertEqual(len(result["not_applicable"]), 4)
+            self.assertIn("not applicable", result["description"])
+            for change in ({"app_affected": True, "ci_changing": False},
+                           {"app_affected": False, "ci_changing": True},
+                           {"app_affected": None, "ci_changing": False}):
+                with self.subTest(classification=change), self.assertRaises(ContractError):
+                    evaluate_records(dict(record, classification=change), RUN, jobs, host, approved=True, fork=False)
+            for bad_jobs in (jobs[1:], [dict(job, conclusion="skipped") for job in jobs],
+                             [dict(job, conclusion="cancelled") if job["name"] != "host-checks" else job for job in jobs]):
+                with self.subTest(jobs=bad_jobs), self.assertRaises(ContractError):
+                    evaluate_records(record, RUN, bad_jobs, host, approved=False, fork=False)
+            self.assertEqual(evaluate_records(record, RUN, jobs, [], approved=False, fork=False)["state"], "failure")
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "failure")
+            fork_evidence = copy.deepcopy(host)
+            for summary in fork_evidence:
+                summary["source"]["fork_originated"] = True
+            self.assertEqual(evaluate_records(record, RUN, jobs, fork_evidence, approved=False, fork=True)["state"], "failure")
+            approved_fork = evaluate_records(record, RUN, jobs, fork_evidence, approved=True, fork=True)
+            self.assertEqual(approved_fork["state"], "success")
+            self.assertTrue(approved_fork["source"]["approval_based"])
+            self.assertTrue(approved_fork["source"]["fork_originated"])
+            push = copy.deepcopy(record)
+            push["identity"] = {"schema_version": 1, "event": "push", "repository": REPOSITORY,
+                                "tree_sha": TREE, "ref": "refs/heads/main", "pushed_sha": MERGE}
+            with self.assertRaises(ContractError):
+                evaluate_records(push, dict(RUN, event="push"), jobs, host, approved=False, fork=False)
+
+    def test_unaffected_gate_artifacts_are_optional_only_for_independently_admitted_skipped_jobs(self):
+        record, jobs, summaries = gate_fixture(units=True)
+        record["classification"] = {"app_affected": False, "ci_changing": False}
+        for job in jobs:
+            if job["name"].startswith(("build-", "renamed-unit-")):
+                job["conclusion"] = "skipped"
+        source = record["workflows"][RUN["path"]]["base"]
+        _, _, artifacts, metadata = workflow_contract(source, RUN, metadata=True)
+        evidence_by_artifact = {artifacts[name][0]: next(summary for summary in summaries
+            if all(summary["run"][key] == meta[key] for key in ("tier", "job", "shard")))
+            for name, meta in metadata.items() if name.startswith(("host-", "archive-relocation-"))}
+        class RecordedAPI:
+            def pages(self, path, collection):
+                return jobs if collection == "jobs" else [{"name": name, "expired": False} for name in evidence_by_artifact]
+        with patch("ci_publish.json_member", side_effect=lambda api, artifact, filename: evidence_by_artifact[artifact["name"]]):
+            actual, evidence = producer_evidence(RecordedAPI(), RUN, record["workflows"][RUN["path"]]["base"],
+                                                admission=record)
+            self.assertEqual(len(actual), len(jobs))
+            self.assertEqual(evidence, list(evidence_by_artifact.values()))
+            with self.assertRaises(ContractError):
+                producer_evidence(RecordedAPI(), RUN, record["workflows"][RUN["path"]]["base"])
+
     def test_failed_publication_summary_keeps_source_and_approval_basis(self):
         source = {"repository": REPOSITORY, "workflow_path": RUN["path"], "event": "pull_request",
                   "run_id": RUN["id"], "attempt": 1, "fork_originated": True,
@@ -674,7 +1006,7 @@ class PublisherTests(unittest.TestCase):
             with patch("ci_publish.approved_status", return_value=True):
                 _, statuses, approval = compute(RecordedAPI(), 7, "", "generic-app[bot]")
             self.assertEqual(statuses["ci-ui"]["state"], "success")
-            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[])
+            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[], admission=record)
             self.assertIsNone(approval["request"])
             with patch("ci_publish.approved_status", return_value=True), patch(
                     "ci_report.summary_diagnostics", side_effect=ContractError("malformed diagnostics")):

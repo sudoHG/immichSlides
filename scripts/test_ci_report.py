@@ -32,6 +32,77 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_archive_unavailable_ui_cannot_notify_for_a_superseded_unexecuted_gate(self):
+        from ci_health import health_report
+        from test_ci_publish import UnavailableUIAPI
+        api = UnavailableUIAPI()
+        with patch("ci_report.on_main", return_value=True):
+            report = read_run(api, api.ui, {201: api.record})
+        self.assertEqual("not-run", report["status"])
+        self.assertEqual([], report["observed"])
+        self.assertEqual([], report["diagnostics"]["failures"])
+        self.assertEqual({"schema_version": 1, "first_attempt_failures": None}, report["first_execution_health"])
+        self.assertIn("Not evaluated", render_entry(ci_report.compact_entry(report, set())))
+        snapshot = ci_report.merge_snapshot(None, [ci_report.compact_entry(report, set())], date(2026, 10, 9))
+        snapshot["producer"] = {"repository": api.repository}
+        health = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 9))
+        self.assertEqual({"not-run": 1}, health["coverage"]["statuses"])
+        self.assertEqual(1, health["coverage"]["incomplete_evidence_runs"])
+        with patch("ci_report.ensure_label") as writes:
+            self.assertEqual(([], {}), synchronize_issues(api, [report], {"entries": []}))
+        writes.assert_not_called()
+        api.refusals = [{"outcome": "archive-identity-mismatch"}]
+        with patch("ci_report.on_main", return_value=True):
+            rejected = read_run(api, api.ui, {201: api.record})
+        self.assertEqual("failed", rejected["status"])
+        self.assertTrue(ci_report.issue_eligible(rejected))
+
+    def test_unstarted_main_gate_is_not_run_and_all_cancellations_remain_ineligible(self):
+        from test_ci_publish import RUN, UNSTARTED_GATE_JOBS, UnstartedGateAPI
+        run = dict(RUN, event="push", head_branch="main", conclusion="cancelled",
+                   created_at="2026-10-09T02:57:13Z")
+        api = UnstartedGateAPI()
+        with patch("ci_report.on_main", return_value=True):
+            report = read_run(api, run, {})
+        self.assertEqual("not-run", report["status"])
+        self.assertEqual(run["head_sha"], report["pushed_sha"])
+        self.assertEqual([], report["observed"])
+        self.assertEqual([], report["diagnostics"]["infrastructure"])
+        self.assertIn("Not evaluated", render_entry(report))
+        compact = ci_report.compact_entry(report, set())
+        self.assertEqual(report["not_evaluated_reason"], compact["not_evaluated_reason"])
+        self.assertEqual({"schema_version": 1, "first_attempt_failures": None}, compact["first_execution_health"])
+        self.assertEqual("cancelled", compact["conclusion"])
+        self.assertEqual(run["created_at"], compact["created_at"])
+        self.assertEqual(run["head_sha"], compact["head_sha"])
+        self.assertIn("Not evaluated", render_entry(compact))
+        saved = ci_report.merge_snapshot(None, [compact], date(2026, 10, 9))
+        self.assertEqual("not-run", saved["days"]["2026-10-09"]["entries"][0]["status"])
+        with patch("ci_report.ensure_label") as writes:
+            self.assertEqual(([], {}), synchronize_issues(api, [report], {"entries": []}))
+        writes.assert_not_called()
+        for mutation in ({"runner_id": 123}, {"steps": [{"status": "completed"}]},
+                         {"conclusion": "failure"}):
+            api.jobs = [dict(UNSTARTED_GATE_JOBS[0], **mutation)]
+            api.total_count = 1
+            with patch("ci_report.on_main", return_value=True):
+                started = read_run(api, run, {})
+            self.assertEqual("unverified", started["status"])
+            self.assertEqual([], started["observed"])
+            self.assertEqual([], started["diagnostics"]["infrastructure"])
+            self.assertFalse(ci_report.issue_eligible(started))
+            with patch("ci_report.ensure_label", side_effect=AssertionError("cancelled push cannot notify")):
+                self.assertEqual(([], {}), synchronize_issues(api, [started], {"entries": []},
+                                                            post_merge_since="2026-10-09T00:00:00Z"))
+        api.jobs = UNSTARTED_GATE_JOBS
+        api.total_count = len(api.jobs)
+        api.newer = []
+        with patch("ci_report.on_main", return_value=True):
+            self.assertEqual("unverified", read_run(api, run, {})["status"])
+        api.newer = UnstartedGateAPI().newer
+        with patch("ci_report.on_main", return_value=False):
+            self.assertEqual("unverified", read_run(api, run, {})["status"])
+
     def transition(self, state, report, referenced=False):
         return issue_decision(state, IDENTITY, [report], registry_referenced=referenced)
 

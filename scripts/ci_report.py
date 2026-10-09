@@ -348,6 +348,8 @@ def render_entry(entry):
              "", "Counts: " + "; ".join(f"{key} {value}" for key, value in sorted(diagnostics["counts"].items())) + "."]
     if source["fork_originated"]:
         lines.append("Fork results are self-reported; approval is separate from test evidence.")
+    if entry.get("not_evaluated_reason"):
+        lines.append("Not evaluated: " + text(entry["not_evaluated_reason"]) + ".")
     lines += ["", "| Failing identity | Outcome | Exit codes |", "| --- | --- | --- |"]
     lines.extend(f"| {text(identity_key(item['identity']))} | {item['outcome']} | {text(item['exit_codes'])} |"
                  for item in diagnostics["failures"][:50])
@@ -476,7 +478,7 @@ def nightly_attempt(api, run, attempt, artifacts):
 
 def read_run(api, run, admissions, previous=None):
     """Only bounded JSON data is read; artifact files are never extracted or executed."""
-    from ci_publish import producer_evidence
+    from ci_publish import producer_evidence, cancelled_unstarted_gate, archive_blocked_ui
     from ci_publish_git import evaluate_records
     from ci_health import first_execution_metrics, observation_metrics, run_metrics, unexpected_skips
     entry = report_base(run, api.repository)
@@ -484,6 +486,15 @@ def read_run(api, run, admissions, previous=None):
     jobs = None
     if run["status"] != "completed" or run.get("conclusion") == "cancelled":
         entry["first_execution_health"] = saved_first
+        if run["status"] == "completed" and run.get("conclusion") == "cancelled":
+            try:
+                if cancelled_unstarted_gate(api, run) and on_main(run["head_sha"]):
+                    entry.update(status="not-run", pushed_sha=run["head_sha"],
+                                 not_evaluated_reason="gate cancelled before any job executed")
+            except RateLimitLow:
+                raise
+            except (ContractError, KeyError, ValueError, TypeError):
+                pass  # Incomplete proof retains the ordinary unverified cancellation.
         if run.get("conclusion") != "cancelled" and previous and previous.get("attempt_history"):
             entry["attempt_history"] = [copy.deepcopy(item) for item in previous["attempt_history"]
                                         if item["run"]["attempt"] < run["run_attempt"]] + [copy.deepcopy(entry)]
@@ -539,6 +550,11 @@ def read_run(api, run, admissions, previous=None):
             if any(item.startswith("required artifact expired:") for item in errors):
                 entry["evidence_expired"] = True
             require(all(summary["identity"] == identity for summary in summaries), "summary identity differs from admission")
+            if not errors and archive_blocked_ui(api, record, run, jobs, summaries):
+                entry.update(identity=identity, status="not-run",
+                             first_execution_health=saved_first,
+                             not_evaluated_reason="archive unavailable for superseded unexecuted gate")
+                return entry
             entry.update(identity=identity, diagnostics=summary_diagnostics(summaries, errors),
                          observed=[item for summary in summaries for item in summary["population"]["observed"]])
             entry["hashes"] = [summary["hashes"] for summary in summaries]
@@ -779,7 +795,7 @@ def compact_entry(entry, tracked):
     result = {key: copy.deepcopy(value) for key, value in entry.items() if key in {
         "schema_version", "day", "source", "run", "identity", "hashes", "status", "release_eligible",
         "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired", "diagnostic_shard", "first_execution_health",
-        "created_at", "conclusion", "head_sha"}}
+        "created_at", "conclusion", "head_sha", "not_evaluated_reason"}}
     if "health" in entry:
         result["health"] = copy.deepcopy(entry["health"])
     result["diagnostics"] = {key: copy.deepcopy(entry["diagnostics"].get(key, [] if key != "counts" else {}))
@@ -823,7 +839,8 @@ def merge_snapshot(previous, entries, now):
 
 def issue_eligible(entry):
     source = entry["source"]
-    return (source.get("fork_originated") is False and not entry.get("diagnostic_shard") and entry.get("conclusion") != "cancelled"
+    return (source.get("fork_originated") is False and not entry.get("diagnostic_shard") and entry.get("status") != "not-run"
+            and entry.get("conclusion") != "cancelled"
             and (source["workflow_path"] == NIGHTLY_PATH and source["event"] in {"schedule", "workflow_dispatch"}
                  or source["workflow_path"] in PRODUCER_PATHS[:2] and source["event"] == "push"))
 

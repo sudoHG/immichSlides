@@ -155,11 +155,34 @@ failure notification. Historical backfill remains in rollups without retroactive
 post-merge notifications; missing creation timestamps or reset boundaries are ineligible.
 For the same SHA and producer workflow, the newest run supersedes older deliveries,
 including when the replacement is still pending or passed. Cancelled main pushes and
-nightlies retain `conclusion: cancelled` and `status: unverified`, read no missing
+nightlies retain `conclusion: cancelled` and normally `status: unverified`, read no missing
 artifacts, and cannot open/recover test or infrastructure issues. Legacy entries in
 the recent discovery window are refreshed once to record their creation time and
 conclusion. Aggregate reporting remains separate from verified test failures.
 Post-merge notifications remain for human triage.
+
+Cancelled first-attempt main gate runs whose complete GitHub jobs list proves
+that no runner or step executed, and which have a newer main-push gate run with
+a greater run ID and a different head SHA, are retained as `not-run`, with an empty test
+population and an explicit not-evaluated reason. They do not open post-merge
+failure notifications or count as passes. This label does not change the rule
+that every cancelled main push is ineligible for notification. A run cancelled
+after any job starts, a cancelled rerun, no newer different push, or
+missing/ambiguous job evidence retains `unverified` in the reporter; the publisher
+keeps its ordinary fail-closed path. Every job must have status `completed` with
+conclusion `cancelled` or `skipped`, no runner and an empty steps list. The jobs'
+unique IDs must match the API's explicit `total_count`; an empty list requires
+`total_count: 0`. Both neutral reader paths retain the saved first-execution
+health fields without inventing test observations. Monthly health counts them as
+incomplete evidence.
+
+The same SHA's first-attempt main UI run is also `not-run` only when its bound
+archive summary failed solely with `archive-unavailable`, no refusal exists, and
+every admitted shard skipped without executing. Other UI failures remain eligible
+for notification. The publisher uses the same predicates; see
+[trusted publication](CI_PUBLISHER.md). Previously saved failure entries carrying
+an identity, and their human-triage notifications, are preserved rather than
+rewritten by this reader update. Entries without an identity are read again.
 
 Registry diagnostics list review dates and closed/missing issues without editing the
 registry, changing retry eligibility, outcomes or thresholds. See
