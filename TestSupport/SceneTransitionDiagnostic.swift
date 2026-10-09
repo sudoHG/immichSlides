@@ -42,7 +42,7 @@ enum SceneTransitionDiagnostic {
     /// Both photos must show at least this share at once in some frame. A linear crossfade peaks near 0.38 and stays
     /// above it for over half of its frames; a hard switch, or an opaque photo cut in on top, stays at 0.
     static let minimumBlendOpacity = 0.1
-    static let firstVisibleTickOffsetSeconds: TimeInterval = 0.5
+    static let firstVisibleTickOffsetSeconds = TestWait.seconds(.product(0.5))
     private static let progressTolerance = 0.000_1
 
     /// Share of the screen covered when the layers are composited over the black backing.

@@ -27,6 +27,15 @@ on the first violated sample and succeeds only after the whole product window.
 Do not classify a product deadline as infrastructure to cure a failure. Existing
 elapsed-time bounds and assertions remain in force.
 
+Legacy helpers can continue to accept resolved seconds. Classify at their callers
+or timing declarations and pass the result through unchanged; wrapping an already
+resolved infrastructure value in another infrastructure budget would scale it twice.
+When one constant serves both initial fixture readiness and a later photo-change
+deadline, split those call sites: discovering the initial scene is infrastructure,
+but waiting for a new photo after Next keeps the original product deadline.
+Scene-presentation sampling spans, screenshot stability spans and first-visible-tick
+offsets remain fixed product timing even when they help collect diagnostic evidence.
+
 ## Runner factor and recording
 
 The factor defaults to `1` locally. Runners accept `--wait-factor`, require a
