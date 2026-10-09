@@ -188,6 +188,12 @@ final class immichSlidesUITests: XCTestCase {
         XCTAssertTrue(settingsButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
         XCTAssertTrue(playPauseButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
 
+        // The control bar auto-hides 8 seconds after the last interaction; a slow runner can cross that between
+        // the lookup above and this tap, so wake it right before tapping.
+        app.tap()
+        XCTAssertTrue(
+            playPauseButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+            "A tap on the slideshow should bring the control bar back")
         playPauseButton.tap()
         playPauseButton.tap()
 
