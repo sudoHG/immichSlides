@@ -74,8 +74,12 @@ issue-sync success is not a condition for retaining already verified test eviden
 Unreadable, invalid, expired or missing snapshots from prior reporter runs fail collection
 without uploading a replacement. A first bootstrap or intentional reset requires a
 repository-owner `workflow_dispatch` with `reset_history: true`; both the original
-and triggering actor must be the owner. The snapshot records the actor, day and run
-under `history_reset`. Scheduled runs cannot reset history. A read-only dry-run may
+and triggering actor must be the owner. The snapshot records the actor, day, run and
+that reset dispatch's UTC creation timestamp under `history_reset`. A legacy snapshot
+without the timestamp uses one Actions read to verify the reset run's repository,
+workflow, main branch and both owner actors, then caches its timestamp in the next
+snapshot. This read shares the existing quota reserve and request cap; a budget stop
+preserves history and defers writes. Scheduled runs cannot reset history. A read-only dry-run may
 start locally without a previous snapshot; it cannot publish that history.
 
 ## Method identities and reruns
@@ -143,9 +147,19 @@ error codes rather than candidate text.
 
 Nightly infrastructure has a separate operational issue and is never inserted into test
 populations. Recovery needs three successful nightly aggregates with verified evidence.
-Main-push failures produce one notification per SHA, shared across gate/UI reruns. Missing
-admission can notify only after the pushed SHA is independently verified on main and
-within the evidence window. Post-merge notifications remain for human triage.
+Main-push test failures produce one notification per SHA, shared across gate/UI reruns.
+They require a verified failing identity and a push created at or after the recorded
+bootstrap/reset timestamp, within the evidence window. Missing admission, unbuilt or
+missing tiers, and a red aggregate without a failing identity cannot produce a test
+failure notification. Historical backfill remains in rollups without retroactive
+post-merge notifications; missing creation timestamps or reset boundaries are ineligible.
+For the same SHA and producer workflow, the newest run supersedes older deliveries,
+including when the replacement is still pending or passed. Cancelled main pushes and
+nightlies retain `conclusion: cancelled` and `status: unverified`, read no missing
+artifacts, and cannot open/recover test or infrastructure issues. Legacy entries in
+the recent discovery window are refreshed once to record their creation time and
+conclusion. Aggregate reporting remains separate from verified test failures.
+Post-merge notifications remain for human triage.
 
 Registry diagnostics list review dates and closed/missing issues without editing the
 registry, changing retry eligibility, outcomes or thresholds. See

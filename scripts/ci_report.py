@@ -150,6 +150,34 @@ def iso_day(value):
     return value
 
 
+def utc_timestamp(value):
+    require(isinstance(value, str), "missing UTC timestamp")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    require(parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0), "invalid UTC timestamp")
+    return parsed
+
+
+def reset_notification_point(api, reset):
+    if not reset:
+        return None
+    owner = api.repository.split("/", 1)[0]
+    require(reset["actor"] == owner, "untrusted history reset")
+    iso_day(reset["day"])
+    if not reset.get("created_at") and reset.get("run"):
+        run_id = int(reset["run"])
+        run = api.repo(f"actions/runs/{run_id}")
+        require(run["id"] == run_id and run["path"] == REPORT_PATH and run["event"] == "workflow_dispatch"
+                and run["head_branch"] == "main" and run["repository"]["full_name"] == api.repository
+                and run["head_repository"]["full_name"] == api.repository
+                and run["actor"]["login"] == run["triggering_actor"]["login"] == owner,
+                "reset run provenance mismatch")
+        require(utc_timestamp(run["created_at"]).date().isoformat() <= reset["day"], "reset run date mismatch")
+        reset["created_at"] = run["created_at"]
+    if reset.get("created_at"):
+        require(utc_timestamp(reset["created_at"]).date().isoformat() <= reset["day"], "reset timestamp date mismatch")
+    return reset.get("created_at")
+
+
 def normalized_identity(identity):
     validate_test_identity(identity)
     result = copy.deepcopy(identity)
@@ -355,11 +383,12 @@ def on_main(revision):
 def report_base(run, repository):
     return {"schema_version": 1, "day": iso_day(run["created_at"][:10]),
             "run": {"id": run["id"], "attempt": run["run_attempt"]},
+            "created_at": run["created_at"], "conclusion": run.get("conclusion"), "head_sha": run.get("head_sha"),
             "source": {"repository": repository, "workflow_path": run["path"], "event": run["event"],
                        "workflow_id": run["workflow_id"],
                        "fork_originated": run["head_repository"]["full_name"] != repository,
                        "ci_changing": None, "approval_based": False},
-            "status": "pending" if run["status"] != "completed" else "failed",
+            "status": "pending" if run["status"] != "completed" else "unverified" if run.get("conclusion") == "cancelled" else "failed",
             "release_eligible": False, "observed": [], "diagnostics": summary_diagnostics([]),
             "diagnostic_shard": "unverified-dispatch-plan" if run["path"] == NIGHTLY_PATH and run["event"] == "workflow_dispatch" else None}
 
@@ -453,9 +482,9 @@ def read_run(api, run, admissions, previous=None):
     entry = report_base(run, api.repository)
     saved_first = first_execution_metrics(previous)
     jobs = None
-    if run["status"] != "completed":
+    if run["status"] != "completed" or run.get("conclusion") == "cancelled":
         entry["first_execution_health"] = saved_first
-        if previous and previous.get("attempt_history"):
+        if run.get("conclusion") != "cancelled" and previous and previous.get("attempt_history"):
             entry["attempt_history"] = [copy.deepcopy(item) for item in previous["attempt_history"]
                                         if item["run"]["attempt"] < run["run_attempt"]] + [copy.deepcopy(entry)]
         return entry
@@ -647,8 +676,9 @@ def sync_identity(api, token, identity, entries, registry_issues, registry_token
     return {"issue": issue["number"], "action": decision["action"], "token": token}
 
 
-def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inventory=None, issue_index=None):
-    entries = [entry for entry in entries if issue_eligible(entry) and entry["source"]["repository"] == api.repository]
+def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inventory=None, issue_index=None, post_merge_since=None):
+    entries = [entry for entry in notification_entries(entries, post_merge_since)
+               if issue_eligible(entry) and entry["source"]["repository"] == api.repository]
     if not entries:
         return [], {}
     raise_errors = errors is None
@@ -748,7 +778,8 @@ def compact_entry(entry, tracked):
                          for item in attempt["observed"] if item["outcome"] in FAILURES}
     result = {key: copy.deepcopy(value) for key, value in entry.items() if key in {
         "schema_version", "day", "source", "run", "identity", "hashes", "status", "release_eligible",
-        "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired", "diagnostic_shard", "first_execution_health"}}
+        "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired", "diagnostic_shard", "first_execution_health",
+        "created_at", "conclusion", "head_sha"}}
     if "health" in entry:
         result["health"] = copy.deepcopy(entry["health"])
     result["diagnostics"] = {key: copy.deepcopy(entry["diagnostics"].get(key, [] if key != "counts" else {}))
@@ -792,7 +823,7 @@ def merge_snapshot(previous, entries, now):
 
 def issue_eligible(entry):
     source = entry["source"]
-    return (source.get("fork_originated") is False and not entry.get("diagnostic_shard")
+    return (source.get("fork_originated") is False and not entry.get("diagnostic_shard") and entry.get("conclusion") != "cancelled"
             and (source["workflow_path"] == NIGHTLY_PATH and source["event"] in {"schedule", "workflow_dispatch"}
                  or source["workflow_path"] in PRODUCER_PATHS[:2] and source["event"] == "push"))
 
@@ -803,9 +834,29 @@ def eligible_run(run, repository):
                 "workflow_path": run["path"], "event": run["event"], "fork_originated": False}}))
 
 
-def decision_entries(entries, now):
+def notification_entries(entries, post_merge_since):
+    newest = {}
+    for entry in entries:
+        if entry["source"]["event"] != "push":
+            continue
+        pushed = entry.get("pushed_sha") or entry.get("identity", {}).get("pushed_sha") or entry.get("head_sha")
+        key = (entry["source"]["repository"], entry["source"]["workflow_path"], pushed)
+        rank = (utc_timestamp(entry.get("created_at", entry["day"] + "T00:00:00Z")), entry["run"]["id"], entry["run"]["attempt"])
+        if key not in newest or rank > newest[key][0]:
+            newest[key] = rank, entry
+    result = [entry for entry in entries if entry["source"]["event"] != "push"]
+    if post_merge_since:
+        boundary = utc_timestamp(post_merge_since)
+        result.extend(entry for _, entry in newest.values() if entry["status"] == "failed"
+                      and entry.get("pushed_sha", entry.get("identity", {}).get("pushed_sha"))
+                      and entry["diagnostics"]["failures"] and entry.get("conclusion") != "cancelled"
+                      and entry.get("created_at") and utc_timestamp(entry["created_at"]) >= boundary)
+    return result
+
+
+def decision_entries(entries, now, *, post_merge_since=None):
     cutoff = (now - timedelta(days=EVIDENCE_DAYS - 1)).isoformat()
-    return [entry for entry in entries if cutoff <= entry["day"] <= now.isoformat()
+    return [entry for entry in notification_entries(entries, post_merge_since) if cutoff <= entry["day"] <= now.isoformat()
             and not entry.get("evidence_expired") and issue_eligible(entry)]
 
 
@@ -887,9 +938,10 @@ def write_report(output, snapshot, entries, registry, states, *, stopped, now=No
     now = now or datetime.now(timezone.utc).date()
     candidates = [entry for rollup in snapshot["days"].values() for entry in rollup["entries"]
                   if entry["source"]["event"] == "push" or entry["source"]["workflow_path"] == NIGHTLY_PATH]
-    plan = {"schema_version": 2, "entries": [] if stopped else decision_entries(candidates, now),
+    since = snapshot.get("history_reset", {}).get("created_at")
+    plan = {"schema_version": 2, "entries": [] if stopped else decision_entries(candidates, now, post_merge_since=since),
             "registry": registry, "issue_inventory": list(inventory), "issue_index": snapshot.get("issue_index", {}), "budget_stopped": stopped,
-            "api_budget": snapshot.get("api_budget", {})}
+            "api_budget": snapshot.get("api_budget", {}), "post_merge_since": since}
     (output / "sync.json").write_text(json.dumps(plan) + "\n")
 
 
@@ -902,6 +954,7 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
     snapshot, entries, states, stopped, history_loaded = None, [], {}, False, False
     inventory = []
     reset = event.get("inputs", {}).get("reset_history") in {True, "true"}
+    history_reset = None
     if reset:
         owner = api.repository.split("/", 1)[0]
         require(event_name == "workflow_dispatch" and os.environ.get("GITHUB_ACTOR") == owner
@@ -912,6 +965,9 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
         require(snapshot is not None or reset or getattr(api, "dry_run", False), "initial history requires an explicit maintainer reset")
         history_loaded = True
         index = copy.deepcopy((snapshot or {}).get("issue_index", {}))
+        history_reset = ({"actor": os.environ["GITHUB_ACTOR"], "day": now.isoformat(), "run": os.environ.get("GITHUB_RUN_ID")}
+                         if reset else copy.deepcopy((snapshot or {}).get("history_reset")))
+        reset_notification_point(api, history_reset)
         inventory = visible_issues(api, LABEL)
         tracked = {identity_token(item["identity"]) for item in registry["entries"]}
         tracked.update(identity_token(item["identity"]) for rollup in (snapshot or {}).get("days", {}).values()
@@ -944,9 +1000,10 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
             if run["created_at"][:10] < (now - timedelta(days=EVIDENCE_DAYS - 1)).isoformat():
                 continue
             previous = saved.get(run["id"])
-            if previous and previous["run"]["attempt"] == run["run_attempt"] and previous["status"] != "pending" and previous.get("identity"):
+            if (previous and previous["run"]["attempt"] == run["run_attempt"] and previous["status"] != "pending"
+                    and previous.get("identity") and "conclusion" in previous and "created_at" in previous):
                 continue
-            admissions = trusted_admissions(api, [run["id"]]) if run["path"] != NIGHTLY_PATH else {}
+            admissions = trusted_admissions(api, [run["id"]]) if run["path"] != NIGHTLY_PATH and run.get("conclusion") != "cancelled" else {}
             report = read_run(api, run, admissions, previous)
             tracked.update(identity_token(item["identity"]) for attempt in report.get("attempt_history", [report])
                            for item in attempt["observed"] if item["outcome"] in FAILURES)
@@ -965,9 +1022,8 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
     snapshot["budget_stopped"] = stopped
     snapshot["api_budget"] = {"requests": api.request_count, "remaining": api.remaining,
                               "limit": getattr(api, "rate_limit", 1000)}
-    if reset:
-        snapshot["history_reset"] = {"actor": os.environ["GITHUB_ACTOR"], "day": now.isoformat(),
-                                    "run": os.environ.get("GITHUB_RUN_ID")}
+    if history_reset:
+        snapshot["history_reset"] = history_reset
     if os.environ.get("GITHUB_ACTIONS") == "true":
         snapshot["producer"] = {"repository": api.repository, "workflow_path": REPORT_PATH,
             "run": {"id": os.environ["GITHUB_RUN_ID"], "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
@@ -1049,14 +1105,15 @@ def main(argv=None):
     require(type(budget.get("requests")) is int and 0 <= budget["requests"] <= REQUEST_BUDGET
             and type(budget.get("limit")) is int and budget["limit"] > 0, "invalid shared API budget")
     api.request_count, api.remaining, api.rate_limit = budget["requests"], budget["remaining"], budget["limit"]
-    plan["entries"] = decision_entries(plan["entries"], datetime.now(timezone.utc).date())
+    plan["entries"] = decision_entries(plan["entries"], datetime.now(timezone.utc).date(), post_merge_since=plan.get("post_merge_since"))
     if plan["budget_stopped"] or not plan["entries"]:
         print("No issue synchronization: no new eligible evidence or API budget reserved.")
         return 0
     errors = []
     try:
         receipts, states = synchronize_issues(api, plan["entries"], plan["registry"], errors=errors,
-                                            inventory=plan.get("issue_inventory", []), issue_index=plan.get("issue_index", {}))
+                                            inventory=plan.get("issue_inventory", []), issue_index=plan.get("issue_index", {}),
+                                            post_merge_since=plan.get("post_merge_since"))
     except RateLimitLow:
         receipts, states = [], {}
         errors.append({"code": "api-budget-low"})
