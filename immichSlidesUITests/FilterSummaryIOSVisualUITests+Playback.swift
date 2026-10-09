@@ -222,11 +222,12 @@ extension FilterSummaryIOSVisualUITests {
         returnToSlideShowFromSettings(app: app)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 18),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(18))),
             "After returning from settings, the app should be back on the playback page"
         )
         XCTAssertFalse(
-            entryHintBanner.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+            entryHintBanner.waitForExistence(timeout: TestWait.seconds(.product(2))),
             "The one-time tip should not reappear when returning from settings to the playback page in the same first-launch flow"
         )
     }

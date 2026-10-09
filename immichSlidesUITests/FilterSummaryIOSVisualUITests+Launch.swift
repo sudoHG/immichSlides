@@ -137,7 +137,7 @@ extension FilterSummaryIOSVisualUITests {
             app.buttons["firstboot.fillConfig.button"],
             app.descendants(matching: .any)["firstboot.fillConfig.button"]
         ]
-        let perCandidateTimeout = max(0.5, timeout / Double(candidates.count))
+        let perCandidateTimeout = max(TestWait.seconds(.infrastructure(0.5)), timeout / Double(candidates.count))
 
         for candidate in candidates {
             if candidate.waitForExistence(timeout: perCandidateTimeout) {
@@ -527,7 +527,7 @@ extension FilterSummaryIOSVisualUITests {
 
     func waitForPlaybackEntryHintToDisappear(
         _ entryHintBanner: XCUIElement,
-        timeout: TimeInterval = 3
+        timeout: TimeInterval = TestWait.seconds(.product(3))
     ) {
 
         let deadline = Date().addingTimeInterval(timeout)

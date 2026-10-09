@@ -255,7 +255,8 @@ extension FilterSummaryIOSVisualUITests {
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-        XCTAssertNil(waitForAnyElement(app: app, labels: ["unrelated alert sentinel"], timeout: 0.2))
+        XCTAssertNil(
+            waitForAnyElement(app: app, labels: ["unrelated alert sentinel"], timeout: TestWait.seconds(.product(0.2))))
         XCTAssertNotNil(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
             waitForAnyElement(
@@ -466,7 +467,7 @@ extension FilterSummaryIOSVisualUITests {
 
         XCTAssertTrue(
             app.textFields["firstboot.serverURL.field"].waitForExistence(
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: TestWait.seconds(.product(8))),
             "After tapping 'Server' in the left sidebar from the open source licenses page, the right detail pane should switch to server settings immediately"
         )
 

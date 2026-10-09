@@ -15,25 +15,30 @@ enum FilterSummaryIOSVisualUITestsCalibration {
 }
 
 enum FilterSummaryIOSVisualUITestsWaitTiming {
-    static let briefElementTimeoutSeconds: TimeInterval = 1
-    static let connectionTimeoutSeconds: TimeInterval = 15
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let controlSettleSeconds: TimeInterval = 0.35
-    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
-    static let navigationTimeoutSeconds: TimeInterval = 10
-    static let playbackControlTimeoutSeconds: TimeInterval = 20
-    static let playbackEntrySettleSeconds: TimeInterval = 0.6
-    static let pollIntervalSeconds: TimeInterval = 0.1
-    static let readbackPollSeconds: TimeInterval = 0.2
-    static let readbackTimeoutSeconds: TimeInterval = 2
-    static let screenSettleSeconds: TimeInterval = 0.8
-    static let screenTransitionTimeoutSeconds: TimeInterval = 12
-    static let selectionPollSeconds: TimeInterval = 0.25
-    static let settingsChangeTimeoutSeconds: TimeInterval = 6
-    static let shortInteractionTimeoutSeconds: TimeInterval = 3
-    static let snapshotPollSeconds: TimeInterval = 0.5
-    static let stateChangeTimeoutSeconds: TimeInterval = 4
-    static let transitionPollSeconds: TimeInterval = 0.4
+    // Resolve infrastructure budgets once before passing them to the existing polling helpers.
+    static let briefElementTimeoutSeconds = TestWait.seconds(.infrastructure(1))
+    static let connectionTimeoutSeconds = TestWait.seconds(.infrastructure(15))
+    static let controlAppearanceTimeoutSeconds = TestWait.seconds(.infrastructure(8))
+    static let elementAppearanceTimeoutSeconds = TestWait.seconds(.infrastructure(5))
+    static let navigationTimeoutSeconds = TestWait.seconds(.infrastructure(10))
+    static let playbackControlTimeoutSeconds = TestWait.seconds(.infrastructure(20))
+    static let readbackTimeoutSeconds = TestWait.seconds(.infrastructure(2))
+    static let screenTransitionTimeoutSeconds = TestWait.seconds(.infrastructure(12))
+    static let settingsChangeTimeoutSeconds = TestWait.seconds(.infrastructure(6))
+    static let stateChangeTimeoutSeconds = TestWait.seconds(.infrastructure(4))
+
+    // Opening the licenses page is a responsiveness promise, independent of runner speed.
+    static let shortInteractionTimeoutSeconds = TestWait.seconds(.product(3))
+
+    // Poll cadence and screenshot settling spans stay fixed when infrastructure budgets scale.
+    static let controlSettleSeconds = TestWait.seconds(.product(0.35))
+    static let playbackEntrySettleSeconds = TestWait.seconds(.product(0.6))
+    static let pollIntervalSeconds = TestWait.seconds(.product(0.1))
+    static let readbackPollSeconds = TestWait.seconds(.product(0.2))
+    static let screenSettleSeconds = TestWait.seconds(.product(0.8))
+    static let selectionPollSeconds = TestWait.seconds(.product(0.25))
+    static let snapshotPollSeconds = TestWait.seconds(.product(0.5))
+    static let transitionPollSeconds = TestWait.seconds(.product(0.4))
 }
 
 #if os(iOS)
