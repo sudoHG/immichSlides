@@ -373,6 +373,7 @@ def producer_evidence(api, run, source, *, diagnostics=None):
     A rerun job can never fall back to an earlier artifact just because it passed.
     """
     jobs = {}
+    minimum_attempts = {}
     for attempt in range(1, run["run_attempt"] + 1):
         require(attempt <= 100, "too many producer attempts")
         attempt_jobs = api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs")
@@ -380,12 +381,20 @@ def producer_evidence(api, run, source, *, diagnostics=None):
             from ci_ui_reuse import expand_skipped_ui_matrix
             # Reruns may switch between a collapsed skip and literal execution.
             # Normalize within each attempt before merging logical shard history.
-            attempt_jobs = expand_skipped_ui_matrix(source, dict(run, run_attempt=attempt), attempt_jobs, complete=False)
+            discarded = set()
+            attempt_jobs = expand_skipped_ui_matrix(source, dict(run, run_attempt=attempt), attempt_jobs,
+                                                   complete=False, historical=attempt < run["run_attempt"],
+                                                   discarded_shards=discarded)
+            # Keep execution history to recognize retained API jobs, but never
+            # admit a shard artifact from before its matrix was invalidated.
+            minimum_attempts.update({name: attempt + 1 for name in discarded})
         for job in attempt_jobs:
             previous = jobs.get(job["name"])
             execution = ("started_at", "completed_at", "runner_id")
             retained = (previous and all(job.get(key) and job[key] == previous.get(key) for key in execution))
             jobs[job["name"]] = dict(job, evidence_attempt=previous["evidence_attempt"] if retained else attempt)
+    require(all(name in jobs and jobs[name]["evidence_attempt"] >= attempt
+                for name, attempt in minimum_attempts.items()), "UI shard did not execute after skipped matrix")
     expected, _, by_job, metadata = workflow_contract(source, run, metadata=True)
     if diagnostics is None:
         require(set(jobs) == set(expected), "required job set mismatch")
