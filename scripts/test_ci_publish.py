@@ -837,7 +837,7 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(actual, {
             "default": [test_identity("ui", "NewUITests/testNew", platform="ios", device="iphone")],
             "visual": [test_identity("ui", "VisualUITests/testFlow", platform="ios", device="iphone")]})
-        for bad in (dict(UI_MANIFEST, schema_version=2), dict(UI_MANIFEST, default_shard="missing"),
+        for bad in (dict(UI_MANIFEST, schema_version=3), dict(UI_MANIFEST, default_shard="missing"),
                     dict(UI_MANIFEST, shards={"default": ["VisualUITests"], "visual": ["VisualUITests"]}),
                     dict(UI_MANIFEST, shards={"default": [], "visual": ["VisualUITests/testFlow"]}),
                     dict(UI_MANIFEST, unexpected=True)):
@@ -848,6 +848,44 @@ class PublisherTests(unittest.TestCase):
                 shard_populations(bad, UI_PLAN, UI_MANIFEST, "iphone")
         with self.assertRaisesRegex(ContractError, "shard visual has no tests on iphone; update scripts/ci-ui-shards.json"):
             shard_populations(declared[:1], UI_PLAN, UI_MANIFEST, "iphone")
+
+    def test_method_shards_partition_each_device_and_default_new_methods_without_overlapping_selectors(self):
+        manifest = {"schema_version": 2, "revision": "method-v2", "default_shard": "default",
+                    "shards": {"default": [], "visual": ["VisualUITests/testFlow"],
+                               "visual-secondary": ["VisualUITests/testOther", "NavigationUITests"]}}
+        keys = ("NewUITests/testNew", "VisualUITests/testFlow", "VisualUITests/testOther",
+                "VisualUITests/testNew", "VisualUITests/testCapture", "NavigationUITests/testNavigate",
+                "EvidenceUITests/testRecord")
+        from ci_ui_shards import DEVICES
+        for device, platform in DEVICES.items():
+            declared = [test_identity("ui", key, platform=platform) for key in keys]
+            with self.subTest(device=device):
+                actual = shard_populations(declared, UI_PLAN, manifest, device)
+                self.assertEqual({name: [entry["key"] for entry in entries] for name, entries in actual.items()}, {
+                    "default": ["NewUITests/testNew", "VisualUITests/testNew"],
+                    "visual": ["VisualUITests/testFlow"],
+                    "visual-secondary": ["NavigationUITests/testNavigate", "VisualUITests/testOther"]})
+                union = [entry for entries in actual.values() for entry in entries]
+                self.assertEqual(len(union), 5)
+                self.assertTrue(all(entry["dimensions"] == {"platform": platform, "device": device} for entry in union))
+        for version in (1, 2):
+            self.assertEqual(parse_shard_manifest(dict(UI_MANIFEST, schema_version=version))["schema_version"], version)
+        for selectors in (("VisualUITests/testFlow", "VisualUITests/testFlow"),
+                          ("VisualUITests", "VisualUITests/testFlow"),
+                          ("VisualUITests/testFlow", "VisualUITests"),
+                          ("VisualUITests/testFlow()",), ("VisualUITests/test*",),
+                          ("immichSlidesUITests/VisualUITests/testFlow",)):
+            bad = dict(manifest, shards={"default": list(selectors), "visual": []})
+            with self.subTest(selectors=selectors), self.assertRaises(ContractError):
+                parse_shard_manifest(bad)
+        for version in (True, 0, 3, "2"):
+            with self.subTest(version=version), self.assertRaises(ContractError):
+                parse_shard_manifest(dict(manifest, schema_version=version))
+        for selectors in (("VisualUITests/testFlow", "VisualUITests/testFlow"),
+                          ("VisualUITests", "VisualUITests/testFlow")):
+            bad = dict(manifest, shards={"default": [selectors[0]], "visual": [selectors[1]]})
+            with self.subTest(selectors=selectors), self.assertRaises(ContractError):
+                parse_shard_manifest(bad)
 
     def test_ui_workflow_binds_literal_device_and_shard_to_each_uploading_job(self):
         names, _, _, metadata = workflow_contract(FIXTURE_UI, RUN, metadata=True)
@@ -866,31 +904,35 @@ class PublisherTests(unittest.TestCase):
         from ci_publish_git import ui_inputs
         from test_ci_verdict import approval_record
         identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
+        manifest = {"schema_version": 2, "revision": "method-v2", "default_shard": "default",
+                    "shards": {"default": [], "visual": ["VisualUITests/testFlow"],
+                               "visual-secondary": ["VisualUITests/testOther"]}}
+        workflow = FIXTURE_UI.replace("[default, visual]", "[default, visual, visual-secondary]")
         population = [test_identity("ui", key, platform="ios") for key in
-                      ("NewUITests/testNew", "VisualUITests/testFlow", "EvidenceUITests/testRecord")]
-        files = {"scripts/ci-ui-shards.json": json.dumps(UI_MANIFEST),
+                      ("NewUITests/testNew", "VisualUITests/testFlow", "VisualUITests/testOther", "EvidenceUITests/testRecord")]
+        files = {"scripts/ci-ui-shards.json": json.dumps(manifest),
                  "immichSlides-iOS.xctestplan": json.dumps(UI_PLAN)}
         listing = [{"path": path, "type": "blob", "mode": "100644"} for path in files]
         modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
         with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
             admitted = ui_inputs(MERGE, listing, populations={"ui-ios": population},
-                                 base_populations={"ui-ios": population}, workflow=FIXTURE_UI, run=RUN, modules=modules)
-        self.assertEqual(admitted["populations"]["iphone"], shard_populations(population, UI_PLAN, UI_MANIFEST, "iphone"))
+                                 base_populations={"ui-ios": population}, workflow=workflow, run=RUN, modules=modules)
+        self.assertEqual(admitted["populations"]["iphone"], shard_populations(population, UI_PLAN, manifest, "iphone"))
         with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
             empty = ui_inputs(MERGE, listing, populations={"ui-ios": population[:1]},
-                              base_populations={"ui-ios": population}, workflow=FIXTURE_UI, run=RUN, modules=modules)
+                              base_populations={"ui-ios": population}, workflow=workflow, run=RUN, modules=modules)
         self.assertEqual(empty["error"], "shard visual has no tests on iphone; update scripts/ci-ui-shards.json")
         self.assertEqual(empty["base_populations"], admitted["base_populations"])
         record = {"identity": identity, "populations": {"ui-ios": population},
                   "base_populations": {"ui-ios": population}, "ui_inputs": {"base": admitted, "candidate": admitted},
-                  "workflows": {".github/workflows/ci-ui.yml": {"base": FIXTURE_UI, "candidate": FIXTURE_UI}},
+                  "workflows": {".github/workflows/ci-ui.yml": {"base": workflow, "candidate": workflow}},
                   "base_policy": {"schema_version": 1, "approval_records": [approval_record("ui")],
                                   "expected_skips": [], "deselections": []},
                   "classification": {"app_affected": True, "ci_changing": False}}
         record["candidate_policy"] = record["base_policy"]
         run = dict(RUN, path=".github/workflows/ci-ui.yml", run_started_at="2026-10-08T10:00:00Z")
-        names, _, _, metadata = workflow_contract(FIXTURE_UI, run, metadata=True)
-        shards = shard_populations(population, UI_PLAN, UI_MANIFEST, "iphone")
+        names, _, _, metadata = workflow_contract(workflow, run, metadata=True)
+        shards = shard_populations(population, UI_PLAN, manifest, "iphone")
         jobs = [{"name": name, "status": "completed", "conclusion": "success", "evidence_attempt": 1} for name in names]
         summaries = []
         for name in names:
@@ -937,6 +979,8 @@ class PublisherTests(unittest.TestCase):
             for mutate in (lambda rows: rows[1]["hashes"]["manifests"].update({"ui-shards": "f" * 64}),
                            lambda rows: rows[1]["hashes"]["manifests"].pop("test-plan"),
                            lambda rows: rows[1]["population"].update(compiled=[]),
+                           lambda rows: rows[2]["population"].update(observed=[]),
+                           lambda rows: rows[3]["population"].update(declared=shards["visual"]),
                            lambda rows: rows[1]["population"]["declared"][0]["dimensions"].update(device="ipad")):
                 bad = copy.deepcopy(summaries)
                 mutate(bad)

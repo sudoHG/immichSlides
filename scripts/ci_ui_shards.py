@@ -16,7 +16,7 @@ SELECTOR = re.compile(r"[A-Za-z_]\w*(?:/test[A-Za-z_]\w*)?")
 def parse_shard_manifest(raw):
     manifest = decode(raw)
     fields(manifest, {"schema_version", "revision", "default_shard", "shards"}, "UI shard manifest")
-    require(type(manifest["schema_version"]) is int and manifest["schema_version"] == 1,
+    require(type(manifest["schema_version"]) is int and manifest["schema_version"] in {1, 2},
             "unsupported UI shard manifest version")
     string(manifest["revision"], "manifest revision")
     require(LABEL.fullmatch(manifest["revision"]) is not None, "invalid UI manifest revision")
@@ -25,13 +25,19 @@ def parse_shard_manifest(raw):
     require(isinstance(manifest["default_shard"], str) and manifest["default_shard"] in shards,
             "default shard is absent from UI manifest")
     assigned = set()
-    for name, classes in shards.items():
+    pattern = CLASS if manifest["schema_version"] == 1 else SELECTOR
+    for name, selectors in shards.items():
         require(isinstance(name, str) and LABEL.fullmatch(name) is not None, "invalid UI shard name")
-        require(isinstance(classes, list), "shard classes must be an array")
-        for name in classes:
-            require(isinstance(name, str) and CLASS.fullmatch(name) is not None, "shards assign exact UI classes")
-            require(name not in assigned, "UI class belongs to more than one shard")
-            assigned.add(name)
+        require(isinstance(selectors, list), "shard selectors must be an array")
+        for selector in selectors:
+            require(isinstance(selector, str) and pattern.fullmatch(selector) is not None,
+                    "shards assign exact UI classes" if manifest["schema_version"] == 1
+                    else "shards assign exact UI classes or methods")
+            require(selector not in assigned, "UI selector belongs to more than one shard")
+            assigned.add(selector)
+    classes = {selector for selector in assigned if "/" not in selector}
+    require(all(selector.split("/")[0] not in classes for selector in assigned if "/" in selector),
+            "UI class and method assignments overlap")
     return manifest
 
 
@@ -68,11 +74,11 @@ def shard_populations(population, plan, raw_manifest, device):
         token = identity_key(entry)
         require(token not in tokens, "duplicate UI source population")
         tokens.add(token)
-    assignment = {name: shard for shard, names in manifest["shards"].items() for name in names}
+    assignment = {selector: shard for shard, selectors in manifest["shards"].items() for selector in selectors}
     result = {shard: [] for shard in manifest["shards"]}
     for entry in default_plan_population(population, plan):
         name = entry["key"].split("/")[0]
-        shard = assignment.get(name, manifest["default_shard"])
+        shard = assignment.get(entry["key"], assignment.get(name, manifest["default_shard"]))
         result[shard].append(test_identity("ui", entry["key"], platform=DEVICES[device], device=device))
     for shard, entries in result.items():
         require(entries, f"shard {shard} has no tests on {device}; update {MANIFEST_PATH}")
