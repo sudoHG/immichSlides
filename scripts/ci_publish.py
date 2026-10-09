@@ -363,7 +363,13 @@ def producer_evidence(api, run, source):
     jobs = {}
     for attempt in range(1, run["run_attempt"] + 1):
         require(attempt <= 100, "too many producer attempts")
-        for job in api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs"):
+        attempt_jobs = api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs")
+        if run["path"] == ".github/workflows/ci-ui.yml":
+            from ci_ui_reuse import expand_skipped_ui_matrix
+            # Reruns may switch between a collapsed skip and literal execution.
+            # Normalize within each attempt before merging logical shard history.
+            attempt_jobs = expand_skipped_ui_matrix(source, dict(run, run_attempt=attempt), attempt_jobs, complete=False)
+        for job in attempt_jobs:
             previous = jobs.get(job["name"])
             execution = ("started_at", "completed_at", "runner_id")
             retained = (previous and all(job.get(key) and job[key] == previous.get(key) for key in execution))
@@ -374,6 +380,9 @@ def producer_evidence(api, run, source):
     summaries = []
     for name in expected:
         job = jobs[name]
+        if (run["event"] == "push" and metadata[name]["tier"] == "ui"
+                and job["status"] == "completed" and job["conclusion"] == "skipped"):
+            continue
         attempt_run = dict(run, run_attempt=job["evidence_attempt"])
         _, _, names = workflow_contract(source, attempt_run, details=True)
         for artifact_name in names[name]:
@@ -444,7 +453,16 @@ def compute(api, pr_number, pushed, login):
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)
                 require(mismatch is None, mismatch or "identity mismatch")
-            evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
+            if context == "ci-ui" and not pr and any(job["conclusion"] == "skipped" for job in jobs):
+                from ci_ui_reuse import evaluate_reused_push
+                evaluations[context] = evaluate_reused_push(api, record, run, jobs, summaries)
+            else:
+                evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
+                if context == "ci-ui":
+                    from ci_ui_reuse import make_verdict
+                    receipt = make_verdict(record, run, summaries, evaluations[context])
+                    if receipt is not None:
+                        evaluations[context]["reuse_verdict"] = receipt
         except (ContractError, KeyError, ValueError, TypeError) as error:
             evaluations[context] = {"state": "failure", "description": ui_failure_hint(error) or
                                    "Missing, invalid or mismatched admitted evidence"}
@@ -486,6 +504,13 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
         return
     if pr_number:
         require(api.repo(f"pulls/{pr_number}")["head"]["sha"] == head, "PR head changed before publication")
+    receipt = plan.get("ci-ui", {}).get("reuse_verdict")
+    if receipt is not None:
+        directory = Path(os.environ["RUNNER_TEMP"], "ci-ui-verdict")
+        directory.mkdir(mode=0o700, exist_ok=False)
+        (directory / "verdict.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+        with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
+            handle.write("ui_verdict_tree=" + receipt["identity"]["tree_sha"] + "\n")
     for context, status in plan.items():
         app.status(head, context, status["state"], status["description"], status.get("target_url", target))
         if status.get("mismatch"):
@@ -533,6 +558,12 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                 if source:
                     handle.write(f"  Source: {source['repository']}, {source['workflow_path']}; run {source['run_id']}, attempt {source['attempt']}; "
                                  f"approval-based: {source['approval_based']}, fork-originated: {source['fork_originated']}.\n")
+                reuse = status.get("reuse")
+                if reuse:
+                    handle.write(f"  Reuse: producer run {reuse['producer_run_id']}, attempt {reuse['producer_attempt']}; "
+                                 f"verdict artifact {reuse['verdict_artifact_id']}; tree {reuse['tree_sha']}; "
+                                 f"approval-based: {reuse['approval_based']}, fork-originated: {reuse['fork_originated']}, "
+                                 f"CI-changing: {reuse['ci_changing']}.\n")
                 for population in status.get("population", []):
                     handle.write(f"  {population['tier']} / {population['shard']}: expected {population['expected']}, "
                                  f"compiled {population['compiled']}, observed {population['observed']}, "

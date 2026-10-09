@@ -389,9 +389,12 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             continue
         publisher_upload = (path == ".github/workflows/ci-publish.yml"
                             and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-                            and options == {"name": "ci-admission-${{ steps.admit.outputs.run_id }}",
-                                            "path": "${{ runner.temp }}/ci-admission/record.json",
-                                            "if-no-files-found": "error", "retention-days": 30})
+                            and options in ({"name": "ci-admission-${{ steps.admit.outputs.run_id }}",
+                                             "path": "${{ runner.temp }}/ci-admission/record.json",
+                                             "if-no-files-found": "error", "retention-days": 30},
+                                            {"name": "ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}",
+                                             "path": "${{ runner.temp }}/ci-ui-verdict/verdict.json",
+                                             "if-no-files-found": "error", "retention-days": 30}))
         if "uses" in item and not publisher_upload and not trusted_action_allowed(uses, options):
             flag(location, "trusted-action", "Trusted uses must be an approved pinned remote action or isolated repository-local action")
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":

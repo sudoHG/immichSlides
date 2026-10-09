@@ -147,6 +147,45 @@ The manifest and both default `immichSlides-iOS.xctestplan` /
 `immichSlides-tvOS.xctestplan` files are CI-trusted classification inputs;
 changing selections or exclusions requires exact-head approval.
 The reader accepts no dynamic matrices or alternate manifest paths.
+The post-merge reader additionally accepts skipped device shards on a main push
+only after independently finding a complete trusted identical-tree PR verdict.
+The archive-selection job must still succeed and supply its identity-bound,
+manifest-bound summary; skipping that job or only part of the device matrix fails.
+GitHub may report a whole skipped matrix as one unexpanded job name. The reader
+maps that exact trusted-workflow name to its declared literal shards while
+retaining the real job's identity and attempt. Each attempt is normalized before
+execution history is merged by logical shard, so a rerun may switch between
+skipping and executing the matrix. Overlapping shards within one attempt,
+unknown names or an incomplete final job set fail. This mapping supplies no test
+observations and still requires independent trusted reuse proof.
+Every ordinary run retains the existing successful-job and complete-population checks.
+
+After publishing a complete PR UI success, the main publisher retains
+`ci-ui-verdict-<tree-sha>` for 30 days. Its `verdict.json` version 1 stores the
+admitted identity, producer run/attempt, fork/CI-change/approval provenance, exact
+manifest/default-plan/policy/registry/classification/workflow/pins hashes, covered
+device shards and observed toolchains. This is publisher output, never a producer
+claim or a matching artifact name alone. The reuse reader verifies the uploader's
+workflow ID/path, event, both repositories, main branch and main-history revision,
+then resolves the pushed commit's associated PRs to exactly one same-repository
+PR merged into main with `merge_commit_sha` equal to the pushed SHA. The receipt's
+PR number and head SHA must match that PR's final head; another green head with
+the same tree cannot authorize reuse. It verifies that the upstream UI producer is still its head's newest completed
+successful run and exact attempt. A rerun in progress invalidates the receipt.
+Unknown versions, missing/expired proof, red/cancelled runs, forks, CI changes,
+approval-based verdicts, different trees or inputs, incomplete device coverage,
+or observed toolchains that disagree with current pins all mean run the UI tier.
+Malformed nested receipt fields and corrupt ZIP or compressed data also fall
+back to running UI.
+The publisher repeats this decision before accepting skipped shards and links
+the status to the original successful UI run.
+The publication summary displays the reused producer run/attempt, verdict artifact,
+tree and approval/fork/CI-change provenance alongside that link.
+
+This reader lands before a producer starts skipping shards. Existing iPhone
+producers keep running normally; the separate iPad/Apple TV and reuse producer
+rollout activates the new path after the reader is on main. A CI-changing reader
+PR still requires maintainer approval of its exact head and cannot approve itself.
 The [iPhone UI producer](CI_UI.md) uses this contract with a Linux archive-selection
 job and three literal iPhone shards. iPad and Apple TV producer rollout remains
 separate; publisher trust and exact-head approval rules apply to every device.
