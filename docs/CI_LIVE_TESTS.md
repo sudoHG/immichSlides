@@ -81,6 +81,10 @@ Injection maps the URL to `TEST_RUNNER_IMMICH_TEST_SERVER_URL` and the key to
 `TEST_RUNNER_IMMICH_TEST_API_KEY`, the existing test helper's inputs. Only test
 execution gets them; enumeration, archive creation, simulator tools and official
 export use a clean environment. No config or `.xctestrun` file contains credentials.
+Workflow policy rejects every case-insensitive `secrets` context reference in a job
+bound to `immich-test-server`, including inherited workflow environment values, except
+the two exact `LIVE_BINDINGS` values in the guarded injection step. Whole-context and
+dynamic-index expressions are rejected too.
 
 ## Results and privacy
 
@@ -127,7 +131,7 @@ After the run finishes, download complete logs and **all** artifacts outside the
 repository, then independently audit the extracted directory:
 
 ```sh
-gh api repos/sudoHG/immichSlides/actions/runs/<run-id>/logs > <outside-repo>/logs.zip
+gh api repos/sudoHG/immichSlides/actions/runs/<run-id>/attempts/<attempt>/logs > <outside-repo>/logs.zip
 gh run download <run-id> --dir <outside-repo>/artifacts
 unzip -q <outside-repo>/logs.zip -d <outside-repo>/logs
 python3 -B scripts/ci_live_tests.py audit-canary --run-id <run-id> \

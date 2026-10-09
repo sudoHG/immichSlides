@@ -194,7 +194,7 @@ jobs:
     name: unit-ios
     needs: [build-ios]
     runs-on: xcode-27
-    timeout-minutes: 40
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read
@@ -258,6 +258,7 @@ jobs:
             --archive-dir "$RUNNER_TEMP/archive-download" \
             --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ env.UNIT_PLATFORM }}" \
             --output-dir "$RUNNER_TEMP/unit-records" --min-free-gib 30 --enumeration-profile ci \
+            --result-export-timeout-seconds 180 \
             --setup-seconds "$UNIT_SETUP_SECONDS" --transfer-seconds "$TRANSFER_SECONDS"
       - name: Scan available unit records
         id: record_scan
@@ -325,7 +326,7 @@ jobs:
     name: unit-tvos
     needs: [build-tvos]
     runs-on: xcode-27
-    timeout-minutes: 40
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read
@@ -389,6 +390,7 @@ jobs:
             --archive-dir "$RUNNER_TEMP/archive-download" \
             --relocated-path "$RUNNER_TEMP/consumer-relocated-${{ env.UNIT_PLATFORM }}" \
             --output-dir "$RUNNER_TEMP/unit-records" --min-free-gib 30 --enumeration-profile ci \
+            --result-export-timeout-seconds 180 \
             --setup-seconds "$UNIT_SETUP_SECONDS" --transfer-seconds "$TRANSFER_SECONDS"
       - name: Scan available unit records
         id: record_scan

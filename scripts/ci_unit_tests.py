@@ -46,8 +46,6 @@ HOSTED_ENUMERATION_SAMPLES = {
 # Job overhead is the failed iOS job duration minus its independently measured phases.
 HOSTED_BOOT_MAX_SECONDS = 110.186966041
 HOSTED_JOB_OVERHEAD_SECONDS = 556 - (110.186966041 + 251.284679625 + 70.472742334)
-OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS = 60
-OFFICIAL_EXPORT_TIMEOUT_SECONDS = 60 + OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS
 SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS = 15
 # A hosted delete exceeded its former 15-second bound; allow recovery before recording failure.
 SIMULATOR_DELETE_TIMEOUT_SECONDS = 60
@@ -64,24 +62,27 @@ def measured_timeout(samples, *, margin, minimum):
             "method": "nearest-rank sample p95; completed post-boot enumerations"}
 
 
-def enumeration_budget(profile, platform):
+def enumeration_budget(profile, platform, *, result_export_timeout_seconds=60):
     require(profile in {"local", "ci"} and platform in HOSTED_ENUMERATION_SAMPLES, "unknown enumeration profile or platform")
+    require(math.isfinite(result_export_timeout_seconds) and result_export_timeout_seconds > 0,
+            "result export timeout must be positive and finite")
     budget = {"profile": profile, "timeout_seconds": 300, "test_timeout_seconds": 900,
               "simulator_boot_timeout_seconds": 600,
+              "result_export_timeout_seconds": result_export_timeout_seconds,
               "job_timeout_seconds": None}
     if profile == "ci":
         samples = HOSTED_ENUMERATION_SAMPLES[platform]
-        budget.update(measured_timeout(samples, margin=2, minimum=300), job_timeout_seconds=2400,
+        budget.update(measured_timeout(samples, margin=2, minimum=300), job_timeout_seconds=2700,
                       sample_configuration="separate boot; calibration run " + samples["calibration_run_id"],
                       simulator_boot_timeout_seconds=math.ceil(HOSTED_BOOT_MAX_SECONDS * 2 / 60) * 60,
                       boot_max_seconds=HOSTED_BOOT_MAX_SECONDS, recovery_calibration_run_id="37717972490",
                       interrupt_grace_seconds=INTERRUPT_GRACE_SECONDS,
                       measured_job_overhead_seconds=HOSTED_JOB_OVERHEAD_SECONDS,
-                      official_export_timeout_seconds=OFFICIAL_EXPORT_TIMEOUT_SECONDS,
-                      official_summary_export_timeout_seconds=OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS,
+                      official_export_timeout_seconds=2 * result_export_timeout_seconds,
+                      official_summary_export_timeout_seconds=result_export_timeout_seconds,
                       simulator_shutdown_timeout_seconds=SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS,
                       simulator_delete_timeout_seconds=SIMULATOR_DELETE_TIMEOUT_SECONDS,
-                      overhead_allowance_seconds=math.ceil((HOSTED_JOB_OVERHEAD_SECONDS + OFFICIAL_EXPORT_TIMEOUT_SECONDS +
+                      overhead_allowance_seconds=math.ceil((HOSTED_JOB_OVERHEAD_SECONDS + 2 * result_export_timeout_seconds +
                                                            SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS + SIMULATOR_DELETE_TIMEOUT_SECONDS) / 60) * 60)
     return budget
 
@@ -91,7 +92,8 @@ def write_unit_summary(summary, path, budget):
     with (path / "summary.md").open("a", encoding="utf-8") as handle:
         handle.write(f"\nEnumeration infrastructure budget ({budget['profile']}): {budget['timeout_seconds']} s; "
                      f"execution: {budget['test_timeout_seconds']} s; "
-                     f"separate simulator boot: {budget['simulator_boot_timeout_seconds']} s.\n")
+                     f"separate simulator boot: {budget['simulator_boot_timeout_seconds']} s; "
+                     f"each official tests / summary export: {budget['result_export_timeout_seconds']:g} s.\n")
         if budget["profile"] == "ci":
             handle.write(f"Sample configuration: {budget['sample_configuration']}. "
                          f"Completed hosted samples: {budget['completed_seconds']} s; "
@@ -307,7 +309,8 @@ def run_units(args):
     summary = archive.record(ctx, platform, "unit-" + platform)
     summary["run"]["tier"] = "unit"
     summary["hashes"]["policies"]["unit-consumer"] = archive.file_hash(Path(__file__))
-    budget = enumeration_budget(args.enumeration_profile, platform)
+    budget = enumeration_budget(args.enumeration_profile, platform,
+                                result_export_timeout_seconds=args.result_export_timeout_seconds)
     write_unit_summary(summary, args.output_dir, budget)
     # This precedes archive validation and Xcode: failed tests must not lose their provenance.
     provenance = {"artifact_id": ctx["artifact_id"], "producer_run_id": ctx["run_id"],
@@ -320,6 +323,7 @@ def run_units(args):
                     "simulator_boot_seconds": None, "simulator_boot_exit_code": None,
                     "enumeration_seconds": None, "enumeration_exit_code": None,
                     "test_seconds": None, "test_exit_code": None,
+                    "official_export_seconds": None, "result_read_seconds": None,
                     "simulator_shutdown_seconds": None, "simulator_shutdown_exit_code": None,
                     "simulator_delete_seconds": None, "simulator_delete_exit_code": None}
     disk = None
@@ -429,18 +433,25 @@ def run_units(args):
             export_started = time.monotonic()
             try:
                 digest = export_private_result_bundle(result_bundle, args.output_dir, [PUBLIC_API_KEY],
-                                                      summary_timeout_seconds=OFFICIAL_SUMMARY_EXPORT_TIMEOUT_SECONDS)
+                                                      summary_timeout_seconds=args.result_export_timeout_seconds,
+                                                      export_timeout_seconds=args.result_export_timeout_seconds)
+                measurements["official_export_seconds"] = time.monotonic() - export_started
+                read_started = time.monotonic()
                 rows, counts = read_results(args.output_dir, platform)
                 code = judge_execution(summary, compiled, rows, counts, code, policy)
+                measurements["result_read_seconds"] = time.monotonic() - read_started
                 export_complete = True
             except Exception as error:
                 code = code or 1
                 export_phase = (error.cmd[4] if isinstance(error, subprocess.TimeoutExpired)
                                 and isinstance(error.cmd, (list, tuple)) and len(error.cmd) > 4
                                 and error.cmd[4] in {"tests", "summary"} else "result")
-                summary["infrastructure"].append({"code": "unit-results-timed-out" if isinstance(error, subprocess.TimeoutExpired) else "unit-results-failed",
+                summary["infrastructure"].append({"code": "xcresult-export-timeout" if isinstance(error, subprocess.TimeoutExpired) else "unit-results-failed",
                                                    "message": f"official {export_phase} export timed out (budget={error.timeout:g}s; elapsed={time.monotonic() - export_started:.1f}s)" if isinstance(error, subprocess.TimeoutExpired)
                                                    else str(error) if isinstance(error, (ContractError, CommandError)) else type(error).__name__})
+            finally:
+                if measurements["official_export_seconds"] is None:
+                    measurements["official_export_seconds"] = time.monotonic() - export_started
         if owns_simulator:
             failures = cleanup_simulator(simulator, measurements)
             if failures:
@@ -567,6 +578,7 @@ def main(argv=None):
     run.add_argument("--min-free-gib", type=int, default=80)
     run.add_argument("--simulator-id")
     run.add_argument("--enumeration-profile", choices=("local", "ci"), default="local")
+    run.add_argument("--result-export-timeout-seconds", type=float, default=60)
     run.add_argument("--setup-seconds", type=float)
     run.add_argument("--transfer-seconds", type=float)
     args = parser.parse_args(argv)
