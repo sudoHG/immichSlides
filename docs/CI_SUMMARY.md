@@ -97,6 +97,11 @@ Host checks hash the exact bytes of `scripts/check_workflow_policy.py` as
 `policies.workflow-policy` and `scripts/ci-test-policy.json` as `policies.test-policy`.
 CI also records the setup manifest `scripts/ci-pins.json`
 as `manifests.ci-pins`; local runs do not claim to consume its setup pins.
+The version dictionary also records the configured `ci_tier`, `ci_profile` and
+`pinned_xcode`/`pinned_*_runtime` values from the selected profile. These describe
+the pins; the separate observed `xcode` and simulator values establish what ran.
+Local Xcode 27 checks do not establish execution on the PR's Xcode 26 profile.
+See [toolchain profiles and switching](CI_TOOLCHAIN.md#switching-the-pr-tier-back).
 
 Coverage discrepancies use `coverage-failed`, readable test keys and a failed
 status, while malformed static populations/policies use `population-invalid`.

@@ -10,6 +10,7 @@ import plistlib
 import subprocess
 import sys
 from pathlib import Path
+from setup_ci_python import load_pins
 
 ROOT = Path(__file__).resolve().parent.parent
 LOCK_PATH = "immichSlides.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
@@ -37,7 +38,7 @@ def validate_environment(root, environment, developer):
             or environment.get("CI_XCODE_SCHEME") != "immichSlides"):
         raise ArchivePreflightError("expected an iOS or tvOS archive of the immichSlides scheme")
 
-    pins = json.loads((root / "scripts/ci-pins.json").read_bytes())["xcode"]
+    pins = load_pins(root / "scripts/ci-pins.json", tier="release")["xcode"]
     version = plistlib.loads((developer.parent / "version.plist").read_bytes())
     # Cloud's Xcode installation path differs from GitHub's; compare the version/build.
     if (not isinstance(pins["version"], str) or not pins["version"]

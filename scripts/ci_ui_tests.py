@@ -25,7 +25,7 @@ from ci_publish import ArtifactRedirect, GitHub, json_member, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
 from ci_ui_shards import DEVICES, MANIFEST_PATH, parse_shard_manifest, shard_populations
 from ci_verdict import classify_changes
-from run_host_checks import run_identity, source_metadata
+from run_host_checks import run_identity, source_metadata, toolchain
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-ui.yml"
@@ -57,7 +57,7 @@ def summary_for(ctx, manifest_hash):
     step = test_identity("host", "UI archive selection")
     return {"schema_version": 1, **ctx,
             "hashes": {"manifests": {"ui-shards": manifest_hash}, "policies": {}},
-            "toolchain": {"versions": {"python": platform.python_version()}, "signing_mode": "not-applicable"},
+            "toolchain": toolchain(tier="pr" if ctx["identity"]["event"] != "local" else None),
             "population": {"declared": [step], "compiled": [step], "observed": [], "deselected": [], "removed_by_pr": []},
             "infrastructure": [], "status": "failed"}
 
@@ -131,7 +131,8 @@ def select_archive(api, identity, *, timeout_seconds, poll_seconds=20, record_re
     head_repository = (api.repo(f"pulls/{identity['pull_request']}")["head"]["repo"]["full_name"]
                        if identity["event"] == "pull_request" else api.repository)
     started, refusals = time.monotonic(), []
-    pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+    from setup_ci_python import load_pins
+    pins = load_pins(ROOT / "scripts/ci-pins.json", tier="pr")
     def refuse(run, outcome, **details):
         refusal = {"run_id": run["id"], "head_sha": head, "consumer_identity": identity,
                    "outcome": outcome, **details}
@@ -257,7 +258,8 @@ def run_shard(args):
             manifest_build_path = args.archive_dir / "manifest.json"
             require(file_hash(manifest_build_path) == selection["build_manifest_sha256"], "selected build manifest changed")
             build = decode(manifest_build_path.read_text())
-            pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+            from setup_ci_python import load_pins
+            pins = load_pins(ROOT / "scripts/ci-pins.json", tier="pr")
             validate_manifest(build, ctx["identity"], selection["producer_run_id"], selection["producer_attempt"],
                               platform_name, pins["xcode"]["build"], file_hash(ROOT / "scripts/ci-pins.json"))
             require(not os.path.lexists(build["source_path"]) and not os.path.lexists(build["products_path"]),
@@ -302,10 +304,10 @@ def failed_shard(args, error):
     write_summary(summary, directory)
 
 
-def verify_reproduction_pins(source, destination, environment):
+def verify_reproduction_pins(source, destination, environment, *, tier="pr"):
     from strict_e2e_runner_support import destination_udid
     from setup_ci_python import load_pins
-    pins = load_pins(source / "scripts/ci-pins.json")
+    pins = load_pins(source / "scripts/ci-pins.json", tier=tier)
     # A local installation may have a different bundle path from hosted macOS.
     # Freeze the selected path, then verify its pinned version/build.
     try:
@@ -329,6 +331,7 @@ def verify_reproduction_pins(source, destination, environment):
             "reproduction destination runtime pin mismatch or unavailable simulator")
     require(len(types) == 1 and devices[0][1].get("deviceTypeIdentifier") == types[0], "reproduction destination device type pin mismatch")
     print("Verified reproduction Xcode, runtime and destination device pins", flush=True)
+    return pins
 
 
 def reproduce(args):
@@ -347,7 +350,14 @@ def reproduce(args):
         # The clean checkout contains no private symlink or ambient local inputs.
         from run_fixture_ui_tests import clean_environment
         environment = clean_environment(os.environ)
-        verify_reproduction_pins(source, args.destination, environment)
+        environment["CI_TOOLCHAIN_TIER"] = args.toolchain_profile
+        pins = verify_reproduction_pins(source, args.destination, environment, tier=args.toolchain_profile)
+        write_json(output_root / "reproduction.json", {
+            "schema_version": 1, "revision": revision, "shard": args.shard, "destination": args.destination,
+            "toolchain_profile": args.toolchain_profile, "resolved_profile": pins.get("profile", pins["runner"]),
+            "pins_sha256": file_hash(source / "scripts/ci-pins.json"),
+            "xcode_version": pins["xcode"]["version"], "xcode_build": pins["xcode"]["build"],
+            "ios_runtime": pins["simulators"]["ios"], "device_type": pins["device_types"]["iphone"]})
         derived = Path(directory, "derived")
         build_records = Path(directory, "build")
         completed = subprocess.run([sys.executable, "-B", str(source / "scripts/ci_build_archive.py"), "build", "--platform", "ios",
@@ -389,6 +399,7 @@ def main(argv=None):
     local.add_argument("--shard", required=True)
     local.add_argument("--destination", required=True)
     local.add_argument("--output-dir", type=Path, required=True)
+    local.add_argument("--toolchain-profile", choices=("pr", "nightly"), default="pr")
     simulator = commands.add_parser("simulator")
     simulator.add_argument("--shard", required=True)
     upload = commands.add_parser("check-upload")
@@ -404,7 +415,8 @@ def main(argv=None):
         if args.command == "simulator":
             require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
                     "automatic simulator creation is hosted-only")
-            pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+            from setup_ci_python import load_pins
+            pins = load_pins(ROOT / "scripts/ci-pins.json", tier="pr")
             udid = subprocess.check_output(["xcrun", "simctl", "create", "ui-iphone-" + args.shard,
                     pins["device_types"]["iphone"], pins["simulators"]["ios"]["runtime"]], text=True, timeout=60).strip()
             with open(os.environ["GITHUB_ENV"], "a") as handle:

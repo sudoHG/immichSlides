@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 import zlib
@@ -152,6 +153,9 @@ def gate_fixture(*, units):
 class PublisherTests(unittest.TestCase):
     def test_ui_reuse_requires_complete_plain_pr_verdict_and_identical_inputs(self):
         from ci_ui_reuse import validate_reuse
+        from setup_ci_python import load_pins
+        pins_content = Path(__file__).with_name("ci-pins.json").read_text()
+        pins = load_pins(tier="pr")
         push = {"schema_version": 1, "repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
                 "pushed_sha": MERGE, "tree_sha": TREE}
         inputs = {"manifest": "a" * 64, "policy": "b" * 64, "pins": "c" * 64}
@@ -161,10 +165,9 @@ class PublisherTests(unittest.TestCase):
                               "run_id": RUN["id"], "attempt": 1, "fork_originated": False,
                               "ci_changing": False, "approval_based": False},
                    "status": "passed", "inputs": inputs, "device_shards": shards,
-                   "toolchains": {name: {"versions": {"xcode": "27.0 (27A266a)", "python": "3.9.6",
+                   "toolchains": {name: {"versions": {"xcode": f"{pins['xcode']['version']} ({pins['xcode']['build']})", "python": "3.9.6",
                                                           "pillow": "11.3.0", "zstd": "zstd 1.5.7"},
                                             "signing_mode": "not-applicable"} for name in shards}}
-        pins = json.loads(Path(__file__).with_name("ci-pins.json").read_text())
         ui_run = dict(RUN, path=".github/workflows/ci-ui.yml")
         validate_reuse(receipt, push, inputs, shards, pins, ui_run, PR)
         mutations = [lambda r: r.update(schema_version=2), lambda r: r.update(status="failed"),
@@ -220,11 +223,19 @@ class PublisherTests(unittest.TestCase):
                     return merged_prs
                 return [artifact] if path == "actions/artifacts" else [ui_run]
         with patch("ci_ui_reuse.reuse_inputs", return_value=inputs), \
-                patch("ci_ui_reuse.read_blob", return_value=json.dumps(pins)), \
+                patch("ci_ui_reuse.read_blob", return_value=pins_content), \
                 patch("ci_ui_reuse.device_shards", return_value=shards), \
                 patch("ci_ui_reuse.git"), patch("ci_ui_reuse.trusted_uploader"), \
                 patch("ci_publish.json_member", return_value=receipt) as member:
             self.assertEqual(find_reuse(RecordedAPI(), push)["artifact_id"], 22)
+            with patch.dict(os.environ, {"CI_TOOLCHAIN_TIER": "nightly"}):
+                self.assertEqual(find_reuse(RecordedAPI(), push)["artifact_id"], 22)
+                other_tier = copy.deepcopy(receipt)
+                nightly = load_pins(tier="nightly")["xcode"]
+                other_tier["toolchains"]["iphone/default"]["versions"]["xcode"] = f"{nightly['version']} ({nightly['build']})"
+                member.return_value = other_tier
+                self.assertIsNone(find_reuse(RecordedAPI(), push))
+                member.return_value = receipt
             for matches in ([], merged_prs * 2,
                             [dict(merged_prs[0], merge_commit_sha="f" * 40)],
                             [dict(merged_prs[0], head=dict(PR["head"], sha="f" * 40))],

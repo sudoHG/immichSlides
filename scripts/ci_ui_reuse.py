@@ -13,6 +13,7 @@ import yaml
 from ci_publish_git import git, read_blob, workflow_contract
 from ci_summary import (ContractError, decode, fields, integer, nullable_string, parse_identity,
                         parse_summary, require, sha, string)
+from setup_ci_python import load_pins
 
 UI_WORKFLOW = ".github/workflows/ci-ui.yml"
 PUBLISH_WORKFLOW = ".github/workflows/ci-publish.yml"
@@ -143,7 +144,7 @@ def find_reuse(api, push):
                   and pr["head"]["repo"] and pr["head"]["repo"]["full_name"] == api.repository]
         require(len(merged) == 1, "reuse needs exactly one same-repository PR actually merged by this push")
         inputs = reuse_inputs(revision)
-        pins = decode(read_blob(revision, "scripts/ci-pins.json"))
+        pins = load_pins(content=read_blob(revision, "scripts/ci-pins.json"), tier="pr")
         shards = device_shards(read_blob(revision, UI_WORKFLOW), {"id": 1, "run_attempt": 1})
         publisher = api.repo("actions/workflows/ci-publish.yml", missing=True)
         workflow = api.repo("actions/workflows/ci-ui.yml", missing=True)

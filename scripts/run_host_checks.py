@@ -118,7 +118,9 @@ def version(command):
         return None
 
 
-def toolchain():
+def toolchain(*, tier=None):
+    from setup_ci_python import load_pins
+    pins = load_pins(tier=tier)
     try:
         import PIL
         pillow = PIL.__version__
@@ -133,7 +135,11 @@ def toolchain():
             xcode = f"{plist['CFBundleShortVersionString']} ({plist['ProductBuildVersion']})"
         except (OSError, KeyError, ValueError):
             pass
-    return {"versions": {"macos": platform.mac_ver()[0], "python": platform.python_version(),
+    return {"versions": {"ci_tier": pins.get("tier", "pr"), "ci_profile": pins.get("profile", pins["runner"]),
+                         "pinned_xcode": pins["xcode"]["version"] + " (" + pins["xcode"]["build"] + ")",
+                         "pinned_ios_runtime": pins["simulators"]["ios"]["build"],
+                         "pinned_tvos_runtime": pins["simulators"]["tvos"]["build"],
+                         "macos": platform.mac_ver()[0] or None, "python": platform.python_version(),
                          "swift": version(["swift", "--version"]), "xcode": xcode,
                          "pillow": pillow, "zstd": version(["zstd", "--version"])},
             "signing_mode": "not-applicable"}

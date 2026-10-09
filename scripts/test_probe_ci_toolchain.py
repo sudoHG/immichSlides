@@ -11,9 +11,33 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import probe_ci_toolchain as probe
+import setup_ci_python as setup
 
 
 class ToolchainProbeTests(unittest.TestCase):
+    def test_tier_pins_reject_unknown_selection_and_isolate_the_pr_switch(self):
+        legacy = setup.load_pins(tier="nightly")
+        profile = {key: legacy[key] for key in ("runner", "xcode", "simulators", "device_types")}
+        document = {"schema_version": 2, "tiers": {"pr": "ga", "nightly": "preview", "release": "preview"},
+                    "profiles": {"ga": dict(profile, runner="macos-26"), "preview": profile},
+                    **{key: legacy[key] for key in ("python", "python_packages", "zstd")}}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "pins.json"
+            path.write_text(json.dumps(document))
+            with patch.dict(os.environ, {"CI_TOOLCHAIN_TIER": "pr"}):
+                self.assertEqual("macos-26", setup.load_pins(path)["runner"])
+            before = [setup.load_pins(path, tier=tier) for tier in ("nightly", "release")]
+            document["tiers"]["pr"] = "preview"
+            path.write_text(json.dumps(document))
+            self.assertEqual("xcode-27", setup.load_pins(path, tier="pr")["runner"])
+            self.assertEqual(before, [setup.load_pins(path, tier=tier) for tier in ("nightly", "release")])
+            with self.assertRaisesRegex(ValueError, "tier"):
+                setup.load_pins(path, tier="unknown")
+            document["tiers"]["pr"] = "missing"
+            path.write_text(json.dumps(document))
+            with self.assertRaisesRegex(ValueError, "profile"):
+                setup.load_pins(path, tier="pr")
+
     def setUp(self):
         self.pins = {"runner": "xcode-27", "python": "3.9.6", "xcode": {
             "version": "27.0", "build": "test-build", "developer_dir": "/synthetic/Xcode.app/Contents/Developer"},

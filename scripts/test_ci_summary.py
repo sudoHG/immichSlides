@@ -40,6 +40,18 @@ def valid_summary():
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_linux_archive_selection_records_unavailable_macos_without_breaking_the_reader(self):
+        import ci_ui_tests
+        context = {key: valid_summary()[key] for key in ("identity", "source", "run")}
+        context["run"].update(tier="ui-infrastructure", job="ui-archive")
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(run_host_checks.platform, "mac_ver", return_value=("", ("", "", ""), "")), \
+                patch.object(run_host_checks, "version", return_value=None):
+            summary = ci_ui_tests.summary_for(context, "f" * 64)
+        parsed = ci_summary.parse_summary(summary)
+        self.assertIsNone(parsed["toolchain"]["versions"]["macos"])
+        self.assertEqual(parsed["toolchain"]["versions"]["ci_tier"], "pr")
+
     def test_current_summary_round_trips_and_names_failures_in_markdown(self):
         summary = valid_summary()
         self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)

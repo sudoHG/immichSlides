@@ -14,9 +14,12 @@ on:
 permissions:
   contents: read
 
+env:
+  CI_TOOLCHAIN_TIER: pr
+
 jobs:
   toolchain:
-    runs-on: xcode-27
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -26,7 +29,7 @@ jobs:
       - name: Select Xcode and inspect its Python
         run: |
           /usr/bin/python3 --version
-          python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
 
       - name: Verify pins and create isolated Python environment
         run: |

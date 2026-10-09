@@ -12,10 +12,13 @@ concurrency:
   group: ci-gate-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  CI_TOOLCHAIN_TIER: pr
+
 jobs:
   host-checks:
     name: host-checks
-    runs-on: xcode-27
+    runs-on: macos-26
     timeout-minutes: 25
     permissions:
       contents: read
@@ -28,7 +31,7 @@ jobs:
 
       - name: Select the pinned Xcode
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
 
       - name: Verify pins and create the isolated Python environment
         run: |
@@ -66,7 +69,7 @@ jobs:
 
   build-ios:
     name: build-ios
-    runs-on: xcode-27
+    runs-on: macos-26
     timeout-minutes: 40
     permissions:
       contents: read
@@ -88,7 +91,7 @@ jobs:
       - name: Select and verify the pinned toolchain
         working-directory: source-build
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/build-python" --verify-toolchain
       - name: Build and structurally inspect the archive
@@ -129,7 +132,7 @@ jobs:
 
   build-tvos:
     name: build-tvos
-    runs-on: xcode-27
+    runs-on: macos-26
     timeout-minutes: 40
     permissions:
       contents: read
@@ -151,7 +154,7 @@ jobs:
       - name: Select and verify the pinned toolchain
         working-directory: source-build
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/build-python" --verify-toolchain
       - name: Build and structurally inspect the archive
@@ -193,7 +196,7 @@ jobs:
   unit-ios:
     name: unit-ios
     needs: [build-ios]
-    runs-on: xcode-27
+    runs-on: macos-26
     timeout-minutes: 40
     permissions:
       contents: read
@@ -216,7 +219,7 @@ jobs:
           echo "UNIT_SETUP_START=$(date +%s)" >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform '${{ env.UNIT_PLATFORM }}' \
             --output-dir "$RUNNER_TEMP/unit-records"
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/consumer-python" --verify-toolchain
       - name: Select the exact artifact ID and producer attempt
@@ -324,7 +327,7 @@ jobs:
   unit-tvos:
     name: unit-tvos
     needs: [build-tvos]
-    runs-on: xcode-27
+    runs-on: macos-26
     timeout-minutes: 40
     permissions:
       contents: read
@@ -347,7 +350,7 @@ jobs:
           echo "UNIT_SETUP_START=$(date +%s)" >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/ci_build_archive.py preflight --platform '${{ env.UNIT_PLATFORM }}' \
             --output-dir "$RUNNER_TEMP/unit-records"
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -c 'import sys; sys.path.insert(0, "scripts"); from setup_ci_python import load_pins; print("DEVELOPER_DIR=" + load_pins()["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/consumer-python" --verify-toolchain
       - name: Select the exact artifact ID and producer attempt

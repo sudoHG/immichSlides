@@ -43,7 +43,8 @@ them to the full selected identity and platform. It retains only these declarati
 and the tools. The consumer removes its entire
 checkout, extracts to another absolute path, rejects existing build-time source and
 Products paths, and remeasures `Signature=adhoc`. Device type, runtime and Xcode build
-come from `scripts/ci-pins.json`. Signing stays **Sign to Run Locally**, clone-process
+come from the PR profile in `scripts/ci-pins.json` through the shared loader; nightly
+live consumers select the nightly profile. Signing stays **Sign to Run Locally**, clone-process
 parallelism is disabled, and automatic simulator diagnostic collection is disabled.
 Official function/parameter results and failures are still exported.
 
@@ -108,6 +109,12 @@ its pre-merge refusal and post-merge acceptance boundary.
 The [summary contract](CI_SUMMARY.md) keeps successful Swift rows in JSON and displays
 failures/skips in Markdown. Parameter rows retain official arguments and outcomes.
 Skip reasons preserve the exact emitted `Skip Message`, including generic `Test skipped`.
+Xcode 26 emits that same official text in a `Failure Message` child of a skipped
+`Test Case`; only text beginning with the reviewed `Test skipped` forms is accepted
+from that shape. It does not derive a reason from source conditions or relax policy.
+Xcode 26 `Arguments` nodes without an identifier use `arguments:<official-name>`
+within the function identity; missing names, duplicate identities and failed
+parameter outcomes still fail coverage.
 Failed functions and parameters retain the first official `Failure Message` line,
 capped at 200 characters. Plain assertion failures do not add infrastructure entries;
 timeouts, unavailable results and export failures remain infrastructure failures.
