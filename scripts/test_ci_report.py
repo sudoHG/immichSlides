@@ -2,6 +2,7 @@
 
 import copy
 import json
+import subprocess
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
@@ -87,6 +88,7 @@ class ReporterTests(unittest.TestCase):
         import hashlib
         from ci_nightly import aggregate_nightly
         from ci_nightly_ui import judge_ui
+        from strict_e2e_server import fixture_manifest
         api = type("API", (), {"repository": "sudoHG/immichSlides"})()
         run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
                "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
@@ -96,7 +98,16 @@ class ReporterTests(unittest.TestCase):
         policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
         registry = {"schema_version": 1, "entries": []}
         blobs = {"scripts/ci-test-policy.json": json.dumps(policy).encode(), "scripts/ci-known-flaky.json": json.dumps(registry).encode()}
-        hashes = {"manifests": {"ui-shards": "c" * 64}, "policies": {
+        blobs.update({"scripts/ci-ui-shards.json": json.dumps({"schema_version": 1, "revision": "example-v1",
+            "default_shard": "default", "shards": {"default": [], "navigation": ["NavigationUITests"], "visual": ["VisualUITests"]}}).encode(),
+            "immichSlides-iOS.xctestplan": json.dumps({"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}).encode(),
+            "immichSlides-tvOS.xctestplan": json.dumps({"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}).encode(),
+            "immichSlidesUITests/Example.swift": b"\n".join(
+                ("final class " + shard.capitalize() + "UITests: XCTestCase { func test" + shard.capitalize() + "() {} }").encode()
+                for shard in ("default", "navigation", "visual"))})
+        hashes = {"manifests": {"ui-shards": hashlib.sha256(blobs["scripts/ci-ui-shards.json"]).hexdigest(),
+                  "test-plan": hashlib.sha256(blobs["immichSlides-iOS.xctestplan"]).hexdigest(),
+                  "fixture-c": fixture_manifest("c")["fixture_sha256"]}, "policies": {
             name: hashlib.sha256(blobs[path]).hexdigest() for name, path in (
                 ("test-policy", "scripts/ci-test-policy.json"), ("known-flaky", "scripts/ci-known-flaky.json"))}}
         source = {"repository": api.repository, "workflow_path": ci_report.NIGHTLY_PATH, "event": "schedule",
@@ -107,13 +118,15 @@ class ReporterTests(unittest.TestCase):
         members, summaries, intervals = {}, [], []
         for device, platform in (("iphone", "ios"), ("ipad", "ios"), ("appletv", "tvos")):
             for shard in ("default", "navigation", "visual"):
-                test = test_identity("ui", "ExampleUITests/test" + shard.capitalize(), device=device, platform=platform)
+                test = test_identity("ui", shard.capitalize() + "UITests/test" + shard.capitalize(), device=device, platform=platform)
                 plan["shards"].append({"device": device, "shard": shard, "declared": [test]})
                 summary = valid_summary()
                 summary.update(identity=identity, source=source, hashes=hashes,
                                run={**plan["run"], "tier": "ui", "job": "ui-" + device, "shard": shard})
                 outcome = "failed" if device == "appletv" and shard == "visual" else "passed"
-                summary["population"].update(declared=[test], compiled=[test], observed=[observation(test, outcome, 2)])
+                summary["population"].update(declared=[test], compiled=[test], observed=[observation(
+                    test, outcome, 2, message="private-runner-failure-text" if outcome == "failed" else None,
+                    reason="private-runner-reason" if outcome == "failed" else None)])
                 summaries.append(summary)
                 members[(f"ui-{device}-{shard}-10-1", "summary.json")] = summary
                 intervals.append({"shard": device + "/" + shard, "started_epoch": len(intervals) + 1, "finished_epoch": len(intervals) + 2})
@@ -124,17 +137,88 @@ class ReporterTests(unittest.TestCase):
         raw = aggregate_nightly([], [], live_in_scope=False)
         raw.update(schema_version=2, identity=identity, source=source, hashes=hashes, run=plan["run"], ui=ui,
                    capacity={"shard_intervals": []})
+        raw["matrix"]["equal"] = True
+        raw["errors"] = []
         raw["tiers"]["ui"] = "failed"
         members[("nightly-aggregate-10-1", "nightly.json")] = raw
         members[("nightly-ui-aggregate-10-1", "nightly-ui.json")] = ui
         artifacts = [{"name": name, "expired": False} for name in sorted({name for name, _ in members})]
+        def git_output(command, **kwargs):
+            if command[1] == "ls-tree":
+                return b"100644 blob " + b"d" * 40 + b"\timmichSlidesUITests/Example.swift\0"
+            if command[1] == "rev-parse":
+                return b"b" * 40 + b"\n"
+            return blobs[command[-1].split(":", 1)[1]]
         with patch("ci_publish.json_member", side_effect=lambda api, artifact, member: members[(artifact["name"], member)]), \
-                patch("subprocess.check_output", side_effect=lambda command, **kwargs: blobs[command[-1].split(":", 1)[1]]):
+                patch("subprocess.check_output", side_effect=git_output), patch("ci_report.on_main", return_value=True):
             report = ci_report.nightly_attempt(api, run, 1, artifacts)
             self.assertEqual(9, report["diagnostics"]["counts"]["ui_executed"])
             failed = [item for item in report["observed"] if item["outcome"] == "failed"]
             self.assertEqual("appletv", failed[0]["identity"]["dimensions"]["device"])
             self.assertEqual("open", issue_decision(None, failed[0]["identity"], [report], registry_referenced=False)["action"])
+            self.assertEqual(9, report["diagnostics"]["counts"]["declared"])
+            api.pages = lambda path, collection: artifacts
+            history = ci_report.read_run(api, run, {})
+            self.assertNotIn("private-runner-failure-text", json.dumps(ci_report.compact_entry(history, set())["attempt_history"]))
+            self.assertNotIn("private-runner-reason", json.dumps(ci_report.compact_entry(history, set())["attempt_history"]))
+            for change in ("unverified shard plus a real failure in another shard", "missing sample", "missing compilation"):
+                changed = copy.deepcopy(summaries)
+                if change.startswith("unverified"):
+                    changed[0]["status"] = "unverified"
+                elif change == "missing sample":
+                    changed[0]["population"]["observed"] = []
+                else:
+                    changed[0]["population"]["compiled"] = []
+                ui["verdict"] = judge_ui(plan, changed, policy=policy, registry=registry,
+                    evaluated_on=date(2026, 10, 1), matrix_job_result="failure")
+                for index, item in enumerate(plan["shards"]):
+                    members[(f"ui-{item['device']}-{item['shard']}-10-1", "summary.json")] = changed[index]
+                with self.subTest(change=change):
+                    incomplete = ci_report.nightly_attempt(api, run, 1, artifacts)
+                    self.assertTrue(any("nightly UI" in error for error in incomplete["diagnostics"]["infrastructure"]))
+                    self.assertEqual(9, incomplete["diagnostics"]["counts"]["declared"])
+                    tracked = plan["shards"][1]["declared"][0]
+                    opened = issue_decision(None, tracked, [entry(outcome="failed") | {
+                        "observed": [observation(tracked, "failed", 1)]}], registry_referenced=False)["state"]
+                    incomplete["day"] = "2026-10-02"
+                    self.assertEqual([], issue_decision(opened, tracked, [incomplete], registry_referenced=False)["state"]["explicit_pass_nights"])
+            for index, item in enumerate(plan["shards"]):
+                members[(f"ui-{item['device']}-{item['shard']}-10-1", "summary.json")] = summaries[index]
+            skipped = summaries[0]["population"]["declared"][0]
+            policy["approval_records"] = [{"tier": "ui", "approver": "example maintainer", "date": "2026-10-01",
+                                            "link": "https://github.com/sudoHG/immichSlides/issues/123#issuecomment-123"}]
+            policy["expected_skips"] = [{"kind": "ui", "key_pattern": skipped["key"], "dimensions": skipped["dimensions"],
+                                         "tier": "ui", "environment": "fixture", "reason": "approved device skip"}]
+            blobs["scripts/ci-test-policy.json"] = json.dumps(policy).encode()
+            hashes["policies"]["test-policy"] = hashlib.sha256(blobs["scripts/ci-test-policy.json"]).hexdigest()
+            summaries[0]["population"]["observed"] = [observation(skipped, "skipped", 1, reason="approved device skip")]
+            ui["verdict"] = judge_ui(plan, summaries, policy=policy, registry=registry,
+                evaluated_on=date(2026, 10, 1), matrix_job_result="failure")
+            skipped_report = ci_report.nightly_attempt(api, run, 1, artifacts)
+            self.assertEqual(0, skipped_report["health"]["unexpected_skips"])
+            for path in ("immichSlidesUITests/Example.swift", "scripts/ci-ui-shards.json",
+                         "immichSlides-iOS.xctestplan", "immichSlides-tvOS.xctestplan"):
+                original = blobs[path]
+                blobs[path] = (original.replace(b"testDefault", b"testInvented") if path.endswith(".swift")
+                               else original + b" ")
+                with self.subTest(path=path), self.assertRaises(ContractError):
+                    ci_report.nightly_attempt(api, run, 1, artifacts)
+                blobs[path] = original
+            for field, value in (("fork_originated", True), ("ci_changing", True)):
+                plan["source"][field] = value
+                with self.subTest(field=field), self.assertRaises(ContractError):
+                    ci_report.nightly_attempt(api, run, 1, artifacts)
+                plan["source"][field] = False if field == "fork_originated" else None
+            for error in (subprocess.CalledProcessError(128, ["git", "show"]),
+                          subprocess.TimeoutExpired(["git", "show"], 30), OSError("source unavailable")):
+                def unavailable_source(command, **kwargs):
+                    if command[1] == "show":
+                        raise error
+                    return git_output(command, **kwargs)
+                with self.subTest(error=type(error).__name__), patch("subprocess.check_output", side_effect=unavailable_source):
+                    unavailable = ci_report.read_run(api, run, {})
+                    self.assertEqual("failed", unavailable["status"])
+                    self.assertIn("nightly attempt evidence unavailable", unavailable["diagnostics"]["infrastructure"])
             for version in (True, "2", 3):
                 with self.subTest(version=version), self.assertRaises(ContractError):
                     raw["schema_version"] = version
@@ -159,6 +243,8 @@ class ReporterTests(unittest.TestCase):
             branch["workflow_id"] = 124
             with self.assertRaises(ContractError):
                 ci_report.diagnose_nightly(api, [10], Path(directory, "foreign"))
+            with self.assertRaisesRegex(ContractError, "outside checkout"):
+                ci_report.diagnose_nightly(api, [10], Path(ci_report.__file__).resolve().parent.parent / "reader-diagnostic")
         for arguments in (["--diagnostic-nightly"], ["--dry-run", "--diagnostic-nightly"],
                           ["--dry-run", "--diagnostic-nightly", "--run-id", "10", "--phase", "sync"]):
             with self.subTest(arguments=arguments), self.assertRaises(ContractError):

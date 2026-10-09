@@ -40,11 +40,18 @@ successor containing a fixture UI aggregate. Version 2 binds the embedded `ui` r
 to `nightly-ui-aggregate-<run>-<attempt>/nightly-ui.json`, with a complete nine-shard
 plan for iPhone, iPad and Apple TV. Each available `ui-<device>-<shard>-<run>-<attempt>`
 summary must match the plan's source, identity, hashes and attempt. Missing shards
-and samples remain failed and visible. The reader recomputes every shard verdict
+and samples remain failed and visible. The reader derives every device/shard population
+from the tested commit's Swift source, default plans and class manifest, verifies their
+hashes and rejects a substituted plan, tree or source binding. It recomputes every shard verdict
 and the UI union using the existing population evaluator, the tested commit's policy
 and registry, and the run's UTC date. It checks wave/timing accounting and retains
 method failures for the ordinary issue lifecycle. Unknown, malformed or boolean
 versions are refused; strict version 1 remains supported.
+Per-shard non-test errors make the night incomplete even alongside real failures;
+incomplete nights cannot supply issue recovery evidence. Approved UI skips remain
+accepted, declared counts deduplicate identities, and raw messages/reasons are sanitized
+through every retained attempt. A failed Git-object read makes that attempt unavailable
+without aborting collection. Read-only diagnostic output must stay outside the checkout.
 
 This reader must be merged before a producer emits version 2, following
 [reader-first evolution](CI_SUMMARY.md#reader-first-evolution). Installing it does
