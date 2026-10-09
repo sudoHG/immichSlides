@@ -197,10 +197,50 @@ class LocalModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             finished = Path(directory, "finished")
             child = [sys.executable, "-c", f"import time; time.sleep(2.5); open({str(finished)!r}, 'w').close()"]
+            environment = {**os.environ, ci_local.RUN_TOKEN: "slow-probe-token"}
             with patch("ci_local.process_states", side_effect=times_out_once):
-                self.assertEqual(ci_local.run_child(child, directory, dict(os.environ)), 0)
+                self.assertEqual(ci_local.run_child(child, directory, environment), 0)
             self.assertTrue(finished.exists())
             self.assertGreater(len(calls), 1)
+
+    def test_group_orphaned_during_a_failed_probe_is_stopped_or_reported(self):
+        token = "orphan-probe-token"
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory, "orphan.pid")
+            orphan = "import time\ntry:\n    time.sleep(60)\nexcept KeyboardInterrupt:\n    pass"
+            child = [sys.executable, "-c",
+                     "import subprocess, sys; "
+                     f"p = subprocess.Popen([sys.executable, '-c', {orphan!r}], start_new_session=True); "
+                     f"open({str(pid_file)!r}, 'w').write(str(p.pid))"]
+            environment = {**os.environ, ci_local.RUN_TOKEN: token}
+            probe = ci_local.process_states
+            calls = []
+
+            def fails_first():
+                calls.append(None)
+                if len(calls) == 1:
+                    raise subprocess.TimeoutExpired("ps", 30)
+                return probe()
+
+            try:
+                with patch("ci_local.process_states", side_effect=fails_first):
+                    self.assertEqual(ci_local.run_child(child, directory, environment), 0)
+                orphan_pid = int(pid_file.read_text())
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(orphan_pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(.05)
+                else:
+                    self.fail("the orphaned process group survived cleanup")
+            finally:
+                if pid_file.exists():
+                    try:
+                        os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
     def test_private_configuration_requires_explicit_opt_in(self):
         with self.assertRaises(ValueError):
