@@ -56,6 +56,9 @@ targets, configuration overrides, skips, repetitions, fixture inputs or scheme
 registration. It derives the expected method list with the existing static parser
 and GitHub shard rules; counts alone do not establish coverage. When the default
 population changes, regenerate the cloud plan's exact selections in the same PR.
+Shared schemes and test plans at every path are CI-trusted inputs. This
+classification must land on main before routing is activated, because admission
+uses the PR base's policy; a candidate cannot grant its own approval.
 
 For a cloud proof, start the existing overflow workflow on the reviewed PR branch
 through the App Store Connect API. Verify its resolved commit SHA, workflow ID,
