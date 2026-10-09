@@ -18,8 +18,15 @@ python3 -B scripts/run_strict_ci_tracer.py --manifest scripts/nightly-matrix.jso
     --output-dir '<fresh-outside-repo>/shard'
 ```
 
-Use a configuration-free checkout, dedicated simulator and workspace device-slot/
-watchdog wrappers. Preflight rejects files, links and dangling private-config links
+Local planning, tracer execution and aggregation each use the same recorded
+working-tree snapshot identity when the source HEAD and working files are unchanged.
+Private configuration links are excluded without reading or parking them. Keep the
+source tree unchanged across all three commands; `--strict-ci` refuses dirty sources.
+Changing a working file between commands produces an identity mismatch and fails
+aggregation. Snapshot commits use a fixed non-personal identity; source refs and
+the caller's index are unchanged. Paths to plans and records remain caller-relative.
+Use a dedicated simulator and workspace device-slot/watchdog wrappers. Hosted
+preflight requires a configuration-free checkout and rejects private files and links
 without reading them. There is no SHA override: dispatch a ref at the desired commit.
 Live execution requires `main`; `live_only` diagnoses live boundaries without strict shards.
 Use `strict_only=true` for full strict diagnostics on a branch. A selected `shard`
@@ -129,6 +136,11 @@ Run it in the same event/run/attempt context as planning; the hosted workflow su
 that context. Shard directories are named `nightly-strict-<shard>-<run-id>-<attempt>`.
 For a local plan the run ID is `None` and attempt is 1. Downloaded CI records must not
 be relabeled as a local run. The matrix job result comes from Actions, not its artifacts.
+For local execution, copy the contents of each tracer's `records` directory into
+`<records-dir>/nightly-strict-<shard>-None-1/` before aggregation. The plan,
+tracer summary and aggregate must all have the same snapshot commit and tree SHA;
+missing or mismatched records remain failures. A single diagnostic shard cannot
+establish complete nightly equality.
 
 [`nightly-policy.json`](../scripts/nightly-policy.json) builds only strict and starts
 with `live_tier_in_scope: false`. UI, offline performance, live and live performance are

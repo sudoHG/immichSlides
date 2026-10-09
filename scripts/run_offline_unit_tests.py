@@ -74,7 +74,6 @@ class ConfigInspection:
     env_xcconfig_exists: bool
     example_xcconfig_exists: bool
     example_is_placeholder: bool
-    env_is_placeholder: bool | None
     report: str
 
 
@@ -109,12 +108,10 @@ def is_placeholder_config(values: dict[str, str]) -> bool:
 def inspect_config(repo_root: Path) -> ConfigInspection:
     env_path = repo_root / ENV_XCCONFIG
     example_path = repo_root / EXAMPLE_XCCONFIG
-    env_exists = env_path.is_file()
+    env_exists = os.path.lexists(env_path)
     example_exists = example_path.is_file()
     example_placeholder = example_exists and is_placeholder_config(parse_xcconfig(example_path))
-    env_placeholder = (
-        is_placeholder_config(parse_xcconfig(env_path)) if env_exists else None
-    )
+    # Presence is sufficient; never open a private file or follow its symlink.
 
     lines = [
         f"env.xcconfig: {'present' if env_exists else 'missing'}.",
@@ -127,8 +124,6 @@ def inspect_config(repo_root: Path) -> ConfigInspection:
                 "For local live/UI configuration, use --prepare-example-config; "
                 "copy from the version-controlled example only when env.xcconfig is missing; do not overwrite an existing file."
             )
-    elif env_placeholder:
-        lines.append("Existing env.xcconfig is still a placeholder; it does not mean a real server is configured.")
     else:
         lines.append("Existing env.xcconfig is present. This entry point does not read or print its server URL or key.")
     if example_exists:
@@ -140,7 +135,6 @@ def inspect_config(repo_root: Path) -> ConfigInspection:
         env_xcconfig_exists=env_exists,
         example_xcconfig_exists=example_exists,
         example_is_placeholder=example_placeholder,
-        env_is_placeholder=env_placeholder,
         report="\n".join(lines),
     )
 
@@ -148,7 +142,7 @@ def inspect_config(repo_root: Path) -> ConfigInspection:
 def prepare_example_config(repo_root: Path) -> tuple[bool, str]:
     env_path = repo_root / ENV_XCCONFIG
     example_path = repo_root / EXAMPLE_XCCONFIG
-    if env_path.is_file():
+    if os.path.lexists(env_path):
         return False, "env.xcconfig already exists; not overwritten."
     if not example_path.is_file():
         raise CommandError("Config/env.example.xcconfig is missing; cannot create local configuration.")
@@ -345,18 +339,21 @@ def check_repo(repo_root: Path, stdout: TextIO, stderr: TextIO) -> None:
 
 
 def _stop_process_group(process: subprocess.Popen, grace_seconds: float) -> None:
+    from ci_local import (SnapshotCleanupError, ignored_cancellation_signals, remember_groups,
+                          signal_groups, wait_for_groups)
+    groups = {process.pid}
     try:
-        os.killpg(process.pid, signal.SIGINT)
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=grace_seconds)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
+        with ignored_cancellation_signals():
+            remember_groups(process, groups)
+            signal_groups(groups, signal.SIGINT)
+            if not wait_for_groups(process, groups, grace_seconds):
+                signal_groups(groups, signal.SIGTERM)
+                if not wait_for_groups(process, groups, 5):
+                    signal_groups(groups, signal.SIGKILL)
+                    if not wait_for_groups(process, groups, 5):
+                        raise SnapshotCleanupError("xcodebuild process groups did not exit")
+    except (OSError, subprocess.SubprocessError) as error:
+        raise SnapshotCleanupError("xcodebuild cleanup could not be verified") from error
 
 
 def default_run(
@@ -525,12 +522,13 @@ def main(
     data_available_gib = default_data_available_gib if data_available_gib is None else data_available_gib
     read_summary = read_official_test_results_summary if read_summary is None else read_summary
     parser = argparse.ArgumentParser(
-        description="Run offline business unit tests without private credentials; business targets by default, with live tests enabled according to configuration."
+        description="Run offline business unit tests without private credentials; business targets by default, with live tests enabled according to configuration.",
+        allow_abbrev=False,
     )
     parser.add_argument("--platform", help="ios or tvos")
     parser.add_argument("--destination", help="Actual simulator destination passed to xcodebuild")
-    parser.add_argument("--derived-data-path")
-    parser.add_argument("--result-bundle-path")
+    parser.add_argument("--derived-data-path", "--derived-data")
+    parser.add_argument("--result-bundle-path", "--result-bundle")
     parser.add_argument("--full-plan", action="store_true", help="Use the full platform test plan, including UI")
     parser.add_argument("--only-testing", action="append", help="Override default business targets; repeatable")
     parser.add_argument("--suite", help="Named offline suite; currently only access-lifecycle")
@@ -634,4 +632,5 @@ def main(
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from ci_local import local_main
+    raise SystemExit(local_main(main, __file__))

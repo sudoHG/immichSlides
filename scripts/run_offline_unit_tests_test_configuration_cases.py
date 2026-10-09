@@ -208,7 +208,6 @@ class ConfigInspectionTestsCases:
         self.assertFalse(info.env_xcconfig_exists)
         self.assertTrue(info.example_xcconfig_exists)
         self.assertTrue(info.example_is_placeholder)
-        self.assertIsNone(info.env_is_placeholder)
 
 
     def test_existing_env_placeholder_does_not_expose_secret(self) -> None:
@@ -228,7 +227,6 @@ class ConfigInspectionTestsCases:
             )
             info = inspect_config(root)
             self.assertTrue(info.env_xcconfig_exists)
-            self.assertFalse(info.env_is_placeholder)
             self.assertTrue(info.example_is_placeholder)
             self.assertNotIn("super-secret-canary", info.report)
             self.assertNotIn("secret.example.invalid", info.report)
@@ -259,7 +257,6 @@ class ConfigInspectionTestsCases:
             copied, _ = prepare_example_config(root)
             info = inspect_config(root)
             self.assertTrue(copied)
-            self.assertTrue(info.env_is_placeholder)
             self.assertEqual(
                 (config_dir / "env.xcconfig").read_text(encoding="utf-8"),
                 example_path.read_text(encoding="utf-8"),
@@ -349,7 +346,7 @@ class CLIMainTestsCases:
         self.assertIn("Example placeholder check: is a placeholder", output)
         self.assertIn("Created env.xcconfig from env.example.xcconfig", prepared_output)
         self.assertIn("env.xcconfig: present", prepared_output)
-        self.assertIn("Existing env.xcconfig is still a placeholder", prepared_output)
+        self.assertIn("Existing env.xcconfig is present", prepared_output)
         self.assertIn("Example placeholder check: is a placeholder", prepared_output)
         self.assertIn("1 external evidence test not run", output)
         self.assertIn("Evidence test plan", output)

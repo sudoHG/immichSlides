@@ -296,8 +296,13 @@ def parse_xcconfig(content: str) -> dict[str, str]:
 
 
 def prepare_task_xcconfig(example_path: Path, destination_path: Path) -> dict[str, str]:
-    if destination_path.exists():
+    if os.path.lexists(destination_path):
         raise CommandError("Task env.xcconfig already exists; strict E2E refuses to start to avoid reading or overwriting private configuration.")
+    from ci_local import CONTEXT
+    if os.environ.get(CONTEXT) == str(destination_path.parent.parent.resolve()):
+        # CI-equivalent snapshots use project defaults and explicit fixture runtime inputs.
+        return {"private_configuration_present": False, "ENABLE_DEBUG_AUTO_SERVER": "0",
+                "ENABLE_DEBUG_FILL_APIKEY_BUTTON": "0"}
     if not example_path.is_file():
         raise CommandError("The version-controlled env.example.xcconfig is missing.")
     content = example_path.read_text(encoding="utf-8")

@@ -3,6 +3,8 @@
 # Optional offline unit tests run only with --with-unit-tests.
 # Exit codes: 0 all checks passed, 1 at least one check failed, 2 invalid arguments.
 set -euo pipefail
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 usage() {
     cat <<'EOF'
@@ -21,6 +23,10 @@ Runs, in order:
  10. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
 
 Options:
+  --strict-ci             Refuse a dirty tree instead of snapshotting it.
+  --allow-private-config  Explicitly use local private configuration; never for public evidence.
+  --config NAME=VALUE     Explicit runtime test configuration (repeatable).
+  --snapshot-record PATH  Keep the tested tree receipt outside the repository.
   --with-unit-tests        Also run scripts/run_offline_unit_tests.py for iOS and tvOS.
   --ios-destination DEST   xcodebuild destination for iOS, e.g. 'platform=iOS Simulator,id=<UDID>'.
   --tvos-destination DEST  xcodebuild destination for tvOS, e.g. 'platform=tvOS Simulator,id=<UDID>'.
@@ -29,9 +35,11 @@ Options:
   -h, --help               Show this help.
 
 Without --with-unit-tests the Xcode tests are skipped; run them before opening a pull request.
-No private configuration is needed.
+By default all checks run in a clean snapshot of tracked working changes and
+untracked, non-ignored files. Ambient and private file configuration are ignored.
 Every Python step uses "${PYTHON:-python3}", honoring an active venv or pyenv.
-Optional unit-test DerivedData stays in .derivedData/check-all-{ios,tvos}.
+Optional unit-test DerivedData stays in the caller's original checkout under
+.derivedData/check-all-{ios,tvos}, outside the disposable snapshot.
 EOF
 }
 
@@ -42,6 +50,12 @@ die_usage() {
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then
+    if [[ "${_IMMICHSLIDES_CI_LOCAL_ROOT:-}" != "$REPO_ROOT" ]]; then
+        exec "${PYTHON:-python3}" -B "$REPO_ROOT/scripts/ci_local.py" "$REPO_ROOT/scripts/check_all.sh" "$@"
+    fi
+fi
 
 with_unit_tests=0
 ios_destination=""
@@ -131,15 +145,16 @@ run_step "host checks" "$python" -B scripts/run_host_checks.py "${host_args[@]}"
 
 if [[ $with_unit_tests -eq 1 ]]; then
     stamp="$(date +%Y%m%d-%H%M%S)"
+    cache_root="${_IMMICHSLIDES_CI_LOCAL_SOURCE:-$REPO_ROOT}"
     run_step "xcode unit tests (iOS)" "$python" scripts/run_offline_unit_tests.py \
         --platform ios \
         --destination "$ios_destination" \
-        --derived-data-path .derivedData/check-all-ios \
+        --derived-data-path "$cache_root/.derivedData/check-all-ios" \
         --result-bundle-path "$output_dir/check-all-ios-$stamp.xcresult"
     run_step "xcode unit tests (tvOS)" "$python" scripts/run_offline_unit_tests.py \
         --platform tvos \
         --destination "$tvos_destination" \
-        --derived-data-path .derivedData/check-all-tvos \
+        --derived-data-path "$cache_root/.derivedData/check-all-tvos" \
         --result-bundle-path "$output_dir/check-all-tvos-$stamp.xcresult"
 fi
 

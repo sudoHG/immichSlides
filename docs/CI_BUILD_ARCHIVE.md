@@ -20,11 +20,14 @@ Run the workspace preflight before setup or Xcode:
     --output-dir /tmp/immichslides-workspace-preflight
 ```
 
-`Config/env.xcconfig` is forbidden: regular file, symlink or dangling symlink. The
-check never opens or follows it and repeats before/after building. Ambient server/debug
-environment variables are also rejected without inspecting their values. Local archive
-builds use a disposable, clean checkout without private configuration; do not copy
-private configuration or remove another worktree's symlink.
+Inside a producer checkout, `Config/env.xcconfig` is forbidden: regular file,
+symlink or dangling symlink. The check never opens or follows it and repeats
+before/after building. Hosted producers reject ambient server/debug variables
+without inspecting their values. Local entry points now automatically snapshot
+the intended working tree, exclude private configuration and strip ambient inputs
+before this preflight. They record the tested tree; `--strict-ci` refuses dirty
+input instead. See [local mode](../CONTRIBUTING.md#setup). Do not copy private
+configuration or remove another worktree's symlink.
 
 ```bash
 /usr/bin/python3 -B scripts/ci_build_archive.py build --platform ios \

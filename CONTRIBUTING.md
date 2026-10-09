@@ -10,6 +10,51 @@ Thanks for helping out. immichSlides is a SwiftUI photo slideshow client for [Im
 
 ## Setup
 
+**Local script defaults have changed:** `check_all.sh`, the offline unit runner,
+fixture UI runner, strict/access-lifecycle device runners, build archive producer
+and UI shard entry points now use CI-equivalent local mode. They ignore ambient
+test/server inputs and `Config/env.xcconfig`, including an existing private symlink.
+They test a clean snapshot containing tracked working changes and untracked,
+non-ignored files. A temporary commit object records that tree without moving a
+branch or changing your index; its disposable worktree is removed afterward.
+The terminal prints the tested tree SHA. An output/evidence directory also gets
+`local-snapshot.json`; otherwise use `--snapshot-record '<outside-repo>/tree.json'`.
+Existing runner flags still work; separated and inline output/DerivedData options
+retain their caller-relative meaning. Offline aliases `--derived-data` and
+`--result-bundle` are explicit; implicit option abbreviations are not supported.
+DerivedData stays outside the disposable snapshot: `check_all.sh` uses the original
+checkout's `.derivedData/check-all-{ios,tvos}`, and the standalone offline runner
+defaults to `.derivedData/offline-{ios,tvos}` there. Explicit paths win. These caches
+survive individual runs; keep them task-specific and remove them after verification.
+
+Use `--strict-ci` to refuse a dirty tree, including non-ignored untracked files.
+Use repeatable `--config NAME=VALUE` for explicit runtime test inputs; values are
+never included in the snapshot receipt. `--allow-private-config` explicitly opts
+into the original checkout's private configuration for local testing. That mode
+does not snapshot, can compile private values, and must never produce public
+evidence. Fixture/archive entry points continue to refuse private files even
+with this flag. `--prepare-example-config` remains an explicit setup operation in
+the original checkout; run it alone or with `--check`, separately from a test command. Xcode's own GUI
+and direct `xcodebuild` commands retain their existing configuration behavior.
+
+```bash
+scripts/check_all.sh --strict-ci
+python3 -B scripts/run_offline_unit_tests.py --allow-private-config --check
+python3 -B scripts/ci_ui_tests.py reproduce --shard navigation \
+  --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
+  --output-dir '<fresh-outside-repo>'
+```
+
+The last command reproduces the current working tree, starts the public fixture
+server and prints the exact build, shard and Xcode test commands. Pass
+`--manifest-revision COMMIT_SHA` to explicitly reproduce a historical tree.
+See [the UI reproduction guide](docs/CI_UI.md#reproduce-one-shard) for pins,
+skip/deselection accounting and artifact boundaries. Hosted producers retain
+their existing admitted-checkout/identity contracts.
+Local nightly planning, execution and aggregation also share this snapshot contract;
+keep the source tree unchanged between commands, as described in
+[the nightly guide](docs/CI_NIGHTLY.md).
+
 - A Mac with the Xcode version the project was last upgraded with (Xcode 26.3, see `LastUpgradeCheck` in `immichSlides.xcodeproj`), the iOS and tvOS Simulator runtimes, Python 3 with Pillow and PyYAML, Swift (included with Xcode), and the zstd CLI (`brew install zstd`) for Python contract tests.
 - CI tool versions and the isolated Python setup are documented in [CI toolchain and workflow policy](docs/CI_TOOLCHAIN.md). The host entry point runs the standalone workflow-policy check in the same environment as the other Python checks.
 - [Trusted CI publication and approval](docs/CI_PUBLISHER.md) explains the informational App statuses, exact-head fork/CI approval, main-only trusted workflows, and a read-only dry-run. GitHub may separately require approval before a first-time fork contributor's producer run starts.
@@ -42,7 +87,7 @@ Thanks for helping out. immichSlides is a SwiftUI photo slideshow client for [Im
   ```
 
   A run that times out (exit 124) or selects zero tests is not a pass.
-- **UI tests** in the default test plans that need a server run the real app against the Immich server set in `Config/env.xcconfig`, and skip when none is set. They only read from that server; tests that start from the filter summary need its first album to contain photos and at least one person. See [docs/TESTING.md](docs/TESTING.md).
+- **UI tests** in Xcode or an explicitly opted-in private local run can use the Immich server set in `Config/env.xcconfig`, and skip when none is set. Script defaults ignore that file. They only read from that server; tests that start from the filter summary need its first album to contain photos and at least one person. See [docs/TESTING.md](docs/TESTING.md).
   For secret-free default-plan runs, use [Fixture-server UI mode](docs/CI_FIXTURE_UI.md).
   It starts a public loopback server and measures coverage for every selected test.
 - **Strict end-to-end tests** run the real app against a local public fixture server that `scripts/run_strict_e2e.py` starts for you, so they do not touch anyone's Immich server. See [Running controlled integration and end-to-end tests](docs/TESTING.md#running-controlled-integration-and-end-to-end-tests) and `python3 scripts/run_strict_e2e.py --help`.

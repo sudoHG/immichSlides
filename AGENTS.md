@@ -66,6 +66,8 @@ These rules exist because past work "passed" while users still saw failures. The
 
 `Config/env.xcconfig` is an optional, git-ignored local test configuration. `Config/Debug.xcconfig` includes it only when present, so a fresh clone builds in Xcode without setup. If you need a local test configuration, `python3 scripts/run_offline_unit_tests.py --prepare-example-config` creates it from the example without overwriting anything. Unit tests need no real credentials or server.
 
+Script entry points ignore local configuration by default and test a recorded working-tree snapshot. Use `--allow-private-config` explicitly for private local testing; see [CONTRIBUTING.md](CONTRIBUTING.md#setup) for mode and evidence boundaries.
+
 Every `check_all.sh` Python step uses `"${PYTHON:-python3}"`. Prerequisites and interpreter setup are described in [CONTRIBUTING.md](CONTRIBUTING.md#setup).
 
 ```bash

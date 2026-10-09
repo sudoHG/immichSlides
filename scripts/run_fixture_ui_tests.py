@@ -10,6 +10,7 @@ import math
 import os
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -312,6 +313,14 @@ def main(argv=None):
         bundles.append(bundle)
         work = bundle.parent.parent
         env = clean_environment(os.environ)
+        # Start fixtures during preflight, before spending time on a build.
+        with (work / "service.log").open("wb") as log:
+            service = subprocess.Popen([sys.executable, str(ROOT / "scripts/strict_e2e_server.py"), "--fixture-set", "c",
+                                        "--host", "127.0.0.1", "--port", "0", "--ready-file", str(work / "ready.json"),
+                                        "--log-file", str(work / "service-requests.log")],
+                                       env=env, stdout=log, stderr=subprocess.STDOUT)
+        host, port = wait_for_service(work / "ready.json", service)
+        print(f"Fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
         timeout = args.timeout_minutes * 60
         def execute(command, name):
             disk_check(args.min_free_gib)
@@ -350,12 +359,6 @@ def main(argv=None):
         require(len(apps) == 1, "expected one Debug simulator app")
         check_products(source_run.parent)
         record_signing(summary, measure_signing(apps[0]))
-        with (work / "service.log").open("wb") as log:
-            service = subprocess.Popen([sys.executable, str(ROOT / "scripts/strict_e2e_server.py"), "--fixture-set", "c",
-                                        "--host", "127.0.0.1", "--port", "0", "--ready-file", str(work / "ready.json"),
-                                        "--log-file", str(work / "service-requests.log")],
-                                       env=env, stdout=log, stderr=subprocess.STDOUT)
-        host, port = wait_for_service(work / "ready.json", service)
         inputs = {"IMMICH_TEST_SERVER_URL": f"http://{host}:{port}/api", "IMMICH_TEST_API_KEY": PUBLIC_API_KEY,
                   "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID": "album-c-exif",
                   "TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR": str(output / "scene-contracts")}
@@ -377,6 +380,7 @@ def main(argv=None):
         compiled = [entry for entry in summary["population"]["compiled"] if entry in selected]
         command = base + selections + ["-resultBundlePath", str(bundle)] + [
             "-skip-testing:immichSlidesUITests/" + entry["identity"]["key"] for entry in deselections]
+        print("Fixture test command: " + shlex.join(command), flush=True)
         registry, evaluated_on = None, None
         if args.listed_only_retry:
             revision = registry_revision(ROOT, os.environ)
@@ -522,4 +526,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from ci_local import local_main
+    raise SystemExit(local_main(main, __file__))

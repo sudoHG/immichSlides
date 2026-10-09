@@ -3,11 +3,15 @@ import copy
 import io
 import json
 import base64
+import os
 import plistlib
 import platform
+import signal
 import subprocess
+import sys
 import tarfile
 import tempfile
+import time
 import unittest
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
@@ -111,6 +115,59 @@ class BuildArchiveTests(unittest.TestCase):
         # Declarations survive without any source; they cannot be copied from enumeration.
         declared = units.read_declarations(staged, {"identity": self.identity, "platform": "ios"})
         self.assertEqual(declared, [{"kind": "swift", "key": "ExampleTests/works", "dimensions": {"platform": "ios"}}])
+        # Lazy cleanup imports must work after the source checkout is removed too.
+        child = ("import json, os, signal, sys, time\nfrom pathlib import Path\n"
+                 "output = Path(sys.argv[1])\n"
+                 "def finalize(signum, frame):\n"
+                 "    (output / 'finalized.json').write_text(json.dumps({'pid': os.getpid(), 'finalized': True}))\n"
+                 "    raise SystemExit(0)\n"
+                 "signal.signal(signal.SIGINT, finalize)\n"
+                 "(output / 'ready.json').write_text(json.dumps({'pid': os.getpid()}))\n"
+                 "time.sleep(60)\n")
+        parent = ("import signal, sys\nfrom pathlib import Path\n"
+                  "tools, mode, output, child = sys.argv[1:]\n"
+                  "sys.path.insert(0, str(Path(tools) / 'scripts'))\n"
+                  "import ci_unit_tests as units\n"
+                  "assert units.ROOT == Path(tools).resolve()\n"
+                  "signal.signal(signal.SIGINT, signal.default_int_handler)\n"
+                  "try:\n"
+                  "    code = units.default_run([sys.executable, '-I', '-c', child, output], "
+                  "timeout_seconds=2 if mode == 'timeout' else 30, grace_seconds=10)\n"
+                  "except KeyboardInterrupt:\n"
+                  "    code = 130\n"
+                  "raise SystemExit(code)\n")
+        for mode, expected in (("timeout", 124), ("interrupt", 130)):
+            with self.subTest(relocated_cleanup=mode):
+                output = self.root / mode
+                output.mkdir()
+                with (output / "runner.log").open("w") as log:
+                    process = subprocess.Popen([sys.executable, "-I", "-B", "-c", parent,
+                                                str(staged), mode, str(output), child], cwd=staged,
+                                               stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                    try:
+                        deadline = time.monotonic() + 15
+                        while not (output / "ready.json").exists() and time.monotonic() < deadline:
+                            if process.poll() is not None:
+                                break
+                            time.sleep(.05)
+                        self.assertTrue((output / "ready.json").exists(), (output / "runner.log").read_text())
+                        ready = json.loads((output / "ready.json").read_text())
+                        if mode == "interrupt":
+                            process.send_signal(signal.SIGINT)
+                        self.assertEqual(process.wait(timeout=20), expected, (output / "runner.log").read_text())
+                        self.assertEqual(json.loads((output / "finalized.json").read_text()),
+                                         {"pid": ready["pid"], "finalized": True})
+                        with self.assertRaises(ProcessLookupError):
+                            os.kill(ready["pid"], 0)
+                    finally:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait(timeout=5)
+                        if (output / "ready.json").exists():
+                            try:
+                                os.killpg(json.loads((output / "ready.json").read_text())["pid"], signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
         for field, value in (("platform", "tvos"), ("identity", dict(self.identity, tree_sha="e" * 40))):
             with self.subTest(field=field), self.assertRaisesRegex(ContractError, "declaration.*mismatch"):
                 units.read_declarations(staged, {"identity": self.identity, "platform": "ios", field: value})
