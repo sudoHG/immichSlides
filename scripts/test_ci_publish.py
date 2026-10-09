@@ -1061,7 +1061,7 @@ class PublisherTests(unittest.TestCase):
             with patch("ci_publish.approved_status", return_value=True):
                 _, statuses, approval = compute(RecordedAPI(), 7, "", "generic-app[bot]")
             self.assertEqual(statuses["ci-ui"]["state"], "success")
-            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[], admission=record)
+            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[], admission=record, cloud=None)
             self.assertIsNone(approval["request"])
             with patch("ci_publish.approved_status", return_value=True), patch(
                     "ci_report.summary_diagnostics", side_effect=ContractError("malformed diagnostics")):

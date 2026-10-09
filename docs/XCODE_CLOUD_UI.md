@@ -79,10 +79,58 @@ the budget resets each month. The router must bind its decision to the exact hea
 and fall back to GitHub whenever a start or run fails. iPhone and iPad stay on
 GitHub. A disabled or absent routing decision runs all GitHub Apple TV shards.
 
-The trusted importer must read the cloud API's executed identities and compare
-them with the admitted population before the publisher can accept Apple TV.
-Acceptance also requires the Xcode Cloud app's successful completed check on the
-exact head from this overflow workflow. The `xcode-cloud` environment is main-only
-and holds `ASC_ISSUER_ID`, `ASC_KEY_ID` and `ASC_PRIVATE_KEY`; creating or changing
-it is maintainer work. PR code must never receive those credentials. Details of
-the implemented decision and importer will be added with their separate changes.
+The `xcode-cloud` environment is main-only and holds `ASC_ISSUER_ID`, `ASC_KEY_ID`
+and `ASC_PRIVATE_KEY`; creating or changing it is maintainer work. PR code must
+never receive those credentials. The reader below is inactive without a trusted
+router decision. Scheduling and fallback integration land separately.
+
+## Trusted importer and acceptance
+
+`ci-xcode-cloud-import` accepts a same-repository PR's authoritative `ci-ui` run
+ID through a main-only manual/API dispatch. It checks the full admitted identity,
+latest producer attempt, exact current PR head and the successful main router's
+artifact before reading App Store Connect. Its protected job checks out main,
+executes only the allowlisted importer, has read-only GitHub permissions, and
+finishes within ten minutes. It signs a ten-minute ES256 token once; the private
+key crosses a pipe to OpenSSL and is never stored or logged. No PR checkout,
+artifact execution or PR-controlled environment input can reach the key.
+
+The admission records the head's cloud plan, its SHA-256, fixture/source hashes
+and Git tree. The head tree must equal the admitted GitHub merge tree. A moved
+base or different merge tree causes GitHub fallback, since Xcode Cloud starts a
+branch head rather than GitHub's synthetic merge commit. The strict plan validator
+compares its exact methods and fixture environment with the admitted Apple TV
+shard union and approved fixture deselections. The copy must match its source.
+
+The API reader proves membership in overflow workflow
+`72574ec0-c168-4317-b469-d3090357ab21` through its paginated build-run collection;
+Developer keys cannot read a build run's nonexistent workflow relationship.
+It requires one completed successful `XcodeCloud-UI-tvOS - tvOS` test action and
+all paginated method results. Every exact method must occur once with `SUCCESS`
+on exactly Apple TV 4K (3rd generation), tvOS 27.0. Missing, extra, duplicate,
+failed, skipped, partial or unknown results are refused. Pagination cycles,
+cross-host links, oversized payloads and unavailable API data are refusals too.
+
+Acceptance separately requires GitHub's completed successful check from the
+Xcode Cloud app (ID 117084, slug `xcode-cloud`), with the exact head, overflow check
+name and App Store Connect run/action link. Another app, check, workflow, head
+or an ambiguous check cannot count. The app check alone proves no population.
+
+The importer uploads `ci-xcc-import-<producer-run>-<attempt>` only after complete
+validation. Publisher and PR diagnostics verify the uploader's workflow ID/path,
+same repository, main-history revision, successful latest attempt and artifact
+binding to the admitted identity and exact router artifact. They repeat the method
+comparison using the independently selected admitted policy and re-read current
+app checks. Import success grants no head approval: existing CI-change/fork
+approval rules remain authoritative. A failed or missing importer cannot excuse
+a GitHub Apple TV skip. Stale attempts and conflicting or expired artifacts fail
+closed. Only literal unexecuted Apple TV skips are excused; GitHub archive,
+iPhone and iPad evidence still require their full original populations.
+
+API evidence stays separate from GitHub producer summaries. Counts report every
+admitted and observed Apple TV method; compiled inventory is
+`NOT_EXPOSED_BY_API`, since the API does not expose a separate bundle enumeration.
+Wall minutes use run timestamps; compute minutes sum action durations. Cloud PR
+verdicts do not create main-push UI reuse receipts. Daily reporter history remains
+main-push only, and refuses cloud PR proof for a push. To disable acceptance,
+disable routing; normal GitHub Apple TV jobs need no cloud credentials or receipts.

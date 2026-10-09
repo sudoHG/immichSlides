@@ -298,6 +298,18 @@ class ReporterTests(unittest.TestCase):
             with self.subTest(arguments=arguments), self.assertRaises(ContractError):
                 ci_report.main(arguments)
 
+    def test_cloud_pr_diagnostics_require_trusted_proof_and_keep_compiled_inventory_unknown(self):
+        identity = test_identity("ui", "ExampleTests/testExample", platform="tvos", device="appletv")
+        proof = {"identities": [identity], "cloud_run_id": "verified-run"}
+        with patch("ci_xcode_cloud.trusted_cloud", return_value=proof) as reader:
+            diagnostics = ci_report.cloud_pr_diagnostics(object(), {}, {}, [], approved=False)
+        reader.assert_called_once()
+        self.assertEqual(diagnostics["counts"], {"declared": 1, "observed": 1, "passed": 1,
+                                               "compiled_not_exposed_by_api": 1})
+        self.assertNotIn("compiled", diagnostics["counts"])
+        with patch("ci_xcode_cloud.trusted_cloud", side_effect=ContractError("untrusted importer")):
+            with self.assertRaises(ContractError):
+                ci_report.cloud_pr_diagnostics(object(), {}, {}, [], approved=False)
 
     def test_archive_unavailable_ui_cannot_notify_for_a_superseded_unexecuted_gate(self):
         from ci_health import health_report

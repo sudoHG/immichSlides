@@ -427,7 +427,7 @@ def approved_status(api, pr, login):
                and status["creator"]["login"] == login for status in statuses)
 
 
-def producer_evidence(api, run, source, *, diagnostics=None, admission=None):
+def producer_evidence(api, run, source, *, diagnostics=None, admission=None, cloud=None):
     """Bind each retained artifact to its job's latest execution attempt.
 
     Failed-job reruns legitimately retain successful jobs and their old records.
@@ -474,6 +474,11 @@ def producer_evidence(api, run, source, *, diagnostics=None, admission=None):
             continue
         if (run["event"] == "push" and metadata[name]["tier"] == "ui"
                 and job["status"] == "completed" and job["conclusion"] == "skipped"):
+            continue
+        if (cloud is not None and run["event"] == "pull_request" and metadata[name].get("device") == "appletv"
+                and job["status"] == "completed" and job["conclusion"] == "skipped"):
+            require((job.get("runner_id") is None or type(job.get("runner_id")) is int and job["runner_id"] == 0)
+                    and job.get("steps") == [], "routed Apple TV job may have executed")
             continue
         attempt_run = dict(run, run_attempt=job["evidence_attempt"])
         _, _, names = workflow_contract(source, attempt_run, details=True)
@@ -617,7 +622,15 @@ def compute(api, pr_number, pushed, login):
                 ui = record.get("ui_inputs", {}).get("candidate" if approved else "base")
                 if ui is not None:
                     require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
-            jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors, admission=record)
+            cloud = None
+            if context == "ci-ui" and pr and not fork:
+                _, _, _, metadata = workflow_contract(source, run, metadata=True)
+                current_jobs = api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
+                if any(job["conclusion"] == "skipped" and metadata.get(job["name"], {}).get("device") == "appletv"
+                       for job in current_jobs):
+                    from ci_xcode_cloud import trusted_cloud
+                    cloud = trusted_cloud(api, record, run, approved=approved)
+            jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors, admission=record, cloud=cloud)
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)
                 require(mismatch is None, mismatch or "identity mismatch")
@@ -630,14 +643,18 @@ def compute(api, pr_number, pushed, login):
                 from ci_ui_reuse import evaluate_reused_push
                 evaluations[context] = evaluate_reused_push(api, record, run, jobs, summaries)
             else:
-                evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
-                if context == "ci-ui":
+                evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork, cloud=cloud)
+                if context == "ci-ui" and cloud is None:
                     from ci_ui_reuse import make_verdict
                     receipt = make_verdict(record, run, summaries, evaluations[context])
                     if receipt is not None:
                         evaluations[context]["reuse_verdict"] = receipt
             from ci_report import summary_diagnostics
-            evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
+            if cloud is not None:
+                from ci_report import cloud_pr_diagnostics
+                evaluations[context]["diagnostics"] = cloud_pr_diagnostics(api, record, run, summaries, approved=approved)
+            else:
+                evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
         except (ContractError, KeyError, ValueError, TypeError) as error:
             evaluations[context] = {"state": "failure", "description": ui_failure_hint(error) or
                                    "Missing, invalid or mismatched admitted evidence"}
@@ -754,9 +771,15 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                                  f"approval-based: {reuse['approval_based']}, fork-originated: {reuse['fork_originated']}, "
                                  f"CI-changing: {reuse['ci_changing']}.\n")
                 for population in status.get("population", []):
+                    compiled = population["compiled"] if population["compiled"] is not None else "NOT_EXPOSED_BY_API"
                     handle.write(f"  {population['tier']} / {population['shard']}: expected {population['expected']}, "
-                                 f"compiled {population['compiled']}, observed {population['observed']}, "
+                                 f"compiled {compiled}, observed {population['observed']}, "
                                  "per-job population.\n")
+                cloud = status.get("xcode_cloud")
+                if cloud:
+                    handle.write(f"  Xcode Cloud: [{cloud['cloud_run_id']}]({cloud['details_url']}); "
+                                 f"import artifact {cloud['import_artifact_id']}; route artifact {cloud['route_artifact_id']}; "
+                                 f"wall {cloud['wall_minutes']:.2f} min; compute {cloud['compute_minutes']:.2f} min.\n")
                 for skipped in status.get("not_applicable", []):
                     handle.write(f"  {skipped['job']}: not applicable; {len(skipped['identities'])} admitted identities; "
                                  "trusted PR classification cannot affect the app or CI tooling.\n")

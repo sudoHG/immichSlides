@@ -191,11 +191,30 @@ def derive_record(identity, run, *, before=None):
                 raise
             # Bad candidate UI data cannot suppress a separate gate admission.
             ui[side] = {"error": ui_failure_hint(error) or "candidate UI inputs are invalid"}
+    cloud_inputs = None
+    cloud_paths = {"XcodeCloud-UI-tvOS.xctestplan", "scripts/strict_e2e_server.py", "ci_scripts/fixture_server.py"}
+    candidate_paths = {entry["path"] for entry in listing if entry["type"] == "blob" and entry["mode"] in {"100644", "100755"}}
+    if identity["event"] == "pull_request" and cloud_paths <= candidate_paths:
+        head = identity["head_sha"]
+        head_listing, _ = tree_inputs(head)
+        head_paths = {entry["path"] for entry in head_listing
+                      if entry["type"] == "blob" and entry["mode"] in {"100644", "100755"}}
+        if cloud_paths <= head_paths:
+            raw_plan = read_blob(head, "XcodeCloud-UI-tvOS.xctestplan")
+            try:
+                parsed_plan = decode(raw_plan)
+            except (ContractError, TypeError, ValueError):
+                parsed_plan = None
+            cloud_inputs = {"plan": parsed_plan, "plan_sha256": hashlib.sha256(raw_plan.encode()).hexdigest(),
+                            "head_tree_sha": git("rev-parse", head + "^{tree}"),
+                            "fixture_sha256": hashlib.sha256(read_blob(head, "ci_scripts/fixture_server.py").encode()).hexdigest(),
+                            "source_sha256": hashlib.sha256(read_blob(head, "scripts/strict_e2e_server.py").encode()).hexdigest()}
     return {"schema_version": 1, "run_id": run["id"], "workflow_id": run["workflow_id"],
             "workflow_path": run["path"], "identity": identity, "tree_listing": listing,
             "populations": derived["populations"], "base_populations": base_derived["populations"],
             "operational_populations": operational,
             "ui_inputs": ui,
+            "cloud_inputs": cloud_inputs,
             "classification": derived["classification"], "reader_revision": base, "workflows": workflows,
             "base_registry": json.loads(read_blob(base, "scripts/ci-known-flaky.json"))
                              if any(entry["path"] == "scripts/ci-known-flaky.json" for entry in base_listing) else None,
@@ -359,7 +378,7 @@ def gate_not_applicable_jobs(record, run, metadata):
             and meta["job"] == meta["tier"] + "-" + meta["shard"]}
 
 
-def evaluate_records(record, run, jobs, summaries, *, approved, fork):
+def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None):
     context = "gate" if run["path"].endswith("ci-gate.yml") else "ui"
     ui = record.get("ui_inputs", {}).get("candidate" if approved else "base") if context == "ui" else None
     if ui is not None:
@@ -369,6 +388,20 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
     actual = {job["name"]: job for job in jobs}
     require(set(actual) == set(expected_jobs) and len(jobs) == len(actual), "required workflow jobs differ")
     allowed_skips = gate_not_applicable_jobs(record, run, metadata)
+    cloud_jobs = set()
+    if cloud is not None:
+        from ci_xcode_cloud import admitted_population
+        require(context == "ui" and not fork and record["identity"]["event"] == "pull_request",
+                "external Apple TV evidence cannot cover this source")
+        require(cloud["identities"] == admitted_population(record, approved=approved), "external Apple TV population differs")
+        cloud_jobs = {name for name, meta in metadata.items() if meta.get("device") == "appletv"}
+        require(cloud_jobs and all(actual[name]["status"] == "completed" and actual[name]["conclusion"] == "skipped"
+                and (actual[name].get("runner_id") is None or type(actual[name].get("runner_id")) is int
+                     and actual[name]["runner_id"] == 0) and actual[name].get("steps") == [] for name in cloud_jobs),
+                "routed GitHub Apple TV shards must be unexecuted literal skips")
+        require(not any(summary["run"]["job"] == "ui-appletv" for summary in summaries),
+                "mixed GitHub and Xcode Cloud Apple TV evidence")
+        allowed_skips |= cloud_jobs
     require(all(job["status"] == "completed" and (job["conclusion"] == "success"
                 or (job["name"] in allowed_skips and job["conclusion"] == "skipped")) for job in jobs),
             "a required job failed, skipped or was cancelled")
@@ -387,7 +420,8 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
             require(len(assigned) == len(set(assigned)) and set(assigned) == set(ui_populations[device]),
                     "workflow shard union differs from the admitted manifest")
             base_ui = record["ui_inputs"]["base"] or ui
-            ui_base.extend(base_ui["base_populations"][device])
+            if cloud is None or device != "appletv":
+                ui_base.extend(base_ui["base_populations"][device])
         for summary in summaries:
             require(summary["hashes"]["manifests"].get("ui-shards") == ui["manifest_sha256"], "UI manifest hash differs")
             meta = next((item for item in metadata.values() if all(item[key] == summary["run"][key]
@@ -409,7 +443,7 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
                       "run_id": str(run["id"]), "attempt": actual[name]["evidence_attempt"],
                       "workflow_paths": [run["path"]], "expected": {"tree_sha": tree, "identities": population(meta)},
                       "status": actual[name]["status"], "conclusion": actual[name]["conclusion"]}
-                     for name, meta in metadata.items()]
+                     for name, meta in metadata.items() if name not in cloud_jobs]
     parts = ["host", "unit-ios", "unit-tvos"] if context == "gate" else []
     expected = [identity for part in parts for identity in record["populations"][part]]
     base_expected = [identity for part in parts for identity in record["base_populations"][part]]
@@ -460,4 +494,10 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork):
             "removed_by_pr": verdict["removed_by_pr"]}
     if verdict.get("not_applicable"):
         result["not_applicable"] = verdict["not_applicable"]
+    if cloud is not None:
+        result["xcode_cloud"] = {key: value for key, value in cloud.items() if key != "identities"}
+        result["population"].append({"tier": "ui", "shard": "appletv/xcode-cloud", "expected": len(cloud["identities"]),
+                                     "compiled": None, "observed": len(cloud["identities"])})
+        if result["state"] == "success":
+            result["description"] = "GitHub iPhone/iPad and API-verified Xcode Cloud Apple TV populations passed"
     return result

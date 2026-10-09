@@ -229,6 +229,23 @@ def summary_diagnostics(summaries, evidence_errors=()):
             "infrastructure": infrastructure, "skipped": skips, "deselected": deselections}
 
 
+def cloud_pr_diagnostics(api, record, run, summaries, *, approved):
+    """PR publication diagnostics use the same provenance and API-result reader.
+
+    Daily history remains main-push only. A cloud PR is never promoted into that
+    history or the identical-tree reuse cache using an app check alone.
+    """
+    from ci_xcode_cloud import trusted_cloud
+    cloud = trusted_cloud(api, record, run, approved=approved)
+    diagnostics = summary_diagnostics(summaries)
+    count = len(cloud["identities"])
+    for key in ("declared", "observed", "passed"):
+        diagnostics["counts"][key] = diagnostics["counts"].get(key, 0) + count
+    diagnostics["counts"]["compiled_not_exposed_by_api"] = count
+    diagnostics["xcode_cloud"] = {key: value for key, value in cloud.items() if key != "identities"}
+    return diagnostics
+
+
 def daily_rollup(day, entries):
     iso_day(day)
     selected = {}

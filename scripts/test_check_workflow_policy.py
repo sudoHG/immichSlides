@@ -24,6 +24,33 @@ def workflow():
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_cloud_importer_main_context_and_secret_step_cannot_be_weakened(self):
+        path = policy.XCC_IMPORT_WORKFLOW
+        source = (Path(__file__).resolve().parent.parent / path).read_text()
+        document = yaml.load(source, Loader=policy.WorkflowLoader)
+        self.assertEqual(self.rules(document, path), set())
+        for mutation in ("branch", "event", "checkout", "environment", "permissions", "job-secret", "early-secret", "upload"):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(document)
+                job = changed["jobs"]["import"]
+                if mutation == "branch":
+                    job.pop("if")
+                elif mutation == "event":
+                    changed["on"]["pull_request"] = None
+                elif mutation == "checkout":
+                    job["steps"][0]["with"]["ref"] = "${{ github.event.pull_request.head.sha }}"
+                elif mutation == "environment":
+                    job["environment"] = "release"
+                elif mutation == "permissions":
+                    job["permissions"]["actions"] = "write"
+                elif mutation == "job-secret":
+                    job["env"] = policy.XCC_BINDINGS
+                elif mutation == "early-secret":
+                    job["steps"][0]["env"] = policy.XCC_BINDINGS
+                else:
+                    job["steps"][-1]["with"]["path"] = "${{ github.workspace }}"
+                self.assertTrue(self.rules(changed, path))
+
     def test_live_environment_and_credentials_are_bound_to_guarded_nightly_jobs(self):
         root = Path(__file__).resolve().parent.parent
         source = (root / ".github/workflows/ci-nightly.yml").read_text()
