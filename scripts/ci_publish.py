@@ -445,7 +445,7 @@ def producer_evidence(api, run, source, *, diagnostics=None, admission=None, clo
             discarded = set()
             attempt_jobs = expand_skipped_ui_matrix(source, dict(run, run_attempt=attempt), attempt_jobs,
                                                    complete=False, historical=attempt < run["run_attempt"],
-                                                   discarded_shards=discarded)
+                                                   discarded_shards=discarded, cloud=cloud is not None)
             # Keep execution history to recognize retained API jobs, but never
             # admit a shard artifact from before its matrix was invalidated.
             minimum_attempts.update({name: attempt + 1 for name in discarded})
@@ -624,9 +624,10 @@ def compute(api, pr_number, pushed, login):
                     require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
             cloud = None
             if context == "ci-ui" and pr and not fork:
-                _, _, _, metadata = workflow_contract(source, run, metadata=True)
+                from ci_xcode_cloud import apple_tv_skip_names
+                cloud_skips = apple_tv_skip_names(source, run)
                 current_jobs = api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
-                if any(job["conclusion"] == "skipped" and metadata.get(job["name"], {}).get("device") == "appletv"
+                if any(job["conclusion"] == "skipped" and job["name"] in cloud_skips
                        for job in current_jobs):
                     from ci_xcode_cloud import trusted_cloud
                     cloud = trusted_cloud(api, record, run, approved=approved)

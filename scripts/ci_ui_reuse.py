@@ -175,7 +175,7 @@ def find_reuse(api, push):
     return None
 
 
-def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=False, discarded_shards=None):
+def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=False, discarded_shards=None, cloud=False):
     """Normalize collapsed matrix history without supplying test evidence."""
     from check_workflow_policy import WorkflowLoader
     names, _, _, metadata = workflow_contract(source, run, metadata=True)
@@ -186,17 +186,23 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
     failed_pr_history = (historical and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
                          and metadata.get("ui-archive", {}).get("tier") == "ui-infrastructure"
                          and archive.get("status") == "completed" and archive.get("conclusion") == "failure")
-    if main_push or failed_pr_history:
+    cloud_pr = cloud is True and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
+    if main_push or failed_pr_history or cloud_pr:
         workflow = yaml.load(source, Loader=WorkflowLoader)
         for key, job in workflow["jobs"].items():
             raw_name = job.get("name", key)
             if not job.get("strategy", {}).get("matrix") or raw_name not in actual or raw_name in names:
                 continue
-            skipped = actual.pop(raw_name)
             expanded, _, _, evidence = workflow_contract(yaml.safe_dump({"jobs": {key: job}}), run, metadata=True)
+            if cloud_pr and not main_push and not failed_pr_history and any(meta.get("device") != "appletv" for meta in evidence.values()):
+                continue
+            skipped = actual.pop(raw_name)
             require(skipped["status"] == "completed" and skipped["conclusion"] == "skipped"
                     and expanded and all(meta["tier"] == "ui" for meta in evidence.values())
                     and not set(expanded).intersection(actual), "whole-matrix skip overlaps execution or is invalid")
+            if cloud_pr:
+                require((skipped.get("runner_id") is None or type(skipped.get("runner_id")) is int and skipped["runner_id"] == 0)
+                        and skipped.get("steps") == [], "cloud matrix skip may have executed")
             if failed_pr_history:
                 # The archive failure prevented shard execution. This historical
                 # placeholder supplies no evidence; later literal jobs must fill

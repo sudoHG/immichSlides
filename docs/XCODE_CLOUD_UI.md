@@ -126,6 +126,10 @@ approval rules remain authoritative. A failed or missing importer cannot excuse
 a GitHub Apple TV skip. Stale attempts and conflicting or expired artifacts fail
 closed. Only literal unexecuted Apple TV skips are excused; GitHub archive,
 iPhone and iPad evidence still require their full original populations.
+If GitHub collapses a TV-only matrix skip into its expression-named job, the
+reader expands only that TV matrix after independent cloud validation, retaining
+the original unexecuted job. An iOS matrix or overlapping executed shard cannot
+be covered by this normalization.
 
 API evidence stays separate from GitHub producer summaries. Counts report every
 admitted and observed Apple TV method; compiled inventory is

@@ -244,6 +244,31 @@ class CloudEvidenceTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             cloud.admitted_population(record, approved=False)
 
+    def test_collapsed_tv_matrix_requires_verified_cloud_proof_and_cannot_cover_ios(self):
+        from ci_ui_reuse import expand_skipped_ui_matrix
+        from ci_publish_git import workflow_contract
+        from test_ci_publish import FIXTURE_UI, RUN
+        source = FIXTURE_UI.replace("device: [iphone]", "device: [appletv]").replace(
+            "name: ui-${{ matrix.device }}-${{ matrix.shard }}", "name: ui-appletv-${{ matrix.shard }}")
+        run = dict(RUN, path=cloud.UI_PATH)
+        placeholder = "ui-appletv-${{ matrix.shard }}"
+        jobs = [{"name": "ui-archive", "status": "completed", "conclusion": "success"},
+                {"name": placeholder, "status": "completed", "conclusion": "skipped", "runner_id": 0, "steps": []}]
+        self.assertIn(placeholder, cloud.apple_tv_skip_names(source, run))
+        with self.assertRaises(ContractError):
+            expand_skipped_ui_matrix(source, run, jobs)
+        normalized = expand_skipped_ui_matrix(source, run, jobs, cloud=True)
+        self.assertEqual({job["name"] for job in normalized}, set(workflow_contract(source, run)[0]))
+        jobs[1]["steps"] = [{"name": "executed"}]
+        with self.assertRaises(ContractError):
+            expand_skipped_ui_matrix(source, run, jobs, cloud=True)
+        self.assertNotIn("ui-${{ matrix.device }}-${{ matrix.shard }}", cloud.apple_tv_skip_names(FIXTURE_UI, run))
+        ios_jobs = [{"name": "ui-archive", "status": "completed", "conclusion": "success"},
+                    {"name": "ui-${{ matrix.device }}-${{ matrix.shard }}", "status": "completed",
+                     "conclusion": "skipped", "runner_id": 0, "steps": []}]
+        with self.assertRaises(ContractError):
+            expand_skipped_ui_matrix(FIXTURE_UI, run, ios_jobs, cloud=True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -171,3 +171,20 @@ def trusted_cloud(api, record, run, *, approved):
     checks = api.pages("commits/" + record["identity"]["head_sha"] + "/check-runs", "check_runs", filter="all")
     result = validate_evidence(record, run, route, receipt["evidence"], checks, approved=approved)
     return dict(result, route_artifact_id=route_artifact, import_artifact_id=import_artifact)
+
+
+def apple_tv_skip_names(source, run):
+    """Recognize a collapsed TV-only matrix without admitting its skip."""
+    import yaml
+    from check_workflow_policy import WorkflowLoader
+    from ci_publish_git import workflow_contract
+    workflow = yaml.load(source, Loader=WorkflowLoader)
+    _, _, _, metadata = workflow_contract(source, run, metadata=True)
+    names = {name for name, meta in metadata.items() if meta.get("device") == "appletv"}
+    for key, job in workflow["jobs"].items():
+        if not job.get("strategy", {}).get("matrix"):
+            continue
+        _, _, _, entries = workflow_contract(yaml.safe_dump({"jobs": {key: job}}), run, metadata=True)
+        if entries and all(meta.get("device") == "appletv" for meta in entries.values()):
+            names.add(job.get("name", key))
+    return names
