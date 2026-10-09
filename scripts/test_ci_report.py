@@ -313,8 +313,14 @@ class ReporterTests(unittest.TestCase):
         self.assertIsNone(unexpected_skips([summary], None, "hermetic"))
         run = {"run_attempt": 1, "status": "completed", "created_at": "2026-10-01T00:00:00Z",
                "run_started_at": "2026-10-01T00:00:10Z", "updated_at": "2026-10-01T00:01:10Z"}
-        self.assertEqual({"queue_seconds": 10, "run_duration_seconds": 60}, run_metrics(run))
-        self.assertIsNone(run_metrics({**run, "run_attempt": 2})["queue_seconds"])
+        jobs = [{"conclusion": "success", "created_at": "2026-10-01T00:00:10Z", "started_at": "2026-10-01T00:00:40Z"},
+                {"conclusion": "success", "created_at": "2026-10-01T00:00:10Z", "started_at": "2026-10-01T00:00:50Z"}]
+        self.assertEqual({"queue_seconds": 70, "run_duration_seconds": 60}, run_metrics(run, jobs))
+        self.assertIsNone(run_metrics(run)["queue_seconds"])
+        self.assertEqual(70, run_metrics({**run, "run_attempt": 2}, jobs)["queue_seconds"])
+        from ci_health import observation_metrics
+        self.assertIsNone(observation_metrics([], unexpected_skips=0)["first_attempt_failures"])
+        self.assertIsNone(observation_metrics([], unexpected_skips=0)["test_duration_seconds"])
 
     def test_read_only_health_stops_on_quota_and_never_bootstraps_missing_history(self):
         for snapshot, error in ((None, ContractError), (ci_report.RateLimitLow(), None)):

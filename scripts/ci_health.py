@@ -38,6 +38,8 @@ def report_month(event_name, event, now):
 
 
 def observation_metrics(observed, *, unexpected_skips=None):
+    if not observed:
+        return dict.fromkeys(("first_attempt_failures", "flaky_passed", "skipped", "unexpected_skips", "test_duration_seconds")) | {"schema_version": 1}
     for item in observed:
         validate_observation(item)
     return {"schema_version": 1,
@@ -75,9 +77,10 @@ def elapsed(start, end):
     return seconds
 
 
-def run_metrics(run):
+def run_metrics(run, jobs=None):
     # updated_at is GitHub's completed-run timestamp, not CPU or billed time.
-    return {"queue_seconds": elapsed(run.get("created_at"), run.get("run_started_at")) if run["run_attempt"] == 1 else None,
+    queues = [elapsed(job.get("created_at"), job.get("started_at")) for job in (jobs or []) if job.get("conclusion") != "skipped"]
+    return {"queue_seconds": sum(queues) if queues and all(value is not None for value in queues) else None,
             "run_duration_seconds": elapsed(run.get("run_started_at"), run.get("updated_at")) if run["status"] == "completed" else None}
 
 
@@ -152,7 +155,8 @@ def render_health(report):
              f"{coverage['incomplete_evidence_runs']} runs have incomplete evidence; totals cover only available observations.", "",
              "Missing history and metrics are unavailable, never zero or evidence of passing. Durations are summed seconds; "
              "test durations include automatic retries. First-attempt failures use GitHub attempt 1 and each test's first call. "
-             "Flaky-passed and skip totals use the latest saved attempt. Queue time is creation to first run start; "
+             "Flaky-passed and skip totals use the latest saved attempt. Queue time sums job creation-to-start intervals "
+             "from the existing gate/UI job reader (nightly queue data is unavailable); "
              "run duration is run start to GitHub update at completion, not billed CPU time. "
              "Artifact bytes are all listed run artifacts at collection time, counted once per run; they are not current repository storage.", "",
              "| Metric | Total | Runs sampled | Runs unavailable |", "| --- | ---: | ---: | ---: |"]

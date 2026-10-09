@@ -449,6 +449,7 @@ def read_run(api, run, admissions, previous=None):
     from ci_publish_git import evaluate_records
     from ci_health import observation_metrics, run_metrics, unexpected_skips
     entry = report_base(run, api.repository)
+    jobs = None
     if run["status"] != "completed":
         if previous and previous.get("attempt_history"):
             entry["attempt_history"] = [copy.deepcopy(item) for item in previous["attempt_history"]
@@ -546,7 +547,7 @@ def read_run(api, run, admissions, previous=None):
             attempt["reason"] = ("skip reason withheld; consult trusted policy" if attempt["outcome"] == "skipped"
                                  else "strict-case-contract-failed" if attempt.get("reason") == "strict-case-contract-failed" else None)
     if "health" in entry:
-        entry["health"].update(run_metrics(run))
+        entry["health"].update(run_metrics(run, jobs))
         sizes = getattr(api, "artifact_sizes", {}).get(run["id"])
         entry["health"]["artifact_bytes"] = sum(sizes.values()) if sizes is not None else None
     return entry

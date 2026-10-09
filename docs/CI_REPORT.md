@@ -187,13 +187,16 @@ counts use GitHub attempt 1; nightly history and previously collected gate/UI co
 survive reruns. Missing attempt 1 is unavailable. Final outcome totals use the latest
 saved attempt.
 
-Queue seconds mean creation to first run start, unavailable for GitHub reruns. Run
+Queue seconds sum job creation-to-start intervals from the existing gate/UI job reader,
+including retained jobs after reruns. Missing timestamps or nightly job data are
+unavailable; workflow start time never stands in for runner queue time. Run
 duration means start to GitHub's completed-run update, not CPU/billed time. Artifact
 bytes count unique artifact IDs listed for each run at collection, including earlier
 attempts; existing reads supply metadata without new requests. This historical sample
 is not current repository storage. Compact snapshot and selected month rollup JSON byte
 sizes are measured separately. Each metric shows sampled/unavailable run counts and
-covers available observations only; health introduces no gating threshold.
+covers available observations only; a run without any test observations supplies no
+test metrics. Health introduces no gating threshold.
 
 Legacy outcome counts supply flaky-passed and total skip counts where observations were
 recorded. Unrecorded first calls, skip classification, timing and artifact sizes remain
