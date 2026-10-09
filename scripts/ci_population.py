@@ -544,6 +544,37 @@ def python_identities(files, *, discovery_pattern="test_*", packages=()):
     for module in sorted(strict):
         validate_module(module)
 
+    def top_level_assignments(body):
+        for node in body:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                yield node
+            elif isinstance(node, (ast.If, ast.Try, ast.With, ast.For, ast.While)):
+                for field in ("body", "orelse", "finalbody"):
+                    yield from top_level_assignments(getattr(node, field, []))
+                for handler in getattr(node, "handlers", []):
+                    yield from top_level_assignments(handler.body)
+
+    # unittest also discovers classes that helper modules build at import time. The static
+    # grammar cannot enumerate them, so a class builder call or one that receives a test base fails closed.
+    def builds_dynamic_class(module, call):
+        for part in ast.walk(call):
+            if not isinstance(part, (ast.Name, ast.Attribute)):
+                continue
+            try:
+                spelling = dotted(part)
+                target = resolve(module + "." + spelling)
+            except ContractError:
+                continue
+            if target in terminals or is_test_case(target) or (part is call.func and (
+                    target == "types.new_class" or (target == "builtins.type" and len(call.args) == 3))):
+                return True
+        return False
+
+    for module in sorted(visited - strict):
+        for node in top_level_assignments(trees[module].body):
+            if isinstance(node.value, ast.Call) and builds_dynamic_class(module, node.value):
+                fail(module, node, "dynamically created classes are outside the allowed declaration grammar")
+
     identities, seen_classes = [], set()
     for module, bindings in modules.items():
         if not discovered(module):

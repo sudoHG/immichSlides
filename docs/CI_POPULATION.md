@@ -95,7 +95,10 @@ they do not pretend to implement arbitrary Swift or Python metaprogramming.
 
 Supply all local source modules, including imported test-class and mixin providers.
 The grammar applies to `test_*.py` and those providers. Imports of unrelated
-non-test helpers do not make their unrelated classes discoverable. At module scope:
+non-test helpers do not make their unrelated classes discoverable, but an imported
+helper must not build classes at import time: a module-level assignment from `type(name, bases, namespace)`,
+`types.new_class` or any call that receives `unittest.TestCase` or a test class is rejected, because
+unittest would discover the result while the static inventory cannot. At module scope:
 
 | Allowed form | Constraints |
 | --- | --- |

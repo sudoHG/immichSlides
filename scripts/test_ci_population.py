@@ -155,6 +155,17 @@ class StaticPopulationTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(ContractError):
                 python_identities({"test_sample": source})
 
+    def test_helper_modules_cannot_build_test_classes_dynamically(self):
+        entry = "from helpers import Dyn\n"
+        for helper in ('import unittest\nDyn = type("Dyn", (unittest.TestCase,), {"test_a": lambda self: None})\n',
+                       'import unittest as ut\nDyn = type("Dyn", (ut.TestCase,), {})\n',
+                       'import unittest\nDyn = make_case(unittest.TestCase)\n',
+                       'import types\nDyn = types.new_class("Dyn", (object,))\n'):
+            with self.subTest(helper=helper), self.assertRaisesRegex(ContractError, r"helpers\.py:\d+: dynamically"):
+                python_identities({"helpers": helper, "test_entry": entry})
+        allowed = "VALUE = factory().value\nKIND = type(VALUE)\nDyn = 1\n"
+        self.assertEqual(python_identities({"helpers": allowed, "test_entry": entry}), [])
+
     def test_conditional_imports_and_base_assignments_cannot_hide_test_classes(self):
         support = "from unittest import TestCase\nclass Imported(TestCase):\n def test_hidden(self): pass\n"
         always = "import unittest\nclass Always(unittest.TestCase):\n def test_always(self): pass\n"
