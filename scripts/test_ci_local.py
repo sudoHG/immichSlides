@@ -98,6 +98,7 @@ class LocalModeTests(unittest.TestCase):
                               "    parser.add_argument('--check', action='store_true')\n"
                               "    parser.add_argument('--manifest')\n"
                               "    parser.add_argument('--output-dir')\n"
+                              "    parser.add_argument('--shard')\n"
                               "    parser.add_argument('command', nargs='?')\n"
                               "    args = parser.parse_args()\n"
                               "    print('DERIVED_DATA=' + str(args.derived_data_path))\n"
@@ -111,6 +112,7 @@ class LocalModeTests(unittest.TestCase):
                               "    return 0 if private == (os.environ.get('IMMICH_TEST_EXPECT_PRIVATE') == '1') "
                               "and os.environ.get('IMMICH_TEST_API_KEY') == 'explicit' else 1\n"
                               "if __name__ == '__main__':\n    raise SystemExit(local_main(main, __file__))\n")
+            shutil.copyfile(runner, scripts / "ci_ui_tests.py")
             (root / ".gitignore").write_text("Config/env.xcconfig\n")
             (root / "immichSlides.xcodeproj").mkdir()
             (root / "immichSlides.xcodeproj/project.pbxproj").write_text("synthetic project")
@@ -197,11 +199,15 @@ class LocalModeTests(unittest.TestCase):
             written.mkdir()
             receipt_path = written / "local-snapshot.json"
             receipt_path.write_text("earlier run receipt\n")
-            completed = subprocess.run([sys.executable, "-B", str(runner), "check-upload", "--output-dir", str(written),
-                                        "--config", "IMMICH_TEST_API_KEY=explicit"], cwd=root, env=test_environment,
-                                       capture_output=True, text=True, timeout=15)
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertEqual(receipt_path.read_text(), "earlier run receipt\n")
+            ui_runner = scripts / "ci_ui_tests.py"
+            for arguments, expected in ((["check-upload", "--output-dir", str(written)], 0),
+                                        (["run", "--shard", "check-upload", "--output-dir", str(written)], 2)):
+                with self.subTest(arguments=arguments):
+                    completed = subprocess.run([sys.executable, "-B", str(ui_runner), *arguments, "--config",
+                                                "IMMICH_TEST_API_KEY=explicit"], cwd=root, env=test_environment,
+                                               capture_output=True, text=True, timeout=15)
+                    self.assertEqual(completed.returncode, expected, completed.stderr)
+                    self.assertEqual(receipt_path.read_text(), "earlier run receipt\n")
 
     def test_private_configuration_requires_explicit_opt_in(self):
         with self.assertRaises(ValueError):
