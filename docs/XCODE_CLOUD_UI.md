@@ -56,7 +56,7 @@ targets, configuration overrides, skips, repetitions, fixture inputs or scheme
 registration. It derives the expected method list with the existing static parser
 and GitHub shard rules; counts alone do not establish coverage. When the default
 population changes, regenerate the cloud plan's exact selections in the same PR.
-Shared schemes and test plans at every path are CI-trusted inputs. This
+Schemes and test plans at every path are CI-trusted inputs. This
 classification must land on main before routing is activated, because admission
 uses the PR base's policy; a candidate cannot grant its own approval.
 
@@ -102,7 +102,9 @@ branch head rather than GitHub's synthetic merge commit. The strict plan validat
 compares its exact methods and fixture environment with the admitted Apple TV
 shard union and approved fixture deselections. The copy must match its source.
 Admission also records the head's tvOS scheme and every same-name plan path in
-the head tree listing. The reader requires one cloud reference resolving exactly
+the head tree listing. Admission refuses cloud inputs if any two full head-tree
+paths are equal under case folding, preventing a case-insensitive checkout from
+substituting a shadow plan, scheme or hook. The reader requires one cloud reference resolving exactly
 to `container:XcodeCloud-UI-tvOS.xctestplan`, no other same-name file, and no
 TestAction pre/post actions. Redirected or ambiguous plan resolution is refused.
 API `isPullRequestBuild` must be explicitly false: only the tree-bound branch

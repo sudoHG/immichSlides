@@ -200,7 +200,10 @@ def derive_record(identity, run, *, before=None):
         head_listing, _ = tree_inputs(head)
         head_paths = {entry["path"] for entry in head_listing
                       if entry["type"] == "blob" and entry["mode"] in {"100644", "100755"}}
-        if cloud_paths <= head_paths:
+        # Cloud checks out on a case-insensitive filesystem; no head path may
+        # shadow another plan, scheme, hook or source while retaining its hash.
+        unambiguous = len({entry["path"].casefold() for entry in head_listing}) == len(head_listing)
+        if cloud_paths <= head_paths and unambiguous:
             raw_plan = read_blob(head, "XcodeCloud-UI-tvOS.xctestplan")
             try:
                 parsed_plan = decode(raw_plan)
