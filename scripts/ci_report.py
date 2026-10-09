@@ -486,6 +486,15 @@ def read_run(api, run, admissions, previous=None):
     jobs = None
     if run["status"] != "completed" or run.get("conclusion") == "cancelled":
         entry["first_execution_health"] = saved_first
+        if run["status"] == "completed" and run.get("conclusion") == "cancelled":
+            try:
+                if cancelled_unstarted_gate(api, run) and on_main(run["head_sha"]):
+                    entry.update(status="not-run", pushed_sha=run["head_sha"],
+                                 not_evaluated_reason="gate cancelled before any job executed")
+            except RateLimitLow:
+                raise
+            except (ContractError, KeyError, ValueError, TypeError):
+                pass  # Incomplete proof retains the ordinary unverified cancellation.
         if run.get("conclusion") != "cancelled" and previous and previous.get("attempt_history"):
             entry["attempt_history"] = [copy.deepcopy(item) for item in previous["attempt_history"]
                                         if item["run"]["attempt"] < run["run_attempt"]] + [copy.deepcopy(entry)]
@@ -495,9 +504,6 @@ def read_run(api, run, admissions, previous=None):
             require(run["head_branch"] == "main" and run["head_repository"]["full_name"] == api.repository
                     and on_main(run["head_sha"]), "push is outside main history")
             entry["pushed_sha"] = run["head_sha"]
-            if cancelled_unstarted_gate(api, run):
-                entry.update(status="not-run", not_evaluated_reason="gate cancelled before any job executed")
-                return entry
         if run["path"] == NIGHTLY_PATH:
             require(run["event"] in {"schedule", "workflow_dispatch"} and run["head_branch"] == "main"
                     and run["head_repository"]["full_name"] == api.repository and on_main(run["head_sha"]), "untrusted nightly source")
@@ -546,6 +552,7 @@ def read_run(api, run, admissions, previous=None):
             require(all(summary["identity"] == identity for summary in summaries), "summary identity differs from admission")
             if not errors and archive_blocked_ui(api, record, run, jobs, summaries):
                 entry.update(identity=identity, status="not-run",
+                             first_execution_health=saved_first,
                              not_evaluated_reason="archive unavailable for superseded unexecuted gate")
                 return entry
             entry.update(identity=identity, diagnostics=summary_diagnostics(summaries, errors),

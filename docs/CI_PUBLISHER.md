@@ -25,8 +25,8 @@ Workflow names and colliding job names do not establish provenance.
 The reader treats a cancelled first-attempt main gate as **not evaluated** only
 after verifying its workflow ID/path/repository and the complete attempt jobs
 list: unique job IDs must match the API's explicit `total_count`. Every job must
-be completed, cancelled or skipped, have no assigned runner
-(`runner_id` is zero or null), and have an explicit empty steps list; an empty
+have status `completed` with conclusion `cancelled` or `skipped`, have no assigned
+runner (`runner_id` is zero or null), and have an explicit empty steps list; an empty
 jobs list qualifies only with `total_count: 0`. A newer main-push gate run with a
 greater run ID and a different head SHA must also exist. Main history is protected
 and linear; a bounded recent run listing supplies that proof. GitHub can set
@@ -39,6 +39,8 @@ with a link to its cancelled run, never successful and never credited with a
 newer SHA's evidence. Main's `ci-approval-state` remains successful with
 **Approval not needed**. Started jobs, reruns and ambiguous/API-incomplete evidence
 keep the ordinary fail-closed path. This reader does not change producer scheduling.
+The reporter retains its separate rule that every cancelled main push is
+ineligible for notification; see [CI reporting](CI_REPORT.md).
 
 For the same SHA, a first-attempt main UI run is also **not evaluated** only when
 its complete jobs listing shows a failed `ui-archive` and every admitted UI shard

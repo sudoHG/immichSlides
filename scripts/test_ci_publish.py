@@ -277,6 +277,7 @@ def gate_fixture(*, units):
 
 class PublisherTests(unittest.TestCase):
     def test_superseded_unexecuted_gate_excuses_only_bound_archive_unavailable_ui(self):
+        from ci_publish import archive_blocked_ui
         def published(api):
             with patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW,
                     "ci-ui": {"id": 43, "path": api.ui["path"]}}), \
@@ -287,23 +288,34 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual("pending", statuses["ci-ui"]["state"])
         self.assertIn("Not evaluated", statuses["ci-ui"]["description"])
         self.assertEqual(f"https://github.com/{REPOSITORY}/actions/runs/201", statuses["ci-ui"]["target_url"])
-        for mutation in ("no-newer", "refusal", "identity", "executed-shard", "unknown-error", "manifest", "rerun"):
+        jobs, summaries = producer_evidence(api, api.ui, FIXTURE_UI, admission=api.record)
+        self.assertTrue(archive_blocked_ui(api, api.record, api.ui, jobs, summaries))
+        for mutation in ("rerun", "executed-shard", "identity"):
+            with self.subTest(direct_guard=mutation):
+                api = UnavailableUIAPI()
+                jobs, summaries = producer_evidence(api, api.ui, FIXTURE_UI, admission=api.record)
+                if mutation == "rerun":
+                    api.ui["run_attempt"] = 2
+                elif mutation == "executed-shard":
+                    api.ui_jobs = [api.ui_jobs[0],
+                        dict(api.ui_jobs[1], name="ui-iphone-default", conclusion="failure", runner_id=123,
+                             steps=[{"status": "completed"}]),
+                        dict(api.ui_jobs[1], id=5, name="ui-iphone-visual")]
+                    jobs = api.ui_jobs
+                else:
+                    summaries[0]["identity"]["pushed_sha"] = "f" * 40
+                self.assertFalse(archive_blocked_ui(api, api.record, api.ui, jobs, summaries))
+        for mutation in ("no-newer", "refusal", "unknown-error", "manifest"):
             with self.subTest(mutation=mutation):
                 api = UnavailableUIAPI()
                 if mutation == "no-newer":
                     api.newer = []
                 elif mutation == "refusal":
                     api.refusals = [{"outcome": "archive-identity-mismatch"}]
-                elif mutation == "identity":
-                    api.summary["identity"]["pushed_sha"] = "f" * 40
-                elif mutation == "executed-shard":
-                    api.ui_jobs[1].update(conclusion="failure", runner_id=123)
                 elif mutation == "unknown-error":
                     api.summary["infrastructure"][0]["message"] = "archive-identity-mismatch: no exact-identity gate archive before timeout"
-                elif mutation == "manifest":
-                    api.summary["hashes"]["manifests"]["ui-shards"] = "f" * 64
                 else:
-                    api.ui["run_attempt"] = 2
+                    api.summary["hashes"]["manifests"]["ui-shards"] = "f" * 64
                 self.assertEqual("failure", published(api)["ci-ui"]["state"])
 
     def test_cancelled_unstarted_main_gate_is_pending_without_inventing_a_verdict(self):

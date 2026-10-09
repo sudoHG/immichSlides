@@ -129,6 +129,7 @@ def cancelled_unstarted_gate(api, run):
     try:
         if (run["path"] != PRODUCERS["ci-pr-gate"] or run["event"] != "push"
                 or run["head_branch"] != "main" or run["head_repository"]["full_name"] != api.repository
+                or run["repository"]["full_name"] != api.repository
                 or run["status"] != "completed" or run["conclusion"] != "cancelled"
                 or type(run["run_attempt"]) is not int or run["run_attempt"] != 1):
             return False
@@ -504,6 +505,9 @@ def archive_blocked_ui(api, record, run, jobs, summaries):
                 or run["head_repository"]["full_name"] != api.repository or run["status"] != "completed"
                 or run["conclusion"] != "failure" or type(run["run_attempt"]) is not int or run["run_attempt"] != 1):
             return False
+        if len(summaries) != 1 or summaries[0]["infrastructure"] != [{"code": "archive-selection-failed",
+                "message": "archive-unavailable: no exact-identity gate archive before timeout"}]:
+            return False
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
         identity = parse_identity(record["identity"])
         require(record["workflow_id"] == run["workflow_id"] and record["workflow_path"] == run["path"]
@@ -523,7 +527,6 @@ def archive_blocked_ui(api, record, run, jobs, summaries):
                 and all(job["status"] == "completed" and job["conclusion"] == "skipped"
                         and (job["runner_id"] is None or type(job["runner_id"]) is int and job["runner_id"] == 0)
                         and job["steps"] == [] for job in shards), "UI shard may have executed")
-        require(len(summaries) == 1, "unexpected UI archive summaries")
         summary = parse_summary(summaries[0])
         require(summary["identity"] == identity and summary["source"]["workflow_path"] == run["path"]
                 and summary["source"]["fork_originated"] is False and summary["status"] == "failed"
@@ -533,9 +536,6 @@ def archive_blocked_ui(api, record, run, jobs, summaries):
         ui_inputs = record["ui_inputs"]["base"]
         require("error" not in ui_inputs and summary["hashes"]["manifests"] == {"ui-shards": ui_inputs["manifest_sha256"]},
                 "UI archive manifest differs from admission")
-        require(summary["infrastructure"] == [{"code": "archive-selection-failed",
-                "message": "archive-unavailable: no exact-identity gate archive before timeout"}],
-                "UI archive failed for another reason")
         from ci_summary import test_identity
         population = summary["population"]
         expected = [test_identity("host", "UI archive selection")]

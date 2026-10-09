@@ -40,6 +40,7 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual("not-run", report["status"])
         self.assertEqual([], report["observed"])
         self.assertEqual([], report["diagnostics"]["failures"])
+        self.assertEqual({"schema_version": 1, "first_attempt_failures": None}, report["first_execution_health"])
         self.assertIn("Not evaluated", render_entry(ci_report.compact_entry(report, set())))
         with patch("ci_report.ensure_label") as writes:
             self.assertEqual(([], {}), synchronize_issues(api, [report], {"entries": []}))
@@ -50,7 +51,7 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual("failed", rejected["status"])
         self.assertTrue(ci_report.issue_eligible(rejected))
 
-    def test_unstarted_main_gate_remains_not_run_and_cannot_notify_but_started_cancellation_can(self):
+    def test_unstarted_main_gate_is_not_run_and_all_cancellations_remain_ineligible(self):
         from test_ci_publish import RUN, UNSTARTED_GATE_JOBS, UnstartedGateAPI
         run = dict(RUN, event="push", head_branch="main", conclusion="cancelled",
                    created_at="2026-10-09T02:57:13Z")
@@ -64,6 +65,10 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("Not evaluated", render_entry(report))
         compact = ci_report.compact_entry(report, set())
         self.assertEqual(report["not_evaluated_reason"], compact["not_evaluated_reason"])
+        self.assertEqual({"schema_version": 1, "first_attempt_failures": None}, compact["first_execution_health"])
+        self.assertEqual("cancelled", compact["conclusion"])
+        self.assertEqual(run["created_at"], compact["created_at"])
+        self.assertEqual(run["head_sha"], compact["head_sha"])
         self.assertIn("Not evaluated", render_entry(compact))
         saved = ci_report.merge_snapshot(None, [compact], date(2026, 10, 9))
         self.assertEqual("not-run", saved["days"]["2026-10-09"]["entries"][0]["status"])
@@ -73,24 +78,24 @@ class ReporterTests(unittest.TestCase):
         for mutation in ({"runner_id": 123}, {"steps": [{"status": "completed"}]},
                          {"conclusion": "failure"}):
             api.jobs = [dict(UNSTARTED_GATE_JOBS[0], **mutation)]
+            api.total_count = 1
             with patch("ci_report.on_main", return_value=True):
                 started = read_run(api, run, {})
-            self.assertEqual("failed", started["status"])
-            self.assertTrue(started["diagnostics"]["infrastructure"])
-            self.assertTrue(ci_report.issue_eligible(started))
-        with patch("ci_report.ensure_label"), patch("ci_report.visible_issues", return_value=[]), \
-                patch("ci_report.matching_issues", return_value=[]), patch("ci_report.wait_for_issue_visibility"), \
-                patch.object(api, "repo", return_value={"number": 99}) as writes:
-            receipts, _ = synchronize_issues(api, [started], {"entries": []})
-        self.assertEqual("post-merge", receipts[0]["action"])
-        self.assertEqual(run["head_sha"], receipts[0]["sha"])
-        self.assertEqual("POST", writes.call_args.kwargs["method"])
+            self.assertEqual("unverified", started["status"])
+            self.assertEqual([], started["observed"])
+            self.assertEqual([], started["diagnostics"]["infrastructure"])
+            self.assertFalse(ci_report.issue_eligible(started))
+            with patch("ci_report.ensure_label", side_effect=AssertionError("cancelled push cannot notify")):
+                self.assertEqual(([], {}), synchronize_issues(api, [started], {"entries": []},
+                                                            post_merge_since="2026-10-09T00:00:00Z"))
         api.jobs = UNSTARTED_GATE_JOBS
+        api.total_count = len(api.jobs)
         api.newer = []
         with patch("ci_report.on_main", return_value=True):
-            self.assertEqual("failed", read_run(api, run, {})["status"])
+            self.assertEqual("unverified", read_run(api, run, {})["status"])
+        api.newer = UnstartedGateAPI().newer
         with patch("ci_report.on_main", return_value=False):
-            self.assertEqual("failed", read_run(api, run, {})["status"])
+            self.assertEqual("unverified", read_run(api, run, {})["status"])
 
     def transition(self, state, report, referenced=False):
         return issue_decision(state, IDENTITY, [report], registry_referenced=referenced)
