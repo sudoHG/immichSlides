@@ -16,7 +16,7 @@ jobs:
   archive:
     name: ui-archive
     runs-on: ubuntu-24.04
-    timeout-minutes: 130
+    timeout-minutes: 125
     permissions:
       contents: read
       actions: read
@@ -25,7 +25,6 @@ jobs:
     outputs:
       app_affected: ${{ steps.select.outputs.app_affected }}
       run_ui: ${{ steps.select.outputs.run_ui }}
-      appletv_routed: ${{ steps.select.outputs.appletv_routed }}
       ios_artifact_id: ${{ steps.select.outputs.ios_artifact_id }}
       ios_producer_run_id: ${{ steps.select.outputs.ios_producer_run_id }}
       tvos_artifact_id: ${{ steps.select.outputs.tvos_artifact_id }}
@@ -176,10 +175,48 @@ jobs:
           fi
           rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive"
 
+  cloud-wait:
+    name: ui-cloud-wait
+    needs: [archive, shards]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      checks: read
+    outputs:
+      appletv_routed: ${{ steps.select.outputs.appletv_routed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: |
+          python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ui-python"
+          echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Verify the Apple TV cloud selection
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py wait-cloud \
+            --output-dir "$RUNNER_TEMP/ui-cloud-selection"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-cloud-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ui-cloud-selection/summary.json
+            ${{ runner.temp }}/ui-cloud-selection/summary.md
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+
   appletv-shards:
     name: ui-appletv-${{ matrix.shard }}
-    needs: [archive, shards]
-    if: always() && needs.archive.outputs.run_ui == 'true' && needs.archive.outputs.appletv_routed != 'true'
+    needs: [archive, shards, cloud-wait]
+    if: ${{ !cancelled() && needs.archive.outputs.run_ui == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:

@@ -276,6 +276,30 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_archive_unavailable_neutrality_retains_the_linux_cloud_selection_guard(self):
+        from ci_publish import archive_blocked_ui
+        api = UnavailableUIAPI()
+        source = FIXTURE_UI + '''  cloud:
+    name: ui-cloud-wait
+    steps:
+      - run: python3 scripts/ci_ui_tests.py wait-cloud
+      - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: {name: 'ui-cloud-selection-${{ github.run_id }}-${{ github.run_attempt }}', path: records/summary.json}
+'''
+        api.record["workflows"][api.ui["path"]]["base"] = source
+        api.ui_jobs.append({"id": 6, "run_id": 201, "run_attempt": 1, "name": "ui-cloud-wait", "status": "completed", "conclusion": "success", "steps": []})
+        from ci_ui_reuse import expand_skipped_ui_matrix
+        jobs = expand_skipped_ui_matrix(source, api.ui, api.ui_jobs)
+        selection = copy.deepcopy(api.summary)
+        selection.update(status="passed", infrastructure=[])
+        selection["run"]["job"] = "ui-cloud-wait"
+        step = test_identity("host", "Apple TV cloud selection")
+        selection["population"].update(declared=[step], compiled=[step], observed=[observation(step, "passed", 1)])
+        summaries = [api.summary, selection]
+        self.assertTrue(archive_blocked_ui(api, api.record, api.ui, jobs, summaries))
+        selection["population"]["observed"][0]["outcome"] = "failed"
+        self.assertFalse(archive_blocked_ui(api, api.record, api.ui, jobs, summaries))
+
     def test_superseded_unexecuted_gate_excuses_only_bound_archive_unavailable_ui(self):
         from ci_publish import archive_blocked_ui
         def published(api):

@@ -19,9 +19,11 @@ def dispatch(api, event):
     source = api.repo("actions/runs/" + str(positive(event["workflow_run"]["id"])))
     require(source["repository"]["full_name"] == source["head_repository"]["full_name"] == api.repository,
             "cloud bridge refuses forks")
-    if source["path"] == UI_PATH and event["action"] in {"requested", "in_progress"}:
+    if source["path"] == UI_PATH and source["event"] != "pull_request":
+        return
+    if source["path"] == UI_PATH and event["action"] == "requested":
         current_producer(api, source)
-        api.dispatch(ROUTE_PATH, {"producer_run_id": str(source["id"]), "mode": "auto"})
+        api.dispatch(ROUTE_PATH, {"producer_run_id": str(source["id"]), "producer_attempt": str(source["run_attempt"]), "mode": "auto"})
     elif source["path"] == ROUTE_PATH and event["action"] == "completed":
         workflow = api.repo("actions/workflows/ci-xcode-cloud-route.yml")
         git("fetch", "--no-tags", "origin", "refs/heads/main")
@@ -36,7 +38,8 @@ def dispatch(api, event):
                 and artifacts[0]["name"] == f"ci-xcc-route-{positive(receipt['producer_run_id'])}-{positive(receipt['producer_attempt'])}",
                 "cloud bridge route run or attempt differs")
         if receipt["decision"] == "routed":
-            api.dispatch(IMPORT_PATH, {"producer_run_id": str(receipt["producer_run_id"])})
+            api.dispatch(IMPORT_PATH, {"producer_run_id": str(receipt["producer_run_id"]),
+                                       "producer_attempt": str(receipt["producer_attempt"])})
 
 
 def main():

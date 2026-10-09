@@ -176,6 +176,29 @@ def validate_uploader(run, workflow, repository, path, attempt):
             "cloud evidence uploader is not a successful trusted main workflow")
 
 
+def archive_evidence_run(api, run):
+    """Bind cloud proof to the actual retained archive-selection execution."""
+    require(type(run["run_attempt"]) is int and 0 < run["run_attempt"] <= 100, "too many UI attempts")
+    retained, evidence_attempt = None, None
+    for attempt in range(1, run["run_attempt"] + 1):
+        jobs = api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs")
+        matches = [job for job in jobs if job["name"] == "ui-archive"]
+        require(len(matches) <= 1, "duplicate UI archive jobs")
+        if not matches:
+            continue
+        job = matches[0]
+        require(type(job["id"]) is int and job["id"] > 0, "archive job has no execution identity")
+        execution = ("started_at", "completed_at", "runner_id")
+        same_execution = retained and (all(job.get(key) and job[key] == retained.get(key) for key in execution)
+                                      or job["id"] == retained["id"] and all(job.get(key) == retained.get(key) for key in execution))
+        # GitHub can regenerate IDs for retained successful jobs on a rerun.
+        if not same_execution:
+            evidence_attempt = attempt
+        retained = job
+    require(retained is not None, "UI archive selection has no execution")
+    return dict(run, run_attempt=evidence_attempt, producer_latest_attempt=run["run_attempt"], archive_job=retained)
+
+
 def trusted_artifact(api, name, path, member):
     from ci_publish import git, json_member, positive
     workflow = api.repo("actions/workflows/" + path.rsplit("/", 1)[-1], missing=True)
@@ -192,8 +215,11 @@ def trusted_artifact(api, name, path, member):
         except (ContractError, KeyError, TypeError, ValueError):
             continue
         receipt = json_member(api, artifact, member)
+        attempt = receipt["uploader_attempt"]
+        historical = api.repo(f"actions/runs/{uploader['id']}/attempts/{positive(attempt)}")
+        validate_uploader(historical, workflow, api.repository, path, attempt)
         require(type(receipt["uploader_run_id"]) is int and receipt["uploader_run_id"] == uploader["id"]
-                and type(receipt["uploader_attempt"]) is int and receipt["uploader_attempt"] == uploader["run_attempt"],
+                and type(attempt) is int and attempt <= uploader["run_attempt"],
                 "cloud artifact uploader run or attempt differs")
         candidates.append((receipt, artifact["id"]))
     require(candidates, "trusted cloud evidence is missing or expired")
@@ -207,7 +233,12 @@ def trusted_artifact(api, name, path, member):
     return min(candidates, key=lambda item: item[1])
 
 
-def trusted_cloud(api, record, run, *, approved):
+def trusted_cloud(api, record, run, *, approved, evidence_attempt=None):
+    if evidence_attempt is None:
+        run = archive_evidence_run(api, run)
+    else:
+        require(type(evidence_attempt) is int and 0 < evidence_attempt <= run["run_attempt"], "invalid archive evidence attempt")
+        run = dict(run, run_attempt=evidence_attempt)
     route, route_artifact = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{run['run_attempt']}", ROUTE_PATH, "route.json")
     validate_route(record, run, route)
     receipt, import_artifact = trusted_artifact(api, f"ci-xcc-import-{run['id']}-{run['run_attempt']}", IMPORT_PATH, "cloud.json")
@@ -219,7 +250,8 @@ def trusted_cloud(api, record, run, *, approved):
     # stale, failed or ambiguous app check or a replaced routing artifact.
     checks = api.pages("commits/" + record["identity"]["head_sha"] + "/check-runs", "check_runs", filter="all")
     result = validate_evidence(record, run, route, receipt["evidence"], checks, approved=approved)
-    return dict(result, route_artifact_id=route_artifact, import_artifact_id=import_artifact)
+    return dict(result, route_artifact_id=route_artifact, import_artifact_id=import_artifact,
+                evidence_attempt=run["run_attempt"])
 
 
 def apple_tv_skip_names(source, run):

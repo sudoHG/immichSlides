@@ -1,10 +1,15 @@
 name: ci-xcode-cloud-route
+run-name: xcc-route-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}
 
 on:
   workflow_dispatch:
     inputs:
       producer_run_id:
         description: Authoritative same-repository pull-request ci-ui run
+        required: true
+        type: string
+      producer_attempt:
+        description: UI archive evidence attempt
         required: true
         type: string
       mode:
@@ -16,21 +21,23 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: ci-xcc-account-budget
-  cancel-in-progress: false
-
 jobs:
-  route:
+  start:
+    name: xcc-start
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 20
     environment: xcode-cloud
     permissions:
       contents: read
       actions: read
       checks: read
       pull-requests: read
+    concurrency:
+      group: ci-xcc-account-budget
+      cancel-in-progress: false
+    outputs:
+      recorded: ${{ steps.start.outputs.recorded }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -38,14 +45,68 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
-      - name: Decide under congestion and the account compute cap
+      - name: Decide and reserve under the account compute cap
+        id: prepare
+        env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          CI_XCC_ROUTING_OVERRIDE: ${{ vars.CI_XCC_ROUTING_OVERRIDE }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py prepare'
+      - if: success() && steps.prepare.outputs.reserved == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-xcc-reservation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-xcc-route/reservation.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Start or reconcile the reserved build
+        if: success() && steps.prepare.outputs.recorded == 'true'
+        id: start
+        env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py start'
+      - if: success() && steps.start.outputs.recorded == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-xcc-route/start.json
+          if-no-files-found: error
+          retention-days: 90
+
+  route:
+    needs: start
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.start.outputs.recorded == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    environment: xcode-cloud
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: read
+    concurrency:
+      group: ci-xcc-poll-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
+      - name: Poll and verify the reserved producer build
         id: route
         env:
           CI_WORKFLOW_TOKEN: ${{ github.token }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
-        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py'
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py poll'
       - if: success() && steps.route.outputs.recorded == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

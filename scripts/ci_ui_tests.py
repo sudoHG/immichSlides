@@ -56,7 +56,7 @@ def context():
 
 
 def summary_for(ctx, manifest_hash):
-    step = test_identity("host", "UI archive selection")
+    step = test_identity("host", "Apple TV cloud selection" if ctx["run"]["job"] == "ui-cloud-wait" else "UI archive selection")
     return {"schema_version": 1, **ctx,
             "hashes": {"manifests": {"ui-shards": manifest_hash}, "policies": {}},
             "toolchain": {"versions": {"python": platform.python_version()}, "signing_mode": "not-applicable"},
@@ -213,7 +213,6 @@ def wait_archive(args):
     parse_shard_manifest((ROOT / MANIFEST_PATH).read_text())
     summary = summary_for(ctx, manifest_hash)
     started, code = time.monotonic(), 1
-    output("appletv_routed", "false")
     try:
         workspace_preflight(ROOT)
         affected = app_affected(ctx["identity"])
@@ -238,10 +237,6 @@ def wait_archive(args):
                     for key in ("artifact_id", "producer_run_id", "producer_attempt"):
                         output(platform_name + "_" + key, selection[key])
                     write_json(records / ("archive-selection-" + platform_name + ".json"), selection)
-                cloud_decision = wait_cloud(ctx, api)
-                output("appletv_routed", str(cloud_decision == "routed").lower())
-                write_json(records / "archive-selection-cloud.json", {"schema_version": 1, "identity": ctx["identity"],
-                           "decision": cloud_decision, "producer_run_id": ctx["run"]["id"], "attempt": ctx["run"]["attempt"]})
         else:
             output("run_ui", "false")
             write_json(records / "archive-selection.json", {"schema_version": 1, "identity": ctx["identity"], "status": "not-applicable"})
@@ -257,36 +252,72 @@ def wait_archive(args):
 
 
 def wait_cloud(ctx, api):
-    """Wait within the archive job budget; PR artifacts cannot authorize a skip."""
+    """Only this Linux job waits; every rerun revalidates retained archive proof."""
     if ctx["identity"]["event"] != "pull_request" or ctx["source"]["fork_originated"]:
         return "github"
     from datetime import datetime, timezone
     from ci_publish import trusted_admissions
     from ci_xcode_cloud_route import producer_decision, timestamp
-    from ci_xcode_cloud import ROUTE_PATH, trusted_artifact
+    from ci_xcode_cloud import ROUTE_PATH, archive_evidence_run, trusted_artifact
     try:
         run = api.repo("actions/runs/" + ctx["run"]["id"])
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
         require(run["run_attempt"] == ctx["run"]["attempt"] and run["head_sha"] == ctx["identity"]["head_sha"], "UI producer changed")
         record = trusted_admissions(api, [run["id"]]).get(run["id"])
         require(record is not None and record["identity"] == ctx["identity"], "UI admission differs from producer")
+        evidence_run = archive_evidence_run(api, run)
+        evidence_attempt = evidence_run["run_attempt"]
+        if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt) == "routed":
+            return "routed"
+        if evidence_attempt != run["run_attempt"] or record["classification"].get("app_affected") is not True:
+            return "github"
+        workflows = {role: api.repo("actions/workflows/ci-xcode-cloud-" + role + ".yml") for role in ("route", "import")}
+        if any(workflow["state"] != "active" for workflow in workflows.values()):
+            return "github"
         started = timestamp(run.get("run_started_at") or run["created_at"])
         remaining = max(0, 115 * 60 - (datetime.now(timezone.utc) - started).total_seconds())
         deadline = time.monotonic() + remaining
+        delay = 60
         while True:
-            if producer_decision(api, record, run, approved=False) == "routed":
-                return "routed"
+            fresh = api.repo("actions/runs/" + str(run["id"]))
+            require(all(fresh[key] == run[key] for key in ("id", "run_attempt", "head_sha"))
+                    and fresh["status"] != "completed", "UI producer superseded or completed")
+            route = None
             try:
-                route, _ = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{run['run_attempt']}", ROUTE_PATH, "route.json")
+                route, _ = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{evidence_attempt}", ROUTE_PATH, "route.json")
                 if route["decision"] != "routed":
                     return "github"
+                if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt, route_seen=True) == "routed":
+                    return "routed"
             except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError):
                 pass
+            role = "import" if route is not None else "route"
+            runs = api.repo(f"actions/workflows/{workflows[role]['id']}/runs?event=workflow_dispatch&per_page=100")["workflow_runs"]
+            matches = [item for item in runs if item.get("display_title") == f"xcc-{role}-{run['id']}-{evidence_attempt}"]
+            if matches and all(item["status"] == "completed" for item in matches):
+                return "github"
             if time.monotonic() >= deadline:
                 return "github"
-            time.sleep(20)
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
+            delay = min(300, delay * 2)
     except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError):
         return "github"
+
+
+def cloud_selection(args):
+    ctx = context()
+    ctx["run"]["job"] = "ui-cloud-wait"
+    records = args.output_dir.resolve()
+    require(ROOT != records and ROOT not in records.parents, "UI output must be outside checkout")
+    records.mkdir(parents=True, exist_ok=False)
+    summary = summary_for(ctx, file_hash(ROOT / MANIFEST_PATH))
+    started = time.monotonic()
+    decision = wait_cloud(ctx, GitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"]))
+    output("appletv_routed", str(decision == "routed").lower())
+    summary["status"] = "passed"
+    summary["population"]["observed"] = [observation(summary["population"]["declared"][0], "passed", time.monotonic() - started)]
+    write_summary(summary, records)
+    return 0
 
 
 def run_shard(args):
@@ -463,6 +494,8 @@ def main(argv=None):
     wait = commands.add_parser("wait-archive")
     wait.add_argument("--output-dir", type=Path, required=True)
     wait.add_argument("--timeout-minutes", type=float, default=120)
+    cloud_wait = commands.add_parser("wait-cloud")
+    cloud_wait.add_argument("--output-dir", type=Path, required=True)
     run = commands.add_parser("run")
     run.add_argument("--device", choices=DEVICES, required=True)
     run.add_argument("--shard", required=True)
@@ -501,6 +534,8 @@ def main(argv=None):
             require(not args.manifest_revision.startswith("-") and ":" not in args.manifest_revision, "invalid manifest revision")
         if args.command == "wait-archive":
             return wait_archive(args)
+        if args.command == "wait-cloud":
+            return cloud_selection(args)
         if args.command == "simulator":
             require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
                     "automatic simulator creation is hosted-only")

@@ -10,6 +10,9 @@ The [Xcode Cloud Apple TV overflow path](XCODE_CLOUD_UI.md) runs the same fixtur
 methods under macOS congestion. Only a main router decision plus independently
 validated API results and the exact-head app check can suppress Apple TV shards.
 iPhone and iPad remain on GitHub; failed or absent cloud proof runs Apple TV here.
+Cloud waiting runs in a separate Linux job, so iPhone/iPad start when archive
+selection finishes. That job publishes its own operational summary and gates only
+Apple TV using `!cancelled()`; failed-job reruns revalidate retained archive proof.
 
 ## Classification and archive selection
 
@@ -109,6 +112,7 @@ commit-to-merged-PR lookup without granting any write authority.
 The archive-selection job still runs and publishes its bound summary and
 `archive-selection.json` with `status: reused` and the original verdict provenance.
 Its `run_ui` output suppresses the entire macOS matrix. The publisher independently
+validates both archive and cloud-selection operational summaries, then
 repeats the reuse decision before accepting those skipped jobs; an arbitrary
 producer skip, partial skip or failed selection job cannot become green.
 For execution, `archive-selection-ios.json` and `archive-selection-tvos.json`

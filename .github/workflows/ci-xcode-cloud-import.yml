@@ -1,10 +1,15 @@
 name: ci-xcode-cloud-import
+run-name: xcc-import-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}
 
 on:
   workflow_dispatch:
     inputs:
       producer_run_id:
         description: Authoritative same-repository pull-request ci-ui run
+        required: true
+        type: string
+      producer_attempt:
+        description: UI archive evidence attempt
         required: true
         type: string
 
@@ -22,7 +27,7 @@ jobs:
       checks: read
       pull-requests: read
     concurrency:
-      group: ci-xcc-import-${{ inputs.producer_run_id }}
+      group: ci-xcc-import-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

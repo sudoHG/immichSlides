@@ -24,6 +24,24 @@ def workflow():
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_macos_jobs_cannot_survive_cancellation_through_always(self):
+        document = workflow()
+        for condition in ("always()", "${{ always() && needs.archive.outputs.run_ui == 'true' }}"):
+            with self.subTest(condition=condition):
+                document["jobs"]["check"]["if"] = condition
+                self.assertIn("macos-cancellation", self.rules(document))
+        document["jobs"]["check"]["if"] = "${{ !cancelled() && needs.archive.outputs.run_ui == 'true' }}"
+        self.assertNotIn("macos-cancellation", self.rules(document))
+
+    def test_cloud_start_requires_a_persisted_reservation_before_post(self):
+        path = policy.XCC_ROUTE_WORKFLOW
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        steps = document["jobs"]["start"]["steps"]
+        reservation = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-reservation-"))
+        post = next(index for index, step in enumerate(steps) if step.get("id") == "start")
+        steps[reservation], steps[post] = steps[post], steps[reservation]
+        self.assertIn("xcc-reservation", self.rules(document, path))
+
     def test_cloud_event_bridge_cannot_receive_secrets_or_execute_pr_code(self):
         root = Path(__file__).resolve().parent.parent
         path = policy.XCC_DISPATCH_WORKFLOW
@@ -61,7 +79,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 elif mutation == "fork":
                     job["if"] = "github.ref == 'refs/heads/main'"
                 elif mutation == "parallel":
-                    changed["concurrency"]["group"] += "-${{ github.run_id }}"
+                    changed["jobs"]["start"]["concurrency"]["group"] += "-${{ github.run_id }}"
                 elif mutation == "write":
                     job["permissions"]["contents"] = "write"
                 elif mutation == "early-key":
