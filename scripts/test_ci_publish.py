@@ -296,6 +296,13 @@ class PublisherTests(unittest.TestCase):
                 jobs, summaries = producer_evidence(api, api.ui, FIXTURE_UI, admission=api.record)
                 if mutation == "rerun":
                     api.ui["run_attempt"] = 2
+                    api.artifact["name"] = "ui-archive-201-2"
+                    api.summary["run"]["attempt"] = 2
+                    summaries[0]["run"]["attempt"] = 2
+                    for job in api.ui_jobs + jobs:
+                        job["run_attempt"] = 2
+                    for job in jobs:
+                        job["evidence_attempt"] = 2
                 elif mutation == "executed-shard":
                     api.ui_jobs = [api.ui_jobs[0],
                         dict(api.ui_jobs[1], name="ui-iphone-default", conclusion="failure", runner_id=123,

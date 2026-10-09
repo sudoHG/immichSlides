@@ -173,7 +173,8 @@ keeps its ordinary fail-closed path. Every job must have status `completed` with
 conclusion `cancelled` or `skipped`, no runner and an empty steps list. The jobs'
 unique IDs must match the API's explicit `total_count`; an empty list requires
 `total_count: 0`. Both neutral reader paths retain the saved first-execution
-health fields without inventing test observations.
+health fields without inventing test observations. Monthly health counts them as
+incomplete evidence.
 
 The same SHA's first-attempt main UI run is also `not-run` only when its bound
 archive summary failed solely with `archive-unavailable`, no refusal exists, and

@@ -530,7 +530,7 @@ def archive_blocked_ui(api, record, run, jobs, summaries):
         summary = parse_summary(summaries[0])
         require(summary["identity"] == identity and summary["source"]["workflow_path"] == run["path"]
                 and summary["source"]["fork_originated"] is False and summary["status"] == "failed"
-                and summary["run"]["id"] == str(run["id"]) and summary["run"]["attempt"] == 1
+                and summary["run"]["id"] == str(run["id"]) and summary["run"]["attempt"] == run["run_attempt"]
                 and all(summary["run"][key] == metadata["ui-archive"][key] for key in ("tier", "job", "shard")),
                 "UI archive summary is not bound")
         ui_inputs = record["ui_inputs"]["base"]

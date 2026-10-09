@@ -33,6 +33,7 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 class ReporterTests(unittest.TestCase):
     def test_archive_unavailable_ui_cannot_notify_for_a_superseded_unexecuted_gate(self):
+        from ci_health import health_report
         from test_ci_publish import UnavailableUIAPI
         api = UnavailableUIAPI()
         with patch("ci_report.on_main", return_value=True):
@@ -42,6 +43,11 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual([], report["diagnostics"]["failures"])
         self.assertEqual({"schema_version": 1, "first_attempt_failures": None}, report["first_execution_health"])
         self.assertIn("Not evaluated", render_entry(ci_report.compact_entry(report, set())))
+        snapshot = ci_report.merge_snapshot(None, [ci_report.compact_entry(report, set())], date(2026, 10, 9))
+        snapshot["producer"] = {"repository": api.repository}
+        health = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 9))
+        self.assertEqual({"not-run": 1}, health["coverage"]["statuses"])
+        self.assertEqual(1, health["coverage"]["incomplete_evidence_runs"])
         with patch("ci_report.ensure_label") as writes:
             self.assertEqual(([], {}), synchronize_issues(api, [report], {"entries": []}))
         writes.assert_not_called()
