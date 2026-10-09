@@ -32,6 +32,129 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_nightly_ui_reader_rejects_missing_samples_and_foreign_shards(self):
+        from ci_nightly_ui import judge_ui, parse_ui_plan
+        identity = {"schema_version": 1, "repository": "sudoHG/immichSlides", "event": "schedule",
+                    "ref": "refs/heads/main", "commit_sha": "a" * 40, "tree_sha": "b" * 40}
+        plan = {"schema_version": 1, "identity": identity, "run": {"id": "10", "attempt": 1},
+                "source": {"repository": identity["repository"], "workflow_path": ci_report.NIGHTLY_PATH,
+                           "event": "schedule", "fork_originated": False, "ci_changing": None},
+                "hashes": {}, "shards": [], "max_parallel": 2, "started_epoch": 1}
+        summaries = []
+        for device, platform in (("iphone", "ios"), ("ipad", "ios"), ("appletv", "tvos")):
+            plan["hashes"][device] = {"manifests": {"ui-shards": "c" * 64}, "policies": {}}
+            for shard in ("default", "navigation", "visual"):
+                test = test_identity("ui", "ExampleUITests/test" + shard.capitalize(), platform=platform, device=device)
+                plan["shards"].append({"device": device, "shard": shard, "declared": [test]})
+                summary = valid_summary()
+                summary.update(identity=identity, source=plan["source"], hashes=plan["hashes"][device],
+                               run={**plan["run"], "tier": "ui", "job": "ui-" + device, "shard": shard})
+                summary["population"].update(declared=[test], compiled=[test], observed=[observation(test, "passed", 2)])
+                summaries.append(summary)
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        good = judge_ui(plan, summaries, policy=policy, registry={"schema_version": 1, "entries": []},
+                        evaluated_on=date(2026, 10, 1), matrix_job_result="success")
+        self.assertEqual("passed", good["status"])
+        self.assertEqual(9, good["matrix"]["executed"])
+        for change in ("missing-shard", "missing-sample", "foreign-attempt", "duplicate-shard", "failed-job"):
+            records = copy.deepcopy(summaries)
+            job_result = "success"
+            if change == "missing-shard":
+                records.pop()
+            elif change == "missing-sample":
+                records[-1]["population"]["observed"] = []
+            elif change == "foreign-attempt":
+                records[-1]["run"]["attempt"] = 2
+            elif change == "duplicate-shard":
+                records.append(records[-1])
+            else:
+                job_result = "failure"
+            with self.subTest(change=change):
+                result = judge_ui(plan, records, policy=policy, registry={"schema_version": 1, "entries": []},
+                                  evaluated_on=date(2026, 10, 1), matrix_job_result=job_result)
+                self.assertEqual("failed", result["status"])
+                self.assertTrue(result["errors"])
+                self.assertEqual(9, len(result["shards"]))
+        for version in (True, "1", 2):
+            with self.subTest(version=version), self.assertRaises(ContractError):
+                parse_ui_plan(dict(plan, schema_version=version))
+        incomplete = copy.deepcopy(plan)
+        incomplete["shards"] = incomplete["shards"][:-1]
+        with self.assertRaises(ContractError):
+            parse_ui_plan(incomplete)
+
+    def test_nightly_ui_successor_is_bound_to_artifacts_and_diagnostics_cannot_write(self):
+        import hashlib
+        from ci_nightly import aggregate_nightly
+        from ci_nightly_ui import judge_ui
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+               "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
+               "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "failure"}
+        identity = {"schema_version": 1, "repository": api.repository, "event": "schedule", "ref": "refs/heads/main",
+                    "commit_sha": run["head_sha"], "tree_sha": "b" * 40}
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        registry = {"schema_version": 1, "entries": []}
+        blobs = {"scripts/ci-test-policy.json": json.dumps(policy).encode(), "scripts/ci-known-flaky.json": json.dumps(registry).encode()}
+        hashes = {"manifests": {"ui-shards": "c" * 64}, "policies": {
+            name: hashlib.sha256(blobs[path]).hexdigest() for name, path in (
+                ("test-policy", "scripts/ci-test-policy.json"), ("known-flaky", "scripts/ci-known-flaky.json"))}}
+        source = {"repository": api.repository, "workflow_path": ci_report.NIGHTLY_PATH, "event": "schedule",
+                  "fork_originated": False, "ci_changing": None}
+        plan = {"schema_version": 1, "identity": identity, "source": source, "run": {"id": "10", "attempt": 1},
+                "hashes": {device: hashes for device in ("iphone", "ipad", "appletv")},
+                "shards": [], "max_parallel": 2, "started_epoch": 1}
+        members, summaries, intervals = {}, [], []
+        for device, platform in (("iphone", "ios"), ("ipad", "ios"), ("appletv", "tvos")):
+            for shard in ("default", "navigation", "visual"):
+                test = test_identity("ui", "ExampleUITests/test" + shard.capitalize(), device=device, platform=platform)
+                plan["shards"].append({"device": device, "shard": shard, "declared": [test]})
+                summary = valid_summary()
+                summary.update(identity=identity, source=source, hashes=hashes,
+                               run={**plan["run"], "tier": "ui", "job": "ui-" + device, "shard": shard})
+                outcome = "failed" if device == "appletv" and shard == "visual" else "passed"
+                summary["population"].update(declared=[test], compiled=[test], observed=[observation(test, outcome, 2)])
+                summaries.append(summary)
+                members[(f"ui-{device}-{shard}-10-1", "summary.json")] = summary
+                intervals.append({"shard": device + "/" + shard, "started_epoch": len(intervals) + 1, "finished_epoch": len(intervals) + 2})
+        ui = {"schema_version": 1, "plan": plan, "matrix_job_result": "failure",
+              "verdict": judge_ui(plan, summaries, policy=policy, registry=registry, evaluated_on=date(2026, 10, 1), matrix_job_result="failure"),
+              "capacity": {"max_parallel": 2, "shards": 9, "minimum_shard_waves": 5, "shard_intervals": intervals,
+                           "start_order_waves": [[item["shard"] for item in intervals[index:index + 2]] for index in range(0, 9, 2)], "wall_seconds": 10}}
+        raw = aggregate_nightly([], [], live_in_scope=False)
+        raw.update(schema_version=2, identity=identity, source=source, hashes=hashes, run=plan["run"], ui=ui,
+                   capacity={"shard_intervals": []})
+        raw["tiers"]["ui"] = "failed"
+        members[("nightly-aggregate-10-1", "nightly.json")] = raw
+        members[("nightly-ui-aggregate-10-1", "nightly-ui.json")] = ui
+        artifacts = [{"name": name, "expired": False} for name in sorted({name for name, _ in members})]
+        with patch("ci_publish.json_member", side_effect=lambda api, artifact, member: members[(artifact["name"], member)]), \
+                patch("subprocess.check_output", side_effect=lambda command, **kwargs: blobs[command[-1].split(":", 1)[1]]):
+            report = ci_report.nightly_attempt(api, run, 1, artifacts)
+            self.assertEqual(9, report["diagnostics"]["counts"]["ui_executed"])
+            failed = [item for item in report["observed"] if item["outcome"] == "failed"]
+            self.assertEqual("appletv", failed[0]["identity"]["dimensions"]["device"])
+            self.assertEqual("open", issue_decision(None, failed[0]["identity"], [report], registry_referenced=False)["action"])
+            for version in (True, "2", 3):
+                with self.subTest(version=version), self.assertRaises(ContractError):
+                    raw["schema_version"] = version
+                    ci_report.nightly_attempt(api, run, 1, artifacts)
+            raw["schema_version"] = 2
+            with self.assertRaises(ContractError):
+                ci_report.nightly_attempt(api, run, 1, artifacts[:-1])
+        branch = dict(run, event="workflow_dispatch", head_branch="nightly-candidate")
+        branch_identity = dict(identity, event="workflow_dispatch", ref="refs/heads/nightly-candidate")
+        self.assertFalse(ci_report.nightly_ref_allowed(api, branch, branch_identity))
+        api.diagnostic_nightly = True
+        self.assertFalse(ci_report.nightly_ref_allowed(api, branch, branch_identity))
+        api.dry_run = True
+        self.assertTrue(ci_report.nightly_ref_allowed(api, branch, branch_identity))
+        for arguments in (["--diagnostic-nightly"], ["--dry-run", "--diagnostic-nightly"],
+                          ["--dry-run", "--diagnostic-nightly", "--run-id", "10", "--phase", "sync"]):
+            with self.subTest(arguments=arguments), self.assertRaises(ContractError):
+                ci_report.main(arguments)
+
+
     def test_archive_unavailable_ui_cannot_notify_for_a_superseded_unexecuted_gate(self):
         from ci_health import health_report
         from test_ci_publish import UnavailableUIAPI
