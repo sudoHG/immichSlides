@@ -426,9 +426,12 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             continue
         publisher_upload = (path == ".github/workflows/ci-publish.yml"
                             and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-                            and options == {"name": "ci-admission-${{ steps.admit.outputs.run_id }}",
-                                            "path": "${{ runner.temp }}/ci-admission/record.json",
-                                            "if-no-files-found": "error", "retention-days": 30})
+                            and options in ({"name": "ci-admission-${{ steps.admit.outputs.run_id }}",
+                                             "path": "${{ runner.temp }}/ci-admission/record.json",
+                                             "if-no-files-found": "error", "retention-days": 30},
+                                            {"name": "ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}",
+                                             "path": "${{ runner.temp }}/ci-ui-verdict/verdict.json",
+                                             "if-no-files-found": "error", "retention-days": 30}))
         report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
                          and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",
                                              "path": "${{ runner.temp }}/ci-report/" + directory,

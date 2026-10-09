@@ -103,6 +103,16 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual(1, len(api.searches))
         self.assertIn('label:"ci-reported-failure"', api.searches[0])
         self.assertIn('in:title "CI nightly failure: ExampleUITests/testPlayback"', api.searches[0])
+        # Adopted registry issues retain their maintainer title after registry removal.
+        target["state"] = "closed"
+        target["title"] = "Existing maintainer diagnosis"
+        api = API()
+        target["body"] = ci_report.issue_body(None, state, api.repository)
+        receipts, _ = synchronize_issues(api, [entry("2026-10-02", run=11)], {"entries": []}, inventory=[],
+                                         issue_index={identity_token(IDENTITY): 135})
+        self.assertEqual(["reopen"], [item["action"] for item in receipts])
+        self.assertEqual([], api.searches)
+        self.assertEqual(2, len(api.reads))
 
     def test_timeouts_and_missing_exports_are_infrastructure_not_contract_failures(self):
         method = test_identity("strict", "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", **IDENTITY["dimensions"])
@@ -327,6 +337,30 @@ class ReporterTests(unittest.TestCase):
             synchronize_issues(api, [entry()], {"entries": []})
         self.assertEqual([], synchronize_issues(api, [entry()], {"entries": []})[0])
         self.assertEqual(1, api.created)
+
+    def test_main_ui_skips_require_the_existing_trusted_reuse_verdict(self):
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        run = {"id": 12, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+               "head_sha": "a" * 40, "path": ".github/workflows/ci-ui.yml", "event": "push", "head_branch": "main",
+               "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "success"}
+        identity = {"schema_version": 1, "repository": api.repository, "event": "push", "ref": "refs/heads/main",
+                    "pushed_sha": run["head_sha"], "tree_sha": "b" * 40}
+        record = {"workflow_id": 123, "workflow_path": run["path"], "identity": identity,
+                  "classification": {"ci_changing": False}, "workflows": {run["path"]: {"base": "trusted workflow"}}}
+        jobs = [{"name": "ui-archive", "status": "completed", "conclusion": "success"},
+                {"name": "ui-iphone-default", "status": "completed", "conclusion": "skipped"}]
+        summary = valid_summary()
+        summary["identity"] = identity
+        summary["source"].update(event="push", workflow_path=run["path"])
+        summary["run"]["id"] = str(run["id"])
+        for verdict in ({"state": "success", "reuse": {"producer_run_id": 10}}, ContractError("no trusted proof")):
+            with self.subTest(verdict=verdict), patch("ci_report.on_main", return_value=True), \
+                    patch("ci_publish.producer_evidence", return_value=(jobs, [summary])), \
+                    patch("ci_ui_reuse.evaluate_reused_push", side_effect=verdict if isinstance(verdict, Exception) else None,
+                          return_value=verdict) as reuse:
+                report = read_run(api, run, {12: record})
+                self.assertEqual("passed" if isinstance(verdict, dict) else "failed", report["status"])
+                reuse.assert_called_once_with(api, record, run, jobs, [summary])
 
     def test_parameterized_swift_observations_cover_the_declared_function(self):
         summary = valid_summary()

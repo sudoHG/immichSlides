@@ -494,8 +494,13 @@ def read_run(api, run, admissions, previous=None):
                 entry["status"] = "unverified"
                 entry["diagnostics"]["infrastructure"] = []
             if not errors:
-                if all(job["status"] == "completed" and job["conclusion"] == "success" for job in jobs):
-                    result = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
+                reused_ui = run["path"] == ".github/workflows/ci-ui.yml" and any(job["conclusion"] == "skipped" for job in jobs)
+                if reused_ui or all(job["status"] == "completed" and job["conclusion"] == "success" for job in jobs):
+                    if reused_ui:
+                        from ci_ui_reuse import evaluate_reused_push
+                        result = evaluate_reused_push(api, record, run, jobs, summaries)
+                    else:
+                        result = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
                     entry["evaluation"] = result
                     entry["status"] = "passed" if result["state"] == "success" and run["conclusion"] == "success" else "failed"
                 elif not entry["diagnostics"]["failures"]:
@@ -607,12 +612,13 @@ def sync_identity(api, token, identity, entries, registry_issues, registry_token
     return {"issue": issue["number"], "action": decision["action"], "token": token}
 
 
-def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inventory=None):
+def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inventory=None, issue_index=None):
     entries = [entry for entry in entries if issue_eligible(entry) and entry["source"]["repository"] == api.repository]
     if not entries:
         return [], {}
     raise_errors = errors is None
     errors = [] if errors is None else errors
+    issue_index = {} if issue_index is None else issue_index
     ensure_label(api, label)
     issues = visible_issues(api, label) if inventory is None else inventory
     registry_issues = {int(item["issue"].rsplit("/", 1)[-1]) for item in registry["entries"]}
@@ -646,8 +652,14 @@ def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inve
             if token not in by_token and token not in registry_tokens:
                 if issue_decision(None, identity, entries, registry_referenced=False)["action"] == "none":
                     continue
-                matches = [issue for issue in matching_issues(api, label, "CI nightly failure: " + identity["key"][:180])
-                           if (read_state(issue) or {}).get("token") == token]
+                if token in issue_index:
+                    issue = api.repo(f"issues/{issue_index[token]}", missing=True)
+                    require(issue and (read_state(issue) or {}).get("token") == token,
+                            "indexed issue is missing or changed; refusing a duplicate")
+                    matches = [issue]
+                else:
+                    matches = [issue for issue in matching_issues(api, label, "CI nightly failure: " + identity["key"][:180])
+                               if (read_state(issue) or {}).get("token") == token]
                 require(len(matches) <= 1, "duplicate tracking identity")
                 if matches:
                     by_token[token] = matches[0]
@@ -834,7 +846,7 @@ def write_report(output, snapshot, entries, registry, states, *, stopped, now=No
     candidates = [entry for rollup in snapshot["days"].values() for entry in rollup["entries"]
                   if entry["source"]["event"] == "push" or entry["source"]["workflow_path"] == NIGHTLY_PATH]
     plan = {"schema_version": 2, "entries": [] if stopped else decision_entries(candidates, now),
-            "registry": registry, "issue_inventory": list(inventory), "budget_stopped": stopped,
+            "registry": registry, "issue_inventory": list(inventory), "issue_index": snapshot.get("issue_index", {}), "budget_stopped": stopped,
             "api_budget": snapshot.get("api_budget", {})}
     (output / "sync.json").write_text(json.dumps(plan) + "\n")
 
@@ -966,7 +978,7 @@ def main(argv=None):
     errors = []
     try:
         receipts, states = synchronize_issues(api, plan["entries"], plan["registry"], errors=errors,
-                                            inventory=plan.get("issue_inventory", []))
+                                            inventory=plan.get("issue_inventory", []), issue_index=plan.get("issue_index", {}))
     except RateLimitLow:
         receipts, states = [], {}
         errors.append({"code": "api-budget-low"})

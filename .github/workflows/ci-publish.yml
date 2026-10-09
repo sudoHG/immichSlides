@@ -95,10 +95,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
-      - env:
+      - id: publish
+        env:
           CI_WORKFLOW_TOKEN: ${{ github.token }}
           CI_APP_ID: ${{ vars.CI_APP_ID }}
           CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
           CI_PR_NUMBER: ${{ needs.route.outputs.pr }}
           CI_PUSHED_SHA: ${{ needs.route.outputs.pushed }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py publish'
+      - name: Retain the trusted complete UI verdict
+        if: steps.publish.outputs.ui_verdict_tree != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}
+          path: ${{ runner.temp }}/ci-ui-verdict/verdict.json
+          if-no-files-found: error
+          retention-days: 30

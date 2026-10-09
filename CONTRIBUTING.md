@@ -82,6 +82,8 @@ The informational `ci-gate` host job and [secret-free build archive jobs](docs/C
 run on pull requests and pushes to `main`. Separate hosted runners execute the
 [complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
 The [iPhone UI tier](docs/CI_UI.md) consumes the iOS archive across runs.
+[P2 visual review](docs/CI_P2_REVIEWS.md) explains the fixture-only seven-day packages
+and the maintainer's signed record pull request; agents never supply human sign-off.
 Release archive preparation and the maintainer-gated App Store Connect steps are in
 [Xcode Cloud to internal TestFlight](docs/XCODE_CLOUD_TESTFLIGHT.md). Its first upload
 is manual, the Default workflow stays disabled, and tag starts need later approval.

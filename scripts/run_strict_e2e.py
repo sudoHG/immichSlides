@@ -151,7 +151,7 @@ def reserve_unreachable_server_url() -> tuple[str, socket.socket]:
         raise
 
 
-def write_sensitive_scan(evidence_dir: Path, sensitive_values: list[str]) -> None:
+def write_sensitive_scan(evidence_dir: Path, sensitive_values: list[str], *, output_path: Path | None = None) -> None:
     values = [value for value in sensitive_values if value]
     matched_files: list[str] = []
 
@@ -181,7 +181,7 @@ def write_sensitive_scan(evidence_dir: Path, sensitive_values: list[str]) -> Non
         "result": "PASS" if not matched_files else "FAIL",
     }
     try:
-        (evidence_dir / "sensitive-scan.json").write_text(
+        (output_path or evidence_dir / "sensitive-scan.json").write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )

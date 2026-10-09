@@ -21,6 +21,9 @@ open, update or recover issues. The scheduling plan verifies that flag even when
 the aggregate is missing; a manual dispatch without a verified plan is ineligible.
 The reporter never crawls PR runs. Producers retain their own per-run JSON artifacts
 and step summaries for 30 days.
+For a main UI matrix skipped through trusted identical-tree reuse, reporting calls
+the existing publisher reuse reader; a skip without its verified proof still fails.
+This does not activate skipping or change the producer's matrix.
 
 The latest trusted snapshot is merged, rather than rebuilding historical days from
 producer artifacts. Only new evidence from the seven most recent UTC dates may drive
@@ -117,7 +120,9 @@ prose and labels and adds the reporter label, so removal from the registry does 
 tracking. Collection lists only open labelled issues and carries that inventory into
 synchronization. Closed issues are searched by label and title only for identities
 involved in the current evidence; only matching issues are refreshed directly before
-decisions and writes. The same targeted lookup deduplicates closed post-merge
+decisions and writes. The snapshot's identity-to-issue index locates adopted issues
+whose original maintainer title is preserved, without scanning closed issues.
+The same targeted title lookup deduplicates closed post-merge
 notifications. Incomplete or oversized search results fail that identity instead of
 enumerating accumulated closed issues. New issue label visibility is checked with a
 60-second deadline before continuing, so index lag cannot create a duplicate on replay.

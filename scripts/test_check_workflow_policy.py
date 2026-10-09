@@ -55,6 +55,21 @@ class WorkflowPolicyTests(unittest.TestCase):
                     job["environment"] = "test-server"
                 self.assertIn("live-credential", self.rules(changed, path))
 
+    def test_ui_verdict_upload_is_limited_to_the_exact_publisher_output(self):
+        document = self.trusted()
+        upload = {"uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                  "with": {"name": "ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}",
+                           "path": "${{ runner.temp }}/ci-ui-verdict/verdict.json",
+                           "if-no-files-found": "error", "retention-days": 30}}
+        document["jobs"]["check"]["steps"].append(upload)
+        self.assertNotIn("trusted-action", self.rules(document, TRUSTED))
+        for key, value in (("path", "${{ runner.temp }}/**"), ("retention-days", 90),
+                           ("name", "ci-ui-verdict-${{ github.sha }}")):
+            bad = copy.deepcopy(document)
+            bad["jobs"]["check"]["steps"][-1]["with"][key] = value
+            with self.subTest(key=key):
+                self.assertIn("trusted-action", self.rules(bad, TRUSTED))
+
     def rules(self, document, path=".github/workflows/example.yml"):
         return {item.rule for item in policy.check_workflow(path, yaml.safe_dump(document))}
 

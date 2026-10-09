@@ -558,7 +558,7 @@ def evaluate_review(
                 or any(hashes[mark] != fixture_hashes.get(mark) for mark in visible)
             ):
                 raise P2ContractError(f"{name} visible marks or fixture hashes do not match the public data.")
-            if name == "cache-returned.png":
+            if name == "cache-returned.png" and entry.get("conclusion") == "PASS":
                 if cache_target_mark is None or visible != [cache_target_mark]:
                     raise P2ContractError("cache-returned.png manual mark sign-off does not match the machine-recognized returned photo.")
         _text(entry.get("controls"), f"{name} controls")
