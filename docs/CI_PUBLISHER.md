@@ -171,6 +171,7 @@ platform. Device dimensions remain in coverage and expected-skip accounting.
 
 Shard manifest version 1 contains `schema_version`, a named `revision`,
 `default_shard` and `shards` (a map from shard names to exact XCTest class names).
+The reader also accepts version 2, described in [CI_UI.md](CI_UI.md).
 Unknown classes go to the default shard, including tests in extensions. A class
 cannot appear twice. The default test plan's class/method selections and
 exclusions apply before assignment; Evidence and strict tests stay outside this

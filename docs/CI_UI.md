@@ -58,6 +58,19 @@ SHA-256 of the manifest bytes identify a reproduction. Class extensions keep
 their class assignment. Every class has exactly one shard; duplicate class
 assignments, unknown schema versions or a missing default shard fail.
 
+The trusted reader also supports successor schema version 2 with the same
+fields. Each shard array may assign exact classes or exact `Class/testMethod`
+selectors, without parentheses or a target prefix. Duplicate selectors and a
+class assignment overlapping any of its method assignments are rejected,
+including overlaps within one shard. Unassigned classes and methods go to
+`default_shard`; adding a method to a class partitioned by methods therefore
+cannot silently omit it. The default plan still filters before assignment.
+Version 2 selectors must match the unfiltered iOS/tvOS population union;
+unknown classes, deleted methods and misspellings fail admission and host checks.
+The checked-in manifest remains version 1; switching it to version 2 with
+matching workflow shards is a separate CI-changing change that requires
+exact-head approval.
+
 The default plan filters the statically declared population before assignment.
 Selections plus approved tier deselections must equal that population for the
 device. Evidence/strict tests excluded by the plan stay excluded. Each shard
