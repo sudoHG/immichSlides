@@ -8,20 +8,20 @@
 import XCTest
 
 enum immichSlidesUITestsWaitTiming {
-    static let briefElementTimeoutSeconds: TimeInterval = 1
-    static let connectionTimeoutSeconds: TimeInterval = 15
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
-    static let navigationTimeoutSeconds: TimeInterval = 10
-    static let playbackControlTimeoutSeconds: TimeInterval = 20
-    static let pollIntervalSeconds: TimeInterval = 0.1
-    static let readbackPollSeconds: TimeInterval = 0.2
-    static let readbackTimeoutSeconds: TimeInterval = 2
-    static let selectionPollSeconds: TimeInterval = 0.25
-    static let settingsChangeTimeoutSeconds: TimeInterval = 6
-    static let shortFocusSettleSeconds: TimeInterval = 0.15
-    static let shortInteractionTimeoutSeconds: TimeInterval = 3
-    static let stateChangeTimeoutSeconds: TimeInterval = 4
+    static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.product(1))
+    static let connectionTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(15))
+    static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(8))
+    static let elementAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(5))
+    static let navigationTimeoutSeconds: TimeInterval = TestWait.seconds(.product(10))
+    static let playbackControlTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(20))
+    static let pollIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.1))
+    static let readbackPollSeconds: TimeInterval = TestWait.seconds(.product(0.2))
+    static let readbackTimeoutSeconds: TimeInterval = TestWait.seconds(.product(2))
+    static let selectionPollSeconds: TimeInterval = TestWait.seconds(.product(0.25))
+    static let settingsChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.product(6))
+    static let shortFocusSettleSeconds: TimeInterval = TestWait.seconds(.product(0.15))
+    static let shortInteractionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(3))
+    static let stateChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.product(4))
 }
 
 #if os(iOS)

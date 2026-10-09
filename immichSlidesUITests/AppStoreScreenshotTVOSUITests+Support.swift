@@ -101,10 +101,10 @@ extension AppStoreScreenshotTVOSUITests {
         )
         try waitOrThrow(
             app.otherElements["slideshow.entryHint.keycap"],
-            timeout: 4,
+            timeout: TestWait.seconds(.product(4)),
             "tvOS playback settings hint bubble should show the key hint"
         )
-        waitForFocusVisualSettle(seconds: 1.2)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(1.2)))
 
         capture(
             app: app,
@@ -160,7 +160,7 @@ extension AppStoreScreenshotTVOSUITests {
         ) {
             app.buttons["filterSummary.startPlayback.button"].isEnabled
         }
-        waitForFocusVisualSettle(seconds: 1.2)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(1.2)))
 
         capture(app: app, slot: .filterEntry, outputRoot: outputRoot, slotDirectory: slotDirectory)
         app.terminate()
@@ -304,7 +304,9 @@ extension AppStoreScreenshotTVOSUITests {
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launch()
 
-        try waitOrThrow(app.buttons["mode.continue.button"], timeout: 18, "Should reach tvOS mode selection")
+        try waitOrThrow(
+            app.buttons["mode.continue.button"], timeout: TestWait.seconds(.infrastructure(18)),
+            "Should reach tvOS mode selection")
         return app
     }
 
@@ -385,7 +387,7 @@ extension AppStoreScreenshotTVOSUITests {
             filteredButton, timeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
             "Mode selection should show the filtered playback option")
         XCUIRemote.shared.press(.right)
-        waitForFocusVisualSettle(seconds: 0.25)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.25)))
         XCUIRemote.shared.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
@@ -396,7 +398,7 @@ extension AppStoreScreenshotTVOSUITests {
             throw TVOSScreenshotError.message("Continue button is disabled after choosing filtered playback.")
         }
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.25)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.25)))
         XCUIRemote.shared.press(.select)
 
         try waitOrThrow(
@@ -442,13 +444,15 @@ extension AppStoreScreenshotTVOSUITests {
         for _ in 0..<6 {
             if isFocused(albumButton) { return }
             XCUIRemote.shared.press(.left)
-            waitForFocusVisualSettle(seconds: 0.15)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.15)))
             if isFocused(albumButton) { return }
             XCUIRemote.shared.press(.up)
-            waitForFocusVisualSettle(seconds: 0.15)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.15)))
         }
 
-        try waitForFocus(albumButton, timeout: 2, "Filter summary should be able to move focus to the album entry")
+        try waitForFocus(
+            albumButton, timeout: TestWait.seconds(.product(2)),
+            "Filter summary should be able to move focus to the album entry")
     }
 
     @MainActor
@@ -458,7 +462,7 @@ extension AppStoreScreenshotTVOSUITests {
 
         try focusFilterSummaryAlbumButton(in: app)
         XCUIRemote.shared.press(.right)
-        waitForFocusVisualSettle(seconds: 0.25)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.25)))
         try waitForFocus(
             peopleButton, timeout: AppStoreScreenshotUITestsWaitTiming.shortInteractionTimeoutSeconds,
             "Filter summary should be able to move focus to the people entry")
@@ -474,7 +478,7 @@ extension AppStoreScreenshotTVOSUITests {
         for _ in 0..<10 {
             if isFocused(startButton) { return }
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.15)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.15)))
         }
 
         try waitForFocus(
@@ -529,7 +533,7 @@ extension AppStoreScreenshotTVOSUITests {
         for _ in 0..<6 {
             if isFocused(settingsButton) { break }
             XCUIRemote.shared.press(.left)
-            waitForFocusVisualSettle(seconds: 0.12)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.12)))
         }
 
         try waitForFocus(
@@ -562,7 +566,7 @@ extension AppStoreScreenshotTVOSUITests {
         for _ in 0..<8 {
             if isFocused(playbackItem) { break }
             XCUIRemote.shared.press(.up)
-            waitForFocusVisualSettle(seconds: 0.12)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.12)))
         }
         try waitForFocus(
             playbackItem, timeout: AppStoreScreenshotUITestsWaitTiming.settingsChangeTimeoutSeconds,
@@ -570,7 +574,7 @@ extension AppStoreScreenshotTVOSUITests {
 
         for _ in 0..<downStepsFromPlayback {
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.15)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.15)))
         }
 
         let target = try waitForSettingsControl(
@@ -687,7 +691,7 @@ extension AppStoreScreenshotTVOSUITests {
         slotDirectory: URL,
         notes: String = ""
     ) {
-        waitForFocusVisualSettle(seconds: 0.7)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.7)))
 
         let screenshot = app.screenshot()
         let data = screenshot.pngRepresentation
@@ -803,7 +807,7 @@ extension AppStoreScreenshotTVOSUITests {
         return String(describing: rawValue)
     }
 
-    func waitForFocusVisualSettle(seconds: TimeInterval = 0.8) {
+    func waitForFocusVisualSettle(seconds: TimeInterval = TestWait.seconds(.product(0.8))) {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 }

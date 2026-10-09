@@ -39,7 +39,9 @@ final class StrictE2ESmokeUITests: XCTestCase {
         }
 
         let serverField = app.textFields["firstboot.serverURL.field"]
-        XCTAssertTrue(serverField.waitForExistence(timeout: 12), "Fresh install must open the normal first-launch page")
+        XCTAssertTrue(
+            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            "Fresh install must open the normal first-launch page")
         #if os(iOS)
         replaceText(in: serverField, with: input.serverURL)
         #else
@@ -47,7 +49,9 @@ final class StrictE2ESmokeUITests: XCTestCase {
         #endif
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "First-launch page must show the API Key field.")
+        XCTAssertTrue(
+            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "First-launch page must show the API Key field.")
         #if os(iOS)
         replaceText(in: apiKeyField, with: input.publicKey)
         #else
@@ -59,7 +63,9 @@ final class StrictE2ESmokeUITests: XCTestCase {
             in: app,
             identifier: "firstboot.testConnection.button"
         )
-        XCTAssertTrue(testConnectionButton.waitForExistence(timeout: 8), "First-launch page must show Test Connection.")
+        XCTAssertTrue(
+            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "First-launch page must show Test Connection.")
         #if os(iOS)
         testConnectionButton.tap()
         #else
@@ -74,14 +80,16 @@ final class StrictE2ESmokeUITests: XCTestCase {
             in: app,
             identifier: "firstboot.saveConfig.button"
         )
-        XCTAssertTrue(saveButton.waitForExistence(timeout: 8), "First-launch page must show the Save Settings button.")
+        XCTAssertTrue(
+            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "First-launch page must show the Save Settings button.")
         let enabled = expectation(
             for: NSPredicate(format: "isEnabled == true"),
             evaluatedWith: saveButton
         )
-        wait(for: [enabled], timeout: 45)
+        wait(for: [enabled], timeout: TestWait.seconds(.infrastructure(45)))
         #else
-        waitForTVOSConnectionSuccess(in: app, timeout: 45)
+        waitForTVOSConnectionSuccess(in: app, timeout: TestWait.seconds(.infrastructure(45)))
         #endif
 
         let screenshot = XCTAttachment(screenshot: app.screenshot())
@@ -100,7 +108,9 @@ final class StrictE2ESmokeUITests: XCTestCase {
     }
     #else
     private func replaceFocusedTVOSText(in field: XCUIElement, app: XCUIApplication, with value: String) {
-        XCTAssertTrue(waitForTVOSFocus(on: field, timeout: 3), "The field must be focused before typing.")
+        XCTAssertTrue(
+            waitForTVOSFocus(on: field, timeout: TestWait.seconds(.product(3))),
+            "The field must be focused before typing.")
         XCUIRemote.shared.press(.select)
         app.typeText(value)
         if field.identifier == "firstboot.serverURL.field" {
@@ -113,7 +123,9 @@ final class StrictE2ESmokeUITests: XCTestCase {
             // ui-label-lookup: Match the simulator-localized tvOS system keyboard submit key.
             NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])
         ).firstMatch
-        XCTAssertTrue(submit.waitForExistence(timeout: 3), "The system keyboard must have a visible submit button.")
+        XCTAssertTrue(
+            submit.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            "The system keyboard must have a visible submit button.")
         for _ in 0..<6 {
             if submit.hasFocus { break }
             XCUIRemote.shared.press(.down)
@@ -126,19 +138,21 @@ final class StrictE2ESmokeUITests: XCTestCase {
                 field.value as? String, value,
                 "The public test URL must be submitted unchanged, without keyboard control characters.")
         }
-        XCTAssertTrue(waitForTVOSFocus(on: field, timeout: 3), "After submitting, focus must return to the same field.")
+        XCTAssertTrue(
+            waitForTVOSFocus(on: field, timeout: TestWait.seconds(.product(3))),
+            "After submitting, focus must return to the same field.")
     }
 
     private func moveTVOSFocusDown(to element: XCUIElement, message: String) {
         XCUIRemote.shared.press(.down)
-        XCTAssertTrue(waitForTVOSFocus(on: element, timeout: 3), message)
+        XCTAssertTrue(waitForTVOSFocus(on: element, timeout: TestWait.seconds(.product(3))), message)
     }
 
     private func waitForTVOSFocus(on element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if element.exists && element.hasFocus { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
         return element.exists && element.hasFocus
     }
@@ -172,7 +186,7 @@ final class StrictE2ESmokeUITests: XCTestCase {
                 XCTFail("Test Connection showed a failure alert: \(alert.label) | \(details)")
                 return
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
         XCTFail("Once the real server is reachable, the connection test success message must be shown.")
     }

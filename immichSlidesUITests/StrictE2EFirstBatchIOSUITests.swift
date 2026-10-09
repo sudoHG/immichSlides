@@ -1,15 +1,15 @@
 import XCTest
 
 enum StrictE2EFirstBatchIOSUITestsProbeTiming {
-    static let pauseWindowTimeoutSeconds: TimeInterval = 7.0
-    static let frameCaptureIntervalSeconds: TimeInterval = 0.08
-    static let probePollIntervalSeconds: TimeInterval = 0.06
+    static let pauseWindowTimeoutSeconds: TimeInterval = TestWait.seconds(.product(7.0))
+    static let frameCaptureIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.08))
+    static let probePollIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.06))
 }
 
 #if os(iOS)
 final class StrictE2EFirstBatchIOSUITests: XCTestCase {
-    let autoplayObservationSeconds: TimeInterval = 6.5
-    let pauseHoldObservationSeconds: TimeInterval = 10.5
+    let autoplayObservationSeconds: TimeInterval = TestWait.seconds(.product(6.5))
+    let pauseHoldObservationSeconds: TimeInterval = TestWait.seconds(.product(10.5))
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -29,11 +29,11 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
 
         try relaunchStrictE2EApp(app)
         XCTAssertFalse(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: 3),
+            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: TestWait.seconds(.product(3))),
             "A cold launch with saved settings must not return to the first-boot page."
         )
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: 30),
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.infrastructure(30))),
             "A configured cold launch must go straight to the playback page."
         )
         dismissPlaybackEntryHintIfNeeded(app: app)
@@ -57,18 +57,22 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         returnToModeSelectionFromFilterSummary(app: app)
 
         chooseOnboardingModeAndContinue(app: app, identifier: "mode.random.button")
-        XCTAssertTrue(waitForPlaybackControls(app: app, timeout: 30), "Random mode must reach the playback page.")
+        XCTAssertTrue(
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.infrastructure(30))),
+            "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
         attachOrientationEvidence(app: app, name: "journey-b-random-playback-start")
 
         let previous = app.buttons["slideshow.control.previous.button"]
-        XCTAssertTrue(previous.waitForExistence(timeout: 8), "The playback page must show the Previous button.")
+        XCTAssertTrue(
+            previous.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "The playback page must show the Previous button.")
         XCTAssertFalse(previous.isEnabled, "Previous must be disabled at the history boundary when playback starts.")
         recordControlTimeline(app: app, event: "journey-b-initial-boundary")
 
         RunLoop.current.run(until: Date().addingTimeInterval(autoplayObservationSeconds))
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: 8),
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(8))),
             "After auto-advance, the playback controls must be revealable."
         )
         attachStrictE2EScreenshot(app: app, name: "journey-b-after-autoplay-5s-\(currentDeviceTag())")
@@ -78,17 +82,19 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         // Screenshots and timeline reads may outlast the control bar's auto-hide delay, so tap the screen to
         // reveal it again before acting.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-        XCTAssertTrue(playPause.waitForExistence(timeout: 4), "The playback page must show Play/Pause.")
+        XCTAssertTrue(
+            playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))),
+            "The playback page must show Play/Pause.")
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
         }
         XCTAssertTrue(
-            waitUntil(timeout: 4) { self.playPauseState(playPause) == "play" },
+            waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "play" },
             "After pausing, the control value must be play."
         )
         RunLoop.current.run(until: Date().addingTimeInterval(pauseHoldObservationSeconds))
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: 8),
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(8))),
             "After pausing, the playback controls must still be revealable."
         )
         attachStrictE2EScreenshot(app: app, name: "journey-b-after-pause-10s-\(currentDeviceTag())")
@@ -101,12 +107,12 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
 
         tapElement(playPause)
         XCTAssertTrue(
-            waitUntil(timeout: 4) { self.playPauseState(playPause) == "pause" },
+            waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "pause" },
             "Resuming must continue from the current photo, with the control value back to pause."
         )
         tapElement(playPause)
         XCTAssertTrue(
-            waitUntil(timeout: 4) { self.playPauseState(playPause) == "play" },
+            waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "play" },
             "Pause again before history actions so the 5-second timer does not interfere."
         )
 
@@ -169,7 +175,9 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             app: app,
             identifier: "mode.random.button"
         )
-        XCTAssertTrue(waitForPlaybackControls(app: app, timeout: 30), "Random mode must reach the playback page.")
+        XCTAssertTrue(
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.infrastructure(30))),
+            "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
 
         RunLoop.current.run(until: Date().addingTimeInterval(autoplayObservationSeconds))
@@ -178,14 +186,18 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         stages.append(capturePauseStage(app: app, stage: "before-control-reveal"))
 
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-        _ = waitUntil(timeout: 4) { app.buttons["slideshow.control.playPause.button"].exists }
+        _ = waitUntil(timeout: TestWait.seconds(.product(4))) {
+            app.buttons["slideshow.control.playPause.button"].exists
+        }
         stages.append(capturePauseStage(app: app, stage: "after-control-reveal-before-pause"))
 
         let playPause = app.buttons["slideshow.control.playPause.button"]
         if playPause.exists, playPauseState(playPause) != "play" {
             tapElement(playPause)
         }
-        _ = waitUntil(timeout: 4) { playPause.exists && self.playPauseState(playPause) == "play" }
+        _ = waitUntil(timeout: TestWait.seconds(.product(4))) {
+            playPause.exists && self.playPauseState(playPause) == "play"
+        }
         stages.append(capturePauseStage(app: app, stage: "after-pause-confirmed-play"))
 
         RunLoop.current.run(until: Date().addingTimeInterval(pauseHoldObservationSeconds))
@@ -202,19 +214,21 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         defer { app.terminate() }
 
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: 20),
+            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
             "After injecting the public fixture, the app must reach the mode page."
         )
         chooseOnboardingModeAndContinue(
             app: app,
             identifier: "mode.random.button"
         )
-        XCTAssertTrue(waitForPlaybackControls(app: app, timeout: 30), "Random mode must reach the playback page.")
+        XCTAssertTrue(
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.infrastructure(30))),
+            "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
         pausePlaybackIfNeeded(app: app)
 
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: 8),
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(8))),
             "The control bar must be visible before opening settings."
         )
         openPlaybackSettingsFromSlideshow(app: app)
@@ -223,7 +237,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         attachStrictE2EScreenshot(app: app, name: "settings-single-photo")
         returnToSlideshowFromPlaybackSettings(app: app)
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: 8),
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(8))),
             "After returning to the playback page, the control bar must be revealed again."
         )
         dismissPlaybackEntryHintIfNeeded(app: app)
@@ -242,7 +256,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         let playUptime = ProcessInfo.processInfo.systemUptime
         tapElement(playPause)
         XCTAssertTrue(
-            waitUntil(timeout: 2) { self.playPauseState(playPause) == "pause" },
+            waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseState(playPause) == "pause" },
             "After tapping Play, the button value must become pause."
         )
 
@@ -256,7 +270,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         var lastFrameUptime = playUptime
         var hitProbeRaw = ""
         var hitContractProbeRaw = ""
-        var hitProbeUptime: TimeInterval = 0
+        var hitProbeUptime: TimeInterval = TestWait.seconds(.product(0))
         var lastProbeRaw = ""
         var lastContractProbeRaw = ""
         var lastProbeUptime = playUptime
@@ -317,7 +331,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             attachedNamedScreenshots.insert("after-pause")
         }
         _ = capturePauseStage(app: app, stage: "after-pause")
-        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
         let postPause03ProbeRaw = frameSynchronizedProbeRaw(app: app)
         if attachKeepAlwaysFrame(app: app, index: frameIndex) {
             keepAlwaysFrameCount += 1
@@ -462,12 +476,13 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: 8),
+            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
             "The first-boot page must show the Save Settings button."
         )
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let alert = app.alerts.firstMatch
-        let failureTimeout: TimeInterval = (scenario == "unreachable" || scenario == "timeout") ? 60 : 30
+        let failureTimeout: TimeInterval = TestWait.seconds(
+            .product((scenario == "unreachable" || scenario == "timeout") ? 60 : 30))
         let failureAppeared = waitUntil(timeout: failureTimeout) {
             self.acceptLocalNetworkPermissionIfNeeded()
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
@@ -490,14 +505,15 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
 
         try relaunchStrictE2EApp(app)
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: 12),
+            app.textFields["firstboot.serverURL.field"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(12))),
             "After a relaunch on the failure path, the app must still be on the first-boot page."
         )
         let saveAfterRelaunch = firstBootControl(
             in: app,
             identifier: "firstboot.saveConfig.button"
         )
-        XCTAssertTrue(saveAfterRelaunch.waitForExistence(timeout: 8))
+        XCTAssertTrue(saveAfterRelaunch.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))))
         XCTAssertFalse(
             saveAfterRelaunch.isEnabled,
             "After a relaunch on the failure path, no half-finished settings may be saveable."

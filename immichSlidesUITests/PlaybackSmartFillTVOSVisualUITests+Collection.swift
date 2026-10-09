@@ -100,7 +100,7 @@ extension PlaybackSmartFillTVOSVisualUITests {
         app.launch()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: 15),
+            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
             "After injecting the test server, Apple TV should go straight to mode selection"
         )
         return app
@@ -109,28 +109,31 @@ extension PlaybackSmartFillTVOSVisualUITests {
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: 8), "Apple TV mode selection should show the random playback option")
+            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "Apple TV mode selection should show the random playback option")
         if randomButton.hasFocus == false {
             XCUIRemote.shared.press(.left)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         XCUIRemote.shared.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 8), "Continue button should appear after choosing random playback")
+            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "Continue button should appear after choosing random playback")
         if continueButton.hasFocus == false {
             XCUIRemote.shared.press(.down)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         XCTAssertTrue(continueButton.hasFocus, "In the Apple TV random playback flow, focus should move to Continue")
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 30),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(30))),
             "After starting Apple TV random playback, the playback control bar should appear"
         )
-        _ = waitUntil(timeout: 30) {
+        _ = waitUntil(timeout: TestWait.seconds(.infrastructure(30))) {
             guard let manifest = self.currentManifest(app: app) else { return false }
             return manifest.fallback != "image-not-ready"
         }
@@ -139,12 +142,12 @@ extension PlaybackSmartFillTVOSVisualUITests {
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
         let filteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            filteredButton.waitForExistence(timeout: 8),
+            filteredButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
             "Apple TV mode selection should show the filtered playback option")
         for _ in 0..<4 {
             if filteredButton.hasFocus { break }
             XCUIRemote.shared.press(.right)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         XCTAssertTrue(
             filteredButton.hasFocus, "Apple TV mode selection focus should move to the filtered playback option")
@@ -152,42 +155,44 @@ extension PlaybackSmartFillTVOSVisualUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 8),
+            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
             "Continue button should appear after choosing filtered playback")
         for _ in 0..<4 {
             if continueButton.hasFocus { break }
             XCUIRemote.shared.press(.down)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         XCTAssertTrue(continueButton.hasFocus, "In the Apple TV filtered playback flow, focus should move to Continue")
         XCUIRemote.shared.press(.select)
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForExistence(timeout: 20), "Apple TV filter summary should show the Start playback button")
+            startButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            "Apple TV filter summary should show the Start playback button")
         XCTAssertTrue(
-            waitUntil(timeout: 20) { startButton.isEnabled },
+            waitUntil(timeout: TestWait.seconds(.infrastructure(20))) { startButton.isEnabled },
             "After seeding the people filter, Apple TV Start playback should be enabled")
         for _ in 0..<10 {
             if startButton.hasFocus { break }
             XCUIRemote.shared.press(.down)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         if startButton.hasFocus == false {
             for _ in 0..<10 {
                 if startButton.hasFocus { break }
                 XCUIRemote.shared.press(.right)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+                RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
             }
         }
         XCTAssertTrue(startButton.hasFocus, "Apple TV filter summary focus should move to Start playback")
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 45),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(45))),
             "After starting Apple TV people-filter playback, the playback control bar should appear"
         )
-        _ = waitUntil(timeout: 30) {
+        _ = waitUntil(timeout: TestWait.seconds(.infrastructure(30))) {
             guard let manifest = self.currentManifest(app: app) else { return false }
             return manifest.fallback != "image-not-ready"
         }
@@ -298,10 +303,10 @@ extension PlaybackSmartFillTVOSVisualUITests {
         timeout: TimeInterval
     ) throws -> String {
         let statusProbe = app.otherElements["slideshow.smartfill.motionFrame.trace.status"]
-        let quietWait = min(timeout, smartFillMotionTraceDurationSeconds() + 5)
+        let quietWait = TestWait.seconds(.product(min(timeout, smartFillMotionTraceDurationSeconds() + 5)))
         RunLoop.current.run(until: Date().addingTimeInterval(quietWait))
         let isCompleteAfterQuietWait = statusProbe.exists && statusProbe.label.contains("status=complete")
-        let remainingTimeout = max(0, timeout - quietWait)
+        let remainingTimeout = TestWait.seconds(.product(max(0, timeout - quietWait)))
         let completed =
             isCompleteAfterQuietWait
             || waitUntil(timeout: remainingTimeout) {
@@ -528,20 +533,21 @@ extension PlaybackSmartFillTVOSVisualUITests {
         let samplingScreenshotIndices = screenshotSampleIndices(for: targetSceneCount)
 
         for index in 0..<targetSceneCount {
-            var manifest = try waitForCurrentManifest(app: app, timeout: index == 0 ? 45 : 25)
+            var manifest = try waitForCurrentManifest(
+                app: app, timeout: TestWait.seconds(index == 0 ? .infrastructure(45) : .product(25)))
             if index == 0,
                 shouldWaitForCompleteStartupRuntimePhases()
             {
                 manifest = try waitForCompleteStartupRuntimeManifest(
                     app: app,
                     initialManifest: manifest,
-                    timeout: 30
+                    timeout: TestWait.seconds(.product(30))
                 )
             }
             manifest = try waitForScreenshotReadyManifest(
                 app: app,
                 initialManifest: manifest,
-                timeout: 30,
+                timeout: TestWait.seconds(.product(30)),
                 scenario: scenario,
                 index: index
             )
@@ -591,7 +597,7 @@ extension PlaybackSmartFillTVOSVisualUITests {
             guard index < targetSceneCount - 1 else { continue }
             let previousRefs = manifest.slotRefs
             pressNext(app: app)
-            _ = waitUntil(timeout: 25) {
+            _ = waitUntil(timeout: TestWait.seconds(.product(25))) {
                 guard let nextManifest = self.currentManifest(app: app) else { return false }
                 return nextManifest.slotRefs != previousRefs
             }

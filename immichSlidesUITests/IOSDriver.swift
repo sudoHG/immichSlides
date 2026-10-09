@@ -21,7 +21,9 @@ struct IOSDriver: PlaybackDriver {
 
     func launchToPlayback(input: StrictE2EInput) {
         let serverField = app.textFields["firstboot.serverURL.field"]
-        XCTAssertTrue(serverField.waitForExistence(timeout: 20), "Fresh install must open the normal first-boot page.")
+        XCTAssertTrue(
+            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            "Fresh install must open the normal first-boot page.")
         replaceText(in: serverField, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
@@ -93,7 +95,7 @@ struct IOSDriver: PlaybackDriver {
                         withNormalizedOffset: CGVector(dx: SliderGeometry.maximumThumbFraction, dy: 0.5))
                     let beyondRightEnd = slider.coordinate(
                         withNormalizedOffset: CGVector(dx: SliderGeometry.dragBeyondMaximumFraction, dy: 0.5))
-                    thumb.press(forDuration: 0.1, thenDragTo: beyondRightEnd)
+                    thumb.press(forDuration: TestWait.seconds(.product(0.1)), thenDragTo: beyondRightEnd)
                 }
                 let reached30 = Wait.until(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds) {
                     interval30.exists && interval30.label == "30 秒"
@@ -254,7 +256,9 @@ struct IOSDriver: PlaybackDriver {
             app.cells.element(boundBy: 0).tap()
         }
         XCTAssertTrue(
-            Wait.until(timeout: 10) { autoPlay.exists || app.staticTexts["settings.playback.title"].exists },
+            Wait.until(timeout: TestWait.seconds(.product(10))) {
+                autoPlay.exists || app.staticTexts["settings.playback.title"].exists
+            },
             "After opening playback settings, the auto-play toggle or the playback settings title must be visible."
         )
     }
@@ -332,7 +336,7 @@ struct IOSDriver: PlaybackDriver {
 
     private func waitForPlaybackControls(timeout: TimeInterval) -> Bool {
         Wait.until(timeout: timeout) {
-            dismissSavePasswordPrompt(timeout: 0)
+            dismissSavePasswordPrompt(timeout: TestWait.seconds(.infrastructure(0)))
             let banner = app.descendants(matching: .any).matching(identifier: "slideshow.entryHint.banner").firstMatch
             if banner.exists { tap(banner) }
             if app.buttons["slideshow.control.settings.button"].isHittable { return true }

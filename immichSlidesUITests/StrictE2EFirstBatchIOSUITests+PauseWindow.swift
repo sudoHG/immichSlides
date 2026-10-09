@@ -31,12 +31,12 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func pausePlaybackIfNeeded(app: XCUIApplication) {
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        guard playPause.waitForExistence(timeout: 4) else { return }
+        guard playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))) else { return }
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
         }
         XCTAssertTrue(
-            waitUntil(timeout: 4) { self.playPauseState(playPause) == "play" },
+            waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "play" },
             "Pause before opening settings or identifying photos, so autoplay does not move away."
         )
     }
@@ -51,7 +51,11 @@ extension StrictE2EFirstBatchIOSUITests {
 
         let playbackEntry: XCUIElement
         if UIDevice.current.userInterfaceIdiom == .pad {
-            if app.switches["settings.playback.autoPlay.toggle"].waitForExistence(timeout: 2) { return }
+            if app.switches["settings.playback.autoPlay.toggle"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(2)))
+            {
+                return
+            }
             let sidebar = app.buttons["ToggleSidebar"]
             // ui-label-lookup: Check the simulator-owned navigation control's localized title before toggling it.
             if sidebar.exists && ["显示边栏", "Show Sidebar"].contains(sidebar.label) {
@@ -62,7 +66,7 @@ extension StrictE2EFirstBatchIOSUITests {
             playbackEntry = app.buttons["settings.item.playback"]
         }
         XCTAssertTrue(
-            playbackEntry.waitForExistence(timeout: 8),
+            playbackEntry.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
             "The settings list must offer the playback settings entry"
         )
         tapElement(playbackEntry)
@@ -91,10 +95,10 @@ extension StrictE2EFirstBatchIOSUITests {
             } else {
                 app.tap()
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
         }
         XCTAssertTrue(
-            waitUntil(timeout: 6) {
+            waitUntil(timeout: TestWait.seconds(.product(6))) {
                 let settingsButton = app.buttons["slideshow.control.settings.button"]
                 return settingsButton.exists && settingsButton.isHittable
             },
@@ -106,11 +110,13 @@ extension StrictE2EFirstBatchIOSUITests {
     func selectSinglePhotoDisplayMode(app: XCUIApplication) {
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: 8),
+            picker.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
             "Playback settings must offer the display mode segmented control."
         )
         let singlePhoto = picker.buttons["settings.playback.displayMode.singlePhoto.option"]
-        XCTAssertTrue(singlePhoto.waitForExistence(timeout: 3), "Display mode must offer single photo mode.")
+        XCTAssertTrue(
+            singlePhoto.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            "Display mode must offer single photo mode.")
         tapElement(singlePhoto)
         XCTAssertTrue(singlePhoto.exists, "The segmented control must remain after selecting single photo mode.")
         // ui-label-lookup: Preserve the Simplified Chinese display-mode copy assertion after identifier lookup.
@@ -120,13 +126,15 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func confirmExifOnAndFiveSecondInterval(app: XCUIApplication) {
         let exifToggle = app.switches["settings.playback.showExif.toggle"]
-        XCTAssertTrue(exifToggle.waitForExistence(timeout: 8), "Playback settings must offer the EXIF toggle.")
+        XCTAssertTrue(
+            exifToggle.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "Playback settings must offer the EXIF toggle.")
         let toggleValue = ((exifToggle.value as? String) ?? "").lowercased()
         XCTAssertTrue(toggleValue == "1" || toggleValue == "true", "Show EXIF info must be on.")
         let intervalValue = app.staticTexts["settings.playback.interval.value"]
         // ui-label-lookup: Preserve the Simplified Chinese playback-interval copy assertion after identifier lookup.
         XCTAssertTrue(
-            waitUntil(timeout: 3) { intervalValue.exists && intervalValue.label == "5 秒" }
+            waitUntil(timeout: TestWait.seconds(.product(3))) { intervalValue.exists && intervalValue.label == "5 秒" }
                 || (intervalValue.exists && intervalValue.label.contains("5 秒")),
             "The playback interval must be 5 seconds."
         )
@@ -151,7 +159,7 @@ extension StrictE2EFirstBatchIOSUITests {
             let maybeA2 = mark == "A2" || (mark == "unknown" && !hasOddFixture)
             if maybeA2 {
                 XCTAssertTrue(
-                    next.waitForExistence(timeout: 4),
+                    next.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))),
                     "After identifying A2, Next must be tappable to check its successor."
                 )
                 tapElement(next)
@@ -217,18 +225,18 @@ extension StrictE2EFirstBatchIOSUITests {
         let playPause = app.buttons["slideshow.control.playPause.button"]
         if playPause.exists && playPause.isHittable { return }
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-        _ = waitUntil(timeout: 4) { playPause.exists }
+        _ = waitUntil(timeout: TestWait.seconds(.product(4))) { playPause.exists }
     }
 
     @MainActor
     func waitForSettledPhoto(app: XCUIApplication) {
-        _ = waitUntil(timeout: 4) {
+        _ = waitUntil(timeout: TestWait.seconds(.product(4))) {
             guard let state = self.probeState(from: self.contractProbeRaw(app: app)) else {
                 return false
             }
             return state.phase == "stablePhoto"
         }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
     }
 
     @MainActor

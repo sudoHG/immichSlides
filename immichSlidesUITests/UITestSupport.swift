@@ -3,18 +3,18 @@ import UIKit
 import XCTest
 
 enum UITestSupportWaitTiming {
-    static let briefElementTimeoutSeconds: TimeInterval = 1
-    static let connectionTimeoutSeconds: TimeInterval = 15
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
-    static let identityPollSeconds: TimeInterval = 0.3
-    static let playbackStartupTimeoutSeconds: TimeInterval = 30
-    static let readbackTimeoutSeconds: TimeInterval = 2
-    static let sceneReadyTimeoutSeconds: TimeInterval = 45
-    static let screenTransitionTimeoutSeconds: TimeInterval = 12
-    static let settingsChangeTimeoutSeconds: TimeInterval = 6
-    static let shortInteractionTimeoutSeconds: TimeInterval = 3
-    static let stateChangeTimeoutSeconds: TimeInterval = 4
+    static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.product(1))
+    static let connectionTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(15))
+    static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(8))
+    static let elementAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(5))
+    static let identityPollSeconds: TimeInterval = TestWait.seconds(.product(0.3))
+    static let playbackStartupTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(30))
+    static let readbackTimeoutSeconds: TimeInterval = TestWait.seconds(.product(2))
+    static let sceneReadyTimeoutSeconds: TimeInterval = TestWait.seconds(.product(45))
+    static let screenTransitionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(12))
+    static let settingsChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.product(6))
+    static let shortInteractionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(3))
+    static let stateChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.product(4))
 }
 
 // Shared by the strict end-to-end UI tests: writing required PNGs / steps to disk, stable-frame waits, and real settings
@@ -24,19 +24,19 @@ enum UITestSupportWaitTiming {
 enum Timing {
     // Interval between two screenshots (seconds). Stable only when two consecutive frames show the same public
     // pattern, which rules out mid-transition frames.
-    static let identityPoll: TimeInterval = 0.3
-    static let stableIdentityTimeout: TimeInterval = 8
-    static let exifSettleTimeout: TimeInterval = 5
+    static let identityPoll: TimeInterval = TestWait.seconds(.product(0.3))
+    static let stableIdentityTimeout: TimeInterval = TestWait.seconds(.product(8))
+    static let exifSettleTimeout: TimeInterval = TestWait.seconds(.product(5))
     // Multi-photo scenes must hold for 1 second in a row, to avoid capturing a half-switched frame.
-    static let multiPhotoWait: TimeInterval = 4
-    static let multiPhotoHold: TimeInterval = 1
-    static let clearCompletionTimeout: TimeInterval = 15
-    static let focusSettle: TimeInterval = 0.16
-    static let poll: TimeInterval = 0.1
+    static let multiPhotoWait: TimeInterval = TestWait.seconds(.product(4))
+    static let multiPhotoHold: TimeInterval = TestWait.seconds(.product(1))
+    static let clearCompletionTimeout: TimeInterval = TestWait.seconds(.product(15))
+    static let focusSettle: TimeInterval = TestWait.seconds(.product(0.16))
+    static let poll: TimeInterval = TestWait.seconds(.product(0.1))
     // Orientation steady state: capture only when two frames 0.5 seconds apart show no layout jump. Wait at most
     // 10 seconds per attempt; on timeout keep the scene as it is.
-    static let stableFramePair: TimeInterval = 0.5
-    static let stableFrameTimeout: TimeInterval = 10
+    static let stableFramePair: TimeInterval = TestWait.seconds(.product(0.5))
+    static let stableFrameTimeout: TimeInterval = TestWait.seconds(.product(10))
 }
 
 // Values match the orientation field in p2-steps.json; notApplicable skips the orientation check.
