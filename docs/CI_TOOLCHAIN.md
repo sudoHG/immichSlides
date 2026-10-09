@@ -60,11 +60,15 @@ The publisher still evaluates summaries using its admitted base reader. That rea
 does not compare recorded Xcode versions or pins hashes against toolchain profiles;
 the version dictionary accepts the added `ci_tier`, `ci_profile` and `pinned_*` strings.
 Summary and archive schema versions, job names and artifact names remain unchanged,
-so no separate reader rollout is needed. No publisher-level toolchain comparison is
-introduced here. Archive consumers still compare exact profile
+so no separate summary reader rollout is needed. Archive consumers still compare exact profile
 Xcode builds and full pins-file hashes; a profile switch cannot reuse the old archive.
-At this baseline post-merge UI reuse is not yet implemented; its future toolchain
-comparison must use the selected PR profile as well as observed versions.
+The trusted post-merge UI reuse reader resolves the pushed revision's pins blob through
+`load_pins(content=..., tier="pr")` before comparing observed toolchains. It never
+inherits a nightly tier or reads pins from another checkout. The reuse reader landed
+on main before this producer switch; PR runs still execute every shard and the
+CI-changing/approval-based verdict exclusion prevents this PR authorizing later reuse.
+Once this change lands, the main reader selects the new PR profile. No reuse receipt,
+admission rule or trust boundary changes here.
 
 Python 3.9.6 and Pillow 11.3.0 match the contributor verification baseline. The workflow
 uses Xcode's `/usr/bin/python3` explicitly and verifies its version; a different version

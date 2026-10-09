@@ -175,6 +175,8 @@ successful run and exact attempt. A rerun in progress invalidates the receipt.
 Unknown versions, missing/expired proof, red/cancelled runs, forks, CI changes,
 approval-based verdicts, different trees or inputs, incomplete device coverage,
 or observed toolchains that disagree with current pins all mean run the UI tier.
+The comparison resolves the pushed revision's PR profile from its pins blob using
+the shared loader, independently of the publisher's ambient toolchain tier.
 Malformed nested receipt fields and corrupt ZIP or compressed data also fall
 back to running UI.
 The publisher repeats this decision before accepting skipped shards and links

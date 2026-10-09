@@ -20,8 +20,9 @@ def run(command, *, env=None, timeout=120):
     return completed.stdout.strip()
 
 
-def load_pins(path=PINS_PATH, *, tier=None):
-    pins = json.loads(path.read_text(encoding="utf-8"))
+def load_pins(path=PINS_PATH, *, tier=None, content=None):
+    # Trusted Git readers supply a revision's blob without reading a different checkout.
+    pins = json.loads(path.read_text(encoding="utf-8") if content is None else content)
     selected_tier = tier or os.environ.get("CI_TOOLCHAIN_TIER", "pr")
     if selected_tier not in {"pr", "nightly", "release"}:
         raise ValueError("Unknown CI toolchain tier")
