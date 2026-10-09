@@ -100,6 +100,33 @@ def authoritative_run(runs, head, workflow, repository):
     return max(admitted, key=lambda run: (run["id"], run["run_attempt"]), default=None)
 
 
+def cancelled_unstarted_gate(api, run):
+    """Recognize a cancelled main gate that never executed a runner or step."""
+    try:
+        if (run["path"] != PRODUCERS["ci-pr-gate"] or run["event"] != "push"
+                or run["head_branch"] != "main" or run["head_repository"]["full_name"] != api.repository
+                or run["status"] != "completed" or run["conclusion"] != "cancelled"
+                or type(run["run_attempt"]) is not int or run["run_attempt"] != 1):
+            return False
+        workflow = api.repo("actions/workflows/ci-gate.yml")
+        verify_workflow(run, workflow, api.repository)
+        jobs = api.pages(f"actions/runs/{run['id']}/attempts/1/jobs", "jobs")
+        require(isinstance(jobs, list), "invalid attempt jobs")
+        seen = set()
+        for job in jobs:
+            positive(job["id"])
+            require(job["id"] not in seen and job["run_id"] == run["id"]
+                    and type(job["run_attempt"]) is int and job["run_attempt"] == 1,
+                    "unexpected attempt job")
+            seen.add(job["id"])
+            require(job["status"] == "completed" and job["conclusion"] in {"cancelled", "skipped"}
+                    and (job["runner_id"] is None or type(job["runner_id"]) is int and job["runner_id"] == 0)
+                    and job["steps"] == [], "job may have executed")
+        return True
+    except (ContractError, KeyError, ValueError, TypeError):
+        return False
+
+
 def approval_context(pr, head):
     positive(pr)
     sha(head)
@@ -464,7 +491,10 @@ def compute(api, pr_number, pushed, login):
                           any(p["number"] == pr_number for p in run["pull_requests"]))
                           and run["head_repository"]["full_name"] == pr["head"]["repo"]["full_name"]]
         runs[context] = authoritative_run(candidates, head, workflow, api.repository)
-    admissions = trusted_admissions(api, [run["id"] for run in runs.values() if run])
+    not_evaluated = {context: {"state": "pending", "description": "Not evaluated: gate cancelled before any job executed",
+        "target_url": f"https://github.com/{api.repository}/actions/runs/{run['id']}"}
+        for context, run in runs.items() if not pr and run and cancelled_unstarted_gate(api, run)}
+    admissions = trusted_admissions(api, [run["id"] for context, run in runs.items() if run and context not in not_evaluated])
     approved = approved_status(api, pr, login) if pr else False
     records = [admissions[run["id"]] for run in runs.values() if run and run["id"] in admissions]
     classified = bool(records) and all(not run or run["id"] in admissions for run in runs.values())
@@ -539,6 +569,7 @@ def compute(api, pr_number, pushed, login):
         synthetic = {"number": 1, "head": {"sha": head, "repo": {"full_name": api.repository}},
                      "base": {"repo": {"full_name": api.repository}}}
         plan = publication_plan(synthetic, runs, admissions, evaluations, approved=False, needs_approval=False)
+        plan.update(not_evaluated)
         if classified and not any(r["classification"]["app_affected"] for r in records):
             plan["ci-ui"] = {"state": "success", "description": "Not applicable: trusted classification cannot affect the app"}
     if not classified:

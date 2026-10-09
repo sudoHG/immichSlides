@@ -93,6 +93,25 @@ RUN = {"id": 101, "workflow_id": 42, "path": ".github/workflows/ci-gate.yml", "e
        "status": "completed", "conclusion": "success", "head_sha": HEAD, "run_attempt": 1,
        "head_branch": "feature", "repository": {"full_name": REPOSITORY},
        "head_repository": {"full_name": REPOSITORY}, "pull_requests": [{"number": 7}]}
+# Reduced jobs from cancelled main run 37877002138, attempt 1. GitHub supplied
+# started_at even though no runner or step executed; IDs/repository are normalized.
+UNSTARTED_GATE_JOBS = [
+    {"id": 1, "name": "build-ios", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": 0,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+    {"id": 2, "name": "build-tvos", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": 0,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+    {"id": 3, "name": "host-checks", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": 0,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+    {"id": 4, "name": "unit-ios", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": None,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+    {"id": 5, "name": "unit-tvos", "run_id": 101, "run_attempt": 1,
+     "status": "completed", "conclusion": "cancelled", "runner_id": None,
+     "steps": [], "started_at": "2026-10-09T02:57:13Z"},
+]
 PR = {"number": 7, "state": "open", "head": {"sha": HEAD, "repo": {"full_name": REPOSITORY}},
       "base": {"ref": "main", "repo": {"full_name": REPOSITORY}}}
 COMMIT = {"sha": MERGE, "parents": [{"sha": BASE}, {"sha": HEAD}], "tree": {"sha": TREE}}
@@ -162,6 +181,80 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_cancelled_unstarted_main_gate_is_pending_without_inventing_a_verdict(self):
+        run = dict(RUN, event="push", head_branch="main", conclusion="cancelled")
+        class API:
+            repository = REPOSITORY
+            jobs = UNSTARTED_GATE_JOBS
+            def repo(self, path, **options):
+                return WORKFLOW
+            def pages(self, path, collection=None, **filters):
+                if path == f"actions/runs/{run['id']}/attempts/1/jobs":
+                    return self.jobs
+                return [run]
+        with patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                patch("ci_publish.trusted_admissions", return_value={}), \
+                patch("ci_publish.producer_evidence") as evidence:
+            head, statuses, approval = compute(API(), 0, HEAD, "generic-app[bot]")
+        self.assertEqual(HEAD, head)
+        self.assertIsNone(approval)
+        self.assertEqual("pending", statuses["ci-pr-gate"]["state"])
+        self.assertIn("Not evaluated", statuses["ci-pr-gate"]["description"])
+        self.assertEqual(f"https://github.com/{REPOSITORY}/actions/runs/{run['id']}",
+                         statuses["ci-pr-gate"]["target_url"])
+        evidence.assert_not_called()
+        api = API()
+        api.jobs = [dict(UNSTARTED_GATE_JOBS[0], runner_id=123)]
+        record = {"workflow_id": run["workflow_id"], "workflow_path": run["path"],
+                  "identity": {"repository": REPOSITORY, "event": "push", "pushed_sha": HEAD},
+                  "classification": {"app_affected": True, "ci_changing": False},
+                  "workflows": {run["path"]: {"base": FIXTURE_GATE}}}
+        with patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                patch("ci_publish.trusted_admissions", return_value={run["id"]: record}), \
+                patch("ci_publish.producer_evidence", side_effect=ContractError("interrupted evidence")):
+            _, started, _ = compute(api, 0, HEAD, "generic-app[bot]")
+        self.assertEqual("failure", started["ci-pr-gate"]["state"])
+
+    def test_unstarted_cancellation_requires_complete_first_attempt_job_and_source_proof(self):
+        from ci_publish import cancelled_unstarted_gate
+        run = dict(RUN, event="push", head_branch="main", conclusion="cancelled")
+        class API:
+            repository = REPOSITORY
+            jobs = UNSTARTED_GATE_JOBS
+            workflow = WORKFLOW
+            def repo(self, path, **options):
+                return self.workflow
+            def pages(self, path, collection):
+                if self.jobs is None:
+                    raise ContractError("incomplete API evidence")
+                return self.jobs
+        api = API()
+        for jobs in (UNSTARTED_GATE_JOBS, []):
+            api.jobs = jobs
+            self.assertTrue(cancelled_unstarted_gate(api, run))
+        for mutation in ({"runner_id": 123}, {"steps": [{"status": "completed"}]},
+                         {"status": "queued"}, {"conclusion": "failure"},
+                         {"run_attempt": 2}, {"run_id": 102}, {"runner_id": False}):
+            with self.subTest(job=mutation):
+                api.jobs = [dict(UNSTARTED_GATE_JOBS[0], **mutation)]
+                self.assertFalse(cancelled_unstarted_gate(api, run))
+        for missing in ("runner_id", "steps", "run_id", "run_attempt"):
+            api.jobs = [copy.deepcopy(UNSTARTED_GATE_JOBS[0])]
+            del api.jobs[0][missing]
+            self.assertFalse(cancelled_unstarted_gate(api, run))
+        api.jobs = None
+        self.assertFalse(cancelled_unstarted_gate(api, run))
+        api.jobs = UNSTARTED_GATE_JOBS
+        for mutation in ({"event": "pull_request"}, {"event": "schedule"}, {"head_branch": "feature"},
+                         {"path": ".github/workflows/ci-ui.yml"}, {"run_attempt": 2},
+                         {"status": "in_progress"}, {"conclusion": "failure"},
+                         {"head_repository": {"full_name": "fork/photos"}}):
+            with self.subTest(run=mutation):
+                self.assertFalse(cancelled_unstarted_gate(api, dict(run, **mutation)))
+        for mutation in ({"id": 43}, {"path": ".github/workflows/ci-ui.yml"}):
+            api.workflow = dict(WORKFLOW, **mutation)
+            self.assertFalse(cancelled_unstarted_gate(api, run))
+
     def test_gate_classification_infrastructure_requires_its_own_bound_successful_summary(self):
         record, jobs, summaries = gate_fixture(units=True)
         classify = '''  classify:

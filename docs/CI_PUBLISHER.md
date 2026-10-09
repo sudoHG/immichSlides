@@ -22,6 +22,25 @@ repository, this repository's `main` base, and the current head SHA for admissio
 Stale admission heads, ambiguous matches and pagination failures refuse mapping.
 Workflow names and colliding job names do not establish provenance.
 
+Main gate queue design: main pushes share one workflow concurrency group with
+`cancel-in-progress: false`. GitHub keeps the active run and replaces an older
+pending run with the newest pending push under GitHub's
+[concurrency contract](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency);
+PR groups remain separate and nightly is unchanged. A run already admitted to the active group can still have jobs
+waiting for macOS capacity and is deliberately preserved.
+
+The reader treats a cancelled first-attempt main gate as **not evaluated** only
+after verifying its workflow ID/path/repository and the complete attempt jobs
+list. Every job must be completed, cancelled or skipped, have no assigned runner
+(`runner_id` is zero or null), and have an explicit empty steps list; an empty
+jobs list also qualifies. GitHub can set `started_at` on jobs that never acquired
+a runner, so timestamps alone do not prove execution. This applies whether
+concurrency replacement or a manual cancellation occurred before execution;
+the API does not prove which caused cancellation. The pushed SHA remains pending
+with a link to its cancelled run, never successful and never credited with a
+newer SHA's evidence. Started jobs, reruns and ambiguous/API-incomplete evidence
+keep the ordinary fail-closed path. This reader must land before queue coalescing.
+
 Admission is separate from publication, serialized by producer run ID with
 `cancel-in-progress: false`. It reads GitHub's test merge SHA and commit parents,
 fetches that commit as Git objects, and verifies that its first parent belongs to

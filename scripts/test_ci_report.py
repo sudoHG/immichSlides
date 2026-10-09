@@ -32,6 +32,52 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_unstarted_main_gate_remains_not_run_and_cannot_notify_but_started_cancellation_can(self):
+        from test_ci_publish import RUN, WORKFLOW, UNSTARTED_GATE_JOBS, REPOSITORY
+        run = dict(RUN, event="push", head_branch="main", conclusion="cancelled",
+                   created_at="2026-10-09T02:57:13Z")
+        class API:
+            repository = REPOSITORY
+            jobs = UNSTARTED_GATE_JOBS
+            def repo(self, path, **options):
+                return WORKFLOW
+            def pages(self, path, collection):
+                return self.jobs
+        api = API()
+        with patch("ci_report.on_main", return_value=True):
+            report = read_run(api, run, {})
+        self.assertEqual("not-run", report["status"])
+        self.assertEqual(run["head_sha"], report["pushed_sha"])
+        self.assertEqual([], report["observed"])
+        self.assertEqual([], report["diagnostics"]["infrastructure"])
+        self.assertIn("Not evaluated", render_entry(report))
+        compact = ci_report.compact_entry(report, set())
+        self.assertEqual(report["not_evaluated_reason"], compact["not_evaluated_reason"])
+        self.assertIn("Not evaluated", render_entry(compact))
+        saved = ci_report.merge_snapshot(None, [compact], date(2026, 10, 9))
+        self.assertEqual("not-run", saved["days"]["2026-10-09"]["entries"][0]["status"])
+        with patch("ci_report.ensure_label") as writes:
+            self.assertEqual(([], {}), synchronize_issues(api, [report], {"entries": []}))
+        writes.assert_not_called()
+        for mutation in ({"runner_id": 123}, {"steps": [{"status": "completed"}]},
+                         {"conclusion": "failure"}):
+            api.jobs = [dict(UNSTARTED_GATE_JOBS[0], **mutation)]
+            with patch("ci_report.on_main", return_value=True):
+                started = read_run(api, run, {})
+            self.assertEqual("failed", started["status"])
+            self.assertTrue(started["diagnostics"]["infrastructure"])
+            self.assertTrue(ci_report.issue_eligible(started))
+        with patch("ci_report.ensure_label"), patch("ci_report.visible_issues", return_value=[]), \
+                patch("ci_report.matching_issues", return_value=[]), patch("ci_report.wait_for_issue_visibility"), \
+                patch.object(api, "repo", return_value={"number": 99}) as writes:
+            receipts, _ = synchronize_issues(api, [started], {"entries": []})
+        self.assertEqual("post-merge", receipts[0]["action"])
+        self.assertEqual(run["head_sha"], receipts[0]["sha"])
+        self.assertEqual("POST", writes.call_args.kwargs["method"])
+        api.jobs = UNSTARTED_GATE_JOBS
+        with patch("ci_report.on_main", return_value=False):
+            self.assertEqual("failed", read_run(api, run, {})["status"])
+
     def transition(self, state, report, referenced=False):
         return issue_decision(state, IDENTITY, [report], registry_referenced=referenced)
 

@@ -161,6 +161,16 @@ the recent discovery window are refreshed once to record their creation time and
 conclusion. Aggregate reporting remains separate from verified test failures.
 Post-merge notifications remain for human triage.
 
+Cancelled first-attempt main gate runs whose complete GitHub jobs list proves
+that no runner or step executed are retained as `not-run`, with an empty test
+population and an explicit not-evaluated reason. They do not open post-merge
+failure notifications or count as passes. An active run cancelled after any job
+starts, a cancelled rerun, or missing/ambiguous job evidence still follows the
+ordinary failure path, including infrastructure notifications. The publisher
+uses the same reader predicate; see the [main gate queue design](CI_PUBLISHER.md).
+Previously saved failure reports and their human-triage notifications
+are preserved rather than rewritten by this reader update.
+
 Registry diagnostics list review dates and closed/missing issues without editing the
 registry, changing retry eligibility, outcomes or thresholds. See
 [listed-only retries](TESTING.md#known-flaky-registry-and-listed-only-retries).
