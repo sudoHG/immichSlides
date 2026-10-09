@@ -14,6 +14,7 @@ import yaml
 
 PRIVACY_WORKFLOW = ".github/workflows/privacy-preflight.yml"
 PROBE_WORKFLOW = ".github/workflows/ci-probe.yml"
+REPORT_WORKFLOW = ".github/workflows/ci-report.yml"
 LIVE_WORKFLOW = ".github/workflows/ci-nightly.yml"
 LIVE_ENVIRONMENT = "immich-test-server"
 LIVE_BINDINGS = {"CI_LIVE_URL": "${{ secrets.IMMICH_TEST_SERVER_URL }}",
@@ -29,7 +30,7 @@ PROBE_ENVIRONMENT = {
 }
 WORKFLOW_RUN_SOURCES = {
     ".github/workflows/ci-publish.yml": {"ci-gate", "ci-ui"},
-    ".github/workflows/ci-report.yml": {"ci-nightly", "ci-gate"},
+    REPORT_WORKFLOW: {"ci-nightly", "ci-gate", "ci-ui"},
 }
 ENVIRONMENT_WORKFLOWS = {
     "ci-publisher": {".github/workflows/ci-publish.yml", ".github/workflows/ci-approval.yml",
@@ -165,6 +166,11 @@ def trusted_run_allowed(script, path, events):
     if not isinstance(script, str):
         return False
     script = script.strip()
+    if path == REPORT_WORKFLOW and set(events) <= {"schedule", "workflow_dispatch", "workflow_run"}:
+        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect',
+                      '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync',
+                      '/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
+            return True
     if path in PUBLISHER_COMMANDS:
         commands = {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py ' + command
                     for command in PUBLISHER_COMMANDS[path]}
@@ -255,6 +261,15 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             or document.get("permissions") != {}):
         flag("workflow", "probe-contract", "ci-probe needs its exact name, scheduled/manual triggers and no workflow-level grants")
     approval_workflow = path in {".github/workflows/ci-approval.yml", ".github/workflows/ci-approve.yml"}
+    if path == REPORT_WORKFLOW and (document.get("name") != "ci-report"
+            or set(events) != {"schedule", "workflow_dispatch", "workflow_run"}
+            or not isinstance(events.get("workflow_run"), dict)
+            or events.get("workflow_run", {}).get("branches") != ["main"]
+            or events.get("workflow_dispatch") != {"inputs": {"reset_history": {
+                "description": "Maintainer-only explicit bootstrap or reset of reporting history",
+                "required": False, "default": False, "type": "boolean"}}}
+            or document.get("permissions") != {}):
+        flag("workflow", "report-contract", "ci-report needs main-filtered completion/daily/manual triggers and no workflow-level grants")
     if approval_workflow and "concurrency" in document:
         flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
     # Live consumers intentionally execute test bundles; publisher-only trusted command rules do not apply.
@@ -309,6 +324,16 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             flag(location, "permissions", "Job needs explicit permissions, directly or inherited")
         if path == PROBE_WORKFLOW and permissions != {"contents": "read", "issues": "write"}:
             flag(location, "probe-contract", "ci-probe grants only contents: read and issues: write at job level")
+        if path == REPORT_WORKFLOW:
+            if (permissions != {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"}
+                    or job.get("runs-on") != "ubuntu-24.04" or "environment" in job
+                    or job.get("if") != "github.ref == 'refs/heads/main' && "
+                    "(github.event_name != 'workflow_run' || "
+                    "(github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && "
+                    "((github.event.workflow_run.name == 'ci-nightly' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
+                    "(contains(fromJSON('[\"ci-gate\",\"ci-ui\"]'), github.event.workflow_run.name) && github.event.workflow_run.event == 'push'))))"
+                    or job.get("concurrency") != {"group": "ci-report-state", "cancel-in-progress": False}):
+                flag(location, "report-contract", "Reporter is serialized, main-only, excludes branch nightly, is environment-free and has only issue write")
         timeout = job.get("timeout-minutes")
         if type(timeout) is not int or not 1 <= timeout <= 360:
             flag(location, "timeout", "Job needs a literal timeout-minutes from 1 to 360")
@@ -325,6 +350,17 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         elif isinstance(steps, list) and any(not isinstance(step, dict) or not ("uses" in step or "run" in step) for step in steps):
             flag(location, "workflow-format", "Each step needs run or uses")
         if trusted and isinstance(steps, list):
+            if path == REPORT_WORKFLOW:
+                collect = [i for i, step in enumerate(steps) if isinstance(step, dict)
+                           and step.get("run", "").endswith("scripts/ci_report.py --phase collect")]
+                sync = [i for i, step in enumerate(steps) if isinstance(step, dict)
+                        and step.get("run", "").endswith("scripts/ci_report.py --phase sync")]
+                daily = [i for i, step in enumerate(steps) if isinstance(step, dict)
+                         and step.get("uses", "").startswith("actions/upload-artifact@")
+                         and step.get("with", {}).get("path") == "${{ runner.temp }}/ci-report/daily"]
+                if not (len(collect) == len(sync) == len(daily) == 1 and collect[0] < daily[0] < sync[0]
+                        and steps[daily[0]].get("if") == "success()" and steps[sync[0]].get("if") == "success()"):
+                    flag(location, "report-contract", "Upload the verified daily rollup before issue synchronization")
             if path in PUBLISHER_COMMANDS and any(step.get("run", "").endswith("scripts/ci_publish.py publish")
                                                  for step in steps if isinstance(step, dict)):
                 checkouts = [step for step in steps if isinstance(step, dict)
@@ -373,7 +409,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if isinstance(environment, dict) and any(key in loader_variables for key in environment):
             flag(location, "artifact-execution", "Artifact data must not control executable search or interpreter startup")
         bindings = (PRIVACY_ENVIRONMENT if path == PRIVACY_WORKFLOW else PROBE_ENVIRONMENT
-                    if path == PROBE_WORKFLOW else PUBLISHER_BINDINGS if path in PUBLISHER_COMMANDS else {})
+                    if path == PROBE_WORKFLOW else {"CI_REPORT_TOKEN": "${{ github.token }}"} if path == REPORT_WORKFLOW
+                    else PUBLISHER_BINDINGS if path in PUBLISHER_COMMANDS else {})
         if (not isinstance(environment, dict) or any(key not in bindings or value != bindings[key]
                 for key, value in environment.items())):
             flag(location, "trusted-environment", "Trusted environment variables need an explicit reviewed binding")
@@ -395,7 +432,13 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                                             {"name": "ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}",
                                              "path": "${{ runner.temp }}/ci-ui-verdict/verdict.json",
                                              "if-no-files-found": "error", "retention-days": 30}))
-        if "uses" in item and not publisher_upload and not trusted_action_allowed(uses, options):
+        report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+                         and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",
+                                             "path": "${{ runner.temp }}/ci-report/" + directory,
+                                             "if-no-files-found": missing, "retention-days": retention}
+                                 for name, directory, missing, retention in (("daily", "daily", "error", 90),
+                                     ("runs", "runs", "ignore", 7))))
+        if "uses" in item and not publisher_upload and not report_upload and not trusted_action_allowed(uses, options):
             flag(location, "trusted-action", "Trusted uses must be an approved pinned remote action or isolated repository-local action")
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":
             ref = options.get("ref")
@@ -407,6 +450,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                     or not (repository is None or isinstance(repository, str))
                     or repository not in {None, "${{ github.repository }}"}):
                 flag(location, "trusted-checkout", "Trusted checkout must use this repository's default branch (privacy may use base.sha)")
+            if path == REPORT_WORKFLOW and (ref != "main" or options.get("fetch-depth") != 0):
+                flag(location, "report-contract", "Reporter needs explicit main checkout and full history")
         if isinstance(uses, str) and "download-artifact" in uses.lower() and not artifact_path(options.get("path")):
             flag(location, "artifact-execution", "Download artifact data only into an explicit ci-artifacts directory")
         if "script" in options:

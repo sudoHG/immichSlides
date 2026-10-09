@@ -258,7 +258,46 @@ class WorkflowPolicyTests(unittest.TestCase):
                 self.assertIn("workflow-run", self.rules(document, TRUSTED))
         document = self.trusted()
         document["on"]["workflow_run"] = {"workflows": ["ci-nightly"], "types": ["completed"]}
-        self.assertEqual(set(), self.rules(document, ".github/workflows/ci-report.yml"))
+        self.assertNotIn("workflow-run", self.rules(document, ".github/workflows/ci-report.yml"))
+
+    def test_reporter_rejects_write_grants_environments_branch_code_and_unbounded_retention(self):
+        document = {"name": "ci-report", "on": {"schedule": [{"cron": "30 8 * * *"}],
+                    "workflow_dispatch": {"inputs": {"reset_history": {
+                        "description": "Maintainer-only explicit bootstrap or reset of reporting history",
+                        "required": False, "default": False, "type": "boolean"}}},
+                    "workflow_run": {"workflows": ["ci-nightly"], "types": ["completed"], "branches": ["main"]}},
+                    "permissions": {}, "jobs": {"report": {"if": "github.ref == 'refs/heads/main' && "
+                    "(github.event_name != 'workflow_run' || "
+                    "(github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && "
+                    "((github.event.workflow_run.name == 'ci-nightly' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
+                    "(contains(fromJSON('[\"ci-gate\",\"ci-ui\"]'), github.event.workflow_run.name) && github.event.workflow_run.event == 'push'))))",
+                    "runs-on": "ubuntu-24.04", "timeout-minutes": 30,
+                    "permissions": {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"},
+                    "concurrency": {"group": "ci-report-state", "cancel-in-progress": False},
+                    "steps": [{"uses": "actions/checkout@" + SHA, "with": {"ref": "main", "fetch-depth": 0}},
+                              {"run": '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect',
+                               "env": {"CI_REPORT_TOKEN": "${{ github.token }}"}},
+                              {"if": "success()", "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                               "with": {"name": "ci-report-daily-${{ github.run_id }}-${{ github.run_attempt }}",
+                                        "path": "${{ runner.temp }}/ci-report/daily", "if-no-files-found": "error", "retention-days": 90}},
+                              {"if": "success()", "run": '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync',
+                               "env": {"CI_REPORT_TOKEN": "${{ github.token }}"}}]}}}
+        self.assertEqual(set(), self.rules(document, policy.REPORT_WORKFLOW))
+        for mutate in (lambda job: job["permissions"].update(actions="write"),
+                       lambda job: job.update(environment="ci-publisher"),
+                       lambda job: job.update({"if": "github.ref == 'refs/heads/main'"}),
+                       lambda job: job.update({"if": job["if"].replace("head_repository.full_name == github.repository", "head_repository.full_name != github.repository")}),
+                       lambda job: job.update({"if": job["if"].replace("event == 'push'", "event == 'pull_request'")}),
+                       lambda job: job["steps"][2].update({"if": "always()"}),
+                       lambda job: job["steps"].reverse(),
+                       lambda job: job["steps"][0]["with"].update(ref="${{ github.event.workflow_run.head_sha }}"),
+                       lambda job: job.update(concurrency={"group": "ci-report-state", "cancel-in-progress": True})):
+            changed = copy.deepcopy(document)
+            mutate(changed["jobs"]["report"])
+            self.assertIn("report-contract", self.rules(changed, policy.REPORT_WORKFLOW))
+        changed = copy.deepcopy(document)
+        changed["on"]["workflow_run"].pop("branches")
+        self.assertIn("report-contract", self.rules(changed, policy.REPORT_WORKFLOW))
 
     def test_trusted_checkout_rejects_pr_refs_shas_and_indirection(self):
         for ref in ["refs/pull/123/head", "refs/pull/123/merge", "${{ github.event.pull_request.head.sha }}",

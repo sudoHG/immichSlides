@@ -13,6 +13,7 @@ Thanks for helping out. immichSlides is a SwiftUI photo slideshow client for [Im
 - A Mac with the Xcode version the project was last upgraded with (Xcode 26.3, see `LastUpgradeCheck` in `immichSlides.xcodeproj`), the iOS and tvOS Simulator runtimes, Python 3 with Pillow and PyYAML, Swift (included with Xcode), and the zstd CLI (`brew install zstd`) for Python contract tests.
 - CI tool versions and the isolated Python setup are documented in [CI toolchain and workflow policy](docs/CI_TOOLCHAIN.md). The host entry point runs the standalone workflow-policy check in the same environment as the other Python checks.
 - [Trusted CI publication and approval](docs/CI_PUBLISHER.md) explains the informational App statuses, exact-head fork/CI approval, main-only trusted workflows, and a read-only dry-run. GitHub may separately require approval before a first-time fork contributor's producer run starts.
+- [CI reporting and failure tracking](docs/CI_REPORT.md) describes daily main/nightly history, producer-owned PR summaries, nightly issue recovery and main-push notifications.
 - All `check_all.sh` Python steps use `"${PYTHON:-python3}"`; child host checks keep that interpreter. Set `PYTHON=/usr/bin/python3` to use the recommended Xcode-bundled Python, or activate a venv made from it and leave `PYTHON` unset. Python 3.14 can hit the [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
 
   ```bash

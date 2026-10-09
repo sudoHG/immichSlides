@@ -1,0 +1,68 @@
+name: ci-report
+
+on:
+  workflow_run:
+    workflows: [ci-nightly, ci-gate, ci-ui]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '30 8 * * *'
+  workflow_dispatch:
+    inputs:
+      reset_history:
+        description: Maintainer-only explicit bootstrap or reset of reporting history
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+jobs:
+  report:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' &&
+      ((github.event.workflow_run.name == 'ci-nightly' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event.workflow_run.event)) ||
+      (contains(fromJSON('["ci-gate","ci-ui"]'), github.event.workflow_run.name) && github.event.workflow_run.event == 'push'))))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      issues: write
+    concurrency:
+      group: ci-report-state
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
+      - name: Collect verified reporting snapshots
+        id: collect
+        env:
+          CI_REPORT_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect'
+      - if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-report-daily-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-report/daily
+          if-no-files-found: error
+          retention-days: 90
+      - name: Synchronize issues after the durable rollup upload
+        if: success()
+        env:
+          CI_REPORT_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync'
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-report-runs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-report/runs
+          if-no-files-found: ignore
+          retention-days: 7

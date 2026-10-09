@@ -442,7 +442,8 @@ class StrictCITracerTests(unittest.TestCase):
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
         timeout = {"code": "official-tests-export-timeout", "message": "official-tests-export timed out after 60.0s."}
-        for official_result, infrastructure in (("Passed", []), ("Failed", []), ("Failed", [timeout])):
+        for official_result, infrastructure, contract in (("Passed", [], None), ("Passed", [], "FAIL"),
+                                                        ("Failed", [], None), ("Failed", [timeout], None)):
             with self.subTest(result=official_result, infrastructure=infrastructure), tempfile.TemporaryDirectory() as raw:
                 output = Path(raw) / "trace"
                 manifest = Path(raw) / "manifest.json"
@@ -457,6 +458,9 @@ class StrictCITracerTests(unittest.TestCase):
                         return 0
                     evidence.mkdir(parents=True)
                     (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": infrastructure}))
+                    if contract:
+                        (evidence / "visual-identity-runner.json").write_text(json.dumps({
+                            "suite": "smoke", "verdict": contract, "error": "private runner details"}))
                     (evidence / "xcodebuild.log").write_text("test-without-building\n")
                     (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
                     counts = {"totalTestCount": 1, "passedTests": int(official_result == "Passed"),
@@ -479,9 +483,13 @@ class StrictCITracerTests(unittest.TestCase):
                 self.assertEqual(summary["population"]["compiled"], summary["population"]["declared"])
                 self.assertEqual(summary["population"]["observed"][0]["outcome"], "failed")
                 self.assertEqual(trace["warm"][0]["official_summary"]["totalTestCount"], 1)
+                self.assertEqual([{"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": official_result}],
+                                 trace["warm"][0]["official_methods"])
                 self.assertEqual(trace["warm"][0]["exit_code"], 124 if infrastructure else 65)
                 self.assertEqual(summary["infrastructure"], infrastructure)
                 self.assertEqual(trace["warm"][0]["infrastructure"], infrastructure)
+                self.assertEqual(contract == "FAIL", trace["warm"][0]["automated_contract_failed"])
+                self.assertNotIn("private runner details", json.dumps(trace))
 
     def test_official_export_rejects_another_selected_test_even_when_counts_match(self):
         from run_strict_ci_tracer import validate_case_export
@@ -490,7 +498,8 @@ class StrictCITracerTests(unittest.TestCase):
             payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
                 {"nodeType": "Test Case", "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()", "result": "Failed"}]}]}
             (evidence / "official-tests.json").write_text(json.dumps(payload))
-            validate_case_export(evidence, "ios", "smoke")
+            self.assertEqual([{"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": "Failed"}],
+                             validate_case_export(evidence, "ios", "smoke"))
             with self.assertRaises(ValueError):
                 validate_case_export(evidence, "ios", "smoke", {
                     "totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0})

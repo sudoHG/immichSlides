@@ -204,7 +204,12 @@ exact-head-approved docs-only fork; fork/approval labels still apply. Unit/archi
 producer changes are independent sibling work; this publisher does not create
 or rename their jobs. Fork successes remain explicitly **self-reported**, and
 approved CI-changing/fork verdicts are labeled **approval-based**.
-Failure Details links identify the authoritative producer run; #111 owns richer failing-test, count and missing-evidence reporting.
+Failure Details links identify the authoritative producer run. Publication summaries
+retain failing identities, exact attempt exits, counts and missing artifact/identity
+diagnostics even after producer failure. Diagnostic parsing errors publish a controlled
+infrastructure failure instead of aborting before statuses are written. Admission,
+approval and test outcomes remain unchanged. [CI reporting](CI_REPORT.md) keeps daily history and
+PR summaries, tracks nightly failures and notifies main-push failures with issue-write.
 
 ## Approval and credentials
 

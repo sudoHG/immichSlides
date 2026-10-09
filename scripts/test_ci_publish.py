@@ -5,6 +5,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+import os
 import zlib
 from unittest.mock import patch
 
@@ -150,6 +151,22 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_failed_publication_summary_keeps_source_and_approval_basis(self):
+        source = {"repository": REPOSITORY, "workflow_path": RUN["path"], "event": "pull_request",
+                  "run_id": RUN["id"], "attempt": 1, "fork_originated": True,
+                  "ci_changing": True, "approval_based": True}
+        plan = {"ci-pr-gate": {"state": "failure", "description": "Authoritative producer failed",
+                               "report_source": source}}
+        api = type("API", (), {"repository": REPOSITORY, "status": lambda *args: None})()
+        with tempfile.TemporaryDirectory() as temporary:
+            summary = Path(temporary) / "summary.md"
+            with patch("ci_publish.compute", return_value=(HEAD, plan, None)), patch.dict(
+                    os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+                write_publication(api, api, None, HEAD, "generic-app[bot]")
+            rendered = summary.read_text()
+        self.assertIn("approval-based: True", rendered)
+        self.assertIn("fork-originated: True", rendered)
+        self.assertIn("pull_request", rendered)
     def test_ui_reuse_requires_complete_plain_pr_verdict_and_identical_inputs(self):
         from ci_ui_reuse import validate_reuse
         push = {"schema_version": 1, "repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
@@ -564,8 +581,13 @@ class PublisherTests(unittest.TestCase):
             with patch("ci_publish.approved_status", return_value=True):
                 _, statuses, approval = compute(RecordedAPI(), 7, "", "generic-app[bot]")
             self.assertEqual(statuses["ci-ui"]["state"], "success")
-            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI)
+            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[])
             self.assertIsNone(approval["request"])
+            with patch("ci_publish.approved_status", return_value=True), patch(
+                    "ci_report.summary_diagnostics", side_effect=ContractError("malformed diagnostics")):
+                _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")
+            self.assertEqual("failure", statuses["ci-ui"]["state"])
+            self.assertIn("diagnostics", statuses["ci-ui"])
             with patch("ci_publish.approved_status", return_value=True), patch(
                     "ci_publish.evaluate_records", side_effect=ContractError(
                         "workflow is absent on the base; exact-head approval required")):
@@ -661,7 +683,12 @@ class PublisherTests(unittest.TestCase):
                 patch("ci_publish.producer_evidence", return_value=(ui_jobs, [])):
             _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")
         self.assertEqual(statuses["ci-ui"], {"state": "failure", "description": hint,
-                         "target_url": "https://github.com/" + REPOSITORY + "/actions/runs/101"})
+                         "target_url": "https://github.com/" + REPOSITORY + "/actions/runs/101",
+                         "diagnostics": {"counts": {}, "failures": [], "missing": [], "infrastructure": [],
+                                         "skipped": [], "deselected": []},
+                         "report_source": {"repository": REPOSITORY, "workflow_path": ui_run["path"], "event": "pull_request",
+                                           "run_id": RUN["id"], "attempt": RUN["run_attempt"],
+                                           "fork_originated": False, "ci_changing": False, "approval_based": False}})
 
     def test_admission_uses_github_merge_parents_and_preserves_original_on_rerun(self):
         identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
@@ -1080,6 +1107,12 @@ class PublisherTests(unittest.TestCase):
                 return rows
         with patch("ci_publish.json_member", side_effect=read_summary), self.assertRaises(ContractError):
             producer_evidence(RerunAPI(), dict(RUN, id=37700479666, run_attempt=3), FIXTURE_GATE)
+        with patch("ci_publish.json_member", side_effect=read_summary):
+            diagnostics = []
+            _, partial = producer_evidence(RerunAPI(), dict(RUN, id=37700479666, run_attempt=3), FIXTURE_GATE,
+                                          diagnostics=diagnostics)
+        self.assertEqual(4, len(partial))
+        self.assertEqual(["required artifact missing or invalid: host-summary-37700479666-3"], diagnostics)
 
     def test_credential_free_approval_requires_the_actual_environment_reviewer(self):
         environment = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",

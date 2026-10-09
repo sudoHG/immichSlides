@@ -129,6 +129,10 @@ def publication_plan(pr, runs, admissions, evaluations, *, approved, needs_appro
             state = {"state": "failure", "description": "Authoritative producer failed or was cancelled"}
         else:
             state = dict(evaluations.get(context, {"state": "failure", "description": "Missing or invalid producer evidence"}))
+        # Failure/approval state is independent of the retained producer diagnostics.
+        for key in ("diagnostics", "report_source"):
+            if key in evaluations.get(context, {}):
+                state[key] = evaluations[context][key]
         if state["state"] == "failure" and run:
             state.setdefault("target_url", f"https://github.com/{pr['base']['repo']['full_name']}/actions/runs/{run['id']}")
         suffix = "; self-reported" if fork else ""
@@ -149,9 +153,10 @@ def check_credential_context(environment, path):
 
 
 class GitHub:
-    def __init__(self, repository, token):
+    def __init__(self, repository, token, *, response_headers=None):
         require(re.fullmatch(r"[\w.-]+/[\w.-]+", repository) is not None, "invalid repository")
         self.repository, self.token = repository, token
+        self.response_headers = response_headers
 
     def request(self, path, *, method="GET", payload=None, binary=False, missing=False):
         url = "https://api.github.com" + path
@@ -162,8 +167,12 @@ class GitHub:
         request = Request(url, data=data, method=method, headers=headers)
         try:
             with build_opener(ArtifactRedirect()).open(request, timeout=45) as response:
+                if self.response_headers:
+                    self.response_headers(response.headers)
                 raw = response.read(MAX_JSON_BYTES + 1)
         except HTTPError as error:
+            if self.response_headers:
+                self.response_headers(error.headers)
             if missing and error.code == 404:
                 return None
             # Never echo response bodies, headers, request objects or credentials.
@@ -354,7 +363,7 @@ def approved_status(api, pr, login):
                and status["creator"]["login"] == login for status in statuses)
 
 
-def producer_evidence(api, run, source):
+def producer_evidence(api, run, source, *, diagnostics=None):
     """Bind each retained artifact to its job's latest execution attempt.
 
     Failed-job reruns legitimately retain successful jobs and their old records.
@@ -375,10 +384,16 @@ def producer_evidence(api, run, source):
             retained = (previous and all(job.get(key) and job[key] == previous.get(key) for key in execution))
             jobs[job["name"]] = dict(job, evidence_attempt=previous["evidence_attempt"] if retained else attempt)
     expected, _, by_job, metadata = workflow_contract(source, run, metadata=True)
-    require(set(jobs) == set(expected), "required job set mismatch")
+    if diagnostics is None:
+        require(set(jobs) == set(expected), "required job set mismatch")
+    elif set(jobs) != set(expected):
+        diagnostics.append("required job set mismatch")
     artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
     summaries = []
     for name in expected:
+        if name not in jobs:
+            diagnostics.append("required job missing: " + name)
+            continue
         job = jobs[name]
         if (run["event"] == "push" and metadata[name]["tier"] == "ui"
                 and job["status"] == "completed" and job["conclusion"] == "skipped"):
@@ -386,14 +401,23 @@ def producer_evidence(api, run, source):
         attempt_run = dict(run, run_attempt=job["evidence_attempt"])
         _, _, names = workflow_contract(source, attempt_run, details=True)
         for artifact_name in names[name]:
-            matches = [artifact for artifact in artifacts if artifact["name"] == artifact_name and not artifact["expired"]]
-            require(len(matches) == 1, "required artifact is missing, expired or duplicated")
-            summary = parse_summary(json_member(api, matches[0], "summary.json"))
-            require(summary["run"]["id"] == str(run["id"]) and summary["run"]["attempt"] == job["evidence_attempt"],
-                    "artifact does not match its job's latest execution attempt")
-            require(all(summary["run"][key] == metadata[name][key] for key in ("tier", "job", "shard")),
-                    "summary tier/job/shard differs from its verified uploading job")
-            summaries.append(summary)
+            try:
+                expired = [artifact for artifact in artifacts if artifact["name"] == artifact_name and artifact["expired"]]
+                if expired and diagnostics is not None:
+                    diagnostics.append("required artifact expired: " + artifact_name)
+                    continue
+                matches = [artifact for artifact in artifacts if artifact["name"] == artifact_name and not artifact["expired"]]
+                require(len(matches) == 1, "required artifact is missing, expired or duplicated")
+                summary = parse_summary(json_member(api, matches[0], "summary.json"))
+                require(summary["run"]["id"] == str(run["id"]) and summary["run"]["attempt"] == job["evidence_attempt"],
+                        "artifact does not match its job's latest execution attempt")
+                require(all(summary["run"][key] == metadata[name][key] for key in ("tier", "job", "shard")),
+                        "summary tier/job/shard differs from its verified uploading job")
+                summaries.append(summary)
+            except (ContractError, KeyError, ValueError, TypeError):
+                if diagnostics is None:
+                    raise
+                diagnostics.append("required artifact missing or invalid: " + artifact_name)
     return list(jobs.values()), summaries
 
 
@@ -433,10 +457,11 @@ def compute(api, pr_number, pushed, login):
     # docs-only approval request while its classification is still being derived.
     needs_approval = bool(pr and (fork or any(r["classification"]["ci_changing"] for r in records)))
     for context, run in runs.items():
-        if not run or run["id"] not in admissions or run["status"] != "completed" or run["conclusion"] != "success":
+        if not run or run["id"] not in admissions or run["status"] != "completed":
             continue
         record = admissions[run["id"]]
         summaries = []
+        diagnostic_errors = []
         try:
             require(record["workflow_id"] == run["workflow_id"] and record["workflow_path"] == run["path"], "admission producer mismatch")
             identity = record["identity"]
@@ -449,10 +474,11 @@ def compute(api, pr_number, pushed, login):
                 ui = record.get("ui_inputs", {}).get("candidate" if approved else "base")
                 if ui is not None:
                     require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
-            jobs, summaries = producer_evidence(api, run, source)
+            jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors)
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)
                 require(mismatch is None, mismatch or "identity mismatch")
+            require(not diagnostic_errors, "missing or invalid artifact evidence")
             if context == "ci-ui" and not pr and any(job["conclusion"] == "skipped" for job in jobs):
                 from ci_ui_reuse import evaluate_reused_push
                 evaluations[context] = evaluate_reused_push(api, record, run, jobs, summaries)
@@ -463,6 +489,8 @@ def compute(api, pr_number, pushed, login):
                     receipt = make_verdict(record, run, summaries, evaluations[context])
                     if receipt is not None:
                         evaluations[context]["reuse_verdict"] = receipt
+            from ci_report import summary_diagnostics
+            evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
         except (ContractError, KeyError, ValueError, TypeError) as error:
             evaluations[context] = {"state": "failure", "description": ui_failure_hint(error) or
                                    "Missing, invalid or mismatched admitted evidence"}
@@ -471,6 +499,18 @@ def compute(api, pr_number, pushed, login):
                 previous = prior_mismatch(api.pages("commits/" + head + "/statuses"), run, login)
                 evaluations[context]["description"] = "base moved; push again or update the branch" + (" (repeated across reruns)" if previous else "")
                 evaluations[context]["mismatch"] = {"run_id": run["id"], "attempt": run["run_attempt"]}
+        if "diagnostics" not in evaluations[context]:
+            try:
+                from ci_report import summary_diagnostics
+                evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
+            except (ContractError, KeyError, ValueError, TypeError):
+                evaluations[context]["diagnostics"] = {"counts": {}, "failures": [], "missing": [],
+                    "infrastructure": ["failure diagnostics unavailable"], "skipped": [], "deselected": []}
+        evaluations[context]["report_source"] = {
+            "repository": api.repository, "workflow_path": run["path"], "event": run["event"],
+            "run_id": run["id"], "attempt": run["run_attempt"],
+            "fork_originated": fork, "ci_changing": record["classification"]["ci_changing"],
+            "approval_based": bool(approved and needs_approval)}
     if pr:
         plan = publication_plan(pr, runs, admissions, evaluations, approved=approved, needs_approval=needs_approval)
         # UI has not shipped yet. Docs-only changes may be independently shown as
@@ -554,9 +594,10 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
             for context, status in plan.items():
                 details = f" ([Details]({status['target_url']}))" if status.get("target_url") else ""
                 handle.write(f"- {context}: {status['state']} — {status['description']}{details}\n")
-                source = status.get("source")
+                source = status.get("report_source") or status.get("source")
                 if source:
                     handle.write(f"  Source: {source['repository']}, {source['workflow_path']}; run {source['run_id']}, attempt {source['attempt']}; "
+                                 f"event: {source.get('event', 'unknown')}; CI-changing: {source.get('ci_changing')}; "
                                  f"approval-based: {source['approval_based']}, fork-originated: {source['fork_originated']}.\n")
                 reuse = status.get("reuse")
                 if reuse:
@@ -571,6 +612,18 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                 if status.get("source"):
                     handle.write(f"  Expected skips {len(status['expected_skips'])}, deselected {len(status['deselected'])}, "
                                  f"removed by PR {len(status['removed_by_pr'])}.\n")
+                diagnostics = status.get("diagnostics")
+                if diagnostics:
+                    from ci_summary import markdown_text
+                    handle.write("\n  Producer counts (admission/verdict acceptance is separate): " +
+                                 "; ".join(f"{key} {value}" for key, value in sorted(diagnostics["counts"].items())) + ".\n")
+                    for failure in diagnostics["failures"]:
+                        handle.write("  Failed: " + markdown_text(failure["identity"]) +
+                                     "; exit codes: " + str(failure["exit_codes"]) + ".\n")
+                    for missing in diagnostics["missing"]:
+                        handle.write("  Missing evidence: " + markdown_text(missing["identity"]) + "; " + missing["reason"] + ".\n")
+                    for error in diagnostics["infrastructure"]:
+                        handle.write("  Infrastructure: " + markdown_text(error) + ".\n")
 
 
 def record_approval(api, app, event, environment, login, path):
