@@ -19,7 +19,10 @@ MODE_CONTEXT = "_IMMICHSLIDES_CI_LOCAL_MODE"
 SOURCE_CONTEXT = "_IMMICHSLIDES_CI_LOCAL_SOURCE"
 PATH_OPTIONS = {"--output-dir", "--evidence-dir", "--derived-data-path", "--result-bundle-path",
                 "--cloned-source-packages-path", "--cloned-source-packages", "--xctestrun",
-                "--archive-dir", "--selection-path", "--relocated-path", "--shard-manifest", "--plan", "--records-dir"}
+                "--archive-dir", "--selection-path", "--relocated-path", "--shard-manifest", "--plan", "--records-dir",
+                "--manifest"}
+# Commands that only check results an earlier run wrote keep that run's receipt.
+RESULT_CHECK_COMMANDS = {"check-upload"}
 PATH_ALIASES = {"--derived-data": "--derived-data-path", "--result-bundle": "--result-bundle-path"}
 INTERRUPT_GRACE_SECONDS = 150
 
@@ -307,7 +310,9 @@ def launch(script, arguments):
     output = Path(output_value) if output_value else None
     if output and (output == root or root in output.parents):
         raise ValueError("output/evidence directory must be outside the source checkout")
-    if record_path is None and output:
+    if RESULT_CHECK_COMMANDS.intersection(remaining):
+        record_path = None
+    elif record_path is None and output:
         record_path = output / "local-snapshot.json"
     if record_path and (record_path == root or root in record_path.parents):
         raise ValueError("snapshot record must be outside the source checkout")
