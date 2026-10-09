@@ -184,8 +184,13 @@ unexpected skips checked against approved base policy and exact reasons, summed 
 durations including automatic retries, GitHub run timing and artifact bytes. Strict
 nightly skips remain unexpected under the existing aggregate contract. First-failure
 counts use GitHub attempt 1; nightly history and previously collected gate/UI counts
-survive reruns. Missing attempt 1 is unavailable. Final outcome totals use the latest
-saved attempt.
+survive reruns. Optional `first_execution_health` stores these counts separately from
+the latest execution's metrics and survives pending/in-progress rerun snapshots.
+Missing attempt 1 is unavailable. Final outcome totals use the latest saved attempt.
+Nightly official method exports contain no measured method durations; their zero
+observation durations are placeholders. Nightly test duration is therefore unavailable,
+not zero. Measured case invocation wall time includes other work and does not substitute
+for summed method durations.
 
 Queue seconds sum job creation-to-start intervals from the existing gate/UI job reader,
 including retained jobs after reruns. Missing timestamps or nightly job data are

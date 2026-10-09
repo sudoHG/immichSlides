@@ -50,6 +50,19 @@ def observation_metrics(observed, *, unexpected_skips=None):
             "test_duration_seconds": sum(item["duration_seconds"] for item in observed)}
 
 
+def first_execution_metrics(entry):
+    if entry is None:
+        return {"schema_version": 1, "first_attempt_failures": None}
+    if "first_execution_health" in entry:
+        return dict(entry["first_execution_health"])
+    first = next((item for item in entry.get("attempt_history", []) if item["run"]["attempt"] == 1), entry)
+    health = first.get("health", {})
+    # Legacy gate/UI health already retained attempt 1; nightly needs its history.
+    if first["run"]["attempt"] != 1 and first["source"]["workflow_path"] == ".github/workflows/ci-nightly.yml":
+        health = {}
+    return {"schema_version": health.get("schema_version", 1), "first_attempt_failures": health.get("first_attempt_failures")}
+
+
 def unexpected_skips(summaries, policy, environment):
     from ci_verdict import expected_skip_verdict, parse_policy, tier_approved
     if policy is None:
@@ -102,8 +115,9 @@ def health_report(snapshot, registry, month, now):
         for entry in entries:
             source = entry
             if key == "first_attempt_failures":
-                source = next((item for item in entry.get("attempt_history", []) if item["run"]["attempt"] == 1), entry)
-            health = source.get("health", {})
+                health = first_execution_metrics(entry)
+            else:
+                health = source.get("health", {})
             if health:
                 require(type(health.get("schema_version")) is int and health["schema_version"] == 1, "unsupported health metrics")
             value = health.get(key)
@@ -155,6 +169,7 @@ def render_health(report):
              f"{coverage['incomplete_evidence_runs']} runs have incomplete evidence; totals cover only available observations.", "",
              "Missing history and metrics are unavailable, never zero or evidence of passing. Durations are summed seconds; "
              "test durations include automatic retries. First-attempt failures use GitHub attempt 1 and each test's first call. "
+             "Nightly method durations are unavailable because official method exports have no measured durations. "
              "Flaky-passed and skip totals use the latest saved attempt. Queue time sums job creation-to-start intervals "
              "from the existing gate/UI job reader (nightly queue data is unavailable); "
              "run duration is run start to GitHub update at completion, not billed CPU time. "

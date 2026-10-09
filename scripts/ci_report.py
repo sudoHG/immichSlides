@@ -440,6 +440,8 @@ def nightly_attempt(api, run, attempt, artifacts):
                       "exit_codes": [a["exit_code"] for a in item["attempts"]]} for item in observed if item["outcome"] in FAILURES]})
     # The strict aggregate accepts explicit passes/flaky-passes only, not skips.
     entry["health"] = observation_metrics(observed, unexpected_skips=counts["skipped"])
+    # Official methods have no timing; case invocation wall time measures a different interval.
+    entry["health"]["test_duration_seconds"] = None
     return entry
 
 
@@ -447,10 +449,12 @@ def read_run(api, run, admissions, previous=None):
     """Only bounded JSON data is read; artifact files are never extracted or executed."""
     from ci_publish import producer_evidence
     from ci_publish_git import evaluate_records
-    from ci_health import observation_metrics, run_metrics, unexpected_skips
+    from ci_health import first_execution_metrics, observation_metrics, run_metrics, unexpected_skips
     entry = report_base(run, api.repository)
+    saved_first = first_execution_metrics(previous)
     jobs = None
     if run["status"] != "completed":
+        entry["first_execution_health"] = saved_first
         if previous and previous.get("attempt_history"):
             entry["attempt_history"] = [copy.deepcopy(item) for item in previous["attempt_history"]
                                         if item["run"]["attempt"] < run["run_attempt"]] + [copy.deepcopy(entry)]
@@ -514,7 +518,7 @@ def read_run(api, run, admissions, previous=None):
             if run["run_attempt"] != 1:
                 # Gate/UI compact history predates metrics and does not retain
                 # every original observation after a GitHub job rerun.
-                entry["health"]["first_attempt_failures"] = (previous or {}).get("health", {}).get("first_attempt_failures")
+                entry["health"]["first_attempt_failures"] = saved_first["first_attempt_failures"]
             if entry.get("evidence_expired"):
                 entry["status"] = "unverified"
                 entry["diagnostics"]["infrastructure"] = []
@@ -546,6 +550,8 @@ def read_run(api, run, admissions, previous=None):
             attempt["message"] = None
             attempt["reason"] = ("skip reason withheld; consult trusted policy" if attempt["outcome"] == "skipped"
                                  else "strict-case-contract-failed" if attempt.get("reason") == "strict-case-contract-failed" else None)
+    entry["first_execution_health"] = (saved_first if saved_first["first_attempt_failures"] is not None
+                                       else first_execution_metrics(entry))
     if "health" in entry:
         entry["health"].update(run_metrics(run, jobs))
         sizes = getattr(api, "artifact_sizes", {}).get(run["id"])
@@ -742,7 +748,7 @@ def compact_entry(entry, tracked):
                          for item in attempt["observed"] if item["outcome"] in FAILURES}
     result = {key: copy.deepcopy(value) for key, value in entry.items() if key in {
         "schema_version", "day", "source", "run", "identity", "hashes", "status", "release_eligible",
-        "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired", "diagnostic_shard"}}
+        "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired", "diagnostic_shard", "first_execution_health"}}
     if "health" in entry:
         result["health"] = copy.deepcopy(entry["health"])
     result["diagnostics"] = {key: copy.deepcopy(entry["diagnostics"].get(key, [] if key != "counts" else {}))
@@ -758,6 +764,7 @@ def compact_entry(entry, tracked):
 
 
 def merge_snapshot(previous, entries, now):
+    from ci_health import first_execution_metrics
     snapshot = copy.deepcopy(previous) if previous else {"schema_version": 2, "days": {}, "issue_index": {}}
     require(snapshot["schema_version"] == 2 and isinstance(snapshot["days"], dict), "invalid prior snapshot")
     cutoff = (now - timedelta(days=89)).isoformat()
@@ -773,7 +780,11 @@ def merge_snapshot(previous, entries, now):
             continue
         if old and old.get("identity") and entry.get("identity"):
             require(old["identity"] == entry["identity"], "saved producer identity changed")
-        selected[entry["run"]["id"]] = copy.deepcopy(entry)
+        replacement = copy.deepcopy(entry)
+        first = first_execution_metrics(old)
+        if first["first_attempt_failures"] is not None:
+            replacement["first_execution_health"] = first
+        selected[entry["run"]["id"]] = replacement
         snapshot["days"][day] = daily_rollup(day, list(selected.values()))
     snapshot["days"].setdefault(now.isoformat(), daily_rollup(now.isoformat(), []))
     return snapshot

@@ -286,6 +286,82 @@ class ReporterTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ContractError):
                 health_report(broken, {"entries": []}, "2026-10", date(2026, 10, 1))
 
+    def test_first_failure_survives_pending_snapshot_before_gate_or_ui_rerun_passes(self):
+        from ci_health import health_report
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        now = date(2026, 10, 1)
+        for path in ci_report.PRODUCER_PATHS[:2]:
+            for status in ("queued", "in_progress"):
+                with self.subTest(path=path, status=status):
+                    run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+                           "head_sha": "a" * 40, "path": path, "event": "push", "head_branch": "main",
+                           "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "failure"}
+                    identity = {"schema_version": 1, "repository": api.repository, "event": "push", "ref": "refs/heads/main",
+                                "pushed_sha": run["head_sha"], "tree_sha": "b" * 40}
+                    record = {"workflow_id": 123, "workflow_path": path, "identity": identity,
+                              "classification": {"ci_changing": False}, "workflows": {path: {"base": "trusted workflow"}}}
+                    summary = valid_summary()
+                    summary["identity"] = identity
+                    summary["source"].update(event="push", workflow_path=path)
+                    summary["run"]["id"] = str(run["id"])
+                    test = summary["population"]["observed"][0]["identity"]
+                    summary["population"]["observed"] = [observation(test, "failed", 2, exit_code=1)]
+                    jobs = [{"status": "completed", "conclusion": "failure"}]
+                    with patch("ci_report.on_main", return_value=True), \
+                            patch("ci_publish.producer_evidence", return_value=(jobs, [summary])) as producer, \
+                            patch("ci_publish_git.evaluate_records", return_value={"state": "success"}):
+                        failed = read_run(api, run, {10: record})
+                        snapshot = ci_report.merge_snapshot(None, [ci_report.compact_entry(failed, set())], now)
+                        saved = snapshot["days"][now.isoformat()]["entries"][0]
+                        pending = read_run(api, {**run, "run_attempt": 2, "status": status}, {10: record}, saved)
+                        self.assertEqual(1, producer.call_count)
+                        snapshot = ci_report.merge_snapshot(snapshot, [ci_report.compact_entry(pending, set())], now)
+                        metrics = health_report(snapshot, {"entries": []}, "2026-10", now)["metrics"]
+                        self.assertEqual({"value": 1, "sampled_runs": 1, "missing_runs": 0}, metrics["first_attempt_failures"])
+                        saved = snapshot["days"][now.isoformat()]["entries"][0]
+                        summary["run"]["attempt"] = 2
+                        summary["population"]["observed"] = [observation(test, "passed", 3)]
+                        jobs[0]["conclusion"] = "success"
+                        passed = read_run(api, {**run, "run_attempt": 2, "conclusion": "success"}, {10: record}, saved)
+                    self.assertEqual("passed", passed["status"])
+                    snapshot = ci_report.merge_snapshot(snapshot, [ci_report.compact_entry(passed, set())], now)
+                    metrics = health_report(snapshot, {"entries": []}, "2026-10", now)["metrics"]
+                    self.assertEqual({"value": 1, "sampled_runs": 1, "missing_runs": 0}, metrics["first_attempt_failures"])
+
+    def test_nightly_method_placeholder_durations_are_unavailable_after_compaction(self):
+        from ci_health import health_report
+        from ci_nightly import aggregate_nightly
+        from run_strict_e2e import resolve_suite_selector
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+               "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
+               "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "success"}
+        identity = {"schema_version": 1, "repository": api.repository, "event": "schedule", "ref": "refs/heads/main",
+                    "commit_sha": run["head_sha"], "tree_sha": "b" * 40}
+        case = test_identity("strict", "smoke", **IDENTITY["dimensions"])
+        summary = valid_summary()
+        summary["identity"] = identity
+        summary["source"].update(event="schedule", workflow_path=ci_report.NIGHTLY_PATH)
+        summary["run"] = {"id": "10", "attempt": 1, "tier": "strict", "job": "nightly-strict", "shard": "iphone"}
+        # A measured case invocation is not an individual method duration.
+        summary["population"].update(declared=[case], compiled=[case], observed=[observation(case, "passed", 37)])
+        aggregate = aggregate_nightly([case], [summary], live_in_scope=False)
+        aggregate.update(identity=identity, hashes=summary["hashes"], run={"id": "10", "attempt": 1},
+                         source=summary["source"], capacity={"shard_intervals": [{"shard": "iphone"}]})
+        trace = {"warm": [{"identity": case, "official_methods": [
+            {"identifier": resolve_suite_selector("ios", "smoke").split("/", 1)[1], "result": "Passed"}],
+            "build_operations": 0, "products_unchanged": True, "log_present": True, "exit_code": 0,
+            "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}]}
+        artifacts = [{"name": name, "expired": False} for name in ("nightly-aggregate-10-1", "nightly-strict-iphone-10-1")]
+        with patch("ci_publish.json_member", side_effect=[aggregate, summary, trace]):
+            report = ci_report.nightly_attempt(api, run, 1, artifacts)
+        self.assertTrue(report["observed"])
+        compact = ci_report.compact_entry(report, set())
+        snapshot = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))
+        metrics = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 1))["metrics"]
+        self.assertEqual({"value": None, "sampled_runs": 0, "missing_runs": 1}, metrics["test_duration_seconds"])
+        self.assertEqual({"value": 0, "sampled_runs": 1, "missing_runs": 0}, metrics["first_attempt_failures"])
+
     def test_monthly_due_date_handles_year_boundary_and_explicit_partial_month(self):
         from ci_health import report_month
         self.assertEqual("2025-12", report_month("schedule", {}, date(2026, 1, 1)))
