@@ -153,6 +153,16 @@ def string_scalars(value, location='workflow'):
             yield from string_scalars(child, f'{location}[{index}]')
 
 
+STRING_LITERAL = r"'(?:[^']|'')*'"
+EXPRESSION = re.compile(r"\$\{\{((?:" + STRING_LITERAL + r"|[^']|')*?)(?:\}\}|\Z)")
+
+
+def references_secrets_context(location, value):
+    """Whether a GitHub expression names the secrets context; plain words and string literals do not count."""
+    bodies = [value] if location.endswith('.if') else EXPRESSION.findall(value)
+    return any(re.search(r'\bsecrets\b', re.sub(STRING_LITERAL, "''", body), re.IGNORECASE) for body in bodies)
+
+
 def artifact_path(value):
     if not isinstance(value, str):
         return False
@@ -290,7 +300,7 @@ def check_workflow(path: str, source: str) -> list[Violation]:
     for location, value in string_scalars(document):
         live_scope = (any(location.startswith(prefix) for prefix in live_job_locations)
                       or bool(live_job_locations) and location.startswith('workflow.env.'))
-        if (live_scope and re.search(r'\bsecrets\b', value, re.IGNORECASE)
+        if (live_scope and references_secrets_context(location, value)
                 or re.search(r"\bsecrets\s*(?:\.\s*IMMICH_TEST_SERVER_|\[\s*['\"]IMMICH_TEST_SERVER_)",
                              value, re.IGNORECASE)):
             if path != LIVE_WORKFLOW or location not in allowed_secret_locations:

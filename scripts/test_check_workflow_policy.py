@@ -29,6 +29,12 @@ class WorkflowPolicyTests(unittest.TestCase):
         source = (root / ".github/workflows/ci-nightly.yml").read_text()
         document = yaml.load(source, Loader=policy.WorkflowLoader)
         self.assertEqual(self.rules(document, ".github/workflows/ci-nightly.yml"), set())
+        legal = copy.deepcopy(document)
+        steps = legal["jobs"]["live-unit"]["steps"]
+        steps[0]["name"] = "Check secrets are absent before injection"
+        steps[2]["run"] = "# secrets are injected later\n" + steps[2]["run"]
+        steps[3]["name"] = "${{ format('{0}', 'secrets') }}"
+        self.assertEqual(self.rules(legal, ".github/workflows/ci-nightly.yml"), set())
         for mutation in ("other-workflow", "unconditional", "job-secret", "early-secret", "wrong-environment",
                          "run-secret", "with-secret", "bracket-secret", "expression-environment",
                          "whole-context", "dynamic-secret", "lowercase-secret", "uppercase-context",
