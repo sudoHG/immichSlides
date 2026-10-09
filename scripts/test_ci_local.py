@@ -12,6 +12,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+import ci_local
 from ci_local import SnapshotCleanupError, clean_environment, local_main, select_mode, snapshot
 
 
@@ -182,6 +183,24 @@ class LocalModeTests(unittest.TestCase):
                                         "IMMICH_TEST_API_KEY=explicit"], cwd=root, env=test_environment,
                                        capture_output=True, text=True, timeout=15)
             self.assertIn("DERIVED_DATA=" + str((root / ".derivedData/offline-local").resolve()), completed.stdout)
+
+    def test_slow_process_probe_does_not_interrupt_a_running_child(self):
+        probe = ci_local.process_states
+        calls = []
+
+        def times_out_once():
+            calls.append(None)
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired("ps", 30)
+            return probe()
+
+        with tempfile.TemporaryDirectory() as directory:
+            finished = Path(directory, "finished")
+            child = [sys.executable, "-c", f"import time; time.sleep(2.5); open({str(finished)!r}, 'w').close()"]
+            with patch("ci_local.process_states", side_effect=times_out_once):
+                self.assertEqual(ci_local.run_child(child, directory, dict(os.environ)), 0)
+            self.assertTrue(finished.exists())
+            self.assertGreater(len(calls), 1)
 
     def test_private_configuration_requires_explicit_opt_in(self):
         with self.assertRaises(ValueError):

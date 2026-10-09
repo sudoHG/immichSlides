@@ -22,6 +22,9 @@ PATH_OPTIONS = {"--output-dir", "--evidence-dir", "--derived-data-path", "--resu
                 "--archive-dir", "--selection-path", "--relocated-path", "--shard-manifest", "--plan", "--records-dir"}
 PATH_ALIASES = {"--derived-data": "--derived-data-path", "--result-bundle": "--result-bundle-path"}
 INTERRUPT_GRACE_SECONDS = 150
+# Under heavy host load ps itself can take tens of seconds; a slow probe is not a verdict on the child.
+PROBE_TIMEOUT_SECONDS = 30
+PROBE_ATTEMPTS = 2
 
 
 class SnapshotCleanupError(RuntimeError):
@@ -184,7 +187,14 @@ def option_value(arguments, names):
 
 
 def process_states():
-    raw = subprocess.check_output(["ps", "-axo", "pid=,ppid=,pgid=,stat="], text=True, timeout=5)
+    for attempt in range(PROBE_ATTEMPTS):
+        try:
+            raw = subprocess.check_output(["ps", "-axo", "pid=,ppid=,pgid=,stat="], text=True,
+                                          timeout=PROBE_TIMEOUT_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            if attempt + 1 == PROBE_ATTEMPTS:
+                raise
     return [(int(pid), int(parent), int(group), state) for line in raw.splitlines()
             for pid, parent, group, state in [line.split()]]
 
@@ -229,7 +239,11 @@ def run_child(command, root, environment):
     with cancellation_signals():
         try:
             while True:
-                remember_groups(process, groups)
+                try:
+                    remember_groups(process, groups)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    # A failed probe must not interrupt a running child; the exit and cleanup paths verify again.
+                    pass
                 try:
                     code = process.wait(timeout=1)
                     break
