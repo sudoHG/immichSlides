@@ -171,7 +171,7 @@ extension FilterSummaryIOSVisualUITests {
                 && isShowSidebarLabel(toggleSidebarButton.label)
             if sidebarIsCollapsed {
                 toggleSidebarButton.tap()
-                _ = waitForAnySettingsRootEntry(app: app, timeout: 1.5)
+                _ = waitForAnySettingsRootEntry(app: app, timeout: TestWait.seconds(.infrastructure(1.5)))
                 continue
             }
 
@@ -600,7 +600,7 @@ extension FilterSummaryIOSVisualUITests {
         tapElement(modeContinueButton)
 
         XCTAssertTrue(
-            waitForSlideshowSettingsButton(app: app, timeout: 25),
+            waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.infrastructure(25))),
             "After entering the playback page, the settings button should be visible"
         )
     }
