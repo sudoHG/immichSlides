@@ -760,6 +760,10 @@ class TimeoutLiteralTests(unittest.TestCase):
                     self.assertTrue(conv.timeout_literal_inventory("TestSupport/A.swift", "func poll() { " + call + value + ") }"))
         source = "func poll() { f(TestWait.seconds(.product(3)), timeout: 5) }"
         self.assertEqual(1, len(conv.timeout_literal_inventory("TestSupport/A.swift", source)))
+        for wrapped in ("wait(timeout: base\n    + 5)", "wait(timeout: base +\n    5)", "let pollDelay = base\n    + 5"):
+            with self.subTest(wrapped=wrapped):
+                self.assertTrue(conv.timeout_literal_inventory("TestSupport/A.swift", "func poll() { " + wrapped + " }"))
+        self.assertEqual([], conv.timeout_literal_inventory("TestSupport/A.swift", "func poll() { let pollDelay = base\n    let other = 5 }"))
 
     def test_named_and_typed_timing_initializers_cannot_bypass_inventory(self):
         declarations = ["let " + name + " = 0.25" for name in (
@@ -831,6 +835,7 @@ class TimeoutLiteralTests(unittest.TestCase):
                 (path, source.replace("5", "6")),
                 (path, source.replace(" }", "; element.waitForExistence(timeout: 5) }")),
                 (path, source.replace("poll", "next")),
+                (path, source.replace("5)", "5\n    + 100)")),
                 ("TestSupport/B.swift", source),
                 (path, "func poll() {}")):
             with self.subTest(path=changed_path, source=changed_source):
