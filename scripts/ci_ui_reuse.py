@@ -175,13 +175,18 @@ def find_reuse(api, push):
     return None
 
 
-def expand_skipped_ui_matrix(source, run, jobs, *, complete=True):
-    """Map a real whole-matrix skip to its trusted literal shard population."""
+def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=False):
+    """Normalize collapsed matrix history without supplying test evidence."""
     from check_workflow_policy import WorkflowLoader
     names, _, _, metadata = workflow_contract(source, run, metadata=True)
     actual = {job["name"]: job for job in jobs}
     require(len(actual) == len(jobs), "duplicate reuse jobs")
-    if (run["path"] == UI_WORKFLOW and run["event"] == "push" and run["head_branch"] == "main"):
+    main_push = run["path"] == UI_WORKFLOW and run["event"] == "push" and run["head_branch"] == "main"
+    archive = actual.get("ui-archive", {})
+    failed_pr_history = (historical and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
+                         and metadata.get("ui-archive", {}).get("tier") == "ui-infrastructure"
+                         and archive.get("status") == "completed" and archive.get("conclusion") == "failure")
+    if main_push or failed_pr_history:
         workflow = yaml.load(source, Loader=WorkflowLoader)
         for key, job in workflow["jobs"].items():
             raw_name = job.get("name", key)
@@ -192,8 +197,13 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True):
             require(skipped["status"] == "completed" and skipped["conclusion"] == "skipped"
                     and expanded and all(meta["tier"] == "ui" for meta in evidence.values())
                     and not set(expanded).intersection(actual), "whole-matrix skip overlaps execution or is invalid")
-            # Preserve the one real API job's ID, timestamps and attempt on every
-            # logical shard. This mapping never supplies test observations.
+            if failed_pr_history:
+                # The archive failure prevented shard execution. This historical
+                # placeholder supplies no evidence; later literal jobs must fill
+                # the complete population and bind their own execution artifacts.
+                continue
+            # Preserve the real skipped job on every logical shard. Reuse
+            # admission still requires independent trusted proof.
             actual.update({name: dict(skipped, name=name, unexpanded_name=raw_name) for name in expanded})
     require(set(actual) == set(names) if complete else set(actual) <= set(names), "required job set mismatch")
     return list(actual.values())

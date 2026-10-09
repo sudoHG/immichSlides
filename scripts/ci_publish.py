@@ -377,7 +377,8 @@ def producer_evidence(api, run, source, *, diagnostics=None):
             from ci_ui_reuse import expand_skipped_ui_matrix
             # Reruns may switch between a collapsed skip and literal execution.
             # Normalize within each attempt before merging logical shard history.
-            attempt_jobs = expand_skipped_ui_matrix(source, dict(run, run_attempt=attempt), attempt_jobs, complete=False)
+            attempt_jobs = expand_skipped_ui_matrix(source, dict(run, run_attempt=attempt), attempt_jobs,
+                                                   complete=False, historical=attempt < run["run_attempt"])
         for job in attempt_jobs:
             previous = jobs.get(job["name"])
             execution = ("started_at", "completed_at", "runner_id")

@@ -41,6 +41,17 @@ FIXTURE_UI = '''jobs:
         with: {name: 'ui-${{ matrix.device }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}', path: records/summary.json}
 '''
 
+# Reduced real jobs from UI run 37867257573, attempt 1: the archive timed out
+# before GitHub expanded the device matrix. Attempt 2 keeps this API history.
+UI_ARCHIVE_TIMEOUT_JOBS = [
+    {"id": 113616826770, "name": "ui-archive", "status": "completed", "conclusion": "failure",
+     "started_at": "2026-10-09T00:56:04Z", "completed_at": "2026-10-09T01:41:18Z",
+     "runner_id": 1000003920, "run_attempt": 1},
+    {"id": 113628763204, "name": "ui-${{ matrix.device }}-${{ matrix.shard }}", "status": "completed",
+     "conclusion": "skipped", "started_at": "2026-10-09T01:41:18Z", "completed_at": "2026-10-09T01:41:18Z",
+     "runner_id": None, "run_attempt": 1},
+]
+
 FIXTURE_GATE = '''jobs:
   host:
     name: host-checks
@@ -303,6 +314,58 @@ class PublisherTests(unittest.TestCase):
                                  {"skipped" if second is skipped else "success"})
         attempts = {1: executed, 2: skipped + [executed[1]]}
         with patch("ci_publish.json_member", side_effect=read_summary), self.assertRaises(ContractError):
+            producer_evidence(RecordedAPI(), run, FIXTURE_UI)
+
+    def test_pr_ui_archive_timeout_history_requires_later_complete_execution(self):
+        run = dict(RUN, path=".github/workflows/ci-ui.yml", run_attempt=2)
+        names, _, _, metadata = workflow_contract(FIXTURE_UI, run, metadata=True)
+        executed = [{"name": name, "status": "completed", "conclusion": "success", "run_attempt": 2,
+                     "started_at": "2026-10-09T01:49:00Z", "completed_at": "2026-10-09T01:50:00Z",
+                     "runner_id": 200} for name in names]
+        attempts = {1: copy.deepcopy(UI_ARCHIVE_TIMEOUT_JOBS), 2: executed}
+        artifacts = [{"name": f"{name}-{run['id']}-2", "expired": False} for name in names]
+        def read_summary(api, artifact, filename):
+            name, attempt = artifact["name"].rsplit("-", 1)
+            meta = metadata[name.rsplit("-", 1)[0]]
+            summary = valid_summary()
+            summary["run"].update(id=str(run["id"]), attempt=int(attempt),
+                                  tier=meta["tier"], job=meta["job"], shard=meta["shard"])
+            return summary
+        class RecordedAPI:
+            def pages(self, path, collection):
+                if collection == "jobs":
+                    return attempts[int(path.split("/attempts/")[1].split("/")[0])]
+                return artifacts
+        with patch("ci_publish.json_member", side_effect=read_summary):
+            jobs, summaries = producer_evidence(RecordedAPI(), run, FIXTURE_UI)
+        self.assertEqual({job["name"] for job in jobs}, set(names))
+        self.assertEqual({job["evidence_attempt"] for job in jobs}, {2})
+        self.assertEqual({job["conclusion"] for job in jobs}, {"success"})
+        self.assertEqual(len(summaries), len(names))
+
+        for conclusion in ("success", "cancelled", "skipped"):
+            attempts[1] = copy.deepcopy(UI_ARCHIVE_TIMEOUT_JOBS)
+            attempts[1][0]["conclusion"] = conclusion
+            with self.subTest(archive=conclusion), self.assertRaises(ContractError):
+                producer_evidence(RecordedAPI(), run, FIXTURE_UI)
+        attempts[1] = copy.deepcopy(UI_ARCHIVE_TIMEOUT_JOBS)
+        for latest in (executed[:-1], [dict(row, run_attempt=2) for row in UI_ARCHIVE_TIMEOUT_JOBS]):
+            attempts[2] = latest
+            with self.subTest(latest=latest), self.assertRaises(ContractError):
+                producer_evidence(RecordedAPI(), run, FIXTURE_UI)
+        attempts[2] = executed
+        attempts[1].append(executed[1])
+        with self.assertRaises(ContractError):
+            producer_evidence(RecordedAPI(), run, FIXTURE_UI)
+        attempts[1] = copy.deepcopy(UI_ARCHIVE_TIMEOUT_JOBS)
+        with self.assertRaises(ContractError):
+            producer_evidence(RecordedAPI(), dict(run, run_attempt=1), FIXTURE_UI)
+        attempts[1][1]["name"] = "ui-${{ matrix.other }}"
+        with self.assertRaises(ContractError):
+            producer_evidence(RecordedAPI(), run, FIXTURE_UI)
+        attempts[1] = copy.deepcopy(UI_ARCHIVE_TIMEOUT_JOBS)
+        artifacts[:] = [{"name": f"{name}-{run['id']}-1", "expired": False} for name in names]
+        with self.assertRaises(ContractError):
             producer_evidence(RecordedAPI(), run, FIXTURE_UI)
 
     def test_ui_skipped_shards_need_independent_trusted_reuse_proof(self):
