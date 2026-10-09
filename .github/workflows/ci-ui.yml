@@ -117,7 +117,7 @@ jobs:
             --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
-            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --min-free-gib 30
+            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30
       - name: Recheck the sensitive scan before publishing
         id: scan
         if: always()
@@ -139,6 +139,7 @@ jobs:
             ${{ runner.temp }}/ui-records/official-*.json
             ${{ runner.temp }}/ui-records/retry-invocations.json
             ${{ runner.temp }}/ui-records/shard-timing.json
+            ${{ runner.temp }}/ui-records/wait-configuration.json
             ${{ runner.temp }}/ui-records/export-timing*.json
             ${{ runner.temp }}/ui-records/export-read-timing.json
             ${{ runner.temp }}/ui-records/sensitive-scan.json

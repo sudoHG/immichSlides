@@ -42,6 +42,7 @@
     "scripts/strict-tracer.json",
     "scripts/nightly-*.json",
     "scripts/test_conventions_allowlist.json",
+    "scripts/test_timeout_allowlist.json",
     "scripts/test_ci_*.py",
     "scripts/test_run_offline_unit_tests.py",
     "scripts/test_run_fixture_ui_tests.py",

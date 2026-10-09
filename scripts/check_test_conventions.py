@@ -16,10 +16,12 @@ import json
 import re
 import sys
 from dataclasses import dataclass
+from collections import Counter
 from pathlib import Path
 
 TARGET_GLOBS = ("immichSlidesTests/*.swift", "immichSlidesUITests/*.swift", "TestSupport/*.swift")
 ALLOWLIST_PATH = "scripts/test_conventions_allowlist.json"
+TIMEOUT_ALLOWLIST_PATH = "scripts/test_timeout_allowlist.json"
 
 # Swift Testing functions that intentionally keep a plain (non-raw-identifier) name. Selected by the
 # scripts that migrated the rest of the suite to sentence-style raw identifiers; see docs/TESTING.md #2.
@@ -766,6 +768,125 @@ def enclosing_function_name(code: str, index: int) -> str:
 # Repository scan + allowlist
 # ---------------------------------------------------------------------------
 
+def timeout_literal_inventory(path: str, source: str) -> list[dict]:
+    """Inventory unclassified Swift timing literals, including defaults and named constants.
+
+    Counts prevent an existing function's exception from admitting another literal.
+    Comments/strings and explicitly classified TestWait budgets are not raw waits.
+    """
+    code = mask_comments(source, mask_strings=True)
+    scopes = []
+    declarations = re.compile(r"\b(class|struct|enum|extension|func)\s+(`[^`]+`|[\w.]+)")
+    for match in declarations.finditer(code):
+        opening = find_top_level_brace(code, match.end())
+        if opening < 0:
+            continue
+        closing = find_matching(code, opening, "{", "}")
+        if closing >= 0:
+            start = match.start()
+            if match.group(1) == "func":
+                for attribute in re.compile(r"@\w+").finditer(code, 0, start):
+                    end = attribute.end()
+                    if code[end:end + 1] == "(":
+                        end = find_matching(code, end, "(", ")") + 1
+                    if end and re.fullmatch(r"\s*(?:@\w+\s+)*(?:(?:private|public|internal|static|final|override|nonisolated)\s+)*", code[end:start]):
+                        start = attribute.start()
+                        break
+            scopes.append((start, closing, match.group(1), raw_identifier_text(match.group(2))))
+
+    def owner(index):
+        containing = [(kind, name) for start, end, kind, name in scopes if start <= index <= end]
+        names = [name for kind, name in containing]
+        if not any(kind == "func" for kind, _ in containing):
+            names.append("<scope>")
+        return ".".join(names)
+
+    # Keep the original expression for the ratchet, but exclude only classified argument regions
+    # from numeric detection. Raw arithmetic outside a nested classified call must still be counted.
+    unclassified = list(code)
+    for match in re.finditer(r"\bTestWait\.(seconds|until|observe)\s*\(", code):
+        opening = code.find("(", match.start(), match.end())
+        closing = find_matching(code, opening, "(", ")")
+        if closing < 0:
+            continue
+        arguments = swift_call_argument_spans(code, opening + 1, closing)
+        if not arguments:
+            continue
+        first = code[slice(*arguments[0])].strip()
+        if match.group(1) == "observe" and not re.match(r"seconds\s*:", first):
+            continue
+        for index, (start, end) in enumerate(arguments):
+            argument = code[start:end]
+            # Conditions can be passed inside the parentheses instead of as a trailing closure.
+            if "{" in argument or (index and not re.match(r"\s*pollIntervalSeconds\s*:", argument)):
+                continue
+            for offset in range(start, end):
+                if unclassified[offset] not in "\n\r":
+                    unclassified[offset] = " "
+    unclassified = "".join(unclassified)
+    number = r"(?<![\w.$])[-+]?(?:0[xX][\da-fA-F_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][-+]?\d+)?)\b"
+    sites = {}
+
+    def expression_end(start):
+        depth = 0
+        for index in range(start, len(code)):
+            character = code[index]
+            if depth == 0 and character in ",);\n{}":
+                return index
+            if character in "([":
+                depth += 1
+            elif character in ")]":
+                depth -= 1
+        return len(code)
+
+    heads = (
+        r"\b(?:\w*(?:timeout|deadline|duration|pollInterval|observation)\w*|"
+        r"\w*window(?!\w*(?:count|limit|size|used)\b)\w*|hold|nanoseconds|forTimeInterval)\s*:\s*",
+        r"\b(?:let|var)\s+(?!\w*threshold\b)\w*(?:timeout|deadline|duration|window|seconds|wait|poll|settle|hold|delay|interval)\s*(?::[^=\n]+)?=\s*",
+        r"\b(?:let|var)\s+\w+\s*:\s*(?:\w+\.)?(?:TimeInterval|Duration|DispatchTimeInterval)\??\s*=\s*",
+    )
+    for head in heads:
+        for match in re.finditer(head, code, re.IGNORECASE):
+            end = expression_end(match.end())
+            if re.search(number, unclassified[match.end():end]):
+                sites[(match.start(), end)] = re.sub(r"\s+", "", code[match.start():end])
+    calls = r"\b(?:addingTimeInterval|sleep|usleep)\s*\(|\.(?:seconds|milliseconds|microseconds|nanoseconds|minutes)\s*\("
+    for match in re.finditer(calls, code, re.IGNORECASE):
+        opening = code.find("(", match.start(), match.end())
+        closing = find_matching(code, opening, "(", ")")
+        if closing >= 0 and re.search(number, unclassified[opening + 1:closing]):
+            sites[(match.start(), closing + 1)] = re.sub(r"\s+", "", code[match.start():closing + 1])
+    sites = {span: literal for span, literal in sites.items()
+             if not any(other != span and other[0] <= span[0] and span[1] <= other[1] for other in sites)}
+    counts = Counter((owner(start), literal) for (start, _), literal in sites.items())
+    return [{"path": path, "function": function, "literal": literal, "count": count}
+            for (function, literal), count in sorted(counts.items())]
+
+
+def repository_timeout_inventory(root: Path) -> list[dict]:
+    return [entry for file in iter_target_files(root)
+            for entry in timeout_literal_inventory(file.relative_to(root).as_posix(), file.read_text(encoding="utf-8"))]
+
+
+def partition_timeout_allowlist(current: list[dict], allowed: list[dict]):
+    def key(entry):
+        return (entry["path"], entry["function"], entry["literal"])
+    for entries in (current, allowed):
+        keys = [key(entry) for entry in entries]
+        if len(keys) != len(set(keys)) or any(type(e["count"]) is not int or e["count"] < 1 for e in entries):
+            raise ValueError("timeout allowlist needs unique sites and positive integer counts")
+    actual, baseline = {key(e): e["count"] for e in current}, {key(e): e["count"] for e in allowed}
+    added = [e for e in current if actual[key(e)] > baseline.get(key(e), 0)]
+    stale = [e for e in allowed if baseline[key(e)] > actual.get(key(e), 0)]
+    return added, stale
+
+
+def check_product_wait_factor(path: str, source: str) -> list[Violation]:
+    code = mask_comments(source)
+    return [Violation(path, line_of(source, match.start()), "product-wait-factor", "TestWait",
+                      "production code must not read the test wait factor or use TestWait")
+            for match in re.finditer(r"\bTestWait\b|IMMICHSLIDES_TEST_WAIT_FACTOR", code)]
+
 CHECKS = (check_forbidden_names, check_display_names, check_swift_testing_names, check_source_text,
           check_unbounded_waits, check_ui_label_lookups)
 
@@ -783,6 +904,8 @@ def check_repository(root: Path) -> list[Violation]:
         source = file.read_text(encoding="utf-8")
         for check in CHECKS:
             violations.extend(check(path, source))
+    for file in sorted((root / "immichSlides").rglob("*.swift")):
+        violations.extend(check_product_wait_factor(file.relative_to(root).as_posix(), file.read_text(encoding="utf-8")))
     return violations
 
 
@@ -832,15 +955,28 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     allowlist = load_allowlist(allowlist_path)
-    unallowed, stale = partition_against_allowlist(violations, allowlist)
+    # Production access is never allowlist-eligible.
+    ordinary = [v for v in violations if v.rule != "product-wait-factor"]
+    unallowed, stale = partition_against_allowlist(ordinary, allowlist)
+    unallowed.extend(v for v in violations if v.rule == "product-wait-factor")
+
+    timeout_path = root / TIMEOUT_ALLOWLIST_PATH
+    timeout_allowed = json.loads(timeout_path.read_text(encoding="utf-8")) if timeout_path.is_file() else []
+    timeout_added, timeout_stale = partition_timeout_allowlist(repository_timeout_inventory(root), timeout_allowed)
 
     for v in unallowed:
         print(v)
     for e in stale:
         print(f"{e['path']}: [stale-allowlist] {e['rule']} entry for `{e['name']}` no longer matches a violation")
 
-    total = len(unallowed) + len(stale)
-    print(f"TEST_CONVENTIONS_{'FAIL' if total else 'PASS'} violations={len(unallowed)} stale_allowlist={len(stale)}")
+    for e in timeout_added:
+        print(f"{e['path']}: [raw-timeout] `{e['function']}`: {e['literal']} count={e['count']}")
+    for e in timeout_stale:
+        print(f"{e['path']}: [stale-timeout-allowlist] `{e['function']}`: {e['literal']} count={e['count']}")
+
+    total = len(unallowed) + len(stale) + len(timeout_added) + len(timeout_stale)
+    print(f"TEST_CONVENTIONS_{'FAIL' if total else 'PASS'} violations={len(unallowed)} stale_allowlist={len(stale)} "
+          f"raw_timeouts={len(timeout_added)} stale_timeouts={len(timeout_stale)}")
     return 1 if total else 0
 
 

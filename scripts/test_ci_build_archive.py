@@ -20,6 +20,18 @@ from ci_summary import ContractError
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_historical_reproduction_preserves_default_and_refuses_unsupported_factor(self):
+        for factor, help_text, expected in ((1, "legacy usage", []),
+                                            (2, "usage: run --wait-factor WAIT_FACTOR", ["--wait-factor", "2"]),
+                                            (2, "legacy usage", None)):
+            with self.subTest(factor=factor, help=help_text):
+                with patch.object(ui.subprocess, "check_output", return_value=help_text):
+                    if expected is None:
+                        with self.assertRaisesRegex(ContractError, "predates"):
+                            ui.reproduction_wait_arguments(Path("source"), factor, {})
+                    else:
+                        self.assertEqual(expected, ui.reproduction_wait_arguments(Path("source"), factor, {}))
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
