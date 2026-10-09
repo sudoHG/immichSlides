@@ -251,6 +251,7 @@ struct PersonFilterViewTV: View {
             )
             .padding(.horizontal, topBarAdditionalHorizontalPadding)
             .padding(.top, 14)
+            .appTVFocusSection()
         }
     }
 
