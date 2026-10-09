@@ -175,6 +175,29 @@ execution, overlapping literal jobs or stale artifacts remains inadmissible.
 
 Every ordinary run retains the existing successful-job and complete-population checks.
 
+The gate reader also supports a Linux `ci_gate.py classify` producer with one
+`host` identity, `Gate change classification`, tier `gate-infrastructure`, job
+`gate-classification` and null shard. It must succeed and provide an
+identity-bound summary like every executed gate job. The producer's classification
+output never authorizes a verdict: admission independently derives classification
+using the base reader and base allowlist.
+
+On pull requests only, that independent classification may mark the iOS/tvOS
+build and unit jobs as **not applicable** when both `app_affected` and
+`ci_changing` are false. The literal workflow jobs must still be present in
+GitHub's complete job set with conclusion `skipped`; their admitted populations
+are reported separately, never counted as executed or passed tests. Missing,
+cancelled or failed jobs remain failures, and an artifact claiming execution for
+a skipped job is refused. Host checks and classification still require complete
+passing evidence. Additional archive proof jobs remain required. Main pushes
+and nightly do not acquire this exception. Forks still require exact-head
+approval; CI-changing and unknown paths cannot take this path, even with approval.
+
+This reader support must land on main before a producer starts skipping gate
+jobs, because publication executes the admitted first parent's verdict reader.
+Host checks remain on macOS: the bounded producer rollout saves the four app
+build/unit jobs while retaining one macOS host job for docs-only pull requests.
+
 After publishing a complete PR UI success, the main publisher retains
 `ci-ui-verdict-<tree-sha>` for 30 days. Its `verdict.json` version 1 stores the
 admitted identity, producer run/attempt, fork/CI-change/approval provenance, exact

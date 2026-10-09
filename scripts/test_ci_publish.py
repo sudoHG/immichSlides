@@ -162,6 +162,94 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_gate_classification_infrastructure_requires_its_own_bound_successful_summary(self):
+        record, jobs, summaries = gate_fixture(units=True)
+        classify = '''  classify:
+    name: gate-classification
+    steps:
+      - run: python3 scripts/ci_gate.py classify --output-dir records
+      - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: {name: 'gate-classification-${{ github.run_id }}-${{ github.run_attempt }}', path: records/summary.json}
+'''
+        source = record["workflows"][RUN["path"]]["base"] + classify
+        record["workflows"][RUN["path"]] = {"base": source, "candidate": source}
+        jobs.append(dict(name="gate-classification", status="completed", conclusion="success", evidence_attempt=1))
+        summary = copy.deepcopy(summaries[0])
+        summary["run"].update(tier="gate-infrastructure", job="gate-classification", shard=None)
+        step = test_identity("host", "Gate change classification")
+        summary["population"].update(declared=[step], compiled=[step], observed=[observation(step, "passed", 0)])
+        modules = {name: (Path(__file__).parent / name).read_text()
+                   for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries + [summary], approved=False, fork=False)["state"], "success")
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "failure")
+            record["classification"] = {"app_affected": False, "ci_changing": False}
+            with self.assertRaises(ContractError):
+                evaluate_records(record, RUN, jobs[:-1] + [dict(jobs[-1], conclusion="skipped")],
+                                 summaries, approved=False, fork=False)
+
+    def test_unaffected_gate_skips_only_build_and_unit_population_with_complete_host_evidence(self):
+        modules = {name: (Path(__file__).parent / name).read_text()
+                   for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        record, jobs, summaries = gate_fixture(units=True)
+        # Keep literal jobs in the workflow; GitHub reports them as skipped.
+        record["classification"] = {"app_affected": False, "ci_changing": False}
+        for job in jobs:
+            if job["name"].startswith(("build-", "renamed-unit-")):
+                job["conclusion"] = "skipped"
+        host = [summary for summary in summaries if summary["run"]["job"] in {"host-checks", "archive-relocation"}]
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            result = evaluate_records(record, RUN, jobs, host, approved=False, fork=False)
+            self.assertEqual(result["state"], "success")
+            self.assertEqual(len(result["not_applicable"]), 4)
+            self.assertIn("not applicable", result["description"])
+            for change in ({"app_affected": True, "ci_changing": False},
+                           {"app_affected": False, "ci_changing": True},
+                           {"app_affected": None, "ci_changing": False}):
+                with self.subTest(classification=change), self.assertRaises(ContractError):
+                    evaluate_records(dict(record, classification=change), RUN, jobs, host, approved=True, fork=False)
+            for bad_jobs in (jobs[1:], [dict(job, conclusion="skipped") for job in jobs],
+                             [dict(job, conclusion="cancelled") if job["name"] != "host-checks" else job for job in jobs]):
+                with self.subTest(jobs=bad_jobs), self.assertRaises(ContractError):
+                    evaluate_records(record, RUN, bad_jobs, host, approved=False, fork=False)
+            self.assertEqual(evaluate_records(record, RUN, jobs, [], approved=False, fork=False)["state"], "failure")
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "failure")
+            fork_evidence = copy.deepcopy(host)
+            for summary in fork_evidence:
+                summary["source"]["fork_originated"] = True
+            self.assertEqual(evaluate_records(record, RUN, jobs, fork_evidence, approved=False, fork=True)["state"], "failure")
+            approved_fork = evaluate_records(record, RUN, jobs, fork_evidence, approved=True, fork=True)
+            self.assertEqual(approved_fork["state"], "success")
+            self.assertTrue(approved_fork["source"]["approval_based"])
+            self.assertTrue(approved_fork["source"]["fork_originated"])
+            push = copy.deepcopy(record)
+            push["identity"] = {"schema_version": 1, "event": "push", "repository": REPOSITORY,
+                                "tree_sha": TREE, "ref": "refs/heads/main", "pushed_sha": MERGE}
+            with self.assertRaises(ContractError):
+                evaluate_records(push, dict(RUN, event="push"), jobs, host, approved=False, fork=False)
+
+    def test_unaffected_gate_artifacts_are_optional_only_for_independently_admitted_skipped_jobs(self):
+        record, jobs, summaries = gate_fixture(units=True)
+        record["classification"] = {"app_affected": False, "ci_changing": False}
+        for job in jobs:
+            if job["name"].startswith(("build-", "renamed-unit-")):
+                job["conclusion"] = "skipped"
+        source = record["workflows"][RUN["path"]]["base"]
+        _, _, artifacts, metadata = workflow_contract(source, RUN, metadata=True)
+        evidence_by_artifact = {artifacts[name][0]: next(summary for summary in summaries
+            if all(summary["run"][key] == meta[key] for key in ("tier", "job", "shard")))
+            for name, meta in metadata.items() if name.startswith(("host-", "archive-relocation-"))}
+        class RecordedAPI:
+            def pages(self, path, collection):
+                return jobs if collection == "jobs" else [{"name": name, "expired": False} for name in evidence_by_artifact]
+        with patch("ci_publish.json_member", side_effect=lambda api, artifact, filename: evidence_by_artifact[artifact["name"]]):
+            actual, evidence = producer_evidence(RecordedAPI(), RUN, record["workflows"][RUN["path"]]["base"],
+                                                admission=record)
+            self.assertEqual(len(actual), len(jobs))
+            self.assertEqual(evidence, list(evidence_by_artifact.values()))
+            with self.assertRaises(ContractError):
+                producer_evidence(RecordedAPI(), RUN, record["workflows"][RUN["path"]]["base"])
+
     def test_failed_publication_summary_keeps_source_and_approval_basis(self):
         source = {"repository": REPOSITORY, "workflow_path": RUN["path"], "event": "pull_request",
                   "run_id": RUN["id"], "attempt": 1, "fork_originated": True,
@@ -674,7 +762,7 @@ class PublisherTests(unittest.TestCase):
             with patch("ci_publish.approved_status", return_value=True):
                 _, statuses, approval = compute(RecordedAPI(), 7, "", "generic-app[bot]")
             self.assertEqual(statuses["ci-ui"]["state"], "success")
-            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[])
+            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[], admission=record)
             self.assertIsNone(approval["request"])
             with patch("ci_publish.approved_status", return_value=True), patch(
                     "ci_report.summary_diagnostics", side_effect=ContractError("malformed diagnostics")):

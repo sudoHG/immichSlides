@@ -366,7 +366,7 @@ def approved_status(api, pr, login):
                and status["creator"]["login"] == login for status in statuses)
 
 
-def producer_evidence(api, run, source, *, diagnostics=None):
+def producer_evidence(api, run, source, *, diagnostics=None, admission=None):
     """Bind each retained artifact to its job's latest execution attempt.
 
     Failed-job reruns legitimately retain successful jobs and their old records.
@@ -396,6 +396,8 @@ def producer_evidence(api, run, source, *, diagnostics=None):
     require(all(name in jobs and jobs[name]["evidence_attempt"] >= attempt
                 for name, attempt in minimum_attempts.items()), "UI shard did not execute after skipped matrix")
     expected, _, by_job, metadata = workflow_contract(source, run, metadata=True)
+    from ci_publish_git import gate_not_applicable_jobs
+    allowed_skips = gate_not_applicable_jobs(admission, run, metadata)
     if diagnostics is None:
         require(set(jobs) == set(expected), "required job set mismatch")
     elif set(jobs) != set(expected):
@@ -407,6 +409,8 @@ def producer_evidence(api, run, source, *, diagnostics=None):
             diagnostics.append("required job missing: " + name)
             continue
         job = jobs[name]
+        if (name in allowed_skips and job["status"] == "completed" and job["conclusion"] == "skipped"):
+            continue
         if (run["event"] == "push" and metadata[name]["tier"] == "ui"
                 and job["status"] == "completed" and job["conclusion"] == "skipped"):
             continue
@@ -486,7 +490,7 @@ def compute(api, pr_number, pushed, login):
                 ui = record.get("ui_inputs", {}).get("candidate" if approved else "base")
                 if ui is not None:
                     require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
-            jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors)
+            jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors, admission=record)
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)
                 require(mismatch is None, mismatch or "identity mismatch")
@@ -621,6 +625,9 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                     handle.write(f"  {population['tier']} / {population['shard']}: expected {population['expected']}, "
                                  f"compiled {population['compiled']}, observed {population['observed']}, "
                                  "per-job population.\n")
+                for skipped in status.get("not_applicable", []):
+                    handle.write(f"  {skipped['job']}: not applicable; {len(skipped['identities'])} admitted identities; "
+                                 "trusted PR classification cannot affect the app or CI tooling.\n")
                 if status.get("source"):
                     handle.write(f"  Expected skips {len(status['expected_skips'])}, deselected {len(status['deselected'])}, "
                                  f"removed by PR {len(status['removed_by_pr'])}.\n")
