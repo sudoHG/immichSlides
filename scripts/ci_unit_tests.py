@@ -28,7 +28,7 @@ from strict_e2e_server import PUBLIC_API_KEY
 
 ROOT = Path(__file__).resolve().parent.parent
 UNIT_TARGET = "immichSlidesTests"
-TOOL_FILES = ("ci_unit_tests.py", "ci_build_archive.py", "ci_summary.py", "run_host_checks.py",
+TOOL_FILES = ("ci_unit_tests.py", "ci_local.py", "ci_build_archive.py", "ci_summary.py", "run_host_checks.py",
               "run_offline_unit_tests.py", "run_strict_e2e.py", "strict_e2e_runner_support.py",
               "strict_e2e_server.py", "strict_e2e_photo_identity.py", "strict_e2e_filter_contract.py",
               "strict_e2e_filter_manifest.py", "strict_e2e_out_of_order_contract.py",
