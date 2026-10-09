@@ -48,6 +48,7 @@ if p['operation']=='derive':
 elif p['operation']=='classify':
     result=classify_changes(p['paths'],p['classification_policy'],build_target_paths=p['build_target_paths'])
 elif p['operation']=='ui':
+    import ci_ui_shards
     from ci_ui_shards import DEVICES,default_plan_population,shard_populations
     result={'populations':{},'base_populations':{}}
     for device in p['devices']:
@@ -56,6 +57,8 @@ elif p['operation']=='ui':
         result['base_populations'][device]=[test_identity('ui',entry['key'],platform=platform,device=device)
             for entry in default_plan_population(p['base_populations']['ui-'+platform],plan)]
     try:
+        if hasattr(ci_ui_shards,'validate_shard_assignments'):
+            ci_ui_shards.validate_shard_assignments(p['manifest'],p['populations'])
         for device in p['shard_devices']:
             platform=DEVICES[device]
             result['populations'][device]=shard_populations(p['populations']['ui-'+platform],p['plans'][platform]['plan'],p['manifest'],device)

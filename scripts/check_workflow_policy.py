@@ -519,6 +519,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent,
                         help="Repository root (default: this script's repository)")
+    parser.add_argument("--check-ui-shards", action="store_true",
+                        help="Also validate the checked-in UI shard assignments against both platforms")
     args = parser.parse_args(argv)
     directory = args.root / ".github/workflows"
     paths = sorted(directory.glob("*.yml")) + sorted(directory.glob("*.yaml"))
@@ -534,6 +536,16 @@ def main(argv=None):
             violations.extend(check_workflow(relative, path.read_text(encoding="utf-8")))
         except (OSError, UnicodeError, ValueError):
             violations.append(Violation(relative, "workflow", "workflow-format", "Cannot read a regular UTF-8 workflow"))
+    if args.check_ui_shards:
+        from ci_population import ui_identities
+        from ci_ui_shards import MANIFEST_PATH, validate_shard_assignments
+        try:
+            sources = {path.relative_to(args.root).as_posix(): path.read_text(encoding="utf-8")
+                       for path in (args.root / "immichSlidesUITests").rglob("*.swift")}
+            populations = {"ui-" + platform: ui_identities(sources, platform) for platform in ("ios", "tvos")}
+            validate_shard_assignments((args.root / MANIFEST_PATH).read_text(encoding="utf-8"), populations)
+        except (OSError, UnicodeError, ValueError) as error:
+            violations.append(Violation(MANIFEST_PATH, "manifest", "ui-shards", str(error)))
     for violation in violations:
         print(violation, file=sys.stderr)
     print(f"Workflow policy {'FAIL' if violations else 'PASS'}: {len(paths)} workflows, {len(violations)} violations")
