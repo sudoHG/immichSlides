@@ -451,14 +451,28 @@ extension FilterSummaryTVOSVisualUITests {
             playPauseButton.waitForExistence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the Play/Pause button")
+
+        // The auto-hide timer starts only after the first preload finishes. Waiting for the bar to hide on its own
+        // proves the timer is running; the wake press then restarts it, so the presses below are measured against a
+        // live timer however slow the first download was.
+        waitForElementToDisappear(
+            playPauseButton,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionDeadlineSeconds,
+            failureMessage: "The control bar should hide on its own before focus movement is verified"
+        )
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(
+            playPauseButton.waitForExistence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
+            "A directional press should wake the hidden control bar")
         waitForButtonToGainFocus(
             playPauseButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
-            failureMessage: "When the playback page first opens, focus should land on the Play/Pause button"
+            failureMessage: "After waking, focus should land on the Play/Pause button"
         )
 
-        // The bar auto-hides 8 seconds after playback starts. Each press below lands well inside that delay, so
-        // together they must keep the bar up for longer than the delay.
+        // Each press below lands well inside the 8 second delay, so together they must keep the bar up for longer
+        // than the delay.
         var isTargetingNext = true
         for _ in 0..<8 {
             XCUIRemote.shared.press(isTargetingNext ? .right : .left)
