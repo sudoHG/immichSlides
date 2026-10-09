@@ -16,14 +16,18 @@ jobs:
   archive:
     name: ui-archive
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 130
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     outputs:
       app_affected: ${{ steps.select.outputs.app_affected }}
-      artifact_id: ${{ steps.select.outputs.artifact_id }}
-      producer_run_id: ${{ steps.select.outputs.producer_run_id }}
+      run_ui: ${{ steps.select.outputs.run_ui }}
+      ios_artifact_id: ${{ steps.select.outputs.ios_artifact_id }}
+      ios_producer_run_id: ${{ steps.select.outputs.ios_producer_run_id }}
+      tvos_artifact_id: ${{ steps.select.outputs.tvos_artifact_id }}
+      tvos_producer_run_id: ${{ steps.select.outputs.tvos_producer_run_id }}
       selection_artifact: ${{ steps.select.outputs.selection_artifact }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -40,7 +44,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           "$PYTHON" -B scripts/ci_ui_tests.py wait-archive \
-            --output-dir "$RUNNER_TEMP/ui-selection" --timeout-minutes 45
+            --output-dir "$RUNNER_TEMP/ui-selection" --timeout-minutes 120
       - name: Publish the bound selection records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -49,8 +53,8 @@ jobs:
           path: |
             ${{ runner.temp }}/ui-selection/summary.json
             ${{ runner.temp }}/ui-selection/summary.md
-            ${{ runner.temp }}/ui-selection/archive-selection.json
-            ${{ runner.temp }}/ui-selection/archive-refusals.json
+            ${{ runner.temp }}/ui-selection/archive-selection*.json
+            ${{ runner.temp }}/ui-selection/archive-refusals*.json
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
           if-no-files-found: error
       - name: Display selection summary
@@ -63,7 +67,7 @@ jobs:
   shards:
     name: ui-${{ matrix.device }}-${{ matrix.shard }}
     needs: archive
-    if: needs.archive.outputs.app_affected == 'true'
+    if: needs.archive.outputs.run_ui == 'true'
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:
@@ -73,7 +77,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        device: [iphone]
+        device: [iphone, ipad, appletv]
         shard: [default, navigation, visual]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -100,22 +104,27 @@ jobs:
       - name: Download by verified immutable archive ID
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          artifact-ids: ${{ needs.archive.outputs.artifact_id }}
+          artifact-ids: ${{ matrix.device == 'appletv' && needs.archive.outputs.tvos_artifact_id || needs.archive.outputs.ios_artifact_id }}
           path: ${{ runner.temp }}/ui-archive
           merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ needs.archive.outputs.producer_run_id }}
+          run-id: ${{ matrix.device == 'appletv' && needs.archive.outputs.tvos_producer_run_id || needs.archive.outputs.ios_producer_run_id }}
       - name: Create only this shard's pinned simulator
         working-directory: ui-source
         run: |
-          "$PYTHON" -B scripts/ci_ui_tests.py simulator --shard '${{ matrix.shard }}'
+          "$PYTHON" -B scripts/ci_ui_tests.py simulator --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
+          if test '${{ matrix.device }}' = appletv; then
+            echo 'UI_PLATFORM=tvos' >> "$GITHUB_ENV"
+          else
+            echo 'UI_PLATFORM=ios' >> "$GITHUB_ENV"
+          fi
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |
           "$PYTHON" -B scripts/ci_ui_tests.py run --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
             --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
-            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection.json" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
             --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30
       - name: Recheck the sensitive scan before publishing

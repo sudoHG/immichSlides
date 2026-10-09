@@ -201,9 +201,10 @@ This reader lands before a producer starts skipping shards. Existing iPhone
 producers keep running normally; the separate iPad/Apple TV and reuse producer
 rollout activates the new path after the reader is on main. A CI-changing reader
 PR still requires maintainer approval of its exact head and cannot approve itself.
-The [iPhone UI producer](CI_UI.md) uses this contract with a Linux archive-selection
-job and three literal iPhone shards. iPad and Apple TV producer rollout remains
-separate; publisher trust and exact-head approval rules apply to every device.
+The [UI producer](CI_UI.md) uses this contract with a Linux archive-selection job
+and three literal shards on each of iPhone, iPad and Apple TV. Publisher trust and
+exact-head approval rules apply to every device. The producer is activated only
+after the reuse reader is installed on main.
 
 The bridge calls the admitted base revision's `evaluate_gate`, including per-job
 expectations and the complete context population. `ci-pr-gate` includes host,

@@ -36,6 +36,48 @@ class BuildArchiveTests(unittest.TestCase):
                     else:
                         self.assertEqual(expected, ui.reproduction_wait_arguments(Path("source"), factor, {}))
 
+    def test_apple_tv_ui_archive_cannot_use_the_iphone_build(self):
+        manifest = self.manifest()
+        manifest["platform"] = "tvos"
+        manifest["producer"]["artifact_name"] = "build-tvos-123-1"
+        run = {"id": 123}
+        ui.check_cross_run_identity(manifest, self.identity, run, 1, {"xcode": {"build": "27A266a"}},
+                                    "f" * 64, platform_name="tvos")
+        for mutate in (lambda m: m.update(platform="ios"),
+                       lambda m: m["producer"].update(artifact_name="build-ios-123-1")):
+            bad = copy.deepcopy(manifest)
+            mutate(bad)
+            with self.subTest(mutate=mutate), self.assertRaises(ContractError):
+                ui.check_cross_run_identity(bad, self.identity, run, 1, {"xcode": {"build": "27A266a"}},
+                                            "f" * 64, platform_name="tvos")
+        runs = [{"name": "build-ios", "status": "completed", "conclusion": "success"},
+                {"name": "build-tvos", "status": "completed", "conclusion": "failure"}]
+        class API:
+            def pages(self, path, collection):
+                return runs
+        self.assertEqual(ui.build_job_attempt(API(), {"id": 123, "run_attempt": 1}, platform_name="tvos")["conclusion"], "failure")
+
+    def test_main_ui_archive_wait_is_skipped_only_with_trusted_reuse(self):
+        from types import SimpleNamespace
+        push = {"schema_version": 1, "repository": "owner/repo", "event": "push", "ref": "refs/heads/main",
+                "pushed_sha": "a" * 40, "tree_sha": "d" * 40}
+        for identity, proof, expected_waits in ((push, {"source": {"run_id": 123}}, 0),
+                                               (push, None, 2), (self.identity, None, 2)):
+            with self.subTest(event=identity["event"], proof=proof):
+                context = {"identity": identity, "source": {"repository": "owner/repo", "event": identity["event"],
+                           "workflow_path": ui.WORKFLOW, "fork_originated": False, "ci_changing": None},
+                           "run": {"id": "100", "attempt": 1, "tier": "ui-infrastructure", "job": "ui-archive", "shard": None}}
+                directory = self.root / (identity["event"] + ("-reuse" if proof else "-run"))
+                with patch.object(ui, "context", return_value=context), patch.object(ui, "workspace_preflight"), \
+                        patch.object(ui, "app_affected", return_value=True), patch.object(ui, "output") as outputs, \
+                        patch("ci_ui_reuse.find_reuse", return_value=proof) as reuse, \
+                        patch.object(ui, "GitHub"), patch.dict(ui.os.environ, {"GH_TOKEN": "test-placeholder"}), \
+                        patch.object(ui, "select_archive", return_value={"artifact_id": 9, "producer_run_id": "123", "producer_attempt": 1}) as select:
+                    self.assertEqual(ui.wait_archive(SimpleNamespace(output_dir=directory, timeout_minutes=1)), 0)
+                self.assertEqual(select.call_count, expected_waits)
+                self.assertIn(unittest.mock.call("run_ui", "false" if proof else "true"), outputs.call_args_list)
+                self.assertEqual(reuse.call_count, 1 if identity["event"] == "push" else 0)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -222,8 +264,13 @@ class BuildArchiveTests(unittest.TestCase):
         with patch.object(ui, "build_job_attempt", return_value={"status": "completed", "conclusion": "success", "evidence_attempt": 1}), \
                 patch.object(ui, "json_member", return_value=summary), patch.object(ui, "downloaded_archive", return_value=(manifest, "a" * 64)), \
                 patch.object(ui, "file_hash", return_value="f" * 64):
-            selected = ui.select_archive(API(), self.identity, timeout_seconds=1)
-            self.assertEqual((selected["artifact_id"], selected["producer_run_id"], selected["producer_attempt"]), (9, "123", 1))
+            for remaining_seconds in (1, 0):
+                # An exhausted shared deadline still checks the next platform's ready archive.
+                selected = ui.select_archive(API(), self.identity, timeout_seconds=remaining_seconds)
+                self.assertEqual((selected["artifact_id"], selected["producer_run_id"], selected["producer_attempt"]), (9, "123", 1))
+            with patch.object(API, "pages", return_value=[]) as poll, self.assertRaisesRegex(ContractError, "archive-unavailable"):
+                ui.select_archive(API(), self.identity, timeout_seconds=0)
+            poll.assert_called_once()
             with patch.object(ui, "downloaded_archive", return_value=(manifest, "e" * 64)), self.assertRaisesRegex(ContractError, "manifest differ"):
                 ui.select_archive(API(), self.identity, timeout_seconds=1)
             refused = []
@@ -251,7 +298,7 @@ class BuildArchiveTests(unittest.TestCase):
                     def pages(path, collection, **filters):
                         return [newer, run] if collection == "workflow_runs" else (
                             [other_records] if "/124/" in path else [records, artifact])
-                    jobs = lambda api, candidate: {"status": "completed", "evidence_attempt": 1,
+                    jobs = lambda api, candidate, **options: {"status": "completed", "evidence_attempt": 1,
                         "conclusion": conclusion if candidate["id"] == 124 else "success"}
                     with patch.object(API, "pages", side_effect=pages), patch.object(ui, "build_job_attempt", side_effect=jobs), \
                             patch.object(ui, "json_member", side_effect=lambda api, record, name: other if record == other_records else summary):
@@ -269,32 +316,33 @@ class BuildArchiveTests(unittest.TestCase):
         source = self.root / "source"
         (source / "scripts").mkdir(parents=True)
         (source / "scripts/ci-pins.json").write_text(json.dumps(pins))
-        runtime = pins["simulators"]["ios"]
         udid = "00000000-0000-0000-0000-000000000000"
-        type_id = "com.apple.CoreSimulator.SimDeviceType.iPhone-17e"
-        inventory = {"runtimes": [{"identifier": runtime["runtime"], "isAvailable": True,
-                                  "version": runtime["version"], "buildversion": runtime["build"]}],
-                     "devices": {runtime["runtime"]: [{"udid": udid, "isAvailable": True, "deviceTypeIdentifier": type_id}]},
-                     "devicetypes": [{"name": pins["device_types"]["iphone"], "identifier": type_id}]}
         version = f"Xcode {pins['xcode']['version']}\nBuild version {pins['xcode']['build']}"
-        destination = "platform=iOS Simulator,id=" + udid
-        for mismatch in (None, "xcode", "runtime", "destination-runtime", "device-type"):
-            with self.subTest(mismatch=mismatch):
-                actual = copy.deepcopy(inventory)
-                if mismatch == "runtime":
-                    actual["runtimes"][0]["buildversion"] = "wrong"
-                if mismatch == "destination-runtime":
-                    actual["devices"]["other-runtime"] = actual["devices"].pop(runtime["runtime"])
-                if mismatch == "device-type":
-                    actual["devices"][runtime["runtime"]][0]["deviceTypeIdentifier"] = "ipad"
-                environment = {"DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"}
-                with patch.object(ui.subprocess, "check_output", side_effect=["Xcode other" if mismatch == "xcode" else version, json.dumps(actual)]):
-                    if mismatch:
-                        with self.assertRaisesRegex(ContractError, "pin mismatch"):
-                            ui.verify_reproduction_pins(source, destination, environment)
-                    else:
-                        ui.verify_reproduction_pins(source, destination, environment)
-                self.assertEqual(environment["DEVELOPER_DIR"], "/Applications/Xcode.app/Contents/Developer")
+        for device, platform_name in ui.DEVICES.items():
+            runtime = pins["simulators"][platform_name]
+            type_id = "com.apple.CoreSimulator.SimDeviceType." + device
+            inventory = {"runtimes": [{"identifier": runtime["runtime"], "isAvailable": True,
+                                      "version": runtime["version"], "buildversion": runtime["build"]}],
+                         "devices": {runtime["runtime"]: [{"udid": udid, "isAvailable": True, "deviceTypeIdentifier": type_id}]},
+                         "devicetypes": [{"name": pins["device_types"][device], "identifier": type_id}]}
+            destination = "platform=" + ("iOS Simulator" if platform_name == "ios" else "tvOS Simulator") + ",id=" + udid
+            for mismatch in (None, "xcode", "runtime", "destination-runtime", "device-type"):
+                with self.subTest(device=device, mismatch=mismatch):
+                    actual = copy.deepcopy(inventory)
+                    if mismatch == "runtime":
+                        actual["runtimes"][0]["buildversion"] = "wrong"
+                    if mismatch == "destination-runtime":
+                        actual["devices"]["other-runtime"] = actual["devices"].pop(runtime["runtime"])
+                    if mismatch == "device-type":
+                        actual["devices"][runtime["runtime"]][0]["deviceTypeIdentifier"] = "other-device"
+                    environment = {"DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"}
+                    with patch.object(ui.subprocess, "check_output", side_effect=["Xcode other" if mismatch == "xcode" else version, json.dumps(actual)]):
+                        if mismatch:
+                            with self.assertRaisesRegex(ContractError, "pin mismatch"):
+                                ui.verify_reproduction_pins(source, destination, environment, device)
+                        else:
+                            ui.verify_reproduction_pins(source, destination, environment, device)
+                    self.assertEqual(environment["DEVELOPER_DIR"], "/Applications/Xcode.app/Contents/Developer")
 
     def test_ui_archive_retains_successful_job_attempt_but_never_falls_back_for_a_rerun_job(self):
         runs = {1: [{"name": "build-ios", "started_at": "first", "completed_at": "done", "runner_id": 1,

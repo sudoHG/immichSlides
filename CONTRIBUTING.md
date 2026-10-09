@@ -118,15 +118,16 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Naming and SwiftUI conventions (View / ViewModel / Store / Service roles, `@MainActor` for UI-driving types, no network or credential access in views) are in [AGENTS.md](AGENTS.md). Code comments are written in English and explain why, not what.
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-The [informational iPhone UI tier](docs/CI_UI.md) reuses exact-identity gate archives
+The [informational iPhone, iPad and Apple TV UI tier](docs/CI_UI.md) reuses exact-identity gate archives
 and runs class-manifest shards against public loopback fixtures. Its guide includes
 one-command shard reproduction by Git revision, listed-only retry, artifact
-retention and the remaining iPad/Apple TV boundary.
+retention and the trusted identical-tree post-merge reuse rule.
 
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
 run on pull requests and pushes to `main`. Separate hosted runners execute the
 [complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
-The [iPhone UI tier](docs/CI_UI.md) consumes the iOS archive across runs.
+The [UI tier](docs/CI_UI.md) consumes the iOS archive for iPhone/iPad and the tvOS
+archive for Apple TV across runs.
 [P2 visual review](docs/CI_P2_REVIEWS.md) explains the fixture-only seven-day packages
 and the maintainer's signed record pull request; agents never supply human sign-off.
 Release archive preparation and the maintainer-gated App Store Connect steps are in
