@@ -199,36 +199,77 @@ class BuildArchiveTests(unittest.TestCase):
 
     def test_ui_reproduction_checks_revision_pins_and_exact_destination_before_build(self):
         from setup_ci_python import load_pins
-        pins = load_pins(ui.ROOT / "scripts/ci-pins.json", tier="pr")
         source = self.root / "source"
         (source / "scripts").mkdir(parents=True)
         (source / "scripts/ci-pins.json").write_bytes((ui.ROOT / "scripts/ci-pins.json").read_bytes())
-        runtime = pins["simulators"]["ios"]
         udid = "00000000-0000-0000-0000-000000000000"
         type_id = "com.apple.CoreSimulator.SimDeviceType.iPhone-17e"
-        inventory = {"runtimes": [{"identifier": runtime["runtime"], "isAvailable": True,
-                                  "version": runtime["version"], "buildversion": runtime["build"]}],
-                     "devices": {runtime["runtime"]: [{"udid": udid, "isAvailable": True, "deviceTypeIdentifier": type_id}]},
-                     "devicetypes": [{"name": pins["device_types"]["iphone"], "identifier": type_id}]}
-        version = f"Xcode {pins['xcode']['version']}\nBuild version {pins['xcode']['build']}"
         destination = "platform=iOS Simulator,id=" + udid
-        for mismatch in (None, "xcode", "runtime", "destination-runtime", "device-type"):
-            with self.subTest(mismatch=mismatch):
-                actual = copy.deepcopy(inventory)
-                if mismatch == "runtime":
-                    actual["runtimes"][0]["buildversion"] = "wrong"
-                if mismatch == "destination-runtime":
-                    actual["devices"]["other-runtime"] = actual["devices"].pop(runtime["runtime"])
-                if mismatch == "device-type":
-                    actual["devices"][runtime["runtime"]][0]["deviceTypeIdentifier"] = "ipad"
-                environment = {"DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"}
-                with patch.object(ui.subprocess, "check_output", side_effect=["Xcode other" if mismatch == "xcode" else version, json.dumps(actual)]):
-                    if mismatch:
-                        with self.assertRaisesRegex(ContractError, "pin mismatch"):
-                            ui.verify_reproduction_pins(source, destination, environment)
-                    else:
-                        ui.verify_reproduction_pins(source, destination, environment)
-                self.assertEqual(environment["DEVELOPER_DIR"], "/Applications/Xcode.app/Contents/Developer")
+        for tier in ("pr", "nightly"):
+            pins = load_pins(ui.ROOT / "scripts/ci-pins.json", tier=tier)
+            runtime = pins["simulators"]["ios"]
+            inventory = {"runtimes": [{"identifier": runtime["runtime"], "isAvailable": True,
+                                      "version": runtime["version"], "buildversion": runtime["build"]}],
+                         "devices": {runtime["runtime"]: [{"udid": udid, "isAvailable": True, "deviceTypeIdentifier": type_id}]},
+                         "devicetypes": [{"name": pins["device_types"]["iphone"], "identifier": type_id}]}
+            version = f"Xcode {pins['xcode']['version']}\nBuild version {pins['xcode']['build']}"
+            for mismatch in (None, "xcode", "runtime", "destination-runtime", "device-type"):
+                with self.subTest(tier=tier, mismatch=mismatch):
+                    actual = copy.deepcopy(inventory)
+                    if mismatch == "runtime":
+                        actual["runtimes"][0]["buildversion"] = "wrong"
+                    if mismatch == "destination-runtime":
+                        actual["devices"]["other-runtime"] = actual["devices"].pop(runtime["runtime"])
+                    if mismatch == "device-type":
+                        actual["devices"][runtime["runtime"]][0]["deviceTypeIdentifier"] = "ipad"
+                    environment = {"DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"}
+                    with patch.object(ui.subprocess, "check_output", side_effect=["Xcode other" if mismatch == "xcode" else version, json.dumps(actual)]):
+                        if mismatch:
+                            with self.assertRaisesRegex(ContractError, "pin mismatch"):
+                                ui.verify_reproduction_pins(source, destination, environment, tier=tier)
+                        else:
+                            self.assertEqual(ui.verify_reproduction_pins(source, destination, environment, tier=tier)["tier"], tier)
+                    self.assertEqual(environment["DEVELOPER_DIR"], "/Applications/Xcode.app/Contents/Developer")
+
+    def test_nightly_reproduction_records_its_profile_and_binds_both_child_commands(self):
+        from setup_ci_python import load_pins
+        pins = load_pins(tier="nightly")
+        output = self.root / "reproduction"
+        environments = []
+
+        def command(arguments, **options):
+            if arguments[:2] == ["git", "clone"]:
+                source = Path(arguments[-1])
+                (source / "scripts").mkdir(parents=True)
+                for name in ("scripts/ci-pins.json", ui.MANIFEST_PATH):
+                    (source / name).write_bytes((ui.ROOT / name).read_bytes())
+            if "--derived-data-path" in arguments:
+                products = Path(arguments[arguments.index("--derived-data-path") + 1]) / "Build/Products"
+                products.mkdir(parents=True)
+                (products / "default.xctestrun").write_text("synthetic test run")
+            if "env" in options:
+                environments.append(options["env"].copy())
+            return subprocess.CompletedProcess(arguments, 0)
+
+        with patch.object(ui.subprocess, "check_output", return_value="a" * 40), \
+                patch.object(ui.subprocess, "run", side_effect=command), \
+                patch.object(ui, "verify_reproduction_pins", return_value=pins) as verify:
+            code = ui.main(["reproduce", "--manifest-revision", "HEAD", "--shard", "visual",
+                            "--destination", "platform=iOS Simulator,id=assigned", "--toolchain-profile", "nightly",
+                            "--output-dir", str(output)])
+        self.assertEqual(code, 0)
+        self.assertEqual(verify.call_args.kwargs["tier"], "nightly")
+        self.assertEqual([env["CI_TOOLCHAIN_TIER"] for env in environments], ["nightly", "nightly"])
+        record = json.loads((output / "reproduction.json").read_text())
+        self.assertEqual(record["toolchain_profile"], "nightly")
+        self.assertEqual(record["resolved_profile"], pins["profile"])
+        self.assertEqual(record["xcode_build"], pins["xcode"]["build"])
+
+        with patch.object(ui, "reproduce", return_value=0) as reproduce:
+            self.assertEqual(ui.main(["reproduce", "--manifest-revision", "HEAD", "--shard", "visual",
+                                      "--destination", "platform=iOS Simulator,id=assigned",
+                                      "--output-dir", str(output)]), 0)
+        self.assertEqual(reproduce.call_args.args[0].toolchain_profile, "pr")
 
     def test_ui_archive_retains_successful_job_attempt_but_never_falls_back_for_a_rerun_job(self):
         runs = {1: [{"name": "build-ios", "started_at": "first", "completed_at": "done", "runner_id": 1,
@@ -755,6 +796,37 @@ class ArchiveUnitResultTests(unittest.TestCase):
         self.assertEqual((code, summary["status"], summary["infrastructure"]), (65, "failed", []))
         with self.assertRaisesRegex(ContractError, "skip reason"):
             result_observations(payload, "ios", {})
+
+    def test_xcode_26_skip_messages_preserve_official_reasons_and_refuse_failed_cases(self):
+        from ci_unit_tests import skip_reason
+        for reason in ("Test skipped", "Test skipped: No local live config; a skip does not mean live membership was verified"):
+            case = {"nodeType": "Test Case", "nodeIdentifier": "A/a()", "result": "Skipped",
+                    "children": [{"nodeType": "Failure Message", "name": reason}]}
+            with self.subTest(reason=reason):
+                self.assertEqual(skip_reason(case), reason)
+                for invalid in (dict(case, result="Failed"), dict(case, children=[]),
+                                dict(case, children=[{"nodeType": "Failure Message", "name": "unrelated failure"}])):
+                    with self.subTest(invalid=invalid), self.assertRaisesRegex(ContractError, "no emitted reason"):
+                        skip_reason(invalid)
+
+    def test_xcode_26_argument_names_retain_each_outcome_without_hiding_failed_parameters(self):
+        from ci_unit_tests import result_observations, judge_execution
+        from run_offline_unit_tests import TestResultsSummary
+        case = {"nodeType": "Test Case", "nodeIdentifier": "A/a(value:)", "result": "Passed", "duration": "0.3s",
+                "children": [{"nodeType": "Arguments", "name": ".active", "result": "Passed", "duration": "0.1s"},
+                             {"nodeType": "Arguments", "name": ".background", "result": "Failed", "duration": "0.2s",
+                              "children": [{"nodeType": "Failure Message", "name": "Expectation failed"}]}]}
+        payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesTests", "children": [case]}]}
+        rows = result_observations(payload, "tvos", {})
+        self.assertEqual([row["outcome"] for row in rows], ["passed", "passed", "failed"])
+        self.assertEqual([row["identity"]["dimensions"]["parameter"] for row in rows[1:]],
+                         ["arguments:.active", "arguments:.background"])
+        summary = {"population": {}, "infrastructure": [], "status": "unverified"}
+        self.assertEqual(judge_execution(summary, {"A/a(value:)"}, rows, TestResultsSummary(1, 1, 0, 0, "Passed"), 0), 1)
+        for child in (dict(case["children"][0], name=""), dict(case["children"][0], nodeType="Test Case Run")):
+            with self.subTest(child=child), self.assertRaisesRegex(ContractError, "missing parameter identity"):
+                invalid = {"testNodes": [dict(payload["testNodes"][0], children=[dict(case, children=[child])])]}
+                result_observations(invalid, "tvos", {})
 
 
 class LiveBoundaryTests(unittest.TestCase):

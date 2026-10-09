@@ -57,7 +57,7 @@ def summary_for(ctx, manifest_hash):
     step = test_identity("host", "UI archive selection")
     return {"schema_version": 1, **ctx,
             "hashes": {"manifests": {"ui-shards": manifest_hash}, "policies": {}},
-            "toolchain": toolchain(tier="pr"),
+            "toolchain": toolchain(tier="pr" if ctx["identity"]["event"] != "local" else None),
             "population": {"declared": [step], "compiled": [step], "observed": [], "deselected": [], "removed_by_pr": []},
             "infrastructure": [], "status": "failed"}
 
@@ -304,10 +304,10 @@ def failed_shard(args, error):
     write_summary(summary, directory)
 
 
-def verify_reproduction_pins(source, destination, environment):
+def verify_reproduction_pins(source, destination, environment, *, tier="pr"):
     from strict_e2e_runner_support import destination_udid
     from setup_ci_python import load_pins
-    pins = load_pins(source / "scripts/ci-pins.json", tier="pr")
+    pins = load_pins(source / "scripts/ci-pins.json", tier=tier)
     # A local installation may have a different bundle path from hosted macOS.
     # Freeze the selected path, then verify its pinned version/build.
     try:
@@ -331,6 +331,7 @@ def verify_reproduction_pins(source, destination, environment):
             "reproduction destination runtime pin mismatch or unavailable simulator")
     require(len(types) == 1 and devices[0][1].get("deviceTypeIdentifier") == types[0], "reproduction destination device type pin mismatch")
     print("Verified reproduction Xcode, runtime and destination device pins", flush=True)
+    return pins
 
 
 def reproduce(args):
@@ -349,8 +350,14 @@ def reproduce(args):
         # The clean checkout contains no private symlink or ambient local inputs.
         from run_fixture_ui_tests import clean_environment
         environment = clean_environment(os.environ)
-        environment["CI_TOOLCHAIN_TIER"] = "pr"
-        verify_reproduction_pins(source, args.destination, environment)
+        environment["CI_TOOLCHAIN_TIER"] = args.toolchain_profile
+        pins = verify_reproduction_pins(source, args.destination, environment, tier=args.toolchain_profile)
+        write_json(output_root / "reproduction.json", {
+            "schema_version": 1, "revision": revision, "shard": args.shard, "destination": args.destination,
+            "toolchain_profile": args.toolchain_profile, "resolved_profile": pins.get("profile", pins["runner"]),
+            "pins_sha256": file_hash(source / "scripts/ci-pins.json"),
+            "xcode_version": pins["xcode"]["version"], "xcode_build": pins["xcode"]["build"],
+            "ios_runtime": pins["simulators"]["ios"], "device_type": pins["device_types"]["iphone"]})
         derived = Path(directory, "derived")
         build_records = Path(directory, "build")
         completed = subprocess.run([sys.executable, "-B", str(source / "scripts/ci_build_archive.py"), "build", "--platform", "ios",
@@ -392,6 +399,7 @@ def main(argv=None):
     local.add_argument("--shard", required=True)
     local.add_argument("--destination", required=True)
     local.add_argument("--output-dir", type=Path, required=True)
+    local.add_argument("--toolchain-profile", choices=("pr", "nightly"), default="pr")
     simulator = commands.add_parser("simulator")
     simulator.add_argument("--shard", required=True)
     upload = commands.add_parser("check-upload")

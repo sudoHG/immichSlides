@@ -193,6 +193,11 @@ def result_observations(payload, platform, skip_reasons):
                 continue
             require(child.get("result") in outcomes, "unsupported parameter outcome")
             parameter = child.get("nodeIdentifier") or child.get("nodeIdentifierURL")
+            if parameter is None and child.get("nodeType") == "Arguments":
+                # Xcode 26 identifies argument runs by their official name within the function.
+                name = child.get("name")
+                require(isinstance(name, str) and bool(name.strip()), "missing parameter identity")
+                parameter = "arguments:" + name
             require(isinstance(parameter, str) and parameter, "missing parameter identity")
             rows.append(observation(test_identity("swift", UNIT_TARGET + "/" + key,
                                                  platform=platform, parameter=parameter), outcomes[child["result"]],
@@ -248,6 +253,13 @@ def judge_execution(summary, compiled, rows, counts, code, policy=None):
 def skip_reason(details):
     # Xcode's detail record owns the reason; never substitute source conditions or log guesses.
     reasons = []
+    # Xcode 26 emits official skip text as a failure-message child of the skipped case.
+    if details.get("nodeType") == "Test Case" and details.get("result") == "Skipped":
+        for child in details.get("children", []):
+            message = child.get("name")
+            if child.get("nodeType") == "Failure Message" and isinstance(message, str) and (
+                    message == "Test skipped" or message.startswith("Test skipped: ") or message.startswith("Test skipped - ")):
+                reasons.append(message)
     def walk(value):
         if isinstance(value, dict):
             for key, item in value.items():

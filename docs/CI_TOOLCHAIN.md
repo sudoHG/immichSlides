@@ -9,9 +9,15 @@ Schema 2 separates shared Python/package/zstd pins from named toolchain `profile
 the `tiers` mapping. `load_pins(..., tier="pr" | "nightly" | "release")` selects an
 exact profile; otherwise it uses `CI_TOOLCHAIN_TIER`, defaulting to `pr`. Unknown
 tiers, profiles or runner labels fail closed. Consumers never infer a tier from the
-installed Xcode. Hosted workflows set the tier explicitly; UI reproduction selects
-the revision's PR profile, live consumers select nightly, and the Cloud archive
+installed Xcode. Hosted workflows set the tier explicitly; UI reproduction defaults
+to the revision's PR profile, live consumers select nightly, and the Cloud archive
 preflight always selects release. Relocated unit tooling includes the shared loader.
+
+Local UI reproduction accepts `--toolchain-profile pr|nightly`, defaulting to `pr`.
+Use `nightly` on a Mac with only Xcode 27; it verifies that revision's exact nightly
+Xcode/runtime/device pins and records the selection in `reproduction.json` and child
+summaries. It does not prove an iOS 26 failure or change hosted admission. See
+[CI_UI.md](CI_UI.md#reproduce-one-shard) for the command and evidence boundary.
 
 The maintainer's temporary PR capacity decision uses the GA `macos-26` arm64 image.
 Nightly and release retain the [hosted Vision probe](https://github.com/sudoHG/immichSlides/actions/runs/37592421181)

@@ -128,7 +128,7 @@ delay every tier. Gate completion never depends on UI completion.
 From a checkout containing the producer, this one command reads the specified
 manifest revision from a disposable clean checkout, builds once without private
 configuration, starts the fixture server and runs the selected shard. Before
-building it reads that revision's pins, freezes the locally selected Xcode path, verifies its
+building it reads that revision's selected profile pins, freezes the locally selected Xcode path, verifies its
 version/build, and checks the assigned UDID's exact runtime version/build and
 device type. The local Xcode bundle path may differ from hosted macOS; version
 and build must still match. A missing or mismatched pin fails before any build:
@@ -138,6 +138,15 @@ python3 -B scripts/ci_ui_tests.py reproduce --manifest-revision COMMIT_SHA \
   --shard visual --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
   --output-dir '<fresh-outside-repo>'
 ```
+
+`--toolchain-profile pr|nightly` defaults to `pr`, currently Xcode 26.6 with iOS 26.5.
+On a Mac with only Xcode 27, add `--toolchain-profile nightly` to select that revision's
+exact nightly pins. The option changes only local reproduction; hosted archive
+admission and PR pins remain unchanged. A nightly-profile reproduction can investigate
+shared behavior, but cannot establish whether a failure occurs only on iOS 26.
+`reproduction.json` records the revision, shard, destination, requested tier, resolved
+profile, pins hash, Xcode version/build, runtime and device type after preflight passes.
+Build and UI summaries also record the selected tier/profile and observed toolchain.
 
 Use the same Python environment as [CONTRIBUTING](../CONTRIBUTING.md#setup).
 Check `df -h /System/Volumes/Data` first. Use a dedicated simulator and a bounded

@@ -139,7 +139,7 @@ def toolchain(*, tier=None):
                          "pinned_xcode": pins["xcode"]["version"] + " (" + pins["xcode"]["build"] + ")",
                          "pinned_ios_runtime": pins["simulators"]["ios"]["build"],
                          "pinned_tvos_runtime": pins["simulators"]["tvos"]["build"],
-                         "macos": platform.mac_ver()[0], "python": platform.python_version(),
+                         "macos": platform.mac_ver()[0] or None, "python": platform.python_version(),
                          "swift": version(["swift", "--version"]), "xcode": xcode,
                          "pillow": pillow, "zstd": version(["zstd", "--version"])},
             "signing_mode": "not-applicable"}
