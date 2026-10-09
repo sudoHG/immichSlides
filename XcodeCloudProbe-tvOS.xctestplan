@@ -1,0 +1,59 @@
+{
+  "configurations": [
+    {
+      "id": "7C0F6B2E-3D51-4E8A-9B1F-0A2C6D4E8F10",
+      "name": "Test Scheme Action",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "environmentVariableEntries": [
+      {
+        "key": "CG_NUMERICS_SHOW_BACKTRACE",
+        "value": "1"
+      },
+      {
+        "key": "UI_TEST_EXPECT_PLATFORM",
+        "value": "tvOS"
+      },
+      {
+        "key": "IMMICH_TEST_SERVER_URL",
+        "value": "http://127.0.0.1:8765/api"
+      },
+      {
+        "key": "IMMICH_TEST_API_KEY",
+        "value": "immichslides-public-e2e-key"
+      },
+      {
+        "key": "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID",
+        "value": "album-c-exif"
+      },
+      {
+        "key": "IMMICHSLIDES_TEST_WAIT_FACTOR",
+        "value": "2"
+      }
+    ],
+    "language": "zh-Hans",
+    "performanceAntipatternCheckerEnabled": true,
+    "targetForVariableExpansion": {
+      "containerPath": "container:immichSlides.xcodeproj",
+      "identifier": "120E64472F0CA2A5003B1480",
+      "name": "immichSlides"
+    }
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:immichSlides.xcodeproj",
+        "identifier": "12F4D6672F6A9FF70049C717",
+        "name": "immichSlidesUITests"
+      },
+      "selectedTests": [
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsAutoPlayPathCanOpenAndToggle()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsIntervalPathCanOpen()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsModePathCanOpen()"
+      ]
+    }
+  ],
+  "version": 1
+}
