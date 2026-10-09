@@ -382,6 +382,62 @@ class PopulationVerdictTests(unittest.TestCase):
 
 
 class AdmissionVerdictTests(unittest.TestCase):
+    def test_gate_classification_failure_keeps_macos_enabled_and_writes_failed_evidence(self):
+        from ci_gate import main
+        identity = {"schema_version": 1, "event": "pull_request", "repository": "example/photos",
+                    "tree_sha": "d" * 40, "base_sha": "a" * 40, "head_sha": "b" * 40,
+                    "merge_sha": "c" * 40, "pull_request": 7}
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            records = Path(directory) / "records"
+            outputs = Path(directory) / "outputs"
+            with patch("sys.argv", ["ci_gate.py", "classify", "--output-dir", str(records)]), \
+                    patch.dict("os.environ", {"GITHUB_OUTPUT": str(outputs), "GITHUB_RUN_ID": "101", "GITHUB_RUN_ATTEMPT": "1"}), \
+                    patch("ci_gate.run_identity", return_value=identity), \
+                    patch("ci_gate.source_metadata", return_value=(".github/workflows/ci-gate.yml", False)), \
+                    patch("ci_gate.read_blob", return_value='{"schema_version":1}'), \
+                    patch("ci_gate.classify", side_effect=ci_summary.ContractError("unavailable base")):
+                self.assertEqual(main(), 1)
+            self.assertEqual(outputs.read_text(), "run_macos=true\n")
+            summary = ci_summary.parse_summary((records / "summary.json").read_text())
+            self.assertEqual(summary["status"], "failed")
+            self.assertEqual(summary["identity"], identity)
+            self.assertEqual(summary["infrastructure"][0]["code"], "classification-failed")
+
+    def test_gate_scheduler_binds_the_base_reader_and_policy_and_both_target_trees(self):
+        from ci_gate import classify
+        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES
+        modules = {name: Path(__file__).with_name(name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        allowlist = Path(__file__).with_name("ci-classification.json").read_text()
+        identity = {"event": "pull_request", "base_sha": "a" * 40, "head_sha": "b" * 40,
+                    "merge_sha": "c" * 40}
+        def repository_input(*args):
+            if args[0] == "diff":
+                return paths
+            if args[-1] == identity["base_sha"]:
+                return "immichSlides/base-only.swift\ndocs/base.md"
+            return "immichSlides/merge-only.swift\ndocs/merge.md"
+
+        for paths in ("docs/note.md", ""):
+            with self.subTest(paths=paths), patch("ci_gate.revision_modules", return_value=modules) as reader, \
+                    patch("ci_gate.read_blob", return_value=allowlist) as policy, \
+                    patch("ci_gate.git", side_effect=repository_input) as diff, \
+                    patch("ci_gate.base_reader", return_value={"app_affected": True, "ci_changing": False}) as evaluate:
+                self.assertEqual(classify(identity), evaluate.return_value)
+                reader.assert_called_once_with(identity["base_sha"])
+                policy.assert_called_once_with(identity["base_sha"], "scripts/ci-classification.json")
+                diff.assert_any_call("diff", "--name-only", "--no-renames",
+                                     identity["base_sha"] + "..." + identity["head_sha"])
+                diff.assert_any_call("ls-tree", "--name-only", "-r", identity["base_sha"])
+                diff.assert_any_call("ls-tree", "--name-only", "-r", identity["merge_sha"])
+                evaluate.assert_called_once_with(modules, {
+                    "operation": "classify", "paths": [paths] if paths else ["__unknown_empty_diff__"],
+                    "classification_policy": json.loads(allowlist),
+                    "build_target_paths": ["immichSlides/base-only.swift", "immichSlides/merge-only.swift"]})
+        with patch("ci_gate.git") as diff:
+            self.assertTrue(classify({"event": "push"})["app_affected"])
+            diff.assert_not_called()
+
     def setUp(self):
         self.summary = valid_summary()
         self.identity = self.summary["identity"]

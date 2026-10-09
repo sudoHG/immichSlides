@@ -6,6 +6,11 @@ package-resolution flags. The [full unit consumers](CI_UNIT_TESTS.md) reuse thes
 archives; the [iPhone UI tracer](CI_UI.md) selects the iOS archive across runs. Host
 and privacy jobs are unchanged. [`scripts/ci_build_archive.py`](../scripts/ci_build_archive.py)
 uses the existing [identity/summary contract](CI_SUMMARY.md) and [toolchain pins](CI_TOOLCHAIN.md).
+For app-unaffected PRs, the Linux classification job skips both build and unit
+jobs under the [trusted not-applicable contract](CI_PUBLISHER.md). Host checks
+still run on macOS. Unknown and CI-trusted paths run all app jobs; classification
+failure or missing output also schedules builds and fails publication. Main
+pushes and nightly retain their complete build paths.
 The [nightly live producer](CI_LIVE_TESTS.md) reuses this entry point with schedule/dispatch
 identity and PR canary builds, exact nightly workflow provenance and the same secret-free checks.
 Its summaries describe host checks of archives, not a full Swift population or a

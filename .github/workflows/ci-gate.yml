@@ -13,6 +13,44 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  classify:
+    name: gate-classification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      run_macos: ${{ steps.classify.outputs.run_macos }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Create the minimal Linux Python environment
+        run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/classify-python"
+      - name: Classify using the merge first parent's isolated reader
+        id: classify
+        run: |
+          "$RUNNER_TEMP/classify-python/bin/python3" -B scripts/ci_gate.py classify \
+            --output-dir "$RUNNER_TEMP/gate-classification"
+      - name: Upload only the classification summary and identity
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gate-classification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/gate-classification/summary.json
+            ${{ runner.temp }}/gate-classification/summary.md
+            ${{ runner.temp }}/gate-classification/run-identity.json
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+      - name: Display the classification record
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/gate-classification/summary.md"; then
+            cat "$RUNNER_TEMP/gate-classification/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   host-checks:
     name: host-checks
     runs-on: xcode-27
@@ -66,6 +104,8 @@ jobs:
 
   build-ios:
     name: build-ios
+    needs: [classify]
+    if: ${{ !cancelled() && needs.classify.outputs.run_macos != 'false' }}
     runs-on: xcode-27
     timeout-minutes: 40
     permissions:
@@ -129,6 +169,8 @@ jobs:
 
   build-tvos:
     name: build-tvos
+    needs: [classify]
+    if: ${{ !cancelled() && needs.classify.outputs.run_macos != 'false' }}
     runs-on: xcode-27
     timeout-minutes: 40
     permissions:
