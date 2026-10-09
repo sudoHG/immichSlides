@@ -278,7 +278,9 @@ class LocalModeTests(unittest.TestCase):
                                                    cwd=checkout, start_new_session=True)
                 return 0
             try:
-                with patch("ci_local.run_child", side_effect=escaped_child), \
+                # Exercise local launch even when this suite runs on hosted CI.
+                with patch.dict(os.environ, clean_environment(os.environ), clear=True), \
+                        patch("ci_local.run_child", side_effect=escaped_child), \
                         patch.object(sys, "argv", [str(entry), "--snapshot-record", str(record)]):
                     self.assertEqual(local_main(lambda: 0, str(entry)), 2)
                 retained = held["root"]
