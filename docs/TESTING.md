@@ -19,6 +19,7 @@ Cancellation forwards SIGINT to the runner first so Xcode and private-bundle
 finalizers can finish, then escalates if needed. A snapshot is removed only after
 its child process groups exit; unverifiable cleanup retains its path for diagnosis.
 The snapshot receipt records the final exit code, including cleanup failure.
+`ci_ui_tests.py check-upload` only inspects results an earlier run wrote, so it keeps that run's receipt and writes none.
 DerivedData remains in the original checkout or an explicit stable path, outside
 the disposable snapshot. Local nightly plan, tracer and aggregate identities must
 match; see [the nightly guide](CI_NIGHTLY.md).
