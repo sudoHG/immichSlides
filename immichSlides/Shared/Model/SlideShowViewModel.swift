@@ -598,6 +598,10 @@ class SlideShowViewModel: ObservableObject {
         )
     }
 
+    func awaitInFlightPreparedPlanningForTesting() async {
+        await candidateProgression.awaitInFlightPlanningForTesting()
+    }
+
     var preparedSmartFillNextAssetIdsForTesting: [String]? {
         playbackSession.preparedNext?.scene.assetIds
     }
