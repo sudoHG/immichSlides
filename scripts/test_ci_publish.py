@@ -343,6 +343,36 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual({job["conclusion"] for job in jobs}, {"success"})
         self.assertEqual(len(summaries), len(names))
 
+        # A failed whole matrix after an earlier green attempt invalidates all
+        # older shards: archive + default alone cannot retain the old visual.
+        old_success = [dict(row, run_attempt=1, started_at="2026-10-09T00:50:00Z",
+                            completed_at="2026-10-09T00:51:00Z", runner_id=100) for row in executed]
+        skipped = [dict(row, run_attempt=2) for row in UI_ARCHIVE_TIMEOUT_JOBS]
+        later_success = [dict(row, run_attempt=3, started_at="2026-10-09T02:00:00Z",
+                              completed_at="2026-10-09T02:01:00Z", runner_id=300) for row in executed]
+        partial = [row for row in later_success if metadata[row["name"]]["tier"] == "ui-infrastructure"
+                   or metadata[row["name"]]["shard"] == "default"]
+        attempts.update({1: old_success, 2: skipped, 3: partial})
+        artifacts[:] = [{"name": f"{name}-{run['id']}-1", "expired": False} for name in names]
+        artifacts.extend({"name": f"{row['name']}-{run['id']}-3", "expired": False} for row in partial)
+        retained = [row for row in old_success if row["name"] not in {job["name"] for job in partial}]
+        for latest in (partial, partial + retained):
+            attempts[3] = latest
+            with self.subTest(latest=latest), patch("ci_publish.json_member", side_effect=read_summary), self.assertRaises(ContractError):
+                producer_evidence(RecordedAPI(), dict(run, run_attempt=3), FIXTURE_UI)
+        attempts[3] = later_success
+        with patch("ci_publish.json_member", side_effect=read_summary), self.assertRaises(ContractError):
+            producer_evidence(RecordedAPI(), dict(run, run_attempt=3), FIXTURE_UI)
+        artifacts.extend({"name": f"{row['name']}-{run['id']}-3", "expired": False}
+                         for row in later_success if row not in partial)
+        with patch("ci_publish.json_member", side_effect=read_summary):
+            jobs, summaries = producer_evidence(RecordedAPI(), dict(run, run_attempt=3), FIXTURE_UI)
+        self.assertEqual({job["evidence_attempt"] for job in jobs}, {3})
+        self.assertEqual(len(summaries), len(names))
+        attempts.clear()
+        attempts.update({1: copy.deepcopy(UI_ARCHIVE_TIMEOUT_JOBS), 2: executed})
+        artifacts[:] = [{"name": f"{name}-{run['id']}-2", "expired": False} for name in names]
+
         for conclusion in ("success", "cancelled", "skipped"):
             attempts[1] = copy.deepcopy(UI_ARCHIVE_TIMEOUT_JOBS)
             attempts[1][0]["conclusion"] = conclusion

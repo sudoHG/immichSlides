@@ -175,7 +175,7 @@ def find_reuse(api, push):
     return None
 
 
-def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=False):
+def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=False, discarded_shards=None):
     """Normalize collapsed matrix history without supplying test evidence."""
     from check_workflow_policy import WorkflowLoader
     names, _, _, metadata = workflow_contract(source, run, metadata=True)
@@ -201,6 +201,8 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
                 # The archive failure prevented shard execution. This historical
                 # placeholder supplies no evidence; later literal jobs must fill
                 # the complete population and bind their own execution artifacts.
+                if discarded_shards is not None:
+                    discarded_shards.update(expanded)
                 continue
             # Preserve the real skipped job on every logical shard. Reuse
             # admission still requires independent trusted proof.

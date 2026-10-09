@@ -162,6 +162,8 @@ observations and still requires independent trusted reuse proof.
 For PR reruns, an older attempt whose `ui-archive` infrastructure job failed may
 contain a raw skipped matrix placeholder because no shard started. The reader
 discards only that historical placeholder; it contributes no shard evidence.
+Its matrix shards acquire a minimum valid attempt after that skip, invalidating
+even successful shard evidence retained from earlier attempts.
 Later literal jobs must cover the entire required population with records bound
 to their own execution attempts. A current PR matrix skip, incomplete later
 execution, overlapping literal jobs or stale artifacts remains inadmissible.
