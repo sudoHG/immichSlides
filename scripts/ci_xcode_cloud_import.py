@@ -9,11 +9,11 @@ import sys
 from pathlib import Path
 from urllib.error import URLError
 
-from ci_publish import GitHub, map_pr, positive, trusted_admissions, verify_workflow
+from ci_publish import map_pr, positive, trusted_admissions, verify_workflow
 from ci_summary import ContractError, require
 from ci_xcode_cloud import (IMPORT_PATH, ROUTE_PATH, UI_PATH, archive_evidence_run, trusted_artifact, validate_evidence, validate_route)
 from ci_xcode_cloud_api import credential_context, jwt
-from ci_xcode_cloud_client import RenewingAppStoreConnect
+from ci_xcode_cloud_client import RenewingAppStoreConnect, RetryingGitHub
 import time
 
 
@@ -59,7 +59,7 @@ def main():
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
         run_id = event["inputs"]["producer_run_id"]
         require(isinstance(run_id, str) and run_id.isdecimal() and 0 < int(run_id) < 10**15, "invalid UI producer run ID")
-        api = GitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"])
+        api = RetryingGitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"], time.monotonic() + 9 * 60)
         attempt = event["inputs"]["producer_attempt"]
         require(isinstance(attempt, str) and attempt.isdecimal(), "invalid evidence attempt input")
         asc = RenewingAppStoreConnect(lambda: jwt(os.environ, IMPORT_PATH), time.monotonic() + 9 * 60)

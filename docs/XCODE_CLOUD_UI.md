@@ -93,33 +93,51 @@ branch reference, reservation time and pre-start build inventory. Its immutable
 main-authenticated artifact is uploaded **before POST**. Failed or interrupted
 main attempts can supply reservation state, with workflow, event, repository,
 main ancestry and historical uploader attempt authenticated before reading bytes.
-After an uncertain POST, subsequent routers reconcile the fixed workflow's build
-collection and never blindly POST again. Missing source commits, multiple matches,
-expired state or unavailable inventory keep the reservation unresolved.
-A known terminal build releases its account reservation. An unresolved or running
-reservation blocks other starts until reconciliation.
+A second immutable **about-to-POST marker** must upload successfully before the
+start step can POST. A creator job that ended without that marker provably never
+posted, including a failed start step. Every HTTP 4xx is a definite rejection;
+5xx, network errors and timeouts leave an uncertain outcome. Subsequent routers
+reconcile the fixed workflow's full build collection and never blindly POST
+again. Inventory membership is compared with `prior_run_ids`, without filtering
+ASC timestamps by the runner clock. After **ten minutes**, no new build and no
+build missing its source commit proves that the uncertain start was not executed.
+Missing commits, multiple matches, expired state or unavailable inventory keep
+the reservation unresolved. The exact known run ID reaching `COMPLETE` releases
+quota even if its branch moved; evidence for another head is still refused.
+
+State discovery lists only the route workflow's main dispatch runs in a
+**90-day window**, and reads their exact state artifact names. Each account job
+uploads a main-authenticated checkpoint containing active reservations and the
+IDs released during that scan. Later starts stop at that checkpoint: released
+reservations are not opened or API-verified again. Active old reservations remain
+in the checkpoint. Unresolved or running reservations block other starts until
+reconciliation; a checkpoint is budget state and cannot authorize test acceptance.
 
 Routing requires trusted `app_affected is True`, a same-repository current PR,
 matching head/merge tree and the admitted exact population. It also requires at
 least **five running macOS jobs** and one macOS job queued for **120 seconds**,
 measured across repository attempts using `xcode-27` and `macos-*` runner labels.
 Before POST, the producer must still be authoritative, its cloud selection must
-be open, and at least **110 minutes** must remain in the **115-minute** budget
-measured from `ci-ui.run_started_at`: 100 for Cloud and ten for import.
+be open, and no more than **30 minutes** may have passed since
+`ci-ui.run_started_at`. The router poll remains bounded to 100 minutes.
 
 The account cap is **45 compute hours** including the proposed 100-minute build.
 Usage scans every accessible product and all actions of runs that can overlap the
 current UTC calendar month, including failed actions. Completed runs ending before
 the month are not scanned. Never-started actions cost zero; each unfinished run
-reserves at least 100 minutes, counting actual action time if greater. Missing or
+reserves at least 100 minutes, counting actual action time if greater. A terminal
+`SKIPPED` or `CANCELED` action with no start timestamp also costs zero. Missing or
 inconsistent inventory/timing fails closed. The accounting window resets at
 00:00 UTC on the first of the month; correspondence with Apple's billing month is
 `NOT_RUN` until runtime acceptance.
 
 ASC tokens are signed on first use and renewed after eight minutes before each
-API request. Reads retry 429, 5xx and timeouts with exponential backoff within the
-deadline. POST is never automatically retried. Each poll rechecks the producer
-and selection, and stops on completion or supersession. Cloud completion also
+API request. ASC and GitHub reads retry 429, 5xx and timeouts with exponential
+backoff within the deadline. A failed Linux poll round has no conclusion and
+keeps waiting. POST is never automatically retried. Each poll rechecks the producer
+and selection, and stops on completion or supersession. A superseded producer
+logs one line and exits successfully without a new start or verdict; a
+failed/cancelled route's completion is a successful no-op in the bridge. Cloud completion also
 waits for the newest matching app check to complete with this Cloud run's link
 before method validation. Failed starts/runs, refused evidence and deadlines
 produce a GitHub fallback decision. The published
@@ -128,11 +146,26 @@ exposes no build cancellation operation: an unconfirmed terminal state keeps the
 persistent account reservation and blocks new starts, rather than claiming a
 cancellation or refund. The independent main importer repeats the API validation.
 
+For an irreconcilable reservation, a maintainer may release it manually: disable
+the bridge and route workflow, let their account jobs end, then inspect the
+reservation, its prior inventory and the full ASC workflow inventory. Wait at
+least ten minutes and confirm every potentially created build is terminal and
+there is no missing source commit or live Cloud work. Record those run IDs and
+the reservation artifact ID before deleting anything. Using maintainer GitHub
+authority, delete only that reservation artifact and the route workflow's journal
+checkpoint artifacts (whose cached active state may contain it); keep start,
+route and importer receipts. Re-enable the workflows. The next account scan
+reconstructs state from the remaining reservations and writes a clean checkpoint.
+Deleting artifacts or changing workflow availability is maintainer work, never
+an automated fallback. If terminal state cannot be confirmed, keep routing off
+and the reservation intact.
+
 `ui-archive` only waits for the two normal gate archives. iPhone and iPad shards
 start when the archive is ready. A separate Linux `ui-cloud-wait` job gates only
-Apple TV and supplies its own operational summary; it runs after the iOS shards
-so failed-job reruns refresh that selection too. It checks complete trusted proof
-before checking the deadline, allowing Cloud to finish while iOS runs.
+Apple TV and supplies its own operational summary; it depends only on the archive,
+so it never serializes iOS and TV. The two independent UI matrices each retain
+`max-parallel: 2`. It checks complete trusted proof before checking the deadline,
+allowing Cloud to finish while the gate archive is built.
 GitHub Apple TV uses `!cancelled()`, so cancellation cannot start new macOS work.
 It runs all three original shards unless the current selection validates Cloud;
 the publisher repeats the full trust check independently of the producer output.
@@ -143,27 +176,40 @@ route/import with no valid artifact. Polling backs off from 60 to 300 seconds,
 with one admission/attempt lookup and small bounded run pages, keeping concurrent
 waits below the repository token's 1,000 requests/hour budget. Missing workflows,
 missing artifacts, importer failure, stale checks and timeout cannot authorize
-skips. Main pushes and forks select GitHub without waiting for Cloud.
+skips. GitHub reads retry transient errors, and a failed round keeps waiting.
+Main pushes and forks select GitHub without waiting for Cloud.
+
+Only a matching main-authenticated receipt for an already started Cloud build
+can justify waiting. With no started build, including a full rerun with no manual
+route task, the selection immediately chooses GitHub. Its deadline is the later
+of **selection start + 15 minutes** and **Cloud creation + 1.3 × 69 minutes +
+10 minutes** (99.7 minutes from the accepted build's ASC `createdDate`). Queueing
+uses the same budget. An available trusted `startedDate` may extend that value,
+but the absolute cap is **createdDate + 119.7 minutes**, including a 20-minute
+queue allowance. Complete trusted proof is checked before that deadline.
 
 Failed-job reruns bind proof to the attempt that executed `ui-archive`, identified
 by its GitHub execution timestamps and runner (or unchanged job ID when those
 fields are absent). GitHub may regenerate retained job IDs on a rerun.
-A retained archive with complete valid proof reuses that
-same proof and starts no additional Cloud or GitHub TV work. Without valid proof,
-the new Linux selection requires GitHub TV. Routers never start Cloud for an
-attempt that retained the archive. A historical collapsed TV skip supplies no
-test evidence; without Cloud proof, subsequent literal TV execution is required.
+A failed-iOS-job rerun retains successful Cloud selection and Apple TV jobs,
+reusing complete valid proof without starting additional TV work. If that
+retained Cloud proof becomes invalid, a **full rerun** is required; the fresh
+selection chooses GitHub unless a matching manual main route has already started
+a valid build. Routers never start Cloud for an attempt that retained the archive.
+A historical collapsed TV skip supplies no test evidence; without Cloud proof,
+subsequent literal TV execution is required.
 Do not manually rerun route/import workflows: dispatch for the producer/evidence
 attempt instead. Receipts are validated against
-`actions/runs/<uploader>/attempts/<uploader_attempt>`, while failed or incomplete
-latest uploader runs remain unacceptable verdict sources.
+`actions/runs/<uploader>/attempts/<uploader_attempt>`. The named historical attempt
+must have succeeded independently of an in-progress, failed or cancelled latest
+attempt; the latest run supplies only trusted provenance before opening bytes.
 
 To disable routing, prefer a reviewed main change setting
 `ROUTING_ENABLED = False` in `scripts/ci_xcode_cloud_route.py`: this publishes a
 prompt GitHub decision. Disabling the GitHub route or import workflow also causes
 an immediate GitHub choice once the Linux selection runs. Disabling the bridge
-leaves active workflows with no matching run, so the Linux wait can consume the
-remaining 115-minute budget before fallback. None changes the Xcode Cloud
+leaves no matching started build, so the Linux selection chooses GitHub
+immediately. None changes the Xcode Cloud
 workflow; already started Cloud work retains its account reservation.
 
 For deterministic acceptance on an ordinary app PR, the maintainer may set the

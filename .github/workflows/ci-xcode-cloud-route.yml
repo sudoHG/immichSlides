@@ -61,6 +61,19 @@ jobs:
           path: ${{ runner.temp }}/ci-xcc-route/reservation.json
           if-no-files-found: error
           retention-days: 90
+      - name: Prepare the durable POST marker
+        if: success() && steps.prepare.outputs.reserved == 'true'
+        id: arm
+        env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py arm'
+      - if: success() && steps.arm.outputs.post == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-xcc-post-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-xcc-route/post.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Start or reconcile the reserved build
         if: success() && steps.prepare.outputs.recorded == 'true'
         id: start
@@ -75,6 +88,13 @@ jobs:
         with:
           name: ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-xcc-route/start.json
+          if-no-files-found: error
+          retention-days: 90
+      - if: always() && steps.prepare.outputs.journal == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-xcc-journal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-xcc-route/journal.json
           if-no-files-found: error
           retention-days: 90
 

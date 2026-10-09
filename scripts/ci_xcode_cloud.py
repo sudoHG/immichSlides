@@ -166,13 +166,18 @@ def on_main(revision):
                           capture_output=True, timeout=30).returncode == 0
 
 
-def validate_uploader(run, workflow, repository, path, attempt):
-    require(type(attempt) is int and attempt > 0 and run["run_attempt"] == attempt,
-            "cloud evidence importer attempt is stale")
+def validate_uploader_provenance(run, workflow, repository, path):
     require(workflow["path"] == path and run["path"] == path and run["workflow_id"] == workflow["id"]
             and run["event"] == "workflow_dispatch" and run["head_branch"] == "main"
             and run["repository"]["full_name"] == run["head_repository"]["full_name"] == repository
-            and run["status"] == "completed" and run["conclusion"] == "success" and on_main(run["head_sha"]),
+            and on_main(run["head_sha"]), "cloud evidence uploader is not a trusted main workflow")
+
+
+def validate_uploader(run, workflow, repository, path, attempt):
+    validate_uploader_provenance(run, workflow, repository, path)
+    require(type(attempt) is int and attempt > 0 and run["run_attempt"] == attempt,
+            "cloud evidence importer attempt is stale")
+    require(run["status"] == "completed" and run["conclusion"] == "success",
             "cloud evidence uploader is not a successful trusted main workflow")
 
 
@@ -211,7 +216,7 @@ def trusted_artifact(api, name, path, member):
         uploader = api.repo("actions/runs/" + str(positive(artifact["workflow_run"]["id"])))
         # Authenticate all provenance before opening even a colliding artifact.
         try:
-            validate_uploader(uploader, workflow, api.repository, path, uploader["run_attempt"])
+            validate_uploader_provenance(uploader, workflow, api.repository, path)
         except (ContractError, KeyError, TypeError, ValueError):
             continue
         receipt = json_member(api, artifact, member)

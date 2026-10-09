@@ -213,7 +213,7 @@ class GitHub:
         self.repository, self.token = repository, token
         self.response_headers = response_headers
 
-    def request(self, path, *, method="GET", payload=None, binary=False, missing=False):
+    def request(self, path, *, method="GET", payload=None, binary=False, missing=False, timeout=45):
         url = "https://api.github.com" + path
         data = json.dumps(payload).encode() if payload is not None else None
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
@@ -221,7 +221,7 @@ class GitHub:
             headers["Authorization"] = "Bearer " + self.token
         request = Request(url, data=data, method=method, headers=headers)
         try:
-            with build_opener(ArtifactRedirect()).open(request, timeout=45) as response:
+            with build_opener(ArtifactRedirect()).open(request, timeout=timeout) as response:
                 if self.response_headers:
                     self.response_headers(response.headers)
                 raw = response.read(MAX_JSON_BYTES + 1)

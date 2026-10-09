@@ -41,6 +41,21 @@ class WorkflowPolicyTests(unittest.TestCase):
         post = next(index for index, step in enumerate(steps) if step.get("id") == "start")
         steps[reservation], steps[post] = steps[post], steps[reservation]
         self.assertIn("xcc-reservation", self.rules(document, path))
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        steps = document["jobs"]["start"]["steps"]
+        marker = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-post-"))
+        del steps[marker]
+        self.assertIn("xcc-reservation", self.rules(document, path))
+
+    def test_failed_ios_reruns_cannot_repeat_successful_tv_through_dependencies(self):
+        path = ".github/workflows/ci-ui.yml"
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertNotIn("xcc-dependencies", self.rules(document, path))
+        for job in ("cloud-wait", "appletv-shards"):
+            changed = copy.deepcopy(document)
+            changed["jobs"][job]["needs"] = ["archive", "shards"]
+            with self.subTest(job=job):
+                self.assertIn("xcc-dependencies", self.rules(changed, path))
 
     def test_cloud_event_bridge_cannot_receive_secrets_or_execute_pr_code(self):
         root = Path(__file__).resolve().parent.parent

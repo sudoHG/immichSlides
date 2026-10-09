@@ -177,7 +177,7 @@ jobs:
 
   cloud-wait:
     name: ui-cloud-wait
-    needs: [archive, shards]
+    needs: archive
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -215,7 +215,7 @@ jobs:
 
   appletv-shards:
     name: ui-appletv-${{ matrix.shard }}
-    needs: [archive, shards, cloud-wait]
+    needs: [archive, cloud-wait]
     if: ${{ !cancelled() && needs.archive.outputs.run_ui == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110

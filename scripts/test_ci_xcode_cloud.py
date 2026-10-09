@@ -76,17 +76,13 @@ class CloudEvidenceTests(unittest.TestCase):
         api = Mock(repository="owner/repo")
         artifact = lambda run_id: {"id": run_id, "name": "receipt", "expired": False, "workflow_run": {"id": run_id}}
         receipt = {"uploader_run_id": 456, "uploader_attempt": 1, "route_artifact_id": 55, "evidence": self.evidence}
-        for mutation in ("fork", "event", "status", "conclusion", "history"):
+        for mutation in ("fork", "event", "history"):
             hostile = copy.deepcopy(trusted)
             hostile["id"] = 123
             if mutation == "fork":
                 hostile["head_repository"]["full_name"] = "fork/repo"
             elif mutation == "event":
                 hostile["event"] = "pull_request"
-            elif mutation == "status":
-                hostile["status"] = "in_progress"
-            elif mutation == "conclusion":
-                hostile["conclusion"] = "failure"
             else:
                 hostile["head_sha"] = "b" * 40
             api.repo.side_effect = lambda path, **_: workflow if "workflows/" in path else hostile if path.endswith("123") else trusted
@@ -379,8 +375,42 @@ class CloudEvidenceTests(unittest.TestCase):
         receipt = {"uploader_run_id": 456, "uploader_attempt": 1}
         with patch("ci_publish.git"), patch.object(cloud, "on_main", return_value=True), \
                 patch("ci_publish.json_member", return_value=receipt):
-            self.assertEqual(cloud.trusted_artifact(api, "receipt", cloud.ROUTE_PATH, "route.json"), (receipt, 99))
-            self.assertIn(unittest.mock.call("actions/runs/456/attempts/1"), api.repo.call_args_list)
+            for status, conclusion in (("in_progress", None), ("completed", "failure"), ("completed", "cancelled")):
+                uploader.update(status=status, conclusion=conclusion)
+                api.repo.side_effect = lambda path, **_: workflow if "workflows/" in path else (
+                    dict(uploader, run_attempt=1, status="completed", conclusion="success") if "/attempts/1" in path else uploader)
+                with self.subTest(status=status, conclusion=conclusion):
+                    self.assertEqual(cloud.trusted_artifact(api, "receipt", cloud.ROUTE_PATH, "route.json"), (receipt, 99))
+                    self.assertIn(unittest.mock.call("actions/runs/456/attempts/1"), api.repo.call_args_list)
+            api.repo.side_effect = lambda path, **_: workflow if "workflows/" in path else (
+                dict(uploader, run_attempt=1, status="completed", conclusion="failure") if "/attempts/1" in path else uploader)
+            with self.assertRaises(ContractError):
+                cloud.trusted_artifact(api, "receipt", cloud.ROUTE_PATH, "route.json")
+
+    def test_active_checkpoint_avoids_repository_artifacts_and_released_reservations(self):
+        import ci_xcode_cloud_state as state
+        api = Mock(repository="owner/repo")
+        workflow = {"id": 789, "path": cloud.ROUTE_PATH}
+        uploader = {"id": 800, "run_attempt": 1, "workflow_id": 789, "path": cloud.ROUTE_PATH,
+                    "event": "workflow_dispatch", "head_branch": "main", "head_sha": "a" * 40,
+                    "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}}
+        api.repo.side_effect = lambda path, **_: workflow if "workflows/" in path else uploader
+        api.pages.side_effect = [[{"id": 800, "created_at": "2026-10-10T00:00:00Z"},
+                                  {"id": 700, "created_at": "2026-10-09T00:00:00Z"}],
+                                 [{"id": 99, "name": "ci-xcc-journal-800-1", "expired": False, "workflow_run": {"id": 800}},
+                                  {"id": 66, "name": "ci-xcc-reservation-800-1", "expired": False, "workflow_run": {"id": 800}}]]
+        row = {"schema_version": 1, "workflow_id": cloud.WORKFLOW_ID, "producer_run_id": 123,
+               "producer_attempt": 2, "uploader_run_id": 456, "uploader_attempt": 1,
+               "identity": self.identity, "reserved_at": "2026-10-09T16:00:00Z", "prior_run_ids": [],
+               "reservation_artifact_id": 55}
+        with patch.object(state, "on_main", return_value=True), patch.object(state, "json_member",
+                return_value={"schema_version": 1, "uploader_run_id": 800, "uploader_attempt": 1, "active": [row], "released": [66]}) as read:
+            self.assertEqual(state.reservations(api), [row])
+            read.assert_called_once()
+        self.assertEqual(api.pages.call_count, 2)
+        self.assertEqual(api.pages.call_args_list[1].args[0], "actions/runs/800/artifacts")
+        self.assertIn("created", api.pages.call_args_list[0].kwargs)
+        self.assertNotIn(unittest.mock.call("actions/runs/456/attempts/1"), api.repo.call_args_list)
 
     def test_reservation_artifacts_authenticate_the_main_attempt_before_reading(self):
         import ci_xcode_cloud_state as state
@@ -431,6 +461,144 @@ class CloudEvidenceTests(unittest.TestCase):
 
 
 class RoutingPolicyTests(unittest.TestCase):
+    def test_missing_post_marker_releases_a_creator_that_failed_before_post(self):
+        import ci_xcode_cloud_state as state
+        api = Mock()
+        reservation = {"uploader_run_id": 456, "uploader_attempt": 1}
+        api.pages.return_value = [{"name": "xcc-start", "status": "completed", "conclusion": "failure",
+                                  "steps": [{"name": "Start or reconcile the reserved build", "conclusion": "failure"}]}]
+        with patch.object(state, "post_marker", return_value=None):
+            self.assertTrue(state.never_posted(api, reservation))
+            api.pages.return_value[0]["status"] = "in_progress"
+            self.assertFalse(state.never_posted(api, reservation))
+        with patch.object(state, "post_marker", return_value={"reservation_artifact_id": 99}):
+            self.assertFalse(state.never_posted(api, reservation))
+
+    def test_uncertain_empty_inventory_releases_after_the_visibility_bound_without_clock_filter(self):
+        import ci_xcode_cloud_state as state
+        from datetime import timedelta
+        reserved = datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc)
+        reservation = {"identity": {"head_sha": "a" * 40}, "prior_run_ids": [], "reserved_at": reserved.isoformat()}
+        self.assertEqual(state.reconcile(Mock(), reservation, inventory=[], now=reserved + timedelta(minutes=9))["state"], "unresolved")
+        self.assertEqual(state.reconcile(Mock(), reservation, inventory=[], now=reserved + timedelta(minutes=11))["state"], "released")
+        run = {"id": "11111111-1111-1111-1111-111111111111", "attributes": {"createdDate": "2026-10-09T15:59:00Z",
+               "executionProgress": "RUNNING", "sourceCommit": {"commitSha": "a" * 40}}}
+        self.assertEqual(state.reconcile(Mock(), reservation, inventory=[run], now=reserved + timedelta(minutes=11))["state"], "in-flight")
+        run["attributes"]["sourceCommit"] = {}
+        self.assertEqual(state.reconcile(Mock(), reservation, inventory=[run], now=reserved + timedelta(minutes=11))["state"], "unresolved")
+
+    def test_start_window_and_wait_deadline_allow_queueing_without_indefinite_pending(self):
+        from ci_xcode_cloud_route import remaining_seconds, cloud_wait_deadline
+        from datetime import timedelta
+        now = datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc)
+        run = {"run_started_at": (now - timedelta(minutes=29)).isoformat()}
+        self.assertEqual(remaining_seconds(run, now), 60)
+        self.assertEqual(remaining_seconds(run, now + timedelta(minutes=2)), 0)
+        self.assertAlmostEqual(cloud_wait_deadline(10 * 60, 0), 99.7 * 60)
+        self.assertAlmostEqual(cloud_wait_deadline(95 * 60, 0), 110 * 60)
+        self.assertAlmostEqual(cloud_wait_deadline(10 * 60, 0, 50 * 60), 119.7 * 60)
+        self.assertAlmostEqual(cloud_wait_deadline(130 * 60, 0, 50 * 60), 119.7 * 60)
+
+    def test_github_reads_retry_transient_errors_but_dispatches_do_not_replay(self):
+        from ci_xcode_cloud_client import RetryingGitHub
+        from ci_publish import GitHub
+        elapsed = [0]
+        client = RetryingGitHub("owner/repo", "test-token", 120, timer=lambda: elapsed[0],
+                              sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+        with patch.object(GitHub, "request", side_effect=[ContractError("HTTP 429"), TimeoutError(), {"id": 1}, ContractError("HTTP 503")]) as network:
+            self.assertEqual(client.request("/repos/owner/repo/actions/runs/1"), {"id": 1})
+            self.assertEqual(elapsed[0], 6)
+            with self.assertRaises(ContractError):
+                client.request("/repos/owner/repo/actions/workflows/route/dispatches", method="POST", payload={})
+            self.assertEqual(network.call_count, 4)
+
+    def test_known_terminal_build_releases_quota_even_when_its_head_cannot_count(self):
+        import ci_xcode_cloud_state as state
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        reservation = {"identity": fixture.identity, "prior_run_ids": [], "reserved_at": "2026-10-09T16:00:00Z"}
+        result = {"cloud_run_id": fixture.evidence["id"]}
+        inventory = [{"id": result["cloud_run_id"], "attributes": {"executionProgress": "COMPLETE",
+                     "sourceCommit": {"commitSha": "f" * 40}}}]
+        self.assertEqual(state.reconcile(Mock(), reservation, result, inventory=inventory)["state"], "released")
+        fixture.evidence["head_sha"] = "f" * 40
+        with self.assertRaises(ContractError):
+            fixture.validate()
+
+    def test_a_terminal_wrong_head_reservation_does_not_block_the_next_producer_start(self):
+        import ci_xcode_cloud_route as router
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        api, asc = Mock(), Mock()
+        old_id = "11111111-1111-1111-1111-111111111111"
+        prior = {"identity": fixture.identity, "producer_run_id": 122, "producer_attempt": 1,
+                 "prior_run_ids": [], "reserved_at": "2026-10-09T16:00:00Z", "reservation_artifact_id": 55}
+        def pages(path):
+            if "/scmRepositories/" in path:
+                return [{"id": "reference", "attributes": {"canonicalName": "refs/heads/branch"}}]
+            return [{"id": old_id, "attributes": {"executionProgress": "COMPLETE", "sourceCommit": {"commitSha": "f" * 40}}}]
+        asc.pages.side_effect = pages
+        asc.request.return_value = {"data": {"id": "22222222-2222-2222-2222-222222222222"}}
+        with patch.object(router, "current_producer", return_value={"head": {"ref": "branch"}}), patch.object(router, "refresh_producer"), \
+                patch.object(router, "trusted_admissions", return_value={123: fixture.record}), \
+                patch.object(router, "admitted_population", return_value=fixture.population), \
+                patch.object(router, "github_capacity", return_value={"congested": True}), patch.object(router, "month_usage", return_value={"minutes": 0}), \
+                patch.object(router.state, "reservations", return_value=[prior]), patch.object(router.state, "start_result", return_value={"cloud_run_id": old_id}):
+            prepared = router.route_run(api, lambda: asc, fixture.run)
+            self.assertTrue(prepared["fresh"])
+            self.assertEqual(prepared["journal"], {"active": [], "released": [55]})
+            result = router.start_reserved(asc, prepared["reservation"], fresh=True)
+            self.assertEqual(result["reason"], "cloud-started")
+            asc.request.assert_called_once()
+
+    def test_superseded_router_exits_successfully_without_a_start_or_receipt(self):
+        import ci_xcode_cloud_route as router
+        import json
+        import os
+        import tempfile
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        api = Mock(repository="owner/repo")
+        api.repo.return_value = fixture.run
+        with tempfile.TemporaryDirectory() as directory:
+            event, output = Path(directory, "event.json"), Path(directory, "output")
+            event.write_text(json.dumps({"inputs": {"producer_run_id": "123", "producer_attempt": "2"}}))
+            environment = {"GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output), "GITHUB_REPOSITORY": "owner/repo",
+                           "CI_WORKFLOW_TOKEN": "test-token", "GITHUB_RUN_ID": "456", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_TEMP": directory}
+            with patch.dict(os.environ, environment), patch.object(router.sys, "argv", ["router", "prepare"]), \
+                    patch.object(router, "credential_context"), patch("ci_publish.git"), patch.object(router, "RetryingGitHub", return_value=api), \
+                    patch.object(router, "verify_workflow"), patch.object(router, "recorded_decision", return_value=False), \
+                    patch.object(router, "route_run", side_effect=router.SupersededProducer("old head")), patch.object(router, "jwt") as sign, \
+                    patch("builtins.print") as log:
+                self.assertEqual(router.main(), 0)
+                sign.assert_not_called()
+                log.assert_called_once()
+                self.assertIn("recorded=false", output.read_text())
+                self.assertFalse(Path(directory, "ci-xcc-route").exists())
+
+    def test_all_post_client_errors_are_definite_rejections_including_conflict(self):
+        import ci_xcode_cloud_route as router
+        reservation = {"identity": {"head_sha": "a" * 40}, "prior_run_ids": [],
+                       "reserved_at": datetime.now(timezone.utc).isoformat(), "reference_id": "reference"}
+        asc = Mock()
+        asc.pages.return_value = []
+        for status in (400, 401, 403, 404, 409, 422, 429):
+            asc.request.side_effect = ContractError(f"HTTP {status}")
+            with self.subTest(status=status):
+                result = router.start_reserved(asc, reservation, fresh=True)
+                self.assertTrue(result["start_rejected"])
+                self.assertEqual(result["decision"], "fallback")
+
+    def test_never_started_terminal_actions_cost_zero_but_missing_success_timing_is_refused(self):
+        from ci_xcode_cloud_route import action_minutes
+        now = datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc)
+        for status in ("SKIPPED", "CANCELED"):
+            with self.subTest(status=status):
+                self.assertEqual(action_minutes({"executionProgress": "COMPLETE", "completionStatus": status,
+                    "startedDate": None, "finishedDate": "2026-10-09T15:00:00Z"}, now.replace(day=1), now), 0)
+        with self.assertRaises(ContractError):
+            action_minutes({"executionProgress": "COMPLETE", "completionStatus": "SUCCEEDED"}, now.replace(day=1), now)
+
     def setUp(self):
         import ci_xcode_cloud_route as router
         for context in (patch.object(router, "selection_open", return_value=True),
@@ -535,7 +703,7 @@ class RoutingPolicyTests(unittest.TestCase):
                 self.assertEqual(router.route_run(api, factory, fixture.run)["reason"], "retained-archive-selection")
             for late in (False, True):
                 with self.subTest(late=late), patch.object(router, "selection_open", return_value=late):
-                    run = dict(fixture.run, run_started_at=(datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat()) if late else fixture.run
+                    run = dict(fixture.run, run_started_at=(datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()) if late else fixture.run
                     self.assertEqual(router.route_run(api, factory, run)["reason"], "producer-selection-too-late")
             factory.assert_not_called()
 
@@ -553,9 +721,10 @@ class RoutingPolicyTests(unittest.TestCase):
             result = router.poll_route(api, asc, fixture.record, fixture.run, fixture.route, sleep=lambda _: None)
             self.assertEqual(result["decision"], "routed")
             self.assertEqual(refresh.call_count, 2)
-            refresh.side_effect = ContractError("producer superseded")
+            refresh.side_effect = router.SupersededProducer("producer superseded")
             asc.request.reset_mock()
-            self.assertEqual(router.poll_route(api, asc, fixture.record, fixture.run, fixture.route)["decision"], "fallback")
+            with self.assertRaises(router.SupersededProducer):
+                router.poll_route(api, asc, fixture.record, fixture.run, fixture.route)
             asc.request.assert_not_called()
 
     def test_finished_previous_month_runs_do_not_consume_or_scan_current_budget(self):
@@ -583,6 +752,9 @@ class RoutingPolicyTests(unittest.TestCase):
             self.assertEqual(artifact.call_args.args[1], "ci-xcc-route-123-2")
             proof.side_effect = ContractError("prior cloud proof is no longer valid")
             self.assertEqual(router.producer_decision(api, fixture.record, run, approved=False), "github")
+            proof.side_effect = ContractError("GitHub HTTP 503")
+            with self.assertRaises(ContractError):
+                router.producer_decision(api, fixture.record, run, approved=False, transient_errors=True)
 
     def test_disabled_or_finished_without_receipt_workflows_fall_back_without_waiting(self):
         import ci_ui_tests as producer
@@ -602,10 +774,51 @@ class RoutingPolicyTests(unittest.TestCase):
             with self.subTest(inactive=inactive), patch.object(producer, "verify_workflow"), \
                     patch("ci_publish.trusted_admissions", return_value={123: fixture.record}), \
                     patch.object(router, "producer_decision", return_value="github"), \
+                    patch("ci_xcode_cloud_state.inflight_start", return_value=None if inactive else {
+                        "identity": fixture.identity, "cloud_created_at": datetime.now(timezone.utc).isoformat()}), \
                     patch.object(cloud, "trusted_artifact", side_effect=ContractError("missing receipt")), \
                     patch.object(producer.time, "sleep") as sleep:
                 self.assertEqual(producer.wait_cloud(ctx, api), "github")
                 sleep.assert_not_called()
+
+    def test_full_rerun_without_a_matching_started_cloud_task_chooses_github_immediately(self):
+        import ci_ui_tests as producer
+        import ci_xcode_cloud_route as router
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        run = dict(fixture.run, run_attempt=3)
+        ctx = {"identity": fixture.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 3}}
+        api = Mock()
+        api.repo.side_effect = lambda path: {"id": 99, "state": "active"} if "ci-xcode-cloud-" in path else run
+        with patch.object(producer, "verify_workflow"), patch("ci_publish.trusted_admissions", return_value={123: fixture.record}), \
+                patch.object(router, "producer_decision", return_value="github"), \
+                patch("ci_xcode_cloud_state.inflight_start", return_value=None), patch.object(producer.time, "sleep") as sleep:
+            self.assertEqual(producer.wait_cloud(ctx, api), "github")
+            sleep.assert_not_called()
+
+    def test_a_transient_poll_round_does_not_decide_github_before_valid_proof_arrives(self):
+        import ci_ui_tests as producer
+        import ci_xcode_cloud_route as router
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        ctx = {"identity": fixture.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 2}}
+        api, reads = Mock(), [0]
+        def response(path):
+            if "ci-xcode-cloud-" in path:
+                return {"id": 99, "state": "active"}
+            if path == "actions/runs/123":
+                reads[0] += 1
+                if reads[0] == 2:
+                    raise ContractError("GitHub HTTP 503")
+            return fixture.run
+        api.repo.side_effect = response
+        start = {"identity": fixture.identity, "cloud_created_at": datetime.now(timezone.utc).isoformat()}
+        with patch.object(producer, "verify_workflow"), patch("ci_publish.trusted_admissions", return_value={123: fixture.record}), \
+                patch("ci_xcode_cloud_state.inflight_start", return_value=start), \
+                patch.object(router, "producer_decision", side_effect=["github", "routed"]), \
+                patch.object(cloud, "trusted_artifact", return_value=(fixture.route, 55)), patch.object(producer.time, "sleep") as sleep:
+            self.assertEqual(producer.wait_cloud(ctx, api), "routed")
+            sleep.assert_called_once_with(60)
 
     def test_retained_archive_selection_reuses_valid_proof_and_invalid_proof_chooses_tv(self):
         import ci_ui_tests as producer
@@ -652,7 +865,7 @@ class RoutingPolicyTests(unittest.TestCase):
         import ci_xcode_cloud_dispatch as bridge
         api = Mock(repository="owner/repo")
         source = {"id": 456, "path": cloud.ROUTE_PATH, "repository": {"full_name": "owner/repo"},
-                  "head_repository": {"full_name": "owner/repo"}, "run_attempt": 1}
+                  "head_repository": {"full_name": "owner/repo"}, "run_attempt": 1, "conclusion": "success"}
         api.repo.return_value = source
         api.pages.return_value = [{"name": "ci-xcc-route-123-2", "expired": False}]
         receipt = {"uploader_run_id": 456, "uploader_attempt": 1, "producer_run_id": 123,
@@ -670,6 +883,14 @@ class RoutingPolicyTests(unittest.TestCase):
             with self.assertRaises(ContractError):
                 bridge.dispatch(api, {"workflow_run": {"id": 456}, "action": "completed"})
             read.assert_not_called()
+            verify.reset_mock()
+            for conclusion in ("failure", "cancelled", "timed_out"):
+                source["conclusion"] = conclusion
+                with self.subTest(conclusion=conclusion):
+                    bridge.dispatch(api, {"workflow_run": {"id": 456}, "action": "completed"})
+                    verify.assert_not_called()
+                    read.assert_not_called()
+                    api.dispatch.assert_not_called()
 
     def test_router_requires_complete_validated_method_evidence_before_routed_receipt(self):
         import ci_xcode_cloud_route as router
@@ -862,6 +1083,7 @@ class RoutingPolicyTests(unittest.TestCase):
                 patch("ci_publish.trusted_admissions", return_value={123: {"identity": identity, "classification": {"app_affected": True}}}), \
                 patch.object(router, "producer_decision", side_effect=["github", "routed"]), \
                 patch.object(cloud, "trusted_artifact", return_value=({"decision": "routed"}, 1)), \
+                patch("ci_xcode_cloud_state.inflight_start", return_value={"identity": identity, "cloud_created_at": now.isoformat()}), \
                 patch.object(producer.time, "monotonic", return_value=0), \
                 patch.object(producer.time, "sleep") as sleep:
             self.assertEqual(producer.wait_cloud(ctx, api), "routed")

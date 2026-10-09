@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ci_publish import json_member, positive
 from ci_summary import ContractError, require, sha
@@ -11,6 +11,10 @@ from ci_xcode_cloud import ROUTE_PATH, WORKFLOW_ID, on_main, uuid
 
 RESERVATION_PREFIX = "ci-xcc-reservation-"
 START_PREFIX = "ci-xcc-start-"
+POST_PREFIX = "ci-xcc-post-"
+JOURNAL_PREFIX = "ci-xcc-journal-"
+STATE_DAYS = 90
+RECONCILE_MINUTES = 10
 
 
 def timestamp(value):
@@ -47,34 +51,72 @@ def read_state(api, artifact, workflow, *, prefix, member):
     return value
 
 
-def reservations(api):
+def validate_reservation(value):
+    require(type(value["schema_version"]) is int and value["schema_version"] == 1
+            and value["workflow_id"] == WORKFLOW_ID, "invalid persisted cloud reservation")
+    for key in ("producer_run_id", "producer_attempt", "uploader_run_id", "uploader_attempt"):
+        positive(value[key])
+    sha(value["identity"]["head_sha"])
+    timestamp(value["reserved_at"])
+    require(isinstance(value["prior_run_ids"], list), "reservation lacks prior build inventory")
+    for run_id in value["prior_run_ids"]:
+        uuid(run_id)
+    require(len(set(value["prior_run_ids"])) == len(value["prior_run_ids"]), "duplicate prior builds")
+    return value
+
+
+def reservations(api, *, now=None):
+    """Read recent router runs until their latest trusted active-state checkpoint.
+
+    The checkpoint omits released reservations. Old active reservations survive
+    in it without re-opening or re-authenticating already processed artifacts.
+    """
     workflow = api.repo("actions/workflows/ci-xcode-cloud-route.yml")
-    records = []
-    for artifact in api.pages("actions/artifacts", "artifacts"):
-        if not artifact["name"].startswith(RESERVATION_PREFIX):
-            continue
-        # An untrusted colliding artifact cannot block or authorize a start.
-        try:
-            run_id, attempt = authenticate_state(api, artifact, workflow, prefix=RESERVATION_PREFIX)
-        except (KeyError, TypeError, ValueError):
-            continue
-        except ContractError as error:
-            if str(error) == "persistent cloud reservation expired before reconciliation":
-                raise
-            continue
-        value = json_member(api, artifact, "reservation.json")
-        require(value["uploader_run_id"] == run_id and value["uploader_attempt"] == attempt
-                and type(value["schema_version"]) is int and value["schema_version"] == 1
-                and value["workflow_id"] == WORKFLOW_ID, "invalid persisted cloud reservation")
-        positive(value["producer_run_id"])
-        positive(value["producer_attempt"])
-        sha(value["identity"]["head_sha"])
-        timestamp(value["reserved_at"])
-        require(isinstance(value["prior_run_ids"], list), "reservation lacks prior build inventory")
-        for run_id in value["prior_run_ids"]:
-            uuid(run_id)
-        require(len(set(value["prior_run_ids"])) == len(value["prior_run_ids"]), "duplicate prior builds")
-        records.append(dict(value, reservation_artifact_id=artifact["id"]))
+    since = (now or datetime.now(timezone.utc)) - timedelta(days=STATE_DAYS)
+    runs = api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", event="workflow_dispatch",
+                     branch="main", created=">=" + since.isoformat())
+    records = {}
+    for run in sorted(runs, key=lambda item: (timestamp(item["created_at"]), item["id"]), reverse=True):
+        artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+        journals = sorted([item for item in artifacts if item["name"].startswith(JOURNAL_PREFIX)],
+                          key=lambda item: item["id"], reverse=True)
+        checkpoint, released = False, set()
+        for artifact in journals:
+            try:
+                value = read_state(api, artifact, workflow, prefix=JOURNAL_PREFIX, member="journal.json")
+            except (KeyError, TypeError, ValueError):
+                continue
+            except ContractError as error:
+                if str(error) == "persistent cloud reservation expired before reconciliation":
+                    raise
+                continue
+            require(type(value["schema_version"]) is int and value["schema_version"] == 1
+                    and isinstance(value["active"], list) and isinstance(value["released"], list), "invalid cloud state checkpoint")
+            released = {positive(item) for item in value["released"]}
+            for row in value["active"]:
+                validate_reservation(row)
+                positive(row["reservation_artifact_id"])
+                records.setdefault(row["reservation_artifact_id"], row)
+            checkpoint = True
+            break
+        for artifact in artifacts:
+            if not artifact["name"].startswith(RESERVATION_PREFIX) or artifact["id"] in released:
+                continue
+            try:
+                value = read_state(api, artifact, workflow, prefix=RESERVATION_PREFIX, member="reservation.json")
+            except (KeyError, TypeError, ValueError):
+                continue
+            except ContractError as error:
+                if str(error) == "persistent cloud reservation expired before reconciliation":
+                    raise
+                continue
+            validate_reservation(value)
+            value = dict(value, reservation_artifact_id=artifact["id"])
+            require(artifact["id"] not in records or records[artifact["id"]] == value, "checkpoint reservation differs")
+            records[artifact["id"]] = value
+        if checkpoint:
+            break
+    records = list(records.values())
     require(len({(record["producer_run_id"], record["producer_attempt"]) for record in records}) == len(records),
             "cloud start reservations are duplicated")
     return records
@@ -99,35 +141,74 @@ def start_result(api, reservation):
 
 
 def never_posted(api, reservation):
+    if post_marker(api, reservation) is not None:
+        return False
     jobs = api.pages(f"actions/runs/{reservation['uploader_run_id']}/attempts/{reservation['uploader_attempt']}/jobs", "jobs")
-    starts = [step for job in jobs if job["name"] == "xcc-start" for step in job.get("steps", [])
-              if step["name"] == "Start or reconcile the reserved build"]
-    # An absent or interrupted step is uncertain. Only GitHub's explicit
-    # unexecuted step state proves that the POST could not have happened.
-    return len(starts) == 1 and starts[0]["status"] == "completed" and starts[0]["conclusion"] == "skipped"
+    starts = [job for job in jobs if job["name"] == "xcc-start"]
+    # Start requires the independently uploaded marker before POST. Once the
+    # creator job has ended, a missing marker proves no POST, including failure.
+    return len(starts) == 1 and starts[0]["status"] == "completed"
 
 
-def reconcile(asc, reservation, result=None, *, inventory=None):
-    """Unknown POST outcomes never authorize another POST or release quota."""
+def post_marker(api, reservation):
+    run_id, attempt = reservation["uploader_run_id"], reservation["uploader_attempt"]
+    name = f"{POST_PREFIX}{run_id}-{attempt}"
+    artifacts = [row for row in api.pages(f"actions/runs/{run_id}/artifacts", "artifacts") if row["name"] == name]
+    require(len(artifacts) <= 1, "cloud POST markers conflict")
+    if not artifacts:
+        return None
+    value = read_state(api, artifacts[0], api.repo("actions/workflows/ci-xcode-cloud-route.yml"),
+                       prefix=POST_PREFIX, member="post.json")
+    require(value["reservation_artifact_id"] == reservation["reservation_artifact_id"]
+            and value["identity"] == reservation["identity"], "POST marker differs from reservation")
+    return value
+
+
+def reconcile(asc, reservation, result=None, *, inventory=None, now=None):
+    """Separate terminal quota release from head/population evidence acceptance."""
+    if result and result.get("start_rejected") is True:
+        return {"state": "released", "cloud_run_id": None}
     runs = inventory if inventory is not None else asc.pages("/v1/ciWorkflows/" + WORKFLOW_ID + "/buildRuns?limit=200")
     if result and result.get("cloud_run_id"):
         matches = [run for run in runs if run["id"] == uuid(result["cloud_run_id"])]
     else:
         prior = set(reservation["prior_run_ids"])
-        newer = [run for run in runs if run["id"] not in prior
-                 and timestamp(run["attributes"]["createdDate"]) >= timestamp(reservation["reserved_at"])]
+        newer = [run for run in runs if run["id"] not in prior]
         # A pending build may not yet expose its source commit. Do not guess
         # which start it represents or issue a second POST during that gap.
         if any(not run["attributes"].get("sourceCommit", {}).get("commitSha") for run in newer):
             return {"state": "unresolved", "cloud_run_id": None, "can_start": False}
         matches = [run for run in newer if run["attributes"].get("sourceCommit", {}).get("commitSha")
                    == reservation["identity"]["head_sha"]]
-        if not matches and result and result.get("start_rejected") is True:
+        if (not newer and not any(not run["attributes"].get("sourceCommit", {}).get("commitSha") for run in runs)
+                and ((now or datetime.now(timezone.utc)) - timestamp(reservation["reserved_at"])).total_seconds()
+                >= RECONCILE_MINUTES * 60):
             return {"state": "released", "cloud_run_id": None}
     if len(matches) != 1:
         return {"state": "unresolved", "cloud_run_id": None, "can_start": not matches}
     run = matches[0]
-    require(run["attributes"].get("sourceCommit", {}).get("commitSha") == reservation["identity"]["head_sha"],
-            "reconciled build has another head")
     return {"state": "released" if run["attributes"]["executionProgress"] == "COMPLETE" else "in-flight",
-            "cloud_run_id": uuid(run["id"])}
+            "cloud_run_id": uuid(run["id"]), "cloud_created_at": run["attributes"].get("createdDate"),
+            "cloud_started_at": run["attributes"].get("startedDate")}
+
+
+def inflight_start(api, run, evidence_attempt, workflow):
+    """Wait scheduling uses main-authenticated start metadata, never a verdict."""
+    from ci_publish import git
+    git("fetch", "--no-tags", "origin", "refs/heads/main")
+    runs = api.repo(f"actions/workflows/{workflow['id']}/runs?event=workflow_dispatch&per_page=100")["workflow_runs"]
+    matches = [row for row in runs if row.get("display_title") == f"xcc-route-{run['id']}-{evidence_attempt}"]
+    for source in sorted(matches, key=lambda row: row["id"], reverse=True):
+        name = f"{START_PREFIX}{source['id']}-{source['run_attempt']}"
+        artifacts = [row for row in api.pages(f"actions/runs/{source['id']}/artifacts", "artifacts") if row["name"] == name]
+        require(len(artifacts) <= 1, "cloud scheduling receipts conflict")
+        if not artifacts:
+            continue
+        value = read_state(api, artifacts[0], workflow, prefix=START_PREFIX, member="start.json")
+        require(value["producer_run_id"] == run["id"] and value["producer_attempt"] == evidence_attempt
+                and value["head_sha"] == run["head_sha"], "cloud scheduling receipt has another producer")
+        if value.get("cloud_run_id") is not None:
+            uuid(value["cloud_run_id"])
+            timestamp(value["cloud_created_at"])
+            return value
+    return None

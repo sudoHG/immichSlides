@@ -259,6 +259,11 @@ def wait_cloud(ctx, api):
     from ci_publish import trusted_admissions
     from ci_xcode_cloud_route import producer_decision, timestamp
     from ci_xcode_cloud import ROUTE_PATH, archive_evidence_run, trusted_artifact
+    from ci_xcode_cloud_client import RetryingGitHub, transient
+    from ci_xcode_cloud_state import inflight_start
+    from ci_xcode_cloud_route import cloud_wait_deadline
+    wait_started = datetime.now(timezone.utc).timestamp()
+    deadline = time.monotonic() + 15 * 60
     try:
         run = api.repo("actions/runs/" + ctx["run"]["id"])
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
@@ -274,28 +279,43 @@ def wait_cloud(ctx, api):
         workflows = {role: api.repo("actions/workflows/ci-xcode-cloud-" + role + ".yml") for role in ("route", "import")}
         if any(workflow["state"] != "active" for workflow in workflows.values()):
             return "github"
-        started = timestamp(run.get("run_started_at") or run["created_at"])
-        remaining = max(0, 115 * 60 - (datetime.now(timezone.utc) - started).total_seconds())
-        deadline = time.monotonic() + remaining
+        start = inflight_start(api, run, evidence_attempt, workflows["route"])
+        # Reruns emit no requested event. Only an existing, authenticated build
+        # can justify waiting; otherwise GitHub starts immediately.
+        if start is None:
+            return "github"
+        require(start["identity"] == ctx["identity"], "cloud start identity differs from producer")
+        cloud_created = timestamp(start["cloud_created_at"]).timestamp()
+        cloud_started = timestamp(start["cloud_started_at"]).timestamp() if start.get("cloud_started_at") else None
+        end = cloud_wait_deadline(wait_started, cloud_created, cloud_started)
+        deadline = time.monotonic() + max(0, end - datetime.now(timezone.utc).timestamp())
+        if isinstance(api, RetryingGitHub):
+            api.deadline = deadline
         delay = 60
         while True:
-            fresh = api.repo("actions/runs/" + str(run["id"]))
-            require(all(fresh[key] == run[key] for key in ("id", "run_attempt", "head_sha"))
-                    and fresh["status"] != "completed", "UI producer superseded or completed")
-            route = None
             try:
-                route, _ = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{evidence_attempt}", ROUTE_PATH, "route.json")
-                if route["decision"] != "routed":
+                fresh = api.repo("actions/runs/" + str(run["id"]))
+                require(all(fresh[key] == run[key] for key in ("id", "run_attempt", "head_sha"))
+                        and fresh["status"] != "completed", "UI producer superseded or completed")
+                route = None
+                try:
+                    route, _ = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{evidence_attempt}", ROUTE_PATH, "route.json")
+                    if route["decision"] != "routed":
+                        return "github"
+                    if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt,
+                                         route_seen=True, transient_errors=True) == "routed":
+                        return "routed"
+                except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError) as error:
+                    if transient(error):
+                        raise
+                role = "import" if route is not None else "route"
+                runs = api.repo(f"actions/workflows/{workflows[role]['id']}/runs?event=workflow_dispatch&per_page=100")["workflow_runs"]
+                matches = [item for item in runs if item.get("display_title") == f"xcc-{role}-{run['id']}-{evidence_attempt}"]
+                if matches and all(item["status"] == "completed" for item in matches):
                     return "github"
-                if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt, route_seen=True) == "routed":
-                    return "routed"
-            except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError):
-                pass
-            role = "import" if route is not None else "route"
-            runs = api.repo(f"actions/workflows/{workflows[role]['id']}/runs?event=workflow_dispatch&per_page=100")["workflow_runs"]
-            matches = [item for item in runs if item.get("display_title") == f"xcc-{role}-{run['id']}-{evidence_attempt}"]
-            if matches and all(item["status"] == "completed" for item in matches):
-                return "github"
+            except (ContractError, urllib.error.URLError, TimeoutError) as error:
+                if not transient(error):
+                    raise
             if time.monotonic() >= deadline:
                 return "github"
             time.sleep(min(delay, max(0, deadline - time.monotonic())))
@@ -312,7 +332,8 @@ def cloud_selection(args):
     records.mkdir(parents=True, exist_ok=False)
     summary = summary_for(ctx, file_hash(ROOT / MANIFEST_PATH))
     started = time.monotonic()
-    decision = wait_cloud(ctx, GitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"]))
+    from ci_xcode_cloud_client import RetryingGitHub
+    decision = wait_cloud(ctx, RetryingGitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"], time.monotonic() + 120 * 60))
     output("appletv_routed", str(decision == "routed").lower())
     summary["status"] = "passed"
     summary["population"]["observed"] = [observation(summary["population"]["declared"][0], "passed", time.monotonic() - started)]

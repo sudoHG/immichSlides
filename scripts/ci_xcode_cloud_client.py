@@ -7,6 +7,7 @@ import time
 from urllib.error import URLError
 
 from ci_summary import ContractError, require
+from ci_publish import GitHub
 from ci_xcode_cloud_api import AppStoreConnect
 
 
@@ -15,6 +16,25 @@ def transient(error):
         return True
     match = re.search(r"HTTP ([0-9]{3})", str(error))
     return bool(match and (int(match[1]) == 429 or int(match[1]) >= 500))
+
+
+class RetryingGitHub(GitHub):
+    def __init__(self, repository, token, deadline, *, timer=time.monotonic, sleep=time.sleep):
+        super().__init__(repository, token)
+        self.deadline, self.timer, self.sleep = deadline, timer, sleep
+
+    def request(self, path, *, method="GET", **options):
+        # Bound a failed read round so a consumer can re-evaluate its deadline.
+        read_deadline, delay = min(self.deadline, self.timer() + 60), 2
+        while True:
+            require(self.timer() < self.deadline, "GitHub read deadline exceeded")
+            try:
+                return super().request(path, method=method, timeout=max(1, min(45, read_deadline - self.timer())), **options)
+            except (ContractError, URLError, TimeoutError) as error:
+                if method != "GET" or not transient(error) or self.timer() + delay >= read_deadline:
+                    raise
+                self.sleep(delay)
+                delay = min(30, delay * 2)
 
 
 class RenewingAppStoreConnect(AppStoreConnect):

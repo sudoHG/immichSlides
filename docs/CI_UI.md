@@ -12,7 +12,9 @@ validated API results and the exact-head app check can suppress Apple TV shards.
 iPhone and iPad remain on GitHub; failed or absent cloud proof runs Apple TV here.
 Cloud waiting runs in a separate Linux job, so iPhone/iPad start when archive
 selection finishes. That job publishes its own operational summary and gates only
-Apple TV using `!cancelled()`; failed-job reruns revalidate retained archive proof.
+Apple TV using `!cancelled()`. Cloud selection depends only on the archive, so
+failed iOS-job reruns retain successful TV results; invalid retained Cloud proof
+requires a full rerun. Each UI matrix retains `max-parallel: 2`.
 
 ## Classification and archive selection
 
