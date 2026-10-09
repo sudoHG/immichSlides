@@ -65,7 +65,7 @@ def main():
         directory.mkdir(mode=0o700, exist_ok=False)
         (directory / "cloud.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-            output.write(f"producer_run_id={receipt['producer_run_id']}\nproducer_attempt={receipt['producer_attempt']}\n")
+            output.write(f"imported=true\nproducer_run_id={receipt['producer_run_id']}\nproducer_attempt={receipt['producer_attempt']}\n")
         print("Xcode Cloud import verified the complete admitted method population and app check")
         return 0
     except (ContractError, KeyError, TypeError, ValueError, OSError, URLError):

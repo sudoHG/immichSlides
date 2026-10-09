@@ -6,9 +6,10 @@ commit status. No required check or repository setting changes here. All three
 devices use the same archive validation, fixture runner, selection and verdict
 path. The trusted reuse reader must land on main before this producer is activated.
 
-The separate [Xcode Cloud Apple TV plan](XCODE_CLOUD_UI.md) prepares a test-only
-overflow execution path with the same fixture methods. Its preparation does not
-route heads or let cloud checks replace this tier's trusted evidence.
+The [Xcode Cloud Apple TV overflow path](XCODE_CLOUD_UI.md) runs the same fixture
+methods under macOS congestion. Only a main router decision plus independently
+validated API results and the exact-head app check can suppress Apple TV shards.
+iPhone and iPad remain on GitHub; failed or absent cloud proof runs Apple TV here.
 
 ## Classification and archive selection
 
@@ -102,7 +103,7 @@ Ordinary PRs do not use this reuse path.
 The receipt must name the one same-repository PR actually merged by the pushed
 SHA and that PR's final head. A different green head with the same tree cannot
 authorize reuse. Linux archive selection receives only `contents: read`,
-`actions: read` and `pull-requests: read`; the last permission supports the
+`actions: read`, `checks: read` and `pull-requests: read`; the last permission supports the
 commit-to-merged-PR lookup without granting any write authority.
 
 The archive-selection job still runs and publishes its bound summary and
@@ -154,7 +155,10 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 
 ## Capacity, timeouts and measurement
 
-The nine device/shard jobs share `max-parallel: 2` and `fail-fast: false`. Superseded runs
+The six iOS jobs and three Apple TV jobs form sequential matrices, each with
+`max-parallel: 2` and `fail-fast: false`, retaining a two-job maximum per producer.
+Apple TV still executes after an iOS failure when cloud proof is absent.
+Superseded runs
 cancel only within the same PR; main pushes and unrelated PRs are not cancelled.
 The Linux selection timeout is 120 minutes inside a 130-minute job. Xcode calls
 have a 65-minute timeout and share an 85-minute shard budget inside a 110-minute

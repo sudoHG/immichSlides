@@ -4,8 +4,8 @@ The **UI - Apple TV (overflow)** workflow runs the same pull-request Apple TV
 fixture methods as the GitHub UI shards. It is test-only, accepts an API or manual
 start on a branch, and uses the `immichSlides-tvOS` scheme with the
 `XcodeCloud-UI-tvOS` plan on Apple TV 4K (3rd generation), tvOS 27.0. Workflow
-configuration belongs to the maintainer. This preparation does not enable
-automatic routing or change the GitHub UI producer or trusted verdict.
+configuration belongs to the maintainer. Only the trusted main router and API
+importer described below can replace GitHub's pull-request Apple TV evidence.
 
 ## Population and fixture environment
 
@@ -71,23 +71,72 @@ contain test inputs; keep them private and do not attach them to a public PR.
 
 ## Routing and trust rollout
 
-Automatic routing remains disabled until the trusted reader and router land.
-The agreed routing policy permits only same-repository PR heads under documented
-GitHub macOS congestion and month-to-date cloud use below **45 compute hours**.
-Usage is summed from build actions since the start of the UTC calendar month;
-the budget resets each month. The router must bind its decision to the exact head
-and fall back to GitHub whenever a start or run fails. iPhone and iPad stay on
-GitHub. A disabled or absent routing decision runs all GitHub Apple TV shards.
+`ci-xcode-cloud-dispatch` handles `ci-ui` requested/in-progress events on main
+and dispatches the fixed main router with the authoritative producer ID. It has
+no environment or ASC secrets; only this five-minute bridge gets GitHub
+`actions: write` to dispatch the two fixed main workflows. A successful routed
+router completion dispatches the importer after uploader validation; fallback
+or duplicate no-op completion imports nothing. This preserves the reader's
+dispatch-only uploader and credential contracts. GitHub permits these explicit
+[`workflow_dispatch` events from `GITHUB_TOKEN`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+
+`ci-xcode-cloud-route` executes only a main dispatch naming the authoritative
+producer run. It refuses
+forks, main pushes, superseded heads, reruns and completed producers. Its account
+budget concurrency group admits one router at a time, without cancellation.
+Requested/in-progress duplicate events cannot start a second cloud run or replace
+an existing immutable decision for that producer attempt.
+
+Routing requires at least **five running macOS jobs** and at least one macOS job
+queued for **120 seconds**, measured across the repository's queued and running
+workflow attempts. Runner labels `xcode-27` and `macos-*` identify these jobs.
+It also requires month-to-date cloud use below **45 compute hours**. The API
+inventory includes all accessible cloud products, their runs and every build
+action, including failed and currently running actions. Durations are intersected
+with the current UTC calendar month; running actions count through the decision
+time. Missing inventory or timing causes GitHub fallback. The budget resets at
+00:00 UTC on the first day of each month. The 45-hour admission threshold leaves
+headroom within the allowance for a bounded run already started.
+
+The router starts only the existing overflow workflow on the current PR branch.
+It refreshes its ten-minute token before eight minutes, polls for at most 100
+minutes, and validates the complete API population and app check before recording
+`routed`. Failed starts, failed runs, unknown results, head movement, missing
+branches and timeouts record `fallback`; unavailable admission cannot route.
+The independent importer runs after successful main router completion and repeats
+validation with its own API read. A non-routed completion imports nothing.
+
+Linux archive selection still requires both normal gate archives. It waits for
+the trusted router/importer receipts within 115 minutes of the UI run's start,
+inside its existing 130-minute job. It sets `appletv_routed` only after independent
+full trust validation. Missing receipts, failed importer, refused evidence or
+expiry return GitHub. The publisher independently repeats that decision; a PR's
+output alone cannot authorize a skip. iPhone and iPad stay on GitHub. GitHub's
+three Apple TV jobs skip only on a validated `routed` head; all three execute for
+a non-routed or fallback head. The two matrices run sequentially with two jobs
+at a time, and iOS failures do not suppress fallback Apple TV execution.
+
+To disable routing, set `ROUTING_ENABLED = False` in
+`scripts/ci_xcode_cloud_route.py` through a reviewed main change, or have the
+maintainer disable the GitHub router workflow. An absent or disabled router runs
+all required GitHub Apple TV shards. No Xcode Cloud workflow change is needed.
+For a main-only diagnostic dispatch, `mode: github` records a non-routed head;
+`mode: force-start-failure` applies the same admission/congestion/budget guards
+and submits an invalid branch-reference ID to exercise a real API rejection.
+That mode cannot create a valid run or authorize a skip. Dispatch it before a
+decision exists; decisions cannot be overwritten.
 
 The `xcode-cloud` environment is main-only and holds `ASC_ISSUER_ID`, `ASC_KEY_ID`
 and `ASC_PRIVATE_KEY`; creating or changing it is maintainer work. PR code must
-never receive those credentials. The reader below is inactive without a trusted
-router decision. Scheduling and fallback integration land separately.
+never receive those credentials. The trusted workflows must first land on main
+and the maintainer must configure that environment before routing can operate.
 
 ## Trusted importer and acceptance
 
 `ci-xcode-cloud-import` accepts a same-repository PR's authoritative `ci-ui` run
-ID through a main-only manual/API dispatch. It checks the full admitted identity,
+ID through a main-only manual/API dispatch, including the credential-free bridge's
+dispatch after successful main router completion.
+It checks the full admitted identity,
 latest producer attempt, exact current PR head and the successful main router's
 artifact before reading App Store Connect. Its protected job checks out main,
 executes only the allowlisted importer, has read-only GitHub permissions, and

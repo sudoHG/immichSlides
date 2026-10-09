@@ -16,6 +16,11 @@ PRIVACY_WORKFLOW = ".github/workflows/privacy-preflight.yml"
 PROBE_WORKFLOW = ".github/workflows/ci-probe.yml"
 REPORT_WORKFLOW = ".github/workflows/ci-report.yml"
 XCC_IMPORT_WORKFLOW = ".github/workflows/ci-xcode-cloud-import.yml"
+XCC_ROUTE_WORKFLOW = ".github/workflows/ci-xcode-cloud-route.yml"
+XCC_DISPATCH_WORKFLOW = ".github/workflows/ci-xcode-cloud-dispatch.yml"
+XCC_WORKFLOWS = {XCC_IMPORT_WORKFLOW, XCC_ROUTE_WORKFLOW}
+XCC_DISPATCH_GUARD = ("github.ref == 'refs/heads/main' && "
+                      "github.event.workflow_run.head_repository.full_name == github.repository")
 XCC_BINDINGS = {"CI_WORKFLOW_TOKEN": "${{ github.token }}",
                 "ASC_ISSUER_ID": "${{ secrets.ASC_ISSUER_ID }}",
                 "ASC_KEY_ID": "${{ secrets.ASC_KEY_ID }}",
@@ -34,11 +39,12 @@ PROBE_ENVIRONMENT = {
     "CI_PROBE_SIMULATE_MISSING_PIN": "${{ inputs.simulate_missing_pin || false }}",
 }
 WORKFLOW_RUN_SOURCES = {
+    XCC_DISPATCH_WORKFLOW: {"ci-ui", "ci-xcode-cloud-route"},
     ".github/workflows/ci-publish.yml": {"ci-gate", "ci-ui"},
     REPORT_WORKFLOW: {"ci-nightly", "ci-gate", "ci-ui"},
 }
 ENVIRONMENT_WORKFLOWS = {
-    "xcode-cloud": {XCC_IMPORT_WORKFLOW},
+    "xcode-cloud": XCC_WORKFLOWS,
     "ci-publisher": {".github/workflows/ci-publish.yml", ".github/workflows/ci-approval.yml",
                      ".github/workflows/ci-approve.yml"},
     "ci-approval": {".github/workflows/ci-approval.yml"},
@@ -204,8 +210,13 @@ def trusted_run_allowed(script, path, events):
     if not isinstance(script, str):
         return False
     script = script.strip()
-    if path == XCC_IMPORT_WORKFLOW and set(events) == {"workflow_dispatch"}:
-        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_import.py',
+    if path == XCC_DISPATCH_WORKFLOW and set(events) == {"workflow_run"}:
+        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_dispatch.py',
+                      '/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
+            return True
+    if path in XCC_WORKFLOWS and set(events) == {"workflow_dispatch"}:
+        role = "import" if path == XCC_IMPORT_WORKFLOW else "route"
+        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_' + role + '.py',
                       '/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
             return True
     if path == REPORT_WORKFLOW and set(events) <= {"schedule", "workflow_dispatch", "workflow_run"}:
@@ -321,6 +332,19 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             or events["workflow_dispatch"] != {"inputs": {"producer_run_id": {
                 "description": "Authoritative same-repository pull-request ci-ui run", "required": True, "type": "string"}}}):
         flag("workflow", "xcc-contract", "Cloud import accepts only a literal main-only dispatch interface")
+    if path == XCC_ROUTE_WORKFLOW and (document.get("name") != "ci-xcode-cloud-route"
+            or set(events) != {"workflow_dispatch"} or document.get("permissions") != {}
+            or document.get("concurrency") != {"group": "ci-xcc-account-budget", "cancel-in-progress": False}
+            or events["workflow_dispatch"] != {"inputs": {"producer_run_id": {
+                "description": "Authoritative same-repository pull-request ci-ui run", "required": True, "type": "string"},
+                "mode": {"description": "Routing policy or bounded fallback diagnostic", "required": True, "default": "auto",
+                         "type": "choice", "options": ["auto", "github", "force-start-failure"]}}}):
+        flag("workflow", "xcc-contract", "Router needs its exact main-only interface and account budget serialization")
+    if path == XCC_DISPATCH_WORKFLOW and (document.get("name") != "ci-xcode-cloud-dispatch"
+            or events != {"workflow_run": {"workflows": ["ci-ui", "ci-xcode-cloud-route"],
+                                           "types": ["requested", "in_progress", "completed"]}}
+            or document.get("permissions") != {} or document.get("env")):
+        flag("workflow", "xcc-contract", "Cloud event bridge has a fixed source interface and no inherited credentials")
     # Live consumers intentionally execute test bundles; publisher-only trusted command rules do not apply.
     # Their environment and test-time credentials instead have this separate admission contract.
     allowed_secret_locations = {'workflow.jobs.live-unit.steps[' + str(index) + '].env.' + key
@@ -336,13 +360,14 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if isinstance(environment, str) and environment.casefold() == LIVE_ENVIRONMENT:
             live_job_locations.append(f'workflow.jobs.{job_id}.')
     for location, value in string_scalars(document):
-        if (path == XCC_IMPORT_WORKFLOW and re.search(r"\bsecrets\b", value, re.IGNORECASE)
+        if (path in XCC_WORKFLOWS and re.search(r"\bsecrets\b", value, re.IGNORECASE)
                 or re.search(r"\bsecrets\s*(?:\.\s*ASC_|\[\s*['\"]ASC_)", value, re.IGNORECASE)):
-            allowed_xcc = {"workflow.jobs.import.steps[" + str(index) + "].env." + key
-                           for index, step in enumerate(jobs.get("import", {}).get("steps", []))
-                           if step.get("id") == "import" and step.get("env") == XCC_BINDINGS
+            role = "import" if path == XCC_IMPORT_WORKFLOW else "route"
+            allowed_xcc = {"workflow.jobs." + role + ".steps[" + str(index) + "].env." + key
+                           for index, step in enumerate(jobs.get(role, {}).get("steps", []))
+                           if step.get("id") == role and step.get("env") == XCC_BINDINGS
                            for key in XCC_BINDINGS if key.startswith("ASC_")}
-            if path != XCC_IMPORT_WORKFLOW or location not in allowed_xcc:
+            if path not in XCC_WORKFLOWS or location not in allowed_xcc:
                 flag(location, "xcc-credential", "ASC secrets belong only to the guarded main importer step")
         live_scope = (any(location.startswith(prefix) for prefix in live_job_locations)
                       or bool(live_job_locations) and location.startswith('workflow.env.'))
@@ -400,6 +425,16 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                     or job.get("env") or document.get("env")
                     or job.get("concurrency") != {"group": "ci-xcc-import-${{ inputs.producer_run_id }}", "cancel-in-progress": False}):
                 flag(location, "xcc-contract", "Importer is bounded, main-only and credential-scoped with read-only grants")
+        if path == XCC_ROUTE_WORKFLOW and (job_id != "route" or job.get("if") != "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'"
+                or job.get("runs-on") != "ubuntu-24.04" or job.get("environment") != "xcode-cloud"
+                or job.get("timeout-minutes") != 120 or job.get("env") or document.get("env")
+                or permissions != {"contents": "read", "actions": "read", "checks": "read", "pull-requests": "read"}):
+            flag(location, "xcc-contract", "Router is main-only, bounded and read-only for GitHub")
+        if path == XCC_DISPATCH_WORKFLOW and (job_id != "dispatch" or job.get("if") != XCC_DISPATCH_GUARD
+                or job.get("runs-on") != "ubuntu-24.04" or job.get("timeout-minutes") != 5
+                or "environment" in job or job.get("env")
+                or permissions != {"contents": "read", "actions": "write", "pull-requests": "read"}):
+            flag(location, "xcc-contract", "Cloud bridge is main-only, bounded, environment-free and grants only dispatch authority")
         if path == PROBE_WORKFLOW and permissions != {"contents": "read", "issues": "write"}:
             flag(location, "probe-contract", "ci-probe grants only contents: read and issues: write at job level")
         if path == REPORT_WORKFLOW:
@@ -455,9 +490,14 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 if not isinstance(step, dict):
                     continue
                 step_location = f"{location}.steps[{index}]"
-                if path == XCC_IMPORT_WORKFLOW and "env" in step:
-                    if (step.get("env") != XCC_BINDINGS or step.get("id") != "import"
-                            or step.get("run") != '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_import.py'):
+                if path == XCC_DISPATCH_WORKFLOW and "env" in step:
+                    if (step.get("env") != {"CI_WORKFLOW_TOKEN": "${{ github.token }}"} or step.get("id") != "dispatch"
+                            or step.get("run") != '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_dispatch.py'):
+                        flag(step_location, "xcc-credential", "Cloud bridge has only its GitHub dispatch token")
+                if path in XCC_WORKFLOWS and "env" in step:
+                    role = "import" if path == XCC_IMPORT_WORKFLOW else "route"
+                    if (step.get("env") != XCC_BINDINGS or step.get("id") != role
+                            or step.get("run") != '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_' + role + '.py'):
                         flag(step_location, "xcc-credential", "ASC credentials belong only to the importer entry point")
                 if (path in PUBLISHER_COMMANDS and step.get("run", "").endswith("scripts/ci_publish.py reevaluate")
                         and step.get("if") != "steps.admit.outputs.recorded == 'true'"):
@@ -497,7 +537,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if isinstance(environment, dict) and any(key in loader_variables for key in environment):
             flag(location, "artifact-execution", "Artifact data must not control executable search or interpreter startup")
         bindings = (PRIVACY_ENVIRONMENT if path == PRIVACY_WORKFLOW else PROBE_ENVIRONMENT
-                    if path == PROBE_WORKFLOW else XCC_BINDINGS if path == XCC_IMPORT_WORKFLOW
+                    if path == PROBE_WORKFLOW else {"CI_WORKFLOW_TOKEN": "${{ github.token }}"} if path == XCC_DISPATCH_WORKFLOW
+                    else XCC_BINDINGS if path in XCC_WORKFLOWS
                     else {"CI_REPORT_TOKEN": "${{ github.token }}"} if path == REPORT_WORKFLOW
                     else PUBLISHER_BINDINGS if path in PUBLISHER_COMMANDS else {})
         if (not isinstance(environment, dict) or any(key not in bindings or value != bindings[key]
@@ -521,10 +562,13 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                                             {"name": "ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}",
                                              "path": "${{ runner.temp }}/ci-ui-verdict/verdict.json",
                                              "if-no-files-found": "error", "retention-days": 30}))
-        xcc_upload = (path == XCC_IMPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-                      and options == {"name": "ci-xcc-import-${{ steps.import.outputs.producer_run_id }}-${{ steps.import.outputs.producer_attempt }}",
-                                      "path": "${{ runner.temp }}/ci-xcc-import/cloud.json", "if-no-files-found": "error", "retention-days": 30}
-                      and item.get("if") == "success()")
+        role = "import" if path == XCC_IMPORT_WORKFLOW else "route"
+        xcc_upload = (path in XCC_WORKFLOWS and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+                      and options == {"name": "ci-xcc-" + role + "-${{ steps." + role + ".outputs.producer_run_id }}-${{ steps." + role + ".outputs.producer_attempt }}",
+                                      "path": "${{ runner.temp }}/ci-xcc-" + role + ("/cloud.json" if role == "import" else "/route.json"),
+                                      "if-no-files-found": "error", "retention-days": 30}
+                      and item.get("if") == ("success() && steps.import.outputs.imported == 'true'" if role == "import"
+                                             else "success() && steps.route.outputs.recorded == 'true'"))
         report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
                          and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",
                                              "path": "${{ runner.temp }}/ci-report/" + directory,
@@ -548,7 +592,7 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 flag(location, "trusted-checkout", "Trusted checkout must use this repository's default branch (privacy may use base.sha)")
             if path == REPORT_WORKFLOW and (ref != "main" or options.get("fetch-depth") != 0):
                 flag(location, "report-contract", "Reporter needs explicit main checkout and full history")
-            if path == XCC_IMPORT_WORKFLOW and (ref != "main" or options.get("fetch-depth") != 0
+            if path in XCC_WORKFLOWS | {XCC_DISPATCH_WORKFLOW} and (ref != "main" or options.get("fetch-depth") != 0
                                                 or options.get("persist-credentials") is not False):
                 flag(location, "xcc-contract", "Importer needs main, full history and no persisted checkout credential")
         if isinstance(uses, str) and "download-artifact" in uses.lower() and not artifact_path(options.get("path")):

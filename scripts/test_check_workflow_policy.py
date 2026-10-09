@@ -24,6 +24,56 @@ def workflow():
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_cloud_event_bridge_cannot_receive_secrets_or_execute_pr_code(self):
+        root = Path(__file__).resolve().parent.parent
+        path = policy.XCC_DISPATCH_WORKFLOW
+        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual(self.rules(document, path), set())
+        for mutation in ("branch", "environment", "secret", "checkout", "command", "write"):
+            changed = copy.deepcopy(document)
+            job = changed["jobs"]["dispatch"]
+            if mutation == "branch":
+                job["if"] = "always()"
+            elif mutation == "environment":
+                job["environment"] = "xcode-cloud"
+            elif mutation == "secret":
+                job["steps"][-1]["env"]["ASC_PRIVATE_KEY"] = "${{ secrets.ASC_PRIVATE_KEY }}"
+            elif mutation == "checkout":
+                job["steps"][0]["with"]["ref"] = "${{ github.event.workflow_run.head_sha }}"
+            elif mutation == "command":
+                job["steps"][-1]["run"] += " --workflow other.yml"
+            else:
+                job["permissions"]["contents"] = "write"
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.rules(changed, path))
+
+    def test_cloud_router_cannot_bypass_main_context_budget_serialization_or_credential_scope(self):
+        root = Path(__file__).resolve().parent.parent
+        path = policy.XCC_ROUTE_WORKFLOW
+        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual(self.rules(document, path), set())
+        for mutation in ("branch", "fork", "parallel", "write", "early-key", "checkout", "upload", "trigger"):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(document)
+                job = changed["jobs"]["route"]
+                if mutation == "branch":
+                    job["if"] = "always()"
+                elif mutation == "fork":
+                    job["if"] = "github.ref == 'refs/heads/main'"
+                elif mutation == "parallel":
+                    changed["concurrency"]["group"] += "-${{ github.run_id }}"
+                elif mutation == "write":
+                    job["permissions"]["contents"] = "write"
+                elif mutation == "early-key":
+                    job["env"] = {"KEY": "${{ secrets.ASC_PRIVATE_KEY }}"}
+                elif mutation == "checkout":
+                    job["steps"][0]["with"]["ref"] = "${{ github.event.workflow_run.head_sha }}"
+                elif mutation == "upload":
+                    job["steps"][-1]["if"] = "always()"
+                else:
+                    changed["on"]["pull_request"] = None
+                self.assertTrue(self.rules(changed, path))
+
     def test_cloud_importer_main_context_and_secret_step_cannot_be_weakened(self):
         path = policy.XCC_IMPORT_WORKFLOW
         source = (Path(__file__).resolve().parent.parent / path).read_text()

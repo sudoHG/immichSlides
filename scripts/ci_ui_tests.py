@@ -213,6 +213,7 @@ def wait_archive(args):
     parse_shard_manifest((ROOT / MANIFEST_PATH).read_text())
     summary = summary_for(ctx, manifest_hash)
     started, code = time.monotonic(), 1
+    output("appletv_routed", "false")
     try:
         workspace_preflight(ROOT)
         affected = app_affected(ctx["identity"])
@@ -237,6 +238,10 @@ def wait_archive(args):
                     for key in ("artifact_id", "producer_run_id", "producer_attempt"):
                         output(platform_name + "_" + key, selection[key])
                     write_json(records / ("archive-selection-" + platform_name + ".json"), selection)
+                cloud_decision = wait_cloud(ctx, api)
+                output("appletv_routed", str(cloud_decision == "routed").lower())
+                write_json(records / "archive-selection-cloud.json", {"schema_version": 1, "identity": ctx["identity"],
+                           "decision": cloud_decision, "producer_run_id": ctx["run"]["id"], "attempt": ctx["run"]["attempt"]})
         else:
             output("run_ui", "false")
             write_json(records / "archive-selection.json", {"schema_version": 1, "identity": ctx["identity"], "status": "not-applicable"})
@@ -249,6 +254,39 @@ def wait_archive(args):
                     reason=None if code == 0 else "UI archive selection failed", exit_code=code)]
         write_summary(summary, records)
     return code
+
+
+def wait_cloud(ctx, api):
+    """Wait within the archive job budget; PR artifacts cannot authorize a skip."""
+    if ctx["identity"]["event"] != "pull_request" or ctx["source"]["fork_originated"]:
+        return "github"
+    from datetime import datetime, timezone
+    from ci_publish import trusted_admissions
+    from ci_xcode_cloud_route import producer_decision, timestamp
+    from ci_xcode_cloud import ROUTE_PATH, trusted_artifact
+    try:
+        run = api.repo("actions/runs/" + ctx["run"]["id"])
+        verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
+        require(run["run_attempt"] == ctx["run"]["attempt"] and run["head_sha"] == ctx["identity"]["head_sha"], "UI producer changed")
+        record = trusted_admissions(api, [run["id"]]).get(run["id"])
+        require(record is not None and record["identity"] == ctx["identity"], "UI admission differs from producer")
+        started = timestamp(run.get("run_started_at") or run["created_at"])
+        remaining = max(0, 115 * 60 - (datetime.now(timezone.utc) - started).total_seconds())
+        deadline = time.monotonic() + remaining
+        while True:
+            if producer_decision(api, record, run, approved=False) == "routed":
+                return "routed"
+            try:
+                route, _ = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{run['run_attempt']}", ROUTE_PATH, "route.json")
+                if route["decision"] != "routed":
+                    return "github"
+            except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError):
+                pass
+            if time.monotonic() >= deadline:
+                return "github"
+            time.sleep(20)
+    except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError):
+        return "github"
 
 
 def run_shard(args):
