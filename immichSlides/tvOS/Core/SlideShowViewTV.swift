@@ -469,6 +469,7 @@ struct SlideShowViewTV: View {
                             onNext: onNext,
                             onPlayPause: onPlayPause,
                             onSettings: onSettings,
+                            onFocusedControlChange: resetAutoHideTimer,
                             shouldPreferSettingsFocusForEntryHint: isPlaybackEntryHintVisible,
                             shouldShowEntryHintBubble: isPlaybackEntryHintVisible,
                             entryHintContent: playbackEntryHintContent,

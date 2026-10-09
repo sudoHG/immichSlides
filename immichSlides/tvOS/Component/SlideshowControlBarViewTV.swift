@@ -27,6 +27,7 @@ struct SlideshowControlBarViewTV: View {
     let onNext: () -> Void
     let onPlayPause: () -> Void
     let onSettings: () -> Void
+    let onFocusedControlChange: () -> Void
 
     let shouldPreferSettingsFocusForEntryHint: Bool
     let shouldShowEntryHintBubble: Bool
@@ -151,6 +152,12 @@ struct SlideshowControlBarViewTV: View {
                         .stroke(.white.opacity(0.08), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.22), radius: 20, x: 0, y: 8)
+            }
+        }
+        .onChange(of: focusedButton) { _, newValue in
+            // Moving focus along the bar is a remote interaction that never reaches the parent's onMoveCommand.
+            if newValue != nil {
+                onFocusedControlChange()
             }
         }
         .onChange(of: shouldPreferSettingsFocusForEntryHint) { _, isTeaching in
