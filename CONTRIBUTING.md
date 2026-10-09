@@ -126,8 +126,9 @@ retention and the trusted identical-tree post-merge reuse rule.
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
 run on pull requests and pushes to `main`. Separate hosted runners execute the
 [complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
-On app-unaffected pull requests, a Linux job classifies changes with the base
-reader before scheduling builds: both build/unit platform paths are not applicable,
+Every `ci-gate` run first classifies changes on Linux with the base reader before
+scheduling builds. On app-unaffected pull requests, both build/unit platform paths
+are not applicable,
 while host checks remain on macOS. Unknown and CI-trusted changes still run all
 gate jobs; the [publisher contract](docs/CI_PUBLISHER.md) explains the fail-closed rules.
 The [UI tier](docs/CI_UI.md) consumes the iOS archive for iPhone/iPad and the tvOS

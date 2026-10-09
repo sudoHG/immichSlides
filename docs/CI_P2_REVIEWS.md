@@ -42,8 +42,9 @@ cache check also requires an item note. Partial means the item is incomplete or
 not reviewed, and can never contribute to overall PASS. Blank optional PASS notes
 are saved honestly as `No note entered; reviewer selected PASS.` The form never
 invents claims that an image was visually reviewed or a recording was watched.
-Record-only changes are classified `app_unaffected`; build scheduling remains a
-separate CI concern and is not changed by this classification.
+Record-only changes are classified `app_unaffected`, so pull requests that only
+change review records skip the iOS/tvOS build and unit jobs while host checks
+still run under the [trusted gate classification contract](CI_PUBLISHER.md).
 
 ## Validate and read by key
 
