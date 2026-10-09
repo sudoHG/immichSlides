@@ -59,6 +59,9 @@ Prefer extending an existing test file. A new test file needs a reason in the pu
 Default-plan server-dependent UI tests can run hermetically through
 [`run_fixture_ui_tests.py`](CI_FIXTURE_UI.md). That entry point uses runtime
 fixture configuration and records per-test coverage; it never uses private config.
+The separate [Xcode Cloud Apple TV plan](XCODE_CLOUD_UI.md) selects the same
+pull-request fixture methods explicitly; a host check rejects population or
+fixture-copy drift. It is an optional plan and leaves both default plans unchanged.
 
 A test must be able to fail. Anything that only produces screenshots, logs or numbers without judging them is evidence tooling. It belongs in the `Evidence` test plan.
 

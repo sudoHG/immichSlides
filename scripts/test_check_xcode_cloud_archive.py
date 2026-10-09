@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import check_xcode_cloud_archive as cloud
+import check_xcode_cloud_ui as ui
 
 
 class XcodeCloudArchiveTests(unittest.TestCase):
@@ -107,6 +108,104 @@ class XcodeCloudArchiveTests(unittest.TestCase):
                     self.lock.symlink_to(target)
                 with self.assertRaisesRegex(cloud.ArchivePreflightError, "regular package resolution"):
                     cloud.validate_environment(self.root, self.environment, self.developer)
+
+
+class XcodeCloudUITests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        sources = self.root / "immichSlidesUITests"
+        sources.mkdir()
+        (sources / "ExampleUITests.swift").write_text(
+            "import XCTest\nclass ExampleUITests: XCTestCase {\n"
+            "func testFirst() {}\nfunc testSecond() {}\nfunc testThird() {}\n}\n")
+        self.default = {"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}
+        (self.root / "immichSlides-tvOS.xctestplan").write_text(json.dumps(self.default))
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        (scripts / "ci-ui-shards.json").write_text(json.dumps({
+            "schema_version": 1, "revision": "fixture-v1", "default_shard": "default",
+            "shards": {"default": []}}))
+        (scripts / "ci-test-policy.json").write_text(json.dumps({
+            "schema_version": 1, "approval_records": [], "expected_skips": [],
+            "deselections": [], "proposed": {"expected_skips": [], "deselections": []}}))
+        self.plan = {
+            "version": 1,
+            "configurations": [{"id": "fixture", "name": "Test Scheme Action", "options": {}}],
+            "defaultOptions": {
+                "environmentVariableEntries": [{"key": name, "value": value}
+                    for name, value in ui.FIXTURE_ENVIRONMENT.items()],
+                "language": "zh-Hans", "performanceAntipatternCheckerEnabled": True,
+                "targetForVariableExpansion": {
+                    "containerPath": "container:immichSlides.xcodeproj",
+                    "identifier": "120E64472F0CA2A5003B1480", "name": "immichSlides"}},
+            "testTargets": [{
+                "target": {"containerPath": "container:immichSlides.xcodeproj",
+                           "identifier": "12F4D6672F6A9FF70049C717", "name": "immichSlidesUITests"},
+                "selectedTests": ["ExampleUITests/testFirst()", "ExampleUITests/testSecond()",
+                                  "ExampleUITests/testThird()"]}]}
+
+    def test_cloud_population_rejects_missing_extra_duplicate_and_disabled_methods(self):
+        population = ui.fixture_population(self.root)
+        self.assertEqual(len(ui.validate_plan(self.plan, population)), 3)
+        for kind in ("missing", "extra", "duplicate", "disabled", "class", "unit-target"):
+            with self.subTest(kind=kind):
+                candidate = json.loads(json.dumps(self.plan))
+                target = candidate["testTargets"][0]
+                if kind == "missing":
+                    target["selectedTests"].pop()
+                elif kind == "extra":
+                    target["selectedTests"].append("ExampleUITests/testUnknown()")
+                elif kind == "duplicate":
+                    target["selectedTests"].append(target["selectedTests"][0])
+                elif kind == "disabled":
+                    target["enabled"] = False
+                elif kind == "class":
+                    target["selectedTests"] = ["ExampleUITests"]
+                else:
+                    candidate["testTargets"].append({"target": {"name": "immichSlidesTests"}})
+                with self.assertRaises(ValueError):
+                    ui.validate_plan(candidate, population)
+
+    def test_cloud_plan_rejects_environment_overrides_skips_and_repetition(self):
+        population = ui.fixture_population(self.root)
+        for kind in ("key", "wait", "duplicate-env", "config", "target-env", "skip", "repeat", "language"):
+            with self.subTest(kind=kind):
+                candidate = json.loads(json.dumps(self.plan))
+                options = candidate["defaultOptions"]
+                if kind in {"key", "wait"}:
+                    name = "IMMICH_TEST_API_KEY" if kind == "key" else "IMMICHSLIDES_TEST_WAIT_FACTOR"
+                    next(entry for entry in options["environmentVariableEntries"] if entry["key"] == name)["value"] = "wrong"
+                elif kind == "duplicate-env":
+                    options["environmentVariableEntries"].append(options["environmentVariableEntries"][0])
+                elif kind == "config":
+                    candidate["configurations"][0]["options"] = {"environmentVariableEntries": []}
+                elif kind == "target-env":
+                    candidate["testTargets"][0]["environmentVariableEntries"] = []
+                elif kind == "skip":
+                    candidate["testTargets"][0]["skippedTests"] = ["ExampleUITests/testFirst()"]
+                elif kind == "repeat":
+                    options["testRepetitionMode"] = "retryOnFailure"
+                else:
+                    options["language"] = "en"
+                with self.assertRaises(ValueError):
+                    ui.validate_plan(candidate, population)
+
+    def test_fixture_server_copy_requires_identical_bytes_and_regular_files(self):
+        original = self.root / "scripts/strict_e2e_server.py"
+        original.write_text("public fixture server\n")
+        copy = self.root / "ci_scripts/fixture_server.py"
+        copy.parent.mkdir()
+        copy.write_bytes(original.read_bytes())
+        ui.validate_fixture_copy(self.root)
+        copy.write_text("outdated fixture server\n")
+        with self.assertRaisesRegex(ValueError, "differs"):
+            ui.validate_fixture_copy(self.root)
+        copy.unlink()
+        copy.symlink_to(original)
+        with self.assertRaisesRegex(ValueError, "regular"):
+            ui.validate_fixture_copy(self.root)
 
 
 if __name__ == "__main__":

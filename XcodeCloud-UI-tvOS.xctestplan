@@ -1,0 +1,167 @@
+{
+  "configurations": [
+    {
+      "id": "7C0F6B2E-3D51-4E8A-9B1F-0A2C6D4E8F10",
+      "name": "Test Scheme Action",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "environmentVariableEntries": [
+      {
+        "key": "CG_NUMERICS_SHOW_BACKTRACE",
+        "value": "1"
+      },
+      {
+        "key": "UI_TEST_EXPECT_PLATFORM",
+        "value": "tvOS"
+      },
+      {
+        "key": "IMMICH_TEST_SERVER_URL",
+        "value": "http://127.0.0.1:8765/api"
+      },
+      {
+        "key": "IMMICH_TEST_API_KEY",
+        "value": "immichslides-public-e2e-key"
+      },
+      {
+        "key": "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID",
+        "value": "album-c-exif"
+      },
+      {
+        "key": "IMMICHSLIDES_TEST_WAIT_FACTOR",
+        "value": "2"
+      }
+    ],
+    "language": "zh-Hans",
+    "performanceAntipatternCheckerEnabled": true,
+    "targetForVariableExpansion": {
+      "containerPath": "container:immichSlides.xcodeproj",
+      "identifier": "120E64472F0CA2A5003B1480",
+      "name": "immichSlides"
+    }
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:immichSlides.xcodeproj",
+        "identifier": "12F4D6672F6A9FF70049C717",
+        "name": "immichSlidesUITests"
+      },
+      "selectedTests": [
+        "FilterSummaryTVOSVisualUITests/testTVOSAccessProtectionShowsProminentSuccessFeedbackAfterDisable()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAccessProtectionShowsProminentSuccessFeedbackAfterEnable()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumCardAccessibilityFramesIgnoreCoverShape()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterAccessibilityTextScreenshotEnglish()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterBottomAreaScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterFocusCanMoveToSecondCard()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterScreenshotEnglish()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterScreenshotEnglishLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterSelectCanToggleSelectionForSecondCard()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterTopBarFocusedScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterUpFromSecondCardCanReachTopBar()",
+        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterUpFromThirdCardCanReachTopBar()",
+        "FilterSummaryTVOSVisualUITests/testTVOSEmptyAlbumAndPersonFilterPagesCanReturn()",
+        "FilterSummaryTVOSVisualUITests/testTVOSEnglishAcceptanceAboutPrivacyAndOpenSourceScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSEnglishAcceptanceSettingsPagesScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSExifAlbumDiagnosticScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryActionBarToggleKeepsPeopleCardStableScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryAlbumStateScreenshotEnglish()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryAlbumStateScreenshotEnglishLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFilterSummaryBackButtonFocusedScreenshotEnglish()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFullFlowModeSelectionToAccessProtectionCanReachTargetPage()",
+        "FilterSummaryTVOSVisualUITests/testTVOSFullFlowPinGateBlocksSettingsUntilPinValidated()",
+        "FilterSummaryTVOSVisualUITests/testTVOSJapaneseAcceptanceAboutScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSJapaneseAcceptanceAccessProtectionScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSJapaneseAcceptanceCoreScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSJapaneseAcceptancePlaybackSettingsScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSJapaneseAcceptanceServerAndCacheScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSModeSelectionContinueToggleKeepsFilteredCardStableScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSModeSelectionInlineOnboardingHeaderScreenshotEnglish()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterAccessibilityTextScreenshotEnglish()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterFocusCanMoveToSecondCard()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterPlayPauseShortcutCanEnableSoloModeForFocusedCard()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterPlayPauseShortcutCanEnableSoloModeForFocusedCardEnglish()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterScreenshotEnglish()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterScreenshotEnglishLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterSelectCanToggleSelectionForSecondCard()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterTopBarFocusedScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPinSheetAccessibilityTextBottomRowRoutingScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPinSheetDefaultsToDigitOneAndBottomRowKeepsStableRouting()",
+        "FilterSummaryTVOSVisualUITests/testTVOSPreviousNextRetainedHistoryFromSlideshowControls()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsAboutPageFocusCanReachPrivacyAndOpenSourceEntries()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsAboutPageScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsAboutPageShowsVersionAndPlatformInfo()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsAccessProtectionScreenshotDark()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsAutoPlayUsesDedicatedSubpage()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsCacheClearShowsConfirmationImmediately()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsCachePageScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsCachePageShowsAllCacheMetrics()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsFilterConfigButtonCanOpenEditor()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsOpenSourceLicensesPageScreenshotDark()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsPlaybackDefaultFocusedScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsPlaybackIntervalUsesDedicatedSubpage()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsPrivacyPolicyEntryOpensBundledPage()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerDetailTestConnectionAlertAppearsInline()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerPageEnglishLocalizationScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerPageScreenshotLight()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerPageShowsFormAndStatusBanner()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDefaultsToPlaybackAndCanMoveToAccessProtection()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDirectionalRoutingMatchesPressedDirection()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarButtonsCanActivateOnSelect()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarFocusStatesScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowHasNoBackButtonScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowInitialDefaultFocusIsPlayPause()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlayPauseCanToggleAndWakeControlBar()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintDismissesHintAndControlBarWithDown()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintEnglishScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintJapaneseScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowWakeReturnsFocusToPlayPause()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptanceAboutScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptanceAccessProtectionScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptanceCoreScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptancePlaybackSettingsScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptanceServerAndCacheScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSpanishSingularSelectionCountsScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseHKAcceptanceAboutScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseHKAcceptanceAccessProtectionScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseHKAcceptanceCoreScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseHKAcceptancePlaybackSettingsScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseHKAcceptanceServerAndCacheScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseTWAcceptanceAboutScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseTWAcceptanceAccessProtectionScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseTWAcceptanceCoreScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseTWAcceptancePlaybackSettingsScreenshots()",
+        "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseTWAcceptanceServerAndCacheScreenshots()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsAutoPlayPathCanOpenAndToggle()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsDisplayDebugEntryHiddenWhenDisabled()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsDisplayDebugPathCanOpen()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsDisplayExifPathCanOpen()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsDisplayModePathCanOpenAndSelectSinglePhoto()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsFilterEditorAlbumPathCanOpen()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsFilterEditorDoneToggleKeepsPeopleCardStable()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsFilterEditorPathPresentsEditorWithDoneFocused()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsFilterEditorPathPresentsEditorWithDoneFocusedLight()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsFilterEditorPersonPathCanOpen()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsIntervalPathCanOpen()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsMainPageDefaultFocusSnapshot()",
+        "PlaybackSettingsTVOSUITests/testTVOSPlaybackSettingsModePathCanOpen()",
+        "PlaybackSettingsTVOSUITests/testTVOSRecoveryMessageLocalizationEnglishSnapshot()",
+        "ScenePresentationContractUITests/testProbeStateRejectsMissingOrMalformedVisibilityEvidence()",
+        "ScenePresentationContractUITests/testTVOSSmartFillSharedScenePresentationContract()",
+        "ServerConfigFormTVOSUITests/testTVOSFirstBootAPIKeyHelpSheet()",
+        "ServerConfigFormTVOSUITests/testTVOSFirstBootCoreElementsAndDisabledSave()",
+        "ServerConfigFormTVOSUITests/testTVOSFirstBootEnglishLocalizationSnapshot()",
+        "ServerConfigFormTVOSUITests/testTVOSFirstBootIdleStateCollapsesStatusCard()",
+        "ServerConfigFormTVOSUITests/testTVOSFirstBootInputCapsulesKeepSameHeightAndWidth()",
+        "ServerConfigFormTVOSUITests/testTVOSFirstBootTestConnectionSelectShowsValidationAlertInline()",
+        "StrictE2ELateImageFocusAuditTests/testEmptyFocusLinesAreUnidentifiable()",
+        "StrictE2ELateImageFocusAuditTests/testFocusedLineIsIdentifiable()",
+        "StrictE2ELateImageFocusAuditTests/testKnownIdentifiersCoverLateImageFocusTargets()"
+      ]
+    }
+  ],
+  "version": 1
+}
