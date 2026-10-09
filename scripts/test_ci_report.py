@@ -35,6 +35,96 @@ class ReporterTests(unittest.TestCase):
     def transition(self, state, report, referenced=False):
         return issue_decision(state, IDENTITY, [report], registry_referenced=referenced)
 
+    def test_snapshot_uses_upload_time_and_survives_an_interrupted_new_attempt(self):
+        runs = {number: {"id": number, "workflow_id": 20, "path": ci_report.REPORT_PATH,
+            "head_branch": "main", "repository": {"full_name": "sudoHG/immichSlides"},
+            "head_repository": {"full_name": "sudoHG/immichSlides"}, "event": "schedule",
+            "head_sha": "a" * 40, "run_attempt": 1} for number in (10, 20)}
+        artifacts = [{"name": f"ci-report-daily-{number}-1", "expired": False,
+            "created_at": created, "workflow_run": {"id": number, "head_branch": "main"}}
+            for number, created in ((20, "2026-10-01T10:00:00Z"), (10, "2026-10-01T11:00:00Z"))]
+        snapshots = {}
+        for number in runs:
+            saved = ci_report.merge_snapshot(None, [entry(run=number)], date(2026, 10, 1))
+            saved["producer"] = {"repository": "sudoHG/immichSlides", "workflow_path": ci_report.REPORT_PATH,
+                "run": {"id": str(number), "attempt": 1}, "commit_sha": "a" * 40}
+            snapshots[f"ci-report-daily-{number}-1"] = saved
+        class API:
+            repository = "sudoHG/immichSlides"
+            def repo(self, path, **options):
+                if path == "actions/workflows/ci-report.yml":
+                    return {"id": 20, "path": ci_report.REPORT_PATH}
+                if path.startswith("actions/runs/"):
+                    return runs[int(path.rsplit("/", 1)[-1])]
+                return {"workflow_runs": [runs[20], runs[10]]}
+            def pages(self, path, *args, **options):
+                return artifacts if path == "actions/artifacts" else [item for item in artifacts
+                    if item["workflow_run"]["id"] == int(path.split("/")[2])]
+        for attempt in (1, 2):
+            runs[10]["run_attempt"] = attempt
+            with self.subTest(attempt=attempt), patch("ci_report.on_main", return_value=True), \
+                    patch("ci_publish.json_member", side_effect=lambda api, artifact, member: snapshots[artifact["name"]]):
+                self.assertEqual(snapshots["ci-report-daily-10-1"], ci_report.read_snapshot(API()))
+
+    def test_closed_issue_history_does_not_expand_reads_and_collect_inventory_is_reused(self):
+        from urllib.parse import parse_qs, urlparse
+        state = self.transition(None, entry())["state"]
+        state["closed"] = True
+        target = {"number": 135, "state": "closed", "labels": [{"name": ci_report.LABEL}],
+                  "body": ci_report.issue_body(None, state, "sudoHG/immichSlides")}
+        class API:
+            repository = "sudoHG/immichSlides"
+            def __init__(self):
+                self.reads, self.searches, self.listings = [], [], []
+            def pages(self, path, **filters):
+                self.listings.append(filters)
+                return [] if filters.get("state") == "open" else [target] * 1000
+            def request(self, path, **options):
+                query = parse_qs(urlparse(path).query)["q"][0]
+                self.searches.append(query)
+                return {"total_count": 1, "incomplete_results": False, "items": [target]}
+            def repo(self, path, method="GET", payload=None, missing=False):
+                if path.startswith("labels/"):
+                    return {}
+                if path != "issues/135":
+                    raise AssertionError("only the touched closed issue may be read or updated")
+                if method == "GET":
+                    self.reads.append(path)
+                else:
+                    target.update(payload)
+                return target
+        api = API()
+        inventory = ci_report.visible_issues(api, ci_report.LABEL)
+        self.assertEqual([], inventory)
+        receipts, _ = synchronize_issues(api, [entry("2026-10-02", run=11)], {"entries": []}, inventory=inventory)
+        self.assertEqual(["reopen"], [item["action"] for item in receipts])
+        self.assertEqual(1, len(api.listings))
+        self.assertEqual(["issues/135"], api.reads)
+        self.assertEqual(1, len(api.searches))
+        self.assertIn('label:"ci-reported-failure"', api.searches[0])
+        self.assertIn('in:title "CI nightly failure: ExampleUITests/testPlayback"', api.searches[0])
+
+    def test_timeouts_and_missing_exports_are_infrastructure_not_contract_failures(self):
+        method = test_identity("strict", "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", **IDENTITY["dimensions"])
+        case = test_identity("strict", "smoke", **IDENTITY["dimensions"])
+        shard = valid_summary()
+        shard["population"].update(declared=[case], compiled=[case], observed=[observation(case, "failed", 1, exit_code=124)])
+        base = {"identity": case, "exit_code": 124, "build_operations": 0, "products_unchanged": True,
+                "log_present": True, "official_methods": [{"identifier": method["key"], "result": "Passed"}],
+                "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
+        for changes in ({"automated_contract_failed": True, "infrastructure": [{"code": "step-timeout", "message": "timeout"}]},
+                        {"automated_contract_failed": True, "exit_code": 65, "official_error": "export failed"},
+                        {"automated_contract_failed": True, "exit_code": 65, "official_methods": []}, {"exit_code": 65}):
+            with self.subTest(changes=changes):
+                observed, missing = ci_report.method_observations(shard, {"warm": [{**base, **changes}]})
+                self.assertFalse(any(item["outcome"] == "failed" for item in observed))
+                self.assertTrue(missing)
+        failed = copy.deepcopy(base)
+        failed["official_methods"][0]["result"] = "Failed"
+        failed["official_summary"].update(passedTests=0, failedTests=1)
+        observed, _ = ci_report.method_observations(shard, {"warm": [failed]})
+        self.assertEqual([method], [item["identity"] for item in observed if item["outcome"] == "failed"])
+
     def test_failures_open_update_and_reopen_one_identity_and_replays_do_not_count(self):
         first = self.transition(None, entry())
         self.assertEqual("open", first["action"])
@@ -144,6 +234,8 @@ class ReporterTests(unittest.TestCase):
                 self.created = 0
             def pages(self, path, **filters):
                 return list(self.issues.values())
+            def request(self, path, **options):
+                return {"total_count": 0, "incomplete_results": False, "items": []}
             def repo(self, path, method="GET", payload=None, missing=False):
                 if path.startswith("labels/"):
                     return {"name": "ci-reported-failure"}
@@ -208,9 +300,14 @@ class ReporterTests(unittest.TestCase):
             repository = "sudoHG/immichSlides"
             def __init__(self):
                 self.issues, self.created = {}, 0
+                self.index_lag = False
             def pages(self, path, **filters):
-                # GitHub's label-filtered list can lag a successful create.
-                return [] if "labels" in filters else list(self.issues.values())
+                if self.index_lag and "labels" in filters:
+                    self.index_lag = False
+                    return []
+                return list(self.issues.values())
+            def request(self, path, **options):
+                return {"total_count": 0, "incomplete_results": False, "items": []}
             def repo(self, path, method="GET", payload=None, missing=False):
                 if path.startswith("labels/"):
                     return {"name": "ci-reported-failure"}
@@ -219,13 +316,15 @@ class ReporterTests(unittest.TestCase):
                     issue = {"number": self.created, "body": payload["body"], "state": "open",
                              "labels": [{"name": name} for name in payload["labels"]]}
                     self.issues[self.created] = issue
+                    self.index_lag = True
                     return issue
                 number = int(path.rsplit("/", 1)[-1])
                 if method == "PATCH":
                     self.issues[number].update(payload)
                 return self.issues[number]
         api = API()
-        synchronize_issues(api, [entry()], {"entries": []})
+        with patch("ci_report.time.sleep"):
+            synchronize_issues(api, [entry()], {"entries": []})
         self.assertEqual([], synchronize_issues(api, [entry()], {"entries": []})[0])
         self.assertEqual(1, api.created)
 
@@ -299,11 +398,14 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual(identity_token(method), receipts[0]["token"])
         trace["warm"][0]["official_methods"][0]["result"] = "Passed"
         trace["warm"][0]["official_summary"].update(failedTests=0, passedTests=3)
+        trace["warm"][0]["automated_contract_failed"] = True
         outcomes = ci_report.method_observations(shard, trace)[0]
         self.assertEqual([case], [item["identity"] for item in outcomes if item["outcome"] == "failed"])
         self.assertEqual("strict-case-contract-failed", outcomes[-1]["attempts"][0]["reason"])
         trace["warm"][0].pop("official_methods")
-        self.assertEqual([case], [item["identity"] for item in ci_report.method_observations(shard, trace)[0]])
+        observed, missing = ci_report.method_observations(shard, trace)
+        self.assertEqual([], observed)
+        self.assertTrue(missing)
 
     def test_newer_attempt_without_observation_revokes_a_saved_pass_and_keeps_first_failure(self):
         state = self.transition(None, entry())["state"]
@@ -329,6 +431,7 @@ class ReporterTests(unittest.TestCase):
         compact = ci_report.compact_entry(observed, set())
         self.assertEqual([IDENTITY], [item["identity"] for item in compact["observed"]])
         with patch("ci_report.ensure_label"), patch("ci_report.visible_issues", return_value=[]), \
+                patch("ci_report.matching_issues", return_value=[]), \
                 patch("ci_report.sync_identity", return_value=None) as sync:
             synchronize_issues(api, [compact], {"entries": []})
         self.assertIn(IDENTITY, [call.args[2] for call in sync.call_args_list])
@@ -457,11 +560,16 @@ class ReporterTests(unittest.TestCase):
             def repo(self, path, **options):
                 if path == "actions/workflows/ci-report.yml":
                     return {"id": 20, "path": ci_report.REPORT_PATH}
-                if "&page=1" in path:
-                    return {"workflow_runs": [{**run, "id": value} for value in range(110, 10, -1)]}
+                if path == "actions/runs/10":
+                    return run
+                if path.startswith("actions/artifacts?"):
+                    from urllib.parse import parse_qs, urlparse
+                    return {"artifacts": [{"name": "unrelated"}] * 100 if parse_qs(urlparse(path).query)["page"] == ["1"] else [{
+                        "name": "ci-report-daily-10-1", "expired": False, "created_at": "2026-10-01T10:00:00Z",
+                        "workflow_run": {"id": 10, "head_branch": "main"}}]}
                 return {"workflow_runs": [run]}
             def pages(self, path, *args, **options):
-                return [{"name": "ci-report-daily-10-1", "expired": False}] if path == "actions/runs/10/artifacts" else []
+                return ci_report.GitHub.pages(self, path, *args, **options)
         with patch("ci_report.on_main", return_value=True), patch("ci_publish.json_member", return_value=saved):
             self.assertEqual(saved, ci_report.read_snapshot(API()))
         with patch("ci_report.on_main", return_value=True), patch.object(API, "pages", return_value=[]), self.assertRaises(ContractError):
@@ -525,6 +633,8 @@ class ReporterTests(unittest.TestCase):
                 self.created = []
             def pages(self, *args, **kwargs):
                 return []
+            def request(self, path, **options):
+                return {"total_count": 0, "incomplete_results": False, "items": []}
             def repo(self, path, method="GET", payload=None, missing=False):
                 if path.startswith("labels/"):
                     return {}

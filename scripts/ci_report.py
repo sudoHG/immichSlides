@@ -122,7 +122,15 @@ def method_observations(raw, trace):
         missing.extend({"identity": wanted[key], "reason": "official-method-not-observed"} for key in sorted(wanted.keys() - seen))
         case_outcome = outcomes.get(identity_key(case))
         if case_outcome in FAILURES and not counts["Failed"]:
-            observed.append(observation(case, case_outcome, 0, exit_code=phase.get("exit_code"), reason="strict-case-contract-failed"))
+            contract_failed = (phase.get("automated_contract_failed") is True and seen == wanted.keys()
+                and counts["Passed"] == len(wanted) and not phase.get("infrastructure")
+                and not phase.get("official_error") and phase.get("exit_code") not in {124, 130}
+                and phase.get("log_present") is True and phase.get("build_operations") == 0
+                and phase.get("products_unchanged") is True)
+            if contract_failed:
+                observed.append(observation(case, case_outcome, 0, exit_code=phase.get("exit_code"), reason="strict-case-contract-failed"))
+            else:
+                missing.append({"identity": case, "reason": "strict-case-infrastructure-or-unverified-failure"})
         elif (case_outcome in {"passed", "needs-human-review"} and seen == wanted.keys()
               and counts["Passed"] == len(wanted) and phase.get("build_operations") == 0
               and phase.get("products_unchanged") is True and phase.get("log_present") is True):
@@ -546,17 +554,23 @@ def issue_body(issue, state, repository):
 
 
 def visible_issues(api, label):
-    # Label indexing can lag an accepted create. Read the repository collection
-    # and filter labels locally; fetch bodies directly to avoid stale list state.
-    return [api.repo(f"issues/{item['number']}") for item in
-            api.pages("issues", state="all", sort="updated", direction="desc")
+    return [item for item in api.pages("issues", state="open", labels=label, sort="updated", direction="desc")
             if "pull_request" not in item and any(value["name"] == label for value in item.get("labels", []))]
+
+
+def matching_issues(api, label, title):
+    from urllib.parse import urlencode
+    query = f'repo:{api.repository} is:issue label:"{label}" in:title {json.dumps(title)}'
+    result = api.request("/search/issues?" + urlencode({"q": query, "per_page": 100}))
+    require(result.get("incomplete_results") is False and result["total_count"] <= 100,
+            "issue identity search is incomplete; reconciliation required")
+    return result["items"]
 
 
 def wait_for_issue_visibility(api, number, label):
     deadline = time.monotonic() + 60
     while True:
-        rows = api.pages("issues", state="all", sort="updated", direction="desc")
+        rows = api.pages("issues", state="open", labels=label, sort="updated", direction="desc")
         if any(item["number"] == number and any(value["name"] == label for value in item.get("labels", [])) for item in rows):
             return
         require(time.monotonic() < deadline, "created issue is not yet visible; refusing further writes")
@@ -570,7 +584,11 @@ def sync_identity(api, token, identity, entries, registry_issues, registry_token
         require(registered in by_number, "registry issue is missing; refusing duplicate issue")
         require(not issue or issue["number"] == registered, "registry points to another issue; reconciliation required")
         issue = by_number[registered]
+    if issue:
+        issue = api.repo(f"issues/{issue['number']}")
+        by_number[issue["number"]] = issue
     state = read_state(issue) if issue else None
+    require(not state or state["token"] == token, "tracking identity changed before synchronization")
     decision = issue_decision(state, identity, entries, registry_referenced=bool(issue and issue["number"] in registry_issues))
     if decision["action"] == "none":
         return None
@@ -600,7 +618,7 @@ def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inve
     registry_issues = {int(item["issue"].rsplit("/", 1)[-1]) for item in registry["entries"]}
     by_number = {item["number"]: item for item in issues if "pull_request" not in item}
     for number in registry_issues:
-        issue = api.repo(f"issues/{number}", missing=True)
+        issue = by_number.get(number) or api.repo(f"issues/{number}", missing=True)
         if issue:
             by_number[number] = issue
     by_token, invalid_tokens = {}, set()
@@ -625,6 +643,15 @@ def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inve
     receipts = []
     for token, identity in sorted(identities.items()):
         try:
+            if token not in by_token and token not in registry_tokens:
+                if issue_decision(None, identity, entries, registry_referenced=False)["action"] == "none":
+                    continue
+                matches = [issue for issue in matching_issues(api, label, "CI nightly failure: " + identity["key"][:180])
+                           if (read_state(issue) or {}).get("token") == token]
+                require(len(matches) <= 1, "duplicate tracking identity")
+                if matches:
+                    by_token[token] = matches[0]
+                    by_number[matches[0]["number"]] = matches[0]
             require(token not in invalid_tokens, "duplicate tracking identity")
             receipt = sync_identity(api, token, identity, entries, registry_issues, registry_tokens, by_number, by_token, label)
             if receipt:
@@ -645,11 +672,14 @@ def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inve
         marker = "<!-- ci-report-post-merge:" + pushed + " -->"
         try:
             matching = [issue for issue in issues if marker in (issue.get("body") or "")]
+            if not matching:
+                matching = [issue for issue in matching_issues(api, label, "CI post-merge failure: " + pushed[:12])
+                            if marker in (issue.get("body") or "")]
             require(len(matching) <= 1, "duplicate post-merge issues")
             body = "A post-merge CI aggregate on main failed.\n\n" + marker + "\n\n" + "\n".join(render_entry(item) for item in reports)
             require(len(body.encode()) < 65000, "post-merge notification exceeds GitHub limit")
             if matching:
-                issue = matching[0]
+                issue = api.repo(f"issues/{matching[0]['number']}")
                 if issue["body"] != body:
                     api.repo(f"issues/{issue['number']}", method="PATCH", payload={"body": body})
             else:
@@ -753,38 +783,41 @@ def read_snapshot(api):
     if workflow is None:
         return None
     require(workflow["path"] == REPORT_PATH, "reporter workflow path mismatch")
-    def previous_runs():
-        found = False
-        for page in range(1, 101):
-            rows = api.repo(f"actions/workflows/{workflow['id']}/runs?branch=main&status=completed&per_page=100&page={page}")["workflow_runs"]
-            found |= bool(rows)
-            yield from rows
-            if len(rows) < 100:
-                require(not found, "previous reporter runs exist but their snapshot could not be read")
-                return
-        raise ContractError("reporter history pagination exhausted")
-    for run in previous_runs():
-        if not (run["path"] == REPORT_PATH and run["workflow_id"] == workflow["id"] and run["head_branch"] == "main"
+    artifacts = []
+    for artifact in api.pages("actions/artifacts", "artifacts"):
+        match = re.fullmatch(r"ci-report-daily-([1-9][0-9]*)-([1-9][0-9]*)", artifact["name"])
+        if not match or artifact.get("workflow_run", {}).get("head_branch") != "main":
+            continue
+        created = datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00"))
+        require(created.tzinfo is not None and created.utcoffset() == timedelta(0), "invalid snapshot creation time")
+        require(artifact["workflow_run"]["id"] == int(match[1]), "snapshot artifact run mismatch")
+        artifacts.append((created, int(match[1]), int(match[2]), artifact))
+    runs = {}
+    for created, run_id, attempt, artifact in sorted(artifacts, key=lambda item: item[:3], reverse=True):
+        run = runs.setdefault(run_id, None)
+        if run is None:
+            run = runs[run_id] = api.repo(f"actions/runs/{run_id}")
+        if not (run["id"] == run_id and run["path"] == REPORT_PATH and run["workflow_id"] == workflow["id"] and run["head_branch"] == "main"
                 and run["repository"]["full_name"] == api.repository and run["head_repository"]["full_name"] == api.repository
                 and run["event"] in {"schedule", "workflow_dispatch", "workflow_run"} and on_main(run["head_sha"])):
             continue
-        name = f"ci-report-daily-{run['id']}-{run['run_attempt']}"
-        artifacts = [item for item in api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts") if item["name"] == name]
-        require(len(artifacts) <= 1, "duplicate reporter snapshot")
-        if artifacts:
-            require(not artifacts[0]["expired"], "previous reporter snapshot expired")
-            snapshot = json_member(api, artifacts[0], "history.json")
-            require(snapshot["schema_version"] == 2 and snapshot["producer"] == {
-                "repository": api.repository, "workflow_path": REPORT_PATH,
-                "run": {"id": str(run["id"]), "attempt": run["run_attempt"]}, "commit_sha": run["head_sha"]},
-                "snapshot provenance mismatch")
-            for day, value in snapshot["days"].items():
-                require(daily_rollup(iso_day(day), value["entries"]) == value, "invalid saved daily rollup")
-            return snapshot
+        require(attempt <= run["run_attempt"], "snapshot attempt is ahead of its run")
+        require(sum(item[3]["name"] == artifact["name"] for item in artifacts) == 1, "duplicate reporter snapshot")
+        require(not artifact["expired"], "previous reporter snapshot expired")
+        snapshot = json_member(api, artifact, "history.json")
+        require(snapshot["schema_version"] == 2 and snapshot["producer"] == {
+            "repository": api.repository, "workflow_path": REPORT_PATH,
+            "run": {"id": str(run_id), "attempt": attempt}, "commit_sha": run["head_sha"]},
+            "snapshot provenance mismatch")
+        for day, value in snapshot["days"].items():
+            require(daily_rollup(iso_day(day), value["entries"]) == value, "invalid saved daily rollup")
+        return snapshot
+    require(not api.repo(f"actions/workflows/{workflow['id']}/runs?branch=main&per_page=1")["workflow_runs"],
+            "previous reporter runs exist but their snapshot could not be read")
     return None
 
 
-def write_report(output, snapshot, entries, registry, states, *, stopped, now=None):
+def write_report(output, snapshot, entries, registry, states, *, stopped, now=None, inventory=()):
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n"
     require(len(encoded.encode()) <= 16 * 1024 * 1024, "reporter snapshot exceeds readable artifact limit")
     for kind in ("daily", "runs"):
@@ -801,7 +834,8 @@ def write_report(output, snapshot, entries, registry, states, *, stopped, now=No
     candidates = [entry for rollup in snapshot["days"].values() for entry in rollup["entries"]
                   if entry["source"]["event"] == "push" or entry["source"]["workflow_path"] == NIGHTLY_PATH]
     plan = {"schema_version": 2, "entries": [] if stopped else decision_entries(candidates, now),
-            "registry": registry, "budget_stopped": stopped, "api_budget": snapshot.get("api_budget", {})}
+            "registry": registry, "issue_inventory": list(inventory), "budget_stopped": stopped,
+            "api_budget": snapshot.get("api_budget", {})}
     (output / "sync.json").write_text(json.dumps(plan) + "\n")
 
 
@@ -810,6 +844,7 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
     from ci_flaky import parse_registry
     registry = parse_registry(Path("scripts/ci-known-flaky.json").read_text())
     snapshot, entries, states, stopped, history_loaded = None, [], {}, False, False
+    inventory = []
     reset = event.get("inputs", {}).get("reset_history") in {True, "true"}
     if reset:
         owner = api.repository.split("/", 1)[0]
@@ -836,6 +871,8 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
             if number not in states:
                 issue = api.repo(f"issues/{number}", missing=True)
                 states[number] = issue["state"] if issue else "missing"
+                if issue:
+                    inventory.append(issue)
         saved = {entry["run"]["id"]: entry for value in (snapshot or {}).get("days", {}).values() for entry in value["entries"]}
         runs = ([run for run_id in run_ids for run in discover_runs(api, "workflow_run", {"workflow_run": {"id": run_id}}, now)]
                 if run_ids else discover_runs(api, event_name, event, now))
@@ -878,7 +915,7 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
         snapshot["producer"] = {"repository": api.repository, "workflow_path": REPORT_PATH,
             "run": {"id": os.environ["GITHUB_RUN_ID"], "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
             "commit_sha": os.environ["GITHUB_SHA"]}
-    write_report(output, snapshot, entries, registry, states, stopped=stopped, now=now)
+    write_report(output, snapshot, entries, registry, states, stopped=stopped, now=now, inventory=inventory)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
             handle.write("# CI daily reporting\n\nDaily history: 90 days; main/nightly summaries: 7 days. PR producers retain their own summaries for 30 days.\n\n")
@@ -928,7 +965,8 @@ def main(argv=None):
         return 0
     errors = []
     try:
-        receipts, states = synchronize_issues(api, plan["entries"], plan["registry"], errors=errors)
+        receipts, states = synchronize_issues(api, plan["entries"], plan["registry"], errors=errors,
+                                            inventory=plan.get("issue_inventory", []))
     except RateLimitLow:
         receipts, states = [], {}
         errors.append({"code": "api-budget-low"})

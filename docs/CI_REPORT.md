@@ -59,7 +59,10 @@ its run's saved entry; older deliveries cannot overwrite it. A nightly entry als
 compact `attempt_history` so the first failure survives reruns. Conflicting identities
 or provenance are refused.
 
-Search completed reporter runs with pagination, and consume their newest available snapshot only after verifying its repository,
+Search repository artifacts with pagination and order reporter snapshots by artifact
+creation time, independently of workflow creation order or completion status. A verified
+upload from an earlier attempt remains usable if a later rerun is interrupted. Consume
+the newest available snapshot only after verifying its repository,
 workflow ID/path, main ancestry, uploader run/attempt and embedded provenance. The daily
 artifact is uploaded before issue synchronization. A later issue-sync failure makes
 the job fail while leaving that verified data available for the next collection;
@@ -94,9 +97,13 @@ For a P2 suite, an officially passed method with the suite's passing automated c
 recorded as `needs-human-review` counts as an explicit pass for issue closure only.
 Signed human review and release eligibility remain separate and unchanged. The skeleton
 nightly remains not release eligible, and unbuilt/informational tiers open no test issues.
-A failed strict case with no officially failed method still creates a case-identity
-failure with `strict-case-contract-failed`, so a failed automated P2 contract cannot
-disappear behind passing methods. Later verified case-contract passes can recover
+A failed strict case creates a case-identity failure with `strict-case-contract-failed`
+only when `automated_contract_failed` records an explicit `FAIL` from the runner's
+contract receipt and every selected official method passed with valid warm-build evidence.
+The tracer exports that boolean without the contract's raw error text. Timeouts, export
+failures, missing official methods and unexplained runner failures instead enter
+infrastructure tracking; an officially failed method still keeps its method failure.
+Later verified case-contract passes can recover
 that case issue; they grant no human approval or release authority.
 
 ## Issue lifecycle
@@ -107,8 +114,13 @@ UI method/platform identities normalize device shards to their shared registry i
 A registry issue is reused even if closed or past its review date. Missing or conflicting
 registry issues are refused instead of producing duplicates. Adoption preserves existing
 prose and labels and adds the reporter label, so removal from the registry does not lose
-tracking. Repository issues are filtered locally and directly read because label indexes
-can lag writes; new issue visibility is checked with a 60-second deadline.
+tracking. Collection lists only open labelled issues and carries that inventory into
+synchronization. Closed issues are searched by label and title only for identities
+involved in the current evidence; only matching issues are refreshed directly before
+decisions and writes. The same targeted lookup deduplicates closed post-merge
+notifications. Incomplete or oversized search results fail that identity instead of
+enumerating accumulated closed issues. New issue label visibility is checked with a
+60-second deadline before continuing, so index lag cannot create a duplicate on replay.
 
 Closure requires three distinct UTC nights after the last failing night with explicit
 passes for that identity and no registry reference. Multiple runs on one night count
@@ -153,7 +165,8 @@ the workflow policy checks this order and the main branch filter.
 
 Existing tests guard method/registry identity, expired snapshots, every rerun attempt,
 pass revocation, P2 closure, manual closure, per-identity sync errors, bounded histories,
-API reserves, write refusal and publisher diagnostic exceptions. No new test file is
+API reserves, write refusal, snapshot upload ordering, interrupted reruns, bounded
+closed-issue reads, infrastructure classification and publisher diagnostic exceptions. No new test file is
 needed for these review fixes. A throwaway seeded lifecycle dispatch can prove writes;
 its issues are closed, its branch deleted and task-created labels removed after the
 receipt. Production scheduling and automatic main reporting remain `NOT_RUN` until

@@ -267,8 +267,12 @@ def main(argv=None):
         except (ValueError, OSError) as error:
             phase["official_error"] = str(error)
             official = None
+        contract_path = evidence / "visual-identity-runner.json"
+        contract = decode(contract_path.read_text()) if contract_path.is_file() else {}
+        contract_failed = contract.get("suite") == case["suite"] and contract.get("verdict") == "FAIL"
         phase.update(log_present=log_path.is_file(), build_operations=len(builds), products_unchanged=unchanged,
-                     official_summary=official, p2_verdict=details.get("visual_identity", {}).get("verdict"))
+                     official_summary=official, p2_verdict=details.get("visual_identity", {}).get("verdict"),
+                     automated_contract_failed=contract_failed)
         results.append(phase)
         if official is not None and official["totalTestCount"] > 0:
             summary["population"]["compiled"].append(phase["identity"])
