@@ -14,8 +14,13 @@ runs on `ubuntu-24.04`. `setup_ci_publisher_python.py` installs only the central
 `pip` and `PyYAML` pins in a new isolated environment; it does not require Xcode,
 the macOS Python pin, Pillow or zstd. It verifies producer workflow **ID and path**,
 repository, event and current PR mapping through GitHub. Forks with empty
-`pull_requests` arrays are mapped through GitHub's commit-to-PR API and the head
-repository. Workflow names and colliding job names do not establish provenance.
+`pull_requests` arrays first use GitHub's commit-to-PR API. If that is also empty,
+the publisher queries open PRs targeting `main` by the producer's
+`head_repository.owner.login:head_branch` label using bounded pagination. Both
+paths retain the same checks: exactly one open PR with the producer's head
+repository, this repository's `main` base, and the current head SHA for admission.
+Stale admission heads, ambiguous matches and pagination failures refuse mapping.
+Workflow names and colliding job names do not establish provenance.
 
 Admission is separate from publication, serialized by producer run ID with
 `cancel-in-progress: false`. It reads GitHub's test merge SHA and commit parents,

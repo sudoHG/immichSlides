@@ -301,6 +301,9 @@ def workflows(api):
 
 def map_pr(api, run, *, current=True):
     candidates = run.get("pull_requests", []) or api.repo("commits/" + run["head_sha"] + "/pulls")
+    if not candidates:
+        candidates = api.pages("pulls", state="open", base="main",
+                               head=run["head_repository"]["owner"]["login"] + ":" + run["head_branch"])
     matches = []
     for candidate in candidates:
         pr = api.repo(f"pulls/{positive(candidate['number'])}")
