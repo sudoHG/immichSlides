@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -17,6 +18,7 @@ PRIVATE_PATHS = ("Config/env.xcconfig", "immichSlides/Config/env.xcconfig")
 CONTEXT = "_IMMICHSLIDES_CI_LOCAL_ROOT"
 MODE_CONTEXT = "_IMMICHSLIDES_CI_LOCAL_MODE"
 SOURCE_CONTEXT = "_IMMICHSLIDES_CI_LOCAL_SOURCE"
+RUN_TOKEN = "_IMMICHSLIDES_CI_LOCAL_RUN"
 PATH_OPTIONS = {"--output-dir", "--evidence-dir", "--derived-data-path", "--result-bundle-path",
                 "--cloned-source-packages-path", "--cloned-source-packages", "--xctestrun",
                 "--archive-dir", "--selection-path", "--relocated-path", "--shard-manifest", "--plan", "--records-dir",
@@ -25,6 +27,9 @@ PATH_OPTIONS = {"--output-dir", "--evidence-dir", "--derived-data-path", "--resu
 RESULT_CHECK_COMMANDS = {"ci_ui_tests.py": "check-upload"}
 PATH_ALIASES = {"--derived-data": "--derived-data-path", "--result-bundle": "--result-bundle-path"}
 INTERRUPT_GRACE_SECONDS = 150
+# Under heavy host load ps itself can take tens of seconds; a slow probe is not a verdict on the child.
+PROBE_TIMEOUT_SECONDS = 30
+PROBE_ATTEMPTS = 2
 
 
 class SnapshotCleanupError(RuntimeError):
@@ -186,10 +191,51 @@ def option_value(arguments, names):
     return value
 
 
+def probe_processes(columns, *flags):
+    for attempt in range(PROBE_ATTEMPTS):
+        try:
+            return subprocess.check_output(["ps", *flags, "-axo", columns], text=True,
+                                           timeout=PROBE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            if attempt + 1 == PROBE_ATTEMPTS:
+                raise
+
+
 def process_states():
-    raw = subprocess.check_output(["ps", "-axo", "pid=,ppid=,pgid=,stat="], text=True, timeout=5)
+    raw = probe_processes("pid=,ppid=,pgid=,stat=")
     return [(int(pid), int(parent), int(group), state) for line in raw.splitlines()
             for pid, parent, group, state in [line.split()]]
+
+
+def tagged_groups(token):
+    # A descendant orphaned during an ignored probe failure is no longer reachable by parentage;
+    # the per-run token in its environment is the only remaining proof of ownership.
+    marker = re.compile(re.escape(RUN_TOKEN + "=" + token) + r"(?:\s|$)")
+    groups = set()
+    for line in probe_processes("pid=,pgid=,stat=,command=", "-Eww").splitlines():
+        fields = line.split(None, 3)
+        if len(fields) < 4 or fields[2].startswith("Z") or int(fields[0]) == os.getpid():
+            continue
+        if int(fields[1]) != os.getpgrp() and marker.search(fields[3]):
+            groups.add(int(fields[1]))
+    return groups
+
+
+def sweep_tagged_groups(token):
+    if not token:
+        raise SnapshotCleanupError("child process groups could not be verified after a failed process probe")
+    live = tagged_groups(token)
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        if not live:
+            return
+        signal_groups(live, signum)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            time.sleep(.1)
+            live = tagged_groups(token)
+            if not live:
+                return
+    raise SnapshotCleanupError("child process groups survived a failed process probe and could not be stopped")
 
 
 def remember_groups(process, groups):
@@ -229,10 +275,17 @@ def wait_for_groups(process, groups, seconds):
 def run_child(command, root, environment):
     process = subprocess.Popen(command, cwd=root, env=environment, start_new_session=True)
     groups = {process.pid}
+    token = environment.get(RUN_TOKEN)
+    probe_gap = False
     with cancellation_signals():
         try:
             while True:
-                remember_groups(process, groups)
+                try:
+                    remember_groups(process, groups)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    # A failed probe must not interrupt a running child; the exit and cleanup paths verify again.
+                    # Descendants started during the gap may be orphaned, so cleanup sweeps by token as well.
+                    probe_gap = True
                 try:
                     code = process.wait(timeout=1)
                     break
@@ -251,7 +304,9 @@ def run_child(command, root, environment):
                         signal_groups(groups, signal.SIGKILL)
                         if not wait_for_groups(process, groups, 15):
                             raise SnapshotCleanupError("child process groups did not exit after cancellation")
-            except (OSError, subprocess.SubprocessError) as cleanup_error:
+                if probe_gap:
+                    sweep_tagged_groups(token)
+            except (OSError, ValueError, subprocess.SubprocessError) as cleanup_error:
                 raise SnapshotCleanupError("child cleanup could not be verified") from cleanup_error
             return 128 + getattr(error, "signum", signal.SIGINT)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -268,6 +323,9 @@ def run_child(command, root, environment):
                             signal_groups(groups, signal.SIGKILL)
                             if not wait_for_groups(process, groups, 15):
                                 raise SnapshotCleanupError("entry point exited with live child process groups")
+            if probe_gap:
+                with ignored_cancellation_signals():
+                    sweep_tagged_groups(token)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             raise SnapshotCleanupError("child cleanup could not be verified") from error
         return code
@@ -293,6 +351,7 @@ def launch(script, arguments):
     environment.pop(CONTEXT, None)
     environment.pop(MODE_CONTEXT, None)
     environment.pop(SOURCE_CONTEXT, None)
+    environment.pop(RUN_TOKEN, None)
     remaining = absolute_paths(remaining, Path.cwd())
     for index, argument in enumerate(remaining):
         option, separator, inline = argument.partition("=")
@@ -323,6 +382,7 @@ def launch(script, arguments):
         environment[CONTEXT] = str(checkout.resolve())
         environment[MODE_CONTEXT] = receipt["mode"]
         environment[SOURCE_CONTEXT] = str(root)
+        environment[RUN_TOKEN] = secrets.token_hex(16)
         target = checkout / script.relative_to(root)
         child_arguments = list(remaining)
         if target.name == "run_offline_unit_tests.py" and option_value(child_arguments, {"--derived-data-path"}) is None:
