@@ -127,6 +127,7 @@ class AppStoreConnect:
         workflow_runs = self.pages("/v1/ciWorkflows/" + WORKFLOW_ID + "/buildRuns?limit=200")
         require(sum(row["id"] == run_id for row in workflow_runs) == 1, "cloud run is outside the overflow workflow")
         result = {"id": run["id"], "workflow_id": WORKFLOW_ID,
+                  "is_pull_request_build": attributes.get("isPullRequestBuild"),
                   "head_sha": attributes.get("sourceCommit", {}).get("commitSha"),
                   "progress": attributes.get("executionProgress"), "status": attributes.get("completionStatus"),
                   "started": attributes.get("startedDate"), "finished": attributes.get("finishedDate"), "actions": []}

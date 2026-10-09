@@ -653,7 +653,7 @@ def compute(api, pr_number, pushed, login):
             from ci_report import summary_diagnostics
             if cloud is not None:
                 from ci_report import cloud_pr_diagnostics
-                evaluations[context]["diagnostics"] = cloud_pr_diagnostics(api, record, run, summaries, approved=approved)
+                evaluations[context]["diagnostics"] = cloud_pr_diagnostics(summaries, cloud=cloud)
             else:
                 evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
         except (ContractError, KeyError, ValueError, TypeError) as error:

@@ -3,7 +3,7 @@
 import copy
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import ci_xcode_cloud as cloud
 from ci_summary import ContractError, observation, test_identity
@@ -26,6 +26,7 @@ class CloudEvidenceTests(unittest.TestCase):
                       "producer_attempt": 2, "decision": "routed", "cloud_run_id": "1" * 8 + "-1111-1111-1111-" + "1" * 12,
                       "workflow_id": cloud.WORKFLOW_ID, "plan_sha256": "c" * 64}
         self.evidence = {"id": self.route["cloud_run_id"], "workflow_id": cloud.WORKFLOW_ID,
+                         "is_pull_request_build": False,
                          "head_sha": "a" * 40, "progress": "COMPLETE", "status": "SUCCEEDED",
                          "started": "2026-10-09T16:00:00Z", "finished": "2026-10-09T16:20:00Z",
                          "actions": [{"id": "2" * 8 + "-2222-2222-2222-" + "2" * 12,
@@ -36,14 +37,88 @@ class CloudEvidenceTests(unittest.TestCase):
                                           "status": "SUCCESS", "destinations": [{"device": cloud.DEVICE_NAME,
                                                                                       "os": "27.0", "status": "SUCCESS"}]}]}]}
         self.check = {"app": {"id": cloud.APP_ID, "slug": "xcode-cloud"}, "head_sha": "a" * 40,
+                      "id": 1,
                       "name": cloud.CHECK_NAME, "status": "completed", "conclusion": "success",
                       "details_url": "https://appstoreconnect.apple.com/teams/" + cloud.TEAM_ID +
                       "/apps/" + cloud.APPLE_APP_ID + "/ci/builds/" + self.evidence["id"] +
                       "/action/" + self.evidence["actions"][0]["id"]}
 
-    def validate(self):
+    def validate(self, checks=None):
         with patch.object(cloud, "admitted_population", return_value=self.population):
-            return cloud.validate_evidence(self.record, self.run, self.route, self.evidence, [self.check], approved=False)
+            return cloud.validate_evidence(self.record, self.run, self.route, self.evidence,
+                                           [self.check] if checks is None else checks, approved=False)
+
+    def test_newer_same_head_app_check_cannot_be_hidden_by_an_old_success(self):
+        for status, conclusion in (("completed", "failure"), ("completed", "cancelled"),
+                                   ("in_progress", None), ("completed", "success")):
+            newer = dict(self.check, id=2, status=status, conclusion=conclusion,
+                         details_url=self.check["details_url"] + "-another-execution")
+            with self.subTest(status=status, conclusion=conclusion), self.assertRaises(ContractError):
+                self.validate([self.check, newer])
+        with self.assertRaises(ContractError):
+            self.validate([self.check, dict(self.check)])
+
+    def test_cloud_branch_run_cannot_be_a_pull_request_merge_build(self):
+        for value in (True, None, "false", 0):
+            self.evidence["is_pull_request_build"] = value
+            with self.subTest(value=value), self.assertRaises(ContractError):
+                self.validate()
+
+    def test_untrusted_uploaders_are_filtered_before_opening_fork_main_artifact_bytes(self):
+        workflow = {"id": 789, "path": cloud.IMPORT_PATH}
+        trusted = {"id": 456, "workflow_id": 789, "path": cloud.IMPORT_PATH, "event": "workflow_dispatch",
+                   "head_branch": "main", "head_sha": "a" * 40, "status": "completed", "conclusion": "success",
+                   "run_attempt": 1, "repository": {"full_name": "owner/repo"},
+                   "head_repository": {"full_name": "owner/repo"}}
+        api = Mock(repository="owner/repo")
+        artifact = lambda run_id: {"id": run_id, "name": "receipt", "expired": False, "workflow_run": {"id": run_id}}
+        receipt = {"uploader_run_id": 456, "uploader_attempt": 1, "route_artifact_id": 55, "evidence": self.evidence}
+        for mutation in ("fork", "event", "status", "conclusion", "history"):
+            hostile = copy.deepcopy(trusted)
+            hostile["id"] = 123
+            if mutation == "fork":
+                hostile["head_repository"]["full_name"] = "fork/repo"
+            elif mutation == "event":
+                hostile["event"] = "pull_request"
+            elif mutation == "status":
+                hostile["status"] = "in_progress"
+            elif mutation == "conclusion":
+                hostile["conclusion"] = "failure"
+            else:
+                hostile["head_sha"] = "b" * 40
+            api.repo.side_effect = lambda path, **_: workflow if "workflows/" in path else hostile if path.endswith("123") else trusted
+            api.pages.return_value = [artifact(123), artifact(456)]
+            with self.subTest(mutation=mutation), patch("ci_publish.git"), \
+                    patch.object(cloud, "on_main", side_effect=lambda value: value == "a" * 40), \
+                    patch("ci_publish.json_member", return_value=receipt) as read:
+                self.assertEqual(cloud.trusted_artifact(api, "receipt", cloud.IMPORT_PATH, "cloud.json"), (receipt, 456))
+                self.assertEqual([call.args[1]["id"] for call in read.call_args_list], [456])
+
+    def test_duplicate_import_receipts_need_identical_evidence_and_route_binding(self):
+        api = Mock(repository="owner/repo")
+        workflow = {"id": 789, "path": cloud.IMPORT_PATH}
+        def uploader(path, **_):
+            if "workflows/" in path:
+                return workflow
+            return {"id": int(path.rsplit('/', 1)[1]), "workflow_id": 789, "path": cloud.IMPORT_PATH,
+                    "event": "workflow_dispatch", "head_branch": "main", "head_sha": "a" * 40,
+                    "status": "completed", "conclusion": "success", "run_attempt": 1,
+                    "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}}
+        api.repo.side_effect = uploader
+        api.pages.return_value = [{"id": number, "name": "receipt", "expired": False, "workflow_run": {"id": number}}
+                                 for number in (456, 457)]
+        receipts = [{"uploader_run_id": number, "uploader_attempt": 1, "route_artifact_id": 55,
+                     "evidence": copy.deepcopy(self.evidence)} for number in (456, 457)]
+        def read(_api, artifact, _member):
+            return receipts[artifact["id"] - 456]
+        with patch("ci_publish.git"), patch.object(cloud, "on_main", return_value=True), patch("ci_publish.json_member", side_effect=read):
+            self.assertEqual(cloud.trusted_artifact(api, "receipt", cloud.IMPORT_PATH, "cloud.json"), (receipts[0], 456))
+            for field, value in (("route_artifact_id", 66), ("evidence", {})):
+                original = receipts[1][field]
+                receipts[1][field] = value
+                with self.subTest(field=field), self.assertRaises(ContractError):
+                    cloud.trusted_artifact(api, "receipt", cloud.IMPORT_PATH, "cloud.json")
+                receipts[1][field] = original
 
     def test_exact_success_returns_every_identity_and_action_compute_time(self):
         result = self.validate()
@@ -177,6 +252,16 @@ class CloudEvidenceTests(unittest.TestCase):
             self.assertEqual(evaluate_records(record, run, jobs, missing_ios, approved=False, fork=False, cloud=proof)["state"], "failure")
             with self.assertRaises(ContractError):
                 evaluate_records(record, run, jobs, summaries, approved=False, fork=False, cloud={"identities": tv[:1]})
+            removed = test_identity("ui", "RemovedTests/testRemoved", platform="tvos", device="appletv")
+            ui["base_populations"]["appletv"].append(removed)
+            policy["deselections"] = [{"identity": tv[1], "tier": "ui", "environment": "fixture",
+                                       "reason": "Owned by another controlled tier", "owning_tier": "controlled"}]
+            with patch.object(cloud, "admitted_population", return_value=tv[:1]):
+                result = evaluate_records(record, run, jobs, summaries, approved=False, fork=False,
+                                          cloud={"identities": tv[:1], "cloud_run_id": "verified-run"})
+            self.assertEqual(result["removed_by_pr"], [removed])
+            self.assertEqual(result["deselected"], [{key: policy["deselections"][0][key]
+                                                    for key in ("identity", "reason", "owning_tier")}])
 
     def test_asc_context_is_checked_before_signing_or_reading_credentials(self):
         from ci_xcode_cloud_api import jwt, credential_context
@@ -236,11 +321,24 @@ class CloudEvidenceTests(unittest.TestCase):
         plan = (root / cloud.PLAN_PATH).read_bytes()
         policy = json.loads((root / "scripts/ci-test-policy.json").read_text())
         record = {"cloud_inputs": {"plan": json.loads(plan), "plan_sha256": hashlib.sha256(plan).hexdigest(),
+                                  "scheme": (root / cloud.SCHEME_PATH).read_text(), "plan_paths": [cloud.PLAN_PATH],
                                   "fixture_sha256": "d" * 64, "source_sha256": "d" * 64},
                   "ui_inputs": {"base": {"populations": {"appletv": shards}}}, "base_policy": policy}
         expected = sorted([entry for entries in shards.values() for entry in entries], key=lambda entry: entry["key"])
         self.assertEqual(cloud.admitted_population(record, approved=False), expected)
         record["cloud_inputs"]["plan"]["testTargets"][0]["selectedTests"].pop()
+        with self.assertRaises(ContractError):
+            cloud.admitted_population(record, approved=False)
+        record["cloud_inputs"]["plan"] = json.loads(plan)
+        original = record["cloud_inputs"]["scheme"]
+        for scheme in (original.replace("container:" + cloud.PLAN_PATH, "container:other/" + cloud.PLAN_PATH),
+                       original.replace("<TestPlans>", "<PreActions/><TestPlans>"),
+                       original.replace("<TestPlans>", "<PostActions/><TestPlans>")):
+            record["cloud_inputs"]["scheme"] = scheme
+            with self.subTest(scheme=scheme[:30]), self.assertRaises(ContractError):
+                cloud.admitted_population(record, approved=False)
+        record["cloud_inputs"]["scheme"] = original
+        record["cloud_inputs"]["plan_paths"].append("other/" + cloud.PLAN_PATH)
         with self.assertRaises(ContractError):
             cloud.admitted_population(record, approved=False)
 

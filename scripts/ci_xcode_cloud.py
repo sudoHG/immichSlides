@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 import subprocess
 from datetime import datetime
+from pathlib import PurePosixPath
+from xml.etree import ElementTree
 
 from ci_summary import ContractError, require, sha
 
@@ -12,6 +14,7 @@ UI_PATH = ".github/workflows/ci-ui.yml"
 IMPORT_PATH = ".github/workflows/ci-xcode-cloud-import.yml"
 ROUTE_PATH = ".github/workflows/ci-xcode-cloud-route.yml"
 PLAN_PATH = "XcodeCloud-UI-tvOS.xctestplan"
+SCHEME_PATH = "immichSlides.xcodeproj/xcshareddata/xcschemes/immichSlides-tvOS.xcscheme"
 WORKFLOW_ID = "72574ec0-c168-4317-b469-d3090357ab21"
 APP_ID = 117084
 APPLE_APP_ID = "6764543664"
@@ -37,6 +40,35 @@ def duration(started, finished):
         raise ContractError("missing or invalid Xcode Cloud action timestamps") from None
 
 
+def validate_plan_resolution(scheme, plan_paths):
+    require(isinstance(scheme, str) and len(scheme.encode()) <= 1024 * 1024
+            and "<!DOCTYPE" not in scheme and "<!ENTITY" not in scheme,
+            "cloud scheme is absent or unsupported")
+    try:
+        root = ElementTree.fromstring(scheme)
+    except ElementTree.ParseError:
+        raise ContractError("cloud scheme is malformed") from None
+    actions = root.findall("TestAction")
+    require(root.tag == "Scheme" and len(actions) == 1, "cloud scheme needs one TestAction")
+    action = actions[0]
+    require(action.find(".//PreActions") is None and action.find(".//PostActions") is None,
+            "cloud scheme TestAction cannot run pre/post actions")
+    references = [item.get("reference", "") for item in action.findall(".//TestPlanReference")
+                  if PurePosixPath(item.get("reference", "").removeprefix("container:")).name.casefold() == PLAN_PATH.casefold()]
+    require(references == ["container:" + PLAN_PATH] and plan_paths == [PLAN_PATH],
+            "cloud scheme redirects or ambiguously resolves the admitted plan")
+
+
+def applied_deselections(record, *, approved):
+    from ci_verdict import parse_policy, tier_approved
+    ui = record["ui_inputs"]["candidate" if approved else "base"]
+    entries = [entry for identities in ui["populations"]["appletv"].values() for entry in identities]
+    policy = parse_policy(record["candidate_policy"] if approved else record["base_policy"])
+    return [{key: item[key] for key in ("identity", "reason", "owning_tier")}
+            for item in policy["deselections"] if tier_approved(policy, "ui")
+            and item["tier"] == "ui" and item["environment"] == "fixture" and item["identity"] in entries]
+
+
 def admitted_population(record, *, approved):
     from check_xcode_cloud_ui import validate_plan
     from ci_verdict import parse_policy, tier_approved
@@ -50,6 +82,7 @@ def admitted_population(record, *, approved):
     entries = [entry for entry in entries if entry not in deselected]
     inputs = record.get("cloud_inputs")
     require(isinstance(inputs, dict), "cloud plan is absent from trusted admission")
+    validate_plan_resolution(inputs["scheme"], inputs["plan_paths"])
     sha(inputs["plan_sha256"], 64)
     require(inputs["fixture_sha256"] == inputs["source_sha256"], "cloud fixture copy differs from the source")
     validate_plan(inputs["plan"], {"admitted": entries})
@@ -80,6 +113,7 @@ def validate_evidence(record, run, route, evidence, checks, *, approved):
     population = admitted_population(record, approved=approved)
     require(evidence["id"] == route["cloud_run_id"] and evidence["workflow_id"] == WORKFLOW_ID
             and evidence["head_sha"] == record["identity"]["head_sha"]
+            and evidence.get("is_pull_request_build") is False
             and evidence["progress"] == "COMPLETE" and evidence["status"] == "SUCCEEDED",
             "cloud run did not complete successfully on the admitted head")
     wall = duration(evidence["started"], evidence["finished"])
@@ -113,8 +147,13 @@ def validate_evidence(record, run, route, evidence, checks, *, approved):
                "/ci/builds/" + evidence["id"] + "/action/" + action["id"])
     matching = [check for check in checks if check.get("app", {}).get("id") == APP_ID
                 and check["app"].get("slug") == "xcode-cloud" and check.get("name") == CHECK_NAME
-                and check.get("head_sha") == record["identity"]["head_sha"] and check.get("details_url") == details]
-    require(len(matching) == 1 and matching[0]["status"] == "completed" and matching[0]["conclusion"] == "success",
+                and check.get("head_sha") == record["identity"]["head_sha"]]
+    require(matching and all(type(check.get("id")) is int and check["id"] > 0 for check in matching),
+            "cloud app check has no authoritative API identity")
+    newest_id = max(check["id"] for check in matching)
+    newest = [check for check in matching if check["id"] == newest_id]
+    require(len(newest) == 1 and newest[0]["status"] == "completed" and newest[0]["conclusion"] == "success"
+            and newest[0].get("details_url") == details,
             "exact-head overflow check from the Xcode Cloud app is missing, ambiguous or not successful")
     return {"identities": population, "cloud_run_id": evidence["id"], "action_id": action["id"],
             "wall_minutes": wall, "compute_minutes": compute, "details_url": details,
@@ -147,15 +186,25 @@ def trusted_artifact(api, name, path, member):
         if artifact["name"] != name or artifact["expired"]:
             continue
         uploader = api.repo("actions/runs/" + str(positive(artifact["workflow_run"]["id"])))
-        # A hostile producer can upload a colliding name; never open its bytes.
-        if uploader["path"] != path or uploader["workflow_id"] != workflow["id"] or uploader["head_branch"] != "main":
+        # Authenticate all provenance before opening even a colliding artifact.
+        try:
+            validate_uploader(uploader, workflow, api.repository, path, uploader["run_attempt"])
+        except (ContractError, KeyError, TypeError, ValueError):
             continue
         receipt = json_member(api, artifact, member)
-        validate_uploader(uploader, workflow, api.repository, path, receipt["uploader_attempt"])
-        require(receipt["uploader_run_id"] == uploader["id"], "cloud artifact uploader differs")
+        require(type(receipt["uploader_run_id"]) is int and receipt["uploader_run_id"] == uploader["id"]
+                and type(receipt["uploader_attempt"]) is int and receipt["uploader_attempt"] == uploader["run_attempt"],
+                "cloud artifact uploader run or attempt differs")
         candidates.append((receipt, artifact["id"]))
-    require(len(candidates) == 1, "trusted cloud evidence is missing, expired, duplicated or conflicting")
-    return candidates[0]
+    require(candidates, "trusted cloud evidence is missing or expired")
+    if path == IMPORT_PATH and member == "cloud.json":
+        content = lambda receipt: {key: value for key, value in receipt.items()
+                                   if key not in {"uploader_run_id", "uploader_attempt"}}
+        require(all(content(receipt) == content(candidates[0][0]) for receipt, _ in candidates),
+                "trusted cloud import receipts conflict")
+    else:
+        require(len(candidates) == 1, "trusted cloud routing decision is duplicated or conflicting")
+    return min(candidates, key=lambda item: item[1])
 
 
 def trusted_cloud(api, record, run, *, approved):

@@ -229,14 +229,13 @@ def summary_diagnostics(summaries, evidence_errors=()):
             "infrastructure": infrastructure, "skipped": skips, "deselected": deselections}
 
 
-def cloud_pr_diagnostics(api, record, run, summaries, *, approved):
-    """PR publication diagnostics use the same provenance and API-result reader.
+def cloud_pr_diagnostics(summaries, *, cloud):
+    """PR diagnostics receive the proof already verified for this evaluation.
 
     Daily history remains main-push only. A cloud PR is never promoted into that
     history or the identical-tree reuse cache using an app check alone.
     """
-    from ci_xcode_cloud import trusted_cloud
-    cloud = trusted_cloud(api, record, run, approved=approved)
+    require(isinstance(cloud, dict) and isinstance(cloud.get("identities"), list), "verified cloud proof is missing")
     diagnostics = summary_diagnostics(summaries)
     count = len(cloud["identities"])
     for key in ("declared", "observed", "passed"):

@@ -192,7 +192,8 @@ def derive_record(identity, run, *, before=None):
             # Bad candidate UI data cannot suppress a separate gate admission.
             ui[side] = {"error": ui_failure_hint(error) or "candidate UI inputs are invalid"}
     cloud_inputs = None
-    cloud_paths = {"XcodeCloud-UI-tvOS.xctestplan", "scripts/strict_e2e_server.py", "ci_scripts/fixture_server.py"}
+    from ci_xcode_cloud import PLAN_PATH, SCHEME_PATH
+    cloud_paths = {PLAN_PATH, SCHEME_PATH, "scripts/strict_e2e_server.py", "ci_scripts/fixture_server.py"}
     candidate_paths = {entry["path"] for entry in listing if entry["type"] == "blob" and entry["mode"] in {"100644", "100755"}}
     if identity["event"] == "pull_request" and cloud_paths <= candidate_paths:
         head = identity["head_sha"]
@@ -206,6 +207,9 @@ def derive_record(identity, run, *, before=None):
             except (ContractError, TypeError, ValueError):
                 parsed_plan = None
             cloud_inputs = {"plan": parsed_plan, "plan_sha256": hashlib.sha256(raw_plan.encode()).hexdigest(),
+                            "scheme": read_blob(head, SCHEME_PATH),
+                            "plan_paths": [entry["path"] for entry in head_listing
+                                           if Path(entry["path"]).name.casefold() == PLAN_PATH.casefold()],
                             "head_tree_sha": git("rev-parse", head + "^{tree}"),
                             "fixture_sha256": hashlib.sha256(read_blob(head, "ci_scripts/fixture_server.py").encode()).hexdigest(),
                             "source_sha256": hashlib.sha256(read_blob(head, "scripts/strict_e2e_server.py").encode()).hexdigest()}
@@ -495,6 +499,16 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
     if verdict.get("not_applicable"):
         result["not_applicable"] = verdict["not_applicable"]
     if cloud is not None:
+        from ci_population import removed_tests
+        from ci_xcode_cloud import applied_deselections
+        deselected = applied_deselections(record, approved=approved)
+        result["deselected"].extend(deselected)
+        # Explicitly owned deselections remain declared; only absent methods
+        # count as removals, matching the GitHub population report.
+        tv_base = record["ui_inputs"]["base"]["base_populations"]["appletv"]
+        result["removed_by_pr"].extend(removed_tests(
+            {"base_sha": record["identity"]["base_sha"], "identities": tv_base},
+            cloud["identities"] + [item["identity"] for item in deselected], base_sha=record["identity"]["base_sha"]))
         result["xcode_cloud"] = {key: value for key, value in cloud.items() if key != "identities"}
         result["population"].append({"tier": "ui", "shard": "appletv/xcode-cloud", "expected": len(cloud["identities"]),
                                      "compiled": None, "observed": len(cloud["identities"])})

@@ -101,6 +101,12 @@ base or different merge tree causes GitHub fallback, since Xcode Cloud starts a
 branch head rather than GitHub's synthetic merge commit. The strict plan validator
 compares its exact methods and fixture environment with the admitted Apple TV
 shard union and approved fixture deselections. The copy must match its source.
+Admission also records the head's tvOS scheme and every same-name plan path in
+the head tree listing. The reader requires one cloud reference resolving exactly
+to `container:XcodeCloud-UI-tvOS.xctestplan`, no other same-name file, and no
+TestAction pre/post actions. Redirected or ambiguous plan resolution is refused.
+API `isPullRequestBuild` must be explicitly false: only the tree-bound branch
+execution is accepted, never an unbound cloud pull-request merge build.
 
 The API reader proves membership in overflow workflow
 `72574ec0-c168-4317-b469-d3090357ab21` through its paginated build-run collection;
@@ -114,17 +120,26 @@ cross-host links, oversized payloads and unavailable API data are refusals too.
 Acceptance separately requires GitHub's completed successful check from the
 Xcode Cloud app (ID 117084, slug `xcode-cloud`), with the exact head, overflow check
 name and App Store Connect run/action link. Another app, check, workflow, head
-or an ambiguous check cannot count. The app check alone proves no population.
+or an ambiguous check cannot count. The newest API check ID among checks with
+the same app, name and head is authoritative before run/action binding is checked.
+A newer failed, cancelled, incomplete or differently bound check prevents an
+older success from counting. The app check alone proves no population.
 
 The importer uploads `ci-xcc-import-<producer-run>-<attempt>` only after complete
 validation. Publisher and PR diagnostics verify the uploader's workflow ID/path,
 same repository, main-history revision, successful latest attempt and artifact
 binding to the admitted identity and exact router artifact. They repeat the method
 comparison using the independently selected admitted policy and re-read current
-app checks. Import success grants no head approval: existing CI-change/fork
+app checks. Uploader event, repositories, successful completion and main-history
+revision are authenticated before any artifact bytes are opened; an untrusted
+uploader, including a fork branch named main, is ignored. Receipts must name that
+uploader's current run and attempt. Import success grants no head approval: existing CI-change/fork
 approval rules remain authoritative. A failed or missing importer cannot excuse
 a GitHub Apple TV skip. Stale attempts and conflicting or expired artifacts fail
-closed. Only literal unexecuted Apple TV skips are excused; GitHub archive,
+closed. Multiple trusted import receipts are accepted only when their complete
+content is identical apart from uploader run/attempt, including the same route
+artifact and API evidence; the smallest immutable artifact ID is reported.
+Routing decisions remain unique. Only literal unexecuted Apple TV skips are excused; GitHub archive,
 iPhone and iPad evidence still require their full original populations.
 If GitHub collapses a TV-only matrix skip into its expression-named job, the
 reader expands only that TV matrix after independent cloud validation, retaining
@@ -135,6 +150,10 @@ API evidence stays separate from GitHub producer summaries. Counts report every
 admitted and observed Apple TV method; compiled inventory is
 `NOT_EXPOSED_BY_API`, since the API does not expose a separate bundle enumeration.
 Wall minutes use run timestamps; compute minutes sum action durations. Cloud PR
-verdicts do not create main-push UI reuse receipts. Daily reporter history remains
+reports retain Apple TV removals against the admitted base and every applied
+fixture deselection; an explicitly owned deselection is reported separately from
+source removal. Diagnostics receive the proof already verified for the verdict,
+avoiding a second network read that could contradict that evaluation.
+Verdicts do not create main-push UI reuse receipts. Daily reporter history remains
 main-push only, and refuses cloud PR proof for a push. To disable acceptance,
 disable routing; normal GitHub Apple TV jobs need no cloud credentials or receipts.
