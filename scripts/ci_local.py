@@ -328,19 +328,34 @@ def launch(script, arguments):
         code = run_child(command, checkout, environment)
         if receipt["mode"] != "private" and (checkout.parent / "cleanup-failed").exists():
             raise SnapshotCleanupError("entry-point cleanup failed")
+        return code
+
+    def record_exit(receipt, code):
         receipt.update(exit_code=code, explicit_configuration_keys=[entry.partition("=")[0] for entry in options.config])
         if record_path:
             record_path.parent.mkdir(parents=True, exist_ok=True)
             record_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
         return code
 
-    if mode == "private":
-        receipt = {"schema_version": 1, "mode": "private", "source_commit_sha": git(root, "rev-parse", "HEAD"),
-                   "tree_sha": None, "source_dirty": bool(git(root, "status", "--porcelain")),
-                   "private_configuration": any(os.path.lexists(root / path) for path in PRIVATE_PATHS)}
-        return execute(root, receipt)
-    with snapshot(root, strict=mode == "strict") as (checkout, receipt):
-        return execute(checkout, receipt)
+    receipt = None
+    try:
+        if mode == "private":
+            receipt = {"schema_version": 1, "mode": "private", "source_commit_sha": git(root, "rev-parse", "HEAD"),
+                       "tree_sha": None, "source_dirty": bool(git(root, "status", "--porcelain")),
+                       "private_configuration": any(os.path.lexists(root / path) for path in PRIVATE_PATHS)}
+            code = execute(root, receipt)
+        else:
+            with snapshot(root, strict=mode == "strict") as (checkout, receipt):
+                code = execute(checkout, receipt)
+    except KeyboardInterrupt as error:
+        if receipt is not None:
+            record_exit(receipt, 128 + getattr(error, "signum", signal.SIGINT))
+        raise
+    except (OSError, ValueError, subprocess.SubprocessError, SnapshotCleanupError):
+        if receipt is not None:
+            record_exit(receipt, 2)
+        raise
+    return record_exit(receipt, code)
 
 
 def local_main(main, filename):

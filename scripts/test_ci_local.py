@@ -10,8 +10,9 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
-from ci_local import SnapshotCleanupError, clean_environment, select_mode, snapshot
+from ci_local import SnapshotCleanupError, clean_environment, local_main, select_mode, snapshot
 
 
 class LocalModeTests(unittest.TestCase):
@@ -266,20 +267,32 @@ class LocalModeTests(unittest.TestCase):
                 if retained is not None:
                     git("worktree", "remove", "--force", str(retained))
                     shutil.rmtree(retained.parent)
-            process = None
+            entry = root / "scripts/run_fixture_ui_tests.py"
+            entry.parent.mkdir()
+            entry.write_text("pass\n")
+            record = Path(directory, "receipt.json")
+            held = {}
+            def escaped_child(command, checkout, environment):
+                held["root"] = checkout
+                held["process"] = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                                   cwd=checkout, start_new_session=True)
+                return 0
             try:
-                with self.assertRaises(SnapshotCleanupError):
-                    with snapshot(root) as (retained, _):
-                        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
-                                                   cwd=retained, start_new_session=True)
+                with patch("ci_local.run_child", side_effect=escaped_child), \
+                        patch.object(sys, "argv", [str(entry), "--snapshot-record", str(record)]):
+                    self.assertEqual(local_main(lambda: 0, str(entry)), 2)
+                retained = held["root"]
                 self.assertTrue(retained.is_dir())
+                self.assertEqual(json.loads(record.read_text())["exit_code"], 2)
             finally:
-                if process is not None:
+                process = held.get("process")
+                if process is not None and process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
-                if retained.exists():
+                retained = held.get("root")
+                if retained is not None and retained.exists():
                     git("worktree", "remove", "--force", str(retained))
-                if retained.parent.exists():
+                if retained is not None and retained.parent.exists():
                     shutil.rmtree(retained.parent)
 
 
