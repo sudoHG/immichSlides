@@ -84,6 +84,7 @@ jobs:
       contents: read
       actions: write
       pull-requests: read
+      checks: read
     environment: ci-publisher
     concurrency:
       group: ci-state-${{ needs.route.outputs.key }}

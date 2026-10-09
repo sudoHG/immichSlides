@@ -1,0 +1,48 @@
+name: ci-xcode-cloud-import
+
+on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id:
+        description: Authoritative same-repository pull-request ci-ui run
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  import:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: xcode-cloud
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: read
+    concurrency:
+      group: ci-xcc-import-${{ inputs.producer_run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
+      - name: Read and verify App Store Connect method results
+        id: import
+        env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_import.py'
+      - if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-xcc-import-${{ steps.import.outputs.producer_run_id }}-${{ steps.import.outputs.producer_attempt }}
+          path: ${{ runner.temp }}/ci-xcc-import/cloud.json
+          if-no-files-found: error
+          retention-days: 30

@@ -6,6 +6,7 @@
     ".github/actions/**",
     ".swift-format",
     "immichSlides.xcodeproj/xcshareddata/xcschemes/*.xcscheme",
+    "**/*.xcscheme",
     "*.xctestplan",
     "**/*.xctestplan",
     "scripts/ci_*.py",

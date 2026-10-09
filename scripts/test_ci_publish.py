@@ -1061,7 +1061,7 @@ class PublisherTests(unittest.TestCase):
             with patch("ci_publish.approved_status", return_value=True):
                 _, statuses, approval = compute(RecordedAPI(), 7, "", "generic-app[bot]")
             self.assertEqual(statuses["ci-ui"]["state"], "success")
-            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[], admission=record)
+            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[], admission=record, cloud=None)
             self.assertIsNone(approval["request"])
             with patch("ci_publish.approved_status", return_value=True), patch(
                     "ci_report.summary_diagnostics", side_effect=ContractError("malformed diagnostics")):
@@ -1581,6 +1581,37 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(record["identity"], identity)
         self.assertEqual(record["reader_revision"], BASE)
         self.assertNotIn("base_modules", record)
+
+    def test_case_variant_cloud_inputs_cannot_survive_admission_or_scheme_classification(self):
+        from ci_verdict import classify_changes
+        from ci_xcode_cloud import PLAN_PATH, SCHEME_PATH
+        root = Path(__file__).resolve().parent.parent
+        classification = json.loads((root / "scripts/ci-classification.json").read_text())
+        for path in (SCHEME_PATH.replace("immichSlides.xcodeproj", "immichslides.xcodeproj"),
+                     "workspace.xcworkspace/xcshareddata/xcschemes/immichSlides-tvOS.xcscheme"):
+            with self.subTest(path=path):
+                self.assertTrue(classify_changes([path], classification, build_target_paths=[])["ci_changing"])
+        identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
+        paths = [PLAN_PATH, SCHEME_PATH, "scripts/strict_e2e_server.py", "ci_scripts/fixture_server.py"]
+        listing = [{"path": path, "mode": "100644", "type": "blob", "sha": TREE} for path in paths]
+        derived = {"populations": {}, "classification": {"ci_changing": False, "app_affected": True}}
+        def blob(commit, path):
+            if path in {PLAN_PATH, SCHEME_PATH}:
+                return (root / path).read_text()
+            if path.endswith(".json"):
+                return '{"schema_version":1}'
+            if path.endswith("ci_build_archive.py"):
+                return 'def run_build():\n step = test_identity("host", "archive", configuration="Debug")\n'
+            return "trusted input"
+        with patch("ci_publish_git.read_blob", side_effect=blob), \
+                patch("ci_publish_git.git", return_value=TREE), patch("ci_publish_git.base_reader", return_value=derived):
+            with patch("ci_publish_git.tree_inputs", return_value=(listing, {})):
+                self.assertIsNotNone(derive_record(identity, RUN)["cloud_inputs"])
+            for shadow in (PLAN_PATH.lower(), SCHEME_PATH.lower(), "CI_SCRIPTS/fixture_server.py"):
+                head_listing = listing + [{"path": shadow, "mode": "100644", "type": "blob", "sha": TREE}]
+                with self.subTest(shadow=shadow), patch("ci_publish_git.tree_inputs",
+                        side_effect=[(listing, {}), (listing, {}), (head_listing, {})]):
+                    self.assertIsNone(derive_record(identity, RUN)["cloud_inputs"])
 
     def test_latest_job_execution_controls_artifacts_in_failed_job_reruns(self):
         _, _, fixture_summaries = gate_fixture(units=False)

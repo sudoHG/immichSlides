@@ -229,6 +229,22 @@ def summary_diagnostics(summaries, evidence_errors=()):
             "infrastructure": infrastructure, "skipped": skips, "deselected": deselections}
 
 
+def cloud_pr_diagnostics(summaries, *, cloud):
+    """PR diagnostics receive the proof already verified for this evaluation.
+
+    Daily history remains main-push only. A cloud PR is never promoted into that
+    history or the identical-tree reuse cache using an app check alone.
+    """
+    require(isinstance(cloud, dict) and isinstance(cloud.get("identities"), list), "verified cloud proof is missing")
+    diagnostics = summary_diagnostics(summaries)
+    count = len(cloud["identities"])
+    for key in ("declared", "observed", "passed"):
+        diagnostics["counts"][key] = diagnostics["counts"].get(key, 0) + count
+    diagnostics["counts"]["compiled_not_exposed_by_api"] = count
+    diagnostics["xcode_cloud"] = {key: value for key, value in cloud.items() if key != "identities"}
+    return diagnostics
+
+
 def daily_rollup(day, entries):
     iso_day(day)
     selected = {}

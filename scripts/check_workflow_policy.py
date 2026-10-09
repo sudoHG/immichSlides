@@ -15,6 +15,11 @@ import yaml
 PRIVACY_WORKFLOW = ".github/workflows/privacy-preflight.yml"
 PROBE_WORKFLOW = ".github/workflows/ci-probe.yml"
 REPORT_WORKFLOW = ".github/workflows/ci-report.yml"
+XCC_IMPORT_WORKFLOW = ".github/workflows/ci-xcode-cloud-import.yml"
+XCC_BINDINGS = {"CI_WORKFLOW_TOKEN": "${{ github.token }}",
+                "ASC_ISSUER_ID": "${{ secrets.ASC_ISSUER_ID }}",
+                "ASC_KEY_ID": "${{ secrets.ASC_KEY_ID }}",
+                "ASC_PRIVATE_KEY": "${{ secrets.ASC_PRIVATE_KEY }}"}
 LIVE_WORKFLOW = ".github/workflows/ci-nightly.yml"
 LIVE_ENVIRONMENT = "immich-test-server"
 LIVE_BINDINGS = {"CI_LIVE_URL": "${{ secrets.IMMICH_TEST_SERVER_URL }}",
@@ -33,6 +38,7 @@ WORKFLOW_RUN_SOURCES = {
     REPORT_WORKFLOW: {"ci-nightly", "ci-gate", "ci-ui"},
 }
 ENVIRONMENT_WORKFLOWS = {
+    "xcode-cloud": {XCC_IMPORT_WORKFLOW},
     "ci-publisher": {".github/workflows/ci-publish.yml", ".github/workflows/ci-approval.yml",
                      ".github/workflows/ci-approve.yml"},
     "ci-approval": {".github/workflows/ci-approval.yml"},
@@ -198,6 +204,10 @@ def trusted_run_allowed(script, path, events):
     if not isinstance(script, str):
         return False
     script = script.strip()
+    if path == XCC_IMPORT_WORKFLOW and set(events) == {"workflow_dispatch"}:
+        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_import.py',
+                      '/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
+            return True
     if path == REPORT_WORKFLOW and set(events) <= {"schedule", "workflow_dispatch", "workflow_run"}:
         if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect',
                       '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync',
@@ -306,6 +316,11 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         flag("workflow", "report-contract", "ci-report needs main-filtered completion/daily/manual triggers and no workflow-level grants")
     if approval_workflow and "concurrency" in document:
         flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
+    if path == XCC_IMPORT_WORKFLOW and (document.get("name") != "ci-xcode-cloud-import"
+            or set(events) != {"workflow_dispatch"} or document.get("permissions") != {}
+            or events["workflow_dispatch"] != {"inputs": {"producer_run_id": {
+                "description": "Authoritative same-repository pull-request ci-ui run", "required": True, "type": "string"}}}):
+        flag("workflow", "xcc-contract", "Cloud import accepts only a literal main-only dispatch interface")
     # Live consumers intentionally execute test bundles; publisher-only trusted command rules do not apply.
     # Their environment and test-time credentials instead have this separate admission contract.
     allowed_secret_locations = {'workflow.jobs.live-unit.steps[' + str(index) + '].env.' + key
@@ -321,6 +336,14 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if isinstance(environment, str) and environment.casefold() == LIVE_ENVIRONMENT:
             live_job_locations.append(f'workflow.jobs.{job_id}.')
     for location, value in string_scalars(document):
+        if (path == XCC_IMPORT_WORKFLOW and re.search(r"\bsecrets\b", value, re.IGNORECASE)
+                or re.search(r"\bsecrets\s*(?:\.\s*ASC_|\[\s*['\"]ASC_)", value, re.IGNORECASE)):
+            allowed_xcc = {"workflow.jobs.import.steps[" + str(index) + "].env." + key
+                           for index, step in enumerate(jobs.get("import", {}).get("steps", []))
+                           if step.get("id") == "import" and step.get("env") == XCC_BINDINGS
+                           for key in XCC_BINDINGS if key.startswith("ASC_")}
+            if path != XCC_IMPORT_WORKFLOW or location not in allowed_xcc:
+                flag(location, "xcc-credential", "ASC secrets belong only to the guarded main importer step")
         live_scope = (any(location.startswith(prefix) for prefix in live_job_locations)
                       or bool(live_job_locations) and location.startswith('workflow.env.'))
         if (live_scope and any(names_secrets_root(code) for code in expression_code(location, value, implicit_locations))
@@ -369,6 +392,14 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         permissions = job.get("permissions", document.get("permissions"))
         if not explicit_permissions(permissions):
             flag(location, "permissions", "Job needs explicit permissions, directly or inherited")
+        if path == XCC_IMPORT_WORKFLOW:
+            if (job_id != "import" or job.get("if") != "github.ref == 'refs/heads/main'"
+                    or job.get("runs-on") != "ubuntu-24.04" or job.get("environment") != "xcode-cloud"
+                    or job.get("timeout-minutes") != 10
+                    or permissions != {"contents": "read", "actions": "read", "checks": "read", "pull-requests": "read"}
+                    or job.get("env") or document.get("env")
+                    or job.get("concurrency") != {"group": "ci-xcc-import-${{ inputs.producer_run_id }}", "cancel-in-progress": False}):
+                flag(location, "xcc-contract", "Importer is bounded, main-only and credential-scoped with read-only grants")
         if path == PROBE_WORKFLOW and permissions != {"contents": "read", "issues": "write"}:
             flag(location, "probe-contract", "ci-probe grants only contents: read and issues: write at job level")
         if path == REPORT_WORKFLOW:
@@ -424,6 +455,10 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 if not isinstance(step, dict):
                     continue
                 step_location = f"{location}.steps[{index}]"
+                if path == XCC_IMPORT_WORKFLOW and "env" in step:
+                    if (step.get("env") != XCC_BINDINGS or step.get("id") != "import"
+                            or step.get("run") != '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_import.py'):
+                        flag(step_location, "xcc-credential", "ASC credentials belong only to the importer entry point")
                 if (path in PUBLISHER_COMMANDS and step.get("run", "").endswith("scripts/ci_publish.py reevaluate")
                         and step.get("if") != "steps.admit.outputs.recorded == 'true'"):
                     flag(step_location, "publisher-admission", "Admission re-evaluates only after recording a new admission")
@@ -462,7 +497,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if isinstance(environment, dict) and any(key in loader_variables for key in environment):
             flag(location, "artifact-execution", "Artifact data must not control executable search or interpreter startup")
         bindings = (PRIVACY_ENVIRONMENT if path == PRIVACY_WORKFLOW else PROBE_ENVIRONMENT
-                    if path == PROBE_WORKFLOW else {"CI_REPORT_TOKEN": "${{ github.token }}"} if path == REPORT_WORKFLOW
+                    if path == PROBE_WORKFLOW else XCC_BINDINGS if path == XCC_IMPORT_WORKFLOW
+                    else {"CI_REPORT_TOKEN": "${{ github.token }}"} if path == REPORT_WORKFLOW
                     else PUBLISHER_BINDINGS if path in PUBLISHER_COMMANDS else {})
         if (not isinstance(environment, dict) or any(key not in bindings or value != bindings[key]
                 for key, value in environment.items())):
@@ -485,6 +521,10 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                                             {"name": "ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}",
                                              "path": "${{ runner.temp }}/ci-ui-verdict/verdict.json",
                                              "if-no-files-found": "error", "retention-days": 30}))
+        xcc_upload = (path == XCC_IMPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+                      and options == {"name": "ci-xcc-import-${{ steps.import.outputs.producer_run_id }}-${{ steps.import.outputs.producer_attempt }}",
+                                      "path": "${{ runner.temp }}/ci-xcc-import/cloud.json", "if-no-files-found": "error", "retention-days": 30}
+                      and item.get("if") == "success()")
         report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
                          and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",
                                              "path": "${{ runner.temp }}/ci-report/" + directory,
@@ -494,7 +534,7 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                          path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
                          and options == {"name": "ci-report-health-${{ steps.collect.outputs.health_month }}-${{ github.run_id }}-${{ github.run_attempt }}",
                                          "path": "${{ runner.temp }}/ci-report/health", "if-no-files-found": "error", "retention-days": 90})
-        if "uses" in item and not publisher_upload and not report_upload and not trusted_action_allowed(uses, options):
+        if "uses" in item and not publisher_upload and not report_upload and not xcc_upload and not trusted_action_allowed(uses, options):
             flag(location, "trusted-action", "Trusted uses must be an approved pinned remote action or isolated repository-local action")
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":
             ref = options.get("ref")
@@ -508,6 +548,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 flag(location, "trusted-checkout", "Trusted checkout must use this repository's default branch (privacy may use base.sha)")
             if path == REPORT_WORKFLOW and (ref != "main" or options.get("fetch-depth") != 0):
                 flag(location, "report-contract", "Reporter needs explicit main checkout and full history")
+            if path == XCC_IMPORT_WORKFLOW and (ref != "main" or options.get("fetch-depth") != 0
+                                                or options.get("persist-credentials") is not False):
+                flag(location, "xcc-contract", "Importer needs main, full history and no persisted checkout credential")
         if isinstance(uses, str) and "download-artifact" in uses.lower() and not artifact_path(options.get("path")):
             flag(location, "artifact-execution", "Download artifact data only into an explicit ci-artifacts directory")
         if "script" in options:
