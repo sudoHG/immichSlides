@@ -96,9 +96,14 @@ class LocalModeTests(unittest.TestCase):
                               "    parser.add_argument('--platform')\n"
                               "    parser.add_argument('--full-plan', action='store_true')\n"
                               "    parser.add_argument('--check', action='store_true')\n"
+                              "    parser.add_argument('--manifest')\n"
+                              "    parser.add_argument('--output-dir')\n"
+                              "    parser.add_argument('--shard')\n"
+                              "    parser.add_argument('command', nargs='?')\n"
                               "    args = parser.parse_args()\n"
                               "    print('DERIVED_DATA=' + str(args.derived_data_path))\n"
                               "    print('RESULT_BUNDLE=' + str(args.result_bundle_path))\n"
+                              "    print('MANIFEST=' + str(args.manifest))\n"
                               "    if args.prepare_example_config and (args.platform or args.full_plan):\n"
                               "        return 71\n"
                               "    if args.project and Path(args.project).resolve() != root / 'immichSlides.xcodeproj':\n"
@@ -107,6 +112,7 @@ class LocalModeTests(unittest.TestCase):
                               "    return 0 if private == (os.environ.get('IMMICH_TEST_EXPECT_PRIVATE') == '1') "
                               "and os.environ.get('IMMICH_TEST_API_KEY') == 'explicit' else 1\n"
                               "if __name__ == '__main__':\n    raise SystemExit(local_main(main, __file__))\n")
+            shutil.copyfile(runner, scripts / "ci_ui_tests.py")
             (root / ".gitignore").write_text("Config/env.xcconfig\n")
             (root / "immichSlides.xcodeproj").mkdir()
             (root / "immichSlides.xcodeproj/project.pbxproj").write_text("synthetic project")
@@ -182,6 +188,26 @@ class LocalModeTests(unittest.TestCase):
                                         "IMMICH_TEST_API_KEY=explicit"], cwd=root, env=test_environment,
                                        capture_output=True, text=True, timeout=15)
             self.assertIn("DERIVED_DATA=" + str((root / ".derivedData/offline-local").resolve()), completed.stdout)
+            for manifest_args in (["--manifest", "m.json"], ["--manifest=m.json"]):
+                with self.subTest(manifest_args=manifest_args):
+                    completed = subprocess.run([sys.executable, "-B", str(runner), "--config",
+                                                "IMMICH_TEST_API_KEY=explicit", *manifest_args], cwd=scripts,
+                                               env=test_environment, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertIn("MANIFEST=" + str((scripts / "m.json").resolve()), completed.stdout)
+            written = Path(directory, "written")
+            written.mkdir()
+            receipt_path = written / "local-snapshot.json"
+            receipt_path.write_text("earlier run receipt\n")
+            ui_runner = scripts / "ci_ui_tests.py"
+            for arguments, expected in ((["check-upload", "--output-dir", str(written)], 0),
+                                        (["run", "--shard", "check-upload", "--output-dir", str(written)], 2)):
+                with self.subTest(arguments=arguments):
+                    completed = subprocess.run([sys.executable, "-B", str(ui_runner), *arguments, "--config",
+                                                "IMMICH_TEST_API_KEY=explicit"], cwd=root, env=test_environment,
+                                               capture_output=True, text=True, timeout=15)
+                    self.assertEqual(completed.returncode, expected, completed.stderr)
+                    self.assertEqual(receipt_path.read_text(), "earlier run receipt\n")
 
     def test_private_configuration_requires_explicit_opt_in(self):
         with self.assertRaises(ValueError):
