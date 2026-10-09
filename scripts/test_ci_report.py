@@ -127,6 +127,12 @@ class ReporterTests(unittest.TestCase):
                                 retry = {"observed": [observation(test, outcome, 2, exit_code=65 if outcome == "failed" else 0)],
                                          "infrastructure": [], "exit_code": 65 if outcome == "failed" else 0,
                                          "invocations": [{"exit_code": 65 if outcome == "failed" else 0}]}
+                                execution_day = [date(2026, 10, 1)]
+                                def simulator_preflight(*args):
+                                    execution_day[0] = date(2026, 10, 2)
+                                    if number == 0:
+                                        raise OSError("simulator unavailable")
+                                retry_runner = Mock(return_value=retry)
                                 with ExitStack() as stack:
                                     patches = [patch.object(fixture, "ROOT", root), patch.object(fixture, "run_identity", return_value=identity),
                                         patch.object(fixture, "source_metadata", return_value=(ci_report.NIGHTLY_PATH, False)),
@@ -135,13 +141,14 @@ class ReporterTests(unittest.TestCase):
                                         patch.object(fixture, "load_registry", return_value=(registry, hashlib.sha256(
                                             blobs["scripts/ci-known-flaky.json"]).hexdigest())),
                                         patch.object(fixture.subprocess, "run", return_value=Mock(stdout=b"{}")),
-                                        patch.object(fixture, "verify_simulator_device", side_effect=OSError("simulator unavailable") if number == 0 else None),
+                                        patch.object(fixture, "verify_simulator_device", side_effect=simulator_preflight),
+                                        patch.object(fixture, "date", Mock(today=Mock(side_effect=lambda: execution_day[0]))),
                                         patch.object(fixture, "prepare_fixture_result_bundle", return_value=bundle),
                                         patch.object(fixture.subprocess, "Popen", side_effect=popen),
                                         patch.object(fixture, "wait_for_service", return_value=("127.0.0.1", 1)),
                                         patch.object(fixture, "check_products"), patch.object(fixture, "measure_signing", return_value="adhoc"),
                                         patch.object(fixture, "disk_check"), patch.object(fixture, "reset_simulator_app"),
-                                        patch.object(fixture, "run_xcode_attempts", return_value=retry),
+                                        patch.object(fixture, "run_xcode_attempts", retry_runner),
                                         patch.object(fixture, "stop_exact_process"), patch.object(fixture, "finalize_fixture_run", return_value=[])]
                                     for applied in patches:
                                         stack.enter_context(applied)
@@ -151,6 +158,8 @@ class ReporterTests(unittest.TestCase):
                                         "--output-dir", str(output), "--shard", shard, "--shard-manifest", str(root / "scripts/ci-ui-shards.json"),
                                         "--only-testing", "immichSlidesUITests/" + test["key"], "--listed-only-retry"])
                                 self.assertEqual(1 if number == 0 else 65 if number == 1 else 0, result)
+                                if number != 0:
+                                    self.assertEqual(date(2026, 10, 2), retry_runner.call_args.kwargs["today"])
                             summary = json.loads((output / "summary.json").read_text())
                             self.assertEqual(ui_plan["hashes"][device], summary["hashes"])
                             self.assertEqual(item["declared"], summary["population"]["declared"])

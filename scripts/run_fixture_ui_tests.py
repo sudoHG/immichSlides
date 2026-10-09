@@ -424,7 +424,7 @@ def main(argv=None):
         declared = inputs_record["population"]["declared"]
         policy, deselections = inputs_record["policy"], inputs_record["deselections"]
         registry, revision = inputs_record["registry"], inputs_record["registry_revision"]
-        evaluated_on = date.today() if registry is not None else None
+        evaluated_on = None
         rows = coverage_rows(declared, None, {"testNodes": []}, args.device)
         summary = {"schema_version": 1, "identity": identity,
                    "source": {"repository": identity["repository"], "workflow_path": workflow,
@@ -527,6 +527,7 @@ def main(argv=None):
             "-skip-testing:immichSlidesUITests/" + entry["identity"]["key"] for entry in deselections]
         print("Fixture test command: " + shlex.join(command), flush=True)
         if args.listed_only_retry:
+            evaluated_on = date.today()
             registry_hash = summary["hashes"]["policies"]["known-flaky"]
             expected_by_key = {entry["key"]: entry for entry in selected}
             read = partial(read_xcode_observations, expected_device=(udid, "tv" if args.device == "appletv" else args.device),
