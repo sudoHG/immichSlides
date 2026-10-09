@@ -914,26 +914,56 @@ class PublisherTests(unittest.TestCase):
     def test_empty_fork_run_pr_list_uses_commit_mapping_and_refuses_stale_or_wrong_source(self):
         fork = copy.deepcopy(PR)
         fork["head"]["repo"]["full_name"] = "contributor/photos"
+        fork["head"]["repo"]["owner"] = {"login": "contributor"}
         run = dict(RUN, pull_requests=[], head_repository=fork["head"]["repo"])
         class RecordedAPI:
             repository = REPOSITORY
-            def __init__(self, current):
+            def __init__(self, current, *, commit_mapping=True, head_candidates=None, pagination_error=False):
                 self.current, self.paths = current, []
+                self.commit_mapping, self.head_candidates = commit_mapping, head_candidates
+                self.pagination_error = pagination_error
             def repo(self, path):
                 self.paths.append(path)
-                return [{"number": 7}] if path == "commits/" + HEAD + "/pulls" else self.current
-        api = RecordedAPI(fork)
-        self.assertEqual(map_pr(api, run), fork)
-        self.assertEqual(api.paths, ["commits/" + HEAD + "/pulls", "pulls/7"])
-        newer = copy.deepcopy(fork)
-        newer["head"]["sha"] = "e" * 40
+                if path == "commits/" + HEAD + "/pulls":
+                    return [{"number": 7}] if self.commit_mapping else []
+                return dict(self.current, number=int(path.removeprefix("pulls/")))
+            def pages(self, path, collection=None, **filters):
+                self.paths.append((path, filters))
+                if self.pagination_error:
+                    raise ContractError("GitHub pagination limit reached; publication refused")
+                return [{"number": 7}] if self.head_candidates is None else self.head_candidates
+        for commit_mapping in (True, False):
+            with self.subTest(commit_mapping=commit_mapping):
+                api = RecordedAPI(fork, commit_mapping=commit_mapping)
+                self.assertEqual(map_pr(api, run), fork)
+                paths = ["commits/" + HEAD + "/pulls"]
+                if not commit_mapping:
+                    paths.append(("pulls", {"state": "open", "base": "main", "head": "contributor:feature"}))
+                self.assertEqual(api.paths, paths + ["pulls/7"])
+                newer = copy.deepcopy(fork)
+                newer["head"]["sha"] = "e" * 40
+                with self.assertRaises(ContractError):
+                    map_pr(RecordedAPI(newer, commit_mapping=commit_mapping), run)
+                self.assertEqual(map_pr(RecordedAPI(newer, commit_mapping=commit_mapping), run, current=False), newer)
+                for field, value in (("state", "closed"), ("head-repository", "another/photos"),
+                                     ("base-ref", "other"), ("base-repository", "another/photos")):
+                    with self.subTest(field=field):
+                        wrong = copy.deepcopy(fork)
+                        if field == "state":
+                            wrong["state"] = value
+                        elif field == "head-repository":
+                            wrong["head"]["repo"]["full_name"] = value
+                        elif field == "base-ref":
+                            wrong["base"]["ref"] = value
+                        else:
+                            wrong["base"]["repo"]["full_name"] = value
+                        with self.assertRaises(ContractError):
+                            map_pr(RecordedAPI(wrong, commit_mapping=commit_mapping), run)
+        for candidates in ([], [{"number": 7}, {"number": 8}]):
+            with self.subTest(head_candidates=candidates), self.assertRaises(ContractError):
+                map_pr(RecordedAPI(fork, commit_mapping=False, head_candidates=candidates), run)
         with self.assertRaises(ContractError):
-            map_pr(RecordedAPI(newer), run)
-        self.assertEqual(map_pr(RecordedAPI(newer), run, current=False), newer)
-        wrong = copy.deepcopy(fork)
-        wrong["head"]["repo"]["full_name"] = "another/photos"
-        with self.assertRaises(ContractError):
-            map_pr(RecordedAPI(wrong), run)
+            map_pr(RecordedAPI(fork, commit_mapping=False, pagination_error=True), run)
 
     def test_repeated_mismatch_requires_a_persisted_earlier_attempt_from_the_app(self):
         run = dict(RUN, run_attempt=3)
