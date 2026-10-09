@@ -237,7 +237,7 @@ def read_policy():
     fields(policy, {"schema_version", "live_tier_in_scope", "built_tiers"}, "nightly policy")
     require(type(policy["schema_version"]) is int and policy["schema_version"] == 1, "unsupported nightly policy")
     require(type(policy["live_tier_in_scope"]) is bool, "live scope must be boolean")
-    require(policy["built_tiers"] == ["strict"], "skeleton only implements strict")
+    require(policy["built_tiers"] in (["strict"], ["strict", "ui"]), "unsupported nightly tiers")
     return policy
 
 
@@ -260,7 +260,9 @@ def main(argv=None):
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--records-dir", type=Path)
     parser.add_argument("--matrix-job-result", choices=("success", "failure", "cancelled", "skipped"))
+    parser.add_argument("--ui-record", type=Path)
     parser.add_argument("--only-shard", help="dispatch one diagnostic shard while retaining the full plan")
+    parser.add_argument("--diagnostic-tier", choices=("ui", "strict"), help="diagnose one tier without establishing complete nightly coverage")
     args = parser.parse_args(argv)
     output = args.output_dir.resolve()
     require(output != ROOT and ROOT not in output.parents and not os.path.lexists(output), "output must be fresh and outside checkout")
@@ -276,9 +278,11 @@ def main(argv=None):
               "fork_originated": fork, "ci_changing": None, "approval_based": False}
     planned = shards(manifest)
     if args.command == "plan":
+        require(not (args.only_shard and args.diagnostic_tier), "select one diagnostic mode")
         selected = select_dispatch_shards(planned, args.only_shard)
         plan = {"schema_version": 1, "identity": identity, "source": source, "run": run, "hashes": hashes,
-                "shards": planned, "max_parallel": 2, "started_epoch": time.time(), "diagnostic_shard": args.only_shard or None}
+                "shards": planned, "max_parallel": 2, "started_epoch": time.time(),
+                "diagnostic_shard": args.only_shard or (args.diagnostic_tier + "-only" if args.diagnostic_tier else None)}
         write_json(output / "plan.json", plan)
         matrix = {"include": [{key: shard[key] for key in ("id", "platform", "device")} for shard in selected]}
         print(json.dumps(matrix, separators=(",", ":")))
@@ -292,9 +296,10 @@ def main(argv=None):
                 and plan["shards"] == planned, "plan differs from workflow checkout, run or matrix")
         require(type(plan["started_epoch"]) in (int, float) and math.isfinite(plan["started_epoch"])
                 and plan["started_epoch"] <= time.time() and plan["max_parallel"] == 2, "invalid plan capacity")
-        select_dispatch_shards(planned, plan.get("diagnostic_shard"))
+        if plan.get("diagnostic_shard") not in {"ui-only", "strict-only"}:
+            select_dispatch_shards(planned, plan.get("diagnostic_shard"))
         if plan.get("diagnostic_shard"):
-            errors.append("single-shard diagnostic cannot establish a complete nightly")
+            errors.append("partial nightly diagnostic cannot establish a complete nightly")
     except (ValueError, OSError, KeyError) as error:
         errors.append("invalid or missing scheduling record: " + str(error))
         plan = {"started_epoch": time.time(), "max_parallel": 2}
@@ -353,12 +358,34 @@ def main(argv=None):
                              "status": result["status"], "release_eligible": False,
                              "release_ineligible_reasons": result["release_ineligible_reasons"], "hashes": hashes,
                              "review_packages": result["review_packages"]}
+    if "ui" in policy["built_tiers"]:
+        from ci_nightly_ui import aggregate_ui, current_plan, parse_ui_plan
+        ui_plan = current_plan(ROOT)
+        try:
+            require(args.ui_record is not None, "nightly UI aggregate path is missing")
+            ui = decode(args.ui_record.read_text())
+            stored = parse_ui_plan(ui["plan"])
+            require(all(stored[key] == ui_plan[key] for key in ("identity", "source", "run", "hashes", "shards", "max_parallel")),
+                    "nightly UI aggregate differs from checkout, population or attempt")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            result["errors"].append("missing or invalid nightly UI aggregate: " + str(error))
+            ui = aggregate_ui(ui_plan, output / "missing-ui-records", matrix_job_result="failure", root=ROOT)
+        result.update(schema_version=2, ui=ui)
+        result["tiers"]["ui"] = ui["verdict"]["status"]
+        if ui["verdict"]["status"] != "passed":
+            result["errors"].extend("UI: " + error for error in ui["verdict"]["errors"])
+            result["status"] = "failed"
+        result["rollup_entry"]["status"] = result["status"]
     write_json(output / "nightly.json", result)
     lines = [f"# Nightly: {result['status']}", "", "Release eligible: **no — skeleton nightly**", "",
              f"Matrix equality: {result['matrix'].get('equal', False)}; scheduled {len(scheduled)}, executed {result['matrix'].get('executed', 0)}.",
              f"Shards: {len(planned)}; max-parallel: 2; minimum waves: {result['capacity']['minimum_shard_waves']}; wall: {result['capacity']['wall_seconds']:.1f}s.",
              "Queue delay and final job teardown are reported separately by the Actions job timestamps.", "", "| Tier | Status |", "|---|---|"]
     lines.extend(f"| {tier} | {status} |" for tier, status in result["tiers"].items())
+    if "ui" in result:
+        ui = result["ui"]
+        lines.extend(["", f"UI scheduled {ui['verdict']['matrix']['scheduled']}; executed {ui['verdict']['matrix']['executed']}; deselected {ui['verdict']['matrix']['deselected']}; missing {len(ui['verdict']['matrix']['missing'])}.",
+                      f"UI shards {ui['capacity']['shards']}; max-parallel {ui['capacity']['max_parallel']}; minimum waves {ui['capacity']['minimum_shard_waves']}; observed waves {len(ui['capacity']['start_order_waves'])}; wall {ui['capacity']['wall_seconds']:.1f}s."])
     lines.extend(["", f"P2 contracts needing human review: {len(result['needs_human_review'])}.",
                   f"Informational Vision outcomes: {len(result['informational'])}.", "", "| Case | Outcome |", "|---|---|"])
     lines.extend(f"| {identity_key(item['identity'])} | {item['outcome']} |" for item in result["observed"])

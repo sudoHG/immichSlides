@@ -15,6 +15,11 @@ on:
         required: false
         default: false
         type: boolean
+      ui_only:
+        description: Diagnose complete fixture UI without strict or live jobs; cannot establish a complete nightly
+        required: false
+        default: false
+        type: boolean
       strict_only:
         description: Diagnose strict shards without live jobs or test-server traffic
         required: false
@@ -29,6 +34,9 @@ on:
     paths:
       - .github/workflows/ci-nightly.yml
       - scripts/ci_nightly.py
+      - scripts/ci_nightly_ui.py
+      - scripts/ci_ui_tests.py
+      - scripts/ci-ui-shards.json
       - scripts/nightly-*.json
       - scripts/run_strict_ci_tracer.py
       - scripts/ci_live_tests.py
@@ -53,6 +61,7 @@ jobs:
       contents: read
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      ui_matrix: ${{ steps.ui_matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -72,8 +81,22 @@ jobs:
           NIGHTLY_DIAGNOSTIC_SHARD: ${{ inputs.shard }}
         run: |
           matrix=$("$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_nightly.py plan \
-            --output-dir "$RUNNER_TEMP/nightly-plan" --only-shard "$NIGHTLY_DIAGNOSTIC_SHARD")
+            --output-dir "$RUNNER_TEMP/nightly-plan" --only-shard "$NIGHTLY_DIAGNOSTIC_SHARD" \
+            ${{ inputs.ui_only && '--diagnostic-tier ui' || inputs.strict_only && '--diagnostic-tier strict' || '' }})
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+      - name: Plan the complete default-plan UI population on every device
+        id: ui_matrix
+        run: |
+          matrix=$("$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_nightly_ui.py plan \
+            --output-dir "$RUNNER_TEMP/nightly-ui-plan")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+      - name: Publish the UI scheduling record
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-ui-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-ui-plan/plan.json
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
       - name: Publish the scheduling record
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -83,7 +106,7 @@ jobs:
           if-no-files-found: error
 
   strict:
-    if: github.event_name != 'pull_request' && !inputs.live_only && !inputs.probe_environment_refusal
+    if: github.event_name != 'pull_request' && !inputs.live_only && !inputs.ui_only && !inputs.probe_environment_refusal
     needs: plan
     name: nightly-strict-${{ matrix.id }}
     runs-on: xcode-27
@@ -184,12 +207,13 @@ jobs:
 
   aggregate:
     if: ${{ !cancelled() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.probe_environment_refusal }}
-    needs: [plan, strict]
+    needs: [plan, strict, ui-aggregate]
     name: nightly-aggregate
     runs-on: xcode-27
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -214,14 +238,22 @@ jobs:
         with:
           pattern: nightly-strict-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/nightly-records
+      - name: Download this attempt's UI aggregate
+        if: always()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nightly-ui-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-ui-aggregate
       - name: Validate provenance, matrix equality and the fixed nightly aggregate
         if: always()
         env:
           NIGHTLY_MATRIX_JOB_RESULT: ${{ needs.strict.result }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_nightly.py aggregate \
             --plan "$RUNNER_TEMP/nightly-plan/plan.json" --records-dir "$RUNNER_TEMP/nightly-records" \
-            --output-dir "$RUNNER_TEMP/nightly-aggregate" --matrix-job-result "$NIGHTLY_MATRIX_JOB_RESULT"
+            --output-dir "$RUNNER_TEMP/nightly-aggregate" --matrix-job-result "$NIGHTLY_MATRIX_JOB_RESULT" \
+            --ui-record "$RUNNER_TEMP/nightly-ui-aggregate/nightly-ui.json"
       - name: Publish the aggregate and non-eligible rollup entry
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -236,10 +268,240 @@ jobs:
           if test -f "$RUNNER_TEMP/nightly-aggregate/nightly.md"; then
             cat "$RUNNER_TEMP/nightly-aggregate/nightly.md" >> "$GITHUB_STEP_SUMMARY"
           fi
-          rm -rf "$RUNNER_TEMP/nightly-plan" "$RUNNER_TEMP/nightly-records" "$RUNNER_TEMP/nightly-aggregate"
+          rm -rf "$RUNNER_TEMP/nightly-plan" "$RUNNER_TEMP/nightly-records" "$RUNNER_TEMP/nightly-aggregate" "$RUNNER_TEMP/nightly-ui-aggregate"
+
+
+  ui-archive:
+    needs: live-build
+    if: always() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal && needs.live-build.result == 'success'
+    name: ui-archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      app_affected: ${{ steps.select.outputs.app_affected }}
+      run_ui: ${{ steps.select.outputs.run_ui }}
+      ios_artifact_id: ${{ steps.select.outputs.ios_artifact_id }}
+      ios_producer_run_id: ${{ steps.select.outputs.ios_producer_run_id }}
+      tvos_artifact_id: ${{ steps.select.outputs.tvos_artifact_id }}
+      tvos_producer_run_id: ${{ steps.select.outputs.tvos_producer_run_id }}
+      selection_artifact: ${{ steps.select.outputs.selection_artifact }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Create the pinned Linux reader environment
+        run: |
+          python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ui-python"
+          echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Verify both current-attempt nightly archives
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py wait-archive \
+            --output-dir "$RUNNER_TEMP/ui-selection" --timeout-minutes 120
+      - name: Publish the bound selection records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-archive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ui-selection/summary.json
+            ${{ runner.temp }}/ui-selection/summary.md
+            ${{ runner.temp }}/ui-selection/archive-selection*.json
+            ${{ runner.temp }}/ui-selection/archive-refusals*.json
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+      - name: Display selection summary
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/ui-selection/summary.md"; then
+            cat "$RUNNER_TEMP/ui-selection/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  ui-shards:
+    name: ui-${{ matrix.device }}-${{ matrix.shard }}
+    needs: [plan, ui-archive, strict]
+    if: always() && needs.ui-archive.outputs.run_ui == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 110
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.ui_matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: ui-source
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Preflight and select the pinned Xcode
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+      - name: Verify pins and prepare Python
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
+          echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Read the retained archive job's selection record
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.ui-archive.outputs.selection_artifact }}
+          path: ${{ runner.temp }}/ui-selection
+      - name: Download by verified immutable archive ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_artifact_id || needs.ui-archive.outputs.ios_artifact_id }}
+          path: ${{ runner.temp }}/ui-archive
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_producer_run_id || needs.ui-archive.outputs.ios_producer_run_id }}
+      - name: Create only this shard's pinned simulator
+        working-directory: ui-source
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py simulator --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
+          if test '${{ matrix.device }}' = appletv; then
+            echo 'UI_PLATFORM=tvos' >> "$GITHUB_ENV"
+          else
+            echo 'UI_PLATFORM=ios' >> "$GITHUB_ENV"
+          fi
+      - name: Run the UI target from relocated Products
+        working-directory: ui-source
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py run --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
+            --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
+            --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
+            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30
+      - name: Recheck the sensitive scan before publishing
+        id: scan
+        if: always()
+        working-directory: ui-source
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py check-upload --output-dir "$RUNNER_TEMP/ui-records"
+      - name: Publish only scanned fixture records
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-${{ matrix.device }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ui-records/summary.json
+            ${{ runner.temp }}/ui-records/summary.md
+            ${{ runner.temp }}/ui-records/fixture-coverage.json
+            ${{ runner.temp }}/ui-records/fixture-coverage.md
+            ${{ runner.temp }}/ui-records/coverage-verdict.json
+            ${{ runner.temp }}/ui-records/compiled-tests.json
+            ${{ runner.temp }}/ui-records/official-*.json
+            ${{ runner.temp }}/ui-records/retry-invocations.json
+            ${{ runner.temp }}/ui-records/shard-timing.json
+            ${{ runner.temp }}/ui-records/wait-configuration.json
+            ${{ runner.temp }}/ui-records/export-timing*.json
+            ${{ runner.temp }}/ui-records/export-read-timing.json
+            ${{ runner.temp }}/ui-records/sensitive-scan.json
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+      - name: Publish scanned public failure attachments
+        if: always() && steps.scan.outcome == 'success' && steps.scan.outputs.has_screenshots == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-failures-${{ matrix.device }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ui-records/failure-screenshots
+          retention-days: 7
+          if-no-files-found: error
+      - name: Display summary and remove task-owned products
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/ui-records/summary.md"; then
+            cat "$RUNNER_TEMP/ui-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -n "${UI_SIMULATOR:-}"; then
+            xcrun simctl shutdown "$UI_SIMULATOR" || true
+            xcrun simctl delete "$UI_SIMULATOR"
+          fi
+          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive"
+
+
+  ui-aggregate:
+    if: always() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal
+    needs: [plan, ui-archive, ui-shards]
+    name: nightly-ui-aggregate
+    runs-on: xcode-27
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Reject private configuration and select pinned toolchain
+        run: |
+          /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
+          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
+            --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
+      - name: Download this attempt's full UI plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nightly-ui-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-ui-plan
+      - name: Download this attempt's iPhone UI records
+        if: always()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ui-iphone-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-ui-records
+      - name: Download this attempt's iPad UI records
+        if: always()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ui-ipad-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-ui-records
+      - name: Download this attempt's Apple TV UI records
+        if: always()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ui-appletv-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-ui-records
+      - name: Judge every shard and require the complete default-plan union
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UI_MATRIX_JOB_RESULT: ${{ needs.ui-shards.result }}
+        run: |
+          "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_nightly_ui.py aggregate \
+            --plan "$RUNNER_TEMP/nightly-ui-plan/plan.json" --records-dir "$RUNNER_TEMP/nightly-ui-records" \
+            --output-dir "$RUNNER_TEMP/nightly-ui-aggregate" --matrix-job-result "$UI_MATRIX_JOB_RESULT"
+      - name: Publish the failed or passing UI aggregate
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-ui-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-ui-aggregate
+          retention-days: 7
+          if-no-files-found: error
+      - name: Display UI coverage and capacity
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/nightly-ui-aggregate/nightly-ui.md"; then
+            cat "$RUNNER_TEMP/nightly-ui-aggregate/nightly-ui.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          rm -rf "$RUNNER_TEMP/nightly-ui-plan" "$RUNNER_TEMP/nightly-ui-records" "$RUNNER_TEMP/nightly-ui-aggregate"
 
   live-admission:
-    if: ${{ !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal }}
+    if: ${{ !inputs.strict_only && !inputs.ui_only && !inputs.shard && !inputs.probe_environment_refusal }}
     runs-on: xcode-27
     timeout-minutes: 5
     permissions:
@@ -256,7 +518,8 @@ jobs:
         run: /usr/bin/python3 -B scripts/ci_live_tests.py admit
 
   live-canary:
-    needs: live-build
+    needs: [live-admission, live-build]
+    if: github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true'
     runs-on: xcode-27
     timeout-minutes: 40
     permissions:
@@ -337,7 +600,9 @@ jobs:
       - run: /usr/bin/false
 
   live-build:
-    if: github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true'
+    if: >-
+      always() && (github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true' ||
+      (github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal))
     needs: live-admission
     runs-on: xcode-27
     timeout-minutes: 40
@@ -356,8 +621,10 @@ jobs:
           persist-credentials: false
       - name: Repeat admission and reject private configuration before setup
         working-directory: live-producer
+        env:
+          LIVE_ADMITTED: ${{ needs.live-admission.outputs.admitted }}
         run: |
-          if test "$GITHUB_EVENT_NAME" != pull_request; then
+          if test "$GITHUB_EVENT_NAME" != pull_request && test "$LIVE_ADMITTED" = true; then
             /usr/bin/python3 -B scripts/ci_live_tests.py admit
           fi
           /usr/bin/python3 -B -c 'from pathlib import Path; import sys; sys.path.insert(0,"scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'

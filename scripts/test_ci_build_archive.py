@@ -24,6 +24,49 @@ from ci_summary import ContractError
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_nightly_ui_requires_its_exact_attempt_archive_and_never_reuses_a_pr_verdict(self):
+        identity = {"schema_version": 1, "repository": "owner/repo", "event": "schedule", "ref": "refs/heads/main",
+                    "commit_sha": "a" * 40, "tree_sha": "d" * 40}
+        context = {"identity": identity, "run": {"id": "123", "attempt": 1}}
+        producer = {"id": 123, "path": ui.NIGHTLY_WORKFLOW, "workflow_id": 20, "run_attempt": 1,
+                    "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"},
+                    "event": "schedule", "head_sha": identity["commit_sha"]}
+        metadata = {"id": 7, "name": "build-ios-123-1", "expired": False,
+                    "workflow_run": {"id": 123, "head_sha": identity["commit_sha"]}}
+        manifest = self.manifest()
+        manifest.update(identity=identity, pins_sha256=archive.file_hash(archive.ROOT / "scripts/ci-pins.json"))
+        manifest["producer"]["workflow_path"] = ui.NIGHTLY_WORKFLOW
+        class API:
+            repository = "owner/repo"
+            def repo(self, path):
+                return {"id": 20, "path": ui.NIGHTLY_WORKFLOW} if path.startswith("actions/workflows/") else producer
+            def pages(self, path, collection):
+                return [metadata]
+        with patch.object(ui, "downloaded_archive", return_value=(manifest, "e" * 64)):
+            selection = ui.select_nightly_archive(API(), context, "ios")
+            self.assertEqual(("123", 1, 7), (selection["producer_run_id"], selection["producer_attempt"], selection["artifact_id"]))
+            for target, key, value in ((producer, "run_attempt", 2), (producer, "workflow_id", 21),
+                                       (producer, "head_sha", "b" * 40), (metadata, "name", "build-ios-123-2"),
+                                       (metadata, "expired", True), (manifest, "platform", "tvos")):
+                original = target[key]
+                with self.subTest(key=key, value=value), self.assertRaises(ContractError):
+                    target[key] = value
+                    ui.select_nightly_archive(API(), context, "ios")
+                target[key] = original
+        from types import SimpleNamespace
+        context.update(source={"repository": identity["repository"], "event": identity["event"],
+                               "workflow_path": ui.NIGHTLY_WORKFLOW, "fork_originated": False, "ci_changing": None})
+        context["run"].update(tier="ui-infrastructure", job="ui-archive", shard=None)
+        with patch.object(ui, "context", return_value=context), patch.object(ui, "workspace_preflight"), \
+                patch.object(ui, "output") as outputs, patch.object(ui, "GitHub"), \
+                patch.dict(ui.os.environ, {"GH_TOKEN": "test-placeholder"}), \
+                patch.object(ui, "select_nightly_archive", return_value=selection) as select, \
+                patch.object(ui, "select_archive", side_effect=AssertionError("nightly cannot select another workflow's archive")), \
+                patch("ci_ui_reuse.find_reuse", side_effect=AssertionError("nightly must execute the complete UI population")):
+            self.assertEqual(ui.wait_archive(SimpleNamespace(output_dir=self.root / "nightly", timeout_minutes=1)), 0)
+        self.assertEqual(["ios", "tvos"], [call.args[-1] for call in select.call_args_list])
+        self.assertIn(unittest.mock.call("run_ui", "true"), outputs.call_args_list)
+
     def test_historical_reproduction_preserves_default_and_refuses_unsupported_factor(self):
         for factor, help_text, expected in ((1, "legacy usage", []),
                                             (2, "usage: run --wait-factor WAIT_FACTOR", ["--wait-factor", "2"]),

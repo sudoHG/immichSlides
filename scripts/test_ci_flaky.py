@@ -30,6 +30,22 @@ def registry():
 
 
 class RegistryTests(unittest.TestCase):
+    def test_branch_registry_is_available_only_to_bound_nightly_fixture_ui_dispatch(self):
+        environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": "a" * 40,
+                       "GITHUB_REF": "refs/heads/candidate", "GITHUB_REPOSITORY": "owner/repo", "GITHUB_JOB": "ui-shards",
+                       "GITHUB_WORKFLOW_REF": "owner/repo/.github/workflows/ci-nightly.yml@refs/heads/candidate"}
+        with mock.patch("ci_flaky.subprocess.check_output", return_value="a" * 40):
+            self.assertEqual(registry_revision(Path("."), environment), "a" * 40)
+            for changed in ({"GITHUB_EVENT_NAME": "schedule"}, {"GITHUB_EVENT_NAME": "push"},
+                            {"GITHUB_JOB": "live-unit"}, {"GITHUB_JOB": "strict"}, {"GITHUB_SHA": "b" * 40},
+                            {"GITHUB_WORKFLOW_REF": "owner/repo/.github/workflows/ci-ui.yml@refs/heads/candidate"},
+                            {"GITHUB_WORKFLOW_REF": "owner/repo/.github/workflows/ci-nightly.yml@refs/heads/main"},
+                            {"GITHUB_REPOSITORY": "foreign/repo"}):
+                with self.subTest(changed=changed), self.assertRaises(ContractError):
+                    registry_revision(Path("."), environment | changed)
+            with self.assertRaises(ContractError):
+                registry_revision(Path("."), environment, "HEAD")
+
     def test_schedule_consumes_only_tested_main_registry(self):
         environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule", "GITHUB_SHA": "a" * 40,
                        "GITHUB_REF": "refs/heads/main"}

@@ -1,14 +1,15 @@
-# Skeleton nightly
+# Nightly strict and fixture UI tiers
 
 `ci-nightly` schedules at 21:15 UTC on the default branch
 and supports `workflow_dispatch` on a selected branch. PRs touching its entry points
-run planning and credential-free live probes. Strict execution is proven by dispatch
-before merge. It has read-only permissions and no publisher, reporter or release
+run planning and credential-free live probes. Full strict and fixture UI execution
+is proven by dispatch before merge. It has read-only permissions and no publisher, reporter or release
 authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
 `immich-test-server` environment after credential-free admission.
 
 ```bash
 gh workflow run ci-nightly.yml --ref <branch> -f strict_only=true
+gh workflow run ci-nightly.yml --ref <branch> -f ui_only=true
 gh run list --workflow ci-nightly.yml --branch <branch>
 gh workflow run ci-nightly.yml --ref <branch> -f shard=ipad-immichSlides-iOS-debug-3
 python3 -B scripts/ci_nightly.py plan --output-dir '<fresh-outside-repo>/plan'
@@ -33,7 +34,11 @@ Use `strict_only=true` for full strict diagnostics on a branch. A selected `shar
 also skips all live admission/build/canary/unit jobs, including on main, so strict
 diagnostics generate no public test Immich server traffic. A plain branch dispatch
 attempts live admission and is refused because live execution requires main; its
-strict results remain diagnostic. `probe_environment_refusal=true` runs only the
+strict and fixture UI results remain diagnostic. `ui_only=true` runs the complete
+fixture UI population and the two credential-free archive producers, while skipping
+strict and live execution. Like strict-only and single-shard diagnostics, its fixed
+nightly aggregate stays red for incomplete nightly coverage. It cannot close nightly
+issues or establish release eligibility. `probe_environment_refusal=true` runs only the
 credential-free protected-environment refusal job on a non-main ref. On main it
 intentionally skips every job, including live execution; it is not a live proof.
 Checkout, workflow, matrix, policy, tree, run or attempt mismatches fail. Schedule
@@ -101,6 +106,58 @@ runner, test and infrastructure deadlines are unchanged; reaching the job cap is
 failure. Planning/aggregate have 15-minute caps.
 Hosted disk floor stays 30 GiB; local default stays 80 GiB.
 
+## Complete fixture UI
+
+Scheduled runs and ordinary dispatches plan all three devices' complete default-plan
+UI populations at the checked-out main head. Branch dispatches provide diagnostic
+evidence for a candidate commit. The [existing UI class manifest](CI_UI.md#manifest-and-union)
+partitions each device into shards. The current v1 manifest has default, navigation
+and visual: nine shards total. Names, counts and the matrix come from that manifest
+through the shared helpers; the separate v2 exact-method reader can support additional
+visual partitions without a nightly protocol change. This PR does not split the manifest.
+New default-plan tests join this population automatically. Evidence plans, strict-only
+tests, offline performance and the uncapped benchmark are outside this UI tier; the
+performance work remains part 2 of the nightly ticket.
+
+The existing credential-free `live-build` jobs produce one iOS and one tvOS archive
+for the same event, source, run and attempt. iPhone/iPad share the iOS archive and
+Apple TV uses tvOS. Linux verifies their immutable artifact IDs and manifests without
+waiting for a different workflow or reusing a PR verdict. Consumers use the same
+`ci_ui_tests.py` relocation, fixture-set C runner, official exports, listed-only retry
+and sensitive-scan path as `ci-ui`; no app or UI test code is added. A branch acceptance
+dispatch reads its tested HEAD registry only in the `ci-nightly` fixture `ui-shards`
+job with an exact workflow/ref binding; other branch registry consumers are refused.
+This branch evidence remains self-reported and diagnostic. Live admission and
+credential-bearing jobs retain their independent main-only boundary.
+
+The UI matrix waits for the strict matrix to settle, then runs with `max-parallel: 2`
+and `fail-fast: false`. Minimum waves round the actual shard count up after division
+by two: the current nine shards require five start-order waves, without
+reserved runner slots. Existing invocation, export and job timeouts remain bounded.
+Each shard publishes timing and its bound summary even after a test failure when
+the sensitive scan succeeds. The always-run UI aggregate checks each shard verdict,
+compiled population and executed/default-plan union, retaining approved skips and
+both retry attempts. Missing shards or samples, duplicate/foreign records, missing
+timing and failed/cancelled matrix jobs remain red.
+
+`nightly-ui.json` and `nightly-ui.md` record every shard verdict, scheduled/executed/
+deselected/missing counts, wall seconds from UI planning through aggregation, shard
+intervals and observed start-order waves. The fixed `nightly.json` v2 embeds this
+aggregate, and the [trusted reporter](CI_REPORT.md) independently reads the same
+attempt's shard artifacts and recomputes the UI verdict. UI failures enter the existing
+nightly failure issue lifecycle; missing evidence cannot close an issue. The trusted
+reader must land before this producer under the [reader-first rule](CI_PUBLISHER.md).
+
+For a branch acceptance run, use the installed trusted reader in read-only mode:
+
+```bash
+python3 -B scripts/ci_report.py --dry-run --diagnostic-nightly --run-id <RUN_ID> \
+    --output-dir '<fresh-outside-repo>/report'
+```
+
+This diagnostic performs no GitHub writes and publishes no trusted history. Production
+reporting accepts only main; a branch result does not replace a main nightly.
+
 ## Results, scope and eligibility
 
 After finalization, the tracer reads official summary and test identity exports whatever
@@ -129,7 +186,8 @@ The aggregate entry point is:
 ```bash
 python3 -B scripts/ci_nightly.py aggregate --plan '<outside-repo>/plan.json' \
     --records-dir '<outside-repo>/shard-artifacts' \
-    --output-dir '<fresh-outside-repo>/aggregate' --matrix-job-result success
+    --output-dir '<fresh-outside-repo>/aggregate' --matrix-job-result success \
+    --ui-record '<outside-repo>/ui-aggregate/nightly-ui.json'
 ```
 
 Run it in the same event/run/attempt context as planning; the hosted workflow supplies
@@ -142,9 +200,9 @@ tracer summary and aggregate must all have the same snapshot commit and tree SHA
 missing or mismatched records remain failures. A single diagnostic shard cannot
 establish complete nightly equality.
 
-[`nightly-policy.json`](../scripts/nightly-policy.json) builds only strict and starts
-with `live_tier_in_scope: false`. UI, offline performance, live and live performance are
-**not yet in scope**, without making the skeleton red. Supplemental live unit jobs
+[`nightly-policy.json`](../scripts/nightly-policy.json) builds strict and fixture UI,
+with `live_tier_in_scope: false`. Offline performance, live and live performance are
+**not yet mandatory aggregate inputs**, without making the skeleton red. Supplemental live unit jobs
 now run independently; mandatory scope/aggregate integration belongs to the separate
 scope ticket. Setting live scope without live
 results fails; enabling it is a separate maintainer decision. Automated cases must pass

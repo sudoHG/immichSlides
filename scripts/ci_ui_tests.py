@@ -32,6 +32,7 @@ from ci_wait_policy import wait_configuration
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-ui.yml"
 GATE_WORKFLOW = ".github/workflows/ci-gate.yml"
+NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 
 
@@ -46,8 +47,9 @@ def git_blob(revision, path):
 def context():
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
     identity = run_identity(os.environ, ci=ci)
-    require(identity["event"] in {"pull_request", "push", "local"}, "UI producer accepts only PR or main pushes")
-    workflow, fork = source_metadata(identity, os.environ, WORKFLOW if ci else None)
+    require(identity["event"] in {"pull_request", "push", "local", "schedule", "workflow_dispatch"}, "unsupported UI producer event")
+    expected_workflow = NIGHTLY_WORKFLOW if identity["event"] in {"schedule", "workflow_dispatch"} else WORKFLOW
+    workflow, fork = source_metadata(identity, os.environ, expected_workflow if ci else None)
     return {"identity": identity,
             "source": {"repository": identity["repository"], "workflow_path": workflow,
                        "event": identity["event"], "fork_originated": fork, "ci_changing": None},
@@ -204,6 +206,30 @@ def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_
     raise ContractError(error + ": no exact-identity gate archive before timeout")
 
 
+def select_nightly_archive(api, ctx, platform_name):
+    run = ctx["run"]
+    workflow = api.repo("actions/workflows/ci-nightly.yml")
+    producer = api.repo("actions/runs/" + run["id"])
+    require(workflow["path"] == NIGHTLY_WORKFLOW and producer["path"] == NIGHTLY_WORKFLOW
+            and producer["workflow_id"] == workflow["id"] and producer["repository"]["full_name"] == api.repository
+            and producer["head_repository"]["full_name"] == api.repository
+            and producer["event"] == ctx["identity"]["event"] and producer["head_sha"] == ctx["identity"]["commit_sha"]
+            and producer["run_attempt"] == run["attempt"], "nightly archive producer provenance differs")
+    artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+    matches = [item for item in artifacts if item["name"] == artifact_name(platform_name, run["id"], run["attempt"])]
+    require(len(matches) == 1, "missing or duplicate current-attempt nightly archive")
+    artifact = matches[0]
+    validate_artifact(artifact, ctx["identity"], run["id"], run["attempt"], platform_name, artifact["id"])
+    manifest, manifest_hash = downloaded_archive(api, artifact)
+    pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+    validate_manifest(manifest, ctx["identity"], run["id"], run["attempt"], platform_name,
+                      pins["xcode"]["build"], file_hash(ROOT / "scripts/ci-pins.json"))
+    return {"schema_version": 1, "identity": ctx["identity"], "platform": platform_name,
+            "producer_run_id": run["id"], "producer_attempt": run["attempt"], "artifact_id": artifact["id"],
+            "artifact_name": artifact["name"], "build_manifest_sha256": manifest_hash,
+            "pins_sha256": file_hash(ROOT / "scripts/ci-pins.json"), "wait_seconds": 0, "refusals": []}
+
+
 def wait_archive(args):
     ctx = context()
     records = args.output_dir.resolve()
@@ -221,6 +247,7 @@ def wait_archive(args):
         if affected:
             api = GitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"])
             from ci_ui_reuse import find_reuse
+            nightly = ctx["identity"]["event"] in {"schedule", "workflow_dispatch"}
             reuse = find_reuse(api, ctx["identity"]) if ctx["identity"]["event"] == "push" else None
             output("run_ui", str(reuse is None).lower())
             if reuse is not None:
@@ -230,7 +257,7 @@ def wait_archive(args):
             else:
                 deadline = started + args.timeout_minutes * 60
                 for platform_name in ("ios", "tvos"):
-                    selection = select_archive(api, ctx["identity"], timeout_seconds=max(0, deadline - time.monotonic()),
+                    selection = select_nightly_archive(api, ctx, platform_name) if nightly else select_archive(api, ctx["identity"], timeout_seconds=max(0, deadline - time.monotonic()),
                                                platform_name=platform_name,
                                                record_refusals=lambda rows, name=platform_name: write_json(records / ("archive-refusals-" + name + ".json"), rows))
                     selection["timeout_minutes"] = args.timeout_minutes
@@ -408,10 +435,11 @@ def run_shard(args):
                    "--min-free-gib", str(args.min_free_gib), "--listed-only-retry", "--failure-screenshots"]
         for entry in shard:
             command += ["--only-testing", "immichSlidesUITests/" + entry["key"]]
-        started = time.monotonic()
+        started, started_epoch = time.monotonic(), time.time()
         code = fixture_main(command)
         write_json(args.output_dir / "shard-timing.json", {"schema_version": 1, "device": args.device, "shard": args.shard,
                    "wall_seconds": time.monotonic() - started, "exit_code": code,
+                   "started_epoch": started_epoch, "finished_epoch": time.time(),
                    "max_parallel": 2, "invocation_timeout_minutes": args.timeout_minutes,
                    "total_timeout_minutes": args.total_timeout_minutes, "result_export_timeout_seconds": args.result_export_timeout_seconds})
         return code
