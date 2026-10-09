@@ -247,7 +247,8 @@ extension FilterSummaryIOSVisualUITests {
         shouldPrepareFilterEditorVisuals: Bool = false,
         shouldForceAutoPlayOff: Bool = false,
         shouldShowExifSamplingDebugOverlay: Bool = false,
-        acceptanceLocale: LocalizedAcceptanceLocale? = nil
+        acceptanceLocale: LocalizedAcceptanceLocale? = nil,
+        extraLaunchEnvironment: [String: String] = [:]
     ) throws -> XCUIApplication {
 
         let app: XCUIApplication
@@ -285,6 +286,7 @@ extension FilterSummaryIOSVisualUITests {
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         try requireServerAlbumAndPerson()
         app.launchEnvironment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] = "1"
+        app.launchEnvironment.merge(extraLaunchEnvironment) { _, new in new }
         if shouldPrepareFilterEditorVisuals {
             app.launchEnvironment["UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS"] = "1"
         }
@@ -585,7 +587,8 @@ extension FilterSummaryIOSVisualUITests {
         shouldPrepareFilterEditorVisuals: Bool = false,
         shouldForceAutoPlayOff: Bool = false,
         shouldShowExifSamplingDebugOverlay: Bool = false,
-        acceptanceLocale: LocalizedAcceptanceLocale? = nil
+        acceptanceLocale: LocalizedAcceptanceLocale? = nil,
+        extraLaunchEnvironment: [String: String] = [:]
     ) throws -> XCUIApplication {
 
         let app = try launchIntoFilterSummary(
@@ -596,7 +599,8 @@ extension FilterSummaryIOSVisualUITests {
             shouldPrepareFilterEditorVisuals: shouldPrepareFilterEditorVisuals,
             shouldForceAutoPlayOff: shouldForceAutoPlayOff,
             shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay,
-            acceptanceLocale: acceptanceLocale
+            acceptanceLocale: acceptanceLocale,
+            extraLaunchEnvironment: extraLaunchEnvironment
         )
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
@@ -633,7 +637,8 @@ extension FilterSummaryIOSVisualUITests {
         shouldPrepareFilterEditorVisuals: Bool = true,
         shouldShowExifSamplingDebugOverlay: Bool = false,
         shouldForceEnglishLocalization: Bool = false,
-        acceptanceLocale: LocalizedAcceptanceLocale? = nil
+        acceptanceLocale: LocalizedAcceptanceLocale? = nil,
+        extraLaunchEnvironment: [String: String] = [:]
     ) throws -> XCUIApplication {
 
         let app = try launchIntoSlideShow(
@@ -643,7 +648,8 @@ extension FilterSummaryIOSVisualUITests {
             shouldPrepareFilterEditorVisuals: shouldPrepareFilterEditorVisuals,
             shouldForceAutoPlayOff: shouldForceAutoPlayOff,
             shouldShowExifSamplingDebugOverlay: shouldShowExifSamplingDebugOverlay,
-            acceptanceLocale: acceptanceLocale
+            acceptanceLocale: acceptanceLocale,
+            extraLaunchEnvironment: extraLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)

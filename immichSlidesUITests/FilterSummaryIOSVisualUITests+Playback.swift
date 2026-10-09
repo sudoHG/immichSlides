@@ -22,7 +22,9 @@ extension FilterSummaryIOSVisualUITests {
         let app = try launchIntoFilterEditor(
             colorScheme: "light",
             shouldForceAutoPlayOff: true,
-            shouldPrepareFilterEditorVisuals: false
+            shouldPrepareFilterEditorVisuals: false,
+            // Double and triple Smart Fill scenes deliberately show no EXIF overlay, so the tone marker only exists on single-photo scenes.
+            extraLaunchEnvironment: ["UI_TEST_FORCE_PLAYBACK_DISPLAY_MODE": "singlePhoto"]
         )
 
         try configureExifDiagnosticFilters(app: app)
