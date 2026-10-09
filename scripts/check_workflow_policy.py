@@ -153,14 +153,36 @@ def string_scalars(value, location='workflow'):
             yield from string_scalars(child, f'{location}[{index}]')
 
 
-STRING_LITERAL = r"'(?:[^']|'')*'"
-EXPRESSION = re.compile(r"\$\{\{((?:" + STRING_LITERAL + r"|[^']|')*?)(?:\}\}|\Z)")
+STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
+EXPRESSION = re.compile(r"\$\{\{((?:" + STRING_LITERAL.pattern + r"|[^']|')*?)(?:\}\}|\Z)")
+SECRETS_ROOT = r"(?<![\w-])secrets(?![\w-])"
+LIVE_SECRET_REFERENCE = SECRETS_ROOT + r"\s*(?:\.\s*IMMICH_TEST_SERVER_|\[\s*'IMMICH_TEST_SERVER_)"
 
 
-def references_secrets_context(location, value):
-    """Whether a GitHub expression names the secrets context; plain words and string literals do not count."""
-    bodies = [value] if location.endswith('.if') else EXPRESSION.findall(value)
-    return any(re.search(r'\bsecrets\b', re.sub(STRING_LITERAL, "''", body), re.IGNORECASE) for body in bodies)
+def implicit_expression_locations(jobs):
+    """Locations of the job-level and step-level `if:` keys, whose values are expressions without `${{ }}`."""
+    locations = set()
+    for job_id, job in jobs.items():
+        if isinstance(job, dict):
+            locations.add(f'workflow.jobs.{job_id}.if')
+            steps = job.get('steps')
+            locations.update(f'workflow.jobs.{job_id}.steps[{index}].if' for index in range(len(steps) if isinstance(steps, list) else 0))
+    return locations
+
+
+def expression_code(location, value, implicit_locations, *, keep_index_literals=False):
+    """Expression source of a scalar. String literals are blanked, except index keys like secrets['NAME'] when asked."""
+    bodies = [value] if location in implicit_locations else EXPRESSION.findall(value)
+
+    def blank(match):
+        keep = keep_index_literals and match.string[:match.start()].rstrip().endswith('[')
+        return match.group(0) if keep else "''"
+    return [STRING_LITERAL.sub(blank, body) for body in bodies]
+
+
+def names_secrets_root(code, pattern=SECRETS_ROOT):
+    """The secrets context is the identifier itself, not a property (a.secrets) or a longer name (check-secrets)."""
+    return any(code[:match.start()].rstrip()[-1:] != '.' for match in re.finditer(pattern, code, re.IGNORECASE))
 
 
 def artifact_path(value):
@@ -290,6 +312,7 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         for index, step in enumerate(jobs.get('live-unit', {}).get('steps', []))
         if step.get('id') == 'live' and step.get('env') == LIVE_BINDINGS for key in LIVE_BINDINGS}
     live_job_locations = []
+    implicit_locations = implicit_expression_locations(jobs)
     for job_id, job in jobs.items():
         if not isinstance(job, dict):
             continue
@@ -300,9 +323,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
     for location, value in string_scalars(document):
         live_scope = (any(location.startswith(prefix) for prefix in live_job_locations)
                       or bool(live_job_locations) and location.startswith('workflow.env.'))
-        if (live_scope and references_secrets_context(location, value)
-                or re.search(r"\bsecrets\s*(?:\.\s*IMMICH_TEST_SERVER_|\[\s*['\"]IMMICH_TEST_SERVER_)",
-                             value, re.IGNORECASE)):
+        if (live_scope and any(names_secrets_root(code) for code in expression_code(location, value, implicit_locations))
+                or any(names_secrets_root(code, LIVE_SECRET_REFERENCE) for code in
+                       expression_code(location, value, implicit_locations, keep_index_literals=True))):
             if path != LIVE_WORKFLOW or location not in allowed_secret_locations:
                 flag(location, 'live-credential', 'Live secret references belong only to the guarded injection environment')
     for location, item in walk_mappings(document):

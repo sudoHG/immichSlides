@@ -34,11 +34,13 @@ class WorkflowPolicyTests(unittest.TestCase):
         steps[0]["name"] = "Check secrets are absent before injection"
         steps[2]["run"] = "# secrets are injected later\n" + steps[2]["run"]
         steps[3]["name"] = "${{ format('{0}', 'secrets') }}"
+        steps[4]["name"] = "${{ github.event.inputs.secrets }} ${{ inputs.check-secrets }}"
+        steps[5]["name"] = "Check secrets.IMMICH_TEST_SERVER_URL is absent"
         self.assertEqual(self.rules(legal, ".github/workflows/ci-nightly.yml"), set())
         for mutation in ("other-workflow", "unconditional", "job-secret", "early-secret", "wrong-environment",
                          "run-secret", "with-secret", "bracket-secret", "expression-environment",
                          "whole-context", "dynamic-secret", "lowercase-secret", "uppercase-context",
-                         "other-secret", "inherited-context", "binding-context"):
+                         "other-secret", "inherited-context", "binding-context", "env-named-if", "implicit-if"):
             with self.subTest(mutation=mutation):
                 changed = copy.deepcopy(document)
                 job = changed["jobs"]["live-unit"]
@@ -71,6 +73,10 @@ class WorkflowPolicyTests(unittest.TestCase):
                     job["env"] = {"OTHER": "${{ secrets.UNRELATED }}"}
                 elif mutation == "inherited-context":
                     changed["env"] = {"OTHER": "${{ toJSON(secrets) }}"}
+                elif mutation == "env-named-if":
+                    job["steps"][0]["env"] = {"if": "'${{ toJSON(secrets) }}'"}
+                elif mutation == "implicit-if":
+                    job["steps"][0]["if"] = "secrets.OTHER != ''"
                 elif mutation == "binding-context":
                     step = next(step for step in job["steps"] if step.get("id") == "live")
                     step["env"]["CI_LIVE_URL"] = "${{ toJSON(secrets) }}"

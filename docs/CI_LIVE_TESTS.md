@@ -84,8 +84,10 @@ export use a clean environment. No config or `.xctestrun` file contains credenti
 Workflow policy rejects every case-insensitive `secrets` context reference in a job
 bound to `immich-test-server`, including inherited workflow environment values, except
 the two exact `LIVE_BINDINGS` values in the guarded injection step. Whole-context and
-dynamic-index expressions are rejected too. Only `${{ }}` expressions count: the
-plain word in a step name, a shell comment or an expression string literal is allowed.
+dynamic-index expressions are rejected too. The check covers `${{ }}` expressions and the implicit job and step `if:`
+expressions. The plain word in a step name, a shell comment, an expression string
+literal, a property name (`github.event.inputs.secrets`) or a longer identifier
+(`inputs.check-secrets`) is allowed.
 
 ## Results and privacy
 
