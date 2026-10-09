@@ -467,7 +467,7 @@ extension FilterSummaryIOSVisualUITests {
 
         XCTAssertTrue(
             app.textFields["firstboot.serverURL.field"].waitForExistence(
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: TestWait.seconds(.product(8))),
             "After tapping 'Server' in the left sidebar from the open source licenses page, the right detail pane should switch to server settings immediately"
         )
 
