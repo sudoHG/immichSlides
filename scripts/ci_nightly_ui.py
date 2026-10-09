@@ -7,11 +7,10 @@ from collections import Counter
 
 from ci_summary import (ContractError, decode, duration, fields, identity_key, integer,
                         observation, parse_identity, parse_summary, require, sha, validate_test_identity)
-from ci_ui_shards import DEVICES
+from ci_ui_shards import DEVICES, LABEL
 from ci_verdict import evaluate_population, tokens
 
 WORKFLOW = ".github/workflows/ci-nightly.yml"
-SHARDS = ("default", "navigation", "visual")
 
 
 def parse_ui_plan(raw):
@@ -43,7 +42,8 @@ def parse_ui_plan(raw):
     for shard in plan["shards"]:
         fields(shard, {"device", "shard", "declared"}, "UI shard plan")
         device = shard["device"]
-        require(device in DEVICES and shard["shard"] in SHARDS, "unsupported UI shard")
+        require(device in DEVICES and isinstance(shard["shard"], str)
+                and LABEL.fullmatch(shard["shard"]) is not None, "unsupported UI shard")
         require(isinstance(shard["declared"], list) and shard["declared"], "empty UI shard population")
         for item in shard["declared"]:
             validate_test_identity(item)
@@ -51,7 +51,8 @@ def parse_ui_plan(raw):
                     "UI population differs from device")
         declared.extend(shard["declared"])
         pairs.append((device, shard["shard"]))
-    require(Counter(pairs) == Counter((device, shard) for device in DEVICES for shard in SHARDS),
+    names = {shard for _, shard in pairs}
+    require(0 < len(names) <= 16 and Counter(pairs) == Counter((device, shard) for device in DEVICES for shard in names),
             "nightly UI plan must cover every device/shard exactly once")
     tokens(declared)
     return plan
@@ -119,7 +120,9 @@ def validate_ui_record(raw, summaries, *, policy, registry, evaluated_on):
     capacity = record["capacity"]
     fields(capacity, {"max_parallel", "shards", "minimum_shard_waves", "start_order_waves", "shard_intervals", "wall_seconds"},
            "nightly UI capacity")
-    require(capacity["max_parallel"] == 2 and capacity["shards"] == 9 and capacity["minimum_shard_waves"] == 5,
+    shard_count, parallel = len(record["plan"]["shards"]), record["plan"]["max_parallel"]
+    require(capacity["max_parallel"] == parallel and capacity["shards"] == shard_count
+            and capacity["minimum_shard_waves"] == (shard_count + parallel - 1) // parallel,
             "invalid UI capacity")
     duration(capacity["wall_seconds"])
     pairs = []

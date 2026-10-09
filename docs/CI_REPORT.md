@@ -37,7 +37,7 @@ This does not activate skipping or change the producer's matrix.
 
 The reader supports strict nightly aggregate version 1 and the explicit version 2
 successor containing a fixture UI aggregate. Version 2 binds the embedded `ui` record
-to `nightly-ui-aggregate-<run>-<attempt>/nightly-ui.json`, with a complete nine-shard
+to `nightly-ui-aggregate-<run>-<attempt>/nightly-ui.json`, with a complete manifest-derived
 plan for iPhone, iPad and Apple TV. Each available `ui-<device>-<shard>-<run>-<attempt>`
 summary must match the plan's source, identity, hashes and attempt. Missing shards
 and samples remain failed and visible. The reader derives every device/shard population
@@ -52,6 +52,10 @@ incomplete nights cannot supply issue recovery evidence. Approved UI skips remai
 accepted, declared counts deduplicate identities, and raw messages/reasons are sanitized
 through every retained attempt. A failed Git-object read makes that attempt unavailable
 without aborting collection. Read-only diagnostic output must stay outside the checkout.
+Shard names and counts come from the manifest through the shared `ci_ui_shards`
+helpers, so the separate exact-method manifest reader can land without changing this
+nightly record. With `max_parallel: 2`, minimum waves are the actual shard count rounded
+up after division by two; the current v1 manifest supplies nine shards and five waves.
 
 This reader must be merged before a producer emits version 2, following
 [reader-first evolution](CI_SUMMARY.md#reader-first-evolution). Installing it does

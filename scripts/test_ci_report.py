@@ -34,7 +34,7 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 class ReporterTests(unittest.TestCase):
     def test_nightly_ui_reader_rejects_missing_samples_and_foreign_shards(self):
-        from ci_nightly_ui import judge_ui, parse_ui_plan
+        from ci_nightly_ui import judge_ui, parse_ui_plan, validate_ui_record
         identity = {"schema_version": 1, "repository": "sudoHG/immichSlides", "event": "schedule",
                     "ref": "refs/heads/main", "commit_sha": "a" * 40, "tree_sha": "b" * 40}
         plan = {"schema_version": 1, "identity": identity, "run": {"id": "10", "attempt": 1},
@@ -57,6 +57,33 @@ class ReporterTests(unittest.TestCase):
                         evaluated_on=date(2026, 10, 1), matrix_job_result="success")
         self.assertEqual("passed", good["status"])
         self.assertEqual(9, good["matrix"]["executed"])
+        expanded, expanded_summaries = copy.deepcopy(plan), copy.deepcopy(summaries)
+        for device, platform in (("iphone", "ios"), ("ipad", "ios"), ("appletv", "tvos")):
+            next(item for item in expanded["shards"] if item["device"] == device and item["shard"] == "visual")["shard"] = "visual-1"
+            original = next(item for item in expanded_summaries if item["run"]["job"] == "ui-" + device and item["run"]["shard"] == "visual")
+            original["run"]["shard"] = "visual-1"
+            extra = test_identity("ui", "ExampleUITests/testVisualMore", platform=platform, device=device)
+            expanded["shards"].append({"device": device, "shard": "visual-2", "declared": [extra]})
+            summary = copy.deepcopy(original)
+            summary["run"]["shard"] = "visual-2"
+            summary["population"].update(declared=[extra], compiled=[extra], observed=[observation(extra, "passed", 1)])
+            expanded_summaries.append(summary)
+        expanded_good = judge_ui(expanded, expanded_summaries, policy=policy, registry={"schema_version": 1, "entries": []},
+                                 evaluated_on=date(2026, 10, 1), matrix_job_result="success")
+        self.assertEqual(("passed", 12), (expanded_good["status"], expanded_good["matrix"]["executed"]))
+        intervals = [{"shard": item["device"] + "/" + item["shard"], "started_epoch": index + 1, "finished_epoch": index + 2}
+                     for index, item in enumerate(expanded["shards"])]
+        expanded_record = {"schema_version": 1, "plan": expanded, "verdict": expanded_good, "matrix_job_result": "success",
+            "capacity": {"max_parallel": 2, "shards": 12, "minimum_shard_waves": 6, "shard_intervals": intervals,
+                         "start_order_waves": [[item["shard"] for item in intervals[index:index + 2]] for index in range(0, 12, 2)],
+                         "wall_seconds": 14}}
+        validate_ui_record(expanded_record, expanded_summaries, policy=policy, registry={"schema_version": 1, "entries": []},
+                           evaluated_on=date(2026, 10, 1))
+        stale_capacity = copy.deepcopy(expanded_record)
+        stale_capacity["capacity"].update(shards=9, minimum_shard_waves=5)
+        with self.assertRaises(ContractError):
+            validate_ui_record(stale_capacity, expanded_summaries, policy=policy, registry={"schema_version": 1, "entries": []},
+                               evaluated_on=date(2026, 10, 1))
         for change in ("missing-shard", "missing-sample", "foreign-attempt", "duplicate-shard", "failed-job"):
             records = copy.deepcopy(summaries)
             job_result = "success"
