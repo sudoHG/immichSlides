@@ -388,7 +388,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: app, identifier: "settings.pin.disable.button",
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds
             ),
             "After access protection is enabled, the page should switch to the 'Disable Access Protection' controls"
         )
@@ -399,7 +399,7 @@ extension FilterSummaryTVOSVisualUITests {
         let pinCloseButton = app.buttons["pinEntry.close.button"]
         XCTAssertTrue(
             pinCloseButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With access protection enabled, opening settings again should first show the PIN check sheet"
         )
 
@@ -407,7 +407,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: app, identifier: "settings.item.playback",
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "After the correct PIN, the settings home should open"
         )
     }

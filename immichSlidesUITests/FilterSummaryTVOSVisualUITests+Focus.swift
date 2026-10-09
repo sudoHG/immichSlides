@@ -455,7 +455,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCTAssertTrue(
             digitOneButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "\(operationName): the opened PIN sheet should show the number pad",
             file: file,
             line: line

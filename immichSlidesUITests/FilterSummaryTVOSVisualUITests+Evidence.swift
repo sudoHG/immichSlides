@@ -115,7 +115,7 @@ extension FilterSummaryTVOSVisualUITests {
             }
             XCTAssertTrue(
                 securityTitle.waitForExistence(
-                    timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+                    timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackDeadlineSeconds),
                 "\(context) help sheet should show the security reminder",
                 file: file, line: line)
             XCTAssertEqual(securityTitle.label, "安全提醒", file: file, line: line)

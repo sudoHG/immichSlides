@@ -129,7 +129,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: app, identifier: "settings.server.hero.summary",
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementDeadlineSeconds),
             "When the alert appears, the server detail page should still be underneath, not the settings root"
         )
         XCTAssertTrue(
@@ -538,7 +538,7 @@ extension FilterSummaryTVOSVisualUITests {
         let englishFirstPolicySection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.section.0",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After choosing English, the privacy policy page should still show the first body section"
         )
         XCTAssertTrue(
@@ -549,7 +549,7 @@ extension FilterSummaryTVOSVisualUITests {
         let tablePolicySection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.section.2",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "The privacy policy data processing section should remain a separate focusable section"
         )
 

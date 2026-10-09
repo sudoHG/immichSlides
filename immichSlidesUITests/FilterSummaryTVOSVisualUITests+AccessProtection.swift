@@ -107,19 +107,19 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCTAssertTrue(
             closeButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the opened PIN sheet should show the close button")
         XCTAssertTrue(
             digitOneButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the opened PIN sheet should show the number pad")
         XCTAssertTrue(
             zeroButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the PIN sheet should show digit 0")
         XCTAssertTrue(
             deleteButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the PIN sheet should show the delete button")
 
         waitForButtonToGainFocus(
@@ -198,23 +198,23 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCTAssertTrue(
             closeButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The opened PIN sheet should show the close button")
         XCTAssertTrue(
             digitOneButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The opened PIN sheet should show the number pad")
         XCTAssertTrue(
             digitTwoButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The opened PIN sheet should show digit 2")
         XCTAssertTrue(
             zeroButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The PIN sheet should show digit 0")
         XCTAssertTrue(
             deleteButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The PIN sheet should show the delete button")
 
         // The PIN sheet's default focus must be on the digit pad, not drift to the close button.
@@ -417,7 +417,7 @@ extension FilterSummaryTVOSVisualUITests {
         let disableCurrentPinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.disableCurrent",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After enabling access protection, the 'Enter current PIN' entry should be shown. state=\(accessibilityValueString(for: app.otherElements["settings.pin.stateProbe"]))"
         )

@@ -84,7 +84,7 @@ extension FilterSummaryTVOSVisualUITests {
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
             continueButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "In light mode the 'Continue' button should be visible")
         XCTAssertTrue(
             continueButton.isEnabled, "In light mode, after choosing a mode, the 'Continue' button should be enabled")
@@ -207,11 +207,11 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCTAssertTrue(
             backButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "After repeated switching, the 'Back to mode selection' button should still exist")
         XCTAssertTrue(
             peopleButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "After repeated switching, the 'Filter people' card should still exist")
 
         XCTAssertTrue(
