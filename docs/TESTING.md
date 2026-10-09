@@ -396,7 +396,7 @@ The UI adapter enumerates the selected compiled tests and compares them with
 observations. Each test invocation and the enumeration use `--min-free-gib N`
 (default 80). Only GitHub-hosted Actions runners may lower that threshold; their
 consumer command can pass `--min-free-gib 30`, using the shared archive disk guard.
-Its local declared list is that compiled selection; the [iPhone UI producer](CI_UI.md)
+Its local declared list is that compiled selection; the [UI producer](CI_UI.md)
 independently compares its manifest shards against the admitted static population.
 This adapter does not implement shard assignment, fixture selection or trusted
 publication. Pass fixture inputs explicitly through the per-run xctestrun; ambient

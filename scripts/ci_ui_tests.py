@@ -143,7 +143,7 @@ def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_
             if record_refusals:
                 record_refusals(refusals)
             print(f"Refused same-head archive from run {run['id']}: {outcome}", flush=True)
-    while time.monotonic() - started < timeout_seconds:
+    while True:
         runs = api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", head_sha=head, event=identity["event"])
         runs = [run for run in runs if run.get("head_sha") == head and
                 (identity["event"] != "pull_request" or not run.get("pull_requests") or
@@ -195,8 +195,11 @@ def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_
                     "producer_attempt": attempt, "artifact_id": archive["id"], "artifact_name": archive["name"],
                     "build_manifest_sha256": manifest_hash, "pins_sha256": file_hash(ROOT / "scripts/ci-pins.json"),
                     "wait_seconds": time.monotonic() - started, "refusals": refusals}
+        remaining = timeout_seconds - (time.monotonic() - started)
+        if remaining <= 0:
+            break
         print("Waiting for the matching ci-gate " + platform_name + " archive", flush=True)
-        time.sleep(min(poll_seconds, max(0, timeout_seconds - (time.monotonic() - started))))
+        time.sleep(min(poll_seconds, remaining))
     error = "archive-identity-mismatch" if refusals else "archive-unavailable"
     raise ContractError(error + ": no exact-identity gate archive before timeout")
 
@@ -230,6 +233,7 @@ def wait_archive(args):
                     selection = select_archive(api, ctx["identity"], timeout_seconds=max(0, deadline - time.monotonic()),
                                                platform_name=platform_name,
                                                record_refusals=lambda rows, name=platform_name: write_json(records / ("archive-refusals-" + name + ".json"), rows))
+                    selection["timeout_minutes"] = args.timeout_minutes
                     for key in ("artifact_id", "producer_run_id", "producer_attempt"):
                         output(platform_name + "_" + key, selection[key])
                     write_json(records / ("archive-selection-" + platform_name + ".json"), selection)
@@ -420,7 +424,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     wait = commands.add_parser("wait-archive")
     wait.add_argument("--output-dir", type=Path, required=True)
-    wait.add_argument("--timeout-minutes", type=float, default=35)
+    wait.add_argument("--timeout-minutes", type=float, default=120)
     run = commands.add_parser("run")
     run.add_argument("--device", choices=DEVICES, required=True)
     run.add_argument("--shard", required=True)

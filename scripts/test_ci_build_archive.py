@@ -264,8 +264,13 @@ class BuildArchiveTests(unittest.TestCase):
         with patch.object(ui, "build_job_attempt", return_value={"status": "completed", "conclusion": "success", "evidence_attempt": 1}), \
                 patch.object(ui, "json_member", return_value=summary), patch.object(ui, "downloaded_archive", return_value=(manifest, "a" * 64)), \
                 patch.object(ui, "file_hash", return_value="f" * 64):
-            selected = ui.select_archive(API(), self.identity, timeout_seconds=1)
-            self.assertEqual((selected["artifact_id"], selected["producer_run_id"], selected["producer_attempt"]), (9, "123", 1))
+            for remaining_seconds in (1, 0):
+                # An exhausted shared deadline still checks the next platform's ready archive.
+                selected = ui.select_archive(API(), self.identity, timeout_seconds=remaining_seconds)
+                self.assertEqual((selected["artifact_id"], selected["producer_run_id"], selected["producer_attempt"]), (9, "123", 1))
+            with patch.object(API, "pages", return_value=[]) as poll, self.assertRaisesRegex(ContractError, "archive-unavailable"):
+                ui.select_archive(API(), self.identity, timeout_seconds=0)
+            poll.assert_called_once()
             with patch.object(ui, "downloaded_archive", return_value=(manifest, "e" * 64)), self.assertRaisesRegex(ContractError, "manifest differ"):
                 ui.select_archive(API(), self.identity, timeout_seconds=1)
             refused = []

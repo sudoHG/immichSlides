@@ -13,10 +13,17 @@ change outside build membership selects no archive and starts no macOS shard.
 The publisher independently derives this classification from admission before
 displaying `not applicable`. Unknown paths, CI changes and main pushes run.
 
-For an app-affecting change, Linux shares one 45-minute deadline while selecting
+For an app-affecting change, Linux shares one 120-minute deadline while selecting
 `ci-gate`'s iOS and tvOS builds. iPhone and iPad share the iOS archive; Apple TV
-uses the tvOS archive. It verifies GitHub's repository, workflow ID/path, event,
-PR and head; the successful platform build job's execution attempt; its bound build record; immutable
+uses the tvOS archive.
+
+Each platform is checked at least once, even if downloading and verifying the
+first platform consumed the remaining deadline; an already-ready archive is
+checked before the deadline is enforced. Each selection records the configured
+`timeout_minutes` and its actual `wait_seconds`.
+
+Selection verifies GitHub's repository, workflow ID/path, event, PR and head;
+the successful platform build job's execution attempt; its bound build record; immutable
 artifact ID/name; and the downloaded manifest and tar hash. The manifest must
 match the full consumer identity, including base, head, merge commit and merge
 tree. Runs from another head repository or base are refused and recorded even
@@ -132,7 +139,7 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 
 The nine device/shard jobs share `max-parallel: 2` and `fail-fast: false`. Superseded runs
 cancel only within the same PR; main pushes and unrelated PRs are not cancelled.
-The Linux selection timeout is 45 minutes inside a 50-minute job. Xcode calls
+The Linux selection timeout is 120 minutes inside a 130-minute job. Xcode calls
 have a 65-minute timeout and share an 85-minute shard budget inside a 110-minute
 job. The earlier visual invocation consumed 2,643 seconds of its 2,700-second
 budget and was stopped at 2,715 seconds in [the hosted run](https://github.com/sudoHG/immichSlides/actions/runs/37796334799/job/113382323589).
