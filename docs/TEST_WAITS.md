@@ -71,7 +71,7 @@ arguments and defaults, named timing constants ending in hold/delay/interval,
 typed `TimeInterval`/`Duration`/`DispatchTimeInterval` initializers, numeric duration constructors,
 `addingTimeInterval`, `sleep`, `usleep`, `Task.sleep(nanoseconds:)` and
 `Thread.sleep(forTimeInterval:)`. Wrapped and arithmetic
-arguments are included. Comments and strings are ignored. This is a lexical
+arguments are included, including continuation lines (a trailing or leading operator, or a leading `.member`). Comments and strings are ignored. This is a lexical
 convention check; it does not infer whether a named variable is a product promise.
 Window arguments ending in `Count`, `Limit`, `Size` or `Used` represent counts
 and are excluded; timing window names should include their time unit.

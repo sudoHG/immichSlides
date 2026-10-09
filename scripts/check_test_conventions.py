@@ -827,11 +827,23 @@ def timeout_literal_inventory(path: str, source: str) -> list[dict]:
     number = r"(?<![\w.$])[-+]?(?:0[xX][\da-fA-F_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][-+]?\d+)?)\b"
     sites = {}
 
+    def continues_on_next_line(start, newline):
+        # Swift continues a statement after a trailing binary operator or before a leading operator or member access.
+        before = newline
+        while before > start and code[before - 1].isspace():
+            before -= 1
+        if before > start and code[before - 1] in "+-*/%&|^~=?:":
+            return True
+        after = newline + 1
+        while after < len(code) and code[after].isspace():
+            after += 1
+        return bool(re.match(r"\.|[-+*/%&|^<>=~?:]+\s", code[after:after + 4]))
+
     def expression_end(start):
         depth = 0
         for index in range(start, len(code)):
             character = code[index]
-            if depth == 0 and character in ",);\n{}":
+            if depth == 0 and (character in ",);{}" or character == "\n" and not continues_on_next_line(start, index)):
                 return index
             if character in "([":
                 depth += 1
