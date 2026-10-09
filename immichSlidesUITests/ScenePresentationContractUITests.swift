@@ -208,7 +208,9 @@ final class ScenePresentationContractUITests: XCTestCase {
         _ = try imageResponse(input: input, mode: "http", assetID: failedAssetID)
         try relaunchStrictE2EApp(app)
         // In portrait the classifier reads A1's letterboxed frame as A2, so its visible EXIF caption identifies it.
-        func failIfFailedTargetCaptionIsShown(within captionTimeout: TimeInterval = TestWait.seconds(.product(0))) throws {
+        func failIfFailedTargetCaptionIsShown(within captionTimeout: TimeInterval = TestWait.seconds(.product(0)))
+            throws
+        {
             guard Wait.until(timeout: captionTimeout, { driver.visibleOverlayText().contains(failedExifModel) })
             else { return }
             try evidence.reject("singlePhoto-recovered", png: app.screenshot().pngRepresentation)
