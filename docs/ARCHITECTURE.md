@@ -111,7 +111,7 @@ The loader owns the ordered pool, while `SlideShowViewModel.assets`, `isLoading`
 
 The iOS and tvOS slideshow views keep their property wrappers in the primary declarations and place diagnostics, rendering and EXIF methods in platform-filtered extensions. tvOS settings server/cache, About/licenses and bundled privacy pages have separate extension files; their focus state remains owned by `SettingsViewTV`.
 
-The tvOS album and person filter pages make each card row and the top bar separate focus sections. The top-bar section bridges horizontal gaps between the cards and its buttons, so moving Up from the first card can reach Back without manual directional routing.
+The tvOS album and person filter pages make each card row and the top bar separate focus sections. The top-bar section bridges horizontal gaps between the cards and its buttons, so moving Up from any first-row card reaches the top bar even when no button sits directly above it, such as the centred partial row on the person page.
 
 `SlideShowViewModel+SettingsApplication.swift` owns the settings refresh run on slideshow entry and on `UserDefaults.didChangeNotification`. The platform EXIF adapters supply synchronous visibility setters. The refresh applies the view model's playback settings, reads the presentation settings, updates EXIF then debug-overlay visibility, decides whether the source changed, and schedules an asynchronous source switch only when needed. Cold-launch source selection stays in `ContentView.initialPlaybackSourceForColdLaunch()`. This extension has no stored state and joins both platforms through the app's synchronized `Shared/` folder.
 

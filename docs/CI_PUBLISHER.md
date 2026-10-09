@@ -223,10 +223,11 @@ passing evidence. Additional archive proof jobs remain required. Main pushes
 and nightly do not acquire this exception. Forks still require exact-head
 approval; CI-changing and unknown paths cannot take this path, even with approval.
 
-This reader support must land on main before a producer starts skipping gate
-jobs, because publication executes the admitted first parent's verdict reader.
-The producer rollout planned in #223 keeps host checks on macOS and skips the
-four app build/unit jobs, retaining one macOS host job for docs-only pull requests.
+The `ci-gate` producer's Linux `gate-classification` job keeps host checks on
+macOS and skips the four app build/unit jobs when they are not applicable,
+retaining one macOS host job for docs-only pull requests. Publication executes
+the admitted first parent's verdict reader and independently verifies that
+classification before reporting the skipped populations as not applicable.
 
 After publishing a complete PR UI success, the main publisher retains
 `ci-ui-verdict-<tree-sha>` for 30 days. Its `verdict.json` version 1 stores the

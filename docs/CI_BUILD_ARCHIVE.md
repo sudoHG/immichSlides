@@ -9,8 +9,9 @@ uses the existing [identity/summary contract](CI_SUMMARY.md) and [toolchain pins
 For app-unaffected PRs, the Linux classification job skips both build and unit
 jobs under the [trusted not-applicable contract](CI_PUBLISHER.md). Host checks
 still run on macOS. Unknown and CI-trusted paths run all app jobs; classification
-failure or missing output also schedules builds and fails publication. Main
-pushes and nightly retain their complete build paths.
+failure or missing output also schedules builds and fails publication; the unit
+consumers are skipped in that case. Main pushes and nightly retain their complete
+build paths.
 The [nightly live producer](CI_LIVE_TESTS.md) reuses this entry point with schedule/dispatch
 identity and PR canary builds, exact nightly workflow provenance and the same secret-free checks.
 Its summaries describe host checks of archives, not a full Swift population or a
