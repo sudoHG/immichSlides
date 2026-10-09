@@ -1135,7 +1135,7 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
 
 
 def diagnose_nightly(api, run_ids, output):
-    from ci_publish import verify_workflow
+    from ci_summary import sha
     require(api.dry_run and api.diagnostic_nightly, "nightly diagnostics require read-only API access")
     require(output is not None and not output.exists(), "nightly diagnostic output must be fresh")
     workflow = api.repo("actions/workflows/ci-nightly.yml")
@@ -1143,7 +1143,9 @@ def diagnose_nightly(api, run_ids, output):
     reports = []
     for run_id in run_ids:
         run = api.repo(f"actions/runs/{run_id}")
-        verify_workflow(run, workflow, api.repository)
+        require(run["repository"]["full_name"] == api.repository and run["workflow_id"] == workflow["id"]
+                and run["path"] == NIGHTLY_PATH and run["id"] == run_id, "nightly diagnostic provenance differs")
+        sha(run["head_sha"])
         require(run["event"] == "workflow_dispatch" and run["head_repository"]["full_name"] == api.repository,
                 "nightly diagnostics require same-repository dispatches")
         reports.append(read_run(api, run, {}))

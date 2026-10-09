@@ -149,6 +149,16 @@ class ReporterTests(unittest.TestCase):
         self.assertFalse(ci_report.nightly_ref_allowed(api, branch, branch_identity))
         api.dry_run = True
         self.assertTrue(ci_report.nightly_ref_allowed(api, branch, branch_identity))
+        api.request_count = 0
+        branch["repository"] = {"full_name": api.repository}
+        api.repo = lambda path: {"id": 123, "path": ci_report.NIGHTLY_PATH} if path.startswith("actions/workflows/") else branch
+        with tempfile.TemporaryDirectory() as directory, patch("ci_report.read_run", return_value=report):
+            output = Path(directory, "diagnostic")
+            self.assertEqual(0, ci_report.diagnose_nightly(api, [10], output))
+            self.assertEqual([report], json.loads((output / "runs.json").read_text()))
+            branch["workflow_id"] = 124
+            with self.assertRaises(ContractError):
+                ci_report.diagnose_nightly(api, [10], Path(directory, "foreign"))
         for arguments in (["--diagnostic-nightly"], ["--dry-run", "--diagnostic-nightly"],
                           ["--dry-run", "--diagnostic-nightly", "--run-id", "10", "--phase", "sync"]):
             with self.subTest(arguments=arguments), self.assertRaises(ContractError):
