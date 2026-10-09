@@ -339,6 +339,8 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 The twelve iOS jobs and six Apple TV jobs run in independent matrices, each with
 `max-parallel: 2` and `fail-fast: false`. Together they allow at most four macOS
 jobs per producer, leaving one of the account's five slots for other runs.
+Nightly retains its independent cap of two. Two independent matrices let iOS
+start without waiting for Cloud selection; only Apple TV waits for that decision.
 Apple TV still executes after an iOS failure when cloud proof is absent.
 Superseded runs
 cancel only within the same PR. First-attempt main pushes share one group per
@@ -384,9 +386,13 @@ on iPad and 16.84 on Apple TV. These are conservative sizing estimates; the
 producer PR reports real partition measurements and complete official results.
 At concurrency two per matrix, the twelve iOS jobs require at least six waves and
 the six Apple TV jobs at least three. The matrices can overlap; only Apple TV
-waits for Cloud selection. Full-matrix feedback remains queue-limited; splitting
-the critical jobs alone cannot bring the whole three-device tier within
-30 minutes. Feature-scoped selection and overflow capacity are separate changes.
+waits for Cloud selection. Shared-runner queueing and archive selection still
+contribute to full-matrix feedback; the producer PR measures that latency and
+its overlap with the gate rather than claiming a 30-minute result from sizing
+alone. Feature-scoped selection and
+overflow capacity are separate changes. The PR includes all 147 methods' measured
+maximum durations and partition loads; the main-run source artifacts for
+37943119387 expire on 2026-10-16.
 
 The archive wait shares the repository's `GITHUB_TOKEN` budget of 1,000 requests per
 hour with every other workflow, so it polls gently: the first poll comes after 30
@@ -410,7 +416,8 @@ allowance. No simulator runtime is downloaded or installed.
 
 The platform selection records include selection wait, producer run/attempt and refused
 identities. `shard-timing.json` records shard wall time, caps, timeouts and exit
-code. The PR links final real runs and reports workflow wall time and gate
+code. The PR/main workflow passes its actual strategy cap to `--max-parallel`;
+nightly retains the runner's default of two. The PR links final real runs and reports workflow wall time and gate
 latency, with job queue time separately, including overlapping PRs. Platform wall
 time is the span from its first shard start to its last shard finish; shard wall
 and queue times are reported separately. These are

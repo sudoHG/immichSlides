@@ -63,7 +63,8 @@ Read-only diagnostic output must stay outside the checkout.
 Shard names and counts come from the manifest through the shared `ci_ui_shards`
 helpers. The separate exact-method manifest reader has merged; this nightly record
 format needs no change. With `max_parallel: 2`, minimum waves are the actual shard count rounded
-up after division by two; the current v1 manifest supplies nine shards and five waves.
+up after division by two. The manifest determines the actual device/shard count;
+the v2 visual partition manifest supplies eighteen jobs and nine minimum nightly waves.
 
 This reader must be merged before a producer emits version 2, following
 [reader-first evolution](CI_SUMMARY.md#reader-first-evolution). Installing it does

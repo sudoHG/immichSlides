@@ -488,7 +488,7 @@ def run_shard(args):
         write_json(args.output_dir / "shard-timing.json", {"schema_version": 1, "device": args.device, "shard": args.shard,
                    "wall_seconds": time.monotonic() - started, "exit_code": code,
                    "started_epoch": started_epoch, "finished_epoch": time.time(),
-                   "max_parallel": 2, "invocation_timeout_minutes": args.timeout_minutes,
+                   "max_parallel": args.max_parallel, "invocation_timeout_minutes": args.timeout_minutes,
                    "total_timeout_minutes": args.total_timeout_minutes, "result_export_timeout_seconds": args.result_export_timeout_seconds})
         return code
 
@@ -637,6 +637,7 @@ def main(argv=None):
     run.add_argument("--result-export-timeout-seconds", type=float, default=60)
     run.add_argument("--wait-factor", type=float, default=1)
     run.add_argument("--min-free-gib", type=int, default=80)
+    run.add_argument("--max-parallel", type=int, default=2, help="Workflow matrix cap recorded in shard timing")
     local = commands.add_parser("reproduce")
     local.add_argument("--device", choices=DEVICES, default="iphone")
     local.add_argument("--manifest-revision", help="Explicit historical commit; default tests the current working-tree snapshot")
@@ -682,6 +683,7 @@ def main(argv=None):
             return 0
         if args.command == "reproduce":
             return reproduce(args)
+        require(args.max_parallel > 0, "matrix cap must be positive")
         require(not args.archive_dir or (args.selection_path and args.relocated_path), "archive shards need selection and relocation paths")
         return run_shard(args)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:

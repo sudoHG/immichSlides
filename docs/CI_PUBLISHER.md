@@ -220,10 +220,12 @@ populations; publication reads these stored populations without recalculating
 them using a later publisher's rules. Candidate-side parsing errors are retained
 as an invalid UI input and fail only `ci-ui`. Invalid base manifest, plan or
 workflow data refuses admission. Errors computing shards from the tested tree,
-including an empty shard after a class rename/removal, are recorded for either
+including an empty shard after a class or method rename/removal, are recorded for either
 rule selection and fail only `ci-ui`; the gate admission still completes. The
 base's filtered source population remains available for an approved replacement
-manifest to account for removed tests. Only the fixed empty-shard and missing-base-workflow
+manifest to account for removed tests. Renaming or removing a class or exact method
+named in the manifest requires updating its selectors and exact-head CI approval,
+even when the affected shard remains nonempty. Only the fixed empty-shard and missing-base-workflow
 hints reach status descriptions; other parsing details stay generic.
 A new workflow absent on the base is
 retained only as candidate metadata; exact-head approval is still required before
@@ -361,7 +363,8 @@ Reader changes land in a separate PR before a producer activates new skipping or
 deferral behavior. A CI-changing reader PR requires maintainer approval of its
 exact head and cannot approve itself.
 The [UI producer](CI_UI.md) uses this contract with a Linux archive-selection job
-and three literal shards on each of iPhone, iPad and Apple TV. Publisher trust and
+and a literal device/shard matrix whose shard names must match the manifest on
+each of iPhone, iPad and Apple TV. Publisher trust and
 exact-head approval rules apply to every device. The producer is activated only
 after the reuse reader is installed on main.
 
