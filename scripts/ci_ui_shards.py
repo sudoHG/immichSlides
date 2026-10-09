@@ -41,6 +41,20 @@ def parse_shard_manifest(raw):
     return manifest
 
 
+def validate_shard_assignments(raw_manifest, populations):
+    """Check v2 assignments against both unfiltered platforms, never one device."""
+    manifest = parse_shard_manifest(raw_manifest)
+    if manifest["schema_version"] == 1:
+        return
+    keys = {entry["key"] for platform in ("ios", "tvos")
+            for entry in populations.get("ui-" + platform, [])}
+    classes = {key.split("/")[0] for key in keys}
+    for selectors in manifest["shards"].values():
+        for selector in selectors:
+            require(selector in (keys if "/" in selector else classes),
+                    f"UI selector {selector} matches no unfiltered UI test")
+
+
 def default_plan_population(population, raw_plan):
     plan = decode(raw_plan)
     require(isinstance(plan, dict), "default UI plan must be an object")

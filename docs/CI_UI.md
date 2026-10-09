@@ -65,8 +65,11 @@ class assignment overlapping any of its method assignments are rejected,
 including overlaps within one shard. Unassigned classes and methods go to
 `default_shard`; adding a method to a class partitioned by methods therefore
 cannot silently omit it. The default plan still filters before assignment.
-The producer continues to emit version 1 until the reader has been reviewed
-and merged; activating method partitions is a separate producer change.
+Version 2 selectors must match the unfiltered iOS/tvOS population union;
+unknown classes, deleted methods and misspellings fail admission and host checks.
+The checked-in manifest remains version 1; switching it to version 2 with
+matching workflow shards is a separate CI-changing change that requires
+exact-head approval.
 
 The default plan filters the statically declared population before assignment.
 Selections plus approved tier deselections must equal that population for the

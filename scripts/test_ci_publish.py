@@ -19,7 +19,7 @@ from test_ci_summary import valid_summary
 from ci_summary import observation, test_identity
 from ci_publish import trusted_admissions, compute, prior_mismatch, map_pr
 from ci_publish_git import workflow_contract
-from ci_ui_shards import parse_shard_manifest, shard_populations
+from ci_ui_shards import parse_shard_manifest, shard_populations, validate_shard_assignments
 
 UI_MANIFEST = {"schema_version": 1, "revision": "iphone-v1", "default_shard": "default",
                "shards": {"default": [], "visual": ["VisualUITests"]}}
@@ -856,6 +856,17 @@ class PublisherTests(unittest.TestCase):
         keys = ("NewUITests/testNew", "VisualUITests/testFlow", "VisualUITests/testOther",
                 "VisualUITests/testNew", "VisualUITests/testCapture", "NavigationUITests/testNavigate",
                 "EvidenceUITests/testRecord")
+        populations = {"ui-ios": [test_identity("ui", key, platform="ios") for key in keys],
+                       "ui-tvos": [test_identity("ui", "TVUITests/testFlow", platform="tvos")]}
+        validate_shard_assignments(manifest, populations)
+        # Platform-only and plan-excluded methods still belong to the unfiltered union.
+        union_manifest = dict(manifest, shards={"default": [], "visual": ["VisualUITests/testCapture"],
+                                              "visual-secondary": ["TVUITests"]})
+        validate_shard_assignments(union_manifest, populations)
+        for selector in ("VisualUITests/testFlwo", "DeletedUITests/testFlow", "UnknownUITests"):
+            bad = dict(manifest, shards={"default": [], "visual": [selector]})
+            with self.subTest(selector=selector), self.assertRaisesRegex(ContractError, "matches no unfiltered UI test"):
+                validate_shard_assignments(bad, populations)
         from ci_ui_shards import DEVICES
         for device, platform in DEVICES.items():
             declared = [test_identity("ui", key, platform=platform) for key in keys]
@@ -921,7 +932,7 @@ class PublisherTests(unittest.TestCase):
         with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
             empty = ui_inputs(MERGE, listing, populations={"ui-ios": population[:1]},
                               base_populations={"ui-ios": population}, workflow=workflow, run=RUN, modules=modules)
-        self.assertEqual(empty["error"], "shard visual has no tests on iphone; update scripts/ci-ui-shards.json")
+        self.assertEqual(empty["error"], "UI shard populations are invalid")
         self.assertEqual(empty["base_populations"], admitted["base_populations"])
         record = {"identity": identity, "populations": {"ui-ios": population},
                   "base_populations": {"ui-ios": population}, "ui_inputs": {"base": admitted, "candidate": admitted},

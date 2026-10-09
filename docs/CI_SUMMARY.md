@@ -28,6 +28,8 @@ whose `host-records` does not already exist. This option also works without unit
 Without it, temporary host records are removed on exit and their path is not printed.
 Every run ends with each host outcome and all nonpassing Python identities and reasons,
 including after optional unit tests. DerivedData remains in `.derivedData/check-all-{ios,tvos}`.
+The workflow-policy host check also validates [UI shard assignments](CI_UI.md)
+against the unfiltered iOS/tvOS population union.
 Checks continue after failures. Exit 0 means commands and coverage succeeded, or the
 only coverage exception matches the policy's **proposed** expected-skip list. That last
 case remains `unverified` with `policy-proposed` evidence until maintainer approval;
