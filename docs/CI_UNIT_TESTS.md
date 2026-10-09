@@ -10,8 +10,9 @@ execution, with no project, scheme, package checkout or rebuild available.
 ```mermaid
 flowchart LR
     PR[PR merge commit or main push] --> H[host-checks]
-    PR --> I[build-ios]
-    PR --> T[build-tvos]
+    PR --> C[Linux classification]
+    C --> I[build-ios when applicable]
+    C --> T[build-tvos when applicable]
     I --> U[unit-ios]
     T --> V[unit-tvos]
     U --> R[scanned summary and official exports]
@@ -20,6 +21,10 @@ flowchart LR
 
 Each unit job waits only for its own platform's build. The critical path is the longer
 complete platform path or host checks; queue time is measured separately.
+The [trusted gate classification](CI_PUBLISHER.md) marks the four build/unit
+jobs not applicable on app-unaffected PRs. Host checks still run on macOS.
+Main pushes and nightly run the full population. The Linux classification job
+has a ten-minute job bound and must provide a passing identity-bound summary.
 Build jobs are bounded at 40 minutes and consumer jobs at 45 minutes. Builds have a 30-minute script
 bound. Unit consumers have separate boot, enumeration and execution bounds:
 
