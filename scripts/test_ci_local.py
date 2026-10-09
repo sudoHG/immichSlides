@@ -16,7 +16,7 @@ from ci_local import SnapshotCleanupError, clean_environment, select_mode, snaps
 
 class LocalModeTests(unittest.TestCase):
     def test_interrupt_finalizes_detached_build_before_disposing_the_snapshot(self):
-        for signum in (signal.SIGINT, signal.SIGTERM):
+        for signum in (None, signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=signum), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory, "repo")
                 scripts = root / "scripts"
@@ -24,7 +24,7 @@ class LocalModeTests(unittest.TestCase):
                 for name in ("ci_local.py", "run_offline_unit_tests.py"):
                     shutil.copyfile(Path(__file__).with_name(name), scripts / name)
                 runner = scripts / "run_fixture_ui_tests.py"
-                runner.write_text("import json, sys\nfrom pathlib import Path\n"
+                runner.write_text("import json, subprocess, sys, time\nfrom pathlib import Path\n"
                                   "from ci_local import local_main\n"
                                   "from run_offline_unit_tests import default_run\n"
                                   "def main():\n"
@@ -33,6 +33,10 @@ class LocalModeTests(unittest.TestCase):
                                   "    code += \"root = Path.cwd(); output = Path(\" + repr(str(output)) + \")\\n\"\n"
                                   "    code += \"(output / 'ready.json').write_text(json.dumps({'pid': os.getpid(), 'root': str(root)}))\\n\"\n"
                                   "    code += \"try: time.sleep(300)\\nfinally: (output / 'finalized.json').write_text(json.dumps({'snapshot_present': root.exists()}))\\n\"\n"
+                                  "    if output.name == 'normal':\n"
+                                  "        subprocess.Popen([sys.executable, '-c', code], start_new_session=True)\n"
+                                  "        time.sleep(1.5)\n"
+                                  "        return 0\n"
                                   "    return default_run([sys.executable, '-c', code], grace_seconds=2)\n"
                                   "if __name__ == '__main__': raise SystemExit(local_main(main, __file__))\n")
                 subprocess.run(["git", "init", "-q", str(root)], check=True)
@@ -40,7 +44,7 @@ class LocalModeTests(unittest.TestCase):
                     subprocess.run(["git", "config", key, value], cwd=root, check=True)
                 subprocess.run(["git", "add", "."], cwd=root, check=True)
                 subprocess.run(["git", "commit", "-qm", "initial"], cwd=root, check=True)
-                output = Path(directory, "output")
+                output = Path(directory, "normal" if signum is None else "output")
                 output.mkdir()
                 with (output / "runner.log").open("w") as log:
                     process = subprocess.Popen([sys.executable, "-B", str(runner), "--output-dir", str(output)],
@@ -54,8 +58,10 @@ class LocalModeTests(unittest.TestCase):
                             time.sleep(.05)
                         self.assertTrue((output / "ready.json").exists(), (output / "runner.log").read_text())
                         ready = json.loads((output / "ready.json").read_text())
-                        process.send_signal(signum)
-                        self.assertEqual(process.wait(timeout=15), 128 + signum, (output / "runner.log").read_text())
+                        if signum is not None:
+                            process.send_signal(signum)
+                        self.assertEqual(process.wait(timeout=15), 0 if signum is None else 128 + signum,
+                                         (output / "runner.log").read_text())
                         self.assertTrue(json.loads((output / "finalized.json").read_text())["snapshot_present"])
                         self.assertFalse(Path(ready["root"]).exists())
                         with self.assertRaises(ProcessLookupError):
