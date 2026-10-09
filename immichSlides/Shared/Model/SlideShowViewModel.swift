@@ -598,9 +598,7 @@ class SlideShowViewModel: ObservableObject {
         )
     }
 
-    func awaitInFlightPreparedPlanningForTesting() async {
-        await candidateProgression.awaitInFlightPlanningForTesting()
-    }
+    var hasInFlightPreparedPlanningForTesting: Bool { candidateProgression.hasInFlightPlanningForTesting }
 
     var preparedSmartFillNextAssetIdsForTesting: [String]? {
         playbackSession.preparedNext?.scene.assetIds

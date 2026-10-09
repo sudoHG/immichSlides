@@ -239,6 +239,8 @@ extension SlideShowViewModelVisibleSceneIdentityTests {
     // over that window instead.
     nonisolated static let preparedNextWaitTimeoutSeconds: TimeInterval = 1
     static let preparedNextWaitPollNanoseconds: UInt64 = 2_000_000
+    // Budget for detached planning to finish on a loaded runner; the assertion that follows still decides pass or fail.
+    nonisolated static let inFlightPlanningWaitTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(10))
 
     func waitUntilForTesting(
         timeout: TimeInterval = Self.preparedNextWaitTimeoutSeconds,
@@ -252,6 +254,12 @@ extension SlideShowViewModelVisibleSceneIdentityTests {
             try? await Task.sleep(nanoseconds: Self.preparedNextWaitPollNanoseconds)
         }
         return condition()
+    }
+
+    func waitForInFlightPlanningForTesting(_ vm: SlideShowViewModel) async {
+        _ = await waitUntilForTesting(timeout: Self.inFlightPlanningWaitTimeoutSeconds) {
+            !vm.hasInFlightPreparedPlanningForTesting
+        }
     }
 
     func setCachedURL(_ url: URL, assetId: String, size: ThumbnailSize, in manager: AssetsDownloadManager) {

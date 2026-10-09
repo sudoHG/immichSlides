@@ -237,7 +237,7 @@ extension SlideShowViewModelVisibleSceneIdentityTests {
         try #require(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-0", "asset-13"])
         try #require(vm.isAutoPlay)
 
-        await vm.awaitInFlightPreparedPlanningForTesting()
+        await waitForInFlightPlanningForTesting(vm)
         let didPrepareNext = vm.preparedSmartFillNextAssetIdsForTesting != nil
         try #require(didPrepareNext)
         let tokenBeforeAutoPlay = vm.targetTransitionToken
@@ -245,7 +245,7 @@ extension SlideShowViewModelVisibleSceneIdentityTests {
         clock.now += SceneLifecycleContract.minimumInterval
         var deadline = vm.fireScheduledScenePresentationWakeUpForTesting()
         if vm.targetTransitionToken == tokenBeforeAutoPlay {
-            await vm.awaitInFlightPreparedPlanningForTesting()
+            await waitForInFlightPlanningForTesting(vm)
             let didPrepareAfterSkippedTick = vm.preparedSmartFillNextAssetIdsForTesting != nil
             try #require(didPrepareAfterSkippedTick)
             clock.now += SceneLifecycleContract.minimumInterval

@@ -258,12 +258,7 @@ final class PlaybackCandidateProgression {
         lookaheadProposal.map { ($0.request.candidateCursor, $0.result.selectedAssetIds.count) }
     }
 
-    /// Returns once no prepared or lookahead planning is in flight, so tests wait on the work itself, not a wall clock.
-    func awaitInFlightPlanningForTesting() async {
-        while let task = preparedRefreshTask ?? lookaheadTasks.values.first {
-            await task.value
-        }
-    }
+    var hasInFlightPlanningForTesting: Bool { preparedRefreshTask != nil || !lookaheadTasks.isEmpty }
 
     func markPoolConsumedForTesting(assets: [Asset], candidateCursorIndex: Int) {
         displayedAssetIds = Set(assets.map(\.id))
