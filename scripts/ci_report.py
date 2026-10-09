@@ -39,6 +39,10 @@ class EvidenceExpired(ContractError):
     """Expired artifacts cannot change a previously verified report."""
 
 
+class FixtureSourceDrift(ContractError):
+    """Fixture hashes require the tested source to match the trusted reader."""
+
+
 class ReportGitHub(GitHub):
     def __init__(self, repository, token, *, dry_run=False):
         self.request_count, self.remaining, self.rate_limit, self.dry_run = 0, None, 1000, dry_run
@@ -433,6 +437,8 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
     require(plan["identity"] == raw["identity"] and plan["run"] == raw["run"], "UI aggregate differs from nightly identity")
     require(plan["source"] == {"repository": api.repository, "workflow_path": NIGHTLY_PATH, "event": run["event"],
                                "fork_originated": False, "ci_changing": None}, "nightly UI source binding differs")
+    require(raw["source"] == {**plan["source"], "approval_based": False}
+            and raw["source"]["approval_based"] is False, "nightly UI outer source binding differs")
     def tested_git(*arguments):
         try:
             return subprocess.check_output(["git", *arguments], timeout=30)
@@ -442,6 +448,8 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
         return tested_git("show", run["head_sha"] + ":" + path)
     require(tested_git("rev-parse", run["head_sha"] + "^{tree}").decode().strip() == plan["identity"]["tree_sha"],
             "nightly UI tree differs from tested commit")
+    if blob("scripts/strict_e2e_server.py") != Path(__file__).with_name("strict_e2e_server.py").read_bytes():
+        raise FixtureSourceDrift("fixture-source-drift")
     sources = {}
     listing = tested_git("ls-tree", "-rz", "--full-tree", run["head_sha"], "--", "immichSlidesUITests")
     for entry in filter(None, listing.split(b"\0")):
@@ -647,10 +655,11 @@ def read_run(api, run, admissions, previous=None):
                     value = copy.deepcopy(cached[attempt])
                 except RateLimitLow:
                     raise
-                except (ContractError, KeyError, ValueError, TypeError):
+                except (ContractError, KeyError, ValueError, TypeError) as error:
                     value = report_base({**run, "run_attempt": attempt}, api.repository)
                     value["diagnostic_shard"] = diagnostic
-                    value["diagnostics"]["infrastructure"] = ["nightly attempt evidence unavailable"]
+                    value["diagnostics"]["infrastructure"] = ["fixture-source-drift" if isinstance(error, FixtureSourceDrift)
+                                                             else "nightly attempt evidence unavailable"]
                 history.append(value)
             if any(item["diagnostics"]["infrastructure"] for item in history):
                 history[-1]["diagnostics"]["infrastructure"].append("nightly attempt history incomplete")

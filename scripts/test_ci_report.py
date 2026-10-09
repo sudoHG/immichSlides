@@ -125,6 +125,7 @@ class ReporterTests(unittest.TestCase):
         policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
         registry = {"schema_version": 1, "entries": []}
         blobs = {"scripts/ci-test-policy.json": json.dumps(policy).encode(), "scripts/ci-known-flaky.json": json.dumps(registry).encode()}
+        blobs["scripts/strict_e2e_server.py"] = Path(__file__).with_name("strict_e2e_server.py").read_bytes()
         blobs.update({"scripts/ci-ui-shards.json": json.dumps({"schema_version": 1, "revision": "example-v1",
             "default_shard": "default", "shards": {"default": [], "navigation": ["NavigationUITests"], "visual": ["VisualUITests"]}}).encode(),
             "immichSlides-iOS.xctestplan": json.dumps({"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}).encode(),
@@ -162,7 +163,7 @@ class ReporterTests(unittest.TestCase):
               "capacity": {"max_parallel": 2, "shards": 9, "minimum_shard_waves": 5, "shard_intervals": intervals,
                            "start_order_waves": [[item["shard"] for item in intervals[index:index + 2]] for index in range(0, 9, 2)], "wall_seconds": 10}}
         raw = aggregate_nightly([], [], live_in_scope=False)
-        raw.update(schema_version=2, identity=identity, source=source, hashes=hashes, run=plan["run"], ui=ui,
+        raw.update(schema_version=2, identity=identity, source={**source, "approval_based": False}, hashes=hashes, run=plan["run"], ui=ui,
                    capacity={"shard_intervals": []})
         raw["matrix"]["equal"] = True
         raw["errors"] = []
@@ -188,6 +189,26 @@ class ReporterTests(unittest.TestCase):
             history = ci_report.read_run(api, run, {})
             self.assertNotIn("private-runner-failure-text", json.dumps(ci_report.compact_entry(history, set())["attempt_history"]))
             self.assertNotIn("private-runner-reason", json.dumps(ci_report.compact_entry(history, set())["attempt_history"]))
+            outer_source = raw["source"]
+            for field, value in (("repository", "foreign/repository"), ("workflow_path", ci_report.REPORT_PATH),
+                                 ("event", "workflow_dispatch"), ("fork_originated", True), ("ci_changing", True),
+                                 ("approval_based", True), ("approval_based", 0), ("unknown", "untrusted")):
+                raw["source"] = {**outer_source, field: value}
+                with self.subTest(outer_source=field, value=value), self.assertRaises(ContractError):
+                    ci_report.nightly_attempt(api, run, 1, artifacts)
+            raw["source"] = {key: value for key, value in outer_source.items() if key != "approval_based"}
+            with self.subTest(outer_source="missing approval_based"), self.assertRaises(ContractError):
+                ci_report.nightly_attempt(api, run, 1, artifacts)
+            raw["source"] = outer_source
+            fixture_source = blobs["scripts/strict_e2e_server.py"]
+            blobs["scripts/strict_e2e_server.py"] += b"\n# different tested fixture source\n"
+            with self.assertRaisesRegex(ContractError, "fixture-source-drift"):
+                ci_report.nightly_attempt(api, run, 1, artifacts)
+            drift = ci_report.read_run(api, run, {})
+            self.assertEqual("failed", drift["status"])
+            self.assertIn("fixture-source-drift", drift["diagnostics"]["infrastructure"])
+            self.assertNotIn("different tested fixture source", json.dumps(drift))
+            blobs["scripts/strict_e2e_server.py"] = fixture_source
             for change in ("unverified shard plus a real failure in another shard", "missing sample", "missing compilation"):
                 changed = copy.deepcopy(summaries)
                 if change.startswith("unverified"):

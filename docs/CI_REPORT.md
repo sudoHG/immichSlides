@@ -41,7 +41,7 @@ to `nightly-ui-aggregate-<run>-<attempt>/nightly-ui.json`, with a complete manif
 plan for iPhone, iPad and Apple TV. Each available `ui-<device>-<shard>-<run>-<attempt>`
 summary must match the plan's source, identity, hashes and attempt. Missing shards
 and samples remain failed and visible. The reader derives every device/shard population
-from the tested commit's Swift source, default plans and class manifest, verifies their
+from the tested commit's Swift source, default plans and class/method manifest, verifies their
 hashes and rejects a substituted plan, tree or source binding. It recomputes every shard verdict
 and the UI union using the existing population evaluator, the tested commit's policy
 and registry, and the run's UTC date. It checks wave/timing accounting and retains
@@ -51,10 +51,14 @@ Per-shard non-test errors make the night incomplete even alongside real failures
 incomplete nights cannot supply issue recovery evidence. Approved UI skips remain
 accepted, declared counts deduplicate identities, and raw messages/reasons are sanitized
 through every retained attempt. A failed Git-object read makes that attempt unavailable
-without aborting collection. Read-only diagnostic output must stay outside the checkout.
+without aborting collection. The outer source's complete fields must match the UI plan
+and shard sources, with `approval_based: false`. Fixture hashing requires the tested
+`strict_e2e_server.py` to equal the reader's copy; a difference is retained as
+`fixture-source-drift`, incomplete evidence that cannot count as a pass night.
+Read-only diagnostic output must stay outside the checkout.
 Shard names and counts come from the manifest through the shared `ci_ui_shards`
-helpers, so the separate exact-method manifest reader can land without changing this
-nightly record. With `max_parallel: 2`, minimum waves are the actual shard count rounded
+helpers. The separate exact-method manifest reader has merged; this nightly record
+format needs no change. With `max_parallel: 2`, minimum waves are the actual shard count rounded
 up after division by two; the current v1 manifest supplies nine shards and five waves.
 
 This reader must be merged before a producer emits version 2, following
