@@ -48,7 +48,7 @@ extension PlaybackHistoryIOSUITests {
         }
         emitManualLifecycleCaptureStatus(mode: mode, kind: kind, markerStatus: markerStatus)
         // External recording must wait for a visible stable scene; only the test capture path keeps this sync window.
-        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.infrastructure(1))))
     }
 
     func emitManualLifecycleCaptureStatus(mode: ManualLifecycleMode, kind: String, markerStatus: String) {
@@ -59,12 +59,19 @@ extension PlaybackHistoryIOSUITests {
 
     func openPlaybackSettingsFromSlideshow(app: XCUIApplication) {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        XCTAssertTrue(waitUntil(timeout: 8) { settingsButton.exists && settingsButton.isHittable })
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.infrastructure(8))) {
+                settingsButton.exists && settingsButton.isHittable
+            })
         tapElement(settingsButton)
 
         let playbackEntry: XCUIElement
         if UIDevice.current.userInterfaceIdiom == .pad {
-            if app.switches["settings.playback.autoPlay.toggle"].waitForExistence(timeout: 2) { return }
+            if app.switches["settings.playback.autoPlay.toggle"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(2)))
+            {
+                return
+            }
             let sidebar = app.buttons["ToggleSidebar"]
             if sidebar.exists && ["显示边栏", "Show Sidebar"].contains(sidebar.label) {
                 tapElement(sidebar)
@@ -74,13 +81,14 @@ extension PlaybackHistoryIOSUITests {
             playbackEntry = app.buttons["settings.item.playback"]
         }
         XCTAssertTrue(
-            playbackEntry.waitForExistence(timeout: 8), "The settings list must provide the Playback Settings entry")
+            playbackEntry.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "The settings list must provide the Playback Settings entry")
         tapElement(playbackEntry)
     }
 
     func requireAutoPlayToggle(app: XCUIApplication) throws -> XCUIElement {
         let toggle = app.switches["settings.playback.autoPlay.toggle"]
-        guard toggle.waitForExistence(timeout: 8) else {
+        guard toggle.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))) else {
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
                 code: 8,
@@ -112,10 +120,10 @@ extension PlaybackHistoryIOSUITests {
             } else {
                 app.tap()
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
         }
         XCTAssertTrue(
-            waitUntil(timeout: 6) {
+            waitUntil(timeout: TestWait.seconds(.infrastructure(6))) {
                 let settingsButton = app.buttons["slideshow.control.settings.button"]
                 return settingsButton.exists && settingsButton.isHittable
             },
@@ -304,7 +312,8 @@ extension PlaybackHistoryIOSUITests {
             RunLoop.current.run(
                 until: Date().addingTimeInterval(
                     TestWait.seconds(.product(PlaybackHistoryIOSUITestsCalibration.pauseSampleIntervalSeconds))))
-            let probe = try waitForPausedFrameSynchronizedPresentationProbe(app: app, timeout: 2)
+            let probe = try waitForPausedFrameSynchronizedPresentationProbe(
+                app: app, timeout: TestWait.seconds(.product(2)))
             let slots = frozenStateOfSmartFillSlots(app: app)
             let pixels = app.windows.firstMatch.screenshot().pngRepresentation
             let frame = XCTAttachment(data: pixels, uniformTypeIdentifier: "public.png")
@@ -331,9 +340,10 @@ extension PlaybackHistoryIOSUITests {
 
     func sceneIdentity(app: XCUIApplication, mode: ManualLifecycleMode) throws -> String {
         if mode == .smartFill {
-            return try waitForCompleteVisibleSmartFillScene(app: app, timeout: 8).sceneIdentity
+            return try waitForCompleteVisibleSmartFillScene(app: app, timeout: TestWait.seconds(.product(8)))
+                .sceneIdentity
         }
-        return try waitForCurrentAssetID(app: app, timeout: 8)
+        return try waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.product(8)))
     }
 
     func waitForSceneIdentityChange(app: XCUIApplication, mode: ManualLifecycleMode, from oldValue: String) throws
@@ -341,7 +351,7 @@ extension PlaybackHistoryIOSUITests {
     {
         guard
             waitUntil(
-                timeout: 20,
+                timeout: TestWait.seconds(.product(20)),
                 condition: {
                     (try? self.sceneIdentity(app: app, mode: mode)).map { $0 != oldValue } ?? false
                 })
@@ -356,18 +366,21 @@ extension PlaybackHistoryIOSUITests {
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: 5), "The mode selection page should show the Random Playback entry")
+            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            "The mode selection page should show the Random Playback entry")
         tapElement(randomButton)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 5), "The mode selection page should show the Continue button")
+            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            "The mode selection page should show the Continue button")
         XCTAssertTrue(
             continueButton.isEnabled, "After choosing Random Playback, the Continue button should be tappable")
         tapElement(continueButton)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 25),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(25))),
             "After entering random playback, the playback control bar should be shown"
         )
     }
@@ -375,31 +388,36 @@ extension PlaybackHistoryIOSUITests {
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
         let filteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            filteredButton.waitForExistence(timeout: 5),
+            filteredButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
             "The filtered-playback harness should show the Filtered Playback entry")
         tapElement(filteredButton)
 
         let continueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(continueButton.waitForExistence(timeout: 5), "Filtered playback should show the Continue button")
+        XCTAssertTrue(
+            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            "Filtered playback should show the Continue button")
         XCTAssertTrue(
             continueButton.isEnabled, "The Continue button in the filtered-playback harness should be tappable")
         tapElement(continueButton)
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForExistence(timeout: 12),
+            startButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
             "The filtered playback summary should show the Start Playback button")
         // Starting before the page swaps in the real album and person would play an empty pool.
         let selectionReady = app.staticTexts["filterSummary.visual.ready"]
         XCTAssertTrue(
-            waitUntil(timeout: 30) { selectionReady.exists && selectionReady.label == "ready" },
+            waitUntil(timeout: TestWait.seconds(.infrastructure(30))) {
+                selectionReady.exists && selectionReady.label == "ready"
+            },
             "The filter summary must select a real album and person before playback starts"
         )
-        XCTAssertTrue(waitUntil(timeout: 12) { startButton.isEnabled })
+        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.infrastructure(12))) { startButton.isEnabled })
         tapElement(startButton)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 45),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(45))),
             "The filtered-playback harness should reach the real playback control bar"
         )
     }
@@ -461,7 +479,7 @@ extension PlaybackHistoryIOSUITests {
             return oldValue
         }
 
-        return try waitForCurrentAssetID(app: app, timeout: 2)
+        return try waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.product(2)))
     }
 
     func currentAssetID(app: XCUIApplication) -> String? {
@@ -516,7 +534,7 @@ extension PlaybackHistoryIOSUITests {
                 userInfo: [NSLocalizedDescriptionKey: "complete visible SmartFill scene did not change"]
             )
         }
-        return try waitForCompleteVisibleSmartFillScene(app: app, timeout: 2)
+        return try waitForCompleteVisibleSmartFillScene(app: app, timeout: TestWait.seconds(.product(2)))
     }
 
     func currentCompleteVisibleSmartFillScene(app: XCUIApplication) -> CompleteVisibleSmartFillScene? {
@@ -585,11 +603,12 @@ extension PlaybackHistoryIOSUITests {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }
 
+    // Callers resolve the TestWait budget once; polling cadence stays fixed.
     func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
         }
         return condition()
     }
