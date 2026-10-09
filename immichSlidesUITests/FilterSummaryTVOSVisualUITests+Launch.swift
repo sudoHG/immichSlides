@@ -262,7 +262,8 @@ extension FilterSummaryTVOSVisualUITests {
             "On the filter summary page, focus should be able to move to the 'Start Playback' button")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 18),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(18))),
             "After starting playback, the playback page should open and show the control bar"
         )
         return app
@@ -280,7 +281,7 @@ extension FilterSummaryTVOSVisualUITests {
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "The tvOS playback page should show the Play/Pause button")
         XCTAssertTrue(
-            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds) {
+            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds) {
                 ((playPauseButton.value as? String) ?? "").lowercased() == "play"
             },
             "Autoplay should be off in tvOS EXIF diagnostic mode so photos do not advance during screenshots"
@@ -310,14 +311,14 @@ extension FilterSummaryTVOSVisualUITests {
 
             if !currentIndexValue.isEmpty {
                 XCTAssertTrue(
-                    waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds) {
+                    waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
                         self.accessibilityValueString(for: indexProbe) != currentIndexValue
                     },
                     "After next, the playback index probe should change so the same photo is not captured twice"
                 )
             } else if let currentDateLabel {
                 XCTAssertTrue(
-                    waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds) {
+                    waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
                         self.currentTVOSExifDateLabel(app: app) != currentDateLabel
                     },
                     "After next, the EXIF date at the top should change so the same photo is not captured twice"
@@ -370,7 +371,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.up)
         XCTAssertTrue(
             playPauseButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
             "Once hidden, the control bar should wake again with a direction key"
         )
     }
@@ -424,7 +425,8 @@ extension FilterSummaryTVOSVisualUITests {
         }
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            app.buttons["slideshow.control.playPause.button"].waitForExistence(timeout: 30),
+            app.buttons["slideshow.control.playPause.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(30))),
             "The control bar must appear after random playback starts"
         )
     }
@@ -448,7 +450,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForElementToDisappear(
             settingsButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionDeadlineSeconds,
             failureMessage:
                 "\(scenarioName): the control bar should hide on its own before waking from hidden can be verified",
             file: file,
@@ -456,13 +458,13 @@ extension FilterSummaryTVOSVisualUITests {
         )
         let wakeReceiver = app.descendants(matching: .any)["slideshow.hiddenWakeReceiver"]
         XCTAssertTrue(
-            wakeReceiver.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds)
+            wakeReceiver.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds)
                 || settingsButton.exists == false,
             "\(scenarioName): the wake receiver should appear after hiding",
             file: file,
             line: line
         )
-        let focusDeadline = Date().addingTimeInterval(4)
+        let focusDeadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
         while Date() < focusDeadline, wakeReceiver.exists, wakeReceiver.hasFocus == false {
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.focusPollSeconds))
@@ -478,7 +480,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCTAssertTrue(
             settingsButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
             "\(scenarioName): the hidden control bar should wake successfully",
             file: file,
             line: line
@@ -507,13 +509,13 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             settingsButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "Before opening settings, focus should return reliably to the leftmost settings button"
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitForAnySettingsSurface(
-                app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "Pressing Select on the settings button should open the settings page")
     }
 
@@ -529,7 +531,7 @@ extension FilterSummaryTVOSVisualUITests {
         }
 
         XCTAssertTrue(
-            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds) {
+            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
                 if app.buttons["slideshow.control.settings.button"].exists {
                     return true
                 }

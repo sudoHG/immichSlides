@@ -125,7 +125,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the English About page, the first focus should land on App Information"
         )
         XCTAssertTrue(
@@ -145,11 +145,11 @@ extension FilterSummaryTVOSVisualUITests {
         )
         for _ in 0..<3 {
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page should let focus move to Privacy Policy"
         )
         attachScreenshot(app: app, name: "english-tvos-settings-about-bottom")
@@ -238,35 +238,35 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             openSourceAppInfoSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page default focus should land on App Information"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceUnofficialSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page should let focus go from App Information to Unofficial Notice"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceFeedbackSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page should let focus go from Unofficial Notice to Feedback & Support"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourcePrivacyLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page should let focus go from Feedback & Support to Privacy Policy"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page should let focus move to Open Source Licenses"
         )
         XCUIRemote.shared.press(.select)
@@ -305,7 +305,8 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertTrue(startPlaybackButton.hasFocus, "Focus should move reliably to the 'Start Playback' button")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 18),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(18))),
             "Starting playback from filter summary should open playback with the control bar settings button"
         )
 
@@ -361,7 +362,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the access protection page, default focus should land on the 'Set PIN' input entry"
         )
         XCUIRemote.shared.press(.select)
@@ -370,7 +371,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enablePinConfirmInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After filling 'Set PIN', moving down should focus the 'Confirm PIN' input entry"
         )
         XCUIRemote.shared.press(.select)
@@ -379,7 +380,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enableProtectionButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After entering and confirming the PIN, moving down should focus the 'Enable Access Protection' button"
         )
