@@ -446,14 +446,22 @@ def run_shard(args):
 
 
 def failed_shard(args, error):
+    from run_fixture_ui_tests import fixture_inputs
     directory = args.output_dir.resolve()
     if ROOT == directory or ROOT in directory.parents or os.path.lexists(directory):
         return
+    try:
+        ctx = context()
+        require(args.manifest_revision is None, "failed CI shards cannot override the admitted manifest")
+        inputs = fixture_inputs(ROOT, args.device, [], shard=args.shard, shard_manifest=ROOT / MANIFEST_PATH,
+                                listed_only_retry=True)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        # Unbound evidence must stay absent so it cannot discard other shards.
+        return
     directory.mkdir(parents=True, mode=0o700)
-    ctx = context()
     ctx["run"].update(tier="ui", job="ui-" + args.device, shard=args.shard)
-    summary = summary_for(ctx, file_hash(ROOT / MANIFEST_PATH))
-    summary["population"].update(declared=[], compiled=[], observed=[])
+    summary = summary_for(ctx, inputs["hashes"]["manifests"]["ui-shards"])
+    summary.update(hashes=inputs["hashes"], population=inputs["population"])
     summary["infrastructure"] = [{"code": "ui-shard-preflight-failed", "message": str(error)[:200]}]
     write_summary(summary, directory)
 

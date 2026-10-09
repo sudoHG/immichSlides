@@ -239,7 +239,7 @@ jobs:
           pattern: nightly-strict-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/nightly-records
       - name: Download this attempt's UI aggregate
-        if: always()
+        if: always() && !inputs.strict_only && !inputs.shard
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: nightly-ui-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
@@ -273,7 +273,7 @@ jobs:
 
   ui-archive:
     needs: live-build
-    if: always() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal && needs.live-build.result == 'success'
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal && needs.live-build.result == 'success' }}
     name: ui-archive
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -326,7 +326,7 @@ jobs:
   ui-shards:
     name: ui-${{ matrix.device }}-${{ matrix.shard }}
     needs: [plan, ui-archive, strict]
-    if: always() && needs.ui-archive.outputs.run_ui == 'true'
+    if: ${{ !cancelled() && needs.ui-archive.result == 'success' && needs.ui-archive.outputs.run_ui == 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:
@@ -601,8 +601,8 @@ jobs:
 
   live-build:
     if: >-
-      always() && (github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true' ||
-      (github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal))
+      ${{ !cancelled() && (github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true' ||
+      (github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal)) }}
     needs: live-admission
     runs-on: xcode-27
     timeout-minutes: 40

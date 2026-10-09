@@ -22,7 +22,7 @@ from pathlib import Path
 from ci_build_archive import check_products, disk_check, measure_signing, record_signing
 from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
-from ci_ui_shards import DEVICES, default_plan_population
+from ci_ui_shards import DEVICES, default_plan_population, shard_populations
 from ci_verdict import evaluate_population, parse_policy, tier_approved
 from ci_flaky import OfficialResultReadError, load_registry, registry_revision, run_xcode_attempts, read_xcode_observations
 from run_host_checks import run_identity, source_metadata, toolchain
@@ -347,6 +347,38 @@ def write_json(path, payload):
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, mode="measure", listed_only_retry=False):
+    """Bind static evidence before simulator, service, archive or Xcode preflight."""
+    platform = DEVICES[device]
+    plan_path = root / ("immichSlides-" + ("tvOS" if platform == "tvos" else "iOS") + ".xctestplan")
+    plan = json.loads(plan_path.read_text())
+    ui_root = root / "immichSlidesUITests"
+    sources = {path.relative_to(ui_root).as_posix(): path.read_text() for path in ui_root.rglob("*.swift")}
+    declared = declared_tests(sources, platform, plan, selectors)
+    if shard and not selectors:
+        declared = shard_populations(ui_identities(sources, platform), plan, shard_manifest.read_text(), device)[shard]
+    for entry in declared:
+        entry["dimensions"]["device"] = device
+    policy_path = root / "scripts/ci-test-policy.json"
+    policy = parse_policy(policy_path.read_text())
+    deselections = [entry for entry in policy["deselections"] if tier_approved(policy, "ui")
+                   and entry["tier"] == "ui" and entry["environment"] == "fixture"
+                   and entry["identity"] in declared] if mode == "pr" else []
+    hashes = {"manifests": {"fixture-c": fixture_manifest("c")["fixture_sha256"],
+                            "test-plan": hashlib.sha256(plan_path.read_bytes()).hexdigest()},
+              "policies": {"test-policy": hashlib.sha256(policy_path.read_bytes()).hexdigest()}}
+    if shard_manifest:
+        hashes["manifests"]["ui-shards"] = hashlib.sha256(shard_manifest.read_bytes()).hexdigest()
+    registry, revision = None, None
+    if listed_only_retry:
+        revision = registry_revision(root, os.environ)
+        registry, hashes["policies"]["known-flaky"] = load_registry(root, revision)
+    return {"hashes": hashes, "population": {"declared": declared, "compiled": [], "observed": [],
+            "deselected": [{key: value for key, value in entry.items() if key not in {"tier", "environment"}}
+                           for entry in deselections], "removed_by_pr": []},
+            "policy": policy, "deselections": deselections, "registry": registry, "registry_revision": revision}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=DEVICES, required=True)
@@ -387,14 +419,22 @@ def main(argv=None):
         require(not any(output.iterdir()), "output directory must be fresh")
         identity = run_identity(os.environ, ci=bool(os.environ.get("GITHUB_ACTIONS")))
         workflow, fork = source_metadata(identity, os.environ, None)
+        inputs_record = fixture_inputs(ROOT, args.device, args.only_testing, shard=args.shard,
+                                       shard_manifest=args.shard_manifest, mode=args.mode, listed_only_retry=args.listed_only_retry)
+        declared = inputs_record["population"]["declared"]
+        policy, deselections = inputs_record["policy"], inputs_record["deselections"]
+        registry, revision = inputs_record["registry"], inputs_record["registry_revision"]
+        evaluated_on = date.today() if registry is not None else None
+        rows = coverage_rows(declared, None, {"testNodes": []}, args.device)
         summary = {"schema_version": 1, "identity": identity,
                    "source": {"repository": identity["repository"], "workflow_path": workflow,
                               "event": identity["event"], "fork_originated": fork, "ci_changing": None},
                    "run": {"id": os.environ.get("GITHUB_RUN_ID"), "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
                            "tier": "ui", "job": "ui-" + args.device if args.shard else "fixture-ui", "shard": args.shard or args.device},
-                   "hashes": {"manifests": {}, "policies": {}}, "toolchain": toolchain(),
-                   "population": {"declared": [], "compiled": [], "observed": [], "deselected": [], "removed_by_pr": []},
+                   "hashes": inputs_record["hashes"], "toolchain": {"versions": {}, "signing_mode": "not-applicable"},
+                   "population": inputs_record["population"],
                    "infrastructure": [], "status": "failed"}
+        summary["toolchain"] = toolchain()
         summary["toolchain"]["versions"]["test_wait_factor"] = str(waits["infrastructure_factor"])
         write_json(output / "wait-configuration.json", waits)
         require(not os.path.lexists(ROOT / "Config/env.xcconfig"), "fixture mode forbids private configuration files or links")
@@ -406,26 +446,6 @@ def main(argv=None):
                                    capture_output=True, check=True, timeout=60)
         verify_simulator_device(json.loads(inventory.stdout), udid, args.device)
         plan_name = "immichSlides-" + ("tvOS" if platform == "tvos" else "iOS")
-        plan = json.loads((ROOT / (plan_name + ".xctestplan")).read_text())
-        ui_root = ROOT / "immichSlidesUITests"
-        declared = declared_tests({path.relative_to(ui_root).as_posix(): path.read_text() for path in ui_root.rglob("*.swift")},
-                                  platform, plan, args.only_testing)
-        for entry in declared:
-            entry["dimensions"]["device"] = args.device
-        rows = coverage_rows(declared, None, {"testNodes": []}, args.device)
-        policy_path = ROOT / "scripts/ci-test-policy.json"
-        policy = parse_policy(policy_path.read_text())
-        deselections = [entry for entry in policy["deselections"] if tier_approved(policy, "ui")
-                       and entry["tier"] == "ui" and entry["environment"] == "fixture"
-                       and entry["identity"] in declared] if args.mode == "pr" else []
-        summary["hashes"] = {"manifests": {"fixture-c": fixture_manifest("c")["fixture_sha256"],
-                                           "test-plan": hashlib.sha256((ROOT / (plan_name + ".xctestplan")).read_bytes()).hexdigest()},
-                             "policies": {"test-policy": hashlib.sha256(policy_path.read_bytes()).hexdigest()}}
-        if args.shard_manifest:
-            summary["hashes"]["manifests"]["ui-shards"] = hashlib.sha256(args.shard_manifest.read_bytes()).hexdigest()
-        summary["population"]["declared"] = declared
-        summary["population"]["deselected"] = [
-            {key: value for key, value in entry.items() if key not in {"tier", "environment"}} for entry in deselections]
         bundle = prepare_fixture_result_bundle()
         bundles.append(bundle)
         work = bundle.parent.parent
@@ -506,12 +526,8 @@ def main(argv=None):
         command = base + selections + ["-resultBundlePath", str(bundle)] + [
             "-skip-testing:immichSlidesUITests/" + entry["identity"]["key"] for entry in deselections]
         print("Fixture test command: " + shlex.join(command), flush=True)
-        registry, evaluated_on = None, None
         if args.listed_only_retry:
-            revision = registry_revision(ROOT, os.environ)
-            registry, registry_hash = load_registry(ROOT, revision)
-            evaluated_on = date.today()
-            summary["hashes"]["policies"]["known-flaky"] = registry_hash
+            registry_hash = summary["hashes"]["policies"]["known-flaky"]
             expected_by_key = {entry["key"]: entry for entry in selected}
             read = partial(read_xcode_observations, expected_device=(udid, "tv" if args.device == "appletv" else args.device),
                            export_timeout_seconds=args.result_export_timeout_seconds)

@@ -114,10 +114,9 @@ evidence for a candidate commit. The [existing UI class manifest](CI_UI.md#manif
 partitions each device into shards. The current v1 manifest has default, navigation
 and visual: nine shards total. Names, counts and the matrix come from that manifest
 through the shared helpers; the separate v2 exact-method reader can support additional
-visual partitions without a nightly protocol change. This PR does not split the manifest.
+visual partitions without a nightly protocol change.
 New default-plan tests join this population automatically. Evidence plans, strict-only
-tests, offline performance and the uncapped benchmark are outside this UI tier; the
-performance work remains part 2 of the nightly ticket.
+tests, offline performance and the uncapped benchmark are outside this UI tier.
 
 The existing credential-free `live-build` jobs produce one iOS and one tvOS archive
 for the same event, source, run and attempt. iPhone/iPad share the iOS archive and
@@ -146,7 +145,11 @@ intervals and observed start-order waves. The fixed `nightly.json` v2 embeds thi
 aggregate, and the [trusted reporter](CI_REPORT.md) independently reads the same
 attempt's shard artifacts and recomputes the UI verdict. UI failures enter the existing
 nightly failure issue lifecycle; missing evidence cannot close an issue. The trusted
-reader must land before this producer under the [reader-first rule](CI_PUBLISHER.md).
+reader and producer follow the [reader-first contract](CI_PUBLISHER.md). Diagnostics
+without a standalone UI aggregate retain a v1 fixed record, preserving strict results.
+Missing UI evidence still fails the nightly. Every published shard binds its complete
+declared population and manifest/policy hashes before runtime preflight; a shard whose
+source cannot be bound remains missing rather than invalidating the other shards.
 
 For a branch acceptance run, use the installed trusted reader in read-only mode:
 

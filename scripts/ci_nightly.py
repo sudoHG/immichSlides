@@ -359,21 +359,27 @@ def main(argv=None):
                              "release_ineligible_reasons": result["release_ineligible_reasons"], "hashes": hashes,
                              "review_packages": result["review_packages"]}
     if "ui" in policy["built_tiers"]:
-        from ci_nightly_ui import aggregate_ui, current_plan, parse_ui_plan
-        ui_plan = current_plan(ROOT)
+        from ci_nightly_ui import current_plan, parse_ui_plan
+        ui = None
         try:
             require(args.ui_record is not None, "nightly UI aggregate path is missing")
             ui = decode(args.ui_record.read_text())
             stored = parse_ui_plan(ui["plan"])
+            ui_plan = current_plan(ROOT)
             require(all(stored[key] == ui_plan[key] for key in ("identity", "source", "run", "hashes", "shards", "max_parallel")),
                     "nightly UI aggregate differs from checkout, population or attempt")
         except (OSError, ValueError, KeyError, TypeError) as error:
-            result["errors"].append("missing or invalid nightly UI aggregate: " + str(error))
-            ui = aggregate_ui(ui_plan, output / "missing-ui-records", matrix_job_result="failure", root=ROOT)
-        result.update(schema_version=2, ui=ui)
-        result["tiers"]["ui"] = ui["verdict"]["status"]
-        if ui["verdict"]["status"] != "passed":
-            result["errors"].extend("UI: " + error for error in ui["verdict"]["errors"])
+            ui = None
+            result["errors"].append("producer infrastructure: missing or invalid nightly UI aggregate: " + str(error))
+        if ui is not None:
+            # V2 always binds the separately published aggregate from this attempt.
+            result.update(schema_version=2, ui=ui)
+            result["tiers"]["ui"] = ui["verdict"]["status"]
+        else:
+            result["tiers"]["ui"] = "failed"
+        if result["tiers"]["ui"] != "passed":
+            if ui is not None:
+                result["errors"].extend("UI: " + error for error in ui["verdict"]["errors"])
             result["status"] = "failed"
         result["rollup_entry"]["status"] = result["status"]
     write_json(output / "nightly.json", result)

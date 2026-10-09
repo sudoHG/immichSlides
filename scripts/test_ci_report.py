@@ -2,12 +2,17 @@
 
 import copy
 import json
+import hashlib
+import os
+import plistlib
 import subprocess
 import tempfile
+import time
 import unittest
 from datetime import date, datetime, timezone
+from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import ci_report
 from ci_summary import ContractError, observation, test_identity
@@ -33,6 +38,180 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_nightly_producer_failure_paths_preserve_other_shards_and_diagnostic_identity(self):
+        import ci_nightly
+        import ci_nightly_ui
+        import ci_ui_tests
+        import run_fixture_ui_tests as fixture
+        from run_strict_e2e import resolve_suite_selector
+        current_plan = ci_nightly_ui.current_plan
+        repository = "sudoHG/immichSlides"
+        identity = {"schema_version": 1, "repository": repository, "event": "workflow_dispatch",
+                    "ref": "refs/heads/candidate", "commit_sha": "a" * 40, "tree_sha": "b" * 40}
+        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+               "head_sha": identity["commit_sha"], "path": ci_report.NIGHTLY_PATH, "event": "workflow_dispatch",
+               "head_branch": "candidate", "head_repository": {"full_name": repository},
+               "status": "completed", "conclusion": "failure"}
+        api = type("API", (), {"repository": repository, "dry_run": True, "diagnostic_nightly": True})()
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        registry = {"schema_version": 1, "entries": []}
+        project = Path(__file__).resolve().parent.parent
+        blobs = {"scripts/ci-test-policy.json": json.dumps(policy).encode(),
+                 "scripts/ci-known-flaky.json": json.dumps(registry).encode(),
+                 "scripts/strict_e2e_server.py": project.joinpath("scripts/strict_e2e_server.py").read_bytes(),
+                 "scripts/ci-ui-shards.json": json.dumps({"schema_version": 1, "revision": "example-v1",
+                     "default_shard": "default", "shards": {"default": [], "navigation": ["NavigationUITests"],
+                                                           "visual": ["VisualUITests"]}}).encode(),
+                 "immichSlidesUITests/Example.swift": b"\n".join(
+                     ("final class " + name + "UITests: XCTestCase { func testPlayback() {} }").encode()
+                     for name in ("Default", "Navigation", "Visual"))}
+        for platform in ("iOS", "tvOS"):
+            blobs["immichSlides-" + platform + ".xctestplan"] = json.dumps(
+                {"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}).encode()
+        def git_output(command, **kwargs):
+            if command[1] == "ls-tree":
+                return b"100644 blob " + b"d" * 40 + b"\timmichSlidesUITests/Example.swift\0"
+            if command[1] == "rev-parse":
+                return b"b" * 40 + b"\n"
+            return blobs[command[-1].split(":", 1)[1]]
+        for mode in ("ui-only", "consumer-preflight", "strict-only", "single-shard", "missing-ui"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory, "source")
+                for name, blob in blobs.items():
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(blob)
+                records = Path(directory, "records")
+                records.mkdir()
+                environment = {"GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "1"}
+                with patch.dict(os.environ, environment, clear=True), \
+                        patch("run_host_checks.run_identity", return_value=identity), \
+                        patch("run_host_checks.source_metadata", return_value=(ci_report.NIGHTLY_PATH, False)), \
+                        patch.object(ci_nightly, "run_identity", return_value=identity), \
+                        patch.object(ci_nightly, "source_metadata", return_value=(ci_report.NIGHTLY_PATH, False)), \
+                        patch.object(ci_nightly, "workspace_preflight"), \
+                        patch.object(ci_nightly_ui, "current_plan", side_effect=lambda ignored: current_plan(root)):
+                    ui_plan = ci_nightly_ui.current_plan(root)
+                    members = {}
+                    if mode in {"ui-only", "consumer-preflight"}:
+                        for number, item in enumerate(ui_plan["shards"]):
+                            device, shard = item["device"], item["shard"]
+                            name = f"ui-{device}-{shard}-10-1"
+                            output = records / name
+                            test = item["declared"][0]
+                            if number == 0 and mode == "consumer-preflight":
+                                args = type("Args", (), {"device": device, "shard": shard, "output_dir": output,
+                                                        "manifest_revision": None})()
+                                with patch.object(ci_ui_tests, "ROOT", root), \
+                                        patch.object(ci_ui_tests, "context", return_value=copy.deepcopy({
+                                            "identity": identity, "source": ui_plan["source"], "run": ui_plan["run"]})), \
+                                        patch.object(fixture, "registry_revision", return_value="HEAD"), \
+                                        patch.object(fixture, "load_registry", return_value=(registry, hashlib.sha256(
+                                            blobs["scripts/ci-known-flaky.json"]).hexdigest())):
+                                    ci_ui_tests.failed_shard(args, OSError("archive relocation failed"))
+                            else:
+                                products = Path(directory, "products")
+                                (products / "Debug-simulator/immichSlides.app").mkdir(parents=True, exist_ok=True)
+                                xctestrun = products / "tests.xctestrun"
+                                xctestrun.write_bytes(plistlib.dumps({"TestConfigurations": [{"TestTargets": [
+                                    {"BlueprintName": "immichSlidesUITests"}]}]}))
+                                bundle = Path(directory, "private", name, "results", "test.xcresult")
+                                bundle.parent.mkdir(parents=True)
+                                def popen(command, **kwargs):
+                                    if "-enumerate-tests" in command:
+                                        path = Path(command[command.index("-test-enumeration-output-path") + 1])
+                                        path.write_text(json.dumps({"errors": [], "values": [{"enabledTests": [
+                                            {"identifier": "immichSlidesUITests/" + test["key"]}]}]}))
+                                    return Mock(wait=Mock(return_value=0))
+                                outcome = "failed" if number == 1 else "passed"
+                                retry = {"observed": [observation(test, outcome, 2, exit_code=65 if outcome == "failed" else 0)],
+                                         "infrastructure": [], "exit_code": 65 if outcome == "failed" else 0,
+                                         "invocations": [{"exit_code": 65 if outcome == "failed" else 0}]}
+                                with ExitStack() as stack:
+                                    patches = [patch.object(fixture, "ROOT", root), patch.object(fixture, "run_identity", return_value=identity),
+                                        patch.object(fixture, "source_metadata", return_value=(ci_report.NIGHTLY_PATH, False)),
+                                        patch.object(fixture, "toolchain", return_value={"versions": {}, "signing_mode": "not-applicable"}),
+                                        patch.object(fixture, "registry_revision", return_value="HEAD"),
+                                        patch.object(fixture, "load_registry", return_value=(registry, hashlib.sha256(
+                                            blobs["scripts/ci-known-flaky.json"]).hexdigest())),
+                                        patch.object(fixture.subprocess, "run", return_value=Mock(stdout=b"{}")),
+                                        patch.object(fixture, "verify_simulator_device", side_effect=OSError("simulator unavailable") if number == 0 else None),
+                                        patch.object(fixture, "prepare_fixture_result_bundle", return_value=bundle),
+                                        patch.object(fixture.subprocess, "Popen", side_effect=popen),
+                                        patch.object(fixture, "wait_for_service", return_value=("127.0.0.1", 1)),
+                                        patch.object(fixture, "check_products"), patch.object(fixture, "measure_signing", return_value="adhoc"),
+                                        patch.object(fixture, "disk_check"), patch.object(fixture, "reset_simulator_app"),
+                                        patch.object(fixture, "run_xcode_attempts", return_value=retry),
+                                        patch.object(fixture, "stop_exact_process"), patch.object(fixture, "finalize_fixture_run", return_value=[])]
+                                    for applied in patches:
+                                        stack.enter_context(applied)
+                                    result = fixture.main(["--device", device, "--destination", "platform=" + (
+                                        "tvOS" if device == "appletv" else "iOS") + " Simulator,id=" + "A" * 8 + "-" + "B" * 4 + "-" +
+                                        "C" * 4 + "-" + "D" * 4 + "-" + "E" * 12, "--xctestrun", str(xctestrun),
+                                        "--output-dir", str(output), "--shard", shard, "--shard-manifest", str(root / "scripts/ci-ui-shards.json"),
+                                        "--only-testing", "immichSlidesUITests/" + test["key"], "--listed-only-retry"])
+                                self.assertEqual(1 if number == 0 else 65 if number == 1 else 0, result)
+                            summary = json.loads((output / "summary.json").read_text())
+                            self.assertEqual(ui_plan["hashes"][device], summary["hashes"])
+                            self.assertEqual(item["declared"], summary["population"]["declared"])
+                            members[(name, "summary.json")] = summary
+                            (output / "shard-timing.json").write_text(json.dumps({"device": device, "shard": shard,
+                                "started_epoch": ui_plan["started_epoch"], "finished_epoch": time.time()}))
+                        ui = ci_nightly_ui.aggregate_ui(ui_plan, records, matrix_job_result="failure", root=root)
+                        ui_path = Path(directory, "nightly-ui.json")
+                        ui_path.write_text(json.dumps(ui))
+                        members[("nightly-ui-aggregate-10-1", "nightly-ui.json")] = ui
+                    else:
+                        ui_path = Path(directory, "absent-ui.json")
+                    plan_dir = Path(directory, "plan")
+                    selected = ci_nightly.shards(ci_nightly.parse_manifest(ci_nightly.MATRIX.read_text()))[0]
+                    option = ["--only-shard", selected["id"]] if mode == "single-shard" else ["--diagnostic-tier", "strict" if mode == "strict-only" else "ui"]
+                    ci_nightly.main(["plan", "--output-dir", str(plan_dir)] + option)
+                    plan = json.loads((plan_dir / "plan.json").read_text())
+                    members[("nightly-plan-10-1", "plan.json")] = plan
+                    strict_records = Path(directory, "strict-records")
+                    strict_records.mkdir()
+                    if mode in {"strict-only", "single-shard"}:
+                        cases = [ci_nightly.case_identity(case) for case in selected["cases"]]
+                        summary = valid_summary()
+                        summary.update(identity=identity, hashes=plan["hashes"], source=ui_plan["source"],
+                                       run={**plan["run"], "tier": "strict", "job": "nightly-strict", "shard": selected["id"]})
+                        summary["population"].update(declared=cases, compiled=cases, observed=[observation(case, "passed", 2) for case in cases])
+                        trace = {"started_epoch": plan["started_epoch"], "finished_epoch": time.time(), "warm": [
+                            {"identity": case, "official_methods": [{"identifier": resolve_suite_selector("ios", case["dimensions"]["suite"]).split("/", 1)[1], "result": "Passed"}],
+                             "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0},
+                             "build_operations": 0, "products_unchanged": True, "log_present": True, "exit_code": 0} for case in cases]}
+                        shard_records = strict_records / f"nightly-strict-{selected['id']}-10-1"
+                        shard_records.mkdir()
+                        for member, value in (("summary.json", summary), ("trace.json", trace), ("p2-review-bindings.json", {"schema_version": 1, "review_packages": []})):
+                            shard_records.joinpath(member).write_text(json.dumps(value))
+                            members[(f"nightly-strict-{selected['id']}-10-1", member)] = value
+                    aggregate_dir = Path(directory, "aggregate")
+                    self.assertEqual(1, ci_nightly.main(["aggregate", "--output-dir", str(aggregate_dir), "--plan", str(plan_dir / "plan.json"),
+                        "--records-dir", str(strict_records), "--matrix-job-result", "failure", "--ui-record", str(ui_path)]))
+                    raw = json.loads((aggregate_dir / "nightly.json").read_text())
+                    members[("nightly-aggregate-10-1", "nightly.json")] = raw
+                    artifacts = [{"name": name, "expired": False} for name in sorted({name for name, _ in members})]
+                    with patch("ci_publish.json_member", side_effect=lambda api, artifact, member: members[(artifact["name"], member)]), \
+                            patch("subprocess.check_output", side_effect=git_output):
+                        report = ci_report.nightly_attempt(api, run, 1, artifacts)
+                    self.assertEqual(plan["diagnostic_shard"], report["diagnostic_shard"])
+                    self.assertEqual("failed", report["status"])
+                    if mode in {"ui-only", "consumer-preflight"}:
+                        self.assertEqual("ui-only", report["diagnostic_shard"])
+                        self.assertEqual((9, 8), (report["diagnostics"]["counts"]["ui_scheduled"], report["diagnostics"]["counts"]["ui_executed"]))
+                        self.assertEqual([ui_plan["shards"][0]["declared"][0]], [item["identity"] for item in report["diagnostics"]["missing"]])
+                        self.assertEqual([ui_plan["shards"][1]["declared"][0]], [item["identity"] for item in report["diagnostics"]["failures"]])
+                        self.assertEqual(ui, raw["ui"])
+                    else:
+                        self.assertEqual(1, raw["schema_version"])
+                        self.assertNotIn("ui", raw)
+                        if mode == "missing-ui":
+                            self.assertIn("nightly infrastructure or scheduling failure", report["diagnostics"]["infrastructure"])
+                        else:
+                            self.assertEqual(2 * len(cases), len(report["observed"]))
+                            self.assertTrue(all(item["outcome"] == "passed" for item in report["observed"]))
+
     def test_nightly_ui_reader_rejects_missing_samples_and_foreign_shards(self):
         from ci_nightly_ui import judge_ui, parse_ui_plan, validate_ui_record
         identity = {"schema_version": 1, "repository": "sudoHG/immichSlides", "event": "schedule",
