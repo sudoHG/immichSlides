@@ -50,14 +50,14 @@ extension FilterSummaryTVOSVisualUITests {
 
         moveFocusToFilteredModeCard()
         XCUIRemote.shared.press(.select)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         moveFocusToModeContinueButton()
 
         for _ in 0..<3 {
             XCUIRemote.shared.press(.up)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
 
         XCTAssertTrue(continueButton.isEnabled, "After choosing a mode, the 'Continue' button should become enabled")
@@ -78,13 +78,13 @@ extension FilterSummaryTVOSVisualUITests {
 
         moveFocusToFilteredModeCard()
         XCUIRemote.shared.press(.select)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         moveFocusToModeContinueButton()
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
             continueButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "In light mode the 'Continue' button should be visible")
         XCTAssertTrue(
             continueButton.isEnabled, "In light mode, after choosing a mode, the 'Continue' button should be enabled")
@@ -197,9 +197,9 @@ extension FilterSummaryTVOSVisualUITests {
 
         for _ in 0..<3 {
             XCUIRemote.shared.press(.up)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
 
         let backButton = app.buttons["filterSummary.backToMode.button"]
@@ -207,11 +207,11 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCTAssertTrue(
             backButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "After repeated switching, the 'Back to mode selection' button should still exist")
         XCTAssertTrue(
             peopleButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "After repeated switching, the 'Filter people' card should still exist")
 
         XCTAssertTrue(
@@ -263,7 +263,7 @@ extension FilterSummaryTVOSVisualUITests {
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Empty album page should show the back button")
         waitForButtonToGainFocus(
-            albumBackButton, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            albumBackButton, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "The back button on the empty album page should be able to get tvOS focus")
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "tvos-empty-album-filter-back-focused")
@@ -289,7 +289,7 @@ extension FilterSummaryTVOSVisualUITests {
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Empty person page should show the back button")
         waitForButtonToGainFocus(
-            personBackButton, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            personBackButton, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "The back button on the empty person page should be able to get tvOS focus")
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "tvos-empty-person-filter-back-focused")
@@ -375,7 +375,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCUIRemote.shared.press(.up)
         waitForAnyAlbumTopBarButtonToGainFocus(
-            app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds)
+            app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds)
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "tvos-album-filter-topbar-focused")
     }
@@ -400,14 +400,14 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForElementToGainFocus(
             firstCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "When the album filter page opens, default focus should land on the first album card"
         )
 
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving right from the first album card, focus should reach the second album card"
         )
     }
@@ -427,7 +427,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving right, focus should land on the second album card"
         )
 
@@ -436,7 +436,7 @@ extension FilterSummaryTVOSVisualUITests {
         waitForElementValue(
             secondCard,
             expectedValue: "已选中，已聚焦",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Pressing Select on the second album card should switch it to selected and keep focus"
         )
     }
@@ -456,13 +456,13 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving right, focus should land on the second album card"
         )
 
         XCUIRemote.shared.press(.up)
         waitForAnyAlbumTopBarButtonToGainFocus(
-            app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds)
+            app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds)
     }
 
     @MainActor
@@ -481,13 +481,13 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             thirdCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving right twice, focus should land on the third album card"
         )
 
         XCUIRemote.shared.press(.up)
         waitForAnyAlbumTopBarButtonToGainFocus(
-            app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds)
+            app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds)
     }
 
     @MainActor
@@ -554,7 +554,7 @@ extension FilterSummaryTVOSVisualUITests {
         let backButton = app.buttons["personFilter.back.button"]
         waitForButtonToGainFocus(
             backButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving up on the person filter page, the back button should get focus"
         )
         waitForFocusVisualSettle()
@@ -593,7 +593,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForElementToGainFocus(
             firstCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "When the person filter page opens, default focus should land on the first person card"
         )
 
@@ -602,7 +602,7 @@ extension FilterSummaryTVOSVisualUITests {
         waitForElementValue(
             firstCard,
             expectedValue: "已选中，单人模式，已聚焦",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "Pressing Play/Pause on the focused person card should go straight to selected with solo mode"
         )
@@ -625,7 +625,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForElementToGainFocus(
             firstCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "When the English person filter page opens, default focus should land on the first person card"
         )
@@ -634,7 +634,7 @@ extension FilterSummaryTVOSVisualUITests {
         waitForElementValue(
             firstCard,
             expectedValue: "Selected, Solo Mode, Focused",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "In English, pressing Play/Pause should switch to selected with solo mode"
         )
         waitForFocusVisualSettle()
@@ -663,7 +663,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForElementToGainFocus(
             firstCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "When the person filter page opens, default focus should land on the first primary person card"
         )
@@ -671,7 +671,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "Moving right from the first person card, focus should reach the second, not stay stuck in the first"
         )
@@ -692,7 +692,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.right)
         waitForElementToGainFocus(
             secondCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving right, focus should land on the second person card"
         )
 
@@ -701,7 +701,7 @@ extension FilterSummaryTVOSVisualUITests {
         waitForElementValue(
             secondCard,
             expectedValue: "已选中，普通模式，已聚焦",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "Pressing Select on the second person card should add that person to the filter and keep normal mode"
         )

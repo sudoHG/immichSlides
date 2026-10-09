@@ -60,7 +60,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             serverURLField,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the server page, default focus should land reliably on the server URL field"
         )
 
@@ -113,7 +113,7 @@ extension FilterSummaryTVOSVisualUITests {
         }
         waitForButtonToGainFocus(
             testConnectionButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds,
             failureMessage:
                 "On the server detail page, direction keys should be able to focus the Test Connection button"
         )
@@ -123,13 +123,13 @@ extension FilterSummaryTVOSVisualUITests {
         let alert = app.alerts["连接测试失败"]
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-            alert.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds),
+            alert.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds),
             "Test Connection on server detail should show the error there at once, not after returning to settings root"
         )
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: app, identifier: "settings.server.hero.summary",
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementDeadlineSeconds),
             "When the alert appears, the server detail page should still be underneath, not the settings root"
         )
         XCTAssertTrue(
@@ -220,35 +220,35 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             clearCacheButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the cache page, direction keys should be able to focus the 'Clear Disk Cache' button"
         )
 
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds) {
+            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
                 // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-                self.waitForElementWithLabelExists(app: app, label: "确认清理磁盘缓存", timeout: 0)
+                self.waitForElementWithLabelExists(app: app, label: "确认清理磁盘缓存", timeout: TestWait.seconds(.product(0)))
                     // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
                     || app.alerts.element(boundBy: 0).exists
                     // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-                    || self.waitForElementWithLabelExists(app: app, label: "清理", timeout: 0)
+                    || self.waitForElementWithLabelExists(app: app, label: "清理", timeout: TestWait.seconds(.product(0)))
                     // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-                    || self.waitForElementWithLabelExists(app: app, label: "取消", timeout: 0)
+                    || self.waitForElementWithLabelExists(app: app, label: "取消", timeout: TestWait.seconds(.product(0)))
             },
             "After choosing 'Clear Disk Cache', a confirmation should pop up right away on the cache page"
         )
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
             waitForElementWithLabelExists(
-                app: app, label: "清理", timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds),
+                app: app, label: "清理", timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds),
             "The confirmation dialog should show the 'Clear' action button"
         )
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
             waitForElementWithLabelExists(
-                app: app, label: "取消", timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds),
+                app: app, label: "取消", timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds),
             "The confirmation dialog should show the 'Cancel' button"
         )
     }
@@ -354,7 +354,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the About page, the first focus should land on the 'App Info' section"
         )
 
@@ -365,10 +365,10 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "About page should expose the 'Unofficial Notice' focus area"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             unofficialNoticeSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down from 'App Info', focus should reach the 'Unofficial Notice' section"
         )
 
@@ -379,10 +379,10 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "About page should expose the 'Feedback & Support' focus area"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             feedbackSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down again, focus should reach the 'Feedback & Support' section"
         )
 
@@ -393,10 +393,10 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "About page should show the 'Privacy Policy' entry"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down again, focus should reach the 'Privacy Policy' entry"
         )
 
@@ -407,20 +407,20 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "About page should show the 'Open Source Licenses' entry"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down again, focus should reach the 'Open Source Licenses' entry"
         )
 
         attachScreenshot(app: app, name: "tvos-settings-about-page-bottom-focus-dark")
 
         XCUIRemote.shared.press(.up)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "Moving back up from 'Open Source Licenses', focus should return reliably to the 'Privacy Policy' entry"
         )
@@ -451,7 +451,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the About page, the first focus should land on the 'App Info' section"
         )
 
@@ -464,12 +464,12 @@ extension FilterSummaryTVOSVisualUITests {
 
         for _ in 0..<3 {
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
 
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "In the lower half of the About page, focus should land reliably on the 'Privacy Policy' entry"
         )
@@ -501,44 +501,44 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             chineseLanguageButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "On the privacy policy page, default focus should land directly on the 'Chinese' language button"
         )
 
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             firstPolicySection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down from the language button, focus should enter the privacy policy text"
         )
 
         attachScreenshot(app: app, name: "tvos-settings-privacy-policy-page-dark")
 
         XCUIRemote.shared.press(.up)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             chineseLanguageButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving back up from the text, focus should return to the current language button"
         )
 
         XCUIRemote.shared.press(.right)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             englishLanguageButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving right from the Chinese button, focus should reach the English button"
         )
 
         XCUIRemote.shared.press(.select)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
 
         let englishFirstPolicySection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.section.0",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After choosing English, the privacy policy page should still show the first body section"
         )
         XCTAssertTrue(
@@ -549,18 +549,18 @@ extension FilterSummaryTVOSVisualUITests {
         let tablePolicySection = waitForSettingsControl(
             app: app,
             identifier: "settings.about.privacyPolicy.section.2",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "The privacy policy data processing section should remain a separate focusable section"
         )
 
         for _ in 0..<3 {
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
 
         waitForButtonToGainFocus(
             tablePolicySection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down again, focus should reach the section with the data processing table"
         )
 
@@ -588,7 +588,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "In dark mode, on the access protection page default focus should be on the 'Set PIN' input entry"
         )
@@ -638,7 +638,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             serverURLField,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "In light mode, on the server page default focus should be on the server URL field"
         )
 
@@ -672,7 +672,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             serverURLField,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "In English, on the server page default focus should be on the server URL field"
         )
 
@@ -795,35 +795,35 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the About page, default focus should land on the 'App Info' section"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             unofficialNoticeSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down from 'App Info', focus should reach the 'Unofficial Notice' section"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             feedbackSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down again, focus should reach the 'Feedback & Support' section"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down again, focus should reach the 'Privacy Policy' entry"
         )
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down from 'Privacy Policy' should reliably focus the 'Open Source Licenses' entry"
         )
 

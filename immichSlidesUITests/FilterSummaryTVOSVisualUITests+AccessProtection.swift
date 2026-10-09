@@ -17,7 +17,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "In light mode, moving down on the home page should also reliably focus 'Access Protection'"
         )
 
@@ -30,7 +30,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "In light mode, on the access protection page default focus should be on the 'Set PIN' input entry"
         )
@@ -62,7 +62,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "With large text, on the access protection page default focus should be on the 'Set PIN' input entry"
         )
@@ -94,7 +94,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "With large text, entering the access protection page should focus the 'Set PIN' input entry first"
         )
@@ -107,24 +107,24 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCTAssertTrue(
             closeButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the opened PIN sheet should show the close button")
         XCTAssertTrue(
             digitOneButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the opened PIN sheet should show the number pad")
         XCTAssertTrue(
             zeroButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the PIN sheet should show digit 0")
         XCTAssertTrue(
             deleteButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the PIN sheet should show the delete button")
 
         waitForButtonToGainFocus(
             digitOneButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "With large text, default focus in the opened PIN sheet should land on digit 1"
         )
 
@@ -133,21 +133,21 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             closeButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "With large text, moving down three times from digit 1 should land focus on 'Close'"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             zeroButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "With large text, moving right from 'Close' should move focus to digit 0"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             deleteButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "With large text, moving right from digit 0 should move focus to 'Delete'"
         )
 
@@ -169,7 +169,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving down, focus should reach 'Access Protection'"
         )
 
@@ -183,7 +183,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "On entering the access protection page, focus should land on the 'Set PIN' input entry first"
         )
@@ -198,43 +198,43 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCTAssertTrue(
             closeButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The opened PIN sheet should show the close button")
         XCTAssertTrue(
             digitOneButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The opened PIN sheet should show the number pad")
         XCTAssertTrue(
             digitTwoButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The opened PIN sheet should show digit 2")
         XCTAssertTrue(
             zeroButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The PIN sheet should show digit 0")
         XCTAssertTrue(
             deleteButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The PIN sheet should show the delete button")
 
         // The PIN sheet's default focus must be on the digit pad, not drift to the close button.
         waitForButtonToGainFocus(
             digitOneButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "When the PIN sheet opens, default focus should land on digit 1"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             digitTwoButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving right from digit 1, focus should reach digit 2"
         )
 
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             digitOneButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving left from digit 2, focus should return to digit 1"
         )
 
@@ -243,21 +243,21 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             closeButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down three times from digit 1, focus should land reliably on 'Close'"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             zeroButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving right from 'Close', focus should reach digit 0"
         )
 
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             deleteButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving right from digit 0, focus should reach 'Delete'"
         )
 
@@ -279,7 +279,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving down, focus should reach 'Access Protection'"
         )
         XCUIRemote.shared.press(.select)
@@ -299,13 +299,13 @@ extension FilterSummaryTVOSVisualUITests {
         let enableProtectionButton = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.enable.button",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Access protection page should show the 'Enable Access Protection' button"
         )
 
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the access protection page, default focus should land on the 'Set PIN' input entry"
         )
         XCUIRemote.shared.press(.select)
@@ -314,7 +314,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enablePinConfirmInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After filling 'Set PIN', moving down should focus 'Confirm PIN'"
         )
         XCUIRemote.shared.press(.select)
@@ -323,7 +323,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enableProtectionButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After entering and confirming the PIN, moving down should focus the 'Enable Access Protection' button"
         )
@@ -333,7 +333,7 @@ extension FilterSummaryTVOSVisualUITests {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.pin.feedback.success.prominent",
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds
             ),
             "After access protection is enabled, a prominent success banner should show at the top of the page. state=\(accessibilityValueString(for: app.otherElements["settings.pin.stateProbe"]))"
         )
@@ -341,7 +341,7 @@ extension FilterSummaryTVOSVisualUITests {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.pin.disable.button",
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds
             ),
             "After access protection is enabled, the page should switch to the 'Disable Access Protection' controls"
         )
@@ -364,7 +364,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving down, focus should reach 'Access Protection'"
         )
         XCUIRemote.shared.press(.select)
@@ -384,13 +384,13 @@ extension FilterSummaryTVOSVisualUITests {
         let enableProtectionButton = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.enable.button",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Access protection page should show the 'Enable Access Protection' button"
         )
 
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the access protection page, default focus should land on the 'Set PIN' input entry"
         )
         XCUIRemote.shared.press(.select)
@@ -399,7 +399,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enablePinConfirmInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After filling 'Set PIN', moving down should focus 'Confirm PIN'"
         )
         XCUIRemote.shared.press(.select)
@@ -408,7 +408,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             enableProtectionButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After entering and confirming the PIN, moving down should focus the 'Enable Access Protection' button"
         )
@@ -417,20 +417,20 @@ extension FilterSummaryTVOSVisualUITests {
         let disableCurrentPinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.disableCurrent",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After enabling access protection, the 'Enter current PIN' entry should be shown. state=\(accessibilityValueString(for: app.otherElements["settings.pin.stateProbe"]))"
         )
         let disableProtectionButton = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.disable.button",
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After enabling access protection, the 'Disable Access Protection' button should be shown"
         )
 
         waitForButtonToGainFocus(
             disableCurrentPinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After access protection is enabled, default focus should be on the 'Enter current PIN' entry"
         )
@@ -440,7 +440,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.down)
         waitForButtonToGainFocus(
             disableProtectionButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After entering the current PIN, moving down should focus the 'Disable Access Protection' button"
         )
@@ -450,7 +450,7 @@ extension FilterSummaryTVOSVisualUITests {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.pin.feedback.success.prominent",
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds
             ),
             "After access protection is disabled, a prominent success banner should be shown. state=\(accessibilityValueString(for: app.otherElements["settings.pin.stateProbe"]))"
         )
@@ -458,7 +458,7 @@ extension FilterSummaryTVOSVisualUITests {
             waitForSettingsControlExists(
                 app: app,
                 identifier: "settings.pin.enable.button",
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds
             ),
             "After disabling access protection, the page should switch back to the 'Enable Access Protection' controls"
         )

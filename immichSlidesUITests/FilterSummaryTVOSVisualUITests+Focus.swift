@@ -32,7 +32,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             playbackItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Settings home should be able to bring focus back to the 'Playback Settings' entry",
             file: file,
             line: line
@@ -57,7 +57,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             target,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: failureMessage,
             file: file,
             line: line
@@ -204,7 +204,7 @@ extension FilterSummaryTVOSVisualUITests {
         let firstCard = try albumCardInServerOrder(at: 0, in: app)
         waitForElementToGainFocus(
             firstCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "Album filter page should focus the first card by default before the scroll-to-bottom screenshot"
         )
@@ -285,7 +285,7 @@ extension FilterSummaryTVOSVisualUITests {
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "A readable UI test readiness marker should be exposed: \(identifier)", file: file, line: line)
 
-        waitForFocusVisualSettle(seconds: 1.2)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(1.2)))
     }
 
     @MainActor
@@ -455,7 +455,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         XCTAssertTrue(
             digitOneButton.waitForExistence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "\(operationName): the opened PIN sheet should show the number pad",
             file: file,
             line: line
@@ -463,7 +463,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             digitOneButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "\(operationName): when the PIN sheet opens, default focus should be on digit 1",
             file: file,
             line: line
@@ -477,7 +477,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForElementToDisappear(
             closeButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "\(operationName): after 6 digits are entered, the PIN sheet should close on its own",
             file: file,
             line: line

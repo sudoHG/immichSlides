@@ -15,7 +15,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After opening settings, default focus should land on 'Playback Settings'"
         )
 
@@ -35,7 +35,7 @@ extension FilterSummaryTVOSVisualUITests {
             "Settings home should show the 'Playback Settings' entry")
         waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Settings home default focus should land on 'Playback Settings'"
         )
         XCUIRemote.shared.press(.select)
@@ -49,7 +49,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             autoPlayLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After opening 'Playback Settings', default focus should land on the first actionable item, 'Autoplay'"
         )
@@ -71,7 +71,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             autoPlayOnButton,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After opening 'Autoplay', default focus should land on the first item, 'Autoplay on'"
         )
         waitForFocusVisualSettle()
@@ -84,7 +84,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds) {
+            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
 
                 self.accessibilityValueString(for: autoPlayOnButton).contains(isOnOptionSelected ? "未选中" : "已选中")
                     && self.accessibilityValueString(for: autoPlayOffButton).contains(
@@ -114,7 +114,7 @@ extension FilterSummaryTVOSVisualUITests {
             "Settings home should show the 'Playback Settings' entry")
         waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Settings home default focus should land on 'Playback Settings'"
         )
         XCUIRemote.shared.press(.select)
@@ -146,14 +146,14 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             autoPlayLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After opening 'Playback Settings', default focus should land on the 'Autoplay' entry"
         )
 
         XCUIRemote.shared.press(.down)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds) {
+            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
                 app.buttons["settings.playback.interval.5.button"].exists
             },
             """
@@ -184,7 +184,7 @@ extension FilterSummaryTVOSVisualUITests {
             "Settings home should show the 'Playback Settings' entry")
         waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Settings home default focus should land on 'Playback Settings'"
         )
         XCUIRemote.shared.press(.select)
@@ -205,7 +205,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             autoPlayLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After opening 'Playback Settings', default focus should land on the 'Autoplay' entry"
         )
 
@@ -217,7 +217,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds) {
+            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationDeadlineSeconds) {
                 app.buttons["filter.editor.done.button"].exists && app.buttons["filter.editor.album.entry"].exists
                     && app.buttons["filter.editor.person.entry"].exists
             },
@@ -255,14 +255,14 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After opening settings, default focus should land on 'Playback Settings'"
         )
 
         XCUIRemote.shared.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving down once on the home page, focus should reach 'Access Protection'"
         )
 
@@ -299,14 +299,14 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForSettingsHomeItemFocus(
             button: playbackItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After opening settings, default focus should land reliably on 'Playback Settings'"
         )
 
         XCUIRemote.shared.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Pressing Down on 'Playback Settings' should move focus to 'Access Protection'"
         )
         XCUIRemote.shared.press(.select)
@@ -319,7 +319,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForButtonToGainFocus(
             enablePinInput,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After opening 'Access Protection', default focus should go to the first PIN input entry"
         )
     }

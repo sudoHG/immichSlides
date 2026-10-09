@@ -75,11 +75,11 @@ extension FilterSummaryTVOSVisualUITests {
         // Focus starts on the server URL: API Key -> Test Connection -> Help.
 
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         XCUIRemote.shared.press(.down)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         XCUIRemote.shared.press(.left)
-        waitForFocusVisualSettle(seconds: 0.22)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             sheet.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
@@ -111,11 +111,11 @@ extension FilterSummaryTVOSVisualUITests {
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementTimeoutSeconds)
             {
                 XCUIRemote.shared.press(.down)
-                waitForFocusVisualSettle(seconds: 0.22)
+                waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
             }
             XCTAssertTrue(
                 securityTitle.waitForExistence(
-                    timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+                    timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackDeadlineSeconds),
                 "\(context) help sheet should show the security reminder",
                 file: file, line: line)
             XCTAssertEqual(securityTitle.label, "安全提醒", file: file, line: line)
@@ -135,7 +135,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         XCUIRemote.shared.press(.select)
         XCTAssertFalse(
-            sheet.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementTimeoutSeconds),
+            sheet.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementDeadlineSeconds),
             "\(context) should not stay on the help sheet after closing",
             file: file, line: line)
         XCTAssertTrue(
@@ -390,7 +390,7 @@ extension FilterSummaryTVOSVisualUITests {
     }
 
     @MainActor
-    func waitForFocusVisualSettle(seconds: TimeInterval = 0.45) {
+    func waitForFocusVisualSettle(seconds: TimeInterval = TestWait.seconds(.product(0.45))) {
 
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
@@ -398,7 +398,7 @@ extension FilterSummaryTVOSVisualUITests {
     @MainActor
     func waitForPlaybackEntryHintAnimationToSettle() {
 
-        waitForFocusVisualSettle(seconds: 1.2)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(1.2)))
     }
 }
 #endif

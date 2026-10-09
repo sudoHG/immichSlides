@@ -25,27 +25,39 @@ enum FilterSummaryTVOSVisualUITestsSettingsNavigation {
 }
 
 enum FilterSummaryTVOSVisualUITestsWaitTiming {
-    static let albumFocusSettleSeconds: TimeInterval = 0.18
-    static let briefElementTimeoutSeconds: TimeInterval = 1
-    static let connectionTimeoutSeconds: TimeInterval = 15
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
-    static let focusPollSeconds: TimeInterval = 0.08
-    static let focusSettleSeconds: TimeInterval = 0.16
-    static let navigationFocusSettleSeconds: TimeInterval = 0.22
-    static let navigationTimeoutSeconds: TimeInterval = 10
-    static let pollIntervalSeconds: TimeInterval = 0.1
-    static let readbackTimeoutSeconds: TimeInterval = 2
-    static let remotePressSettleSeconds: TimeInterval = 0.12
-    static let screenSettleSeconds: TimeInterval = 0.8
-    static let screenTransitionTimeoutSeconds: TimeInterval = 12
-    static let selectionPollSeconds: TimeInterval = 0.25
-    static let settingsChangeTimeoutSeconds: TimeInterval = 6
-    static let shortFocusSettleSeconds: TimeInterval = 0.15
-    static let shortInteractionTimeoutSeconds: TimeInterval = 3
-    static let snapshotPollSeconds: TimeInterval = 0.5
-    static let stateChangeTimeoutSeconds: TimeInterval = 4
-    static let transitionPollSeconds: TimeInterval = 0.4
+    // Resolve discovery budgets once; helpers receive seconds without scaling them again.
+    static let albumFocusSettleSeconds = TestWait.seconds(.product(0.18))
+    static let briefElementTimeoutSeconds = TestWait.seconds(.infrastructure(1))
+    static let connectionTimeoutSeconds = TestWait.seconds(.infrastructure(15))
+    static let controlAppearanceTimeoutSeconds = TestWait.seconds(.infrastructure(8))
+    static let elementAppearanceTimeoutSeconds = TestWait.seconds(.infrastructure(5))
+    static let focusPollSeconds = TestWait.seconds(.product(0.08))
+    static let focusSettleSeconds = TestWait.seconds(.product(0.16))
+    static let navigationFocusSettleSeconds = TestWait.seconds(.product(0.22))
+    static let navigationTimeoutSeconds = TestWait.seconds(.infrastructure(10))
+    static let pollIntervalSeconds = TestWait.seconds(.product(0.1))
+    static let readbackTimeoutSeconds = TestWait.seconds(.infrastructure(2))
+    static let remotePressSettleSeconds = TestWait.seconds(.product(0.12))
+    static let screenSettleSeconds = TestWait.seconds(.product(0.8))
+    static let screenTransitionTimeoutSeconds = TestWait.seconds(.infrastructure(12))
+    static let selectionPollSeconds = TestWait.seconds(.product(0.25))
+    static let settingsChangeTimeoutSeconds = TestWait.seconds(.infrastructure(6))
+    static let shortFocusSettleSeconds = TestWait.seconds(.product(0.15))
+    static let shortInteractionTimeoutSeconds = TestWait.seconds(.product(3))
+    static let snapshotPollSeconds = TestWait.seconds(.product(0.5))
+    static let stateChangeTimeoutSeconds = TestWait.seconds(.infrastructure(4))
+    static let transitionPollSeconds = TestWait.seconds(.product(0.4))
+
+    // Focus, disappearance and state changes retain their original product deadlines.
+    static let briefElementDeadlineSeconds = TestWait.seconds(.product(1))
+    static let connectionDeadlineSeconds = TestWait.seconds(.product(15))
+    static let controlAppearanceDeadlineSeconds = TestWait.seconds(.product(8))
+    static let elementAppearanceDeadlineSeconds = TestWait.seconds(.product(5))
+    static let navigationDeadlineSeconds = TestWait.seconds(.product(10))
+    static let readbackDeadlineSeconds = TestWait.seconds(.product(2))
+    static let screenTransitionDeadlineSeconds = TestWait.seconds(.product(12))
+    static let settingsChangeDeadlineSeconds = TestWait.seconds(.product(6))
+    static let stateChangeDeadlineSeconds = TestWait.seconds(.product(4))
 }
 
 #if os(tvOS)
@@ -475,7 +487,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         waitForButtonToGainFocus(
             appInfoSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Localized tvOS About page default focus should land on App Info"
         )
         XCTAssertTrue(
@@ -495,11 +507,11 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         for _ in 0..<3 {
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
         waitForButtonToGainFocus(
             privacyPolicyLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Localized tvOS About page should let focus move to Privacy Policy"
         )
         attachScreenshot(app: aboutApp, name: "\(locale.screenshotPrefix)-tvos-settings-about-bottom")
@@ -536,7 +548,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         waitForButtonToGainFocus(
             openSourceAppInfoSection,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Localized tvOS About page default focus should land on App Info"
         )
 
@@ -548,11 +560,11 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         for _ in 0..<4 {
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
         waitForButtonToGainFocus(
             openSourceLink,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Localized tvOS About page should let focus move to Open Source Licenses"
         )
         XCUIRemote.shared.press(.select)
