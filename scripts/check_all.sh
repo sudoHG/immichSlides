@@ -3,6 +3,8 @@
 # Optional offline unit tests run only with --with-unit-tests.
 # Exit codes: 0 all checks passed, 1 at least one check failed, 2 invalid arguments.
 set -euo pipefail
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 usage() {
     cat <<'EOF'

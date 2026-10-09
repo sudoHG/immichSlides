@@ -1,7 +1,9 @@
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from ci_local import CONTEXT, SOURCE_CONTEXT
@@ -82,6 +84,31 @@ class CheckAllTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown argument", result.stderr)
         self.assertEqual(self.calls(), [])
+
+    def test_interrupt_does_not_start_the_next_unit_platform(self):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=signum):
+                self.log.unlink(missing_ok=True)
+                stub = self.tmp / "bin/python3"
+                stub.write_text(STUB.replace("exit 0", "sleep 60\nexit 0"))
+                stub.chmod(0o755)
+                process = subprocess.Popen(
+                    ["bash", str(self.repo / "scripts/check_all.sh"), "--with-unit-tests",
+                     "--ios-destination", "i", "--tvos-destination", "t",
+                     "--output-dir", str(self.tmp / ("interrupted-" + str(signum)))], env=self.env,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not self.calls() and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    self.assertTrue(self.calls())
+                    os.killpg(process.pid, signum)
+                    self.assertEqual(process.wait(timeout=3), 128 + signum)
+                    self.assertEqual(len(self.calls()), 1)
+                finally:
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
 
     def test_unit_tests_require_destinations_and_output_dir(self):
         out = self.tmp / "out"
