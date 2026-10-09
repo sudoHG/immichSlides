@@ -5,10 +5,10 @@ import Foundation
 
 enum AccessLifecycleContract {
     static let sha256HexCharacterCount: Int = 64
-    static let timingToleranceSeconds: TimeInterval = 0.001
+    static let timingToleranceSeconds: TimeInterval = TestWait.seconds(.product(0.001))
     static let luminanceTolerance: Double = 0.001
     static let minimumBaselineLuminance: Double = 0.1
-    static let maximumPressReturnDelaySeconds: TimeInterval = 2
+    static let maximumPressReturnDelaySeconds: TimeInterval = TestWait.seconds(.product(2))
     static let sustainedDimmingLuminanceRatio: Double = 0.95
     static let requiredConsecutiveDimmingSampleCount: Int = 3
 
@@ -54,14 +54,14 @@ enum AccessLifecycleContract {
     // while focus was still being established.
     static let minStableHiddenWakeFocusObservations = 5
     static let allowedSystemPauseActivation = "activate_existing_process"
-    static let newStableMarkPollInterval: TimeInterval = 0.1
-    static let newStableMarkConfirmWindow: TimeInterval = 0.8
-    static let ipadNewStableMarkConfirmWindow: TimeInterval = 1.0
-    static let ipadStableImageDeadlineAfterTransition: TimeInterval = 4.0
+    static let newStableMarkPollInterval: TimeInterval = TestWait.seconds(.product(0.1))
+    static let newStableMarkConfirmWindow: TimeInterval = TestWait.seconds(.product(0.8))
+    static let ipadNewStableMarkConfirmWindow: TimeInterval = TestWait.seconds(.product(1.0))
+    static let ipadStableImageDeadlineAfterTransition: TimeInterval = TestWait.seconds(.product(4.0))
     static let newStableMarkMinimumLuma: Double = 0.20
     // Wake evidence must finish before the next automatic photo change; 2.5s covers one screenshot, a tap and
     // another screenshot.
-    static let wakeEvidenceBudgetSeconds: TimeInterval = 2.5
+    static let wakeEvidenceBudgetSeconds: TimeInterval = TestWait.seconds(.product(2.5))
 
     static func clampedWait(requested: TimeInterval, remaining: TimeInterval) -> TimeInterval {
         if remaining <= 0 || requested <= 0 {

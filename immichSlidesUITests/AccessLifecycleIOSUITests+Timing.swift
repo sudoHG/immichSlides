@@ -55,9 +55,11 @@ extension AccessLifecycleIOSUITests {
             )
         )
         let visible = playPauseButton(app)
-        XCTAssertTrue(visible.waitForExistence(timeout: 8), "The playback page must have play/pause.")
         XCTAssertTrue(
-            waitUntil(timeout: 2) { self.playPauseButton(app).isHittable },
+            visible.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "The playback page must have play/pause.")
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseButton(app).isHittable },
             "Play/pause must be hittable."
         )
         XCTAssertNoThrow(
@@ -73,7 +75,8 @@ extension AccessLifecycleIOSUITests {
         if playPauseButton(app).exists == false {
             revealPlaybackControls(app: app)
         }
-        XCTAssertTrue(waitForPlayPauseState(app: app, expected: expected, timeout: 4), message)
+        XCTAssertTrue(
+            waitForPlayPauseState(app: app, expected: expected, timeout: TestWait.seconds(.product(4))), message)
     }
 
     // The stopwatch starts when Continue is pressed; the return time is recorded separately, never as the origin.
@@ -81,10 +84,12 @@ extension AccessLifecycleIOSUITests {
     func pressContinueStartingClock(app: XCUIApplication) -> (issued: Date, returned: Date) {
         revealPlaybackControls(app: app)
         let playPause = playPauseButton(app)
-        XCTAssertTrue(playPause.waitForExistence(timeout: 8), "The playback page must have play/pause.")
+        XCTAssertTrue(
+            playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "The playback page must have play/pause.")
         XCTAssertTrue(playPause.exists, "Play/pause must be in the tree before continuing.")
         XCTAssertTrue(
-            waitUntil(timeout: 2) { self.playPauseButton(app).isHittable },
+            waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseButton(app).isHittable },
             "Play/pause must be hittable before continuing."
         )
         let issued = Date()
@@ -98,7 +103,7 @@ extension AccessLifecycleIOSUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
         return condition()
     }
@@ -106,7 +111,7 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func assertNarrowEntryHasNoPin(app: XCUIApplication) throws {
         XCTAssertFalse(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: 2),
+            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(2))),
             "This narrow entry must not enable a password."
         )
     }
@@ -126,12 +131,14 @@ extension AccessLifecycleIOSUITests {
     ) throws -> [String: Any] {
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
-        XCTAssertTrue(autoPlay.waitForExistence(timeout: 12), "Playback settings must provide the autoplay toggle.")
+        XCTAssertTrue(
+            autoPlay.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            "Playback settings must provide the autoplay toggle.")
         let isInitiallyAutoPlayEnabled = initial["autoPlayEnabled"] as? Bool ?? isToggleOn(autoPlay)
         if isToggleOn(autoPlay) == false {
             tapElement(autoPlay)
             XCTAssertTrue(
-                waitUntil(timeout: 4) { self.isToggleOn(autoPlay) },
+                waitUntil(timeout: TestWait.seconds(.product(4))) { self.isToggleOn(autoPlay) },
                 "Autoplay must be turned on before changing the interval.")
         }
         let initialInterval = initial["intervalSeconds"] as? Int ?? Int(intervalMinimumSeconds)
@@ -144,19 +151,23 @@ extension AccessLifecycleIOSUITests {
         XCTAssertNotEqual(observedInterval, initialInterval, "The interval must change to a different value.")
 
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
-        XCTAssertTrue(exif.waitForExistence(timeout: 8), "Playback settings must provide the EXIF toggle.")
+        XCTAssertTrue(
+            exif.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "Playback settings must provide the EXIF toggle.")
         let isInitiallyExifEnabled = initial["showExif"] as? Bool ?? isToggleOn(exif)
         if isToggleOn(exif) == isInitiallyExifEnabled {
             tapElement(exif)
         }
         XCTAssertTrue(
-            waitUntil(timeout: 4) { self.isToggleOn(exif) != isInitiallyExifEnabled },
+            waitUntil(timeout: TestWait.seconds(.product(4))) { self.isToggleOn(exif) != isInitiallyExifEnabled },
             "EXIF must be switched to the opposite value through the real settings."
         )
         requests.append("settings.save.exif")
 
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 8), "Playback settings must provide the display policy.")
+        XCTAssertTrue(
+            picker.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "Playback settings must provide the display policy.")
         let initialMode = initial["displayMode"] as? String ?? "smartFill"
         let targetIdentifier =
             initialMode == "smartFill"
@@ -164,7 +175,8 @@ extension AccessLifecycleIOSUITests {
             : "settings.playback.displayMode.smartFill.option"
         let targetButton = picker.buttons[targetIdentifier]
         XCTAssertTrue(
-            targetButton.waitForExistence(timeout: 3), "The display policy must be able to switch to the other option.")
+            targetButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            "The display policy must be able to switch to the other option.")
         tapElement(targetButton)
         requests.append("settings.save.display_mode")
 
@@ -172,7 +184,7 @@ extension AccessLifecycleIOSUITests {
         if isToggleOn(autoPlay) != shouldEnableAutoPlay {
             tapElement(autoPlay)
             XCTAssertTrue(
-                waitUntil(timeout: 4) { self.isToggleOn(autoPlay) == shouldEnableAutoPlay },
+                waitUntil(timeout: TestWait.seconds(.product(4))) { self.isToggleOn(autoPlay) == shouldEnableAutoPlay },
                 "Autoplay must be switched to the opposite value through the real settings."
             )
         }
@@ -190,11 +202,13 @@ extension AccessLifecycleIOSUITests {
         try assertNarrowEntryHasNoPin(app: app)
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
-        XCTAssertTrue(autoPlay.waitForExistence(timeout: 12), "Playback settings must provide the autoplay toggle.")
+        XCTAssertTrue(
+            autoPlay.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            "Playback settings must provide the autoplay toggle.")
         if isToggleOn(autoPlay) != isAutoPlayEnabled {
             tapElement(autoPlay)
             XCTAssertTrue(
-                waitUntil(timeout: 4) { self.isToggleOn(autoPlay) == isAutoPlayEnabled },
+                waitUntil(timeout: TestWait.seconds(.product(4))) { self.isToggleOn(autoPlay) == isAutoPlayEnabled },
                 "Autoplay must be turned on through the real settings."
             )
             requests.append("settings.save.autoplay")
@@ -208,15 +222,18 @@ extension AccessLifecycleIOSUITests {
         requests.append("settings.save.interval")
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: 8),
+            picker.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
             "The pause/background cases must be able to switch to single-photo mode.")
         let singlePhoto = picker.buttons["settings.playback.displayMode.singlePhoto.option"]
-        XCTAssertTrue(singlePhoto.waitForExistence(timeout: 3), "The display policy should offer single-photo mode.")
+        XCTAssertTrue(
+            singlePhoto.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            "The display policy should offer single-photo mode.")
         tapElement(singlePhoto)
         requests.append("settings.save.display_mode")
         returnToSlideshowFromSettings(app: app)
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: 15), "Must return to the playback page after settings.")
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(15))),
+            "Must return to the playback page after settings.")
         return interval
     }
 
@@ -232,7 +249,7 @@ extension AccessLifecycleIOSUITests {
             shouldTapIfNeeded: true,
             message: "Must be playing before the mid-interval timing."
         )
-        RunLoop.current.run(until: Date().addingTimeInterval(interval / 2))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(interval / 2))))
         confirmPlayPauseState(
             app: app,
             expected: "play",
@@ -255,7 +272,7 @@ extension AccessLifecycleIOSUITests {
         let holdStart = Date()
         let holdTarget = interval + AccessLifecycleContract.pauseHoldBeyondIntervalSeconds
         while Date().timeIntervalSince(holdStart) < holdTarget {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.4))))
             try AccessLifecycleContract.assertHoldSampleUnchanged(
                 expectedMark: afterNext.mark,
                 polled: classifyCurrentMark(app: app)
@@ -286,7 +303,7 @@ extension AccessLifecycleIOSUITests {
             didRetapBecauseMissing: false
         )
         XCTAssertTrue(
-            waitForPlayPauseState(app: app, expected: "pause", timeout: 4),
+            waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))),
             "Should be playing after Continue."
         )
         let continueWatch = try watchContinueToFirstAdvance(
@@ -436,7 +453,7 @@ extension AccessLifecycleIOSUITests {
         var rawFrames: [ContinueWatchRawFrame] = []
         var frames: [ContinueWatchFrame] = []
         var earlyMark = ""
-        var earlyElapsed: TimeInterval = 0
+        var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
         var earlyPNG: Data?
         var confirmed: ContinueWatchFrame?
         var baselineLuma: Double?

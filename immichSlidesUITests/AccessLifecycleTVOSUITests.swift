@@ -5,34 +5,34 @@ enum AccessLifecycleTVOSUITestsCalibration {
 }
 
 enum AccessLifecycleTVOSUITestsWaitTiming {
-    static let briefElementTimeoutSeconds: TimeInterval = 1
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
-    static let navigationFocusSettleSeconds: TimeInterval = 0.22
-    static let navigationTimeoutSeconds: TimeInterval = 10
-    static let pinDigitSettleSeconds: TimeInterval = 0.07
-    static let playbackControlTimeoutSeconds: TimeInterval = 20
-    static let playbackStartupTimeoutSeconds: TimeInterval = 30
-    static let pollIntervalSeconds: TimeInterval = 0.1
-    static let readbackPollSeconds: TimeInterval = 0.2
-    static let readbackTimeoutSeconds: TimeInterval = 2
-    static let settingsChangeTimeoutSeconds: TimeInterval = 6
-    static let stateChangeTimeoutSeconds: TimeInterval = 4
-    static let transitionPollSeconds: TimeInterval = 0.4
+    static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(1))
+    static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(8))
+    static let elementAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(5))
+    static let navigationFocusSettleSeconds: TimeInterval = TestWait.seconds(.product(0.22))
+    static let navigationTimeoutSeconds: TimeInterval = TestWait.seconds(.product(10))
+    static let pinDigitSettleSeconds: TimeInterval = TestWait.seconds(.product(0.07))
+    static let playbackControlTimeoutSeconds: TimeInterval = TestWait.seconds(.product(20))
+    static let playbackStartupTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(30))
+    static let pollIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.1))
+    static let readbackPollSeconds: TimeInterval = TestWait.seconds(.product(0.2))
+    static let readbackTimeoutSeconds: TimeInterval = TestWait.seconds(.product(2))
+    static let settingsChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.product(6))
+    static let stateChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.product(4))
+    static let transitionPollSeconds: TimeInterval = TestWait.seconds(.product(0.4))
 }
 
 #if os(tvOS)
 final class AccessLifecycleTVOSUITests: XCTestCase {
     enum Timing {
-        static let focusSettle: TimeInterval = 0.16
-        static let focusPoll: TimeInterval = 0.08
-        static let sceneSettle: TimeInterval = 2.5
-        static let controlBarHide: TimeInterval = 9
-        static let systemPauseHold: TimeInterval = 9
+        static let focusSettle: TimeInterval = TestWait.seconds(.product(0.16))
+        static let focusPoll: TimeInterval = TestWait.seconds(.product(0.08))
+        static let sceneSettle: TimeInterval = TestWait.seconds(.product(2.5))
+        static let controlBarHide: TimeInterval = TestWait.seconds(.product(9))
+        static let systemPauseHold: TimeInterval = TestWait.seconds(.product(9))
         // Transition-complete can return before the visible frame is stable enough for identity PNG.
-        static let sceneStableExtra: TimeInterval = 1
+        static let sceneStableExtra: TimeInterval = TestWait.seconds(.product(1))
         // In an earlier device run, Up was pressed about 0.56s after Menu, still inside the return transition.
-        static let transitionHold: TimeInterval = 1.2
+        static let transitionHold: TimeInterval = TestWait.seconds(.product(1.2))
     }
 
     var requests: [String] = []
@@ -278,7 +278,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         let before = try captureTVOSNewStableMark(
             app: app,
             name: "before-background",
-            timeout: TimeInterval(interval.actual) + 4
+            timeout: TestWait.seconds(.product(TimeInterval(interval.actual) + 4))
         )
         let processBefore = try applicationProcessID(app)
         XCTAssertNotEqual(app.state, .notRunning, "The process must still be running before going to background.")
@@ -290,7 +290,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         app.activate()
         systemPauseActivation = AccessLifecycleContract.allowedSystemPauseActivation
         record("playback.foreground")
-        _ = app.wait(for: .runningForeground, timeout: AccessLifecycleTVOSUITestsWaitTiming.navigationTimeoutSeconds)
+        _ = app.wait(for: .runningForeground, timeout: TestWait.seconds(.infrastructure(10)))
         let processAfter = try applicationProcessID(app)
         didRebuildProcess = processAfter != processBefore || didHomeLeaveAppRunning == false || app.state == .notRunning
         XCTAssertNotEqual(
@@ -308,7 +308,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
             didHomeLeaveAppRunning: didHomeLeaveAppRunning
         )
         XCTAssertTrue(
-            waitUntilOnSlideShowLayer(app: app, timeout: 3),
+            waitUntilOnSlideShowLayer(app: app, timeout: TestWait.seconds(.product(3))),
             "Must still be on playback after returning from system pause."
         )
         confirmReturnedToSlideShow(app: app)

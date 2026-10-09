@@ -3,14 +3,14 @@ import Foundation
 extension AccessLifecycleContract {
     // Narrow entry for settings save / pause-continue / background return: time and the public frame are the final
     // criteria, not the progress probe or control value changes.
-    static let requestedIntervalSeconds = 12
-    static let pauseHoldBeyondIntervalSeconds: TimeInterval = 2
-    static let continueCaptureSlackSeconds: TimeInterval = 2
+    static let requestedIntervalSeconds = Int(TestWait.seconds(.product(12)))
+    static let pauseHoldBeyondIntervalSeconds: TimeInterval = TestWait.seconds(.product(2))
+    static let continueCaptureSlackSeconds: TimeInterval = TestWait.seconds(.product(2))
     static let tvOSSelectableIntervals: [Int] = [5, 8, 10, 15, 30]
     // A brightness drop on the same photo is only an uncertain signal and cannot alone count as a transition.
     static let uncertainSameMarkLumaDrop: Double = 0.12
     // Evidence of an identifiable new photo may extend past T+2 without widening the transition window.
-    static let newImageCaptureBeyondWindowSeconds: TimeInterval = 4
+    static let newImageCaptureBeyondWindowSeconds: TimeInterval = TestWait.seconds(.product(4))
 
     struct ContinueWatchSample {
         let requestElapsed: TimeInterval

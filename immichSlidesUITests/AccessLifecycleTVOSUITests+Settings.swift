@@ -5,7 +5,9 @@ extension AccessLifecycleTVOSUITests {
     @MainActor
     func configureServerThroughFirstBoot(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
-        XCTAssertTrue(serverField.waitForExistence(timeout: 12), "A clean install must open the first-boot form.")
+        XCTAssertTrue(
+            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            "A clean install must open the first-boot form.")
         replaceFocusedText(in: serverField, app: app, with: input.serverURL)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
@@ -29,7 +31,7 @@ extension AccessLifecycleTVOSUITests {
 
         let success = app.staticTexts["firstboot.connection.success"]
         XCTAssertTrue(
-            success.waitForExistence(timeout: 45),
+            success.waitForExistence(timeout: TestWait.seconds(.infrastructure(45))),
             "With the real controlled service reachable, the connection test must show as passed."
         )
 
@@ -47,7 +49,9 @@ extension AccessLifecycleTVOSUITests {
     @MainActor
     func enterRandomPlayback(app: XCUIApplication) throws {
         let randomButton = app.buttons["mode.random.button"]
-        XCTAssertTrue(randomButton.waitForExistence(timeout: 15), "After saving settings, mode selection must open.")
+        XCTAssertTrue(
+            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            "After saving settings, mode selection must open.")
         XCTAssertTrue(
             waitForFocus(
                 on: randomButton, timeout: AccessLifecycleTVOSUITestsWaitTiming.elementAppearanceTimeoutSeconds),

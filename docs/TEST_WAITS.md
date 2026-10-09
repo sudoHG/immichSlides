@@ -30,11 +30,17 @@ elapsed-time bounds and assertions remain in force.
 Legacy helpers can continue to accept resolved seconds. Classify at their callers
 or timing declarations and pass the result through unchanged; wrapping an already
 resolved infrastructure value in another infrastructure budget would scale it twice.
-When one constant serves both initial fixture readiness and a later photo-change
-deadline, split those call sites: discovering the initial scene is infrastructure,
-but waiting for a new photo after Next keeps the original product deadline.
 Scene-presentation sampling spans, screenshot stability spans and first-visible-tick
 offsets remain fixed product timing even when they help collect diagnostic evidence.
+
+Access-lifecycle timing starts at the original user action. Pause holds, background
+holds, first-wake evidence, PIN-gate responses and the resume interval's tolerance
+remain product timing. A screenshot capture can have its own fixed evidence budget
+without extending the first-transition deadline; preserve both bounds separately.
+Shared timing values used by focus or state-response assertions keep the fixed
+product classification even when other callers only discover a control. Classify
+an independent launch/setup wait at its own call site rather than scaling that
+shared product value. Polling and remote-press cadence stay fixed.
 
 ## Runner factor and recording
 
