@@ -1,14 +1,14 @@
 import XCTest
 
 enum PlaybackSettingsTVOSUITestsWaitTiming {
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let navigationTimeoutSeconds: TimeInterval = 10
-    static let pollIntervalSeconds: TimeInterval = 0.1
-    static let remotePressSettleSeconds: TimeInterval = 0.12
-    static let sceneStableExtraSeconds: TimeInterval = 1
-    static let screenTransitionTimeoutSeconds: TimeInterval = 12
-    static let settingsChangeTimeoutSeconds: TimeInterval = 6
-    static let shortFocusSettleSeconds: TimeInterval = 0.15
+    static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(8))
+    static let navigationTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(10))
+    static let pollIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.1))
+    static let remotePressSettleSeconds: TimeInterval = TestWait.seconds(.product(0.12))
+    static let sceneStableExtraSeconds: TimeInterval = TestWait.seconds(.product(1))
+    static let screenTransitionTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(12))
+    static let settingsChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(6))
+    static let shortFocusSettleSeconds: TimeInterval = TestWait.seconds(.product(0.15))
 }
 
 #if os(tvOS)
@@ -33,7 +33,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 
         waitForFocusableElementToGainFocus(
             autoPlayLink,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "After opening Playback Settings, default focus should land on the 'Autoplay' entry first"
         )
 
@@ -58,7 +58,8 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 18),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(18))),
             "After entering the slideshow, the control bar settings button should be visible"
         )
 
@@ -90,7 +91,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
         waitForFocusableElementToGainFocus(
             autoPlayLink,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "The Autoplay entry should take the default focus on the Playback Settings page"
         )
 
@@ -111,14 +112,14 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 
         waitForFocusableElementToGainFocus(
             onButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "After entering the Autoplay subpage, default focus should land on the first item"
         )
 
         XCUIRemote.shared.press(.down)
         waitForFocusableElementToGainFocus(
             offButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "One move down on the Autoplay subpage should focus 'Turn Off Autoplay'"
         )
 
@@ -128,7 +129,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             // The option button value is the localized "selected/not selected" text, not the English word "selected".
 
             expectedFragment: "已选中",
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "Pressing Select on 'Turn Off Autoplay' should switch to the off state"
         )
 
@@ -157,7 +158,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
         waitForFocusableElementToGainFocus(
             intervalButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "After entering the interval subpage, default focus should land on the first item"
         )
 
@@ -193,14 +194,14 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 
         waitForFocusableElementToGainFocus(
             randomButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "Entering the Default Playback Mode subpage should put default focus on the first item"
         )
 
         XCUIRemote.shared.press(.down)
         waitForFocusableElementToGainFocus(
             filteredButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "One move down on the Default Playback Mode subpage should focus 'Filtered Playback'"
         )
 
@@ -236,21 +237,21 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 
         waitForFocusableElementToGainFocus(
             smartFillButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "After entering the Display Mode subpage, default focus should land on 'Smart Fill' first"
         )
 
         XCUIRemote.shared.press(.down)
         waitForFocusableElementToGainFocus(
             singlePhotoButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "One move down on the Display Mode subpage should focus 'Single Photo Mode'"
         )
         XCUIRemote.shared.press(.select)
         waitForElementValueToContain(
             singlePhotoButton,
             expectedFragment: "已选中",
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "Pressing Select on 'Single Photo Mode' should mark it as selected"
         )
 
@@ -294,7 +295,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
 
         waitForFocusableElementToGainFocus(
             albumEntry,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "Entering the filter editor main page should put default focus on the 'Albums' entry first"
         )
         XCUIRemote.shared.press(.select)
@@ -323,7 +324,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
         waitForFocusableElementToGainFocus(
             personEntry,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds,
+            timeout: TestWait.seconds(.product(6)),
             failureMessage: "On the filter editor main page, the 'People' entry should be able to take focus"
         )
         XCUIRemote.shared.press(.select)
@@ -360,20 +361,20 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
                 timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
                 failureMessage: "The filter editor main page should show the 'People' entry"
             ),
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds,
+            timeout: TestWait.seconds(.product(6)),
             failureMessage: "Before toggling starts, the 'People' entry should already hold focus steadily"
         )
 
         for _ in 0..<3 {
             XCUIRemote.shared.press(.right)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
             XCTAssertTrue(
                 isAnySettingsControlFocused(app: app, identifier: doneIdentifier),
                 "After moving right from 'People', focus should settle on the 'Done' button"
             )
 
             XCUIRemote.shared.press(.left)
-            waitForFocusVisualSettle(seconds: 0.22)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
             XCTAssertTrue(
                 isAnySettingsControlFocused(app: app, identifier: peopleIdentifier),
                 "After moving left from 'Done', focus should settle back on the 'People' entry"
@@ -381,7 +382,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         }
 
         XCUIRemote.shared.press(.right)
-        waitForFocusVisualSettle(seconds: 0.24)
+        waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.24)))
 
         XCTAssertTrue(
             isAnySettingsControlFocused(app: app, identifier: doneIdentifier),
@@ -416,7 +417,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
         waitForFocusableElementToGainFocus(
             exifLink,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "Entering the Display Items subpage should put default focus on the 'EXIF Info' entry first"
         )
 
@@ -430,7 +431,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
         waitForFocusableElementToGainFocus(
             exifOnButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "After entering the EXIF subpage, default focus should land on the first item"
         )
 
@@ -468,7 +469,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
         waitForFocusableElementToGainFocus(
             debugOnButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "After entering the Debug Panel subpage, default focus should land on the first item"
         )
 
@@ -497,12 +498,12 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
         waitForFocusableElementToGainFocus(
             exifLink,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "In Display Items, default focus should still settle on the first item, the EXIF entry"
         )
 
         XCTAssertFalse(
-            app.buttons["settings.playback.showDebug.link"].waitForExistence(timeout: 1.5),
+            app.buttons["settings.playback.showDebug.link"].waitForExistence(timeout: TestWait.seconds(.product(1.5))),
             "With the debug entry explicitly off, the Display Items subpage should not expose 'Debug Panel'"
         )
 

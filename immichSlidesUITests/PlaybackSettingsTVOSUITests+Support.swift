@@ -72,7 +72,7 @@ extension PlaybackSettingsTVOSUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: 15),
+            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
             "After injecting the test server config, the app should go straight to mode selection")
 
         startFilteredFlowFromModeSelection(app: app)
@@ -150,7 +150,8 @@ extension PlaybackSettingsTVOSUITests {
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 18),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(18))),
             "After playback starts, the slideshow should open and show the control bar"
         )
 
@@ -175,7 +176,7 @@ extension PlaybackSettingsTVOSUITests {
             "The settings main page should show the 'Playback Settings' entry")
         waitForFocusableElementToGainFocus(
             playbackItem,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            timeout: TestWait.seconds(.product(8)),
             failureMessage: "Entering the settings main page should put default focus on 'Playback Settings' first"
         )
 
@@ -274,7 +275,7 @@ extension PlaybackSettingsTVOSUITests {
         )
         waitForFocusableElementToGainFocus(
             doneButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds,
+            timeout: TestWait.seconds(.product(6)),
             failureMessage: "On the filter editor main page, the 'Done' button should be able to take focus",
             file: file,
             line: line
@@ -301,7 +302,7 @@ extension PlaybackSettingsTVOSUITests {
 
         waitForFocusableElementToGainFocus(
             settingsButton,
-            timeout: PlaybackSettingsTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds,
+            timeout: TestWait.seconds(.product(6)),
             failureMessage: "Before opening settings, focus should settle on the control bar's left settings button"
         )
 
@@ -335,7 +336,7 @@ extension PlaybackSettingsTVOSUITests {
                 return target
             }
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.18)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
             }
@@ -376,7 +377,7 @@ extension PlaybackSettingsTVOSUITests {
 
             if isAnySettingsControlFocused(app: app, identifier: doneIdentifier) {
                 XCUIRemote.shared.press(.up)
-                waitForFocusVisualSettle(seconds: 0.18)
+                waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
                 if isAnySettingsControlFocused(app: app, identifier: identifier) {
                     return target
                 }
@@ -384,7 +385,7 @@ extension PlaybackSettingsTVOSUITests {
 
             if identifier == personIdentifier && isAnySettingsControlFocused(app: app, identifier: albumIdentifier) {
                 XCUIRemote.shared.press(.right)
-                waitForFocusVisualSettle(seconds: 0.18)
+                waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
                 if isAnySettingsControlFocused(app: app, identifier: identifier) {
                     return target
                 }
@@ -392,32 +393,32 @@ extension PlaybackSettingsTVOSUITests {
                 && isAnySettingsControlFocused(app: app, identifier: personIdentifier)
             {
                 XCUIRemote.shared.press(.left)
-                waitForFocusVisualSettle(seconds: 0.18)
+                waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
                 if isAnySettingsControlFocused(app: app, identifier: identifier) {
                     return target
                 }
             }
 
             XCUIRemote.shared.press(.up)
-            waitForFocusVisualSettle(seconds: 0.16)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.16)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
             }
 
             XCUIRemote.shared.press(.right)
-            waitForFocusVisualSettle(seconds: 0.18)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
             }
 
             XCUIRemote.shared.press(.down)
-            waitForFocusVisualSettle(seconds: 0.18)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
             }
 
             XCUIRemote.shared.press(.left)
-            waitForFocusVisualSettle(seconds: 0.16)
+            waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.16)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
             }
@@ -545,6 +546,7 @@ extension PlaybackSettingsTVOSUITests {
         return String(describing: rawValue)
     }
 
+    // Callers resolve the TestWait budget once; polling cadence stays fixed.
     func waitUntil(timeout: TimeInterval, condition: @escaping () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -578,7 +580,7 @@ extension PlaybackSettingsTVOSUITests {
             "ready"
         )
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: readinessLabel)
-        let result = XCTWaiter.wait(for: [expectation], timeout: 20)
+        let result = XCTWaiter.wait(for: [expectation], timeout: TestWait.seconds(.infrastructure(20)))
         XCTAssertEqual(
             result,
             .completed,
@@ -596,7 +598,7 @@ extension PlaybackSettingsTVOSUITests {
     }
 
     @MainActor
-    func waitForFocusVisualSettle(seconds: TimeInterval = 0.45) {
+    func waitForFocusVisualSettle(seconds: TimeInterval = TestWait.seconds(.product(0.45))) {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 }

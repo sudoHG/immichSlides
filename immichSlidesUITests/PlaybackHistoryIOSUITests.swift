@@ -2,7 +2,7 @@ import XCTest
 
 enum PlaybackHistoryIOSUITestsCalibration {
     static let pauseSampleCount: Int = 4
-    static let pauseSampleIntervalSeconds: TimeInterval = 0.75
+    static let pauseSampleIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.75))
     static let observableMotionProgress: Double = 0.001
     static let zeroProgressTolerance: Double = 0.000_1
 }
@@ -23,28 +23,30 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         defer { app.terminate() }
         startRandomPlaybackFromModeSelection(app: app)
 
-        let initialAssetID = try waitForCurrentAssetID(app: app, timeout: 20)
+        let initialAssetID = try waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.infrastructure(20)))
         attachScreenshot(app: app, name: "history-01-initial-\(currentDeviceTag())")
 
         tapElement(app.buttons["slideshow.control.next.button"])
-        let secondAssetID = try waitForCurrentAssetIDChange(app: app, from: initialAssetID, timeout: 20)
+        let secondAssetID = try waitForCurrentAssetIDChange(
+            app: app, from: initialAssetID, timeout: TestWait.seconds(.product(20)))
         attachScreenshot(app: app, name: "history-02-after-next-\(currentDeviceTag())")
 
         tapElement(app.buttons["slideshow.control.next.button"])
-        let thirdAssetID = try waitForCurrentAssetIDChange(app: app, from: secondAssetID, timeout: 20)
+        let thirdAssetID = try waitForCurrentAssetIDChange(
+            app: app, from: secondAssetID, timeout: TestWait.seconds(.product(20)))
         XCTAssertNotEqual(thirdAssetID, initialAssetID, "Two nexts in a row should reach a new playback scene")
         attachScreenshot(app: app, name: "history-03-after-second-next-\(currentDeviceTag())")
 
         tapElement(app.buttons["slideshow.control.previous.button"])
         XCTAssertTrue(
-            waitUntil(timeout: 20) { self.currentAssetID(app: app) == secondAssetID },
+            waitUntil(timeout: TestWait.seconds(.product(20))) { self.currentAssetID(app: app) == secondAssetID },
             "The first previous should return to the previous photo, not pick a new random one"
         )
         attachScreenshot(app: app, name: "history-04-after-previous-to-second-\(currentDeviceTag())")
 
         tapElement(app.buttons["slideshow.control.previous.button"])
         XCTAssertTrue(
-            waitUntil(timeout: 20) { self.currentAssetID(app: app) == initialAssetID },
+            waitUntil(timeout: TestWait.seconds(.product(20))) { self.currentAssetID(app: app) == initialAssetID },
             "The second previous should keep following the retained history back to the first photo"
         )
         attachScreenshot(app: app, name: "history-05-after-previous-to-initial-\(currentDeviceTag())")
@@ -56,14 +58,14 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         defer { app.terminate() }
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let initial = try waitForCompleteVisibleSmartFillScene(app: app, timeout: 45)
+        let initial = try waitForCompleteVisibleSmartFillScene(app: app, timeout: TestWait.seconds(.infrastructure(45)))
         attachScreenshot(app: app, name: "smartfill-history-01-initial")
 
         tapElement(app.buttons["slideshow.control.next.button"])
         let second = try waitForCompleteVisibleSmartFillSceneChange(
             app: app,
             from: initial.sceneIdentity,
-            timeout: 20
+            timeout: TestWait.seconds(.product(20))
         )
         XCTAssertGreaterThan(second.historyCursor, initial.historyCursor)
         attachScreenshot(app: app, name: "smartfill-history-02-after-next")
@@ -72,7 +74,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         let third = try waitForCompleteVisibleSmartFillSceneChange(
             app: app,
             from: second.sceneIdentity,
-            timeout: 20
+            timeout: TestWait.seconds(.product(20))
         )
         XCTAssertNotEqual(third.sceneIdentity, initial.sceneIdentity)
         XCTAssertGreaterThan(third.historyCursor, second.historyCursor)
@@ -80,23 +82,23 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
         tapElement(app.buttons["slideshow.control.previous.button"])
         XCTAssertTrue(
-            waitUntil(timeout: 20) {
+            waitUntil(timeout: TestWait.seconds(.product(20))) {
                 self.currentCompleteVisibleSmartFillScene(app: app)?.sceneIdentity == second.sceneIdentity
             },
             "SmartFill previous must return to the previous fully visible scene, not just move the internal cursor"
         )
-        let returnedSecond = try waitForCompleteVisibleSmartFillScene(app: app, timeout: 2)
+        let returnedSecond = try waitForCompleteVisibleSmartFillScene(app: app, timeout: TestWait.seconds(.product(2)))
         XCTAssertEqual(returnedSecond.historyCursor, second.historyCursor)
         attachScreenshot(app: app, name: "smartfill-history-04-after-previous-to-second")
 
         tapElement(app.buttons["slideshow.control.previous.button"])
         XCTAssertTrue(
-            waitUntil(timeout: 20) {
+            waitUntil(timeout: TestWait.seconds(.product(20))) {
                 self.currentCompleteVisibleSmartFillScene(app: app)?.sceneIdentity == initial.sceneIdentity
             },
             "The second SmartFill previous must follow the retained history back to the first fully visible scene"
         )
-        let returnedInitial = try waitForCompleteVisibleSmartFillScene(app: app, timeout: 2)
+        let returnedInitial = try waitForCompleteVisibleSmartFillScene(app: app, timeout: TestWait.seconds(.product(2)))
         XCTAssertEqual(returnedInitial.historyCursor, initial.historyCursor)
         attachScreenshot(app: app, name: "smartfill-history-05-after-previous-to-initial")
     }
@@ -116,31 +118,33 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: .singlePhoto)
         defer { app.terminate() }
         startFilteredPlaybackFromModeSelection(app: app)
-        _ = try waitForStablePresentationProbe(app: app, timeout: 45)
+        _ = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
 
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        XCTAssertTrue(playPause.waitForExistence(timeout: 8), "The slideshow must show the Play/Pause control")
-        XCTAssertTrue(waitUntil(timeout: 4) { self.playPauseState(playPause) == "pause" })
+        XCTAssertTrue(
+            playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "The slideshow must show the Play/Pause control")
+        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "pause" })
 
         // Pausing from the control bar must write the same autoPlayEnabled that the settings page uses.
         tapElement(playPause)
-        XCTAssertTrue(waitUntil(timeout: 3) { self.playPauseState(playPause) == "play" })
+        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(3))) { self.playPauseState(playPause) == "play" })
         openPlaybackSettingsFromSlideshow(app: app)
         let autoPlayToggle = try requireAutoPlayToggle(app: app)
         XCTAssertTrue(
-            waitUntil(timeout: 3) { !self.isToggleOn(autoPlayToggle) },
+            waitUntil(timeout: TestWait.seconds(.product(3))) { !self.isToggleOn(autoPlayToggle) },
             "After pausing from the control bar, the settings Autoplay toggle must turn off immediately")
         attachScreenshot(app: app, name: "manual-lifecycle-settings-after-control-pause")
 
         // Turning Autoplay back on in settings must sync to the control bar at once, not wait for the next photo.
         tapElement(autoPlayToggle)
         XCTAssertTrue(
-            waitUntil(timeout: 3) { self.isToggleOn(autoPlayToggle) },
+            waitUntil(timeout: TestWait.seconds(.product(3))) { self.isToggleOn(autoPlayToggle) },
             "The settings Autoplay toggle must be able to turn back on")
         attachScreenshot(app: app, name: "manual-lifecycle-settings-after-slider-play")
         returnToSlideshowFromPlaybackSettings(app: app)
         XCTAssertTrue(
-            waitUntil(timeout: 4) { self.playPauseState(playPause) == "pause" },
+            waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "pause" },
             "After Autoplay is turned on in settings, the control bar must show Pause immediately")
         attachScreenshot(app: app, name: "manual-lifecycle-control-after-slider-play")
     }
@@ -163,12 +167,12 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
             app.terminate()
         }
         startFilteredPlaybackFromModeSelection(app: app)
-        _ = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: 45)
+        _ = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
 
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        XCTAssertTrue(waitUntil(timeout: 4) { self.playPauseState(playPause) == "pause" })
+        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "pause" })
         tapElement(playPause)
-        XCTAssertTrue(waitUntil(timeout: 3) { self.playPauseState(playPause) == "play" })
+        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(3))) { self.playPauseState(playPause) == "play" })
 
         try assertSmartFillPauseOnlyFrameFreeze(app: app, evidenceEventPrefix: "ipad-pause-only")
     }
@@ -181,20 +185,20 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
             app.terminate()
         }
         startFilteredPlaybackFromModeSelection(app: app)
-        _ = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: 45)
+        _ = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
 
         openPlaybackSettingsFromSlideshow(app: app)
         let autoPlayToggle = try requireAutoPlayToggle(app: app)
         XCTAssertTrue(isToggleOn(autoPlayToggle), "Autoplay should be on when the settings page opens")
         tapElement(autoPlayToggle)
         XCTAssertTrue(
-            waitUntil(timeout: 3) { !self.isToggleOn(autoPlayToggle) },
+            waitUntil(timeout: TestWait.seconds(.product(3))) { !self.isToggleOn(autoPlayToggle) },
             "Turning off Autoplay in settings must take effect immediately")
         returnToSlideshowFromPlaybackSettings(app: app)
 
         let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            waitUntil(timeout: 3) { self.playPauseState(playPause) == "play" },
+            waitUntil(timeout: TestWait.seconds(.product(3))) { self.playPauseState(playPause) == "play" },
             "Pausing in settings must sync to the control bar immediately")
         try assertSmartFillPauseOnlyFrameFreeze(app: app, evidenceEventPrefix: "ipad-settings-pause-only")
     }
@@ -213,7 +217,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
         let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            waitUntil(timeout: 8) { self.playPauseState(playPause) == "play" },
+            waitUntil(timeout: TestWait.seconds(.product(8))) { self.playPauseState(playPause) == "play" },
             "With Autoplay turned off at launch, the first SmartFill scene must stay paused"
         )
         try assertSmartFillPauseOnlyFrameFreeze(app: app, evidenceEventPrefix: "ipad-initially-paused")
@@ -249,7 +253,7 @@ extension PlaybackHistoryIOSUITests {
         app.launch()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: 10),
+            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
             "After the test server is injected, the app should go straight to mode selection"
         )
         return app
@@ -283,7 +287,7 @@ extension PlaybackHistoryIOSUITests {
         app.launch()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: 10),
+            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
             "After the fixed SmartFill harness injects the test server, the app should go straight to mode selection"
         )
         return app
@@ -327,7 +331,8 @@ extension PlaybackHistoryIOSUITests {
             app.launchEnvironment["UI_TEST_FORCE_PLAYBACK_DISPLAY_MODE"] = "singlePhoto"
         }
         app.launch()
-        XCTAssertTrue(app.buttons["mode.continue.button"].waitForExistence(timeout: 12))
+        XCTAssertTrue(
+            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(12))))
         return app
     }
 
@@ -339,15 +344,15 @@ extension PlaybackHistoryIOSUITests {
         }
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let initial = try waitForStablePresentationProbe(app: app, timeout: 45)
+        let initial = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "initial-stable", probe: initial)
         XCTAssertTrue(
-            waitUntil(timeout: 8) {
+            waitUntil(timeout: TestWait.seconds(.product(8))) {
                 self.presentationProbe(app: app)?.rawProgress.contains(where: {
                     $0 > PlaybackHistoryIOSUITestsCalibration.observableMotionProgress
                 }) == true
             }, "The current autoplay scene must already show observable motion before the pause")
-        let movingInitial = try waitForPresentationProbe(app: app, timeout: 3)
+        let movingInitial = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
         appendManualLifecycleRuntimeEvidence(
             app: app, mode: mode, event: "automatic-motion-observed", probe: movingInitial)
 
@@ -355,18 +360,18 @@ extension PlaybackHistoryIOSUITests {
 
         let playPause = app.buttons["slideshow.control.playPause.button"]
         tapElement(playPause)
-        XCTAssertTrue(waitUntil(timeout: 3) { playPause.value as? String == "play" })
-        let paused = try waitForPresentationProbe(app: app, timeout: 3)
+        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(3))) { playPause.value as? String == "play" })
+        let paused = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "paused", probe: paused)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
-        let frozen = try waitForPresentationProbe(app: app, timeout: 3)
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
+        let frozen = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
         XCTAssertEqual(paused.rawProgress, frozen.rawProgress, "Pausing must freeze the current transform progress")
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "freeze-confirmed", probe: frozen)
 
         let initialIdentity = try sceneIdentity(app: app, mode: mode)
         tapElement(app.buttons["slideshow.control.next.button"])
         let afterNextIdentity = try waitForSceneIdentityChange(app: app, mode: mode, from: initialIdentity)
-        let staticAfterNext = try waitForStablePresentationProbe(app: app, timeout: 4)
+        let staticAfterNext = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.product(4)))
         XCTAssertTrue(
             staticAfterNext.rawProgress.allSatisfy {
                 abs($0) < PlaybackHistoryIOSUITestsCalibration.zeroProgressTolerance
@@ -382,7 +387,7 @@ extension PlaybackHistoryIOSUITests {
 
         tapElement(app.buttons["slideshow.control.previous.button"])
         let afterPreviousIdentity = try waitForSceneIdentityChange(app: app, mode: mode, from: afterNextIdentity)
-        let staticAfterPrevious = try waitForStablePresentationProbe(app: app, timeout: 4)
+        let staticAfterPrevious = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.product(4)))
         XCTAssertTrue(
             staticAfterPrevious.rawProgress.allSatisfy {
                 abs($0) < PlaybackHistoryIOSUITestsCalibration.zeroProgressTolerance
@@ -397,14 +402,14 @@ extension PlaybackHistoryIOSUITests {
         )
 
         tapElement(playPause)
-        XCTAssertTrue(waitUntil(timeout: 3) { playPause.value as? String == "pause" })
+        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(3))) { playPause.value as? String == "pause" })
         XCTAssertTrue(
-            waitUntil(timeout: 4) {
+            waitUntil(timeout: TestWait.seconds(.product(4))) {
                 self.presentationProbe(app: app)?.rawProgress.contains(where: {
                     $0 > PlaybackHistoryIOSUITestsCalibration.observableMotionProgress
                 }) == true
             }, "Play must make the current still scene start moving from p=0 immediately")
-        let resumed = try waitForPresentationProbe(app: app, timeout: 3)
+        let resumed = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
         appendManualLifecycleRuntimeEvidence(
             app: app, mode: mode, event: "resumed-current-scene-motion", probe: resumed)
         attachScreenshot(app: app, name: "manual-lifecycle-\(mode == .smartFill ? "smartfill" : "single")-resumed")
@@ -418,11 +423,13 @@ extension PlaybackHistoryIOSUITests {
         }
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let initial = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: 45)
+        let initial = try waitForFrameSynchronizedPresentationProbe(
+            app: app, timeout: TestWait.seconds(.infrastructure(45)))
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "normal-autoplay-start", probe: initial)
         announceManualLifecycleCaptureWindowIfRequested(mode: mode, kind: "normal-autoplay-five-seconds")
-        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
-        let afterShortWindow = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: 3)
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
+        let afterShortWindow = try waitForFrameSynchronizedPresentationProbe(
+            app: app, timeout: TestWait.seconds(.product(3)))
         XCTAssertNotEqual(
             initial.rawProgress,
             afterShortWindow.rawProgress,
@@ -430,8 +437,9 @@ extension PlaybackHistoryIOSUITests {
         )
         appendManualLifecycleRuntimeEvidence(
             app: app, mode: mode, event: "normal-autoplay-motion-0.8-seconds", probe: afterShortWindow)
-        RunLoop.current.run(until: Date().addingTimeInterval(4.2))
-        let afterFiveSeconds = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: 5)
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(4.2))))
+        let afterFiveSeconds = try waitForFrameSynchronizedPresentationProbe(
+            app: app, timeout: TestWait.seconds(.product(5)))
         XCTAssertTrue(
             afterFiveSeconds.rawProgress.contains(where: {
                 $0 > PlaybackHistoryIOSUITestsCalibration.observableMotionProgress
