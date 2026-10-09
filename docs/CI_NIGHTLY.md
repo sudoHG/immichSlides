@@ -136,8 +136,8 @@ Run it in the same event/run/attempt context as planning; the hosted workflow su
 that context. Shard directories are named `nightly-strict-<shard>-<run-id>-<attempt>`.
 For a local plan the run ID is `None` and attempt is 1. Downloaded CI records must not
 be relabeled as a local run. The matrix job result comes from Actions, not its artifacts.
-For local execution, place each tracer's `records` directory in
-`<records-dir>/nightly-strict-<shard>-None-1/records` before aggregation. The plan,
+For local execution, copy the contents of each tracer's `records` directory into
+`<records-dir>/nightly-strict-<shard>-None-1/` before aggregation. The plan,
 tracer summary and aggregate must all have the same snapshot commit and tree SHA;
 missing or mismatched records remain failures. A single diagnostic shard cannot
 establish complete nightly equality.
