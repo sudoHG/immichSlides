@@ -72,11 +72,18 @@ With `--failure-screenshots`, a run where any Xcode invocation exits nonzero als
 copies the app and UI test runner crash reports (`immichSlides*.ips` / `.crash`)
 that the host wrote for this simulator since the test run began, to
 `failure-screenshots/crash-logs/`, so they are published and scanned with the
-failure attachments. A report counts only if it is new, its process name starts
-with `immichSlides` and it names this simulator's UDID. At most 5 reports of at
-most 1 MiB each (4 MiB in total) are kept, earliest first; the host home directory
-is replaced by `~`, and `manifest.json` lists what was kept and what was omitted.
-The collection is evidence only: it never changes a test outcome. An app that
+failure attachments. A report counts only if it was last modified after the
+runner took its baseline, is not in that baseline by name (so a report the host
+later moves into `Retired` is excluded), its process name starts with
+`immichSlides` and it names this simulator's UDID. At most 5 reports of at most
+1 MiB each (4 MiB in total) are kept, earliest first; each file is read up to the
+limit plus one byte. The host home directory is replaced by `~` and stable device
+identifiers (`crashReporterKey`, `CrashReporter Key`, `Anonymous UUID`,
+`Sleep/Wake UUID`, boot session UUID) by `<redacted>`; binary image UUIDs stay
+for symbolication. `manifest.json` lists what was kept and what was omitted.
+The collection is evidence only and best effort: any error while listing, reading
+or writing is reported on stderr and never changes the exit code, the test results
+or the other exported evidence. An app that
 left the foreground without a report there (for example a kill by the system) shows
 as zero collected reports in the runner output.
 

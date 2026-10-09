@@ -233,43 +233,81 @@ def prepare_test_run(source, directory, inputs, *, failure_screenshots=False):
     return path
 
 
+CRASH_DEVICE_IDENTIFIER_JSON = re.compile(
+    rb'("(?:crashReporterKey|bootSessionUUID|anonymousUUID|sleepWakeUUID)"\s*:\s*")[^"]*(")', re.IGNORECASE)
+CRASH_DEVICE_IDENTIFIER_TEXT = re.compile(
+    rb"^((?:CrashReporter Key|Anonymous UUID|Sleep/Wake UUID|Boot Session UUID):[ \t]*)[^\r\n]*", re.IGNORECASE | re.MULTILINE)
+
+
+def crash_report_directories():
+    try:
+        return [Path.home() / directory for directory in CRASH_REPORT_DIRECTORIES]
+    except Exception:
+        return []
+
+
 def crash_report_snapshot(directories):
-    return {path for directory in directories if directory.is_dir() for path in directory.iterdir()}
+    """Names are stable when the host moves a report into Retired; the start time covers a failed listing."""
+    baseline = {"started": time.time(), "names": set()}
+    try:
+        baseline["names"] = {path.name for directory in directories if directory.is_dir() for path in directory.iterdir()}
+    except Exception as error:
+        print(f"Crash report baseline unavailable ({type(error).__name__}); relying on the time window", file=sys.stderr, flush=True)
+    return baseline
 
 
-def collect_crash_reports(udid, before, destination, directories, *, home=None):
-    """Copy this simulator's app crash reports created since `before`, earliest first and within fixed bounds."""
+def redact_crash_report(data, home_text):
+    """Drop the host path and stable device identifiers; binary image UUIDs stay for symbolication."""
+    data = data.replace(home_text.encode(), b"~").replace(home_text.replace("/", "\\/").encode(), b"~")
+    data = CRASH_DEVICE_IDENTIFIER_JSON.sub(rb"\1<redacted>\2", data)
+    return CRASH_DEVICE_IDENTIFIER_TEXT.sub(rb"\1<redacted>", data)
+
+
+def collect_crash_reports(udid, baseline, destination, directories, *, home=None):
+    """Best effort: a failure here must never change the run's exit code or hide the other evidence."""
+    try:
+        return collect_new_crash_reports(udid, baseline, destination, directories, home=home)
+    except Exception as error:
+        print(f"Crash report collection skipped ({type(error).__name__})", file=sys.stderr, flush=True)
+        return [], []
+
+
+def collect_new_crash_reports(udid, baseline, destination, directories, *, home=None):
+    """Copy this simulator's app crash reports written during the run, earliest first and within fixed bounds."""
     home_text = str(home or Path.home())
-    candidates = []
+    candidates, seen = [], set()
     for directory in directories:
         if not directory.is_dir():
             continue
         for path in directory.iterdir():
-            if (path in before or path.suffix.lower() not in CRASH_REPORT_SUFFIXES
+            if (path.name in baseline["names"] or path.name in seen or path.suffix.lower() not in CRASH_REPORT_SUFFIXES
                     or not path.name.startswith(CRASH_REPORT_PROCESS_PREFIX)):
                 continue
             try:
-                stat = path.stat()
+                modified = path.stat().st_mtime
             except OSError:
                 continue
-            candidates.append((stat.st_mtime, path.name, path, stat.st_size))
+            if modified < baseline["started"]:
+                continue
+            seen.add(path.name)
+            candidates.append((modified, path.name, path))
     reports, omitted, total = [], [], 0
-    for _, name, path, size in sorted(candidates):
-        if size > MAX_CRASH_REPORT_BYTES:
-            omitted.append({"name": name, "reason": "larger than the per-report limit"})
-            continue
+    for _, name, path in sorted(candidates):
         try:
-            data = path.read_bytes()
+            with path.open("rb") as handle:
+                data = handle.read(MAX_CRASH_REPORT_BYTES + 1)
         except OSError:
             omitted.append({"name": name, "reason": "unreadable"})
             continue
+        if len(data) > MAX_CRASH_REPORT_BYTES:
+            omitted.append({"name": name, "reason": "larger than the per-report limit"})
+            continue
         if udid.lower().encode() not in data.lower():
             continue
+        data = redact_crash_report(data, home_text)
         if len(reports) >= MAX_CRASH_REPORTS or total + len(data) > MAX_CRASH_REPORTS_TOTAL_BYTES:
             omitted.append({"name": name, "reason": "report count or total size limit reached"})
             continue
-        # The host user name appears in paths; keep reports useful but not personal.
-        data = data.replace(home_text.encode(), b"~").replace(home_text.replace("/", "\\/").encode(), b"~")
         destination.mkdir(parents=True, exist_ok=True)
         (destination / name).write_bytes(data)
         total += len(data)
@@ -430,7 +468,7 @@ def main(argv=None):
         summary["population"]["compiled"] = compiled_tests(json.loads(enumeration.read_text()), declared)
         rows = coverage_rows(declared, summary["population"]["compiled"], {"testNodes": []}, args.device)
         reset_simulator_app(udid)
-        crash_directories = [Path.home() / directory for directory in CRASH_REPORT_DIRECTORIES]
+        crash_directories = crash_report_directories()
         crash_reports_before = crash_report_snapshot(crash_directories)
         selected = [entry for entry in declared if not any(rule["identity"] == entry for rule in deselections)]
         compiled = [entry for entry in summary["population"]["compiled"] if entry in selected]
