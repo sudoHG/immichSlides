@@ -22,24 +22,33 @@ repository, this repository's `main` base, and the current head SHA for admissio
 Stale admission heads, ambiguous matches and pagination failures refuse mapping.
 Workflow names and colliding job names do not establish provenance.
 
-Main gate queue design: main pushes share one workflow concurrency group with
-`cancel-in-progress: false`. GitHub keeps the active run and replaces an older
-pending run with the newest pending push under GitHub's
-[concurrency contract](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency);
-PR groups remain separate and nightly is unchanged. A run already admitted to the active group can still have jobs
-waiting for macOS capacity and is deliberately preserved.
-
 The reader treats a cancelled first-attempt main gate as **not evaluated** only
 after verifying its workflow ID/path/repository and the complete attempt jobs
-list. Every job must be completed, cancelled or skipped, have no assigned runner
+list: unique job IDs must match the API's explicit `total_count`. Every job must
+be completed, cancelled or skipped, have no assigned runner
 (`runner_id` is zero or null), and have an explicit empty steps list; an empty
-jobs list also qualifies. GitHub can set `started_at` on jobs that never acquired
+jobs list qualifies only with `total_count: 0`. A newer main-push gate run with a
+greater run ID and a different head SHA must also exist. Main history is protected
+and linear; a bounded recent run listing supplies that proof. GitHub can set
+`started_at` on jobs that never acquired
 a runner, so timestamps alone do not prove execution. This applies whether
 concurrency replacement or a manual cancellation occurred before execution;
-the API does not prove which caused cancellation. The pushed SHA remains pending
+the API does not prove which caused cancellation. Without a newer different push,
+the cancellation follows the ordinary failure path. The pushed SHA remains pending
 with a link to its cancelled run, never successful and never credited with a
-newer SHA's evidence. Started jobs, reruns and ambiguous/API-incomplete evidence
-keep the ordinary fail-closed path. This reader must land before queue coalescing.
+newer SHA's evidence. Main's `ci-approval-state` remains successful with
+**Approval not needed**. Started jobs, reruns and ambiguous/API-incomplete evidence
+keep the ordinary fail-closed path. This reader does not change producer scheduling.
+
+For the same SHA, a first-attempt main UI run is also **not evaluated** only when
+its complete jobs listing shows a failed `ui-archive` and every admitted UI shard
+skipped without a runner or steps. The sole archive summary must bind to the run,
+attempt, trusted admission identity and manifest, with only the exact
+`archive-unavailable` timeout outcome and no archive refusal record. The reader
+independently verifies that SHA's authoritative gate satisfies the superseded,
+unexecuted predicate above. The UI status stays pending with its own run link.
+Executed shards, identity mismatches, any refusal, other archive failures and
+reruns retain the ordinary failure path.
 
 Admission is separate from publication, serialized by producer run ID with
 `cancel-in-progress: false`. It reads GitHub's test merge SHA and commit parents,
@@ -206,16 +215,16 @@ build and unit jobs as **not applicable** when both `app_affected` and
 `ci_changing` are false. The literal workflow jobs must still be present in
 GitHub's complete job set with conclusion `skipped`; their admitted populations
 are reported separately, never counted as executed or passed tests. Missing,
-cancelled or failed jobs remain failures, and an artifact claiming execution for
-a skipped job is refused. Host checks and classification still require complete
+cancelled or failed jobs remain failures. The reader ignores artifacts for those
+independently admitted skipped jobs; their bytes are never read. Host checks and classification still require complete
 passing evidence. Additional archive proof jobs remain required. Main pushes
 and nightly do not acquire this exception. Forks still require exact-head
 approval; CI-changing and unknown paths cannot take this path, even with approval.
 
 This reader support must land on main before a producer starts skipping gate
 jobs, because publication executes the admitted first parent's verdict reader.
-Host checks remain on macOS: the bounded producer rollout saves the four app
-build/unit jobs while retaining one macOS host job for docs-only pull requests.
+The producer rollout planned in #223 keeps host checks on macOS and skips the
+four app build/unit jobs, retaining one macOS host job for docs-only pull requests.
 
 After publishing a complete PR UI success, the main publisher retains
 `ci-ui-verdict-<tree-sha>` for 30 days. Its `verdict.json` version 1 stores the

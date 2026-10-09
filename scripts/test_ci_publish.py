@@ -112,6 +112,101 @@ UNSTARTED_GATE_JOBS = [
      "status": "completed", "conclusion": "cancelled", "runner_id": None,
      "steps": [], "started_at": "2026-10-09T02:57:13Z"},
 ]
+
+
+class UnstartedGateAPI:
+    repository = REPOSITORY
+    workflow = WORKFLOW
+
+    def __init__(self):
+        self.jobs = copy.deepcopy(UNSTARTED_GATE_JOBS)
+        self.newer = [dict(RUN, id=102, event="push", head_branch="main", head_sha="e" * 40)]
+        self.total_count = len(self.jobs)
+
+    def repo(self, path, **options):
+        if "/jobs?" in path:
+            if self.jobs is None:
+                raise ContractError("incomplete API evidence")
+            result = {"jobs": self.jobs}
+            if self.total_count is not None:
+                result["total_count"] = self.total_count
+            return result
+        if "/runs?" in path:
+            return {"workflow_runs": self.newer}
+        return self.workflow
+
+    def pages(self, path, collection=None, **filters):
+        if self.jobs is None:
+            raise ContractError("incomplete API evidence")
+        return self.jobs
+
+
+def unavailable_ui_fixture():
+    # Normalized main run 37877002236: archive failed and the whole matrix skipped.
+    ui = dict(RUN, id=201, workflow_id=43, path=".github/workflows/ci-ui.yml", event="push",
+              head_branch="main", conclusion="failure", created_at="2026-10-09T02:57:13Z")
+    identity = {"schema_version": 1, "event": "push", "repository": REPOSITORY,
+                "ref": "refs/heads/main", "pushed_sha": HEAD, "tree_sha": TREE}
+    record = {"workflow_id": 43, "workflow_path": ui["path"], "identity": identity,
+              "classification": {"app_affected": True, "ci_changing": False},
+              "workflows": {ui["path"]: {"base": FIXTURE_UI}},
+              "ui_inputs": {"base": {"manifest_sha256": "e" * 64}}}
+    jobs = [
+        {"id": 3, "name": "ui-archive", "run_id": 201, "run_attempt": 1,
+         "status": "completed", "conclusion": "failure", "runner_id": 1, "steps": [{"status": "completed"}]},
+        {"id": 4, "name": "ui-${{ matrix.device }}-${{ matrix.shard }}", "run_id": 201, "run_attempt": 1,
+         "status": "completed", "conclusion": "skipped", "runner_id": None, "steps": []},
+    ]
+    summary = valid_summary()
+    step = test_identity("host", "UI archive selection")
+    summary.update(identity=copy.deepcopy(identity), status="failed",
+        infrastructure=[{"code": "archive-selection-failed", "message": "archive-unavailable: no exact-identity gate archive before timeout"}])
+    summary["source"].update(repository=REPOSITORY, event="push", workflow_path=ui["path"], fork_originated=False)
+    summary["run"].update(id="201", attempt=1, tier="ui-infrastructure", job="ui-archive", shard=None)
+    summary["hashes"] = {"manifests": {"ui-shards": "e" * 64}, "policies": {}}
+    summary["population"].update(declared=[step], compiled=[step], observed=[observation(step, "failed", 1, exit_code=1)],
+                                 deselected=[], removed_by_pr=[])
+    return ui, record, jobs, summary
+
+
+class UnavailableUIAPI(UnstartedGateAPI):
+    def __init__(self):
+        super().__init__()
+        self.ui, self.record, self.ui_jobs, self.summary = unavailable_ui_fixture()
+        self.gate = dict(RUN, event="push", head_branch="main", conclusion="cancelled")
+        self.refusals = None
+        self.artifact = {"id": 9, "name": "ui-archive-201-1", "expired": False, "size_in_bytes": 10000}
+
+    def repo(self, path, **options):
+        if path == "actions/workflows/ci-ui.yml":
+            return {"id": 43, "path": self.ui["path"]}
+        if path.startswith("actions/runs/201/") and "/jobs?" in path:
+            return {"jobs": self.ui_jobs, "total_count": len(self.ui_jobs)}
+        if path == "actions/artifacts/9/zip":
+            import io
+            import zipfile
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w") as bundle:
+                bundle.writestr("summary.json", json.dumps(self.summary))
+                if self.refusals is not None:
+                    bundle.writestr("archive-refusals.json", json.dumps(self.refusals))
+            return stream.getvalue()
+        return super().repo(path, **options)
+
+    def pages(self, path, collection=None, **filters):
+        if path.startswith("commits/"):
+            return []
+        if path.startswith("actions/workflows/42/runs"):
+            return [self.gate]
+        if path.startswith("actions/workflows/43/runs"):
+            return [self.ui]
+        if path == "actions/runs/201/artifacts":
+            return [self.artifact]
+        if path == "actions/runs/201/attempts/1/jobs":
+            return self.ui_jobs
+        return super().pages(path, collection, **filters)
+
+
 PR = {"number": 7, "state": "open", "head": {"sha": HEAD, "repo": {"full_name": REPOSITORY}},
       "base": {"ref": "main", "repo": {"full_name": REPOSITORY}}}
 COMMIT = {"sha": MERGE, "parents": [{"sha": BASE}, {"sha": HEAD}], "tree": {"sha": TREE}}
@@ -181,13 +276,39 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_superseded_unexecuted_gate_excuses_only_bound_archive_unavailable_ui(self):
+        def published(api):
+            with patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW,
+                    "ci-ui": {"id": 43, "path": api.ui["path"]}}), \
+                    patch("ci_publish.trusted_admissions", return_value={201: api.record}):
+                return compute(api, 0, HEAD, "generic-app[bot]")[1]
+        api = UnavailableUIAPI()
+        statuses = published(api)
+        self.assertEqual("pending", statuses["ci-ui"]["state"])
+        self.assertIn("Not evaluated", statuses["ci-ui"]["description"])
+        self.assertEqual(f"https://github.com/{REPOSITORY}/actions/runs/201", statuses["ci-ui"]["target_url"])
+        for mutation in ("no-newer", "refusal", "identity", "executed-shard", "unknown-error", "manifest", "rerun"):
+            with self.subTest(mutation=mutation):
+                api = UnavailableUIAPI()
+                if mutation == "no-newer":
+                    api.newer = []
+                elif mutation == "refusal":
+                    api.refusals = [{"outcome": "archive-identity-mismatch"}]
+                elif mutation == "identity":
+                    api.summary["identity"]["pushed_sha"] = "f" * 40
+                elif mutation == "executed-shard":
+                    api.ui_jobs[1].update(conclusion="failure", runner_id=123)
+                elif mutation == "unknown-error":
+                    api.summary["infrastructure"][0]["message"] = "archive-identity-mismatch: no exact-identity gate archive before timeout"
+                elif mutation == "manifest":
+                    api.summary["hashes"]["manifests"]["ui-shards"] = "f" * 64
+                else:
+                    api.ui["run_attempt"] = 2
+                self.assertEqual("failure", published(api)["ci-ui"]["state"])
+
     def test_cancelled_unstarted_main_gate_is_pending_without_inventing_a_verdict(self):
         run = dict(RUN, event="push", head_branch="main", conclusion="cancelled")
-        class API:
-            repository = REPOSITORY
-            jobs = UNSTARTED_GATE_JOBS
-            def repo(self, path, **options):
-                return WORKFLOW
+        class API(UnstartedGateAPI):
             def pages(self, path, collection=None, **filters):
                 if path == f"actions/runs/{run['id']}/attempts/1/jobs":
                     return self.jobs
@@ -198,6 +319,7 @@ class PublisherTests(unittest.TestCase):
             head, statuses, approval = compute(API(), 0, HEAD, "generic-app[bot]")
         self.assertEqual(HEAD, head)
         self.assertIsNone(approval)
+        self.assertEqual({"state": "success", "description": "Approval not needed"}, statuses["ci-approval-state"])
         self.assertEqual("pending", statuses["ci-pr-gate"]["state"])
         self.assertIn("Not evaluated", statuses["ci-pr-gate"]["description"])
         self.assertEqual(f"https://github.com/{REPOSITORY}/actions/runs/{run['id']}",
@@ -214,24 +336,27 @@ class PublisherTests(unittest.TestCase):
                 patch("ci_publish.producer_evidence", side_effect=ContractError("interrupted evidence")):
             _, started, _ = compute(api, 0, HEAD, "generic-app[bot]")
         self.assertEqual("failure", started["ci-pr-gate"]["state"])
+        api.jobs = UNSTARTED_GATE_JOBS
+        api.newer = []
+        with patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                patch("ci_publish.trusted_admissions", return_value={run["id"]: record}), \
+                patch("ci_publish.producer_evidence", side_effect=ContractError("unverified cancellation")):
+            _, latest, _ = compute(api, 0, HEAD, "generic-app[bot]")
+        self.assertEqual("failure", latest["ci-pr-gate"]["state"])
 
     def test_unstarted_cancellation_requires_complete_first_attempt_job_and_source_proof(self):
         from ci_publish import cancelled_unstarted_gate
         run = dict(RUN, event="push", head_branch="main", conclusion="cancelled")
-        class API:
-            repository = REPOSITORY
-            jobs = UNSTARTED_GATE_JOBS
-            workflow = WORKFLOW
-            def repo(self, path, **options):
-                return self.workflow
-            def pages(self, path, collection):
-                if self.jobs is None:
-                    raise ContractError("incomplete API evidence")
-                return self.jobs
-        api = API()
+        api = UnstartedGateAPI()
         for jobs in (UNSTARTED_GATE_JOBS, []):
             api.jobs = jobs
+            api.total_count = len(jobs)
             self.assertTrue(cancelled_unstarted_gate(api, run))
+        for jobs, count in (([], None), ([], 1), (UNSTARTED_GATE_JOBS, 6),
+                            (UNSTARTED_GATE_JOBS + [UNSTARTED_GATE_JOBS[0]], 6)):
+            api.jobs, api.total_count = jobs, count
+            self.assertFalse(cancelled_unstarted_gate(api, run))
+        api.total_count = 1
         for mutation in ({"runner_id": 123}, {"steps": [{"status": "completed"}]},
                          {"status": "queued"}, {"conclusion": "failure"},
                          {"run_attempt": 2}, {"run_id": 102}, {"runner_id": False}):
@@ -245,6 +370,13 @@ class PublisherTests(unittest.TestCase):
         api.jobs = None
         self.assertFalse(cancelled_unstarted_gate(api, run))
         api.jobs = UNSTARTED_GATE_JOBS
+        api.total_count = len(api.jobs)
+        for newer in ([], [dict(RUN, id=102, event="push", head_branch="main")],
+                      [dict(RUN, id=100, event="push", head_branch="main", head_sha="e" * 40)],
+                      [dict(RUN, id=102, event="pull_request", head_branch="main", head_sha="e" * 40)]):
+            api.newer = newer
+            self.assertFalse(cancelled_unstarted_gate(api, run))
+        api.newer = [dict(RUN, id=102, event="push", head_branch="main", head_sha="e" * 40)]
         for mutation in ({"event": "pull_request"}, {"event": "schedule"}, {"head_branch": "feature"},
                          {"path": ".github/workflows/ci-ui.yml"}, {"run_attempt": 2},
                          {"status": "in_progress"}, {"conclusion": "failure"},

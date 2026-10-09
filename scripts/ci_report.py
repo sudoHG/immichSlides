@@ -478,7 +478,7 @@ def nightly_attempt(api, run, attempt, artifacts):
 
 def read_run(api, run, admissions, previous=None):
     """Only bounded JSON data is read; artifact files are never extracted or executed."""
-    from ci_publish import producer_evidence, cancelled_unstarted_gate
+    from ci_publish import producer_evidence, cancelled_unstarted_gate, archive_blocked_ui
     from ci_publish_git import evaluate_records
     from ci_health import first_execution_metrics, observation_metrics, run_metrics, unexpected_skips
     entry = report_base(run, api.repository)
@@ -544,6 +544,10 @@ def read_run(api, run, admissions, previous=None):
             if any(item.startswith("required artifact expired:") for item in errors):
                 entry["evidence_expired"] = True
             require(all(summary["identity"] == identity for summary in summaries), "summary identity differs from admission")
+            if not errors and archive_blocked_ui(api, record, run, jobs, summaries):
+                entry.update(identity=identity, status="not-run",
+                             not_evaluated_reason="archive unavailable for superseded unexecuted gate")
+                return entry
             entry.update(identity=identity, diagnostics=summary_diagnostics(summaries, errors),
                          observed=[item for summary in summaries for item in summary["population"]["observed"]])
             entry["hashes"] = [summary["hashes"] for summary in summaries]

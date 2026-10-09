@@ -32,18 +32,29 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_archive_unavailable_ui_cannot_notify_for_a_superseded_unexecuted_gate(self):
+        from test_ci_publish import UnavailableUIAPI
+        api = UnavailableUIAPI()
+        with patch("ci_report.on_main", return_value=True):
+            report = read_run(api, api.ui, {201: api.record})
+        self.assertEqual("not-run", report["status"])
+        self.assertEqual([], report["observed"])
+        self.assertEqual([], report["diagnostics"]["failures"])
+        self.assertIn("Not evaluated", render_entry(ci_report.compact_entry(report, set())))
+        with patch("ci_report.ensure_label") as writes:
+            self.assertEqual(([], {}), synchronize_issues(api, [report], {"entries": []}))
+        writes.assert_not_called()
+        api.refusals = [{"outcome": "archive-identity-mismatch"}]
+        with patch("ci_report.on_main", return_value=True):
+            rejected = read_run(api, api.ui, {201: api.record})
+        self.assertEqual("failed", rejected["status"])
+        self.assertTrue(ci_report.issue_eligible(rejected))
+
     def test_unstarted_main_gate_remains_not_run_and_cannot_notify_but_started_cancellation_can(self):
-        from test_ci_publish import RUN, WORKFLOW, UNSTARTED_GATE_JOBS, REPOSITORY
+        from test_ci_publish import RUN, UNSTARTED_GATE_JOBS, UnstartedGateAPI
         run = dict(RUN, event="push", head_branch="main", conclusion="cancelled",
                    created_at="2026-10-09T02:57:13Z")
-        class API:
-            repository = REPOSITORY
-            jobs = UNSTARTED_GATE_JOBS
-            def repo(self, path, **options):
-                return WORKFLOW
-            def pages(self, path, collection):
-                return self.jobs
-        api = API()
+        api = UnstartedGateAPI()
         with patch("ci_report.on_main", return_value=True):
             report = read_run(api, run, {})
         self.assertEqual("not-run", report["status"])
@@ -75,6 +86,9 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual(run["head_sha"], receipts[0]["sha"])
         self.assertEqual("POST", writes.call_args.kwargs["method"])
         api.jobs = UNSTARTED_GATE_JOBS
+        api.newer = []
+        with patch("ci_report.on_main", return_value=True):
+            self.assertEqual("failed", read_run(api, run, {})["status"])
         with patch("ci_report.on_main", return_value=False):
             self.assertEqual("failed", read_run(api, run, {})["status"])
 
