@@ -8,6 +8,12 @@ re-evaluation. A manual re-evaluation runs no build or test.
 
 ## Trust and identities
 
+New producer record shapes require their trusted parser and validator to land first
+in a separate PR, alongside the existing reader; see
+[reader-first evolution](CI_SUMMARY.md#reader-first-evolution). The nightly UI
+successor is read by [the reporter](CI_REPORT.md), so its reader precedes the nightly
+producer. This does not change PR admission or publisher status formats.
+
 The workflow checks out `main` only, with full history in publication and admission
 so a base remains readable after main advances. Every publisher and approval job
 runs on `ubuntu-24.04`. `setup_ci_publisher_python.py` installs only the central

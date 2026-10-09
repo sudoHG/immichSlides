@@ -16,6 +16,16 @@ reporter jobs and are also excluded by collection and issue synchronization.
 Daily scheduled/manual collection finds recent main pushes and nightlies, skips completed attempts already in the snapshot
 and revisits pending runs. It never repeats two days of artifact reads per completion.
 Branch diagnostic nightlies, including historical #158 probes, remain excluded.
+An explicit read-only diagnostic command can inspect a same-repository branch
+`workflow_dispatch` run without adding it to trusted history or synchronizing issues:
+
+```bash
+python3 -B scripts/ci_report.py --dry-run --diagnostic-nightly --run-id RUN_ID \
+    --output-dir '<fresh-outside-repo>/report'
+```
+
+This option requires explicit run IDs and `collect`; it cannot write through the API.
+Its entries are marked `branch-dispatch-read-only` and remain release ineligible.
 Single-shard dispatches on main remain recorded with `diagnostic_shard`, but cannot
 open, update or recover issues. The scheduling plan verifies that flag even when
 the aggregate is missing; a manual dispatch without a verified plan is ineligible.
@@ -24,6 +34,36 @@ and step summaries for 30 days.
 For a main UI matrix skipped through trusted identical-tree reuse, reporting calls
 the existing publisher reuse reader; a skip without its verified proof still fails.
 This does not activate skipping or change the producer's matrix.
+
+The reader supports strict nightly aggregate version 1 and the explicit version 2
+successor containing a fixture UI aggregate. Version 2 binds the embedded `ui` record
+to `nightly-ui-aggregate-<run>-<attempt>/nightly-ui.json`, with a complete manifest-derived
+plan for iPhone, iPad and Apple TV. Each available `ui-<device>-<shard>-<run>-<attempt>`
+summary must match the plan's source, identity, hashes and attempt. Missing shards
+and samples remain failed and visible. The reader derives every device/shard population
+from the tested commit's Swift source, default plans and class/method manifest, verifies their
+hashes and rejects a substituted plan, tree or source binding. It recomputes every shard verdict
+and the UI union using the existing population evaluator, the tested commit's policy
+and registry, and the run's UTC date. It checks wave/timing accounting and retains
+method failures for the ordinary issue lifecycle. Unknown, malformed or boolean
+versions are refused; strict version 1 remains supported.
+Per-shard non-test errors make the night incomplete even alongside real failures;
+incomplete nights cannot supply issue recovery evidence. Approved UI skips remain
+accepted, declared counts deduplicate identities, and raw messages/reasons are sanitized
+through every retained attempt. A failed Git-object read makes that attempt unavailable
+without aborting collection. The outer source's complete fields must match the UI plan
+and shard sources, with `approval_based: false`. Fixture hashing requires the tested
+`strict_e2e_server.py` to equal the reader's copy; a difference is retained as
+`fixture-source-drift`, incomplete evidence that cannot count as a pass night.
+Read-only diagnostic output must stay outside the checkout.
+Shard names and counts come from the manifest through the shared `ci_ui_shards`
+helpers. The separate exact-method manifest reader has merged; this nightly record
+format needs no change. With `max_parallel: 2`, minimum waves are the actual shard count rounded
+up after division by two; the current v1 manifest supplies nine shards and five waves.
+
+This reader must be merged before a producer emits version 2, following
+[reader-first evolution](CI_SUMMARY.md#reader-first-evolution). Installing it does
+not activate UI execution, alter live scope or implement offline performance.
 
 The latest trusted snapshot is merged, rather than rebuilding historical days from
 producer artifacts. Only new evidence from the seven most recent UTC dates may drive

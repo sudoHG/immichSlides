@@ -39,11 +39,16 @@ class EvidenceExpired(ContractError):
     """Expired artifacts cannot change a previously verified report."""
 
 
+class FixtureSourceDrift(ContractError):
+    """Fixture hashes require the tested source to match the trusted reader."""
+
+
 class ReportGitHub(GitHub):
     def __init__(self, repository, token, *, dry_run=False):
         self.request_count, self.remaining, self.rate_limit, self.dry_run = 0, None, 1000, dry_run
         self.binary_cache = {}
         self.artifact_sizes = {}
+        self.diagnostic_nightly = False
         super().__init__(repository, token, response_headers=self.check_headers)
 
     def check_headers(self, headers):
@@ -405,12 +410,123 @@ def dispatch_shard(api, run, attempt, artifacts):
     identity = parse_identity(plan["identity"])
     require(plan["schema_version"] == 1 and plan["run"] == {"id": str(run["id"]), "attempt": attempt}
             and identity["repository"] == api.repository and identity["event"] == run["event"]
-            and identity["commit_sha"] == run["head_sha"] and identity["ref"] == "refs/heads/main"
+            and identity["commit_sha"] == run["head_sha"] and nightly_ref_allowed(api, run, identity)
             and plan["source"]["workflow_path"] == NIGHTLY_PATH and plan["source"]["fork_originated"] is False,
             "nightly dispatch plan provenance mismatch")
     shard = plan["diagnostic_shard"]
     require(shard is None or isinstance(shard, str) and bool(shard), "invalid diagnostic shard")
     return shard
+
+
+def nightly_ref_allowed(api, run, identity):
+    return identity["ref"] == "refs/heads/" + run["head_branch"] and (
+        run["head_branch"] == "main" or getattr(api, "diagnostic_nightly", False)
+        and getattr(api, "dry_run", False) and run["event"] == "workflow_dispatch")
+
+
+def nightly_ui_attempt(api, run, attempt, artifacts, raw):
+    import subprocess
+    from ci_population import ui_identities
+    from ci_nightly_ui import parse_ui_plan, validate_ui_record
+    from ci_publish import json_member
+    from ci_ui_shards import DEVICES, MANIFEST_PATH, shard_populations
+    from ci_verdict import identity_label
+    from strict_e2e_server import fixture_manifest
+    ui = raw["ui"]
+    plan = parse_ui_plan(ui["plan"])
+    require(plan["identity"] == raw["identity"] and plan["run"] == raw["run"], "UI aggregate differs from nightly identity")
+    require(plan["source"] == {"repository": api.repository, "workflow_path": NIGHTLY_PATH, "event": run["event"],
+                               "fork_originated": False, "ci_changing": None}, "nightly UI source binding differs")
+    require(raw["source"] == {**plan["source"], "approval_based": False}
+            and raw["source"]["approval_based"] is False, "nightly UI outer source binding differs")
+    def tested_git(*arguments):
+        try:
+            return subprocess.check_output(["git", *arguments], timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            raise ContractError("nightly UI tested source unavailable") from None
+    def blob(path):
+        return tested_git("show", run["head_sha"] + ":" + path)
+    require(tested_git("rev-parse", run["head_sha"] + "^{tree}").decode().strip() == plan["identity"]["tree_sha"],
+            "nightly UI tree differs from tested commit")
+    if blob("scripts/strict_e2e_server.py") != Path(__file__).with_name("strict_e2e_server.py").read_bytes():
+        raise FixtureSourceDrift("fixture-source-drift")
+    sources = {}
+    listing = tested_git("ls-tree", "-rz", "--full-tree", run["head_sha"], "--", "immichSlidesUITests")
+    for entry in filter(None, listing.split(b"\0")):
+        metadata, path = entry.split(b"\t", 1)
+        mode, kind, _ = metadata.decode("ascii").split()
+        path = path.decode("utf-8")
+        require(path.startswith("immichSlidesUITests/"), "UI source lies outside the tested target")
+        if path.endswith(".swift"):
+            require(mode in {"100644", "100755"} and kind == "blob", "UI source is not a regular blob")
+            sources[path] = blob(path).decode("utf-8")
+    manifest = blob(MANIFEST_PATH)
+    expected_shards, expected_hashes = [], {}
+    for device, platform in DEVICES.items():
+        test_plan = blob("immichSlides-" + ("iOS" if platform == "ios" else "tvOS") + ".xctestplan")
+        populations = shard_populations(ui_identities(sources, platform), test_plan.decode(), manifest.decode(), device)
+        expected_shards.extend({"device": device, "shard": shard, "declared": declared} for shard, declared in populations.items())
+        expected_hashes[device] = {"ui-shards": hashlib.sha256(manifest).hexdigest(),
+                                   "test-plan": hashlib.sha256(test_plan).hexdigest(),
+                                   "fixture-c": fixture_manifest("c")["fixture_sha256"]}
+    require(plan["shards"] == expected_shards, "nightly UI plan differs from tested default-plan population")
+    require(all(plan["hashes"][device]["manifests"] == hashes for device, hashes in expected_hashes.items()),
+            "nightly UI manifest hashes differ from tested source")
+    matches = [item for item in artifacts if item["name"] == f"nightly-ui-aggregate-{run['id']}-{attempt}"]
+    require(len(matches) == 1, "missing or duplicate nightly UI aggregate")
+    if matches[0]["expired"]:
+        raise EvidenceExpired("nightly UI aggregate expired")
+    require(json_member(api, matches[0], "nightly-ui.json") == ui, "nightly UI aggregate binding differs")
+    summaries = []
+    for shard in plan["shards"]:
+        name = f"ui-{shard['device']}-{shard['shard']}-{run['id']}-{attempt}"
+        matches = [item for item in artifacts if item["name"] == name]
+        require(len(matches) <= 1, "duplicate nightly UI shard")
+        if not matches:
+            continue
+        if matches[0]["expired"]:
+            raise EvidenceExpired("nightly UI shard expired")
+        summary = parse_summary(json_member(api, matches[0], "summary.json"))
+        require(summary["identity"] == plan["identity"] and summary["source"] == plan["source"]
+                and summary["run"] == {**plan["run"], "tier": "ui", "job": "ui-" + shard["device"], "shard": shard["shard"]}
+                and summary["hashes"] == plan["hashes"][shard["device"]], "nightly UI shard source binding differs")
+        summaries.append(summary)
+    values = {}
+    for name, path in (("policy", "scripts/ci-test-policy.json"), ("registry", "scripts/ci-known-flaky.json")):
+        content = blob(path)
+        label = "test-policy" if name == "policy" else "known-flaky"
+        require(all(hashes["policies"][label] == hashlib.sha256(content).hexdigest() for hashes in plan["hashes"].values()),
+                "nightly UI policy differs from tested source")
+        values[name] = decode(content.decode())
+    validate_ui_record(ui, summaries, **values, evaluated_on=date.fromisoformat(run["created_at"][:10]))
+    require(raw["tiers"]["ui"] == ui["verdict"]["status"]
+            and (ui["verdict"]["status"] != "failed" or raw["status"] == "failed"), "nightly UI status differs")
+    verdict = copy.deepcopy(ui["verdict"])
+    verdict["infrastructure"] = []
+    for shard, planned in zip(verdict["shards"], plan["shards"]):
+        declared = {identity_key(item) for item in planned["declared"]}
+        failures = [item for item in verdict["observed"] if identity_key(item["identity"]) in declared and item["outcome"] in FAILURES]
+        failure_errors = {item["outcome"] + ": " + identity_label(item["identity"]) for item in failures}
+        if failures:
+            failure_errors.add("producer status is failed")
+        other_errors = [error for error in shard["verdict"]["errors"] if error not in failure_errors]
+        if other_errors:
+            categories = set()
+            for error in other_errors:
+                category = next((label for prefix, label in (
+                    ("missing ", "missing-population"), ("unexpected ", "unexpected-population"),
+                    ("infrastructure ", "producer-infrastructure"), ("policy ", "policy"),
+                    ("population ", "population"), ("coverage ", "coverage"),
+                    ("producer status", "unverified-producer")) if error.startswith(prefix)), "invalid-evidence")
+                categories.add(category)
+            verdict["infrastructure"].append("nightly UI evidence incomplete: " + shard["device"] + "/" + shard["shard"]
+                                             + " (" + ", ".join(sorted(categories)) + ")")
+    intervals = {item["shard"] for item in ui["capacity"]["shard_intervals"]}
+    if intervals != {item["device"] + "/" + item["shard"] for item in plan["shards"]}:
+        verdict["infrastructure"].append("nightly UI timing evidence incomplete")
+    if ui["matrix_job_result"] != "success" and not any(item["outcome"] in FAILURES for item in verdict["observed"]):
+        verdict["infrastructure"].append("nightly UI matrix execution incomplete")
+    return verdict
 
 
 def nightly_attempt(api, run, attempt, artifacts):
@@ -424,9 +540,11 @@ def nightly_attempt(api, run, attempt, artifacts):
         raise EvidenceExpired("nightly aggregate expired")
     raw = json_member(api, matches[0], "nightly.json")
     identity = parse_identity(raw["identity"])
-    require(raw["schema_version"] == 1 and raw["run"] == {"id": str(run["id"]), "attempt": attempt}, "nightly run mismatch")
+    require(type(raw["schema_version"]) is int and raw["schema_version"] in {1, 2}
+            and raw["run"] == {"id": str(run["id"]), "attempt": attempt}, "nightly run mismatch")
+    require((raw["schema_version"] == 2) == ("ui" in raw), "nightly UI successor shape mismatch")
     require(identity["repository"] == api.repository and identity["event"] == run["event"]
-            and identity["ref"] == "refs/heads/main" and identity["commit_sha"] == run["head_sha"], "nightly identity mismatch")
+            and nightly_ref_allowed(api, run, identity) and identity["commit_sha"] == run["head_sha"], "nightly identity mismatch")
     require(raw["source"]["workflow_path"] == NIGHTLY_PATH and raw["source"]["repository"] == api.repository
             and raw["source"]["event"] == run["event"] and raw["source"]["fork_originated"] is False
             and raw["status"] in {"passed", "failed"}, "invalid nightly source or status")
@@ -458,19 +576,31 @@ def nightly_attempt(api, run, attempt, artifacts):
         methods, absent = method_observations(summary, trace)
         observed.extend(methods)
         missing.extend(absent)
+    ui = nightly_ui_attempt(api, run, attempt, artifacts, raw) if raw["schema_version"] == 2 else None
+    if ui is not None:
+        observed.extend(ui["observed"])
+        missing.extend({"identity": item, "reason": "nightly-ui-sample-missing"} for item in ui["matrix"]["missing"])
     counts = Counter(item["outcome"] for item in observed)
-    counts.update(declared=len(observed) + len(missing), observed=len(observed),
+    declared_keys = {identity_key(item["identity"]) for item in observed + missing}
+    if ui is not None:
+        declared_keys.update(identity_key(item["identity"]) for item in ui["deselected"])
+    counts.update(declared=len(declared_keys), observed=len(observed),
                   scheduled_cases=raw["matrix"].get("scheduled", 0), executed_cases=raw["matrix"].get("executed", 0))
     infrastructure = [] if raw["matrix"].get("equal") else ["nightly matrix evidence incomplete"]
     if any(error.startswith(("missing shard", "invalid or missing", "producer infrastructure", "single-shard")) for error in raw["errors"]):
         infrastructure.append("nightly infrastructure or scheduling failure")
     if missing:
         infrastructure.append("nightly official method evidence incomplete")
+    if ui is not None:
+        counts.update(ui_scheduled=ui["matrix"]["scheduled"], ui_executed=ui["matrix"]["executed"],
+                      ui_deselected=ui["matrix"]["deselected"])
+        infrastructure.extend(ui["infrastructure"])
     entry.update(observed=observed, diagnostics={"counts": dict(counts), "missing": missing, "infrastructure": infrastructure,
         "failures": [{"identity": item["identity"], "outcome": item["outcome"],
                       "exit_codes": [a["exit_code"] for a in item["attempts"]]} for item in observed if item["outcome"] in FAILURES]})
     # The strict aggregate accepts explicit passes/flaky-passes only, not skips.
-    entry["health"] = observation_metrics(observed, unexpected_skips=counts["skipped"])
+    accepted_skips = sum(len(item["verdict"].get("expected_skips", [])) for item in ui["shards"]) if ui is not None else 0
+    entry["health"] = observation_metrics(observed, unexpected_skips=counts["skipped"] - accepted_skips)
     # Official methods have no timing; case invocation wall time measures a different interval.
     entry["health"]["test_duration_seconds"] = None
     return entry
@@ -505,8 +635,11 @@ def read_run(api, run, admissions, previous=None):
                     and on_main(run["head_sha"]), "push is outside main history")
             entry["pushed_sha"] = run["head_sha"]
         if run["path"] == NIGHTLY_PATH:
-            require(run["event"] in {"schedule", "workflow_dispatch"} and run["head_branch"] == "main"
-                    and run["head_repository"]["full_name"] == api.repository and on_main(run["head_sha"]), "untrusted nightly source")
+            diagnostic_branch = (getattr(api, "diagnostic_nightly", False) and getattr(api, "dry_run", False)
+                                 and run["event"] == "workflow_dispatch" and run["head_branch"] != "main")
+            require(run["event"] in {"schedule", "workflow_dispatch"}
+                    and run["head_repository"]["full_name"] == api.repository
+                    and (diagnostic_branch or run["head_branch"] == "main" and on_main(run["head_sha"])), "untrusted nightly source")
             artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
             history = []
             cached = {item["run"]["attempt"]: item for item in (previous or {}).get("attempt_history", [])}
@@ -522,15 +655,20 @@ def read_run(api, run, admissions, previous=None):
                     value = copy.deepcopy(cached[attempt])
                 except RateLimitLow:
                     raise
-                except (ContractError, KeyError, ValueError, TypeError):
+                except (ContractError, KeyError, ValueError, TypeError) as error:
                     value = report_base({**run, "run_attempt": attempt}, api.repository)
                     value["diagnostic_shard"] = diagnostic
-                    value["diagnostics"]["infrastructure"] = ["nightly attempt evidence unavailable"]
+                    value["diagnostics"]["infrastructure"] = ["fixture-source-drift" if isinstance(error, FixtureSourceDrift)
+                                                             else "nightly attempt evidence unavailable"]
                 history.append(value)
             if any(item["diagnostics"]["infrastructure"] for item in history):
                 history[-1]["diagnostics"]["infrastructure"].append("nightly attempt history incomplete")
             entry = copy.deepcopy(history[-1])
             entry["attempt_history"] = history
+            if diagnostic_branch:
+                entry["diagnostic_shard"] = "branch-dispatch-read-only"
+                for value in history:
+                    value["diagnostic_shard"] = "branch-dispatch-read-only"
             if run["conclusion"] != "success":
                 entry["status"] = "failed"
         else:
@@ -590,11 +728,12 @@ def read_run(api, run, admissions, previous=None):
         # Only reporter/base-controlled diagnostics cross this boundary.
         entry["diagnostics"]["infrastructure"].append("missing, invalid or untrusted evidence")
     # Raw runner messages can contain private values even in otherwise valid JSON.
-    for item in entry["observed"]:
-        for attempt in item["attempts"]:
-            attempt["message"] = None
-            attempt["reason"] = ("skip reason withheld; consult trusted policy" if attempt["outcome"] == "skipped"
-                                 else "strict-case-contract-failed" if attempt.get("reason") == "strict-case-contract-failed" else None)
+    for record in [entry, *entry.get("attempt_history", [])]:
+        for item in record["observed"]:
+            for attempt in item["attempts"]:
+                attempt["message"] = None
+                attempt["reason"] = ("skip reason withheld; consult trusted policy" if attempt["outcome"] == "skipped"
+                                     else "strict-case-contract-failed" if attempt.get("reason") == "strict-case-contract-failed" else None)
     entry["first_execution_health"] = (saved_first if saved_first["first_attempt_failures"] is not None
                                        else first_execution_metrics(entry))
     if "health" in entry:
@@ -1071,6 +1210,33 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
     return 0
 
 
+def diagnose_nightly(api, run_ids, output):
+    from ci_summary import sha
+    require(api.dry_run and api.diagnostic_nightly, "nightly diagnostics require read-only API access")
+    require(output is not None, "nightly diagnostic output is required")
+    output = output.resolve()
+    root = Path(__file__).resolve().parent.parent
+    require(root != output and root not in output.parents and not os.path.lexists(output),
+            "nightly diagnostic output must be fresh and outside checkout")
+    workflow = api.repo("actions/workflows/ci-nightly.yml")
+    require(workflow["path"] == NIGHTLY_PATH, "nightly diagnostic workflow differs")
+    reports = []
+    for run_id in run_ids:
+        run = api.repo(f"actions/runs/{run_id}")
+        require(run["repository"]["full_name"] == api.repository and run["workflow_id"] == workflow["id"]
+                and run["path"] == NIGHTLY_PATH and run["id"] == run_id, "nightly diagnostic provenance differs")
+        sha(run["head_sha"])
+        require(run["event"] == "workflow_dispatch" and run["head_repository"]["full_name"] == api.repository,
+                "nightly diagnostics require same-repository dispatches")
+        reports.append(read_run(api, run, {}))
+    output.mkdir(parents=True)
+    (output / "runs.json").write_text(json.dumps(reports, indent=2, sort_keys=True) + "\n")
+    (output / "report.md").write_text("\n".join(render_entry(report) for report in reports))
+    print(json.dumps({"writes": False, "runs_read": len(reports), "requests": api.request_count,
+                      "statuses": [report["status"] for report in reports]}))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", choices=("collect", "sync", "health"), default="collect")
@@ -1079,11 +1245,14 @@ def main(argv=None):
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", "sudoHG/immichSlides"))
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--run-id", type=int, action="append", default=[])
+    parser.add_argument("--diagnostic-nightly", action="store_true", help="Read branch nightly dispatches without issue or rollup writes")
     args = parser.parse_args(argv)
     require(not args.dry_run or args.phase in {"collect", "health"}, "dry-run cannot synchronize issues")
     require((args.phase == "health") == bool(args.month), "health requires one month")
     require(args.phase != "health" or args.dry_run, "standalone health is read-only")
     require(not args.run_id or args.dry_run and all(run_id > 0 for run_id in args.run_id), "run selection is dry-run only")
+    require(not args.diagnostic_nightly or args.dry_run and args.phase == "collect" and args.run_id,
+            "branch nightly diagnostics require read-only collection of explicit runs")
     if not args.dry_run:
         check_context(os.environ)
         require(args.repository == os.environ["GITHUB_REPOSITORY"], "report repository differs from workflow")
@@ -1093,7 +1262,10 @@ def main(argv=None):
         token = subprocess.check_output(["gh", "auth", "token"], text=True, stderr=subprocess.DEVNULL, timeout=30).strip()
     require(bool(token), "missing reporting token")
     api = ReportGitHub(args.repository, token, dry_run=args.dry_run)
+    api.diagnostic_nightly = args.diagnostic_nightly
     output = args.output_dir or Path(os.environ["RUNNER_TEMP"]) / "ci-report"
+    if args.diagnostic_nightly:
+        return diagnose_nightly(api, args.run_id, output)
     if args.phase == "health":
         from ci_health import write_health
         from ci_flaky import parse_registry
