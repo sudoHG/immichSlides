@@ -14,6 +14,11 @@ on:
         required: false
         default: false
         type: boolean
+      health_month:
+        description: Optional UTC health month (YYYY-MM); scheduled collection reports the previous month on day 1
+        required: false
+        default: ''
+        type: string
 
 permissions: {}
 
@@ -52,6 +57,14 @@ jobs:
         with:
           name: ci-report-daily-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-report/daily
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload monthly health from verified rollups
+        if: success() && steps.collect.outputs.health_month != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-report-health-${{ steps.collect.outputs.health_month }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-report/health
           if-no-files-found: error
           retention-days: 90
       - name: Synchronize issues after the durable rollup upload

@@ -227,6 +227,201 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual("closed", checks[0]["issue_state"])
         self.assertFalse(registry_checks(registry, "2026-10-01", {135: "open"})[0]["expired"])
 
+    def test_registry_warning_and_expiry_match_retry_dates_without_editing_entries(self):
+        from ci_flaky import eligible_entry
+        from test_ci_flaky import registry
+        payload = registry()
+        original = copy.deepcopy(payload)
+        item = payload["entries"][0]
+        for day, status, eligible in (("2026-10-30", "active", True),
+                                      ("2026-10-31", "review-due", True),
+                                      ("2026-11-07", "review-due", True),
+                                      ("2026-11-08", "expired", False)):
+            for states, expected in (({123: "open"}, "open"), ({123: "closed"}, "closed"),
+                                     ({123: "missing"}, "missing"), ({}, "unknown")):
+                with self.subTest(day=day, state=expected):
+                    check = registry_checks(payload, day, states)[0]
+                    self.assertEqual(status, check["review_status"])
+                    self.assertEqual(expected, check["issue_state"])
+                    self.assertEqual(eligible, check["date_eligible"])
+                    self.assertEqual(eligible, eligible_entry(payload, item["identity"],
+                        tier="ui", environment="hermetic", today=date.fromisoformat(day)) is not None)
+        self.assertEqual(original, payload)
+
+    def test_health_keeps_first_failure_after_rerun_and_reports_missing_legacy_metrics(self):
+        from ci_health import health_report, observation_metrics
+        first = entry("2026-10-01")
+        first["health"] = observation_metrics(first["observed"], unexpected_skips=0)
+        last = entry("2026-10-01", "passed", attempt=2)
+        last["health"] = observation_metrics(last["observed"], unexpected_skips=0)
+        last["attempt_history"] = [first, copy.deepcopy(last)]
+        legacy = entry("2026-10-02", "passed", run=11)
+        snapshot = ci_report.merge_snapshot(None, [last, legacy], date(2026, 10, 9))
+        result = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 9))
+        self.assertEqual(2, result["coverage"]["runs"])
+        self.assertEqual(["2026-10-01", "2026-10-02"], result["coverage"]["days_with_runs"])
+        self.assertEqual(6, result["coverage"]["missing_calendar_days"])
+        self.assertEqual({"value": 1, "sampled_runs": 1, "missing_runs": 1}, result["metrics"]["first_attempt_failures"])
+        self.assertEqual({"value": None, "sampled_runs": 0, "missing_runs": 2}, result["metrics"]["queue_seconds"])
+        self.assertGreater(result["storage"]["snapshot_json_bytes"], 0)
+        malformed = copy.deepcopy(snapshot)
+        malformed["days"]["2026-10-01"]["retention_days"] = 7
+        with self.assertRaises(ContractError):
+            health_report(malformed, {"entries": []}, "2026-10", date(2026, 10, 9))
+
+    def test_health_counts_retry_first_calls_before_compaction_and_rejects_bad_metrics(self):
+        from ci_health import health_report, observation_metrics
+        from ci_flaky import merge_retry
+        report = entry()
+        report["observed"] = [merge_retry(report["observed"][0], observation(IDENTITY, "passed", 2))]
+        report["health"] = observation_metrics(report["observed"], unexpected_skips=0)
+        compact = ci_report.compact_entry(report, set())
+        snapshot = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))
+        result = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 1))
+        for key, expected in (("first_attempt_failures", 1), ("flaky_passed", 1), ("test_duration_seconds", 3)):
+            self.assertEqual(expected, result["metrics"][key]["value"])
+        for invalid in (-1, float("nan"), True):
+            broken = copy.deepcopy(snapshot)
+            broken["days"]["2026-10-01"]["entries"][0]["health"]["test_duration_seconds"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ContractError):
+                health_report(broken, {"entries": []}, "2026-10", date(2026, 10, 1))
+
+    def test_first_failure_survives_pending_snapshot_before_gate_or_ui_rerun_passes(self):
+        from ci_health import health_report
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        now = date(2026, 10, 1)
+        for path in ci_report.PRODUCER_PATHS[:2]:
+            for status in ("queued", "in_progress"):
+                with self.subTest(path=path, status=status):
+                    run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+                           "head_sha": "a" * 40, "path": path, "event": "push", "head_branch": "main",
+                           "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "failure"}
+                    identity = {"schema_version": 1, "repository": api.repository, "event": "push", "ref": "refs/heads/main",
+                                "pushed_sha": run["head_sha"], "tree_sha": "b" * 40}
+                    record = {"workflow_id": 123, "workflow_path": path, "identity": identity,
+                              "classification": {"ci_changing": False}, "workflows": {path: {"base": "trusted workflow"}}}
+                    summary = valid_summary()
+                    summary["identity"] = identity
+                    summary["source"].update(event="push", workflow_path=path)
+                    summary["run"]["id"] = str(run["id"])
+                    test = summary["population"]["observed"][0]["identity"]
+                    summary["population"]["observed"] = [observation(test, "failed", 2, exit_code=1)]
+                    jobs = [{"status": "completed", "conclusion": "failure"}]
+                    with patch("ci_report.on_main", return_value=True), \
+                            patch("ci_publish.producer_evidence", return_value=(jobs, [summary])) as producer, \
+                            patch("ci_publish_git.evaluate_records", return_value={"state": "success"}):
+                        failed = read_run(api, run, {10: record})
+                        snapshot = ci_report.merge_snapshot(None, [ci_report.compact_entry(failed, set())], now)
+                        saved = snapshot["days"][now.isoformat()]["entries"][0]
+                        pending = read_run(api, {**run, "run_attempt": 2, "status": status}, {10: record}, saved)
+                        self.assertEqual(1, producer.call_count)
+                        snapshot = ci_report.merge_snapshot(snapshot, [ci_report.compact_entry(pending, set())], now)
+                        metrics = health_report(snapshot, {"entries": []}, "2026-10", now)["metrics"]
+                        self.assertEqual({"value": 1, "sampled_runs": 1, "missing_runs": 0}, metrics["first_attempt_failures"])
+                        saved = snapshot["days"][now.isoformat()]["entries"][0]
+                        summary["run"]["attempt"] = 2
+                        summary["population"]["observed"] = [observation(test, "passed", 3)]
+                        jobs[0]["conclusion"] = "success"
+                        passed = read_run(api, {**run, "run_attempt": 2, "conclusion": "success"}, {10: record}, saved)
+                    self.assertEqual("passed", passed["status"])
+                    snapshot = ci_report.merge_snapshot(snapshot, [ci_report.compact_entry(passed, set())], now)
+                    metrics = health_report(snapshot, {"entries": []}, "2026-10", now)["metrics"]
+                    self.assertEqual({"value": 1, "sampled_runs": 1, "missing_runs": 0}, metrics["first_attempt_failures"])
+
+    def test_nightly_method_placeholder_durations_are_unavailable_after_compaction(self):
+        from ci_health import health_report
+        from ci_nightly import aggregate_nightly
+        from run_strict_e2e import resolve_suite_selector
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+               "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
+               "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "success"}
+        identity = {"schema_version": 1, "repository": api.repository, "event": "schedule", "ref": "refs/heads/main",
+                    "commit_sha": run["head_sha"], "tree_sha": "b" * 40}
+        case = test_identity("strict", "smoke", **IDENTITY["dimensions"])
+        summary = valid_summary()
+        summary["identity"] = identity
+        summary["source"].update(event="schedule", workflow_path=ci_report.NIGHTLY_PATH)
+        summary["run"] = {"id": "10", "attempt": 1, "tier": "strict", "job": "nightly-strict", "shard": "iphone"}
+        # A measured case invocation is not an individual method duration.
+        summary["population"].update(declared=[case], compiled=[case], observed=[observation(case, "passed", 37)])
+        aggregate = aggregate_nightly([case], [summary], live_in_scope=False)
+        aggregate.update(identity=identity, hashes=summary["hashes"], run={"id": "10", "attempt": 1},
+                         source=summary["source"], capacity={"shard_intervals": [{"shard": "iphone"}]})
+        trace = {"warm": [{"identity": case, "official_methods": [
+            {"identifier": resolve_suite_selector("ios", "smoke").split("/", 1)[1], "result": "Passed"}],
+            "build_operations": 0, "products_unchanged": True, "log_present": True, "exit_code": 0,
+            "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}]}
+        artifacts = [{"name": name, "expired": False} for name in ("nightly-aggregate-10-1", "nightly-strict-iphone-10-1")]
+        with patch("ci_publish.json_member", side_effect=[aggregate, summary, trace]):
+            report = ci_report.nightly_attempt(api, run, 1, artifacts)
+        self.assertTrue(report["observed"])
+        compact = ci_report.compact_entry(report, set())
+        snapshot = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))
+        metrics = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 1))["metrics"]
+        self.assertEqual({"value": None, "sampled_runs": 0, "missing_runs": 1}, metrics["test_duration_seconds"])
+        self.assertEqual({"value": 0, "sampled_runs": 1, "missing_runs": 0}, metrics["first_attempt_failures"])
+
+    def test_monthly_due_date_handles_year_boundary_and_explicit_partial_month(self):
+        from ci_health import report_month
+        self.assertEqual("2025-12", report_month("schedule", {}, date(2026, 1, 1)))
+        self.assertIsNone(report_month("schedule", {}, date(2026, 1, 2)))
+        self.assertIsNone(report_month("workflow_run", {}, date(2026, 1, 1)))
+        self.assertEqual("2026-01", report_month("workflow_dispatch", {"inputs": {"health_month": "2026-01"}}, date(2026, 1, 2)))
+        for month in ("2026-02", "2026-13", "2026-1", "candidate text"):
+            with self.subTest(month=month), self.assertRaises(ContractError):
+                report_month("workflow_dispatch", {"inputs": {"health_month": month}}, date(2026, 1, 2))
+
+    def test_health_skip_classification_uses_approved_rules_and_exact_reasons(self):
+        from ci_health import unexpected_skips, run_metrics
+        summary = valid_summary()
+        identity = summary["population"]["observed"][0]["identity"]
+        summary["population"]["observed"] = [observation(identity, "skipped", 0, reason="fixture unavailable")]
+        rule = {"kind": identity["kind"], "key_pattern": identity["key"], "dimensions": identity["dimensions"],
+                "tier": summary["run"]["tier"], "environment": "hermetic", "reason": "fixture unavailable"}
+        policy = {"schema_version": 1, "expected_skips": [rule], "deselections": [],
+                  "approval_records": [{"approver": "sudoHG", "date": "2026-10-01", "tier": summary["run"]["tier"],
+                                        "link": "https://github.com/sudoHG/immichSlides/issues/83#issuecomment-123"}]}
+        self.assertEqual(0, unexpected_skips([summary], policy, "hermetic"))
+        self.assertEqual(1, unexpected_skips([summary], policy, "live"))
+        policy["approval_records"] = []
+        self.assertEqual(1, unexpected_skips([summary], policy, "hermetic"))
+        self.assertIsNone(unexpected_skips([summary], None, "hermetic"))
+        run = {"run_attempt": 1, "status": "completed", "created_at": "2026-10-01T00:00:00Z",
+               "run_started_at": "2026-10-01T00:00:10Z", "updated_at": "2026-10-01T00:01:10Z"}
+        jobs = [{"conclusion": "success", "created_at": "2026-10-01T00:00:10Z", "started_at": "2026-10-01T00:00:40Z"},
+                {"conclusion": "success", "created_at": "2026-10-01T00:00:10Z", "started_at": "2026-10-01T00:00:50Z"}]
+        self.assertEqual({"queue_seconds": 70, "run_duration_seconds": 60}, run_metrics(run, jobs))
+        self.assertIsNone(run_metrics(run)["queue_seconds"])
+        self.assertEqual(70, run_metrics({**run, "run_attempt": 2}, jobs)["queue_seconds"])
+        from ci_health import observation_metrics
+        self.assertIsNone(observation_metrics([], unexpected_skips=0)["first_attempt_failures"])
+        self.assertIsNone(observation_metrics([], unexpected_skips=0)["test_duration_seconds"])
+
+    def test_read_only_health_stops_on_quota_and_never_bootstraps_missing_history(self):
+        for snapshot, error in ((None, ContractError), (ci_report.RateLimitLow(), None)):
+            with self.subTest(snapshot=snapshot), tempfile.TemporaryDirectory() as temporary:
+                api = ci_report.ReportGitHub("sudoHG/immichSlides", "synthetic", dry_run=True)
+                with patch("ci_report.ReportGitHub", return_value=api), patch.dict("os.environ", {"CI_REPORT_TOKEN": "synthetic"}), \
+                        patch.object(api, "request", return_value={}), patch("ci_report.read_snapshot", return_value=snapshot,
+                            side_effect=snapshot if isinstance(snapshot, Exception) else None):
+                    args = ["--phase", "health", "--dry-run", "--month", "2026-10", "--output-dir", temporary]
+                    if error:
+                        with self.assertRaises(error):
+                            ci_report.main(args)
+                    else:
+                        self.assertEqual(0, ci_report.main(args))
+                    self.assertEqual([], list(Path(temporary).iterdir()))
+
+    def test_artifact_storage_reuses_listed_metadata_without_counting_pages_twice(self):
+        api = ci_report.ReportGitHub("sudoHG/immichSlides", "synthetic", dry_run=True)
+        response = {"artifacts": [{"id": 1, "size_in_bytes": 12}, {"id": 2, "size_in_bytes": 8}]}
+        with patch("ci_publish.GitHub.request", return_value=response):
+            api.repo("actions/runs/10/artifacts?per_page=100&page=1")
+            api.repo("actions/runs/10/artifacts?per_page=100&page=1")
+        self.assertEqual(20, sum(api.artifact_sizes[10].values()))
+        self.assertEqual(2, api.request_count)
+
     def test_missing_nightly_evidence_is_infrastructure_and_not_an_invented_test_result(self):
         report = entry()
         report["observed"] = []
@@ -304,6 +499,135 @@ class ReporterTests(unittest.TestCase):
             verified = read_run(api, {**run, "conclusion": "success"}, {run["id"]: record})
         self.assertEqual("passed", verified["status"])
         self.assertEqual([], verified["diagnostics"]["infrastructure"])
+
+    def test_post_merge_plan_requires_failure_identity_after_exact_reset_point(self):
+        point = "2026-10-09T01:14:43Z"
+        report = entry("2026-10-08", run=37759065943)
+        report["source"].update(workflow_path=ci_report.PRODUCER_PATHS[0], event="push")
+        report.update(pushed_sha="3f84ad734e632f7cabd6fcd2743d03e0c323b52a",
+                      created_at="2026-10-08T09:47:17Z", conclusion="success", observed=[])
+        report["diagnostics"].update(counts={"declared": 1051, "compiled": 1051, "observed": 1051,
+                                           "passed": 1046, "skipped": 5},
+                                     infrastructure=["missing required unit tier"])
+        genuine = copy.deepcopy(report)
+        genuine.update(day="2026-10-09", created_at="2026-10-09T02:00:00Z", conclusion="failure")
+        genuine["diagnostics"]["counts"].update(passed=1045, failed=1)
+        genuine["diagnostics"]["failures"] = [{"identity": test_identity("host", "format"), "outcome": "failed", "exit_codes": [1]}]
+        cases = [(report, point, False), (genuine, point, True), (genuine, None, False)]
+        for timestamp, accepted in (("2026-10-09T01:14:42Z", False), (point, True)):
+            cases.append(({**genuine, "created_at": timestamp}, point, accepted))
+        cases += [({key: value for key, value in genuine.items() if key != "created_at"}, point, False),
+                  ({**genuine, "conclusion": "cancelled"}, point, False),
+                  ({**genuine, "diagnostics": report["diagnostics"]}, point, False)]
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        for value, since, accepted in cases:
+            with self.subTest(created=value.get("created_at"), since=since, accepted=accepted), tempfile.TemporaryDirectory() as temporary:
+                snapshot = ci_report.merge_snapshot(None, [value], date(2026, 10, 9))
+                if since:
+                    snapshot["history_reset"] = {"actor": "sudoHG", "day": "2026-10-09", "run": "37868827278", "created_at": since}
+                ci_report.write_report(Path(temporary), snapshot, [value], {"entries": []}, {}, stopped=False, now=date(2026, 10, 9))
+                plan = json.loads((Path(temporary) / "sync.json").read_text())
+                self.assertEqual([value] if accepted else [], plan["entries"])
+                if not accepted:
+                    with patch("ci_report.ensure_label", side_effect=AssertionError("no false-notification writes")):
+                        self.assertEqual(([], {}), synchronize_issues(api, [value], {"entries": []}, post_merge_since=since))
+
+    def test_newer_same_sha_producer_supersedes_a_saved_push_failure(self):
+        first = entry()
+        first["source"].update(workflow_path=ci_report.PRODUCER_PATHS[0], event="push")
+        first.update(pushed_sha="a" * 40, created_at="2026-10-01T10:00:00Z", conclusion="failure")
+        first["diagnostics"]["failures"] = [{"identity": test_identity("host", "format"), "outcome": "failed", "exit_codes": [1]}]
+        newer = copy.deepcopy(first)
+        newer.update(run={"id": 11, "attempt": 1}, created_at="2026-10-01T11:00:00Z", status="passed", conclusion="success")
+        newer["diagnostics"]["failures"] = []
+        since = "2026-10-01T00:00:00Z"
+        self.assertEqual([first], ci_report.decision_entries([first], date(2026, 10, 1), post_merge_since=since))
+        for status in ("passed", "pending", "unverified"):
+            with self.subTest(status=status):
+                latest = {**newer, "status": status}
+                self.assertEqual([], ci_report.decision_entries([first, latest], date(2026, 10, 1), post_merge_since=since))
+                api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+                with patch("ci_report.ensure_label", side_effect=AssertionError("no superseded notification")):
+                    self.assertEqual(([], {}), synchronize_issues(api, [first, latest], {"entries": []}, post_merge_since=since))
+
+    def test_verified_gate_and_ui_failures_after_reset_notify_once_per_sha(self):
+        class API:
+            repository = "sudoHG/immichSlides"
+            def __init__(self):
+                self.issues, self.writes = [], []
+            def pages(self, *args, **kwargs):
+                return self.issues
+            def request(self, path, **kwargs):
+                return {"total_count": 0, "incomplete_results": False, "items": []}
+            def repo(self, path, method="GET", payload=None, missing=False):
+                if path.startswith("labels/"):
+                    return {}
+                if path == "issues" and method == "POST":
+                    self.writes.append(payload)
+                    issue = {"number": 1, "state": "open", "body": payload["body"], "labels": [{"name": ci_report.LABEL}]}
+                    self.issues.append(issue)
+                    return issue
+                if path == "issues/1" and method == "GET":
+                    return self.issues[0]
+                raise AssertionError("unexpected issue write")
+        api, reports = API(), []
+        for number, path in enumerate(ci_report.PRODUCER_PATHS[:2], 10):
+            report = entry(run=number)
+            report["source"].update(event="push", workflow_path=path)
+            report.update(pushed_sha="a" * 40, created_at="2026-10-01T10:00:00Z", conclusion="failure")
+            report["diagnostics"]["failures"] = [{"identity": test_identity("host", "format"), "outcome": "failed", "exit_codes": [1]}]
+            reports.append(report)
+        with patch("ci_report.wait_for_issue_visibility"):
+            for _ in range(2):
+                receipts, _ = synchronize_issues(api, reports, {"entries": []}, post_merge_since="2026-10-01T09:00:00Z")
+                self.assertEqual(["post-merge"], [receipt["action"] for receipt in receipts])
+        self.assertEqual(1, len(api.writes))
+        self.assertIn("format", api.writes[0]["body"])
+        self.assertIn(ci_report.PRODUCER_PATHS[0], api.writes[0]["body"])
+        self.assertIn(ci_report.PRODUCER_PATHS[1], api.writes[0]["body"])
+
+    def test_cancelled_nightly_or_push_does_not_read_missing_artifacts_or_track_failures(self):
+        api = type("API", (), {"repository": "sudoHG/immichSlides",
+                    "pages": lambda *args: self.fail("cancelled run must not read artifacts")})()
+        for path, event in ((ci_report.NIGHTLY_PATH, "schedule"), (ci_report.PRODUCER_PATHS[0], "push")):
+            run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+                   "head_sha": "a" * 40, "path": path, "event": event, "head_branch": "main",
+                   "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "cancelled"}
+            with self.subTest(path=path), patch("ci_report.on_main", return_value=True):
+                report = ci_report.compact_entry(read_run(api, run, {}), set())
+                self.assertEqual("unverified", report["status"])
+                self.assertEqual("cancelled", report["conclusion"])
+                self.assertEqual([], report["diagnostics"]["infrastructure"])
+                self.assertFalse(ci_report.issue_eligible(report))
+                self.assertEqual("none", issue_decision(None, NIGHTLY_INFRASTRUCTURE, [report], registry_referenced=False)["action"])
+
+    def test_legacy_reset_point_uses_one_verified_read_and_is_cached_for_replay(self):
+        reset = {"actor": "sudoHG", "day": "2026-10-09", "run": "37868827278"}
+        run = {"id": 37868827278, "path": ci_report.REPORT_PATH, "event": "workflow_dispatch",
+               "created_at": "2026-10-09T01:14:43Z", "head_branch": "main", "repository": {"full_name": "sudoHG/immichSlides"},
+               "head_repository": {"full_name": "sudoHG/immichSlides"}, "actor": {"login": "sudoHG"}, "triggering_actor": {"login": "sudoHG"}}
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        with patch.object(api, "repo", return_value=run, create=True) as reader:
+            self.assertEqual(run["created_at"], ci_report.reset_notification_point(api, reset))
+            self.assertEqual(run["created_at"], ci_report.reset_notification_point(api, reset))
+            reader.assert_called_once_with("actions/runs/37868827278")
+        for changes in ({"path": ci_report.PRODUCER_PATHS[0]}, {"actor": {"login": "other"}}):
+            with self.subTest(changes=changes), patch.object(api, "repo", return_value={**run, **changes}, create=True), self.assertRaises(ContractError):
+                ci_report.reset_notification_point(api, {key: value for key, value in reset.items() if key != "created_at"})
+        limited = ci_report.ReportGitHub(api.repository, "", dry_run=True)
+        limited.check_headers({"X-RateLimit-Remaining": "500", "X-RateLimit-Limit": "1000"})
+        with self.assertRaises(ci_report.RateLimitLow):
+            ci_report.reset_notification_point(limited, {key: value for key, value in reset.items() if key != "created_at"})
+        self.assertEqual(0, limited.request_count)
+        snapshot = ci_report.merge_snapshot(None, [], date(2026, 10, 9))
+        snapshot["history_reset"] = {key: value for key, value in reset.items() if key != "created_at"}
+        with tempfile.TemporaryDirectory() as temporary, patch("ci_report.read_snapshot", return_value=snapshot), \
+                patch.object(limited, "request", return_value=None), patch.object(limited, "repo", side_effect=ci_report.RateLimitLow):
+            self.assertEqual(0, ci_report.collect_report(limited, "schedule", {}, date(2026, 10, 9), Path(temporary)))
+            saved = json.loads((Path(temporary) / "daily/history.json").read_text())
+            self.assertEqual(snapshot["days"], saved["days"])
+            self.assertTrue(saved["budget_stopped"])
+            self.assertEqual([], json.loads((Path(temporary) / "sync.json").read_text())["entries"])
 
     def test_immediate_issue_replay_survives_label_index_delay(self):
         class API:
@@ -615,7 +939,7 @@ class ReporterTests(unittest.TestCase):
             with self.subTest(event=event, actor=actor), tempfile.TemporaryDirectory() as temporary, \
                     patch("ci_flaky.parse_registry", return_value={"entries": []}), patch("ci_report.read_snapshot", return_value=None), \
                     patch("ci_report.visible_issues", return_value=[]), patch("ci_report.discover_runs", return_value=[]), \
-                    patch.dict("os.environ", {"GITHUB_ACTOR": actor, "GITHUB_TRIGGERING_ACTOR": actor}, clear=False):
+                    patch.dict("os.environ", {"GITHUB_ACTOR": actor, "GITHUB_TRIGGERING_ACTOR": actor, "GITHUB_RUN_ID": ""}, clear=False):
                 output = Path(temporary)
                 if allowed:
                     ci_report.collect_report(api, event, {"inputs": {"reset_history": True}}, date(2026, 10, 1), output)

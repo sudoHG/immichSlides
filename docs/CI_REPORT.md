@@ -54,6 +54,7 @@ same artifact uses one download.
 | `ci-report-daily-<run>-<attempt>` | Compact `history.json` and UTC-day snapshots | 90 days |
 | Producer's own PR artifact | Per-run PR summaries; collected by the producer | 30 days |
 | `ci-report-runs-<run>-<attempt>` | Updated main/nightly summaries and issue-sync receipts | 7 days |
+| `ci-report-health-<month>-<run>-<attempt>` | Monthly health JSON and Markdown from verified rollups | 90 days |
 
 History schema version 2 contains `days`, `issue_index`, `registry`, `budget_stopped`, `api_budget`
 and trusted reporter `producer` provenance. Daily schema version 1 contains `day`,
@@ -73,10 +74,13 @@ issue-sync success is not a condition for retaining already verified test eviden
 Unreadable, invalid, expired or missing snapshots from prior reporter runs fail collection
 without uploading a replacement. A first bootstrap or intentional reset requires a
 repository-owner `workflow_dispatch` with `reset_history: true`; both the original
-and triggering actor must be the owner. The snapshot records the actor, day and run
-under `history_reset`. Scheduled runs cannot reset history. A read-only dry-run may
+and triggering actor must be the owner. The snapshot records the actor, day, run and
+that reset dispatch's UTC creation timestamp under `history_reset`. A legacy snapshot
+without the timestamp uses one Actions read to verify the reset run's repository,
+workflow, main branch and both owner actors, then caches its timestamp in the next
+snapshot. This read shares the existing quota reserve and request cap; a budget stop
+preserves history and defers writes. Scheduled runs cannot reset history. A read-only dry-run may
 start locally without a previous snapshot; it cannot publish that history.
-Monthly health calculation belongs to its separate ticket.
 
 ## Method identities and reruns
 
@@ -143,13 +147,89 @@ error codes rather than candidate text.
 
 Nightly infrastructure has a separate operational issue and is never inserted into test
 populations. Recovery needs three successful nightly aggregates with verified evidence.
-Main-push failures produce one notification per SHA, shared across gate/UI reruns. Missing
-admission can notify only after the pushed SHA is independently verified on main and
-within the evidence window. Post-merge notifications remain for human triage.
+Main-push test failures produce one notification per SHA, shared across gate/UI reruns.
+They require a verified failing identity and a push created at or after the recorded
+bootstrap/reset timestamp, within the evidence window. Missing admission, unbuilt or
+missing tiers, and a red aggregate without a failing identity cannot produce a test
+failure notification. Historical backfill remains in rollups without retroactive
+post-merge notifications; missing creation timestamps or reset boundaries are ineligible.
+For the same SHA and producer workflow, the newest run supersedes older deliveries,
+including when the replacement is still pending or passed. Cancelled main pushes and
+nightlies retain `conclusion: cancelled` and `status: unverified`, read no missing
+artifacts, and cannot open/recover test or infrastructure issues. Legacy entries in
+the recent discovery window are refreshed once to record their creation time and
+conclusion. Aggregate reporting remains separate from verified test failures.
+Post-merge notifications remain for human triage.
 
 Registry diagnostics list review dates and closed/missing issues without editing the
 registry, changing retry eligibility, outcomes or thresholds. See
 [listed-only retries](TESTING.md#known-flaky-registry-and-listed-only-retries).
+
+## Registry upkeep and monthly health
+
+The daily schedule and eligible nightly completions check every registry entry.
+`runs/registry.json`, `runs/registry.md` and the job summary show its owner, review-by
+date, age, linked issue state and date eligibility. Workflow warnings start seven UTC
+days before review-by and continue through expiry; closed, missing or unread issues
+also warn. Unread state is `unknown`, not evidence that the issue is missing. Issue
+reads reuse the inventory and deduplicate issue numbers; upkeep adds no API requests
+or issue writes.
+
+The existing `ci_flaky.eligible_entry` is authoritative: an entry remains date eligible
+through its review-by UTC day and is no longer retried the following day. Expiry does
+not invalidate registry formatting, fail all PRs, remove entries or change outcomes.
+Issue state does not change eligibility. Any registry reference still blocks automatic
+issue closure, including an expired reference.
+
+On the first UTC day of each month, the existing daily schedule reports the previous
+calendar month. An owner dispatch can set `health_month: YYYY-MM` for a previous month
+or the current partial month without resetting history. Health uploads follow daily
+history and precede issue synchronization, so an issue-write failure cannot lose them.
+No extra schedule, macOS job, secret, App key or write permission is introduced.
+
+Health uses the reporter's verified snapshot and daily rollups. It shows exact available
+days, days with runs, statuses, diagnostic/incomplete runs and missing calendar days.
+Scope remains main pushes and nightlies; PR producers are not collected. Sparse or
+budget-stopped history cannot establish a complete month or passing CI.
+
+New entries retain optional version 1 `health` metrics before population compaction:
+first-call failures (including crashes/timeouts), flaky-passed outcomes, total skips,
+unexpected skips checked against approved base policy and exact reasons, summed test
+durations including automatic retries, GitHub run timing and artifact bytes. Strict
+nightly skips remain unexpected under the existing aggregate contract. First-failure
+counts use GitHub attempt 1; nightly history and previously collected gate/UI counts
+survive reruns. Optional `first_execution_health` stores these counts separately from
+the latest execution's metrics and survives pending/in-progress rerun snapshots.
+Missing attempt 1 is unavailable. Final outcome totals use the latest saved attempt.
+Nightly official method exports contain no measured method durations; their zero
+observation durations are placeholders. Nightly test duration is therefore unavailable,
+not zero. Measured case invocation wall time includes other work and does not substitute
+for summed method durations.
+
+Queue seconds sum job creation-to-start intervals from the existing gate/UI job reader,
+including retained jobs after reruns. Missing timestamps or nightly job data are
+unavailable; workflow start time never stands in for runner queue time. Run
+duration means start to GitHub's completed-run update, not CPU/billed time. Artifact
+bytes count unique artifact IDs listed for each run at collection, including earlier
+attempts; existing reads supply metadata without new requests. This historical sample
+is not current repository storage. Compact snapshot and selected month rollup JSON byte
+sizes are measured separately. Each metric shows sampled/unavailable run counts and
+covers available observations only; a run without any test observations supplies no
+test metrics. Health introduces no gating threshold.
+
+Legacy outcome counts supply flaky-passed and total skip counts where observations were
+recorded. Unrecorded first calls, skip classification, timing and artifact sizes remain
+unavailable. Tracked method subsets never stand in for complete populations. Registry
+dates/ages use the report date, while issue states show the snapshot collection date
+(or explicitly say that the legacy date was not recorded). Entries aged at least 30
+days are counted for review; age does not change eligibility.
+
+Standalone read-only health uses `ReportGitHub` and `read_snapshot`, including uploader
+provenance, main ancestry, daily validation, the 150-request cap and half-quota reserve.
+Missing/unreadable history is refused; low quota before verification stops without a
+report. Health computation adds no API requests or writes to collection. The collection
+budget remains shared with synchronization; reports after a budget stop mark history
+incomplete.
 
 ## Commands and acceptance
 
@@ -160,12 +240,14 @@ or captures the existing `gh` authentication internally without displaying crede
 ```bash
 python3 -B scripts/ci_report.py --dry-run --repository <owner/repository> \
   --run-id <recent-main-run-id> --output-dir '<outside-repo>/ci-report-dry-run'
+python3 -B scripts/ci_report.py --phase health --dry-run --month YYYY-MM \
+  --repository <owner/repository> --output-dir '<outside-repo>/ci-health'
 PYTHONPATH=scripts python3 -B -m unittest test_ci_report test_ci_publish test_check_workflow_policy
 python3 -B scripts/check_workflow_policy.py
 ```
 
 Repeat `--run-id` to sample multiple recent main runs. Without it, dry-run uses scheduled
-collection. Production phases are `--phase collect`, daily upload, then `--phase sync`;
+collection. Production phases are `--phase collect`, daily/optional health upload, then `--phase sync`;
 the workflow policy checks this order and the main branch filter.
 
 Existing tests guard method/registry identity, expired snapshots, every rerun attempt,
@@ -176,3 +258,12 @@ needed for these review fixes. A throwaway seeded lifecycle dispatch can prove w
 its issues are closed, its branch deleted and task-created labels removed after the
 receipt. Production scheduling and automatic main reporting remain `NOT_RUN` until
 this workflow merges. No agent approves a run, deployment or exact head.
+
+Upkeep/health cases extend the existing reporter tests: warning/date boundaries versus
+actual retry eligibility, unknown issue state, first-failure retention across reruns
+and compaction, unavailable legacy metrics, invalid rollups/metrics, approved skip
+reasons, month/year boundaries and low-quota read refusal. Workflow-policy cases guard
+monthly upload ordering and success-only conditions. Real-rollup acceptance must cite
+the reporter run/attempt, available dates and counts; sparse bootstrap history is not
+a full monthly baseline. A read-only Linux branch probe may exercise monthly collection
+and upload without issue synchronization; delete its branch after recording the run.
