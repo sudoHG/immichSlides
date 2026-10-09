@@ -28,9 +28,8 @@ CLOUD_MINUTES = 100
 IMPORT_MINUTES = 10
 START_WINDOW_MINUTES = 30
 FULL_PLAN_MINUTES = 69
-WAIT_MARGIN_MINUTES = 15
 WAIT_FACTOR = 1.3
-QUEUE_ALLOWANCE_MINUTES = 20
+MAX_BUILD_LIFE_MINUTES = 180
 SCM_REPOSITORY_ID = "894b3bbd-682b-454d-b797-0b7f63a2dd73"
 
 
@@ -95,9 +94,29 @@ def action_minutes(attributes, month_start, now):
     return max(0, (end - max(start, month_start)).total_seconds()) / 60
 
 
-def month_usage(asc, now):
+def overflow_inventory(asc):
+    runs = asc.pages("/v1/ciWorkflows/" + WORKFLOW_ID + "/buildRuns?limit=200")
+    require(len({uuid(run["id"]) for run in runs}) == len(runs), "duplicate overflow build inventory")
+    require(all(run["attributes"]["executionProgress"] in {"PENDING", "RUNNING", "COMPLETE"} for run in runs),
+            "overflow inventory has unknown build state")
+    return runs
+
+
+def existing_build(inventory, head):
+    matches = [run for run in inventory if (run["attributes"].get("sourceCommit") or {}).get("commitSha") == head]
+    return max(matches, key=lambda run: timestamp(run["attributes"]["createdDate"])) if matches else None
+
+
+def blocking_builds(inventory, now):
+    return [run for run in inventory if run["attributes"]["executionProgress"] != "COMPLETE"
+            and (now - timestamp(run["attributes"]["createdDate"])).total_seconds() < MAX_BUILD_LIFE_MINUTES * 60]
+
+
+def month_usage(asc, now, *, inventory=None):
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    actions, runs, projected = {}, set(), 0
+    inventory = overflow_inventory(asc) if inventory is None else inventory
+    actions, runs = {}, set()
+    projected = sum(CLOUD_MINUTES for run in inventory if run["attributes"]["executionProgress"] != "COMPLETE")
     products = asc.pages("/v1/ciProducts?limit=200")
     require(products, "cloud usage product inventory is empty")
     for product in products:
@@ -111,18 +130,17 @@ def month_usage(asc, now):
             finished = attributes.get("finishedDate")
             if progress == "COMPLETE" and finished is not None and timestamp(finished) <= month_start:
                 continue
-            # A run that started in a prior month may have billable actions now.
-            # Inspect every action, including failed and currently running work.
+            # Completed actions, including failed work, are billed even when
+            # their parent build is still active. Active overflow builds add a
+            # separate fixed projection, including builds too old to block.
             billable = asc.pages("/v1/ciBuildRuns/" + uuid(run["id"]) + "/actions?limit=200")
             require(billable or run["attributes"]["executionProgress"] == "PENDING",
                     "active or completed cloud run has no action inventory")
-            used = 0
             for action in billable:
                 require(action["id"] not in actions, "duplicate cloud billable action")
-                actions[action["id"]] = action_minutes(action["attributes"], month_start, now)
-                used += actions[action["id"]]
-            if progress != "COMPLETE":
-                projected += max(0, CLOUD_MINUTES - used)
+                attributes = action["attributes"]
+                minutes = action_minutes(attributes, month_start, now)
+                actions[action["id"]] = minutes if attributes["executionProgress"] == "COMPLETE" else 0
     return {"month": month_start.strftime("%Y-%m"), "minutes": sum(actions.values()) + projected,
             "projected_minutes": projected,
             "cap_minutes": CAP_MINUTES, "products": len(products), "actions": len(actions)}
@@ -193,11 +211,9 @@ def remaining_seconds(run, now):
                (now - timestamp(run.get("run_started_at") or run["created_at"])).total_seconds())
 
 
-def cloud_wait_deadline(started, cloud_created, cloud_started=None):
+def cloud_wait_deadline(cloud_created):
     duration = (WAIT_FACTOR * FULL_PLAN_MINUTES + IMPORT_MINUTES) * 60
-    cap = cloud_created + duration + QUEUE_ALLOWANCE_MINUTES * 60
-    cloud_end = cloud_created + duration if cloud_started is None else min(cloud_started + duration, cap)
-    return min(max(started + WAIT_MARGIN_MINUTES * 60, cloud_end), cap)
+    return cloud_created + duration
 
 
 def selection_open(api, run):
@@ -206,7 +222,7 @@ def selection_open(api, run):
 
 
 def route_run(api, asc_factory, run, *, mode="auto", override="", sleep=time.sleep, monotonic=time.monotonic):
-    """Decide and reserve under the short account lock; never POST here."""
+    """Decide from the ASC build inventory under the short account lock."""
     current_producer(api, run)
     receipt = {"schema_version": 1, "identity": None, "head_sha": run["head_sha"],
                "producer_run_id": run["id"], "producer_attempt": run["run_attempt"],
@@ -249,47 +265,23 @@ def route_run(api, asc_factory, run, *, mode="auto", override="", sleep=time.sle
         if remaining_seconds(run, now) <= 0 or not selection_open(api, run):
             receipt["reason"] = "producer-selection-too-late"
             return receipt
-        stage = "cloud-reservation-unavailable"
-        journal = state.reservations(api)
-        # Even an uncongested eligible head carries the checkpoint forward,
-        # keeping later state discovery bounded without any ASC request.
-        receipt["journal"] = {"active": journal, "released": []}
         stage = "github-capacity-unavailable"
         receipt["capacity"] = github_capacity(api, now)
         if mode == "auto" and not receipt["capacity"]["congested"]:
             receipt["reason"] = "github-capacity-available"
             return receipt
         asc = asc_factory()
-        stage = "cloud-reservation-unavailable"
-        inventory = asc.pages("/v1/ciWorkflows/" + WORKFLOW_ID + "/buildRuns?limit=200") if journal else []
-        current, active, released, blocked = None, [], [], False
-        for reservation in journal:
-            result = state.start_result(api, reservation)
-            if result is None and state.never_posted(api, reservation):
-                result = {"start_rejected": True}
-            reconciled = state.reconcile(asc, reservation, result, inventory=inventory)
-            if reconciled["state"] != "released":
-                active.append(reservation)
-            else:
-                released.append(reservation["reservation_artifact_id"])
-            same = (reservation["producer_run_id"] == run["id"] and reservation["producer_attempt"] == run["run_attempt"])
-            if same:
-                require(reservation["identity"] == record["identity"], "existing reservation differs from admission")
-                current = dict(reservation, reconciled=reconciled)
-            elif reconciled["state"] != "released":
-                blocked = True
-        receipt["journal"] = {"active": active, "released": released}
-        if blocked:
-            receipt["reason"] = "account-reservation-in-flight"
+        stage = "cloud-inventory-unavailable"
+        inventory = overflow_inventory(asc)
+        existing = existing_build(inventory, run["head_sha"])
+        if existing is not None:
+            receipt.update(build_receipt(asc, existing, "resumed-existing-build"))
             return receipt
-        if current is not None:
-            if current["reconciled"]["state"] == "released" and not current["reconciled"]["cloud_run_id"]:
-                receipt["reason"] = "reserved-start-was-not-executed"
-                return receipt
-            receipt.update(decision="pending", reason="resume-reserved-start", reservation=current, fresh=False)
+        if blocking_builds(inventory, now):
+            receipt["reason"] = "overflow-build-in-flight"
             return receipt
         stage = "cloud-usage-unavailable"
-        receipt["usage"] = month_usage(asc, now)
+        receipt["usage"] = month_usage(asc, now, inventory=inventory)
         if receipt["usage"]["minutes"] + CLOUD_MINUTES > CAP_MINUTES:
             receipt["reason"] = "monthly-cap-reached"
             return receipt
@@ -302,12 +294,7 @@ def route_run(api, asc_factory, run, *, mode="auto", override="", sleep=time.sle
         refs = asc.pages("/v1/scmRepositories/" + SCM_REPOSITORY_ID + "/gitReferences?limit=200")
         refs = [ref for ref in refs if ref["attributes"].get("canonicalName") == "refs/heads/" + pr["head"]["ref"]]
         require(len(refs) == 1, "cloud branch is absent or ambiguous")
-        prior = asc.pages("/v1/ciWorkflows/" + WORKFLOW_ID + "/buildRuns?limit=200")
-        reservation = {"schema_version": 1, "identity": record["identity"], "producer_run_id": run["id"],
-                       "producer_attempt": run["run_attempt"], "workflow_id": WORKFLOW_ID,
-                       "reserved_at": datetime.now(timezone.utc).isoformat(), "prior_run_ids": [item["id"] for item in prior],
-                       "reference_id": refs[0]["id"], "control": receipt["control"]}
-        receipt.update(decision="pending", reason="reserved-before-post", reservation=reservation, fresh=True)
+        receipt.update(decision="pending", reason="inventory-allows-start", reference_id=refs[0]["id"])
         return receipt
     except SupersededProducer:
         raise
@@ -316,35 +303,49 @@ def route_run(api, asc_factory, run, *, mode="auto", override="", sleep=time.sle
         return receipt
 
 
-def start_reserved(asc, reservation, *, fresh=False, before_post=lambda: None):
-    """The reservation has already been authenticated and uploaded before POST."""
-    reconciled = state.reconcile(asc, reservation, now=timestamp(reservation["reserved_at"]) if fresh else None)
-    if reconciled["cloud_run_id"]:
-        return dict(reconciled, decision="pending", reason="resumed-existing-build")
-    if reconciled["state"] == "released":
-        return dict(reconciled, decision="fallback", reason="reserved-start-was-not-executed", start_rejected=True)
-    if not fresh or not reconciled.get("can_start", False):
-        return dict(reconciled, decision="pending", reason="start-outcome-unknown")
-    reference = ("invalid-reference" if reservation.get("control", {}).get("mode") == "force-start-failure"
-                 else reservation["reference_id"])
+def build_receipt(asc, build, reason):
+    run_id = uuid(build["id"])
+    created = build.get("attributes", {}).get("createdDate")
+    if created is None:
+        fetched = asc.request("/v1/ciBuildRuns/" + run_id)["data"]
+        require(fetched["id"] == run_id, "cloud build metadata has another run")
+        created = fetched["attributes"]["createdDate"]
+    timestamp(created)
+    return {"decision": "pending", "reason": reason, "cloud_run_id": run_id, "cloud_created_at": created}
+
+
+def start_cloud(asc, prepared, *, before_post=lambda: None):
+    """Recheck ASC inventory; issue at most one POST in this router run."""
+    inventory = overflow_inventory(asc)
+    existing = existing_build(inventory, prepared["identity"]["head_sha"])
+    if existing is not None:
+        return build_receipt(asc, existing, "resumed-existing-build")
+    now = datetime.now(timezone.utc)
+    if blocking_builds(inventory, now):
+        return {"decision": "github", "reason": "overflow-build-in-flight", "cloud_run_id": None}
+    if month_usage(asc, now, inventory=inventory)["minutes"] + CLOUD_MINUTES > CAP_MINUTES:
+        return {"decision": "github", "reason": "monthly-cap-reached", "cloud_run_id": None}
+    reference = ("invalid-reference" if prepared.get("control", {}).get("mode") == "force-start-failure"
+                 else prepared["reference_id"])
     try:
         before_post()
+    except SupersededProducer:
+        raise
     except (ContractError, KeyError, TypeError, ValueError, OSError, URLError):
-        return {"decision": "fallback", "reason": "producer-selection-too-late", "cloud_run_id": None, "start_rejected": True}
+        return {"decision": "fallback", "reason": "producer-selection-too-late", "cloud_run_id": None}
     try:
         response = asc.request("/v1/ciBuildRuns", method="POST", payload={"data": {
             "type": "ciBuildRuns", "attributes": {}, "relationships": {
                 "workflow": {"data": {"type": "ciWorkflows", "id": WORKFLOW_ID}},
                 "sourceBranchOrTag": {"data": {"type": "scmGitReferences", "id": reference}}}}})
-        attributes = response["data"].get("attributes", {})
-        return {"decision": "pending", "reason": "cloud-started", "cloud_run_id": uuid(response["data"]["id"]),
-                "cloud_created_at": attributes.get("createdDate"), "cloud_started_at": attributes.get("startedDate")}
     except (ContractError, KeyError, TypeError, ValueError, OSError, URLError) as error:
         status = re.search(r"HTTP ([0-9]{3})", str(error)) if isinstance(error, ContractError) else None
         rejected = bool(status and 400 <= int(status[1]) < 500)
         return {"decision": "fallback" if rejected else "pending", "reason": "cloud-start-failed" if rejected else "start-outcome-unknown",
-                "cloud_run_id": None, "start_rejected": rejected,
+                "cloud_run_id": None,
                 **({"http_status": int(status[1])} if status else {})}
+    # A metadata GET failure after an accepted POST is not a rejected start.
+    return build_receipt(asc, response["data"], "cloud-started")
 
 
 def latest_check_ready(checks, head, cloud_id):
@@ -359,8 +360,8 @@ def latest_check_ready(checks, head, cloud_id):
             and "/ci/builds/" + cloud_id + "/action/" in matching[0].get("details_url", ""))
 
 
-def poll_route(api, asc, record, run, receipt, reservation=None, *, sleep=time.sleep, monotonic=time.monotonic):
-    """Per-producer polling; durable reservations remain until API termination."""
+def poll_route(api, asc, record, run, receipt, *, sleep=time.sleep, monotonic=time.monotonic):
+    """Poll the producer build; a failed read round has no conclusion."""
     if receipt["decision"] in {"github", "fallback"}:
         return receipt
     receipt = dict(receipt)
@@ -368,45 +369,41 @@ def poll_route(api, asc, record, run, receipt, reservation=None, *, sleep=time.s
     stage = "cloud-start-outcome-unknown"
     try:
         while monotonic() < deadline:
-            refresh_producer(api, run)
-            require(selection_open(api, run), "producer already chose GitHub")
-            if receipt.get("cloud_run_id") is None:
-                require(reservation is not None, "missing persisted start reservation")
-                reconciled = state.reconcile(asc, reservation, receipt)
-                receipt["cloud_run_id"] = reconciled["cloud_run_id"]
-                if reconciled["state"] == "released" and receipt["cloud_run_id"] is None:
-                    receipt.update(decision="fallback", reason="reserved-start-was-not-executed")
-                    return receipt
-                if receipt["cloud_run_id"] is None:
-                    sleep(120)
-                    continue
-            stage = "cloud-run-failed-or-timed-out"
-            attributes = asc.request("/v1/ciBuildRuns/" + uuid(receipt["cloud_run_id"]))["data"]["attributes"]
-            if attributes.get("startedDate") is not None:
-                receipt["cloud_started_at"] = attributes["startedDate"]
-            commit = attributes.get("sourceCommit", {}).get("commitSha")
-            if commit is not None:
-                require(commit == run["head_sha"], "cloud branch advanced before start")
-            if attributes.get("executionProgress") == "COMPLETE":
-                receipt["terminal"] = True
-                require(attributes.get("completionStatus") == "SUCCEEDED", "cloud run failed")
-                stage = "cloud-population-or-app-check-refused"
-                evidence = asc.evidence(receipt["cloud_run_id"])
-                checks = api.pages("commits/" + run["head_sha"] + "/check-runs", "check_runs", filter="all")
-                if not latest_check_ready(checks, run["head_sha"], receipt["cloud_run_id"]):
-                    sleep(120)
-                    continue
-                validate_evidence(record, run, dict(receipt, decision="routed"), evidence, checks, approved=False)
-                receipt.update(decision="routed", reason="cloud-run-and-population-completed")
-                return receipt
-            print("Cloud build still pending; reservation retained", flush=True)
-            sleep(120)
+            try:
+                refresh_producer(api, run)
+                require(selection_open(api, run), "producer already chose GitHub")
+                if receipt.get("cloud_run_id") is None:
+                    existing = existing_build(overflow_inventory(asc), run["head_sha"])
+                    if existing is not None:
+                        receipt.update(build_receipt(asc, existing, "resumed-existing-build"))
+                if receipt.get("cloud_run_id") is not None:
+                    stage = "cloud-run-failed-or-timed-out"
+                    attributes = asc.request("/v1/ciBuildRuns/" + uuid(receipt["cloud_run_id"]))["data"]["attributes"]
+                    commit = (attributes.get("sourceCommit") or {}).get("commitSha")
+                    if commit is not None:
+                        require(commit == run["head_sha"], "cloud branch advanced before start")
+                    if attributes.get("executionProgress") == "COMPLETE":
+                        receipt["terminal"] = True
+                        require(attributes.get("completionStatus") == "SUCCEEDED", "cloud run failed")
+                        stage = "cloud-population-or-app-check-refused"
+                        evidence = asc.evidence(receipt["cloud_run_id"])
+                        checks = api.pages("commits/" + run["head_sha"] + "/check-runs", "check_runs", filter="all")
+                        if latest_check_ready(checks, run["head_sha"], receipt["cloud_run_id"]):
+                            validate_evidence(record, run, dict(receipt, decision="routed"), evidence, checks, approved=False)
+                            receipt.update(decision="routed", reason="cloud-run-and-population-completed")
+                            return receipt
+            except SupersededProducer:
+                raise
+            except (ContractError, KeyError, TypeError, ValueError, OSError, URLError) as error:
+                from ci_xcode_cloud_client import transient
+                if not transient(error):
+                    raise
+            print("Cloud poll has no conclusion; waiting for the next round", flush=True)
+            sleep(min(120, max(0, deadline - monotonic())))
         raise ContractError("cloud run deadline exceeded")
     except SupersededProducer:
         raise
     except (ContractError, KeyError, TypeError, ValueError, OSError, URLError):
-        # The public ASC API exposes no cancellation operation. No terminal
-        # confirmation means this reservation continues blocking new starts.
         receipt.update(decision="fallback", reason=stage)
         return receipt
 
@@ -416,17 +413,6 @@ def write_phase(phase, value):
     directory.mkdir(mode=0o700, exist_ok=True)
     (directory / (phase + ".json")).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
     return value
-
-
-def authenticate_prepared(api, prepared):
-    reservation = prepared["reservation"]
-    matches = [item for item in state.reservations(api)
-               if item["producer_run_id"] == prepared["producer_run_id"] and item["producer_attempt"] == prepared["producer_attempt"]]
-    require(len(matches) == 1 and matches[0]["identity"] == prepared["identity"], "start reservation was not persisted")
-    committed = matches[0]
-    for key in ("reference_id", "reserved_at", "prior_run_ids", "control"):
-        require(committed[key] == reservation[key], "prepared start differs from immutable reservation")
-    return committed
 
 
 def recorded_decision(api, run):
@@ -449,59 +435,58 @@ def main():
         attempt = event["inputs"]["producer_attempt"]
         require(isinstance(run_id, str) and run_id.isdecimal() and isinstance(attempt, str) and attempt.isdecimal(), "invalid producer input")
         run_id, attempt = positive(int(run_id)), positive(int(attempt))
-        api = RetryingGitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"], time.monotonic() + 109 * 60)
+        phase_minutes = 109 if phase == "poll" else 19
+        api = RetryingGitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"], time.monotonic() + phase_minutes * 60)
         git("fetch", "--no-tags", "origin", "refs/heads/main")
         run = api.repo("actions/runs/" + str(run_id))
         if run["run_attempt"] != attempt:
             raise SupersededProducer("router producer attempt changed")
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
         uploader = {"uploader_run_id": int(os.environ["GITHUB_RUN_ID"]), "uploader_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
-        asc = RenewingAppStoreConnect(lambda: jwt(os.environ, ROUTE_PATH), time.monotonic() + 110 * 60)
+        asc = RenewingAppStoreConnect(lambda: jwt(os.environ, ROUTE_PATH), time.monotonic() + phase_minutes * 60)
         directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-route")
         if phase in {"prepare", "poll"} and recorded_decision(api, run):
             with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-                output.write("recorded=false\nreserved=false\n")
+                output.write("recorded=false\npost=false\n")
             print("Existing trusted decision retained; no duplicate start or receipt")
             return 0
         if phase == "prepare":
             value = route_run(api, lambda: asc, run, mode=event["inputs"].get("mode", "auto"),
                               override=os.environ.get("CI_XCC_ROUTING_OVERRIDE", ""))
-            if value.get("fresh"):
-                value["reservation"].update(uploader)
-                write_phase("reservation", value["reservation"])
             write_phase("prepared", dict(value, **uploader))
             value.update(uploader)
-            if "journal" in value:
-                write_phase("journal", dict(schema_version=1, **value.pop("journal"), **uploader))
         elif phase in {"arm", "start"}:
             prepared = json.loads((directory / "prepared.json").read_text())
             require(prepared["producer_run_id"] == run_id and prepared["producer_attempt"] == attempt, "prepared producer differs")
             value = dict(prepared)
             if prepared["decision"] == "pending":
-                reservation = authenticate_prepared(api, prepared)
-                fresh = prepared["fresh"] is True and all(reservation[key] == uploader[key] for key in uploader)
+                needs_post = prepared.get("cloud_run_id") is None
                 def before_post():
                     refresh_producer(api, run)
                     require(selection_open(api, run) and remaining_seconds(run, datetime.now(timezone.utc)) > 0,
                             "producer selection expired before POST")
                 if phase == "arm":
-                    if fresh:
+                    if needs_post:
                         before_post()
-                        write_phase("post", dict(identity=reservation["identity"],
-                            reservation_artifact_id=reservation["reservation_artifact_id"], **uploader))
+                        write_phase("post", dict(prepared, posted_at=datetime.now(timezone.utc).isoformat()))
                     with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-                        output.write("post=" + str(fresh).lower() + "\n")
+                        output.write("post=" + str(needs_post).lower() + "\n")
                     return 0
                 try:
                     before_post()
-                    if fresh:
-                        require(state.post_marker(api, reservation) is not None, "POST marker was not persisted")
-                    value.update(start_reserved(asc, reservation, fresh=fresh, before_post=before_post))
+                    if needs_post:
+                        artifacts = api.pages(f"actions/runs/{uploader['uploader_run_id']}/artifacts", "artifacts")
+                        marker = state.receipt(api, artifacts, {"id": uploader["uploader_run_id"], "run_attempt": uploader["uploader_attempt"]},
+                            api.repo("actions/workflows/ci-xcode-cloud-route.yml"), prefix=state.POST_PREFIX, member="post.json")
+                        require(marker is not None and all(marker[key] == prepared[key]
+                                for key in ("identity", "producer_run_id", "producer_attempt", "head_sha", "reference_id")),
+                                "POST marker differs from prepared producer")
+                        value.update(start_cloud(asc, prepared, before_post=before_post))
+                except SupersededProducer:
+                    raise
                 except (ContractError, KeyError, TypeError, ValueError, OSError, URLError):
-                    value.update(decision="fallback", reason="producer-selection-too-late", start_rejected=fresh)
-                value["reservation_artifact_id"] = reservation["reservation_artifact_id"]
+                    value.update(decision="fallback", reason="cloud-start-unavailable")
             value.update(uploader)
-            value.pop("journal", None)
             write_phase("start", value)
         else:
             own = {"name": f"ci-xcc-start-{uploader['uploader_run_id']}-{uploader['uploader_attempt']}"}
@@ -512,23 +497,19 @@ def main():
                                         prefix=state.START_PREFIX, member="start.json")
             require(prepared["producer_run_id"] == run_id and prepared["producer_attempt"] == attempt, "start result differs from producer")
             record = trusted_admissions(api, [run_id]).get(run_id)
-            value = poll_route(api, asc, record, run, prepared, prepared.get("reservation"))
-            value.pop("reservation", None)
-            value.pop("fresh", None)
-            value.pop("journal", None)
+            value = poll_route(api, asc, record, run, prepared)
             value.update(uploader)
             write_phase("route", value)
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write(f"recorded=true\nproducer_run_id={run_id}\nproducer_attempt={attempt}\n")
             if phase == "prepare":
-                output.write("reserved=" + str(value.get("fresh") is True).lower() + "\n")
-                output.write("journal=" + str((directory / "journal.json").exists()).lower() + "\n")
+                output.write("post=" + str(value["decision"] == "pending" and value.get("cloud_run_id") is None).lower() + "\n")
         print("Apple TV " + phase + ": " + value["decision"] + " (" + value["reason"] + ")")
         return 0
     except SupersededProducer:
         print("Cloud producer superseded; no new start or verdict")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-            output.write("recorded=false\nreserved=false\n")
+            output.write("recorded=false\npost=false\n")
         return 0
     except (ContractError, KeyError, TypeError, ValueError, OSError, URLError):
         print("Cloud router refused this source; GitHub Apple TV remains required", file=sys.stderr)

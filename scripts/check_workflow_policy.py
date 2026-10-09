@@ -452,20 +452,18 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 flag(location, "xcc-credential", "Each router job executes only its reviewed credential phases")
             if start:
                 steps = job.get("steps", [])
-                reservation = [index for index, step in enumerate(steps) if isinstance(step, dict)
-                               and step.get("with", {}).get("name") == "ci-xcc-reservation-${{ github.run_id }}-${{ github.run_attempt }}"]
                 post = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "start"]
                 marker = [index for index, step in enumerate(steps) if isinstance(step, dict)
                           and step.get("with", {}).get("name") == "ci-xcc-post-${{ github.run_id }}-${{ github.run_attempt }}"]
                 arm = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "arm"]
                 prepare = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "prepare"]
-                if not (len(prepare) == len(reservation) == len(post) == len(marker) == len(arm) == 1
-                        and prepare[0] < reservation[0] < arm[0] < marker[0] < post[0]
-                        and steps[arm[0]].get("if") == "success() && steps.prepare.outputs.reserved == 'true'"
+                if not (len(prepare) == len(post) == len(marker) == len(arm) == 1
+                        and prepare[0] < arm[0] < marker[0] < post[0]
+                        and steps[arm[0]].get("if") == "success() && steps.prepare.outputs.post == 'true'"
                         and steps[marker[0]].get("if") == "success() && steps.arm.outputs.post == 'true'"
                         and steps[post[0]].get("if") == "success() && steps.prepare.outputs.recorded == 'true'"
                         and job.get("outputs") == {"recorded": "${{ steps.start.outputs.recorded }}"}):
-                    flag(location, "xcc-reservation", "Upload the immutable reservation and POST marker successfully before any start")
+                    flag(location, "xcc-post-marker", "Upload the immutable scheduling POST marker successfully before any start")
         if (any(label in str(job.get("runs-on", "")) for label in ("macos-", "xcode-"))
                 and any(re.search(r"\balways\s*\(", code, re.IGNORECASE) for code in expression_code("workflow." + location + ".if", str(job.get("if", "")), implicit_locations))):
             flag(location, "macos-cancellation", "macOS jobs must stop on cancellation; never use job-level always()")
@@ -619,9 +617,7 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                                           "path": "${{ runner.temp }}/ci-xcc-route/" + member + ".json",
                                           "if-no-files-found": "error", "retention-days": 90}
                               and item.get("if") == guard for stage, member, guard in (
-                                  ("reservation", "reservation", "success() && steps.prepare.outputs.reserved == 'true'"),
                                   ("post", "post", "success() && steps.arm.outputs.post == 'true'"),
-                                  ("journal", "journal", "always() && steps.prepare.outputs.journal == 'true'"),
                                   ("start", "start", "success() && steps.start.outputs.recorded == 'true'")))
         report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
                          and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",

@@ -45,7 +45,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
-      - name: Decide and reserve under the account compute cap
+      - name: Decide from the cloud inventory and account compute cap
         id: prepare
         env:
           CI_WORKFLOW_TOKEN: ${{ github.token }}
@@ -54,15 +54,8 @@ jobs:
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
           CI_XCC_ROUTING_OVERRIDE: ${{ vars.CI_XCC_ROUTING_OVERRIDE }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py prepare'
-      - if: success() && steps.prepare.outputs.reserved == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ci-xcc-reservation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-xcc-route/reservation.json
-          if-no-files-found: error
-          retention-days: 90
       - name: Prepare the durable POST marker
-        if: success() && steps.prepare.outputs.reserved == 'true'
+        if: success() && steps.prepare.outputs.post == 'true'
         id: arm
         env:
           CI_WORKFLOW_TOKEN: ${{ github.token }}
@@ -74,7 +67,7 @@ jobs:
           path: ${{ runner.temp }}/ci-xcc-route/post.json
           if-no-files-found: error
           retention-days: 90
-      - name: Start or reconcile the reserved build
+      - name: Start or reuse the inventoried build
         if: success() && steps.prepare.outputs.recorded == 'true'
         id: start
         env:
@@ -88,13 +81,6 @@ jobs:
         with:
           name: ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-xcc-route/start.json
-          if-no-files-found: error
-          retention-days: 90
-      - if: always() && steps.prepare.outputs.journal == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ci-xcc-journal-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-xcc-route/journal.json
           if-no-files-found: error
           retention-days: 90
 
@@ -119,7 +105,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
-      - name: Poll and verify the reserved producer build
+      - name: Poll and verify the producer build
         id: route
         env:
           CI_WORKFLOW_TOKEN: ${{ github.token }}

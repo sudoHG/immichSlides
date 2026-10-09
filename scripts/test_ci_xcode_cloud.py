@@ -387,35 +387,10 @@ class CloudEvidenceTests(unittest.TestCase):
             with self.assertRaises(ContractError):
                 cloud.trusted_artifact(api, "receipt", cloud.ROUTE_PATH, "route.json")
 
-    def test_active_checkpoint_avoids_repository_artifacts_and_released_reservations(self):
+    def test_scheduling_artifacts_authenticate_the_main_attempt_before_reading(self):
         import ci_xcode_cloud_state as state
         api = Mock(repository="owner/repo")
-        workflow = {"id": 789, "path": cloud.ROUTE_PATH}
-        uploader = {"id": 800, "run_attempt": 1, "workflow_id": 789, "path": cloud.ROUTE_PATH,
-                    "event": "workflow_dispatch", "head_branch": "main", "head_sha": "a" * 40,
-                    "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}}
-        api.repo.side_effect = lambda path, **_: workflow if "workflows/" in path else uploader
-        api.pages.side_effect = [[{"id": 800, "created_at": "2026-10-10T00:00:00Z"},
-                                  {"id": 700, "created_at": "2026-10-09T00:00:00Z"}],
-                                 [{"id": 99, "name": "ci-xcc-journal-800-1", "expired": False, "workflow_run": {"id": 800}},
-                                  {"id": 66, "name": "ci-xcc-reservation-800-1", "expired": False, "workflow_run": {"id": 800}}]]
-        row = {"schema_version": 1, "workflow_id": cloud.WORKFLOW_ID, "producer_run_id": 123,
-               "producer_attempt": 2, "uploader_run_id": 456, "uploader_attempt": 1,
-               "identity": self.identity, "reserved_at": "2026-10-09T16:00:00Z", "prior_run_ids": [],
-               "reservation_artifact_id": 55}
-        with patch.object(state, "on_main", return_value=True), patch.object(state, "json_member",
-                return_value={"schema_version": 1, "uploader_run_id": 800, "uploader_attempt": 1, "active": [row], "released": [66]}) as read:
-            self.assertEqual(state.reservations(api), [row])
-            read.assert_called_once()
-        self.assertEqual(api.pages.call_count, 2)
-        self.assertEqual(api.pages.call_args_list[1].args[0], "actions/runs/800/artifacts")
-        self.assertIn("created", api.pages.call_args_list[0].kwargs)
-        self.assertNotIn(unittest.mock.call("actions/runs/456/attempts/1"), api.repo.call_args_list)
-
-    def test_reservation_artifacts_authenticate_the_main_attempt_before_reading(self):
-        import ci_xcode_cloud_state as state
-        api = Mock(repository="owner/repo")
-        artifact = {"name": "ci-xcc-reservation-456-1", "expired": False, "workflow_run": {"id": 456}}
+        artifact = {"name": "ci-xcc-post-456-1", "expired": False, "workflow_run": {"id": 456}}
         workflow = {"id": 789, "path": cloud.ROUTE_PATH}
         uploader = {"id": 456, "run_attempt": 1, "workflow_id": 789, "path": cloud.ROUTE_PATH,
                     "event": "workflow_dispatch", "head_branch": "main", "head_sha": "a" * 40,
@@ -423,11 +398,11 @@ class CloudEvidenceTests(unittest.TestCase):
                     "head_repository": {"full_name": "owner/repo"}}
         api.repo.return_value = uploader
         with patch.object(state, "on_main", return_value=True), patch.object(state, "json_member", return_value={"uploader_run_id": 456, "uploader_attempt": 1}) as read:
-            state.read_state(api, artifact, workflow, prefix=state.RESERVATION_PREFIX, member="reservation.json")
+            state.read_state(api, artifact, workflow, prefix=state.POST_PREFIX, member="post.json")
             read.reset_mock()
             uploader["head_repository"]["full_name"] = "fork/repo"
             with self.assertRaises(ContractError):
-                state.read_state(api, artifact, workflow, prefix=state.RESERVATION_PREFIX, member="reservation.json")
+                state.read_state(api, artifact, workflow, prefix=state.POST_PREFIX, member="post.json")
             read.assert_not_called()
 
     def test_collapsed_tv_matrix_requires_verified_cloud_proof_and_cannot_cover_ios(self):
@@ -461,31 +436,91 @@ class CloudEvidenceTests(unittest.TestCase):
 
 
 class RoutingPolicyTests(unittest.TestCase):
-    def test_missing_post_marker_releases_a_creator_that_failed_before_post(self):
-        import ci_xcode_cloud_state as state
-        api = Mock()
-        reservation = {"uploader_run_id": 456, "uploader_attempt": 1}
-        api.pages.return_value = [{"name": "xcc-start", "status": "completed", "conclusion": "failure",
-                                  "steps": [{"name": "Start or reconcile the reserved build", "conclusion": "failure"}]}]
-        with patch.object(state, "post_marker", return_value=None):
-            self.assertTrue(state.never_posted(api, reservation))
-            api.pages.return_value[0]["status"] = "in_progress"
-            self.assertFalse(state.never_posted(api, reservation))
-        with patch.object(state, "post_marker", return_value={"reservation_artifact_id": 99}):
-            self.assertFalse(state.never_posted(api, reservation))
-
-    def test_uncertain_empty_inventory_releases_after_the_visibility_bound_without_clock_filter(self):
-        import ci_xcode_cloud_state as state
+    def test_inventory_reuses_exact_heads_and_bounds_stuck_builds_without_quota_artifacts(self):
+        import ci_xcode_cloud_route as router
         from datetime import timedelta
-        reserved = datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc)
-        reservation = {"identity": {"head_sha": "a" * 40}, "prior_run_ids": [], "reserved_at": reserved.isoformat()}
-        self.assertEqual(state.reconcile(Mock(), reservation, inventory=[], now=reserved + timedelta(minutes=9))["state"], "unresolved")
-        self.assertEqual(state.reconcile(Mock(), reservation, inventory=[], now=reserved + timedelta(minutes=11))["state"], "released")
-        run = {"id": "11111111-1111-1111-1111-111111111111", "attributes": {"createdDate": "2026-10-09T15:59:00Z",
-               "executionProgress": "RUNNING", "sourceCommit": {"commitSha": "a" * 40}}}
-        self.assertEqual(state.reconcile(Mock(), reservation, inventory=[run], now=reserved + timedelta(minutes=11))["state"], "in-flight")
-        run["attributes"]["sourceCommit"] = {}
-        self.assertEqual(state.reconcile(Mock(), reservation, inventory=[run], now=reserved + timedelta(minutes=11))["state"], "unresolved")
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        now = datetime.now(timezone.utc)
+        asc = Mock()
+        run = {"id": fixture.evidence["id"], "attributes": {"executionProgress": "PENDING",
+               "createdDate": now.isoformat(), "sourceCommit": {"commitSha": fixture.run["head_sha"]}}}
+        asc.pages.return_value = [run]
+        result = router.start_cloud(asc, dict(fixture.route, reference_id="reference"))
+        self.assertEqual(result["cloud_run_id"], run["id"])
+        asc.request.assert_not_called()
+        run["attributes"]["sourceCommit"] = None
+        self.assertEqual(router.start_cloud(asc, dict(fixture.route, reference_id="reference"))["reason"], "overflow-build-in-flight")
+        asc.request.assert_not_called()
+        run["attributes"]["createdDate"] = (now - timedelta(hours=4)).isoformat()
+        asc.request.return_value = {"data": {"id": fixture.evidence["id"], "attributes": {"createdDate": now.isoformat()}}}
+        with patch.object(router, "month_usage", return_value={"minutes": 100}):
+            self.assertEqual(router.start_cloud(asc, dict(fixture.route, reference_id="reference"))["reason"], "cloud-started")
+        self.assertEqual(asc.request.call_count, 1)
+
+    def test_router_503_for_more_than_sixty_seconds_then_recovery_still_routes(self):
+        import ci_xcode_cloud_route as router
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        api, asc, elapsed = Mock(), Mock(), [0]
+        asc.request.return_value = {"data": {"attributes": {"executionProgress": "COMPLETE",
+            "completionStatus": "SUCCEEDED", "sourceCommit": {"commitSha": fixture.run["head_sha"]}}}}
+        asc.evidence.return_value = fixture.evidence
+        def checks(*args, **kwargs):
+            if elapsed[0] < 61:
+                elapsed[0] = 61
+                raise ContractError("GitHub HTTP 503")
+            return [fixture.check]
+        api.pages.side_effect = checks
+        with patch.object(router, "refresh_producer"), patch.object(cloud, "admitted_population", return_value=fixture.population):
+            result = router.poll_route(api, asc, fixture.record, fixture.run, dict(fixture.route, decision="pending"),
+                monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+        self.assertEqual(result["decision"], "routed")
+        self.assertGreater(elapsed[0], 60)
+
+    def test_post_without_created_date_fetches_start_receipt_and_waits_through_the_marker_race(self):
+        import ci_ui_tests as producer
+        import ci_xcode_cloud_route as router
+        import ci_xcode_cloud_state as state
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        now = datetime.now(timezone.utc).isoformat()
+        api, asc = Mock(repository="owner/repo"), Mock()
+        workflow = {"id": 789, "path": cloud.ROUTE_PATH, "state": "active"}
+        source = {"id": 456, "run_attempt": 1, "display_title": "xcc-route-123-2", "workflow_id": 789,
+                  "event": "workflow_dispatch", "path": cloud.ROUTE_PATH, "head_branch": "main", "head_sha": "b" * 40,
+                  "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}}
+        def response(path):
+            if "/runs?" in path:
+                return {"workflow_runs": [source]}
+            if "ci-xcode-cloud-" in path:
+                return workflow
+            return source if "456" in path else fixture.run
+        api.repo.side_effect = response
+        artifacts = [{"name": "ci-xcc-post-456-1", "expired": False, "workflow_run": {"id": 456}}]
+        api.pages.side_effect = lambda *args, **kwargs: list(artifacts)
+        posted = dict(fixture.route, head_sha=fixture.run["head_sha"], uploader_run_id=456, uploader_attempt=1, posted_at=now)
+        receipts = {"post.json": posted}
+        asc.pages.return_value = []
+        asc.request.side_effect = [{"data": {"id": fixture.evidence["id"]}},
+                                   {"data": {"id": fixture.evidence["id"], "attributes": {"createdDate": now}}}]
+        def upload_start(_seconds):
+            value = router.start_cloud(asc, dict(posted, reference_id="reference"))
+            receipts["start.json"] = dict(posted, **value)
+            artifacts.append({"name": "ci-xcc-start-456-1", "expired": False, "workflow_run": {"id": 456}})
+        ctx = {"identity": fixture.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 2}}
+        with patch("ci_publish.git"), patch.object(state, "on_main", return_value=True), \
+                patch.object(state, "json_member", side_effect=lambda api, artifact, member: receipts[member]), \
+                patch.object(producer, "verify_workflow"), patch("ci_publish.trusted_admissions", return_value={123: fixture.record}), \
+                patch.object(router, "month_usage", return_value={"minutes": 0}), \
+                patch.object(router, "producer_decision", side_effect=["github", "github", "routed"]), \
+                patch.object(cloud, "trusted_artifact", return_value=(fixture.route, 55)), \
+                patch.object(producer.time, "sleep", side_effect=upload_start) as sleep:
+            self.assertEqual(producer.wait_cloud(ctx, api), "routed")
+            sleep.assert_called_once()
+        self.assertEqual(asc.request.call_args_list[0].kwargs["method"], "POST")
+        self.assertEqual(asc.request.call_args_list[1].args[0], "/v1/ciBuildRuns/" + fixture.evidence["id"])
+        self.assertEqual(receipts["start.json"]["cloud_created_at"], now)
 
     def test_start_window_and_wait_deadline_allow_queueing_without_indefinite_pending(self):
         from ci_xcode_cloud_route import remaining_seconds, cloud_wait_deadline
@@ -494,10 +529,8 @@ class RoutingPolicyTests(unittest.TestCase):
         run = {"run_started_at": (now - timedelta(minutes=29)).isoformat()}
         self.assertEqual(remaining_seconds(run, now), 60)
         self.assertEqual(remaining_seconds(run, now + timedelta(minutes=2)), 0)
-        self.assertAlmostEqual(cloud_wait_deadline(10 * 60, 0), 99.7 * 60)
-        self.assertAlmostEqual(cloud_wait_deadline(95 * 60, 0), 110 * 60)
-        self.assertAlmostEqual(cloud_wait_deadline(10 * 60, 0, 50 * 60), 119.7 * 60)
-        self.assertAlmostEqual(cloud_wait_deadline(130 * 60, 0, 50 * 60), 119.7 * 60)
+        self.assertAlmostEqual(cloud_wait_deadline(0), 99.7 * 60)
+        self.assertAlmostEqual(cloud_wait_deadline(50 * 60), 149.7 * 60)
 
     def test_github_reads_retry_transient_errors_but_dispatches_do_not_replay(self):
         from ci_xcode_cloud_client import RetryingGitHub
@@ -512,42 +545,38 @@ class RoutingPolicyTests(unittest.TestCase):
                 client.request("/repos/owner/repo/actions/workflows/route/dispatches", method="POST", payload={})
             self.assertEqual(network.call_count, 4)
 
-    def test_known_terminal_build_releases_quota_even_when_its_head_cannot_count(self):
-        import ci_xcode_cloud_state as state
+    def test_known_terminal_build_does_not_block_even_when_its_head_cannot_count(self):
+        import ci_xcode_cloud_route as router
         fixture = CloudEvidenceTests()
         fixture.setUp()
-        reservation = {"identity": fixture.identity, "prior_run_ids": [], "reserved_at": "2026-10-09T16:00:00Z"}
         result = {"cloud_run_id": fixture.evidence["id"]}
         inventory = [{"id": result["cloud_run_id"], "attributes": {"executionProgress": "COMPLETE",
                      "sourceCommit": {"commitSha": "f" * 40}}}]
-        self.assertEqual(state.reconcile(Mock(), reservation, result, inventory=inventory)["state"], "released")
+        self.assertEqual(router.blocking_builds(inventory, datetime.now(timezone.utc)), [])
         fixture.evidence["head_sha"] = "f" * 40
         with self.assertRaises(ContractError):
             fixture.validate()
 
-    def test_a_terminal_wrong_head_reservation_does_not_block_the_next_producer_start(self):
+    def test_a_terminal_wrong_head_build_does_not_block_the_next_producer_start(self):
         import ci_xcode_cloud_route as router
         fixture = CloudEvidenceTests()
         fixture.setUp()
         api, asc = Mock(), Mock()
         old_id = "11111111-1111-1111-1111-111111111111"
-        prior = {"identity": fixture.identity, "producer_run_id": 122, "producer_attempt": 1,
-                 "prior_run_ids": [], "reserved_at": "2026-10-09T16:00:00Z", "reservation_artifact_id": 55}
         def pages(path):
             if "/scmRepositories/" in path:
                 return [{"id": "reference", "attributes": {"canonicalName": "refs/heads/branch"}}]
             return [{"id": old_id, "attributes": {"executionProgress": "COMPLETE", "sourceCommit": {"commitSha": "f" * 40}}}]
         asc.pages.side_effect = pages
-        asc.request.return_value = {"data": {"id": "22222222-2222-2222-2222-222222222222"}}
+        asc.request.return_value = {"data": {"id": "22222222-2222-2222-2222-222222222222",
+                                    "attributes": {"createdDate": datetime.now(timezone.utc).isoformat()}}}
         with patch.object(router, "current_producer", return_value={"head": {"ref": "branch"}}), patch.object(router, "refresh_producer"), \
                 patch.object(router, "trusted_admissions", return_value={123: fixture.record}), \
                 patch.object(router, "admitted_population", return_value=fixture.population), \
-                patch.object(router, "github_capacity", return_value={"congested": True}), patch.object(router, "month_usage", return_value={"minutes": 0}), \
-                patch.object(router.state, "reservations", return_value=[prior]), patch.object(router.state, "start_result", return_value={"cloud_run_id": old_id}):
+                patch.object(router, "github_capacity", return_value={"congested": True}), patch.object(router, "month_usage", return_value={"minutes": 0}):
             prepared = router.route_run(api, lambda: asc, fixture.run)
-            self.assertTrue(prepared["fresh"])
-            self.assertEqual(prepared["journal"], {"active": [], "released": [55]})
-            result = router.start_reserved(asc, prepared["reservation"], fresh=True)
+            self.assertEqual(prepared["reason"], "inventory-allows-start")
+            result = router.start_cloud(asc, prepared)
             self.assertEqual(result["reason"], "cloud-started")
             asc.request.assert_called_once()
 
@@ -578,16 +607,20 @@ class RoutingPolicyTests(unittest.TestCase):
 
     def test_all_post_client_errors_are_definite_rejections_including_conflict(self):
         import ci_xcode_cloud_route as router
-        reservation = {"identity": {"head_sha": "a" * 40}, "prior_run_ids": [],
-                       "reserved_at": datetime.now(timezone.utc).isoformat(), "reference_id": "reference"}
+        prepared = {"identity": {"head_sha": "a" * 40}, "reference_id": "reference"}
         asc = Mock()
         asc.pages.return_value = []
         for status in (400, 401, 403, 404, 409, 422, 429):
             asc.request.side_effect = ContractError(f"HTTP {status}")
-            with self.subTest(status=status):
-                result = router.start_reserved(asc, reservation, fresh=True)
-                self.assertTrue(result["start_rejected"])
+            with self.subTest(status=status), patch.object(router, "month_usage", return_value={"minutes": 0}):
+                result = router.start_cloud(asc, prepared)
+                self.assertEqual(result["http_status"], status)
                 self.assertEqual(result["decision"], "fallback")
+        cloud_id = "11111111-1111-1111-1111-111111111111"
+        asc.request.side_effect = [{"data": {"id": cloud_id}}, ContractError("HTTP 429")]
+        with patch.object(router, "month_usage", return_value={"minutes": 0}), self.assertRaises(ContractError):
+            router.start_cloud(asc, prepared)
+        self.assertEqual(asc.request.call_args.args[0], "/v1/ciBuildRuns/" + cloud_id)
 
     def test_never_started_terminal_actions_cost_zero_but_missing_success_timing_is_refused(self):
         from ci_xcode_cloud_route import action_minutes
@@ -602,7 +635,6 @@ class RoutingPolicyTests(unittest.TestCase):
     def setUp(self):
         import ci_xcode_cloud_route as router
         for context in (patch.object(router, "selection_open", return_value=True),
-                        patch.object(router.state, "reservations", return_value=[]),
                         patch.object(cloud, "archive_evidence_run", side_effect=lambda api, run: dict(run,
                             archive_job={"id": 999, "status": "in_progress", "conclusion": None}))):
             context.start()
@@ -614,15 +646,14 @@ class RoutingPolicyTests(unittest.TestCase):
         prepared = router.route_run(api, lambda: asc, fixture.run, sleep=lambda _: None, **options)
         if prepared["decision"] != "pending":
             return prepared
-        started = dict(prepared, **router.start_reserved(asc, prepared["reservation"], fresh=prepared["fresh"]))
-        return router.poll_route(api, asc, fixture.record, fixture.run, started, prepared["reservation"], sleep=lambda _: None)
+        started = dict(prepared, **router.start_cloud(asc, prepared))
+        return router.poll_route(api, asc, fixture.record, fixture.run, started, sleep=lambda _: None)
 
-    def test_a_post_interruption_resumes_the_reserved_build_without_another_post(self):
+    def test_a_post_interruption_reuses_the_visible_inventory_without_another_post(self):
         import ci_xcode_cloud_route as router
         fixture = CloudEvidenceTests()
         fixture.setUp()
-        reservation = {"identity": fixture.identity, "producer_run_id": 123, "producer_attempt": 2,
-                       "reserved_at": "2026-10-09T16:00:00Z", "prior_run_ids": [], "reference_id": "reference"}
+        prepared = {"identity": fixture.identity, "reference_id": "reference"}
         asc, inventory = Mock(), []
         asc.pages.side_effect = lambda _: copy.deepcopy(inventory)
         def post(path, **kwargs):
@@ -632,39 +663,46 @@ class RoutingPolicyTests(unittest.TestCase):
                 "sourceCommit": {"commitSha": fixture.run["head_sha"]}}})
             raise KeyboardInterrupt()
         asc.request.side_effect = post
-        with self.assertRaises(KeyboardInterrupt):
-            router.start_reserved(asc, reservation, fresh=True)
-        result = router.start_reserved(asc, reservation, fresh=False)
+        with patch.object(router, "month_usage", return_value={"minutes": 0}), self.assertRaises(KeyboardInterrupt):
+            router.start_cloud(asc, prepared)
+        result = router.start_cloud(asc, prepared)
         self.assertEqual(result["cloud_run_id"], fixture.evidence["id"])
         asc.request.assert_called_once()
 
-    def test_pending_and_running_builds_reserve_projected_compute_minutes(self):
+    def test_pending_running_and_stuck_builds_count_projection_plus_completed_actions(self):
         from ci_xcode_cloud_route import month_usage
         asc = Mock()
-        def pages(path):
-            if path == "/v1/ciProducts?limit=200":
-                return [{"id": "11111111-1111-1111-1111-111111111111"}]
-            if "/ciProducts/" in path:
-                return [{"id": "22222222-2222-2222-2222-222222222222", "attributes": {
-                    "executionProgress": "PENDING", "createdDate": "2026-10-09T15:59:00Z"}}]
-            return []
-        asc.pages.side_effect = pages
-        usage = month_usage(asc, datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc))
-        self.assertEqual(usage["minutes"], 100)
+        for progress in ("PENDING", "RUNNING"):
+            run = {"id": "22222222-2222-2222-2222-222222222222", "attributes": {
+                "executionProgress": progress, "createdDate": "2026-10-09T11:00:00Z"}}
+            def pages(path):
+                if path == "/v1/ciProducts?limit=200":
+                    return [{"id": "11111111-1111-1111-1111-111111111111"}]
+                if "/ciProducts/" in path:
+                    return [run]
+                return [] if progress == "PENDING" else [{"id": "completed-action", "attributes": {
+                    "executionProgress": "COMPLETE", "startedDate": "2026-10-09T15:40:00Z",
+                    "finishedDate": "2026-10-09T15:50:00Z"}}, {"id": "running-action", "attributes": {
+                    "executionProgress": "RUNNING", "startedDate": "2026-10-09T15:50:00Z"}}]
+            asc.pages.side_effect = pages
+            with self.subTest(progress=progress):
+                usage = month_usage(asc, datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc), inventory=[run])
+                self.assertEqual(usage["projected_minutes"], 100)
+                self.assertEqual(usage["minutes"], 100 if progress == "PENDING" else 110)
 
-    def test_uncertain_new_build_inventory_never_authorizes_a_second_post(self):
+    def test_incomplete_inventory_blocks_starts_and_duplicate_exact_heads_are_reused(self):
         import ci_xcode_cloud_route as router
         fixture = CloudEvidenceTests()
         fixture.setUp()
-        reservation = {"identity": fixture.identity, "reserved_at": "2026-10-09T16:00:00Z",
-                       "prior_run_ids": [], "reference_id": "reference"}
+        prepared = {"identity": fixture.identity, "reference_id": "reference"}
         asc = Mock()
         for commits in ((None,), (fixture.run["head_sha"], fixture.run["head_sha"])):
             asc.pages.return_value = [{"id": f"{index:08d}-1111-1111-1111-111111111111", "attributes": {
-                "createdDate": "2026-10-09T16:00:01Z", "executionProgress": "PENDING",
+                "createdDate": datetime.now(timezone.utc).isoformat(), "executionProgress": "PENDING",
                 "sourceCommit": {} if head is None else {"commitSha": head}}} for index, head in enumerate(commits)]
             with self.subTest(commits=commits):
-                self.assertEqual(router.start_reserved(asc, reservation, fresh=True)["decision"], "pending")
+                result = router.start_cloud(asc, prepared)
+                self.assertEqual(result["decision"], "github" if commits == (None,) else "pending")
                 asc.request.assert_not_called()
 
     def test_token_age_and_read_backoff_do_not_replay_an_uncertain_post(self):
@@ -685,7 +723,7 @@ class RoutingPolicyTests(unittest.TestCase):
                 client.request("/v1/ciBuildRuns", method="POST", payload={})
             self.assertEqual(network.call_count, 4)
 
-    def test_unaffected_retained_or_late_producers_cannot_reserve_a_start(self):
+    def test_unaffected_retained_or_late_producers_cannot_start_cloud(self):
         import ci_xcode_cloud_route as router
         from datetime import timedelta
         fixture = CloudEvidenceTests()
@@ -734,7 +772,7 @@ class RoutingPolicyTests(unittest.TestCase):
             "id": "22222222-2222-2222-2222-222222222222", "attributes": {
                 "executionProgress": "COMPLETE", "finishedDate": "2026-09-30T23:59:59Z"}}]]
         now = datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc)
-        self.assertEqual(month_usage(asc, now)["minutes"], 0)
+        self.assertEqual(month_usage(asc, now, inventory=[])["minutes"], 0)
         self.assertEqual(asc.pages.call_count, 2)
         self.assertEqual(action_minutes({"executionProgress": "PENDING", "startedDate": None}, now.replace(day=1), now), 0)
 
@@ -901,7 +939,7 @@ class RoutingPolicyTests(unittest.TestCase):
         asc.evidence.return_value = fixture.evidence
         api.pages.return_value = [fixture.check]
         def response(path, **_):
-            return ({"data": {"id": fixture.evidence["id"]}} if path == "/v1/ciBuildRuns" else
+            return ({"data": {"id": fixture.evidence["id"], "attributes": {"createdDate": datetime.now(timezone.utc).isoformat()}}} if path == "/v1/ciBuildRuns" else
                     {"data": {"attributes": {"executionProgress": "COMPLETE", "completionStatus": "SUCCEEDED",
                      "sourceCommit": {"commitSha": fixture.run["head_sha"]}}}})
         asc.request.side_effect = response
@@ -937,15 +975,16 @@ class RoutingPolicyTests(unittest.TestCase):
                        "startedDate": "2026-10-09T15:55:00Z", "finishedDate": None}}
             return [failed] if run_ids[0] in path else [running]
         asc.pages.side_effect = pages
-        usage = month_usage(asc, now)
+        inventory = [{"id": run_ids[1], "attributes": {"executionProgress": "RUNNING"}}]
+        usage = month_usage(asc, now, inventory=inventory)
         self.assertEqual((usage["month"], usage["products"], usage["actions"], usage["minutes"]),
                          ("2026-10", 2, 2, 110))
         asc.pages.side_effect = lambda path: [] if "/actions?" in path else pages(path)
         with self.assertRaises(ContractError):
-            month_usage(asc, now)
+            month_usage(asc, now, inventory=inventory)
         asc.pages.return_value, asc.pages.side_effect = [], None
         with self.assertRaises(ContractError):
-            month_usage(asc, now)
+            month_usage(asc, now, inventory=inventory)
 
     def test_main_override_is_head_bound_and_cannot_bypass_budget_or_population(self):
         import ci_xcode_cloud_route as router
@@ -955,7 +994,8 @@ class RoutingPolicyTests(unittest.TestCase):
         asc.pages.return_value = [{"id": "reference", "attributes": {"canonicalName": "refs/heads/branch"}}]
         asc.evidence.return_value = fixture.evidence
         api.pages.return_value = [fixture.check]
-        asc.request.side_effect = lambda path, **_: ({"data": {"id": fixture.evidence["id"]}}
+        asc.request.side_effect = lambda path, **_: ({"data": {"id": fixture.evidence["id"],
+            "attributes": {"createdDate": datetime.now(timezone.utc).isoformat()}}}
             if path == "/v1/ciBuildRuns" else {"data": {"attributes": {
                 "executionProgress": "COMPLETE", "completionStatus": "SUCCEEDED",
                 "sourceCommit": {"commitSha": fixture.run["head_sha"]}}}})
@@ -1031,7 +1071,7 @@ class RoutingPolicyTests(unittest.TestCase):
         result = self.run_stages(router, api, asc, fixture)
         self.assertEqual((result["decision"], result["reason"], result["http_status"]),
                          ("fallback", "cloud-start-failed", 400))
-        asc.request.side_effect = [{"data": {"id": fixture.evidence["id"]}}, {"data": {"attributes": {
+        asc.request.side_effect = [{"data": {"id": fixture.evidence["id"], "attributes": {"createdDate": datetime.now(timezone.utc).isoformat()}}}, {"data": {"attributes": {
             "executionProgress": "COMPLETE", "completionStatus": "FAILED",
             "sourceCommit": {"commitSha": fixture.run["head_sha"]}}}}]
         result = self.run_stages(router, api, asc, fixture)
@@ -1044,6 +1084,7 @@ class RoutingPolicyTests(unittest.TestCase):
         fixture.setUp()
         api, factory, asc = Mock(), Mock(), Mock()
         factory.return_value = asc
+        asc.pages.return_value = []
         with patch.object(router, "current_producer", return_value={"head": {"ref": "branch"}}), \
                 patch.object(router, "trusted_admissions", return_value={123: fixture.record}), \
                 patch.object(router, "admitted_population", return_value=fixture.population), \

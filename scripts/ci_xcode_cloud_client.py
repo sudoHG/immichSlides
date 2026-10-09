@@ -53,7 +53,7 @@ class RenewingAppStoreConnect(AppStoreConnect):
                 return super().request(path, method=method, payload=payload)
             except (ContractError, URLError, TimeoutError) as error:
                 # A timed-out or 5xx POST may already have created a build.
-                # Its persisted reservation must reconcile that uncertainty.
+                # The next router discovers an accepted start in ASC inventory.
                 if method != "GET" or not transient(error):
                     raise
                 remaining = self.deadline - self.timer()

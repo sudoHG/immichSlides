@@ -33,19 +33,19 @@ class WorkflowPolicyTests(unittest.TestCase):
         document["jobs"]["check"]["if"] = "${{ !cancelled() && needs.archive.outputs.run_ui == 'true' }}"
         self.assertNotIn("macos-cancellation", self.rules(document))
 
-    def test_cloud_start_requires_a_persisted_reservation_before_post(self):
+    def test_cloud_start_requires_a_scheduling_marker_before_post(self):
         path = policy.XCC_ROUTE_WORKFLOW
         document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
         steps = document["jobs"]["start"]["steps"]
-        reservation = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-reservation-"))
+        marker = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-post-"))
         post = next(index for index, step in enumerate(steps) if step.get("id") == "start")
-        steps[reservation], steps[post] = steps[post], steps[reservation]
-        self.assertIn("xcc-reservation", self.rules(document, path))
+        steps[marker], steps[post] = steps[post], steps[marker]
+        self.assertIn("xcc-post-marker", self.rules(document, path))
         document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
         steps = document["jobs"]["start"]["steps"]
         marker = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-post-"))
         del steps[marker]
-        self.assertIn("xcc-reservation", self.rules(document, path))
+        self.assertIn("xcc-post-marker", self.rules(document, path))
 
     def test_failed_ios_reruns_cannot_repeat_successful_tv_through_dependencies(self):
         path = ".github/workflows/ci-ui.yml"

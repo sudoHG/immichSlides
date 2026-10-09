@@ -81,37 +81,31 @@ completion dispatches the importer after uploader validation. GitHub documents
 The resulting dispatch-to-`workflow_run` chain still needs runtime proof on main.
 
 The main-only router has two Linux jobs. The short `xcc-start` job holds the
-account budget concurrency group while deciding, uploading a reservation, starting
-or reconciling one build, and uploading the start result. The separate poll job
+account budget concurrency group while checking the ASC inventory, starting
+or reusing one build, and uploading the start result. The separate poll job
 uses a producer/attempt concurrency group and never holds the account start lock.
 Both use `cancel-in-progress: false`: a running job is retained, but GitHub can
 replace an older **pending** job in the same group. A replaced router cannot
 authorize a skip; its producer falls back when no complete decision appears.
 
-A reservation binds the admitted head/tree, producer ID, archive evidence attempt,
-branch reference, reservation time and pre-start build inventory. Its immutable
-main-authenticated artifact is uploaded **before POST**. Failed or interrupted
-main attempts can supply reservation state, with workflow, event, repository,
-main ancestry and historical uploader attempt authenticated before reading bytes.
-A second immutable **about-to-POST marker** must upload successfully before the
-start step can POST. A creator job that ended without that marker provably never
-posted, including a failed start step. Every HTTP 4xx is a definite rejection;
-5xx, network errors and timeouts leave an uncertain outcome. Subsequent routers
-reconcile the fixed workflow's full build collection and never blindly POST
-again. Inventory membership is compared with `prior_run_ids`, without filtering
-ASC timestamps by the runner clock. After **ten minutes**, no new build and no
-build missing its source commit proves that the uncertain start was not executed.
-Missing commits, multiple matches, expired state or unavailable inventory keep
-the reservation unresolved. The exact known run ID reaching `COMPLETE` releases
-quota even if its branch moved; evidence for another head is still refused.
+The fixed overflow workflow's ASC build inventory is the sole source of truth
+for in-flight builds and projected usage. Before starting, the router reuses the
+newest existing build for the exact head, even if it is already complete. Otherwise,
+any non-`COMPLETE` overflow build blocks a start until **three hours** after its
+ASC `createdDate`. A stuck older build stops blocking but still adds 100 minutes
+to usage. Missing or invalid inventory fails closed. A terminal build for another
+head no longer blocks starts; it still cannot supply accepted test evidence.
 
-State discovery lists only the route workflow's main dispatch runs in a
-**90-day window**, and reads their exact state artifact names. Each account job
-uploads a main-authenticated checkpoint containing active reservations and the
-IDs released during that scan. Later starts stop at that checkpoint: released
-reservations are not opened or API-verified again. Active old reservations remain
-in the checkpoint. Unresolved or running reservations block other starts until
-reconciliation; a checkpoint is budget state and cannot authorize test acceptance.
+An immutable **about-to-POST marker** uploads successfully before the start step
+can POST. The marker and start receipt bind the producer ID, archive evidence
+attempt and admitted identity, with main workflow provenance authenticated before
+opening bytes. They schedule waiting only; they are never quota state. A POST HTTP
+4xx is a definite rejection; 5xx, network errors and timeouts leave an uncertain
+outcome. A router never retries its POST. A later router reads the ASC inventory
+and reuses a visible exact-head build. A rare duplicate during ASC visibility lag
+is accepted: the global start lock, one in-flight rule and 45-hour cap bound this
+risk once builds are visible. Test acceptance still verifies the chosen run's
+exact head, population and newest app check independently.
 
 Routing requires trusted `app_affected is True`, a same-repository current PR,
 matching head/merge tree and the admitted exact population. It also requires at
@@ -122,10 +116,11 @@ be open, and no more than **30 minutes** may have passed since
 `ci-ui.run_started_at`. The router poll remains bounded to 100 minutes.
 
 The account cap is **45 compute hours** including the proposed 100-minute build.
-Usage scans every accessible product and all actions of runs that can overlap the
-current UTC calendar month, including failed actions. Completed runs ending before
-the month are not scanned. Never-started actions cost zero; each unfinished run
-reserves at least 100 minutes, counting actual action time if greater. A terminal
+Usage equals completed action minutes in the current UTC calendar month across
+every accessible product, including failed actions, plus **100 minutes for every
+non-`COMPLETE` overflow build**. This includes stuck builds and builds created in
+an earlier month; completed actions in an unfinished build also count. Completed
+runs ending before the month are not scanned. Never-started actions cost zero. A terminal
 `SKIPPED` or `CANCELED` action with no start timestamp also costs zero. Missing or
 inconsistent inventory/timing fails closed. The accounting window resets at
 00:00 UTC on the first of the month; correspondence with Apple's billing month is
@@ -142,23 +137,9 @@ waits for the newest matching app check to complete with this Cloud run's link
 before method validation. Failed starts/runs, refused evidence and deadlines
 produce a GitHub fallback decision. The published
 [ASC API specification](https://developer.apple.com/app-store-connect/api/)
-exposes no build cancellation operation: an unconfirmed terminal state keeps the
-persistent account reservation and blocks new starts, rather than claiming a
-cancellation or refund. The independent main importer repeats the API validation.
-
-For an irreconcilable reservation, a maintainer may release it manually: disable
-the bridge and route workflow, let their account jobs end, then inspect the
-reservation, its prior inventory and the full ASC workflow inventory. Wait at
-least ten minutes and confirm every potentially created build is terminal and
-there is no missing source commit or live Cloud work. Record those run IDs and
-the reservation artifact ID before deleting anything. Using maintainer GitHub
-authority, delete only that reservation artifact and the route workflow's journal
-checkpoint artifacts (whose cached active state may contain it); keep start,
-route and importer receipts. Re-enable the workflows. The next account scan
-reconstructs state from the remaining reservations and writes a clean checkpoint.
-Deleting artifacts or changing workflow availability is maintainer work, never
-an automated fallback. If terminal state cannot be confirmed, keep routing off
-and the reservation intact.
+exposes no build cancellation operation. A fallback does not cancel or refund
+Cloud work; its ASC inventory state continues to count under the rules above.
+The independent main importer repeats the API validation.
 
 `ui-archive` only waits for the two normal gate archives. iPhone and iPad shards
 start when the archive is ready. A separate Linux `ui-cloud-wait` job gates only
@@ -179,14 +160,18 @@ missing artifacts, importer failure, stale checks and timeout cannot authorize
 skips. GitHub reads retry transient errors, and a failed round keeps waiting.
 Main pushes and forks select GitHub without waiting for Cloud.
 
-Only a matching main-authenticated receipt for an already started Cloud build
-can justify waiting. With no started build, including a full rerun with no manual
-route task, the selection immediately chooses GitHub. Its deadline is the later
-of **selection start + 15 minutes** and **Cloud creation + 1.3 × 69 minutes +
-10 minutes** (99.7 minutes from the accepted build's ASC `createdDate`). Queueing
-uses the same budget. An available trusted `startedDate` may extend that value,
-but the absolute cap is **createdDate + 119.7 minutes**, including a 20-minute
-queue allowance. Complete trusted proof is checked before that deadline.
+With no start receipt but a matching main-authenticated POST marker, selection
+waits at most the **20-minute `xcc-start` timeout** from the marker for `start.json`.
+If the POST response omits `createdDate`, a retried ASC GET obtains it before the
+start receipt is written. Without a build or marker, including a full rerun with
+no manual route task, selection immediately chooses GitHub. There is a small
+residual race if selection runs before the marker has uploaded: GitHub starts
+and later Cloud work cannot authorize skipping it.
+
+Once a start receipt is available, the deadline is strictly **Cloud creation +
+1.3 × 69 minutes + 10 minutes** (99.7 minutes from ASC `createdDate`). Queueing
+uses the same budget, with no `startedDate` extension. Complete trusted proof is
+checked before that deadline.
 
 Failed-job reruns bind proof to the attempt that executed `ui-archive`, identified
 by its GitHub execution timestamps and runner (or unchanged job ID when those
@@ -210,7 +195,7 @@ prompt GitHub decision. Disabling the GitHub route or import workflow also cause
 an immediate GitHub choice once the Linux selection runs. Disabling the bridge
 leaves no matching started build, so the Linux selection chooses GitHub
 immediately. None changes the Xcode Cloud
-workflow; already started Cloud work retains its account reservation.
+workflow; already started Cloud work remains in the ASC inventory and usage.
 
 For deterministic acceptance on an ordinary app PR, the maintainer may set the
 repository variable `CI_XCC_ROUTING_OVERRIDE` to one reviewed head and mode:

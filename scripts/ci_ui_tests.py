@@ -260,10 +260,8 @@ def wait_cloud(ctx, api):
     from ci_xcode_cloud_route import producer_decision, timestamp
     from ci_xcode_cloud import ROUTE_PATH, archive_evidence_run, trusted_artifact
     from ci_xcode_cloud_client import RetryingGitHub, transient
-    from ci_xcode_cloud_state import inflight_start
+    from ci_xcode_cloud_state import inflight_start, START_TIMEOUT_MINUTES
     from ci_xcode_cloud_route import cloud_wait_deadline
-    wait_started = datetime.now(timezone.utc).timestamp()
-    deadline = time.monotonic() + 15 * 60
     try:
         run = api.repo("actions/runs/" + ctx["run"]["id"])
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
@@ -280,14 +278,27 @@ def wait_cloud(ctx, api):
         if any(workflow["state"] != "active" for workflow in workflows.values()):
             return "github"
         start = inflight_start(api, run, evidence_attempt, workflows["route"])
-        # Reruns emit no requested event. Only an existing, authenticated build
-        # can justify waiting; otherwise GitHub starts immediately.
+        while start is not None and start.get("awaiting_start"):
+            require(start["identity"] == ctx["identity"], "cloud POST marker identity differs from producer")
+            if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt) == "routed":
+                return "routed"
+            end = timestamp(start["posted_at"]).timestamp() + START_TIMEOUT_MINUTES * 60
+            remaining = end - datetime.now(timezone.utc).timestamp()
+            if remaining <= 0:
+                return "github"
+            time.sleep(min(60, remaining))
+            try:
+                start = inflight_start(api, run, evidence_attempt, workflows["route"])
+            except (ContractError, urllib.error.URLError, TimeoutError) as error:
+                if not transient(error):
+                    raise
+        # Reruns emit no requested event. No build and no POST marker mean
+        # GitHub immediately; receipts here only schedule a bounded wait.
         if start is None:
             return "github"
         require(start["identity"] == ctx["identity"], "cloud start identity differs from producer")
         cloud_created = timestamp(start["cloud_created_at"]).timestamp()
-        cloud_started = timestamp(start["cloud_started_at"]).timestamp() if start.get("cloud_started_at") else None
-        end = cloud_wait_deadline(wait_started, cloud_created, cloud_started)
+        end = cloud_wait_deadline(cloud_created)
         deadline = time.monotonic() + max(0, end - datetime.now(timezone.utc).timestamp())
         if isinstance(api, RetryingGitHub):
             api.deadline = deadline
