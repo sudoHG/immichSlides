@@ -16,7 +16,7 @@ cannot undo an upload. Leave the auto-created **Default** workflow disabled.
   `com.331works.immichSlides`, automatic signing, and the shared `immichSlides`
   scheme. Its Archive action uses Release. No project or scheme changes are needed.
 - The executable `ci_scripts/ci_post_clone.sh` runs once for each cloud action,
-  after cloning, while the source checkout is available. It calls
+  after cloning, while the source checkout is available. For archive actions it calls
   `scripts/check_xcode_cloud_archive.py` using isolated system Python. No Python
   packages, Homebrew installs, signing files, or upload tools are needed.
 - The check refuses any `Config/env.xcconfig`, including a dangling symlink,
@@ -31,8 +31,10 @@ cannot undo an upload. Leave the auto-created **Default** workflow disabled.
   upgrades. The direct SDWebImageSwiftUI reference already omits `.git` (#85).
   See [Apple's dependency guidance](https://developer.apple.com/documentation/xcode/making-dependencies-available-to-xcode-cloud).
 
-There is no pre- or post-xcodebuild script: signing and TestFlight delivery belong
-to the cloud workflow. `ci_scripts/` and `scripts/` are outside all app targets;
+The pre- and post-xcodebuild scripts serve the separate
+[Apple TV fixture UI workflow](XCODE_CLOUD_UI.md) and return immediately for
+archive actions. Signing and TestFlight delivery belong to the release cloud
+workflow. `ci_scripts/` and `scripts/` are outside all app targets;
 these files do not ship in either app. Unit tests from the simulator archive
 (#131) and release prerequisite/tag automation (#115) remain separate work.
 

@@ -34,6 +34,7 @@ HOST_CHECKS = [
     ("Python test prerequisites", [sys.executable, "scripts/check_required_test_tools.py"]),
     ("workflow policy", [sys.executable, "scripts/check_workflow_policy.py", "--check-ui-shards"]),
     ("known-flaky registry", [sys.executable, "scripts/ci_flaky.py"]),
+    ("Xcode Cloud UI contract", [sys.executable, "scripts/check_xcode_cloud_ui.py"]),
     ("python tests", [sys.executable, "-B", "scripts/run_python_tests.py"]),
 ]
 

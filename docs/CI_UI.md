@@ -6,6 +6,10 @@ commit status. No required check or repository setting changes here. All three
 devices use the same archive validation, fixture runner, selection and verdict
 path. The trusted reuse reader must land on main before this producer is activated.
 
+The separate [Xcode Cloud Apple TV plan](XCODE_CLOUD_UI.md) prepares a test-only
+overflow execution path with the same fixture methods. Its preparation does not
+route heads or let cloud checks replace this tier's trusted evidence.
+
 ## Classification and archive selection
 
 The Linux `ui-archive` job reads the PR's base classification policy. A docs-only
