@@ -260,6 +260,21 @@ class LocalModeTests(unittest.TestCase):
                 if retained is not None:
                     git("worktree", "remove", "--force", str(retained))
                     shutil.rmtree(retained.parent)
+            process = None
+            try:
+                with self.assertRaises(SnapshotCleanupError):
+                    with snapshot(root) as (retained, _):
+                        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                                   cwd=retained, start_new_session=True)
+                self.assertTrue(retained.is_dir())
+            finally:
+                if process is not None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                if retained.exists():
+                    git("worktree", "remove", "--force", str(retained))
+                if retained.parent.exists():
+                    shutil.rmtree(retained.parent)
 
 
 if __name__ == "__main__":

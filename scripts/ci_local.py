@@ -140,6 +140,11 @@ def snapshot(root, *, strict=False):
         finally:
             if not retained:
                 try:
+                    # A crashing launcher can orphan a new session between process probes.
+                    usage = subprocess.run(["lsof", "-t", "+D", str(checkout)], capture_output=True,
+                                           text=True, timeout=30)
+                    if usage.returncode != 1 or usage.stdout or usage.stderr:
+                        raise SnapshotCleanupError("snapshot process/file occupancy could not be cleared")
                     git(root, "worktree", "remove", "--force", str(checkout), environment=environment)
                 except BaseException:
                     retained = True
@@ -249,8 +254,19 @@ def run_child(command, root, environment):
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             signal_groups({process.pid}, signal.SIGINT)
             raise SnapshotCleanupError("child process state could not be verified") from error
-        if not wait_for_groups(process, groups, 5):
-            raise SnapshotCleanupError("entry point exited with live child process groups")
+        try:
+            if not wait_for_groups(process, groups, 5):
+                # Xcode can leave owned developer services holding the snapshot cwd.
+                with ignored_cancellation_signals():
+                    signal_groups(groups, signal.SIGINT)
+                    if not wait_for_groups(process, groups, 15):
+                        signal_groups(groups, signal.SIGTERM)
+                        if not wait_for_groups(process, groups, 15):
+                            signal_groups(groups, signal.SIGKILL)
+                            if not wait_for_groups(process, groups, 15):
+                                raise SnapshotCleanupError("entry point exited with live child process groups")
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            raise SnapshotCleanupError("child cleanup could not be verified") from error
         return code
 
 
@@ -356,7 +372,7 @@ def local_main(main, filename):
     except KeyboardInterrupt as error:
         return 128 + getattr(error, "signum", signal.SIGINT)
     except (OSError, ValueError, subprocess.SubprocessError, SnapshotCleanupError) as error:
-        print("Local preflight refused: " + (str(error) if isinstance(error, ValueError) else type(error).__name__), file=sys.stderr)
+        print("Local preflight refused: " + (str(error) if isinstance(error, (ValueError, SnapshotCleanupError)) else type(error).__name__), file=sys.stderr)
         return 2
 
 
@@ -367,5 +383,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt as error:
         raise SystemExit(128 + getattr(error, "signum", signal.SIGINT))
     except (OSError, ValueError, subprocess.SubprocessError, SnapshotCleanupError) as error:
-        print("Local preflight refused: " + (str(error) if isinstance(error, ValueError) else type(error).__name__), file=sys.stderr)
+        print("Local preflight refused: " + (str(error) if isinstance(error, (ValueError, SnapshotCleanupError)) else type(error).__name__), file=sys.stderr)
         raise SystemExit(2)
