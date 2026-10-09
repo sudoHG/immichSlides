@@ -36,6 +36,13 @@ from ci_wait_policy import FACTOR_ENVIRONMENT_KEY, wait_configuration
 
 ROOT = Path(__file__).resolve().parent.parent
 DEVICE_MODELS = {"iphone": "iPhone", "ipad": "iPad", "appletv": "Apple TV"}
+# Simulator processes are crash-reported by the host, so their reports land in the host's diagnostic directories.
+CRASH_REPORT_DIRECTORIES = ("Library/Logs/DiagnosticReports", "Library/Logs/DiagnosticReports/Retired")
+CRASH_REPORT_SUFFIXES = {".ips", ".crash"}
+CRASH_REPORT_PROCESS_PREFIX = "immichSlides"  # the app and the UI test runner
+MAX_CRASH_REPORTS = 5
+MAX_CRASH_REPORT_BYTES = 1024 * 1024
+MAX_CRASH_REPORTS_TOTAL_BYTES = 4 * 1024 * 1024
 
 
 def verify_simulator_device(payload, udid, device):
@@ -226,6 +233,53 @@ def prepare_test_run(source, directory, inputs, *, failure_screenshots=False):
     return path
 
 
+def crash_report_snapshot(directories):
+    return {path for directory in directories if directory.is_dir() for path in directory.iterdir()}
+
+
+def collect_crash_reports(udid, before, destination, directories, *, home=None):
+    """Copy this simulator's app crash reports created since `before`, earliest first and within fixed bounds."""
+    home_text = str(home or Path.home())
+    candidates = []
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            if (path in before or path.suffix.lower() not in CRASH_REPORT_SUFFIXES
+                    or not path.name.startswith(CRASH_REPORT_PROCESS_PREFIX)):
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            candidates.append((stat.st_mtime, path.name, path, stat.st_size))
+    reports, omitted, total = [], [], 0
+    for _, name, path, size in sorted(candidates):
+        if size > MAX_CRASH_REPORT_BYTES:
+            omitted.append({"name": name, "reason": "larger than the per-report limit"})
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            omitted.append({"name": name, "reason": "unreadable"})
+            continue
+        if udid.lower().encode() not in data.lower():
+            continue
+        if len(reports) >= MAX_CRASH_REPORTS or total + len(data) > MAX_CRASH_REPORTS_TOTAL_BYTES:
+            omitted.append({"name": name, "reason": "report count or total size limit reached"})
+            continue
+        # The host user name appears in paths; keep reports useful but not personal.
+        data = data.replace(home_text.encode(), b"~").replace(home_text.replace("/", "\\/").encode(), b"~")
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / name).write_bytes(data)
+        total += len(data)
+        reports.append({"name": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+    if reports or omitted:
+        destination.mkdir(parents=True, exist_ok=True)
+        write_json(destination / "manifest.json", {"schema_version": 1, "reports": reports, "omitted": omitted})
+    return reports, omitted
+
+
 def write_json(path, payload):
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -376,6 +430,8 @@ def main(argv=None):
         summary["population"]["compiled"] = compiled_tests(json.loads(enumeration.read_text()), declared)
         rows = coverage_rows(declared, summary["population"]["compiled"], {"testNodes": []}, args.device)
         reset_simulator_app(udid)
+        crash_directories = [Path.home() / directory for directory in CRASH_REPORT_DIRECTORIES]
+        crash_reports_before = crash_report_snapshot(crash_directories)
         selected = [entry for entry in declared if not any(rule["identity"] == entry for rule in deselections)]
         compiled = [entry for entry in summary["population"]["compiled"] if entry in selected]
         command = base + selections + ["-resultBundlePath", str(bundle)] + [
@@ -425,6 +481,7 @@ def main(argv=None):
             summary["infrastructure"].extend(retry_result["infrastructure"])
             write_json(output / "retry-invocations.json", dict(retry_result, registry_revision=revision, registry_sha256=registry_hash))
             code = retry_result["exit_code"]
+            invocation_codes = [invocation["exit_code"] for invocation in retry_result["invocations"]]
             if (not retry_result["infrastructure"] and retry_result["observed"]
                     and all(item["outcome"] in {"passed", "flaky-passed", "skipped"} for item in retry_result["observed"])
                     and (retry_result["invocations"][0]["exit_code"] == 0 or
@@ -438,6 +495,12 @@ def main(argv=None):
                     for entry in selected]
         else:
             code = execute(command, "test")
+            invocation_codes = [code]
+        if args.failure_screenshots and any(item != 0 for item in invocation_codes):
+            # Lets a failure that left the app gone (home screen, failed termination) be told from a plain test failure.
+            collected, omitted = collect_crash_reports(udid, crash_reports_before,
+                                                       output / "failure-screenshots" / "crash-logs", crash_directories)
+            print(f"Crash reports for this simulator: {len(collected)} collected, {len(omitted)} omitted", flush=True)
         for number, path in enumerate(bundles, 1):
             if not path.exists():
                 continue

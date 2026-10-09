@@ -68,6 +68,18 @@ in the prepared UI target's temporary `.xctestrun`, overriding the archive's
 default video format. The archived run file and unit target stay unchanged.
 Only failed-test attachments are exported, then scanned before publication.
 
+With `--failure-screenshots`, a run where any Xcode invocation exits nonzero also
+copies the app and UI test runner crash reports (`immichSlides*.ips` / `.crash`)
+that the host wrote for this simulator since the test run began, to
+`failure-screenshots/crash-logs/`, so they are published and scanned with the
+failure attachments. A report counts only if it is new, its process name starts
+with `immichSlides` and it names this simulator's UDID. At most 5 reports of at
+most 1 MiB each (4 MiB in total) are kept, earliest first; the host home directory
+is replaced by `~`, and `manifest.json` lists what was kept and what was omitted.
+The collection is evidence only: it never changes a test outcome. An app that
+left the foreground without a report there (for example a kill by the system) shows
+as zero collected reports in the runner output.
+
 ## Coverage and policy
 
 The runner statically derives the selected default-plan population, enumerates

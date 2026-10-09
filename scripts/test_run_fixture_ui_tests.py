@@ -31,6 +31,31 @@ class FixtureCoverageTests(unittest.TestCase):
             self.assertEqual(targets[1], payload["TestConfigurations"][0]["TestTargets"][1])
             self.assertEqual(source.read_bytes(), original)
 
+    def test_crash_reports_keep_only_new_reports_of_this_simulator_within_bounds(self):
+        mine, other = "AAAAAAAA-0000-0000-0000-000000000001", "BBBBBBBB-0000-0000-0000-000000000002"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "reports"
+            reports.mkdir()
+            def write(name, text):
+                (reports / name).write_text(text)
+            write("immichSlides-old.ips", f"CoreSimulator/Devices/{mine}")
+            before = runner.crash_report_snapshot([reports])
+            write("immichSlides-this.ips", f'"procPath" : "{root}/CoreSimulator/Devices/{mine}/immichSlides"')
+            write("immichSlides-other-simulator.ips", f"CoreSimulator/Devices/{other}")
+            write("accountsd-this.ips", f"CoreSimulator/Devices/{mine}")
+            write("immichSlides-huge.ips", "x" * (runner.MAX_CRASH_REPORT_BYTES + 1))
+            destination = root / "out"
+            collected, omitted = runner.collect_crash_reports(mine, before, destination, [reports], home=root)
+            self.assertEqual([item["name"] for item in collected], ["immichSlides-this.ips"])
+            self.assertEqual([item["name"] for item in omitted], ["immichSlides-huge.ips"])
+            self.assertEqual(sorted(path.name for path in destination.iterdir()), ["immichSlides-this.ips", "manifest.json"])
+            self.assertNotIn(str(root), (destination / "immichSlides-this.ips").read_text())
+            for number in range(runner.MAX_CRASH_REPORTS + 2):
+                write(f"immichSlides-burst-{number}.ips", f"CoreSimulator/Devices/{mine}")
+            bounded, _ = runner.collect_crash_reports(mine, before, root / "bounded", [reports], home=root)
+            self.assertEqual(len(bounded), runner.MAX_CRASH_REPORTS)
+
     def test_successful_private_disposal_removes_bundle_and_sibling_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
