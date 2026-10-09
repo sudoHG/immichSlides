@@ -1,6 +1,7 @@
 """Guard per-test fixture coverage against missing, duplicate and skipped results."""
 
 import copy
+import os
 import plistlib
 import tempfile
 import unittest
@@ -30,6 +31,62 @@ class FixtureCoverageTests(unittest.TestCase):
             targets = plistlib.loads(prepared.read_bytes())["TestConfigurations"][0]["TestTargets"]
             self.assertEqual(targets[1], payload["TestConfigurations"][0]["TestTargets"][1])
             self.assertEqual(source.read_bytes(), original)
+
+    def test_crash_reports_keep_only_new_reports_of_this_simulator_within_bounds(self):
+        mine, other = "AAAAAAAA-0000-0000-0000-000000000001", "BBBBBBBB-0000-0000-0000-000000000002"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "reports"
+            retired = reports / "Retired"
+            retired.mkdir(parents=True)
+            def write(name, text, folder=reports, age=0):
+                path = folder / name
+                path.write_text(text) if isinstance(text, str) else path.write_bytes(text)
+                stamp = baseline["started"] + age
+                os.utime(path, (stamp, stamp))
+            baseline = {"started": 1_000_000.0}
+            write("immichSlides-old.ips", f"CoreSimulator/Devices/{mine}", age=-100)
+            moved = reports / "immichSlides-moved.ips"
+            write(moved.name, f"CoreSimulator/Devices/{mine}", age=-100)
+            baseline = runner.crash_report_snapshot([reports, retired])
+            self.assertIn(moved.name, baseline["names"])
+            baseline["started"] = 1_000_000.0
+            moved.rename(retired / moved.name)
+            write("immichSlides-unlisted-old.ips", f"CoreSimulator/Devices/{mine}", folder=retired, age=-100)
+            write("immichSlides-this.ips", f'"procPath" : "{root}/CoreSimulator/Devices/{mine}/immichSlides"\n'
+                  f'"crashReporterKey" : "D2604435-10B2-A3CB-5A7F-F0079E1980C1"\n'
+                  f'CrashReporter Key:   D2604435-10B2-A3CB-5A7F-F0079E1980C1\nAnonymous UUID:  1234\n'
+                  f'"uuid" : "13bf61dd-c45c-3fbf-94a2-7219a8e7abf4"', age=1)
+            write("immichSlides-other-simulator.ips", f"CoreSimulator/Devices/{other}", age=1)
+            write("accountsd-this.ips", f"CoreSimulator/Devices/{mine}", age=1)
+            write("immichSlides-huge.ips", b"x" * (runner.MAX_CRASH_REPORT_BYTES + 1), age=1)
+            destination = root / "out"
+            collected, omitted = runner.collect_crash_reports(mine, baseline, destination, [reports, retired], home=root)
+            self.assertEqual([item["name"] for item in collected], ["immichSlides-this.ips"])
+            self.assertEqual([item["name"] for item in omitted], ["immichSlides-huge.ips"])
+            self.assertEqual(sorted(path.name for path in destination.iterdir()), ["immichSlides-this.ips", "manifest.json"])
+            text = (destination / "immichSlides-this.ips").read_text()
+            for private in (str(root), "D2604435", "1234"):
+                self.assertNotIn(private, text)
+            self.assertIn("13bf61dd-c45c-3fbf-94a2-7219a8e7abf4", text)
+            for number in range(runner.MAX_CRASH_REPORTS + 2):
+                write(f"immichSlides-burst-{number}.ips", f"CoreSimulator/Devices/{mine}", age=2 + number)
+            bounded, _ = runner.collect_crash_reports(mine, baseline, root / "bounded", [reports, retired], home=root)
+            self.assertEqual(len(bounded), runner.MAX_CRASH_REPORTS)
+            self.assertNotIn("immichSlides-unlisted-old.ips", [item["name"] for item in bounded])
+
+    def test_crash_report_collection_failure_never_escapes_into_the_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "reports"
+            reports.mkdir()
+            (reports / "immichSlides-this.ips").write_text("CoreSimulator/Devices/UDID")
+            blocker = root / "blocker"
+            blocker.write_text("a file where the destination parent should be")
+            baseline = {"started": 0.0, "names": set()}
+            self.assertEqual(runner.collect_crash_reports("UDID", baseline, blocker / "crash-logs", [reports]), ([], []))
+            with patch.object(Path, "iterdir", side_effect=PermissionError):
+                self.assertEqual(runner.crash_report_snapshot([reports])["names"], set())
 
     def test_successful_private_disposal_removes_bundle_and_sibling_logs(self):
         with tempfile.TemporaryDirectory() as directory:

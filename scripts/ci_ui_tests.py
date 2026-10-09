@@ -479,7 +479,7 @@ def main(argv=None):
             from strict_e2e_server import PUBLIC_API_KEY
             parse_summary((args.output_dir / "summary.json").read_text())
             write_sensitive_scan(args.output_dir, [PUBLIC_API_KEY])
-            output("has_screenshots", str(any(path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+            output("has_screenshots", str(any(path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".ips", ".crash"}
                     for path in (args.output_dir / "failure-screenshots").rglob("*"))).lower())
             return 0
         if args.command == "reproduce":
