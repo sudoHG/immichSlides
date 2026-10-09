@@ -227,6 +227,119 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual("closed", checks[0]["issue_state"])
         self.assertFalse(registry_checks(registry, "2026-10-01", {135: "open"})[0]["expired"])
 
+    def test_registry_warning_and_expiry_match_retry_dates_without_editing_entries(self):
+        from ci_flaky import eligible_entry
+        from test_ci_flaky import registry
+        payload = registry()
+        original = copy.deepcopy(payload)
+        item = payload["entries"][0]
+        for day, status, eligible in (("2026-10-30", "active", True),
+                                      ("2026-10-31", "review-due", True),
+                                      ("2026-11-07", "review-due", True),
+                                      ("2026-11-08", "expired", False)):
+            for states, expected in (({123: "open"}, "open"), ({123: "closed"}, "closed"),
+                                     ({123: "missing"}, "missing"), ({}, "unknown")):
+                with self.subTest(day=day, state=expected):
+                    check = registry_checks(payload, day, states)[0]
+                    self.assertEqual(status, check["review_status"])
+                    self.assertEqual(expected, check["issue_state"])
+                    self.assertEqual(eligible, check["date_eligible"])
+                    self.assertEqual(eligible, eligible_entry(payload, item["identity"],
+                        tier="ui", environment="hermetic", today=date.fromisoformat(day)) is not None)
+        self.assertEqual(original, payload)
+
+    def test_health_keeps_first_failure_after_rerun_and_reports_missing_legacy_metrics(self):
+        from ci_health import health_report, observation_metrics
+        first = entry("2026-10-01")
+        first["health"] = observation_metrics(first["observed"], unexpected_skips=0)
+        last = entry("2026-10-01", "passed", attempt=2)
+        last["health"] = observation_metrics(last["observed"], unexpected_skips=0)
+        last["attempt_history"] = [first, copy.deepcopy(last)]
+        legacy = entry("2026-10-02", "passed", run=11)
+        snapshot = ci_report.merge_snapshot(None, [last, legacy], date(2026, 10, 9))
+        result = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 9))
+        self.assertEqual(2, result["coverage"]["runs"])
+        self.assertEqual(["2026-10-01", "2026-10-02"], result["coverage"]["days_with_runs"])
+        self.assertEqual(6, result["coverage"]["missing_calendar_days"])
+        self.assertEqual({"value": 1, "sampled_runs": 1, "missing_runs": 1}, result["metrics"]["first_attempt_failures"])
+        self.assertEqual({"value": None, "sampled_runs": 0, "missing_runs": 2}, result["metrics"]["queue_seconds"])
+        self.assertGreater(result["storage"]["snapshot_json_bytes"], 0)
+        malformed = copy.deepcopy(snapshot)
+        malformed["days"]["2026-10-01"]["retention_days"] = 7
+        with self.assertRaises(ContractError):
+            health_report(malformed, {"entries": []}, "2026-10", date(2026, 10, 9))
+
+    def test_health_counts_retry_first_calls_before_compaction_and_rejects_bad_metrics(self):
+        from ci_health import health_report, observation_metrics
+        from ci_flaky import merge_retry
+        report = entry()
+        report["observed"] = [merge_retry(report["observed"][0], observation(IDENTITY, "passed", 2))]
+        report["health"] = observation_metrics(report["observed"], unexpected_skips=0)
+        compact = ci_report.compact_entry(report, set())
+        snapshot = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))
+        result = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 1))
+        for key, expected in (("first_attempt_failures", 1), ("flaky_passed", 1), ("test_duration_seconds", 3)):
+            self.assertEqual(expected, result["metrics"][key]["value"])
+        for invalid in (-1, float("nan"), True):
+            broken = copy.deepcopy(snapshot)
+            broken["days"]["2026-10-01"]["entries"][0]["health"]["test_duration_seconds"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ContractError):
+                health_report(broken, {"entries": []}, "2026-10", date(2026, 10, 1))
+
+    def test_monthly_due_date_handles_year_boundary_and_explicit_partial_month(self):
+        from ci_health import report_month
+        self.assertEqual("2025-12", report_month("schedule", {}, date(2026, 1, 1)))
+        self.assertIsNone(report_month("schedule", {}, date(2026, 1, 2)))
+        self.assertIsNone(report_month("workflow_run", {}, date(2026, 1, 1)))
+        self.assertEqual("2026-01", report_month("workflow_dispatch", {"inputs": {"health_month": "2026-01"}}, date(2026, 1, 2)))
+        for month in ("2026-02", "2026-13", "2026-1", "candidate text"):
+            with self.subTest(month=month), self.assertRaises(ContractError):
+                report_month("workflow_dispatch", {"inputs": {"health_month": month}}, date(2026, 1, 2))
+
+    def test_health_skip_classification_uses_approved_rules_and_exact_reasons(self):
+        from ci_health import unexpected_skips, run_metrics
+        summary = valid_summary()
+        identity = summary["population"]["observed"][0]["identity"]
+        summary["population"]["observed"] = [observation(identity, "skipped", 0, reason="fixture unavailable")]
+        rule = {"kind": identity["kind"], "key_pattern": identity["key"], "dimensions": identity["dimensions"],
+                "tier": summary["run"]["tier"], "environment": "hermetic", "reason": "fixture unavailable"}
+        policy = {"schema_version": 1, "expected_skips": [rule], "deselections": [],
+                  "approval_records": [{"approver": "sudoHG", "date": "2026-10-01", "tier": summary["run"]["tier"],
+                                        "link": "https://github.com/sudoHG/immichSlides/issues/83#issuecomment-123"}]}
+        self.assertEqual(0, unexpected_skips([summary], policy, "hermetic"))
+        self.assertEqual(1, unexpected_skips([summary], policy, "live"))
+        policy["approval_records"] = []
+        self.assertEqual(1, unexpected_skips([summary], policy, "hermetic"))
+        self.assertIsNone(unexpected_skips([summary], None, "hermetic"))
+        run = {"run_attempt": 1, "status": "completed", "created_at": "2026-10-01T00:00:00Z",
+               "run_started_at": "2026-10-01T00:00:10Z", "updated_at": "2026-10-01T00:01:10Z"}
+        self.assertEqual({"queue_seconds": 10, "run_duration_seconds": 60}, run_metrics(run))
+        self.assertIsNone(run_metrics({**run, "run_attempt": 2})["queue_seconds"])
+
+    def test_read_only_health_stops_on_quota_and_never_bootstraps_missing_history(self):
+        for snapshot, error in ((None, ContractError), (ci_report.RateLimitLow(), None)):
+            with self.subTest(snapshot=snapshot), tempfile.TemporaryDirectory() as temporary:
+                api = ci_report.ReportGitHub("sudoHG/immichSlides", "synthetic", dry_run=True)
+                with patch("ci_report.ReportGitHub", return_value=api), patch.dict("os.environ", {"CI_REPORT_TOKEN": "synthetic"}), \
+                        patch.object(api, "request", return_value={}), patch("ci_report.read_snapshot", return_value=snapshot,
+                            side_effect=snapshot if isinstance(snapshot, Exception) else None):
+                    args = ["--phase", "health", "--dry-run", "--month", "2026-10", "--output-dir", temporary]
+                    if error:
+                        with self.assertRaises(error):
+                            ci_report.main(args)
+                    else:
+                        self.assertEqual(0, ci_report.main(args))
+                    self.assertEqual([], list(Path(temporary).iterdir()))
+
+    def test_artifact_storage_reuses_listed_metadata_without_counting_pages_twice(self):
+        api = ci_report.ReportGitHub("sudoHG/immichSlides", "synthetic", dry_run=True)
+        response = {"artifacts": [{"id": 1, "size_in_bytes": 12}, {"id": 2, "size_in_bytes": 8}]}
+        with patch("ci_publish.GitHub.request", return_value=response):
+            api.repo("actions/runs/10/artifacts?per_page=100&page=1")
+            api.repo("actions/runs/10/artifacts?per_page=100&page=1")
+        self.assertEqual(20, sum(api.artifact_sizes[10].values()))
+        self.assertEqual(2, api.request_count)
+
     def test_missing_nightly_evidence_is_infrastructure_and_not_an_invented_test_result(self):
         report = entry()
         report["observed"] = []

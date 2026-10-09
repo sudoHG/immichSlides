@@ -267,7 +267,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             or events.get("workflow_run", {}).get("branches") != ["main"]
             or events.get("workflow_dispatch") != {"inputs": {"reset_history": {
                 "description": "Maintainer-only explicit bootstrap or reset of reporting history",
-                "required": False, "default": False, "type": "boolean"}}}
+                "required": False, "default": False, "type": "boolean"}, "health_month": {
+                "description": "Optional UTC health month (YYYY-MM); scheduled collection reports the previous month on day 1",
+                "required": False, "default": "", "type": "string"}}}
             or document.get("permissions") != {}):
         flag("workflow", "report-contract", "ci-report needs main-filtered completion/daily/manual triggers and no workflow-level grants")
     if approval_workflow and "concurrency" in document:
@@ -370,9 +372,15 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 daily = [i for i, step in enumerate(steps) if isinstance(step, dict)
                          and step.get("uses", "").startswith("actions/upload-artifact@")
                          and step.get("with", {}).get("path") == "${{ runner.temp }}/ci-report/daily"]
+                health = [i for i, step in enumerate(steps) if isinstance(step, dict)
+                          and step.get("uses", "").startswith("actions/upload-artifact@")
+                          and step.get("with", {}).get("path") == "${{ runner.temp }}/ci-report/health"]
                 if not (len(collect) == len(sync) == len(daily) == 1 and collect[0] < daily[0] < sync[0]
                         and steps[daily[0]].get("if") == "success()" and steps[sync[0]].get("if") == "success()"):
                     flag(location, "report-contract", "Upload the verified daily rollup before issue synchronization")
+                if not (len(daily) == len(health) == len(sync) == 1 and daily[0] < health[0] < sync[0]
+                        and steps[health[0]].get("if") == "success() && steps.collect.outputs.health_month != ''"):
+                    flag(location, "report-contract", "Upload requested monthly health after daily history and before issue synchronization")
             if path in PUBLISHER_COMMANDS and any(step.get("run", "").endswith("scripts/ci_publish.py publish")
                                                  for step in steps if isinstance(step, dict)):
                 checkouts = [step for step in steps if isinstance(step, dict)
@@ -449,7 +457,10 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                                              "path": "${{ runner.temp }}/ci-report/" + directory,
                                              "if-no-files-found": missing, "retention-days": retention}
                                  for name, directory, missing, retention in (("daily", "daily", "error", 90),
-                                     ("runs", "runs", "ignore", 7))))
+                                     ("runs", "runs", "ignore", 7))) or
+                         path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+                         and options == {"name": "ci-report-health-${{ steps.collect.outputs.health_month }}-${{ github.run_id }}-${{ github.run_attempt }}",
+                                         "path": "${{ runner.temp }}/ci-report/health", "if-no-files-found": "error", "retention-days": 90})
         if "uses" in item and not publisher_upload and not report_upload and not trusted_action_allowed(uses, options):
             flag(location, "trusted-action", "Trusted uses must be an approved pinned remote action or isolated repository-local action")
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":

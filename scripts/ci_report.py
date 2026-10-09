@@ -43,6 +43,7 @@ class ReportGitHub(GitHub):
     def __init__(self, repository, token, *, dry_run=False):
         self.request_count, self.remaining, self.rate_limit, self.dry_run = 0, None, 1000, dry_run
         self.binary_cache = {}
+        self.artifact_sizes = {}
         super().__init__(repository, token, response_headers=self.check_headers)
 
     def check_headers(self, headers):
@@ -72,6 +73,12 @@ class ReportGitHub(GitHub):
             raise
         if method == "GET" and options.get("binary"):
             self.binary_cache = {path: result}
+        match = re.search(r"/actions/runs/([1-9][0-9]*)/artifacts(?:\?|$)", path)
+        if match and isinstance(result, dict) and "artifacts" in result:
+            sizes = self.artifact_sizes.setdefault(int(match[1]), {})
+            for artifact in result["artifacts"]:
+                require(type(artifact["size_in_bytes"]) is int and artifact["size_in_bytes"] >= 0, "invalid artifact size")
+                sizes[artifact["id"]] = artifact["size_in_bytes"]
         return result
 
 
@@ -286,10 +293,17 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
 
 def registry_checks(registry, day, issue_states):
     iso_day(day)
-    return [{"identity": entry["identity"], "issue": entry["issue"], "owner": entry["owner"],
-             "review_by": entry["review_by"], "expired": entry["review_by"] < day,
-             "issue_state": issue_states.get(int(entry["issue"].rsplit("/", 1)[-1]), "missing")}
-            for entry in registry["entries"]]
+    checks = []
+    for entry in registry["entries"]:
+        remaining = (date.fromisoformat(entry["review_by"]) - date.fromisoformat(day)).days
+        state = issue_states.get(int(entry["issue"].rsplit("/", 1)[-1]), "unknown")
+        require(state in {"open", "closed", "missing", "unknown"}, "invalid registry issue state")
+        status = "expired" if remaining < 0 else "review-due" if remaining <= 7 else "active"
+        checks.append({"identity": entry["identity"], "issue": entry["issue"], "owner": entry["owner"],
+                       "review_by": entry["review_by"], "expired": remaining < 0, "date_eligible": remaining >= 0,
+                       "review_status": status, "days_until_review": remaining, "issue_state": state,
+                       "age_days": (date.fromisoformat(day) - date.fromisoformat(entry["added_on"])).days if "added_on" in entry else None})
+    return checks
 
 
 def text(value):
@@ -369,6 +383,7 @@ def dispatch_shard(api, run, attempt, artifacts):
 
 
 def nightly_attempt(api, run, attempt, artifacts):
+    from ci_health import observation_metrics
     from ci_publish import json_member
     entry = report_base({**run, "run_attempt": attempt}, api.repository)
     name = f"nightly-aggregate-{run['id']}-{attempt}"
@@ -423,6 +438,8 @@ def nightly_attempt(api, run, attempt, artifacts):
     entry.update(observed=observed, diagnostics={"counts": dict(counts), "missing": missing, "infrastructure": infrastructure,
         "failures": [{"identity": item["identity"], "outcome": item["outcome"],
                       "exit_codes": [a["exit_code"] for a in item["attempts"]]} for item in observed if item["outcome"] in FAILURES]})
+    # The strict aggregate accepts explicit passes/flaky-passes only, not skips.
+    entry["health"] = observation_metrics(observed, unexpected_skips=counts["skipped"])
     return entry
 
 
@@ -430,6 +447,7 @@ def read_run(api, run, admissions, previous=None):
     """Only bounded JSON data is read; artifact files are never extracted or executed."""
     from ci_publish import producer_evidence
     from ci_publish_git import evaluate_records
+    from ci_health import observation_metrics, run_metrics, unexpected_skips
     entry = report_base(run, api.repository)
     if run["status"] != "completed":
         if previous and previous.get("attempt_history"):
@@ -490,6 +508,12 @@ def read_run(api, run, admissions, previous=None):
             entry.update(identity=identity, diagnostics=summary_diagnostics(summaries, errors),
                          observed=[item for summary in summaries for item in summary["population"]["observed"]])
             entry["hashes"] = [summary["hashes"] for summary in summaries]
+            entry["health"] = observation_metrics(entry["observed"], unexpected_skips=unexpected_skips(
+                summaries, record.get("base_policy"), "fixture" if run["path"] == PRODUCER_PATHS[1] else "hermetic"))
+            if run["run_attempt"] != 1:
+                # Gate/UI compact history predates metrics and does not retain
+                # every original observation after a GitHub job rerun.
+                entry["health"]["first_attempt_failures"] = (previous or {}).get("health", {}).get("first_attempt_failures")
             if entry.get("evidence_expired"):
                 entry["status"] = "unverified"
                 entry["diagnostics"]["infrastructure"] = []
@@ -521,6 +545,10 @@ def read_run(api, run, admissions, previous=None):
             attempt["message"] = None
             attempt["reason"] = ("skip reason withheld; consult trusted policy" if attempt["outcome"] == "skipped"
                                  else "strict-case-contract-failed" if attempt.get("reason") == "strict-case-contract-failed" else None)
+    if "health" in entry:
+        entry["health"].update(run_metrics(run))
+        sizes = getattr(api, "artifact_sizes", {}).get(run["id"])
+        entry["health"]["artifact_bytes"] = sum(sizes.values()) if sizes is not None else None
     return entry
 
 
@@ -714,6 +742,8 @@ def compact_entry(entry, tracked):
     result = {key: copy.deepcopy(value) for key, value in entry.items() if key in {
         "schema_version", "day", "source", "run", "identity", "hashes", "status", "release_eligible",
         "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired", "diagnostic_shard"}}
+    if "health" in entry:
+        result["health"] = copy.deepcopy(entry["health"])
     result["diagnostics"] = {key: copy.deepcopy(entry["diagnostics"].get(key, [] if key != "counts" else {}))
                              for key in ("counts", "failures", "missing", "infrastructure")}
     result["observed"] = [copy.deepcopy(item) for item in entry["observed"]
@@ -854,6 +884,8 @@ def write_report(output, snapshot, entries, registry, states, *, stopped, now=No
 def collect_report(api, event_name, event, now, output, *, run_ids=()):
     from ci_publish import trusted_admissions
     from ci_flaky import parse_registry
+    from ci_health import report_month, write_health, render_registry
+    month = report_month(event_name, event, now)
     registry = parse_registry(Path("scripts/ci-known-flaky.json").read_text())
     snapshot, entries, states, stopped, history_loaded = None, [], {}, False, False
     inventory = []
@@ -916,6 +948,7 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
         snapshot = merge_snapshot(snapshot, entries, now)
         snapshot["issue_index"] = index
     snapshot["registry"] = registry_checks(registry, now.isoformat(), states)
+    snapshot["registry_day"] = now.isoformat()
     stopped |= api.budget_exhausted()
     snapshot["budget_stopped"] = stopped
     snapshot["api_budget"] = {"requests": api.request_count, "remaining": api.remaining,
@@ -928,12 +961,24 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
             "run": {"id": os.environ["GITHUB_RUN_ID"], "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
             "commit_sha": os.environ["GITHUB_SHA"]}
     write_report(output, snapshot, entries, registry, states, stopped=stopped, now=now, inventory=inventory)
+    rendered_health = write_health(output, snapshot, registry, month, now) if month else ""
+    if month and os.environ.get("GITHUB_OUTPUT"):
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
+            handle.write("health_month=" + month + "\n")
+    checks = snapshot["registry"]
+    (output / "runs/registry.json").write_text(json.dumps({"day": now.isoformat(), "entries": checks, "budget_stopped": stopped}) + "\n")
+    (output / "runs/registry.md").write_text(render_registry(checks))
+    for item in checks:
+        if item["review_status"] != "active" or item["issue_state"] in {"closed", "missing", "unknown"}:
+            number = item["issue"].rsplit("/", 1)[-1]
+            print(f"::warning title=Known-flaky registry::Issue {number}: {item['review_status']}; review by {item['review_by']}; "
+                  f"issue state {item['issue_state']}; date eligible {item['date_eligible']}")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
             handle.write("# CI daily reporting\n\nDaily history: 90 days; main/nightly summaries: 7 days. PR producers retain their own summaries for 30 days.\n\n")
             for entry in entries:
                 handle.write(render_entry(entry))
-            handle.write("\nRegistry review: " + text(snapshot["registry"]) + "\n")
+            handle.write("\n## Registry review\n\n" + render_registry(checks) + "\n" + rendered_health)
     receipt = {"writes": False, "requests": api.request_count, "rate_remaining": api.remaining,
                "budget_stopped": stopped, "runs_read": len(entries), "days": len(snapshot["days"]),
                "rollup_bytes": (output / "daily/history.json").stat().st_size}
@@ -943,13 +988,16 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", choices=("collect", "sync"), default="collect")
+    parser.add_argument("--phase", choices=("collect", "sync", "health"), default="collect")
+    parser.add_argument("--month", help="UTC calendar month, YYYY-MM; required for read-only health")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", "sudoHG/immichSlides"))
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--run-id", type=int, action="append", default=[])
     args = parser.parse_args(argv)
-    require(not args.dry_run or args.phase == "collect", "dry-run cannot synchronize issues")
+    require(not args.dry_run or args.phase in {"collect", "health"}, "dry-run cannot synchronize issues")
+    require((args.phase == "health") == bool(args.month), "health requires one month")
+    require(args.phase != "health" or args.dry_run, "standalone health is read-only")
     require(not args.run_id or args.dry_run and all(run_id > 0 for run_id in args.run_id), "run selection is dry-run only")
     if not args.dry_run:
         check_context(os.environ)
@@ -961,6 +1009,24 @@ def main(argv=None):
     require(bool(token), "missing reporting token")
     api = ReportGitHub(args.repository, token, dry_run=args.dry_run)
     output = args.output_dir or Path(os.environ["RUNNER_TEMP"]) / "ci-report"
+    if args.phase == "health":
+        from ci_health import write_health
+        from ci_flaky import parse_registry
+        now = datetime.now(timezone.utc).date()
+        try:
+            api.request("/rate_limit")
+            snapshot = read_snapshot(api)
+            require(snapshot is not None, "health requires real reporter history")
+        except RateLimitLow:
+            print("Health deferred: API reserve reached before history was verified; no report written.")
+            return 0
+        rendered = write_health(output, snapshot, parse_registry(Path("scripts/ci-known-flaky.json").read_text()), args.month, now)
+        if os.environ.get("GITHUB_STEP_SUMMARY"):
+            with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
+                handle.write(rendered)
+        print(json.dumps({"writes": False, "requests": api.request_count, "month": args.month,
+                          "source": snapshot["producer"], "days": sorted(snapshot["days"])}))
+        return 0
     if args.phase == "collect":
         event_name = "schedule" if args.dry_run else os.environ["GITHUB_EVENT_NAME"]
         event = {} if args.dry_run else decode(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())

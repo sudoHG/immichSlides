@@ -299,6 +299,14 @@ class WorkflowPolicyTests(unittest.TestCase):
                                         "path": "${{ runner.temp }}/ci-report/daily", "if-no-files-found": "error", "retention-days": 90}},
                               {"if": "success()", "run": '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync',
                                "env": {"CI_REPORT_TOKEN": "${{ github.token }}"}}]}}}
+        document["on"]["workflow_dispatch"]["inputs"]["health_month"] = {
+            "description": "Optional UTC health month (YYYY-MM); scheduled collection reports the previous month on day 1",
+            "required": False, "default": "", "type": "string"}
+        document["jobs"]["report"]["steps"].insert(3, {
+            "if": "success() && steps.collect.outputs.health_month != ''",
+            "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            "with": {"name": "ci-report-health-${{ steps.collect.outputs.health_month }}-${{ github.run_id }}-${{ github.run_attempt }}",
+                     "path": "${{ runner.temp }}/ci-report/health", "if-no-files-found": "error", "retention-days": 90}})
         self.assertEqual(set(), self.rules(document, policy.REPORT_WORKFLOW))
         for mutate in (lambda job: job["permissions"].update(actions="write"),
                        lambda job: job.update(environment="ci-publisher"),
@@ -306,6 +314,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                        lambda job: job.update({"if": job["if"].replace("head_repository.full_name == github.repository", "head_repository.full_name != github.repository")}),
                        lambda job: job.update({"if": job["if"].replace("event == 'push'", "event == 'pull_request'")}),
                        lambda job: job["steps"][2].update({"if": "always()"}),
+                       lambda job: job["steps"][3].update({"if": "always()"}),
                        lambda job: job["steps"].reverse(),
                        lambda job: job["steps"][0]["with"].update(ref="${{ github.event.workflow_run.head_sha }}"),
                        lambda job: job.update(concurrency={"group": "ci-report-state", "cancel-in-progress": True})):
