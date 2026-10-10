@@ -8,7 +8,7 @@
 import SwiftUI
 import UIKit
 
-// FocusedValue reports the system's actual focus, since it isn't always in sync with @FocusState.
+// FocusedValue reports the system's actual focus while @FocusState catches up after grid updates.
 
 private enum FocusHandoffTiming {
     static let delayNanoseconds: UInt64 = 180_000_000
