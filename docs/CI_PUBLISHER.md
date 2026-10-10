@@ -308,7 +308,9 @@ scoped cloud routing is outside this rollout.
 GitHub cannot skip one entry of a static matrix, so a scoped producer lists only
 the shards it runs: each UI matrix may take exactly
 `shard: ${{ fromJSON(needs.archive.outputs.ios_shards) }}` (or `tvos_shards`) beside
-a literal device list of that one platform. Any other dynamic matrix value, a
+a literal device list of that one platform. The prepared packed protocol also
+allows `iphone_shards` and `ipad_shards` beside that one literal device.
+Any other dynamic matrix value, a
 second occurrence of that expression, or a mixed-platform device list is refused.
 Admission binds the expression in both stored `ci-ui.yml` texts to trusted names
 and leaves every other byte unchanged. For a non-CI-changing pull request with a
@@ -333,8 +335,50 @@ Scoped successes emit no identical-tree full-UI reuse receipt. Full receipts bin
 the area-map hash too, preserving main-push full coverage when area definitions
 change. Pull-request producers schedule the bound trusted selection
 ([scheduling](CI_UI.md#scheduling-the-selection)); full bindings apply to pushes,
-nightly, manual and CI-changing runs, and a main push may still skip its matrices
+nightly, manual and legacy CI-changing runs, and a main push may still skip its matrices
 through reuse or nightly deferral.
+
+### Packed scoped UI protocol
+
+The reader recognizes `--pack-scoped-ui` only as one literal flag on the admitted
+workflow's `ci_ui_tests.py wait-archive` command. The current producer has no flag;
+the reader must land before a separate producer PR activates it. Historical and
+unflagged producers retain the existing full-or-exact-selection compatibility.
+
+Admission reads the area map, synchronized app platform filters and
+`scripts/ci-ui-durations.json` from the verified base. The isolated reader executes
+only the base `ci_ui_selection.py`, `ci_ui_test_kinds.py` and `ci_ui_packing.py`; candidate scripts and
+duration data are never imported or used as selection authority. Approved candidate
+workflow metadata still cannot narrow the base population. The deterministic plan
+contains exact per-device shard identities, frozen duration hash and predicted
+costs, with a canonical SHA-256 over all these fields. The
+[selection and packing rules](CI_UI.md#prepared-platform-selection-and-capacity-packing)
+define its bounded scheduling behavior. Full default-plan partitions remain v2.
+
+For an activated scoped PR the job union must be exactly the nonempty packed
+shards, named `scoped-a` through `scoped-f`. All three device declarations remain
+mandatory even when one platform has no test. Every executed infrastructure and
+device summary must bind `hashes.manifests.ui-scoped-plan` to the admitted hash,
+in addition to the existing manifest, default-plan and run/head/tree checks.
+Per-job declared, compiled and observed identities must equal its exact plan;
+missing, extra, duplicate or cross-device evidence fails closed. Legacy full shard
+summaries cannot satisfy a packed selection, even when its union happens to equal
+the full population. An excluded platform may produce only the existing complete,
+skipped, no-runner/no-steps collapsed matrix record; no archive or device summary
+can claim its tests passed. Scoped successes still provide no full reuse receipt.
+
+Every activated PR excludes methods whose method name contains `Screenshot` or
+`Acceptance`, including locale methods. Core, unknown and CI-changing PRs retain
+all **functional** default-plan methods on every platform. CI-changing evidence
+still needs the existing exact-head approval; functional selection cannot waive
+that boundary. The host audit rejects methods matching zero or multiple kind rules.
+Separate literal iPhone and iPad matrices may bind `iphone_shards` and `ipad_shards`
+outputs, so their independently capped counts need not agree. A device output on
+another device, or a grouped matrix with differing selected lists, is refused.
+Pushes, manual and nightly full runs retain every default-plan method.
+Selection/classification/packing errors fail activated PR admission; only unflagged
+historical producers retain full-population compatibility on selection errors.
+Plan estimates are diagnostic data, not passing samples or duration acceptance.
 
 The gate reader also supports a Linux `ci_gate.py classify` producer with one
 `host` identity, `Gate change classification`, tier `gate-infrastructure`, job

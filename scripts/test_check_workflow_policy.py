@@ -214,6 +214,14 @@ final class LocaleUITests: XCTestCase {
         document["jobs"]["shards"]["strategy"]["max-parallel"] = 4
         document["jobs"]["appletv-shards"]["strategy"]["max-parallel"] = 1
         self.assertIn("ui-capacity", self.rules(document, path))
+        split = copy.deepcopy(document)
+        split['jobs']['iphone-shards'] = split['jobs'].pop('shards')
+        split['jobs']['ipad-shards'] = copy.deepcopy(split['jobs']['iphone-shards'])
+        split['jobs']['iphone-shards']['strategy']['max-parallel'] = 2
+        split['jobs']['ipad-shards']['strategy']['max-parallel'] = 1
+        self.assertNotIn('ui-capacity', self.rules(split, path))
+        split['jobs']['ipad-shards']['strategy']['max-parallel'] = 2
+        self.assertIn('ui-capacity', self.rules(split, path))
 
     def test_ui_matrix_cannot_omit_a_manifest_partition_or_unbind_its_selection(self):
         from ci_publish_git import DYNAMIC_UI_SHARDS

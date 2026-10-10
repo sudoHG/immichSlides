@@ -186,6 +186,82 @@ rule still requires a green, release-eligible nightly for the exact release SHA
 and its complete required human reviews; a scoped PR result cannot replace it.
 See [the nightly contract](CI_NIGHTLY.md) and [publisher trust](CI_PUBLISHER.md).
 
+### Prepared platform selection and capacity packing
+
+The reader supports a successor protocol, but the current `ci-ui.yml` producer
+does **not** activate it. Activation requires the literal `--pack-scoped-ui` flag
+on its admitted `ci_ui_tests.py wait-archive` command, in a separate producer PR
+after this reader has reached main. Until then, scheduling and locale deferral
+retain the contract above. No tests, assertions or default plans change.
+
+With this intent, selection pairs each changed path's areas with its proven
+platform. An iOS-only settings file selects iPhone/iPad settings and smoke tests;
+a tvOS-only filter file selects Apple TV filter and smoke tests. A mixed diff
+unions these pairs rather than running every affected area on both platforms.
+Narrowing requires an explicit `platformFiltersByRelativePath` entry attached to
+the synchronized app root and app target in the **base** Xcode project. A directory
+or filename alone supplies no proof. Missing or unfamiliar project syntax remains
+shared. On PRs, methods whose **method name** contains `Screenshot` or `Acceptance`
+are screenshot tests; every other method is functional. Class names do not affect
+this rule. The host audit applies both predicates to every unfiltered method on
+both platforms and rejects an unclassified or ambiguous method. New tests are
+classified automatically by their method name and still need reviewed area coverage.
+The base map's separate `functional_smoke` uses functional first-boot checks;
+the legacy screenshot smoke remains unchanged until producer activation.
+Core, unknown and CI-changing PRs run **all functional methods** on all platforms,
+without screenshot or locale methods, even when a catalog or captured screen changes.
+The nightly and other non-PR full runs retain the complete default-plan population.
+
+For a scoped run the base reader packs the exact selected methods independently
+on each device into `scoped-a` through `scoped-f`. It uses deterministic longest
+method first assignment and identity ordering for ties. Separate literal iPhone
+and iPad matrices let their different method durations choose different counts.
+Their only dynamic values are `shard` lists from `iphone_shards` and `ipad_shards`;
+Apple TV retains `tvos_shards`. Each device's
+count is bounded by `ceil(selected estimated test seconds / 900)`, six shards and
+its method count. Candidate counts must fit the existing 28-minute estimated job
+budget; impossible packing or classification fails the activated PR admission.
+No method is dropped, duplicated, replaced or borrowed from another device.
+
+The planner accounts for two iPhone slots, one iPad slot and one Apple TV slot,
+with nine minutes of fixed overhead per iOS job and four per Apple TV job. It
+chooses the fewest jobs when predicted UI time fits 25 minutes, leaving five for
+the gate build. Otherwise it minimizes predicted UI wall time, then runner
+minutes, within the same caps. Predictions do **not** establish a 30-minute pass.
+Gate queue time, real test duration and runner overhead still require hosted
+measurement. Full/nightly runs retain every existing duration-balanced v2 shard.
+
+With the initial frozen weights, iOS settings selects 30/30/0 methods in 2/1/0
+jobs: about 23.5 UI minutes and 67.7 runner-minutes. Apple TV filter selects
+0/0/26 in 0/0/1: 17.5 UI and runner-minutes. Shared settings selects 30/30/34
+in 2/1/1: 25.1 UI minutes and 92.9 runner-minutes. Adding a five-to-ten-minute
+gate wait predicts 28.5–33.5, 22.5–27.5 and 30.1–35.1 minutes respectively.
+Core selects all 51/51/60 functional methods. These are estimates from recorded
+method durations, not hosted acceptance; iOS's 30-minute target requires archive
+readiness within about 6.5 minutes on an idle queue.
+
+[`scripts/ci-ui-durations.json`](../scripts/ci-ui-durations.json) supplies frozen,
+per-device method seconds. The initial weights are the maximum observed duration
+per method in the latest execution attempts of UI runs
+[38051247254](https://github.com/sudoHG/immichSlides/actions/runs/38051247254) and
+[38035723923](https://github.com/sudoHG/immichSlides/actions/runs/38035723923), rounded
+to milliseconds with a one-second floor. Failed observations remain included.
+An unseen method receives 120 seconds; weights never determine coverage. This
+file is CI-trusted and host-validated. Only base weights can choose a PR's plan,
+including an exact-head-approved candidate that edits them. Updating estimates
+requires a reviewed data change; it cannot reduce the trusted selected test set.
+
+The publisher binds the packed matrix names and requires each infrastructure and
+UI summary to carry the same `hashes.manifests.ui-scoped-plan` hash. Declared,
+compiled and observed identities must equal the base plan for that job. An active
+packed run cannot substitute legacy full-shard evidence; empty platforms still
+declare their devices and admit only an unexecuted collapsed matrix skip. See
+[publisher validation](CI_PUBLISHER.md#packed-scoped-ui-protocol).
+The producer follow-up must publish this plan, carry its exact per-job selectors,
+and avoid waiting for or downloading an unselected platform's gate archive.
+Archive identity and signature checks remain mandatory for every selected platform.
+An earlier build with a different head/base/tree cannot supply a cache shortcut.
+
 ### Nightly-default locale screenshots
 
 The multi-language acceptance screenshots (Japanese, Spanish, Traditional Chinese

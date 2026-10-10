@@ -429,11 +429,14 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
         if any(isinstance(key, str) and key.startswith("CI_APP_") for key in document["env"]):
             flag("env", "publisher-credential", "App credentials cannot be inherited from workflow environment")
     if path == ".github/workflows/ci-ui.yml":
-        strategies = [jobs[name].get("strategy", {}) for name in ("shards", "appletv-shards")
+        split_ios = "iphone-shards" in jobs or "ipad-shards" in jobs
+        ui_keys = ("iphone-shards", "ipad-shards", "appletv-shards") if split_ios else ("shards", "appletv-shards")
+        strategies = [jobs[name].get("strategy", {}) for name in ui_keys
                       if isinstance(jobs.get(name), dict)]
         capacities = [strategy.get("max-parallel") if isinstance(strategy, dict) else None
                       for strategy in strategies]
-        if (len(capacities) != 2 or any(type(capacity) is not int or capacity <= 0 for capacity in capacities)
+        if (len(capacities) != len(ui_keys) or split_ios and "shards" in jobs
+                or any(type(capacity) is not int or capacity <= 0 for capacity in capacities)
                 or sum(capacities) > 4):
             flag("jobs", "ui-capacity", "Independent UI matrices need positive literal capacities totaling at most four")
     for job_id, job in jobs.items():
@@ -469,18 +472,21 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                     "${{ !cancelled() && needs.archive.result == 'success' && needs.archive.outputs." + run_output
                     + " == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}" for run_output in ("run_ui", "run_tvos")}:
                 flag(location, "xcc-dependencies", "Apple TV shards require a successful archive and an unrouted selection")
-        if path == ".github/workflows/ci-ui.yml" and job_id in {"shards", "appletv-shards"}:
+        if path == ".github/workflows/ci-ui.yml" and job_id in {"shards", "iphone-shards", "ipad-shards", "appletv-shards"}:
             strategy = job.get("strategy")
             if not isinstance(strategy, dict) or strategy.get("fail-fast") is not False:
                 flag(location, "ui-fail-fast", "UI failures must retain every other partition's official results")
             matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
             from ci_publish_git import DYNAMIC_UI_SHARDS
             platform = "tvos" if job_id == "appletv-shards" else "ios"
+            scope = {"iphone-shards": "iphone", "ipad-shards": "ipad"}.get(job_id, platform)
             outputs = jobs.get("archive", {}).get("outputs", {}) if isinstance(jobs.get("archive"), dict) else {}
-            dynamic = isinstance(matrix, dict) and matrix.get("shard") == DYNAMIC_UI_SHARDS[platform]
+            dynamic = isinstance(matrix, dict) and matrix.get("shard") == DYNAMIC_UI_SHARDS[scope]
+            if scope in {"iphone", "ipad"} and matrix.get("device") != [scope]:
+                flag(location, "ui-shards", "Device-specific shard outputs require that one literal device")
             # Admission binds the dynamic list to the trusted selection; the archive step must publish it.
             if dynamic and any(outputs.get(name) != "${{ steps.select.outputs." + name + " }}"
-                               for name in (platform + "_shards", "run_" + platform)):
+                               for name in (scope + "_shards", "run_" + platform)):
                 flag(location, "ui-shards", "Dynamic UI shards must come from the archive selection step")
             if ui_shards is not None and not dynamic and (not isinstance(matrix, dict) or matrix.get("shard") != ui_shards):
                 flag(location, "ui-shards", "UI matrix shards must equal the ordered manifest shard keys or the bound selection")
@@ -755,10 +761,21 @@ def main(argv=None):
             violations.append(Violation(relative, "workflow", "workflow-format", "Cannot read a regular UTF-8 workflow"))
     if args.check_ui_shards:
         from ci_ui_selection import AREA_MAP_PATH, check_area_map
+        from ci_ui_test_kinds import classify_ui_methods
+        from ci_ui_packing import DURATIONS_PATH, parse_durations
+        try:
+            parse_durations((args.root / DURATIONS_PATH).read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError) as error:
+            violations.append(Violation(DURATIONS_PATH, "durations", "ui-durations", str(error)))
         try:
             check_area_map(args.root)
         except (OSError, UnicodeError, ValueError) as error:
             violations.append(Violation(AREA_MAP_PATH, "map", "ui-areas", str(error)))
+        if populations is not None:
+            try:
+                classify_ui_methods(populations)
+            except ValueError as error:
+                violations.append(Violation("scripts/ci_ui_test_kinds.py", "inventory", "ui-kinds", str(error)))
         if populations is not None and not any(item.rule == "ui-areas" for item in violations):
             from ci_ui_flows import EXCEPTIONS_PATH, check_flows
             try:

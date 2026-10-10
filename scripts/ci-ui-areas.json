@@ -1,8 +1,12 @@
 {
   "schema_version": 1,
-  "revision": "feature-areas-v2",
+  "revision": "feature-areas-v3",
   "smoke": [
     "FilterSummaryIOSVisualUITests/testIOSFirstBootOnboardingHeaderScreenshot",
+    "ServerConfigFormTVOSUITests/testTVOSFirstBootCoreElementsAndDisabledSave"
+  ],
+  "functional_smoke": [
+    "immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton",
     "ServerConfigFormTVOSUITests/testTVOSFirstBootCoreElementsAndDisabledSave"
   ],
   "nightly_default": [
