@@ -134,7 +134,9 @@ proposal; they must not be attributed to fixture gaps without evidence.
 Only demonstrated fixture/server gaps may become `nightly-live` deselections.
 
 The [UI-shard workflow](CI_UI.md) schedules iPhone, iPad and Apple TV on pull
-requests and main pushes. The PR records the per-test measurements,
+requests; the [nightly fixture UI tier](CI_NIGHTLY.md#complete-fixture-ui) schedules
+the same three devices. Main pushes use trusted reuse or explicit nightly deferral.
+The PR records the per-test measurements,
 real run links and any proposed exceptions; proposals remain inactive.
 
 ## Public fixture and output boundaries

@@ -6,6 +6,11 @@ commit status. No required check or repository setting changes here. All three
 devices use the same archive validation, fixture runner, selection and verdict
 path. The trusted reuse reader must land on main before this producer is activated.
 
+Main pushes run the Linux selection jobs and keep the gate's build, unit and host
+checks. They run no UI shards: a trusted identical-tree PR verdict is reused, or UI
+verification is explicitly deferred to the complete nightly aggregate. Pull
+requests keep their fixture UI execution and archive selection.
+
 ## Main UI scheduling contract
 
 The trusted reader recognizes `--defer-main-ui` only on the admitted base workflow's
@@ -43,9 +48,10 @@ post-merge verdict reuse. Its UI aggregate is independently judged by `ci-report
 The Linux `ui-archive` job reads the PR's base classification policy. A docs-only
 change outside build membership selects no archive and starts no macOS shard.
 The publisher independently derives this classification from admission before
-displaying `not applicable`. Unknown paths, CI changes and main pushes run.
+displaying `not applicable`. Unknown paths and CI changes run UI on pull requests.
+Main pushes use trusted identical-tree reuse or explicit nightly deferral.
 
-For an app-affecting change, Linux shares one 120-minute deadline while selecting
+For an app-affecting PR, Linux shares one 120-minute deadline while selecting
 `ci-gate`'s iOS and tvOS builds. iPhone and iPad share the iOS archive; Apple TV
 uses the tvOS archive.
 
@@ -201,12 +207,15 @@ skips use the existing approved `ui` policy, with exact identity and skip reason
 ## Post-merge reuse
 
 On a main push, Linux first looks for the [trusted publisher's UI verdict
-receipt](CI_PUBLISHER.md). UI is skipped only for a complete successful
+receipt](CI_PUBLISHER.md). UI reuse succeeds only for a complete successful
 same-repository, non-CI-changing PR verdict on an identical tree, with identical
 manifest, default-plan, policy, registry, classification, workflow and pins hashes
 and observed toolchains matching those pins. All currently scheduled device
 shards must be covered. Fork or approval-based verdicts never qualify; missing,
-expired, malformed, red, cancelled, superseded or rerunning verdicts run UI.
+expired, malformed, red, cancelled, superseded or rerunning verdicts cannot be reused.
+Without `--defer-main-ui`, unavailable proof runs UI. With the trusted declaration,
+the main UI status is pending and verification belongs to the complete nightly
+aggregate, as described by the [scheduling contract](#main-ui-scheduling-contract).
 Ordinary PRs do not use this reuse path.
 The receipt must name the one same-repository PR actually merged by the pushed
 SHA and that PR's final head. A different green head with the same tree cannot
@@ -214,8 +223,9 @@ authorize reuse. Linux archive selection receives only `contents: read`,
 `actions: read`, `checks: read` and `pull-requests: read`; the last permission supports the
 commit-to-merged-PR lookup without granting any write authority.
 
-The archive-selection job still runs and publishes its bound summary and
-`archive-selection.json` with `status: reused` and the original verdict provenance.
+When reusing a verdict, the archive-selection job still runs and publishes its
+bound summary and `archive-selection.json` with `status: reused` and the original
+verdict provenance.
 Its `run_ui` output suppresses the entire macOS matrix. The publisher independently
 validates both archive and cloud-selection operational summaries, then
 repeats the reuse decision before accepting those skipped jobs; an arbitrary

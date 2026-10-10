@@ -77,9 +77,10 @@ cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 - **Residual race:** GitHub does not guarantee that runs enter a concurrency group
   in push order. In a rare race an older first-attempt run can replace the newest
   pending one, leaving the newest SHA unevaluated. That SHA is reported "not
-  evaluated", never success; the next main push or the nightly full tier evaluates
-  the code. When a specific SHA needs a verdict (for example before tagging a
-  release), the maintainer uses "Re-run all jobs" (attempt 2, own group). No trusted
+  evaluated", never success. Later main pushes evaluate the gate, and the nightly
+  full tier evaluates main UI. When a specific SHA needs a gate verdict (for example
+  before tagging a release), the maintainer uses "Re-run all jobs" on `ci-gate`
+  (attempt 2, own group). No trusted
   re-dispatch is added for a race this unlikely.
 - **Why not also cancel in-progress runs:** a rolling burst of merges would then
   cancel every SHA before it finished, and nothing would be evaluated. Pending-only
@@ -250,16 +251,19 @@ The manifest and both default `immichSlides-iOS.xctestplan` /
 changing selections or exclusions requires exact-head approval.
 The reader accepts no dynamic matrices or alternate manifest paths.
 The post-merge reader additionally accepts skipped device shards on a main push
-only after independently finding a complete trusted identical-tree PR verdict.
-The archive-selection job must still succeed and supply its identity-bound,
-manifest-bound summary; skipping that job or only part of the device matrix fails.
+after independently finding a complete trusted identical-tree PR verdict (success),
+or verifying the admitted base workflow's explicit `--defer-main-ui` declaration
+(pending: "UI deferred to nightly"). All required selection jobs must still succeed
+and supply identity-bound, manifest-bound summaries; skipping a selection job or
+only part of the device matrix fails.
 GitHub may report a whole skipped matrix as one unexpanded job name. The reader
 maps that exact trusted-workflow name to its declared literal shards while
 retaining the real job's identity and attempt. Each attempt is normalized before
 execution history is merged by logical shard, so a rerun may switch between
 skipping and executing the matrix. Overlapping shards within one attempt,
 unknown names or an incomplete final job set fail. This mapping supplies no test
-observations and still requires independent trusted reuse proof.
+observations. Success still requires independent trusted reuse proof; the explicit
+trusted deferral declaration supplies only a pending status.
 
 For PR reruns, an older attempt whose `ui-archive` infrastructure job failed may
 contain a raw skipped matrix placeholder because no shard started. The reader
@@ -348,8 +352,8 @@ archive-selection command. Complete, passed infrastructure records and entirely
 unexecuted skipped shards permit a pending "UI deferred to nightly" status when
 no trusted identical-tree proof exists. Missing records, invalid provenance and
 failed jobs cannot claim this state. A PR or candidate-only flag cannot authorize it.
-The publisher repeats this decision before accepting skipped shards and links
-the status to the original successful UI run.
+The publisher repeats this decision before accepting skipped shards. Reuse links
+the original successful UI run; deferral links the main nightly workflow.
 The publication summary displays the reused producer run/attempt, verdict artifact,
 tree and approval/fork/CI-change provenance alongside that link.
 
