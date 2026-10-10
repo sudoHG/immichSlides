@@ -209,7 +209,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.probe_environment_refusal }}
     needs: [plan, strict, ui-aggregate]
     name: nightly-aggregate
-    runs-on: xcode-27
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -222,11 +222,9 @@ jobs:
       - name: Reject private configuration before setup
         run: |
           /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
-      - name: Select and verify pinned toolchain
+      - name: Set up pinned reader packages
         run: |
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
-          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
-            --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
+          /usr/bin/python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/nightly-python"
       - name: Download this attempt's scheduling record
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -436,7 +434,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal }}
     needs: [plan, ui-archive, ui-shards]
     name: nightly-ui-aggregate
-    runs-on: xcode-27
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -446,12 +444,10 @@ jobs:
         with:
           fetch-depth: 2
           persist-credentials: false
-      - name: Reject private configuration and select pinned toolchain
+      - name: Reject private configuration and set up pinned reader packages
         run: |
           /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
-          /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
-          /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
-            --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
+          /usr/bin/python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/nightly-python"
       - name: Download this attempt's full UI plan
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

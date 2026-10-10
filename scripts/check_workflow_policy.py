@@ -416,6 +416,14 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             continue
         if path in PUBLISHER_COMMANDS and job.get("runs-on") != "ubuntu-24.04":
             flag(location, "publisher-runner", "Publisher and approval jobs use the pinned Linux runner")
+        if path == LIVE_WORKFLOW and job_id in {"aggregate", "ui-aggregate"}:
+            commands = [step["run"] for step in job.get("steps", [])
+                        if isinstance(step, dict) and isinstance(step.get("run"), str)]
+            bootstrap = '/usr/bin/python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/nightly-python"'
+            has_bootstrap = any(bootstrap in [line.strip() for line in command.splitlines()] for command in commands)
+            uses_xcode = any(re.search(r"\b(?:xcrun|xcodebuild|DEVELOPER_DIR)\b|--verify-toolchain", command) for command in commands)
+            if job.get("runs-on") != "ubuntu-24.04" or not has_bootstrap or uses_xcode:
+                flag(location, "nightly-aggregate-platform", "Artifact aggregates use Linux and pinned reader packages without Xcode")
         if path in PUBLISHER_COMMANDS and isinstance(job.get("env"), dict):
             if any(isinstance(key, str) and key.startswith("CI_APP_") for key in job["env"]):
                 flag(location, "publisher-credential", "App credentials cannot be inherited from job environment")

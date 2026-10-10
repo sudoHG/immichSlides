@@ -24,6 +24,25 @@ def workflow():
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_nightly_aggregates_cannot_wait_for_macos_or_require_xcode(self):
+        path = policy.LIVE_WORKFLOW
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual(set(), self.rules(document, path))
+        for job_id in ("aggregate", "ui-aggregate"):
+            for mutation in ("runner", "xcode", "toolchain", "bootstrap"):
+                with self.subTest(job=job_id, mutation=mutation):
+                    changed = copy.deepcopy(document)
+                    job = changed["jobs"][job_id]
+                    if mutation == "runner":
+                        job["runs-on"] = "xcode-27"
+                    elif mutation == "bootstrap":
+                        for step in job["steps"]:
+                            if "setup_ci_publisher_python.py" in step.get("run", ""):
+                                step["run"] = "python3 scripts/setup_ci_python.py --venv env"
+                    else:
+                        job["steps"].append({"run": "xcrun simctl list" if mutation == "xcode" else "python3 setup.py --verify-toolchain"})
+                    self.assertIn("nightly-aggregate-platform", self.rules(changed, path))
+
     def test_macos_jobs_cannot_survive_cancellation_through_always(self):
         document = workflow()
         for condition in ("always()", "${{ always() && needs.archive.outputs.run_ui == 'true' }}"):
