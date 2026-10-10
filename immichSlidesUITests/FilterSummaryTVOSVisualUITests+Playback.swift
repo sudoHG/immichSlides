@@ -442,6 +442,53 @@ extension FilterSummaryTVOSVisualUITests {
     }
 
     @MainActor
+    func testTVOSSlideShowControlBarStaysWhileFocusKeepsMoving() throws {
+        let app = try launchIntoSlideShow()
+        let playPauseButton = app.buttons["slideshow.control.playPause.button"]
+        let nextButton = app.buttons["slideshow.control.next.button"]
+
+        XCTAssertTrue(
+            playPauseButton.waitForExistence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            "Playback page should show the Play/Pause button")
+
+        // The auto-hide timer starts only after the first preload finishes. Waiting for the bar to hide on its own
+        // proves the timer is running; the wake press then restarts it, so the presses below are measured against a
+        // live timer however slow the first download was.
+        waitForElementToDisappear(
+            playPauseButton,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionDeadlineSeconds,
+            failureMessage: "The control bar should hide on its own before focus movement is verified"
+        )
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(
+            playPauseButton.waitForExistence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
+            "A directional press should wake the hidden control bar")
+        waitForButtonToGainFocus(
+            playPauseButton,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
+            failureMessage: "After waking, focus should land on the Play/Pause button"
+        )
+
+        // Each press below lands well inside the 8 second delay, so together they must keep the bar up for longer
+        // than the delay.
+        var isTargetingNext = true
+        for _ in 0..<8 {
+            XCUIRemote.shared.press(isTargetingNext ? .right : .left)
+            waitForButtonToGainFocus(
+                isTargetingNext ? nextButton : playPauseButton,
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
+                failureMessage: "Each remote press should move focus along the control bar"
+            )
+            XCTAssertTrue(
+                TestWait.observe(seconds: 1.5) { playPauseButton.exists },
+                "The control bar must stay visible while the remote keeps moving focus along it")
+            isTargetingNext.toggle()
+        }
+    }
+
+    @MainActor
     func testTVOSSlideShowControlBarLightModeContrastScreenshot() throws {
         let app = try launchIntoSlideShow(colorScheme: "light")
         let settingsButton = app.buttons["slideshow.control.settings.button"]
