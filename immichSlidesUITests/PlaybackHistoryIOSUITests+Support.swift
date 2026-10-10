@@ -271,12 +271,19 @@ extension PlaybackHistoryIOSUITests {
         "handoffStartDeadlineTime", "removalDeadlineTime"
     ]
 
+    // Interface chrome and next-scene bookkeeping are not photo rendering: the pause contract freezes the photo only (#218).
+    static let nonPhotoSlotProbeFields: Set<String> = [
+        "controlBarVisible", "appOverlayPollution", "preparedNextTargetIndex", "preparedNextSourceCursor",
+        "currentPreparedSourceCursor", "lookaheadCachedSourceCursor", "lookaheadCachedSelectedCount"
+    ]
+
     func frozenStateOfSmartFillSlots(app: XCUIApplication) -> [String] {
         smartFillRenderedSlotProbeLabels(app: app).map { probe in
             probe.split(separator: ";", omittingEmptySubsequences: false)
                 .filter { field in
                     let key = field.split(separator: "=", maxSplits: 1).first.map(String.init) ?? ""
                     return !Self.renderTimeAnchoredSlotProbeFields.contains(key)
+                        && !Self.nonPhotoSlotProbeFields.contains(key)
                 }
                 .joined(separator: ";")
         }
@@ -300,10 +307,10 @@ extension PlaybackHistoryIOSUITests {
         XCTAssertFalse(
             initialSlots.isEmpty,
             "The pause diagnostic must read the rendered frame/transform probe of every SmartFill slot")
-        let initialPixels = app.windows.firstMatch.screenshot().pngRepresentation
+        let initialSample = capturePausedWindowSample(app: app)
         appendManualLifecycleRuntimeEvidence(
             app: app, mode: .smartFill, event: "\(evidenceEventPrefix)-start", probe: initialProbe)
-        let initialPixelsAttachment = XCTAttachment(data: initialPixels, uniformTypeIdentifier: "public.png")
+        let initialPixelsAttachment = XCTAttachment(data: initialSample.png, uniformTypeIdentifier: "public.png")
         initialPixelsAttachment.name = "\(evidenceEventPrefix)-start"
         initialPixelsAttachment.lifetime = .keepAlways
         add(initialPixelsAttachment)
@@ -315,7 +322,8 @@ extension PlaybackHistoryIOSUITests {
             let probe = try waitForPausedFrameSynchronizedPresentationProbe(
                 app: app, timeout: TestWait.seconds(.product(2)))
             let slots = frozenStateOfSmartFillSlots(app: app)
-            let pixels = app.windows.firstMatch.screenshot().pngRepresentation
+            let sampleWindow = capturePausedWindowSample(app: app)
+            let pixels = sampleWindow.png
             let frame = XCTAttachment(data: pixels, uniformTypeIdentifier: "public.png")
             frame.name = "Desktop-settings-pause-before-assert-\(sample)"
             frame.lifetime = .keepAlways
@@ -328,7 +336,17 @@ extension PlaybackHistoryIOSUITests {
             XCTAssertEqual(
                 slots, initialSlots,
                 "After pausing, the rendered transform/frame of every SmartFill slot must stay frozen")
-            XCTAssertEqual(pixels, initialPixels, "After pausing, consecutive rendered pixels must stay frozen")
+            let pixelComparison = comparePausedPhotoPixels(sampleWindow, against: initialSample)
+            let comparisonAttachment = XCTAttachment(
+                data: Data(pixelComparison.summary.utf8), uniformTypeIdentifier: "public.plain-text")
+            comparisonAttachment.name = "\(evidenceEventPrefix)-photo-pixels-sample-\(sample)"
+            comparisonAttachment.lifetime = .keepAlways
+            add(comparisonAttachment)
+            XCTAssertTrue(pixelComparison.isComparable, "Paused screenshots must decode at the same size")
+            XCTAssertEqual(
+                pixelComparison.differingPixelCount, 0,
+                "After pausing, the photo pixels outside the control bar and entry hint must stay frozen: \(pixelComparison.summary)"
+            )
             appendManualLifecycleRuntimeEvidence(
                 app: app, mode: .smartFill, event: "\(evidenceEventPrefix)-sample-\(sample)", probe: probe)
             let pixelsAttachment = XCTAttachment(data: pixels, uniformTypeIdentifier: "public.png")
