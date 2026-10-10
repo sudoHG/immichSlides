@@ -137,7 +137,8 @@ have 60-second bounds; deletion still runs after shutdown failure. Their duratio
 and exit codes are measured and shown in `summary.md`. A cleanup that fails, or times out
 while results are incomplete or unverified, makes the summary failed, and scanning
 continues. A cleanup that only times out (exit 124) after a complete, verified passing
-result set (zero exit, exported and compared results, no other infrastructure entry) is
+result set (zero exit, exported and compared results, declared = compiled = observed functions
+under the trusted identity normalization, no other infrastructure entry) is
 recorded as an `infrastructure_notes` entry in `measurements.json` and `summary.md`; it
 is not an infrastructure entry in `summary.json`, so it cannot turn that passing population
 red. The live runner shares this cleanup and rule (see [live tests](CI_LIVE_TESTS.md)). Failed runs or

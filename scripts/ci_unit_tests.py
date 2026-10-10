@@ -16,9 +16,9 @@ from pathlib import Path
 
 import ci_build_archive as archive
 from ci_population import swift_identities
-from ci_summary import (ContractError, decode, fields, observation, parse_summary, require, test_identity,
+from ci_summary import (ContractError, decode, fields, identity_key, observation, parse_summary, require, test_identity,
                         validate_test_identity, write_summary)
-from ci_verdict import expected_skip_verdict, identity_label, parse_policy, tier_approved
+from ci_verdict import expected_skip_verdict, function_identity, identity_label, parse_policy, tier_approved
 from run_host_checks import git, toolchain
 from run_offline_unit_tests import (CommandError, INTERRUPT_GRACE_SECONDS, classify_test_results,
                                     default_run, parse_official_test_results_summary)
@@ -289,6 +289,18 @@ def read_results(records, platform):
     return rows, counts
 
 
+def population_verified(summary):
+    """True only when declared, compiled and observed functions are the same set under trusted normalization."""
+    population = summary["population"]
+    try:
+        declared, compiled, observed = ({identity_key(function_identity(identity)) for identity in identities}
+                                        for identities in (population["declared"], population["compiled"],
+                                                           [row["identity"] for row in population["observed"]]))
+    except (ContractError, KeyError, TypeError):
+        return False
+    return bool(declared) and declared == compiled == observed
+
+
 def cleanup_simulator(simulator, measurements, *, results_verified=False, run=None):
     """Shut down and delete an owned simulator.
 
@@ -474,7 +486,8 @@ def run_units(args):
                     measurements["official_export_seconds"] = time.monotonic() - export_started
         if owns_simulator:
             failures = cleanup_simulator(simulator, measurements, results_verified=(
-                export_complete and code == 0 and summary["status"] == "passed" and not summary["infrastructure"]))
+                export_complete and code == 0 and summary["status"] == "passed" and not summary["infrastructure"]
+                and population_verified(summary)))
             if failures:
                 code = code or 1
                 summary["infrastructure"].extend(failures)

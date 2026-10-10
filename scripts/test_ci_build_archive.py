@@ -1029,12 +1029,18 @@ class BuildArchiveTests(unittest.TestCase):
         device_types = {"devicetypes": [{"name": pins["device_types"]["iphone"], "identifier": device_type}]}
         devices = {"devices": {pins["simulators"]["ios"]["runtime"]: [
             {"udid": simulator, "deviceTypeIdentifier": device_type}]}}
-        for phase, readable, export_bound in ((phase, readable, bound) for bound in (60, 180)
-                                for phase, readable in (("enumeration", False), ("enumeration", True),
-                                ("execution", False), ("execution", True),
-                                ("tests", False), ("summary", False), ("shutdown", True), ("delete", True))):
-            with self.subTest(phase=phase, readable=readable, export_bound=export_bound):
-                case = self.root / (phase + ("-readable" if readable else "-unreadable") + str(export_bound))
+        declared_a = {"kind": "swift", "key": "A/a", "dimensions": {"platform": "ios"}}
+        undeclared_b = {"kind": "swift", "key": "A/b", "dimensions": {"platform": "ios"}}
+        for phase, readable, export_bound, declared in (
+                [(phase, readable, bound, [declared_a]) for bound in (60, 180)
+                 for phase, readable in (("enumeration", False), ("enumeration", True),
+                                         ("execution", False), ("execution", True),
+                                         ("tests", False), ("summary", False), ("shutdown", True), ("delete", True))] +
+                [(phase, True, 60, [declared_a, undeclared_b]) for phase in ("shutdown", "delete")]):
+            with self.subTest(phase=phase, readable=readable, export_bound=export_bound, declared=len(declared)):
+                (workspace / "unit-declarations.json").write_text(json.dumps({
+                    "identity": self.identity, "platform": "ios", "declared": declared}))
+                case = self.root / (phase + ("-readable" if readable else "-unreadable") + str(export_bound) + str(len(declared)))
                 relocated, output = case / "relocated", case / "records"
                 enumeration_bundle = case / "private/enumeration/enumeration.xcresult"
                 execution_bundle = case / "private/execution/execution.xcresult"
@@ -1043,7 +1049,8 @@ class BuildArchiveTests(unittest.TestCase):
                 bundle = enumeration_bundle if phase == "enumeration" else execution_bundle
                 owns_simulator = phase in {"tests", "summary", "shutdown", "delete"}
                 # Complete, verified results make a cleanup timeout an infrastructure note, not a failure.
-                verified_cleanup = phase in {"shutdown", "delete"} and readable
+                # A declared test that never compiled or ran keeps the failure even with readable passing results.
+                verified_cleanup = phase in {"shutdown", "delete"} and readable and len(declared) == 1
                 codes = iter([0, 124] if phase == "enumeration" else [0, 0, 124 if phase == "execution" else 0])
 
                 def run(command, **_kwargs):
@@ -1114,7 +1121,7 @@ class BuildArchiveTests(unittest.TestCase):
                 self.assertEqual(provenance["test_exit_code"], None if phase == "enumeration" else 124 if phase == "execution" else 0)
                 summary = json.loads((output / "summary.json").read_text())
                 self.assertEqual(summary["status"], "passed" if verified_cleanup else "failed")
-                self.assertEqual(summary["population"]["declared"], [{"kind": "swift", "key": "A/a", "dimensions": {"platform": "ios"}}])
+                self.assertEqual(summary["population"]["declared"], declared)
                 self.assertEqual(summary["hashes"]["manifests"]["unit-declarations"],
                                  archive.file_hash(workspace / "unit-declarations.json"))
                 self.assertEqual(json.loads((output / "sensitive-scan.json").read_text())["result"], "PASS")
@@ -1244,7 +1251,18 @@ class ArchiveUnitResultTests(unittest.TestCase):
             measured_timeout({"completed_seconds": []}, margin=1.5, minimum=60)
 
     def test_cleanup_timeout_is_only_a_note_after_complete_verified_results(self):
-        from ci_unit_tests import SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS, cleanup_simulator
+        from ci_summary import observation, test_identity
+        from ci_unit_tests import SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS, cleanup_simulator, population_verified
+        declared = {"kind": "swift", "key": "A/a", "dimensions": {"platform": "ios"}}
+        compiled = test_identity("swift", "immichSlidesTests/A/a()", platform="ios")
+        parameter = test_identity("swift", "immichSlidesTests/A/a()", platform="ios", parameter=1)
+        row = lambda identity: observation(identity, "passed", 0)
+        for population, expected in (
+                ({"declared": [declared], "compiled": [compiled], "observed": [row(compiled)]}, True),
+                ({"declared": [declared], "compiled": [compiled], "observed": [row(compiled), row(parameter)]}, True),
+                ({"declared": [declared, dict(declared, key="A/b")], "compiled": [compiled], "observed": [row(compiled)]}, False),
+                ({"declared": [declared], "compiled": [compiled], "observed": []}, False)):
+            self.assertEqual(population_verified({"population": population}), expected)
         self.assertGreater(SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS, 15)
         for verified, shutdown_code, delete_code, failures, notes in (
                 (True, 124, 0, [], ["simulator-cleanup-timed-out"]),

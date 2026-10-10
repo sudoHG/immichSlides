@@ -115,8 +115,9 @@ preparation/finalization failure publishes its scanned shared failure summary bu
 no passing canary verdict, so the audit remains red and the phase stays visible.
 
 Boot/enumeration use the [unit consumer bounds](CI_UNIT_TESTS.md); execution is
-bounded at 900 seconds, each official export at 60 seconds, and disposal at 15/60
-seconds. Jobs have 40-minute caps. Local disk reserve is 80 GiB; hosted reserve is 30 GiB.
+bounded at 900 seconds, each official export at 60 seconds, and simulator shutdown and
+delete at the shared 60/60 seconds. After a `capture()` timeout the runner stops the process
+group with a separate termination grace, which is not part of those bounds. Jobs have 40-minute caps. Local disk reserve is 80 GiB; hosted reserve is 30 GiB.
 
 ## Canary and server acceptance
 
