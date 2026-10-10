@@ -119,9 +119,9 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 The [informational iPhone, iPad and Apple TV UI tier](docs/CI_UI.md) reuses exact-identity gate archives
-and runs class-manifest shards against public loopback fixtures. Its guide includes
-one-command shard reproduction by Git revision, listed-only retry, artifact
-retention and the trusted identical-tree post-merge reuse rule.
+and runs class-manifest shards against public loopback fixtures on pull requests.
+Its guide includes one-command shard reproduction by Git revision, listed-only retry, artifact
+retention and the [post-merge reuse or nightly deferral rule](docs/CI_UI.md#post-merge-reuse).
 
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
 run on pull requests and pushes to `main`. Pushes to `main` replace a still-pending
