@@ -37,7 +37,8 @@ class WorkflowPolicyTests(unittest.TestCase):
             (root / ".github/workflows").mkdir(parents=True)
             (root / ".github/workflows/check.yml").write_text(yaml.safe_dump(workflow()))
             (root / "scripts").mkdir()
-            (root / MANIFEST_PATH).write_text("{}")
+            (root / MANIFEST_PATH).write_text(
+                '{"schema_version": 2, "revision": "test", "default_shard": "default", "shards": {"default": []}}')
             output = io.StringIO()
             with patch("ci_ui_shards.validate_shard_assignments"), \
                     patch("ci_ui_selection.check_area_map", side_effect=ContractError("unmapped app source")), \
@@ -195,6 +196,37 @@ final class LocaleUITests: XCTestCase {
         changed["jobs"]["appletv-shards"]["if"] = changed["jobs"]["appletv-shards"]["if"].replace(
             "needs.archive.result == 'success' && ", "")
         self.assertIn("xcc-dependencies", self.rules(changed, path))
+
+    def test_ui_failure_cannot_cancel_other_partition_results(self):
+        path = ".github/workflows/ci-ui.yml"
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertNotIn("ui-fail-fast", self.rules(document, path))
+        for job in ("shards", "appletv-shards"):
+            changed = copy.deepcopy(document)
+            changed["jobs"][job]["strategy"]["fail-fast"] = True
+            with self.subTest(job=job):
+                self.assertIn("ui-fail-fast", self.rules(changed, path))
+
+    def test_independent_ui_matrices_cannot_take_the_reserved_macos_slot(self):
+        path = ".github/workflows/ci-ui.yml"
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertNotIn("ui-capacity", self.rules(document, path))
+        document["jobs"]["shards"]["strategy"]["max-parallel"] = 4
+        document["jobs"]["appletv-shards"]["strategy"]["max-parallel"] = 1
+        self.assertIn("ui-capacity", self.rules(document, path))
+
+    def test_ui_matrix_cannot_omit_a_manifest_partition(self):
+        from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest
+        root = Path(__file__).resolve().parent.parent
+        path = ".github/workflows/ci-ui.yml"
+        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
+        shards = list(parse_shard_manifest((root / MANIFEST_PATH).read_text())["shards"])
+        self.assertNotIn("ui-shards", self.rules(document, path, ui_shards=shards))
+        for job in ("shards", "appletv-shards"):
+            changed = copy.deepcopy(document)
+            changed["jobs"][job]["strategy"]["matrix"]["shard"].pop()
+            with self.subTest(job=job):
+                self.assertIn("ui-shards", self.rules(changed, path, ui_shards=shards))
 
     def test_cloud_event_bridge_cannot_receive_secrets_or_execute_pr_code(self):
         root = Path(__file__).resolve().parent.parent
@@ -374,8 +406,8 @@ final class LocaleUITests: XCTestCase {
             with self.subTest(key=key):
                 self.assertIn("trusted-action", self.rules(bad, TRUSTED))
 
-    def rules(self, document, path=".github/workflows/example.yml"):
-        return {item.rule for item in policy.check_workflow(path, yaml.safe_dump(document))}
+    def rules(self, document, path=".github/workflows/example.yml", **options):
+        return {item.rule for item in policy.check_workflow(path, yaml.safe_dump(document), **options)}
 
     def trusted(self):
         document = workflow()

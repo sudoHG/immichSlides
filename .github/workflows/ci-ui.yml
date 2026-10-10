@@ -76,10 +76,10 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 3
       matrix:
         device: [iphone, ipad]
-        shard: [default, navigation, visual]
+        shard: [default, navigation, visual-a, visual-b, visual-c, visual-d]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -127,7 +127,8 @@ jobs:
             --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
-            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30
+            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30 \
+            --max-parallel '${{ strategy.max-parallel }}'
       - name: Recheck the sensitive scan before publishing
         id: scan
         if: always()
@@ -226,10 +227,10 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
         device: [appletv]
-        shard: [default, navigation, visual]
+        shard: [default, navigation, visual-a, visual-b, visual-c, visual-d]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -277,7 +278,8 @@ jobs:
             --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
-            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30
+            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30 \
+            --max-parallel '${{ strategy.max-parallel }}'
       - name: Recheck the sensitive scan before publishing
         id: scan
         if: always()

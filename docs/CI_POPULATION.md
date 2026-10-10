@@ -279,8 +279,9 @@ because every app source must be mapped, and mainly mean a new file unknown to t
 The reviewed `scripts/ci-ui-flow-exceptions.json` for the identifier-to-flow host check is CI-trusted.
 The trusted base map is used even when candidate metadata has exact-head approval.
 The reader supports scoped equality before producers begin selecting areas.
-Editing default plans or renaming/removing manifest-named classes requires
-maintainer approval of that exact head; update the manifest when a shard becomes empty.
+Editing default plans or renaming/removing manifest-named classes or exact methods
+requires updating the affected manifest selectors and maintainer approval of that
+exact head, even when every shard remains nonempty.
 The strict tracer's `run_strict_ci_tracer.py` and `strict-tracer.json` are CI inputs;
 its warm-build dependencies and tests belong to the same import closure.
 The recursive local-import closure is trusted too: the excluded-UI check imports
