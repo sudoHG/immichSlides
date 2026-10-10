@@ -444,7 +444,7 @@ class BuildArchiveTests(unittest.TestCase):
         stuck, wait = scenario(10 ** 6)
         self.assertRegex(stuck["ios"], "archive-unavailable")
         self.assertEqual(ui.GATE_PENDING_PAUSE_SECONDS, wait.paused)
-        self.assertAlmostEqual(120 * 60 + ui.GATE_PENDING_PAUSE_SECONDS, wait.deadline - 1000.0, delta=1)
+        self.assertAlmostEqual(170 * 60, wait.deadline - 1000.0, delta=1)
 
     def test_ui_reproduction_checks_revision_pins_and_exact_destination_before_build(self):
         pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())

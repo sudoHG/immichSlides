@@ -97,10 +97,12 @@ cancel-in-progress: ${{ github.event_name == 'pull_request' }}
   needs no archive. The final SHA's UI run starts waiting for the gate archive at
   push time while the gate may still queue behind an older run. While the same-head
   gate run is `pending`, the archive selection deadline is paused for at most
-  60 minutes in total. The iPhone/iPad and Apple TV selections share one deadline
-  that includes the accumulated pause, so the total wall-clock cap is 180 minutes
-  inside the 185-minute Linux job timeout, and the wait ends immediately when the same-head gate run
-  was cancelled.
+  50 minutes in total. The iPhone/iPad and Apple TV selections share one deadline
+  that includes the accumulated pause, so the total wall-clock cap is 170 minutes
+  inside the 185-minute Linux job timeout. The 15 minutes of margin cover the final
+  API reads and downloads, which the deadline does not count; a job that still hits
+  the job timeout fails closed (no archive, no pass). The wait ends immediately when
+  the same-head gate run was cancelled.
 - **Release:** the maintainer tags `v*` on main. Tag the newest SHA whose gate and
   UI runs both evaluated. For a SHA that was replaced, use "Re-run all jobs" on its
   cancelled `ci-gate` and `ci-ui` runs; the rerun is attempt 2 in its own group, so

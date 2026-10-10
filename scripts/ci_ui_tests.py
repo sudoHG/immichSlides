@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-ui.yml"
 GATE_WORKFLOW = ".github/workflows/ci-gate.yml"
 NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
-GATE_PENDING_PAUSE_SECONDS = 60 * 60  # keeps the job inside its 185-minute timeout
+GATE_PENDING_PAUSE_SECONDS = 50 * 60  # 120 + 50 = 170-minute cap leaves 15 minutes of the 185-minute job for final reads and downloads
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 
 
