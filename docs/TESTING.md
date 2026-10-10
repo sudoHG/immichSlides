@@ -63,10 +63,10 @@ The separate [Xcode Cloud Apple TV plan](XCODE_CLOUD_UI.md) selects the same
 pull-request fixture methods explicitly; a host check rejects population or
 fixture-copy drift. It is an optional plan and leaves both default plans unchanged.
 
-The prepared [PR UI protocol](CI_UI.md#prepared-platform-selection-and-capacity-packing)
+The [PR UI protocol](CI_UI.md#platform-selection-and-capacity-packing)
 classifies every method by its method name: `Screenshot` or `Acceptance` means
 screenshot; otherwise it is functional. Its host audit rejects unclassified or
-ambiguous methods. After the reader-first producer activation, PRs run only
+ambiguous methods. Following reader-first activation, PRs run only
 functional methods selected by area and proven platform; core, unknown and
 CI-changing PRs run all functional methods. The nightly still runs everything.
 Add each test to the appropriate area in `scripts/ci-ui-areas.json`; no test-kind

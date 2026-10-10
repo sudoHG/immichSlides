@@ -4,7 +4,8 @@
 It is informational: only the [trusted publisher](CI_PUBLISHER.md) writes its
 commit status. No required check or repository setting changes here. All three
 devices use the same archive validation, fixture runner, selection and verdict
-path. The trusted reuse reader must land on main before this producer is activated.
+path. Packed functional selection was shipped reader first, then activated by the
+producer's explicit `--pack-scoped-ui` intent.
 
 Main pushes run the Linux selection jobs and keep the gate's build, unit and host
 checks. They run no UI shards: a trusted identical-tree PR verdict is reused, or UI
@@ -28,16 +29,20 @@ record for deferred UI. Main build, unit and host checks retain their own verdic
 Pull-request and nightly population selection is independent of this main-only
 contract. Reader changes precede producer activation in a separate PR.
 
-The [Xcode Cloud Apple TV overflow path](XCODE_CLOUD_UI.md) runs the same fixture
-methods under macOS congestion. Only a main router decision plus independently
-validated API results and the exact-head app check can suppress Apple TV shards.
-iPhone and iPad remain on GitHub; failed or absent cloud proof runs Apple TV here.
+Until #283 adds scoped Cloud routing, all pull-request UI runs stay on GitHub,
+including core, unknown and CI-changing PRs. Activating functional packing makes
+every app-affecting PR scoped, so the existing
+[Xcode Cloud Apple TV overflow path](XCODE_CLOUD_UI.md) cannot route those PRs.
+Nightly and main-push scheduling are unaffected. Historical full selections retain
+the overflow protocol: only a main router decision plus independently validated
+API results and the exact-head app check can suppress Apple TV shards. Failed or
+absent cloud proof runs Apple TV here.
 Cloud waiting runs in a separate Linux job, so iPhone/iPad start when archive
 selection finishes. That job publishes its own operational summary and gates only
 Apple TV using `!cancelled()`. Cloud selection depends only on the archive, so
 failed iOS-job reruns retain successful TV results; invalid retained Cloud proof
-requires a full rerun. The independent matrices allow three iOS jobs and one
-Apple TV job concurrently, for a combined cap of four.
+requires a full rerun. Independent matrices allow two iPhone jobs, one iPad job
+and one Apple TV job concurrently, for a combined cap of four.
 
 The [nightly fixture UI tier](CI_NIGHTLY.md#complete-fixture-ui) reuses these shard
 consumers and complete default-plan populations on all three devices. It consumes
@@ -53,8 +58,8 @@ displaying `not applicable`. Unknown paths and CI changes run UI on pull request
 Main pushes use trusted identical-tree reuse or explicit nightly deferral.
 
 For an app-affecting PR, Linux shares one 120-minute deadline while selecting
-`ci-gate`'s iOS and tvOS builds. iPhone and iPad share the iOS archive; Apple TV
-uses the tvOS archive.
+only the affected platforms' `ci-gate` builds. iPhone and iPad share the iOS
+archive; Apple TV uses the tvOS archive. An excluded platform is never awaited.
 
 Each platform is checked at least once, even if downloading and verifying the
 first platform consumed the remaining deadline; an already-ready archive is
@@ -101,15 +106,15 @@ segment explicitly includes zero or more directories.
 | `onboarding` | First boot, server form components, mode selection, mode cards and onboarding scaffold; setup, mode selection and entry hints |
 | `server-connection` | Server form components and tvOS server/cache pages; field input, validation, help and connection feedback |
 | `cache` | tvOS server/cache pages; metrics, confirmation and cache clearing |
-| `core` | All shared models, playback engine, networking, app entry, platform/layout helpers, localization/assets, project/config files and test support; the full default-plan population (minus nightly-default tests on PRs) |
+| `core` | All shared models, playback engine, networking, app entry, platform/layout helpers, localization/assets, project/config files and test support; all functional default-plan methods on PRs, the complete population on full runs |
 | `localization` | Both string catalogs; every locale acceptance screenshot method (nightly-default) |
 | `localization-settings`, `-about`, `-filter`, `-onboarding`, `-playback` | Only the leaf screen files each locale screenshot family captures; that family's locale methods (nightly-default) |
 
 Multiple memberships are intentional: a settings host change affects its category
 flows, a mode selector affects both onboarding and filtering, and the combined
-server/cache page affects both areas. Shared model changes stay full even when
+server/cache page affects both areas. Shared model changes select all functional PR tests even when
 the model's name mentions one feature. No broad app-directory catch-all hides a
-new, unreviewed feature file. An unknown changed path conservatively selects full.
+new, unreviewed feature file. An unknown changed path selects all functional PR tests.
 
 Mode selection/cards, the iOS onboarding scaffold and filter-summary containers
 are shared launch routes in the default UI flows. Their source globs overlap every
@@ -123,17 +128,17 @@ sidebar check that probes the server form also belongs to server/connection.
 Review the helpers a test calls,
 not just the screen named by its method, when checking these relationships.
 
-The always-run smoke set explicitly names
-`FilterSummaryIOSVisualUITests/testIOSFirstBootOnboardingHeaderScreenshot`
+The applicable platform's functional smoke set explicitly names
+`ServerConfigFormIOSUITests/testIOSFirstBootServerFieldsKeyboardAppear`
 (iPhone/iPad) and
 `ServerConfigFormTVOSUITests/testTVOSFirstBootCoreElementsAndDisabledSave`
 (Apple TV). For ordinary app-affecting PRs the trusted selection is the union of
-affected areas plus applicable smoke methods, filtered by each platform's unchanged
-default plan and expanded to all three devices. Allowlisted docs-only changes
-select no UI. Core changes select the full population except the
-[nightly-default locale screenshots](#nightly-default-locale-screenshots); unknown,
-CI-changing, push and nightly changes stay complete.
-An unavailable or empty diff is conservative full input, never docs-only proof.
+affected areas plus applicable smoke methods, filtered by the unchanged default
+plans, method kind and each path's proven platform. Allowlisted docs-only changes
+select no UI. Core, unknown and CI-changing PRs select all functional methods on
+all platforms. Every PR excludes screenshots, including locale acceptance methods.
+Nightly and other non-PR full runs stay complete. An unavailable or empty diff
+selects all functional PR tests, never docs-only proof.
 
 The host workflow-policy check (`--check-ui-shards`, included in `check_all.sh`)
 uses `ui_identities` over `immichSlidesUITests` and `TestSupport` on both platforms.
@@ -154,45 +159,47 @@ assignment against the identifiers the test actually uses.
 ### Scheduling the selection
 
 Pull-request UI runs schedule only the trusted selection. The Linux `ui-archive`
-job repeats admission's selection from base data (`shard_selection` in
-`ci_ui_tests.py`): the base map, classification policy, shard manifest and default
-plans, the `base...head` diff and the tested tree's UI inventory. It publishes
-`ios_shards`/`tvos_shards`, the manifest-ordered shards that contain selected tests,
-and `run_ios`/`run_tvos`. Each matrix takes its platform's list through
+job repeats admission's selection from base data (`planned_ui_selection` in
+`ci_ui_tests.py`): the base map, classification policy, project platform proof,
+frozen durations and default plans, the `base...head` diff and the tested tree's
+UI inventory. It publishes `iphone_shards`, `ipad_shards`, `tvos_shards`, the
+canonical packed plan hash, and `run_ios`/`run_tvos`. Each matrix takes its device's list through
 `fromJSON(...)` and keeps its `max-parallel` cap, so an empty shard never takes a
 macOS runner. A platform with no selected test skips its whole matrix. Each shard
-runs only its selected tests (`selected_keys` in the platform's archive selection
-record); `ui-selection.json` in the archive artifact records the mode, lists and
-keys. Pushes, nightly, manual runs, CI-changing PRs, unknown paths and selection
-errors are bound to every shard and test, and run them when UI runs at all: a main
-push still skips both matrices when it reuses a trusted PR verdict or defers UI to
-nightly (see the [main contract](#main-ui-scheduling-contract)). Docs-only PRs
-schedule none.
+runs only its packed identities in the platform's archive selection record;
+`ui-selection.json` records the mode, device lists, keys and complete hashed plan.
+CI-changing and unknown-path PRs pack all functional methods. Selection errors
+fail closed. Nightly and other non-PR full runs retain duration-balanced v2 shards
+and every default-plan method. A main push still skips all matrices when it reuses
+a trusted PR verdict or defers UI to nightly (see the
+[main contract](#main-ui-scheduling-contract)). Docs-only PRs schedule none.
 
 Admission binds the same lists from its own base reader. The producer cannot widen
 or narrow its own population: any difference fails the required-job check.
-Publication accepts either the complete full set or the exact trusted selected
-set across every device and shard. A selection error refuses scoped evidence while
-preserving full-population admission. Partial, mixed or extra populations fail.
+Publication requires the exact trusted packed set across every device and shard,
+with the same plan hash on every infrastructure and UI summary. Historical
+unflagged producers retain full-or-exact-selection compatibility; an activated
+producer cannot substitute full evidence. Partial, mixed or extra populations fail.
 Only independently empty selected shards may be unexecuted literal skips.
 Scoped success cannot supply a full post-merge reuse receipt.
 GitHub cannot skip one entry of a static matrix, so the reader accepts
 [bound dynamic shard lists](CI_PUBLISHER.md#bound-dynamic-ui-shards). The main Cloud
-router keeps scoped pull requests on GitHub, so a selection never starts a Cloud
-build; full selections keep the [overflow path](XCODE_CLOUD_UI.md).
+router keeps scoped pull requests on GitHub. Every app-affecting PR now has a
+scoped functional selection, so all PR UI stays on GitHub until #283 extends
+[Cloud routing](XCODE_CLOUD_UI.md) to scoped selections. Nightly and main pushes
+are unaffected; historical full selections retain the overflow protocol.
 
 The nightly full UI tier is the safety net for cross-area regressions. The release
 rule still requires a green, release-eligible nightly for the exact release SHA
 and its complete required human reviews; a scoped PR result cannot replace it.
 See [the nightly contract](CI_NIGHTLY.md) and [publisher trust](CI_PUBLISHER.md).
 
-### Prepared platform selection and capacity packing
+### Platform selection and capacity packing
 
-The reader supports a successor protocol, but the current `ci-ui.yml` producer
-does **not** activate it. Activation requires the literal `--pack-scoped-ui` flag
-on its admitted `ci_ui_tests.py wait-archive` command, in a separate producer PR
-after this reader has reached main. Until then, scheduling and locale deferral
-retain the contract above. No tests, assertions or default plans change.
+The `ci-ui.yml` producer activates the reader's protocol with the literal
+`--pack-scoped-ui` flag on its admitted `ci_ui_tests.py wait-archive` command.
+The reader landed separately before this producer. Historical unflagged runs
+retain their original contract. No assertions, skips, deadlines or default plans change.
 
 With this intent, selection pairs each changed path's areas with its proven
 platform. An iOS-only settings file selects iPhone/iPad settings and smoke tests;
@@ -210,8 +217,8 @@ The base map's separate `functional_smoke` uses functional first-boot checks:
 `ServerConfigFormIOSUITests/testIOSFirstBootServerFieldsKeyboardAppear` runs on
 both iPhone and iPad, and the TV first-boot core-elements check runs on Apple TV.
 The host audit rejects smoke methods recorded as an expected baseline fixture
-skip on any applicable device. The legacy screenshot smoke remains unchanged
-until producer activation.
+skip on any applicable device. The legacy screenshot smoke remains available
+only for historical unflagged producers.
 Core, unknown and CI-changing PRs run **all functional methods** on all platforms,
 without screenshot or locale methods, even when a catalog or captured screen changes.
 The nightly and other non-PR full runs retain the complete default-plan population.
@@ -227,8 +234,10 @@ its method count. Candidate counts must fit the existing 28-minute estimated job
 budget; impossible packing or classification fails the activated PR admission.
 No method is dropped, duplicated, replaced or borrowed from another device.
 
-The planner accounts for two iPhone slots, one iPad slot and one Apple TV slot,
-with nine minutes of fixed overhead per iOS job and four per Apple TV job. It
+The planner accounts for two iPhone slots, one iPad slot and one Apple TV slot;
+host policy requires each packed device job's literal `max-parallel` to equal
+that device's `DEVICE_SLOTS` capacity. It allows nine minutes of fixed overhead
+per iOS job and four per Apple TV job. It
 chooses the fewest jobs when predicted UI time fits 25 minutes, leaving five for
 the gate build. Otherwise it minimizes predicted UI wall time, then runner
 minutes, within the same caps. Predictions do **not** establish a 30-minute pass.
@@ -269,21 +278,15 @@ An earlier build with a different head/base/tree cannot supply a cache shortcut.
 ### Nightly-default locale screenshots
 
 The multi-language acceptance screenshots (Japanese, Spanish, Traditional Chinese
-HK/TW) check layout in other languages rather than behavior and take about 70 seconds
-each. They belong only to the areas listed in the map's `nightly_default` array. On a
-pull request the trusted selection omits a nightly-default test unless one of its own
-areas is selected: a catalog change (`Localizable.xcstrings`, `InfoPlist.xcstrings`)
-selects every locale method, and a change to a captured leaf screen selects that
-family. Shared navigation containers and launch routes are deliberately not family
-sources; the default-language tests in the feature areas cover those flows. A core
-change without a catalog change therefore selects the full population minus the locale
-methods, which the reader accepts as an exact selected population. CI-changing and
-unknown-path PRs, pushes, the nightly and manual runs keep the complete population. An
-unknown path stays fully conservative, locale methods included. It is rare: host checks
-require every app source to be mapped, so it mainly occurs when a PR adds an app file
-the base map does not know yet. The [nightly full UI](CI_NIGHTLY.md#complete-fixture-ui)
-runs every locale method. No
-test policy deselection is involved: the methods stay declared in the default plans.
+HK/TW) check layout in other languages and remain mapped to the areas listed in
+`nightly_default`. Every PR excludes **all** screenshot methods by method name,
+even when a catalog, captured leaf screen, core file or CI contract changes.
+Those changes retain their affected functional tests; core and unknown paths
+select every functional method. The
+[nightly full UI](CI_NIGHTLY.md#complete-fixture-ui) runs every locale and
+default-language screenshot method, together with every functional method.
+Historical unflagged producers retain their earlier area-sensitive locale policy.
+No test policy deselection is involved: every method stays in the default plans.
 Adding a test to a nightly-default area is a CI-trusted map change; list every such
 method in the PR for maintainer approval. The settings-family screenshots also capture
 the slideshow frame before opening settings. Its localized content is the control bar,
@@ -304,7 +307,8 @@ interpolation matches any text. An app Swift file compiled on that platform defi
 identifier when it contains a matching literal or calls a function whose name ends in
 `AccessibilityID`/`AccessibilityIdentifier` that returns one. The test must belong to
 one of each defining file's areas or to the smoke set; core files already select the
-full population. A test only in nightly-default areas is checked the same way and must
+all functional PR methods and the complete population on full runs. A test only
+in nightly-default areas is checked the same way and must
 also reach at least one identifier from its own areas' leaf screens; a file it only
 traverses on the way to the captured screen must be a reviewed navigation source for
 one of its areas. The analysis over-approximates by design, so a false dependency is
@@ -574,6 +578,11 @@ exact runtime and device-type pins before the build.
 
 Pass `--manifest-revision COMMIT_SHA` to explicitly reproduce that historical
 tree instead of the working tree. Use `--strict-ci` to refuse local changes.
+For a packed PR shard, retain `ui-selection.json` from that run's archive artifact
+and pass `--shard scoped-a --selection-path '<retained-selection>/ui-selection.json'`.
+The command validates its tested tree, canonical plan hash and exact device selectors
+before building, and records the same plan hash on every per-test summary. Choose the
+matching tested tree with `--manifest-revision` when reproducing a historical run.
 An existing private `Config/env.xcconfig` symlink is left untouched and excluded
 from the snapshot. Ambient test configuration is ignored; the fixture runner
 injects only public set C runtime inputs. Fixture preflight starts its server

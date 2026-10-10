@@ -292,7 +292,7 @@ final class LocaleUITests: XCTestCase {
         path = ".github/workflows/ci-ui.yml"
         document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
         self.assertNotIn("ui-fail-fast", self.rules(document, path))
-        for job in ("shards", "appletv-shards"):
+        for job in ("iphone-shards", "ipad-shards", "appletv-shards"):
             changed = copy.deepcopy(document)
             changed["jobs"][job]["strategy"]["fail-fast"] = True
             with self.subTest(job=job):
@@ -302,16 +302,17 @@ final class LocaleUITests: XCTestCase {
         path = ".github/workflows/ci-ui.yml"
         document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
         self.assertNotIn("ui-capacity", self.rules(document, path))
-        document["jobs"]["shards"]["strategy"]["max-parallel"] = 4
+        document["jobs"]["iphone-shards"]["strategy"]["max-parallel"] = 3
         document["jobs"]["appletv-shards"]["strategy"]["max-parallel"] = 1
         self.assertIn("ui-capacity", self.rules(document, path))
         split = copy.deepcopy(document)
-        split['jobs']['iphone-shards'] = split['jobs'].pop('shards')
-        split['jobs']['ipad-shards'] = copy.deepcopy(split['jobs']['iphone-shards'])
         split['jobs']['iphone-shards']['strategy']['max-parallel'] = 2
         split['jobs']['ipad-shards']['strategy']['max-parallel'] = 1
         self.assertNotIn('ui-capacity', self.rules(split, path))
         split['jobs']['ipad-shards']['strategy']['max-parallel'] = 2
+        self.assertIn('ui-capacity', self.rules(split, path))
+        split['jobs']['iphone-shards']['strategy']['max-parallel'] = 1
+        # The total is still four, but serial iPhone jobs violate the packing budget.
         self.assertIn('ui-capacity', self.rules(split, path))
 
     def test_packed_ui_requires_independent_device_outputs_and_reports_string_matrices(self):
@@ -319,18 +320,13 @@ final class LocaleUITests: XCTestCase {
         root = Path(__file__).resolve().parent.parent
         path = '.github/workflows/ci-ui.yml'
         document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
-        archive = document['jobs']['archive']
-        command = next(step for step in archive['steps'] if 'ci_ui_tests.py wait-archive' in step.get('run', ''))
-        command['run'] = command['run'].rstrip() + ' --pack-scoped-ui'
-        self.assertIn('ui-shards', self.rules(document, path))
-        document['jobs']['iphone-shards'] = document['jobs'].pop('shards')
-        document['jobs']['ipad-shards'] = copy.deepcopy(document['jobs']['iphone-shards'])
-        for device, capacity in (('iphone', 2), ('ipad', 1)):
-            job = document['jobs'][device + '-shards']
-            job['strategy'].update({'max-parallel': capacity, 'matrix': {'device': [device],
-                                   'shard': DYNAMIC_UI_SHARDS[device]}})
-            archive['outputs'][device + '_shards'] = '${{ steps.select.outputs.' + device + '_shards }}'
         self.assertNotIn('ui-shards', self.rules(document, path))
+        grouped = copy.deepcopy(document)
+        job = grouped['jobs']['shards'] = grouped['jobs'].pop('iphone-shards')
+        del grouped['jobs']['ipad-shards']
+        job['strategy'].update({'max-parallel': 3, 'matrix': {'device': ['iphone', 'ipad'],
+                               'shard': DYNAMIC_UI_SHARDS['ios']}})
+        self.assertIn('ui-shards', self.rules(grouped, path))
         for mutation in ('platform-output', 'string-matrix'):
             bad = copy.deepcopy(document)
             strategy = bad['jobs']['iphone-shards']['strategy']
@@ -348,20 +344,25 @@ final class LocaleUITests: XCTestCase {
         path = ".github/workflows/ci-ui.yml"
         document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
         shards = list(parse_shard_manifest((root / MANIFEST_PATH).read_text())["shards"])
-        for job, platform in (("shards", "ios"), ("appletv-shards", "tvos")):
+        for job, platform, output in (("iphone-shards", "ios", "iphone"), ("ipad-shards", "ios", "ipad"),
+                                      ("appletv-shards", "tvos", "tvos")):
             literal = copy.deepcopy(document)
             literal["jobs"][job]["strategy"]["matrix"]["shard"] = list(shards)
-            dynamic = copy.deepcopy(literal)
-            dynamic["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS[platform]
+            # Historical full matrices remain valid without the packed intent.
+            for step in literal['jobs']['archive']['steps']:
+                if 'run' in step:
+                    step['run'] = step['run'].replace(' --pack-scoped-ui', '')
+            dynamic = copy.deepcopy(document)
+            dynamic["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS[output]
             dynamic["jobs"]["archive"]["outputs"].update({name: "${{ steps.select.outputs." + name + " }}"
-                                                          for name in (platform + "_shards", "run_" + platform)})
+                                                          for name in (output + "_shards", "run_" + platform)})
             with self.subTest(job=job):
                 for accepted in (literal, dynamic):
                     self.assertNotIn("ui-shards", self.rules(accepted, path, ui_shards=shards))
                 omitted = copy.deepcopy(literal)
                 omitted["jobs"][job]["strategy"]["matrix"]["shard"].pop()
                 unbound = copy.deepcopy(dynamic)
-                del unbound["jobs"]["archive"]["outputs"][platform + "_shards"]
+                del unbound["jobs"]["archive"]["outputs"][output + "_shards"]
                 other = copy.deepcopy(dynamic)
                 other["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS["tvos" if platform == "ios" else "ios"]
                 for refused in (omitted, unbound, other):
