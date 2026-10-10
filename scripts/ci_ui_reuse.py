@@ -11,7 +11,7 @@ import zlib
 import yaml
 
 from ci_publish_git import git, read_blob, workflow_contract
-from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest
+from ci_ui_shards import DEVICES, MANIFEST_PATH, parse_shard_manifest
 from ci_summary import (ContractError, decode, fields, integer, nullable_string, parse_identity,
                         parse_summary, require, sha, string)
 
@@ -184,7 +184,8 @@ def find_reuse(api, push):
     return None
 
 
-def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=False, discarded_shards=None, cloud=False):
+def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=False, discarded_shards=None, cloud=False,
+                             group_history=False):
     """Normalize collapsed matrix history without supplying test evidence."""
     from check_workflow_policy import WorkflowLoader
     names, _, _, metadata = workflow_contract(source, run, metadata=True)
@@ -205,15 +206,19 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
     failed_pr_history = (historical and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
                          and metadata.get("ui-archive", {}).get("tier") == "ui-infrastructure"
                          and archive.get("status") == "completed" and archive.get("conclusion") == "failure")
-    cloud_pr = cloud is True and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
+    from ci_xcode_cloud_groups import cloud_devices
+    external_devices = cloud_devices(cloud) if isinstance(cloud, dict) else {"appletv"} if cloud is True else set()
+    cloud_pr = bool(external_devices) and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
     historical_tv = historical and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
+    historical_devices = set(DEVICES) if group_history else {"appletv"}
     if main_push or failed_pr_history or cloud_pr or historical_tv:
         for key, job in workflow["jobs"].items():
             raw_name = job.get("name", key)
             if not job.get("strategy", {}).get("matrix") or raw_name not in actual or raw_name in names:
                 continue
             expanded, _, _, evidence = workflow_contract(yaml.safe_dump({"jobs": {key: job}}), run, metadata=True)
-            if (cloud_pr or historical_tv) and not main_push and not failed_pr_history and any(meta.get("device") != "appletv" for meta in evidence.values()):
+            if (cloud_pr or historical_tv) and not main_push and not failed_pr_history and any(
+                    meta.get("device") not in (external_devices if cloud_pr else historical_devices) for meta in evidence.values()):
                 continue
             skipped = actual.pop(raw_name)
             require(skipped["status"] == "completed" and skipped["conclusion"] == "skipped"

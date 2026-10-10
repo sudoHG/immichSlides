@@ -181,13 +181,13 @@ def validate_uploader(run, workflow, repository, path, attempt):
             "cloud evidence uploader is not a successful trusted main workflow")
 
 
-def archive_evidence_run(api, run):
-    """Bind cloud proof to the actual retained archive-selection execution."""
+def archive_evidence_run(api, run, *, selection_job="ui-archive"):
+    """Bind cloud proof to the actual retained selection execution."""
     require(type(run["run_attempt"]) is int and 0 < run["run_attempt"] <= 100, "too many UI attempts")
     retained, evidence_attempt = None, None
     for attempt in range(1, run["run_attempt"] + 1):
         jobs = api.pages(f"actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs")
-        matches = [job for job in jobs if job["name"] == "ui-archive"]
+        matches = [job for job in jobs if job["name"] == selection_job]
         require(len(matches) <= 1, "duplicate UI archive jobs")
         if not matches:
             continue

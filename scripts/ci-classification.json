@@ -45,6 +45,7 @@
     "scripts/ci-ui-shards.json",
     "scripts/ci-ui-durations.json",
     "scripts/ci-ui-areas.json",
+    "scripts/ci-xcode-cloud-*.json",
     "scripts/ci-ui-flow-exceptions.json",
     "immichSlides-iOS.xctestplan",
     "immichSlides-tvOS.xctestplan",
