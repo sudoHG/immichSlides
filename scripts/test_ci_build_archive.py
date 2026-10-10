@@ -137,7 +137,11 @@ class BuildArchiveTests(unittest.TestCase):
                     with patch.object(ui, "context", return_value=copy.deepcopy(context)), patch.object(ui, "output"), \
                             patch.dict(ui.os.environ, {"GH_TOKEN": "test-placeholder"}):
                         self.assertEqual(ui.cloud_selection(SimpleNamespace(output_dir=cloud_dir)), 0)
-                    workflow = (ui.ROOT / ui.WORKFLOW).read_text()
+                    from ci_publish_git import bind_ui_shards
+                    from ci_ui_shards import parse_shard_manifest
+                    shards = list(parse_shard_manifest((ui.ROOT / ui.MANIFEST_PATH).read_text())["shards"])
+                    # Admission binds a push to every manifest shard.
+                    workflow = bind_ui_shards((ui.ROOT / ui.WORKFLOW).read_text(), {"ios": shards, "tvos": shards})
                     run = {"id": 100, "run_attempt": 1, "head_sha": push["pushed_sha"], "event": "push",
                            "path": ui.WORKFLOW, "head_branch": "main", "status": "completed", "conclusion": "success",
                            "repository": {"full_name": push["repository"]}, "head_repository": {"full_name": push["repository"]}}
@@ -150,6 +154,67 @@ class BuildArchiveTests(unittest.TestCase):
                     with patch("ci_ui_reuse.find_reuse", return_value=None):
                         self.assertEqual("pending", evaluate_reused_push(SimpleNamespace(repository=push["repository"]),
                                                                        record, run, jobs, records)["state"])
+
+    def test_producer_shard_lists_equal_the_trusted_admission_binding(self):
+        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES, base_reader, ui_shard_lists
+        from ci_population import ui_identities
+        repo = self.root / "repo"
+        (repo / "scripts").mkdir(parents=True)
+        (repo / "immichSlidesUITests").mkdir()
+        (repo / "immichSlides").mkdir()
+        manifest = {"schema_version": 2, "revision": "method-v2", "default_shard": "default",
+                    "shards": {"default": [], "visual": ["VisualUITests/testFlow"], "other": ["OtherUITests"]}}
+        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["OtherUITests"]},
+                              "settings": {"sources": ["immichSlides/Settings.swift"], "tests": ["VisualUITests"]},
+                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]}}}
+        plan = {"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}
+        files = {"scripts/ci-ui-shards.json": json.dumps(manifest), "scripts/ci-ui-areas.json": json.dumps(area_map),
+                 "scripts/ci-classification.json": json.dumps({"schema_version": 1, "app_unaffected": ["docs/**"],
+                                                               "ci_trusted": ["scripts/ci-*.json"]}),
+                 "immichSlides-iOS.xctestplan": json.dumps(plan), "immichSlides-tvOS.xctestplan": json.dumps(plan),
+                 "immichSlides/Settings.swift": "// v1\n", "immichSlides/Engine.swift": "// v1\n",
+                 "immichSlidesUITests/Flows.swift": "import XCTest\n" + "".join(
+                     f"class {name}: XCTestCase {{ func {method}() {{}} }}\n" for name, method in
+                     (("SmokeUITests", "testLaunch"), ("VisualUITests", "testFlow"), ("OtherUITests", "testPlay")))}
+        for path, text in files.items():
+            (repo / path).write_text(text)
+        def git(*arguments):
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *arguments],
+                                  cwd=repo, check=True, capture_output=True, text=True, timeout=60).stdout.strip()
+        git("init", "-q")
+        git("add", "-A")
+        git("commit", "-q", "-m", "base")
+        base = git("rev-parse", "HEAD")
+        sources = {path: text for path, text in files.items() if path.startswith("immichSlidesUITests/")}
+        populations = {"ui-" + platform: ui_identities(sources, platform) for platform in ("ios", "tvos")}
+        modules = {name: (Path(ui.__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        for changed, expected in (("immichSlides/Settings.swift", ["default", "visual"]),
+                                  ("immichSlides/Engine.swift", ["default", "visual", "other"]),
+                                  ("docs/guide.md", [])):
+            with self.subTest(changed=changed):
+                git("checkout", "-q", base)
+                (repo / changed).parent.mkdir(parents=True, exist_ok=True)
+                (repo / changed).write_text("// v2\n")
+                git("add", "-A")
+                git("commit", "-q", "-m", "head")
+                head = git("rev-parse", "HEAD")
+                identity = {"event": "pull_request", "base_sha": base, "head_sha": head}
+                with patch.object(ui, "ROOT", repo):
+                    lists, keys, mode = ui.shard_selection(identity)
+                selection_inputs = {"paths": [changed], "event": "pull_request", "area_map": json.dumps(area_map),
+                                    "classification_policy": json.loads(files["scripts/ci-classification.json"]),
+                                    "build_target_paths": sorted(path for path in files if path.startswith("immichSlides/")),
+                                    "map_revision": base, "map_sha256": "0" * 64}
+                devices = ["appletv", "ipad", "iphone"]
+                admitted = {"manifest": manifest, **base_reader(modules, {
+                    "operation": "ui", "shard_devices": devices, "devices": devices, "populations": populations,
+                    "base_populations": populations, "plans": {platform: {"plan": plan} for platform in ("ios", "tvos")},
+                    "manifest": manifest, "selection_inputs": selection_inputs})}
+                trusted = ui_shard_lists(admitted, identity, {"ci_changing": False})
+                self.assertEqual(lists, trusted)
+                self.assertEqual(lists["ios"], expected)
+                self.assertEqual(mode, admitted["selection"]["mode"])
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

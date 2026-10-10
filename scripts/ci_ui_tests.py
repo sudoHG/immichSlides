@@ -79,6 +79,56 @@ def app_affected(identity):
                             build_target_paths=members)["app_affected"]
 
 
+def shard_selection(identity):
+    """Mirror admission's trusted selection: per-platform shard lists and selected keys (None when full).
+
+    Admission binds the workflow to the same lists from base data; any difference fails closed there.
+    """
+    order = list(parse_shard_manifest((ROOT / MANIFEST_PATH).read_text())["shards"])
+    full = ({platform: order for platform in ("ios", "tvos")}, {platform: None for platform in ("ios", "tvos")}, "full")
+    if identity["event"] != "pull_request":
+        return full
+    from ci_population import ui_identities
+    from ci_ui_selection import AREA_MAP_PATH, select_ui_population
+    from ci_ui_shards import default_plan_population
+    base, head = identity["base_sha"], identity["head_sha"]
+    try:
+        area_map = git_blob(base, AREA_MAP_PATH).decode()
+    except subprocess.CalledProcessError:
+        return full  # historical bases without a map stay full-only
+    try:
+        paths = subprocess.check_output(["git", "diff", "--name-only", "--no-renames", base + "..." + head],
+                                        cwd=ROOT, text=True, timeout=60).splitlines()
+        members = {path for revision in ("HEAD", base) for path in subprocess.check_output(
+            ["git", "ls-tree", "-r", "--name-only", revision, "--", "immichSlides"], cwd=ROOT, text=True, timeout=60).splitlines()}
+        ui_root = ROOT / "immichSlidesUITests"
+        sources = {path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8") for path in ui_root.rglob("*.swift")}
+        populations = {"ui-" + platform: ui_identities(sources, platform) for platform in ("ios", "tvos")}
+        plans = {platform: git_blob(base, "immichSlides-" + suffix + ".xctestplan").decode()
+                 for platform, suffix in (("ios", "iOS"), ("tvos", "tvOS"))}
+        manifest = git_blob(base, MANIFEST_PATH).decode()
+        selection = select_ui_population(paths or ["__unknown_empty_diff__"],
+                                         decode(git_blob(base, "scripts/ci-classification.json").decode()),
+                                         build_target_paths=sorted(members), area_map=area_map,
+                                         populations=populations, plans=plans, event="pull_request")
+    except (ContractError, ValueError, KeyError, subprocess.SubprocessError):
+        return full  # a selection error keeps the complete population, as admission does
+    if selection["mode"] == "full":
+        return full
+    lists, keys = {}, {}
+    order = list(parse_shard_manifest(manifest)["shards"])
+    for platform in ("ios", "tvos"):
+        devices = [device for device, item in DEVICES.items() if item == platform]
+        chosen = {tuple(entry["key"] for entry in selection["populations"][device]) for device in devices}
+        require(len(chosen) == 1, "devices of one platform selected different tests")
+        keys[platform] = sorted(chosen.pop())
+        shards = shard_populations(populations["ui-" + platform], plans[platform], manifest, devices[0])
+        lists[platform] = [shard for shard in order if any(entry["key"] in keys[platform] for entry in shards[shard])]
+        require(set(keys[platform]) <= {entry["key"] for entry in default_plan_population(
+            populations["ui-" + platform], plans[platform])}, "selection is outside the default plan")
+    return lists, keys, selection["mode"]
+
+
 def downloaded_archive(api, artifact):
     require(artifact["expired"] is False and 0 < artifact["size_in_bytes"] <= MAX_ARCHIVE_BYTES,
             "build archive is expired or exceeds the bounded download")
@@ -285,6 +335,14 @@ def wait_archive(args):
         affected = app_affected(ctx["identity"])
         output("app_affected", str(affected).lower())
         output("selection_artifact", f"ui-archive-{ctx['run']['id']}-{ctx['run']['attempt']}")
+        lists, keys, mode = shard_selection(ctx["identity"])
+        for platform_name in ("ios", "tvos"):
+            output(platform_name + "_shards", json.dumps(lists[platform_name], separators=(",", ":")))
+        write_json(records / "ui-selection.json", {"schema_version": 1, "identity": ctx["identity"], "mode": mode,
+                   "shards": lists, "keys": keys})
+        print(f"UI selection: {mode}; " + "; ".join(
+            f"{name} {len(keys[name]) if keys[name] is not None else 'all'} tests in {len(lists[name])} shards"
+            for name in ("ios", "tvos")), flush=True)
         if affected:
             wait = ArchiveWait(max(0, started + args.timeout_minutes * 60 - time.monotonic()))
             api = RateLimitWaitingGitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"], wait.remaining)
@@ -294,6 +352,8 @@ def wait_archive(args):
             deferred = (getattr(args, "defer_main_ui", False) and ctx["identity"]["event"] == "push"
                         and ctx["identity"]["ref"] == "refs/heads/main")
             output("run_ui", str(reuse is None and not deferred).lower())
+            for platform_name in ("ios", "tvos"):
+                output("run_" + platform_name, str(reuse is None and not deferred and bool(lists[platform_name])).lower())
             if reuse is not None:
                 write_json(records / "archive-selection.json", {"schema_version": 1, "identity": ctx["identity"],
                            "status": "reused", "verdict": reuse})
@@ -308,11 +368,13 @@ def wait_archive(args):
                                                platform_name=platform_name,
                                                record_refusals=lambda rows, name=platform_name: write_json(records / ("archive-refusals-" + name + ".json"), rows))
                     selection["timeout_minutes"] = args.timeout_minutes
+                    selection["selected_keys"] = keys[platform_name]
                     for key in ("artifact_id", "producer_run_id", "producer_attempt"):
                         output(platform_name + "_" + key, selection[key])
                     write_json(records / ("archive-selection-" + platform_name + ".json"), selection)
         else:
-            output("run_ui", "false")
+            for name in ("run_ui", "run_ios", "run_tvos"):
+                output(name, "false")
             write_json(records / "archive-selection.json", {"schema_version": 1, "identity": ctx["identity"], "status": "not-applicable"})
         summary["status"], code = "passed", 0
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
@@ -447,6 +509,11 @@ def run_shard(args):
     ui_root = ROOT / "immichSlidesUITests"
     population = declared_tests({path.relative_to(ui_root).as_posix(): path.read_text() for path in ui_root.rglob("*.swift")}, platform_name, plan, [])
     shard = shard_populations(population, plan, manifest, args.device)[args.shard]
+    if args.archive_dir:
+        # A scoped producer runs only the selected tests of this shard; None keeps the full shard.
+        selected = decode(args.selection_path.read_text()).get("selected_keys")
+        if selected is not None:
+            shard = [entry for entry in shard if entry["key"] in set(selected)]
     require(shard, "requested UI shard has no declared tests")
     require(not os.environ.get("GITHUB_ACTIONS") or args.manifest_revision is None, "CI cannot override the admitted manifest")
     with tempfile.TemporaryDirectory(prefix="ui-shard-manifest-") as manifest_directory:
