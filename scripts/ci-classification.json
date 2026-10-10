@@ -44,6 +44,7 @@
     "scripts/ci-known-flaky.json",
     "scripts/ci-ui-shards.json",
     "scripts/ci-ui-areas.json",
+    "scripts/ci-ui-flow-exceptions.json",
     "immichSlides-iOS.xctestplan",
     "immichSlides-tvOS.xctestplan",
     "scripts/ci-classification.json",

@@ -1111,9 +1111,14 @@ class PublisherTests(unittest.TestCase):
                     "areas": {"core": {"sources": ["immichSlides/Engine.swift", "immichSlides/Models/**"], "tests": ["CoreUITests"]},
                               "settings": {"sources": ["immichSlides/Settings*.swift"], "tests": ["SettingsUITests"]},
                               "filter": {"sources": ["immichSlides/Filter.swift"], "tests": ["FilterUITests"]},
-                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]}}}
+                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]},
+                              "locale": {"sources": ["immichSlides/Strings.xcstrings", "immichSlides/Settings.swift"],
+                                         "tests": ["LocaleUITests"]}},
+                    "nightly_default": ["locale"]}
         policy = {"schema_version": 1, "app_unaffected": ["docs/**"], "ci_trusted": ["scripts/ci-*.json"]}
-        keys = ("SmokeUITests/testLaunch", "SettingsUITests/testSave", "FilterUITests/testSelect", "CoreUITests/testPlay")
+        keys = ("SmokeUITests/testLaunch", "SettingsUITests/testSave", "FilterUITests/testSelect", "CoreUITests/testPlay",
+                "LocaleUITests/testJapanese")
+        locale = keys[4:]
         populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
                        for platform in ("ios", "tvos")}
         plans = {platform: {"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}
@@ -1122,10 +1127,14 @@ class PublisherTests(unittest.TestCase):
             return select_ui_population(paths, policy, build_target_paths=set(), area_map=area_map,
                                         populations=populations, plans=plans, event=event)
         for paths, event, mode, expected in (
-                (["immichSlides/Settings.swift", "docs/guide.md"], "pull_request", "scoped", keys[:2]),
-                (["immichSlides/Settings.swift", "immichSlides/Filter.swift"], "pull_request", "scoped", keys[:3]),
-                (["immichSlides/Engine.swift"], "pull_request", "full", keys),
-                (["immichSlides/Models/Nested/Engine.swift"], "pull_request", "full", keys),
+                (["immichSlides/Settings.swift", "docs/guide.md"], "pull_request", "scoped", keys[:2] + locale),
+                (["immichSlides/Settings.swift", "immichSlides/Filter.swift"], "pull_request", "scoped", keys[:3] + locale),
+                (["immichSlides/Filter.swift"], "pull_request", "scoped", keys[:1] + keys[2:3]),
+                (["immichSlides/Strings.xcstrings"], "pull_request", "scoped", keys[:1] + locale),
+                # Core stays full except nightly-default tests, unless their own area is also selected.
+                (["immichSlides/Engine.swift"], "pull_request", "scoped", keys[:4]),
+                (["immichSlides/Models/Nested/Engine.swift"], "pull_request", "scoped", keys[:4]),
+                (["immichSlides/Engine.swift", "immichSlides/Strings.xcstrings"], "pull_request", "full", keys),
                 (["immichSlides/SettingsModels/New.swift"], "pull_request", "full", keys),
                 (["new/Unknown.swift"], "pull_request", "full", keys),
                 (["scripts/ci-ui-areas.json"], "pull_request", "full", keys),
@@ -1185,6 +1194,7 @@ class PublisherTests(unittest.TestCase):
     def test_area_map_includes_flows_that_drive_shared_setup_and_settings_screens(self):
         from ci_ui_selection import AREA_MAP_PATH, affected_areas, matches_test, parse_area_map
         area_map = parse_area_map((Path(__file__).parent.parent / AREA_MAP_PATH).read_text())
+        locales = ("Japanese", "Spanish", "TraditionalChineseHK", "TraditionalChineseTW")
         cases = [
             ("iOS/Component/ServerConfigFormViewIOS.swift", "immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton"),
             ("Shared/Component/ServerConfigFormView.swift", "immichSlidesUITests/testIPhonePortraitAndLandscapeFirstBootElements"),
@@ -1197,22 +1207,35 @@ class PublisherTests(unittest.TestCase):
             ("Shared/Core/SettingsView.swift", "FilterSummaryIOSVisualUITests/testIOSExifAlbumDiagnosticScreenshots"),
             ("Shared/Core/SettingsView+Sections.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFilterEditorScreenshot"),
             ("Shared/Core/SettingsView+Helpers.swift", "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow"),
-            ("Shared/Component/SlideshowControlBarView.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
+            ("Shared/Component/SlideshowControlBarView.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceSettingsAboutOpenSourceScreenshots"),
             ("iOS/Core/SlideShowViewIOS.swift", "immichSlidesUITests/testIPhonePortraitAndLandscapeModeSelectionFlow"),
             ("Shared/Component/SlideshowControlBarView.swift", "immichSlidesUITests/testResetStateEnvironmentForcesFirstBootAfterConfigured"),
             ("tvOS/Component/SlideshowControlBarViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerPageShowsFormAndStatusBanner"),
             ("Shared/Component/ServerConfigFormView.swift", "immichSlidesUITestsLaunchTests/testLaunch"),
             ("iOS/Component/ServerConfigFormViewIOS.swift", "FilterSummaryIOSVisualUITests/testIOSSettingsOpenSourceLicensesKeepsPadSidebarResponsive"),
             ("iOS/Core/ModeSelectionViewIOS.swift", "PlaybackHistoryIOSUITests/testPreviousNextRetainedHistoryFromRandomPlayback"),
-            ("iOS/Core/FilterSummaryViewIOS+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
+            ("iOS/Core/FilterSummaryViewIOS+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceSettingsAboutOpenSourceScreenshots"),
             ("tvOS/Core/FilterSummaryViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSFullFlowModeSelectionToAccessProtectionCanReachTargetPage"),
             ("iOS/Component/OnboardingScaffoldIOS.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFilterSummaryScreenshot"),
+            # Nightly-default locale screenshots follow the leaf screens they capture.
+            ("tvOS/Core/AlbumFilterViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSJapaneseAcceptanceCoreScreenshots"),
+            ("tvOS/Core/PersonFilterViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptanceCoreScreenshots"),
+            ("Localizable.xcstrings", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
+        ] + [("Shared/Component/SlideshowControlBarView.swift",
+              f"FilterSummaryIOSVisualUITests/testIOS{locale}AcceptanceSettingsPrimaryScreenshots") for locale in locales] + [
+             ("tvOS/Component/SlideshowControlBarViewTV.swift",
+              f"FilterSummaryTVOSVisualUITests/testTVOS{locale}AcceptancePlaybackSettingsScreenshots") for locale in locales]
+        omitted = [
+            ("Shared/Core/SettingsView+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceSettingsPrimaryScreenshots"),
+            ("Shared/Core/SettingsView+Actions.swift", "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptancePlaybackSettingsScreenshots"),
         ]
-        for source, key in cases:
+        for source, key in cases + omitted:
             with self.subTest(source=source, key=key):
-                selectors = area_map["smoke"] + [selector for name in affected_areas("immichSlides/" + source, area_map)
+                names = affected_areas("immichSlides/" + source, area_map)
+                nightly = [name for name in area_map["nightly_default"] if matches_test(key, area_map["areas"][name]["tests"])]
+                selectors = area_map["smoke"] + [selector for name in names if not nightly or name in nightly
                                                   for selector in area_map["areas"][name]["tests"]]
-                self.assertTrue(matches_test(key, selectors), f"{source} omits its UI flow {key}")
+                self.assertEqual(matches_test(key, selectors), (source, key) in cases, f"{source} and its UI flow {key}")
 
     def test_ui_reader_requires_device_population_union_and_admitted_manifest_hash(self):
         from ci_publish_git import ui_inputs

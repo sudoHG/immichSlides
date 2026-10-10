@@ -100,7 +100,9 @@ segment explicitly includes zero or more directories.
 | `onboarding` | First boot, server form components, mode selection, mode cards and onboarding scaffold; setup, mode selection and entry hints |
 | `server-connection` | Server form components and tvOS server/cache pages; field input, validation, help and connection feedback |
 | `cache` | tvOS server/cache pages; metrics, confirmation and cache clearing |
-| `core` | All shared models, playback engine, networking, app entry, platform/layout helpers, localization/assets, project/config files and test support; always the full default-plan population |
+| `core` | All shared models, playback engine, networking, app entry, platform/layout helpers, localization/assets, project/config files and test support; the full default-plan population (minus nightly-default tests on PRs) |
+| `localization` | Both string catalogs; every locale acceptance screenshot method (nightly-default) |
+| `localization-settings`, `-about`, `-filter`, `-onboarding`, `-playback` | Only the leaf screen files each locale screenshot family captures; that family's locale methods (nightly-default) |
 
 Multiple memberships are intentional: a settings host change affects its category
 flows, a mode selector affects both onboarding and filtering, and the combined
@@ -127,7 +129,9 @@ The always-run smoke set explicitly names
 (Apple TV). For ordinary app-affecting PRs the trusted selection is the union of
 affected areas plus applicable smoke methods, filtered by each platform's unchanged
 default plan and expanded to all three devices. Allowlisted docs-only changes
-select no UI. Core, unknown, CI-changing, push and nightly changes stay full.
+select no UI. Core changes select the full population except the
+[nightly-default locale screenshots](#nightly-default-locale-screenshots); unknown,
+CI-changing, push and nightly changes stay complete.
 An unavailable or empty diff is conservative full input, never docs-only proof.
 
 The host workflow-policy check (`--check-ui-shards`, included in `check_all.sh`)
@@ -143,7 +147,8 @@ include future methods; mixed classes use exact methods so new flows need a
 reviewed assignment. Add the corresponding source glob for a new app file.
 Do not assign a feature to core merely to satisfy coverage; use core when shared
 behavior needs full coverage. Cross-area selectors are allowed; duplicates within
-one selector list are rejected.
+one selector list are rejected. The identifier-to-flow check below then confirms the
+assignment against the identifiers the test actually uses.
 
 This is the reader rollout only: **producers still schedule the complete UI
 population**. Admission stores full populations and the base-map selection;
@@ -160,6 +165,57 @@ The nightly full UI tier is the safety net for cross-area regressions. The relea
 rule still requires a green, release-eligible nightly for the exact release SHA
 and its complete required human reviews; a scoped PR result cannot replace it.
 See [the nightly contract](CI_NIGHTLY.md) and [publisher trust](CI_PUBLISHER.md).
+
+### Nightly-default locale screenshots
+
+The multi-language acceptance screenshots (Japanese, Spanish, Traditional Chinese
+HK/TW) check layout in other languages rather than behavior and take about 70 seconds
+each. They belong only to the areas listed in the map's `nightly_default` array. On a
+pull request the trusted selection omits a nightly-default test unless one of its own
+areas is selected: a catalog change (`Localizable.xcstrings`, `InfoPlist.xcstrings`)
+selects every locale method, and a change to a captured leaf screen selects that
+family. Shared navigation containers and launch routes are deliberately not family
+sources; the default-language tests in the feature areas cover those flows. A core
+change without a catalog change therefore selects the full population minus the locale
+methods, which the reader accepts as an exact selected population. CI-changing and
+unknown-path PRs, pushes, the nightly and manual runs keep the complete population. An
+unknown path stays fully conservative, locale methods included. It is rare: host checks
+require every app source to be mapped, so it mainly occurs when a PR adds an app file
+the base map does not know yet. The [nightly full UI](CI_NIGHTLY.md#complete-fixture-ui)
+runs every locale method. No
+test policy deselection is involved: the methods stay declared in the default plans.
+Adding a test to a nightly-default area is a CI-trusted map change; list every such
+method in the PR for maintainer approval.
+
+### Identifier-to-flow check
+
+The same host step runs [`scripts/ci_ui_flows.py`](../scripts/ci_ui_flows.py) under its
+own `ui-flows` rule. For each default-plan UI test on each platform it collects the
+dotted identifier literals (`area.element.kind`) the test method reaches, directly or
+through helpers, computed properties and stored constants in `immichSlidesUITests` and
+`TestSupport`. A bare or `self` call resolves to the caller's own type first, then to
+shared helpers outside other test classes; a call on another receiver may reach any
+definition with that name. `#if os(...)` branches follow the platform, and an
+interpolation matches any text. An app Swift file compiled on that platform defines an
+identifier when it contains a matching literal or calls a function whose name ends in
+`AccessibilityID`/`AccessibilityIdentifier` that returns one. The test must belong to
+one of each defining file's areas or to the smoke set; core files already select the
+full population. A test only in nightly-default areas is checked the same way and must
+also reach at least one identifier from its own areas' leaf screens; a file it only
+traverses on the way to the captured screen must be a reviewed navigation source for
+one of its areas. The analysis over-approximates by design, so a false dependency is
+resolved by adding the membership, not by weakening the check.
+
+[`scripts/ci-ui-flow-exceptions.json`](../scripts/ci-ui-flow-exceptions.json) holds a
+small reviewed list (at most 24) with a one-line `reason` each: an `identifier` from one
+`source` file that does not imply a flow dependency (for example a defensive "dismiss
+the PIN sheet if shown" branch), a `test` that never launches the app, or a
+`navigation` app file with the nightly-default `areas` whose locale screenshots only
+pass through it (launch routes, the slideshow control bar, the settings list). A
+captured screen belongs in the family's sources, never in this list. An exception that
+no longer suppresses anything fails as stale. When the check reports a test, add
+the test to one of the named areas; add an exception only with a reason a reviewer can
+verify in the helper code.
 
 ## Manifest and union
 

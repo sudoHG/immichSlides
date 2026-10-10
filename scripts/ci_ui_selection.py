@@ -17,7 +17,8 @@ AREA_MAP_PATH = "scripts/ci-ui-areas.json"
 
 def parse_area_map(raw):
     area_map = decode(raw)
-    fields(area_map, {"schema_version", "revision", "smoke", "areas"}, "UI area map")
+    fields(area_map, {"schema_version", "revision", "smoke", "areas"} | ({"nightly_default"} & set(area_map)),
+           "UI area map")
     require(type(area_map["schema_version"]) is int and area_map["schema_version"] == 1,
             "unsupported UI area map version")
     string(area_map["revision"], "area map revision")
@@ -45,6 +46,10 @@ def parse_area_map(raw):
             require(not PurePosixPath(pattern).is_absolute() and ".." not in pattern.split("/")
                     and "\\" not in pattern and str(PurePosixPath(pattern)) == pattern, "invalid UI source glob")
         require(len(set(area["sources"])) == len(area["sources"]), "duplicate UI source glob")
+    nightly = area_map.setdefault("nightly_default", [])
+    require(isinstance(nightly, list) and len(set(nightly)) == len(nightly)
+            and all(isinstance(name, str) and name in areas and name != "core" for name in nightly),
+            "nightly-default UI areas must name distinct feature areas")
     return area_map
 
 
@@ -121,13 +126,27 @@ def select_ui_population(paths, classification_policy, *, build_target_paths, ar
             unknown.append(path)
     mode = ("full" if event != "pull_request" or classification["ci_changing"] or unknown or "core" in areas else
             "none" if not classification["app_affected"] else "scoped")
-    if mode == "scoped":
-        validate_area_coverage(area_map, [], populations, plans=plans)
+    # Pull requests leave nightly-default tests to the nightly full tier unless one of their areas is selected.
+    nightly = [selector for name in area_map["nightly_default"] if name not in areas
+               for selector in area_map["areas"][name]["tests"]]
+    kept = [selector for name in areas for selector in area_map["areas"][name]["tests"]
+            if name in area_map["nightly_default"]] + area_map["smoke"]
+    deferred = (event == "pull_request" and not classification["ci_changing"] and not unknown)
     selectors = area_map["smoke"] + [selector for name in areas for selector in area_map["areas"][name]["tests"]]
-    selected = {}
+    selected, omitted = {}, False
     for device, platform in DEVICES.items():
         entries = default_plan_population(populations["ui-" + platform], plans[platform])
-        selected[device] = sorted([test_identity("ui", entry["key"], platform=platform, device=device)
-                                   for entry in entries if mode == "full" or
-                                   mode == "scoped" and matches_test(entry["key"], selectors)], key=identity_key)
+        chosen = []
+        for entry in entries:
+            if not (mode == "full" or mode == "scoped" and matches_test(entry["key"], selectors)):
+                continue
+            if deferred and matches_test(entry["key"], nightly) and not matches_test(entry["key"], kept):
+                omitted = True
+                continue
+            chosen.append(test_identity("ui", entry["key"], platform=platform, device=device))
+        selected[device] = sorted(chosen, key=identity_key)
+    if mode == "full" and omitted:
+        mode = "scoped"  # full minus nightly-default tests is an exact trusted selection
+    if mode == "scoped":
+        validate_area_coverage(area_map, [], populations, plans=plans)
     return {"mode": mode, "areas": sorted(areas), "unknown_paths": sorted(unknown), "populations": selected}

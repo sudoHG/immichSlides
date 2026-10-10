@@ -117,6 +117,9 @@ through the shared helpers; the separate v2 exact-method reader can support addi
 visual partitions without a nightly protocol change.
 New default-plan tests join this population automatically. Evidence plans, strict-only
 tests, offline performance and the uncapped benchmark are outside this UI tier.
+It also runs the
+[nightly-default locale screenshots](CI_UI.md#nightly-default-locale-screenshots),
+which pull requests omit unless they change a string catalog or a captured screen.
 
 The existing credential-free `live-build` jobs produce one iOS and one tvOS archive
 for the same event, source, run and attempt. iPhone/iPad share the iOS archive and
