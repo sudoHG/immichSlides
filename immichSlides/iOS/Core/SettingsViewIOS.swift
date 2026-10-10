@@ -1,6 +1,6 @@
 import SwiftUI
 
-// The iOS settings screen only hosts the category list and details; state stays in the shared SettingsView.
+// The iOS settings screen hosts platform-specific category navigation; state stays in the shared SettingsView.
 
 struct SettingsViewIOS: View {
 
