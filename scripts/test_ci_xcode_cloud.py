@@ -561,13 +561,18 @@ class RoutingPolicyTests(unittest.TestCase):
         from ci_publish import GitHub, RateLimited
         def client(deadline):
             elapsed = [0]
-            return RetryingGitHub("owner/repo", "test-token", deadline, timer=lambda: elapsed[0],
+            return RetryingGitHub("owner/repo", "test-token", deadline, timer=lambda: elapsed[0], wait_out_rate_limits=True,
                                   sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)), elapsed
         waiting, elapsed = client(600)
         with patch.object(GitHub, "request", side_effect=[RateLimited("HTTP 403", 120), {"id": 1}]):
             self.assertEqual(waiting.request("/repos/owner/repo/actions/runs/1"), {"id": 1})
         self.assertEqual(elapsed[0], 121)
         waiting, _ = client(100)
+        with patch.object(GitHub, "request", side_effect=[RateLimited("HTTP 403", 120), {"id": 1}]) as network, \
+                self.assertRaises(RateLimited):
+            waiting.request("/repos/owner/repo/actions/runs/1")
+        self.assertEqual(network.call_count, 1)
+        waiting, _ = client(121)  # the extra second of the sleep does not fit
         with patch.object(GitHub, "request", side_effect=[RateLimited("HTTP 403", 120), {"id": 1}]) as network, \
                 self.assertRaises(RateLimited):
             waiting.request("/repos/owner/repo/actions/runs/1")
@@ -580,6 +585,22 @@ class RoutingPolicyTests(unittest.TestCase):
         with patch.object(GitHub, "request", side_effect=[RateLimited("HTTP 403", 5), {}]) as network, self.assertRaises(RateLimited):
             waiting.request("/repos/owner/repo/dispatches", method="POST", payload={})
         self.assertEqual(network.call_count, 1)
+
+    def test_router_importer_and_dispatcher_clients_still_fail_at_once_on_a_rate_limited_403(self):
+        import re
+        import ci_xcode_cloud_dispatch, ci_xcode_cloud_import, ci_xcode_cloud_route
+        from ci_xcode_cloud_client import RetryingGitHub
+        from ci_publish import GitHub, RateLimited
+        client = RetryingGitHub("owner/repo", "test-token", 600, timer=lambda: 0, sleep=lambda seconds: self.fail("must not wait"))
+        with patch.object(GitHub, "request", side_effect=[RateLimited("GitHub API GET refused request (HTTP 403)", 30), {"id": 1}]) as network, \
+                self.assertRaises(RateLimited):
+            client.request("/repos/owner/repo/actions/runs/1")
+        self.assertEqual(network.call_count, 1)
+        for module in (ci_xcode_cloud_dispatch, ci_xcode_cloud_import, ci_xcode_cloud_route):
+            with self.subTest(module=module.__name__):
+                source = Path(module.__file__).read_text()
+                self.assertTrue(re.search(r"RetryingGitHub\(", source))
+                self.assertNotIn("wait_out_rate_limits", source)
 
     def test_known_terminal_build_does_not_block_even_when_its_head_cannot_count(self):
         import ci_xcode_cloud_route as router

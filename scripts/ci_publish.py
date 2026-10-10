@@ -300,15 +300,26 @@ class RateLimitWaitingGitHub(GitHub):
         super().__init__(repository, token)
         self.remaining_seconds, self.sleep = remaining_seconds, sleep
 
+    def pause_for(self, wait_seconds):
+        """Sleep out a rate limit whose full wait (plus one second) fits in the remaining time; True when a retry is still in time."""
+        if wait_seconds + 1 >= self.remaining_seconds():
+            return False
+        print(f"GitHub rate limit: waiting {wait_seconds} seconds", flush=True)
+        self.sleep(wait_seconds + 1)
+        return self.remaining_seconds() > 0
+
+    def retry_timeout(self, timeout):
+        return max(0.1, min(timeout, self.remaining_seconds()))
+
     def request(self, path, *, method="GET", **options):
+        timeout = options.pop("timeout", 45)
         while True:
             try:
-                return super().request(path, method=method, **options)
+                return super().request(path, method=method, timeout=timeout, **options)
             except RateLimited as error:
-                if method != "GET" or error.wait_seconds >= self.remaining_seconds():
+                if method != "GET" or not self.pause_for(error.wait_seconds):
                     raise
-                print(f"GitHub rate limit: waiting {error.wait_seconds} seconds", flush=True)
-                self.sleep(error.wait_seconds + 1)
+                timeout = self.retry_timeout(timeout)
 
 
 def mint_app(environment, path):

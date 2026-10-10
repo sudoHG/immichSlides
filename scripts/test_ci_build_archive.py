@@ -446,6 +446,48 @@ class BuildArchiveTests(unittest.TestCase):
         self.assertEqual(ui.GATE_PENDING_PAUSE_SECONDS, wait.paused)
         self.assertAlmostEqual(170 * 60, wait.deadline - 1000.0, delta=1)
 
+    def test_archive_download_waits_out_one_rate_limit_inside_the_deadline_and_fails_closed_otherwise(self):
+        import hashlib
+        import zipfile
+        from email.message import Message
+        from ci_publish import RateLimitWaitingGitHub
+        tar = b"tar-bytes"
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as bundle:
+            bundle.writestr("manifest.json", json.dumps({"archive_sha256": hashlib.sha256(tar).hexdigest()}))
+            bundle.writestr("build.tar.gz", tar)
+        artifact = {"id": 9, "expired": False, "size_in_bytes": len(buffer.getvalue())}
+        def refusal(code, **headers):
+            message = Message()
+            for key, value in headers.items():
+                message[key.replace("_", "-")] = value
+            return urllib.error.HTTPError("https://api.github.com/x", code, "refused", message, io.BytesIO(b""))
+        def download(results, remaining):
+            clock, timeouts = [0.0], []
+            api = RateLimitWaitingGitHub("owner/repo", "test-placeholder", lambda: remaining - clock[0],
+                                         sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+            def open_(request, timeout):
+                timeouts.append(timeout)
+                result = results[len(timeouts) - 1]
+                if isinstance(result, Exception):
+                    raise result
+                return contextlib.nullcontext(io.BytesIO(result))
+            with patch.object(ui, "build_opener") as opener, contextlib.redirect_stdout(io.StringIO()):
+                opener.return_value.open.side_effect = open_
+                try:
+                    return ui.downloaded_archive(api, artifact), timeouts, clock[0]
+                except ContractError as error:
+                    return error, timeouts, clock[0]
+        (manifest, _), timeouts, waited = download([refusal(403, Retry_After="30"), buffer.getvalue()], 600)
+        self.assertEqual(({"archive_sha256": hashlib.sha256(tar).hexdigest()}, [60, 60], 31), (manifest, timeouts, waited))
+        (_, _), timeouts, _ = download([refusal(403, Retry_After="30"), buffer.getvalue()], 32.5)
+        self.assertEqual([60, 1.5], timeouts)
+        for results, remaining in (([refusal(403, Retry_After="30"), buffer.getvalue()], 31), ([refusal(403)], 600), ([refusal(500)], 600)):
+            error, timeouts, _ = download(results, remaining)
+            self.assertIsInstance(error, ContractError)
+            self.assertRegex(str(error), r"Archive download refused \(HTTP (403|500)\)")
+            self.assertEqual([60], timeouts)
+
     def test_a_long_archive_wait_backs_off_and_skips_artifact_listings_until_the_build_finishes(self):
         head = "d" * 40
         identity = {"schema_version": 1, "event": "push", "repository": "owner/repo",

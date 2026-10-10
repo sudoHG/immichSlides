@@ -22,7 +22,7 @@ from urllib.request import Request, build_opener
 
 from ci_build_archive import (artifact_name, check_products, extract_products, file_hash, measure_signing,
                               output, validate_artifact, validate_manifest, workspace_preflight)
-from ci_publish import ArtifactRedirect, RateLimitWaitingGitHub, json_member, verify_workflow
+from ci_publish import ArtifactRedirect, RateLimitWaitingGitHub, json_member, rate_limit_wait, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
 from ci_ui_shards import DEVICES, MANIFEST_PATH, parse_shard_manifest, shard_populations
 from ci_verdict import classify_changes
@@ -84,11 +84,17 @@ def downloaded_archive(api, artifact):
             "build archive is expired or exceeds the bounded download")
     request = Request(f"https://api.github.com/repos/{api.repository}/actions/artifacts/{artifact['id']}/zip",
                       headers={"Authorization": "Bearer " + api.token, "Accept": "application/vnd.github+json"})
-    try:
-        with build_opener(ArtifactRedirect()).open(request, timeout=60) as response:
-            raw = response.read(MAX_ARCHIVE_BYTES + 1)
-    except urllib.error.HTTPError as error:
-        raise ContractError(f"Archive download refused (HTTP {error.code})") from None
+    timeout = 60
+    while True:
+        try:
+            with build_opener(ArtifactRedirect()).open(request, timeout=timeout) as response:
+                raw = response.read(MAX_ARCHIVE_BYTES + 1)
+            break
+        except urllib.error.HTTPError as error:
+            wait = rate_limit_wait(error)
+            if wait is None or not isinstance(api, RateLimitWaitingGitHub) or not api.pause_for(wait):
+                raise ContractError(f"Archive download refused (HTTP {error.code})") from None
+            timeout = api.retry_timeout(timeout)
     require(len(raw) <= MAX_ARCHIVE_BYTES, "build archive download exceeds limit")
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         entries = archive.infolist()
@@ -413,7 +419,8 @@ def cloud_selection(args):
     summary = summary_for(ctx, file_hash(ROOT / MANIFEST_PATH))
     started = time.monotonic()
     from ci_xcode_cloud_client import RetryingGitHub
-    decision = wait_cloud(ctx, RetryingGitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"], time.monotonic() + 120 * 60))
+    decision = wait_cloud(ctx, RetryingGitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"], time.monotonic() + 120 * 60,
+                                                    wait_out_rate_limits=True))
     output("appletv_routed", str(decision == "routed").lower())
     summary["status"] = "passed"
     summary["population"]["observed"] = [observation(summary["population"]["declared"][0], "passed", time.monotonic() - started)]

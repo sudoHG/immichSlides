@@ -489,6 +489,26 @@ class PublisherTests(unittest.TestCase):
         with outcomes(RateLimited("limited", 5)), self.assertRaises(RateLimited):
             waiter().request("/x", method="POST", payload={})
         self.assertEqual(["POST"], requests)
+        # The extra second of the sleep must fit, the deadline is re-checked after waking, and the retry timeout is bounded.
+        for remaining, jump, expected in ((90.5, 1, 1), (600, 1000, 1)):
+            requests.clear()
+            clock[0] = 0
+            limited = RateLimitWaitingGitHub("owner/repo", "secret-token", lambda: remaining - clock[0],
+                                             sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds * jump))
+            with outcomes(RateLimited("limited", 90 if remaining < 100 else 30), {"ok": True}), self.assertRaises(RateLimited):
+                limited.request("/x")
+            self.assertEqual(expected, len(requests))
+        timeouts = []
+        def respond(self, path, *, method="GET", **options):
+            timeouts.append(options["timeout"])
+            if len(timeouts) == 1:
+                raise RateLimited("limited", 10)
+            return {"ok": True}
+        clock[0] = 0
+        with patch.object(GitHub, "request", respond):
+            RateLimitWaitingGitHub("owner/repo", "secret-token", lambda: 12.5 - clock[0],
+                                   sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)).request("/x")
+        self.assertEqual([45, 1.5], timeouts)
 
     def test_replaced_pending_ui_run_is_recognized_like_a_replaced_pending_gate(self):
         from ci_publish import cancelled_unstarted_run
