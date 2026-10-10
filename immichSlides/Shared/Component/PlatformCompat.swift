@@ -4,6 +4,7 @@ import UIKit
 #endif
 
 /// Collects platform color/style branches, so shared views do not touch iOS-only APIs directly.
+// Temporary CI acceptance probe for failed cloud starts; runtime behavior is unchanged.
 
 enum PlatformCompat {
     /// Preserve the raw Debug flag comparison; Release never bootstraps a local test server.
