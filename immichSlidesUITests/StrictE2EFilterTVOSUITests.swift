@@ -44,7 +44,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
 
         let start = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            start.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            start.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "The filter summary must show Start Playback.")
         XCTAssertFalse(start.isEnabled, "Start Playback must be disabled with an empty selection.")
         try StrictE2EVisualEvidence.writeRequiredJSON(
@@ -156,7 +156,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try openAlbumFilter(app: app)
         let clear = app.buttons["albumFilter.clear.button"]
         XCTAssertTrue(
-            clear.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            clear.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The real album filter screen must offer Clear selection")
         moveFocusTo(
             clear, directions: [.up, .right], message: "Focus must be able to reach Clear selection in the top toolbar")
@@ -203,7 +203,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try enterFilteredSummary(app: app)
         let start = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            start.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            start.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "The filter summary must show Start Playback.")
         XCTAssertFalse(start.isEnabled, "Start Playback must be disabled with 0 albums / 0 people.")
         attachScreenshot(app: app, name: "tvos-album-empty-selection")
@@ -413,7 +413,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             app.buttons["slideshow.control.playPause.button"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(30))))
+                timeout: TestWait.seconds(.product(30))))
         try openPlaybackSettingsFromSlideshow(app: app)
         try selectVerifiedDisplayMode(app: app, mode: "smartFill")
         try returnToSlideshowFromSettings(app: app)
@@ -495,11 +495,11 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
     @MainActor
     func selectVerifiedDisplayMode(app: XCUIApplication, mode: String) throws {
         let link = app.buttons["settings.playback.displayMode.link"]
-        XCTAssertTrue(link.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))))
+        XCTAssertTrue(link.waitForExistence(timeout: TestWait.seconds(.product(8))))
         moveFocusTo(link, directions: [.down, .up], message: "Focus Display Mode.")
         XCUIRemote.shared.press(.select)
         let option = app.buttons["settings.playback.displayMode.\(mode).button"]
-        XCTAssertTrue(option.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))))
+        XCTAssertTrue(option.waitForExistence(timeout: TestWait.seconds(.product(8))))
         moveFocusTo(option, directions: [.down, .up], message: "Focus the target display mode.")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
@@ -628,7 +628,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             "Back from the people list must return to the filter screen."
         )
         let start = app.buttons["filterSummary.startPlayback.button"]
-        if start.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))), start.isEnabled {
+        if start.waitForExistence(timeout: TestWait.seconds(.product(5))), start.isEnabled {
             moveFocus(.right, to: start, maximumPresses: 3, message: "Focus must be able to move to Start Playback.")
             XCUIRemote.shared.press(.select)
             var names = [evidenceName]
@@ -650,7 +650,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         let randomButton = app.buttons["mode.random.button"]
         let filteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            randomButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
             "Saving the configuration must open the mode selection screen.")
         if !waitForFocus(on: filteredButton, timeout: TestWait.seconds(.product(1))) {
             XCTAssertTrue(
@@ -663,14 +663,14 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            continueButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "Choosing Filtered Playback must show the Continue button.")
         moveFocus(
             .down, to: continueButton, maximumPresses: 2,
             message: "After choosing a mode, focus must be able to move down to the Continue button.")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            app.buttons["filterSummary.album.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
             "Filtered mode must open the filter summary screen."
         )
     }
@@ -697,18 +697,18 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             ? app.buttons["filterSummary.album.button"]
             : app.buttons["filter.editor.album.entry"]
         XCTAssertTrue(
-            albumCard.waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            albumCard.waitForExistence(timeout: TestWait.seconds(.product(10))),
             "The album filter entry must be shown.")
         moveFocusTo(
             albumCard, directions: [.left, .up, .down], message: "Focus must be able to move to the album entry.")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             app.buttons["albumFilter.album.album-a-target.button"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(8)))
+                timeout: TestWait.seconds(.product(8)))
                 || app.buttons["albumFilter.album.album-b-target.button"].waitForExistence(
-                    timeout: TestWait.seconds(.infrastructure(8)))
+                    timeout: TestWait.seconds(.product(8)))
                 || app.otherElements["albumFilter.loading.indicator"].waitForExistence(
-                    timeout: TestWait.seconds(.infrastructure(2))),
+                    timeout: TestWait.seconds(.product(2))),
             "Opening the album filter must show album cards or a loading state."
         )
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.2))))
@@ -721,7 +721,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             ? app.buttons["filterSummary.person.button"]
             : app.buttons["filter.editor.person.entry"]
         XCTAssertTrue(
-            peopleCard.waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            peopleCard.waitForExistence(timeout: TestWait.seconds(.product(10))),
             "The person filter entry must be shown.")
         moveFocusTo(
             peopleCard, directions: [.right, .up, .down], message: "Focus must be able to move to the person entry.")
@@ -791,7 +791,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
     func finishTVOSFilterEditor(app: XCUIApplication) throws {
         let done = app.buttons["filter.editor.done.button"]
         XCTAssertTrue(
-            done.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            done.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The filter settings editor must offer a Done entry")
         moveFocusTo(
             done, directions: [.right, .down, .left], message: "Focus must be able to land on the editor's Done")

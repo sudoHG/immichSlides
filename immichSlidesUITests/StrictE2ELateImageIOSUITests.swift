@@ -66,7 +66,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
         // that would trigger the first A1 before entering playback.
         if !(continueButton.exists && continueButton.isEnabled) {
             XCTAssertTrue(
-                modeButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+                modeButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
                 "The mode page must provide mode.random.button.")
             modeButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             XCTAssertTrue(
@@ -169,7 +169,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-connection-passed-\(currentDeviceTag())")
         tapElement(saveButton)
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
             "After a successful save, mode selection must open."
         )
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-mode-selection-\(currentDeviceTag())")

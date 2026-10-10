@@ -33,7 +33,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             "A cold launch with saved settings must not return to the first-boot page."
         )
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.infrastructure(30))),
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(30))),
             "A configured cold launch must go straight to the playback page."
         )
         dismissPlaybackEntryHintIfNeeded(app: app)
@@ -58,14 +58,14 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
 
         chooseOnboardingModeAndContinue(app: app, identifier: "mode.random.button")
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.infrastructure(30))),
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(30))),
             "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
         attachOrientationEvidence(app: app, name: "journey-b-random-playback-start")
 
         let previous = app.buttons["slideshow.control.previous.button"]
         XCTAssertTrue(
-            previous.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            previous.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The playback page must show the Previous button.")
         XCTAssertFalse(previous.isEnabled, "Previous must be disabled at the history boundary when playback starts.")
         recordControlTimeline(app: app, event: "journey-b-initial-boundary")
@@ -178,7 +178,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             identifier: "mode.random.button"
         )
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.infrastructure(30))),
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(30))),
             "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
 
@@ -224,7 +224,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             identifier: "mode.random.button"
         )
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.infrastructure(30))),
+            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(30))),
             "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
         pausePlaybackIfNeeded(app: app)
@@ -508,14 +508,14 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         try relaunchStrictE2EApp(app)
         XCTAssertTrue(
             app.textFields["firstboot.serverURL.field"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(12))),
+                timeout: TestWait.seconds(.product(12))),
             "After a relaunch on the failure path, the app must still be on the first-boot page."
         )
         let saveAfterRelaunch = firstBootControl(
             in: app,
             identifier: "firstboot.saveConfig.button"
         )
-        XCTAssertTrue(saveAfterRelaunch.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))))
+        XCTAssertTrue(saveAfterRelaunch.waitForExistence(timeout: TestWait.seconds(.product(8))))
         XCTAssertFalse(
             saveAfterRelaunch.isEnabled,
             "After a relaunch on the failure path, no half-finished settings may be saveable."

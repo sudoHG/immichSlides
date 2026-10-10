@@ -109,7 +109,7 @@ extension StrictE2EFilterIOSUITests {
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-connection-passed-\(currentDeviceTag())")
         tapElement(saveButton)
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
             "A successful save must lead to mode selection.")
         XCTAssertTrue(app.buttons["mode.filtered.button"].exists, "Mode page must also offer the filter option.")
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-mode-selection-\(currentDeviceTag())")
@@ -122,7 +122,7 @@ extension StrictE2EFilterIOSUITests {
             app.switches[identifier].exists
             ? app.switches[identifier]
             : app.descendants(matching: .any)[identifier].firstMatch
-        guard exif.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))),
+        guard exif.waitForExistence(timeout: TestWait.seconds(.product(6))),
             let value = exif.value as? String, ["0", "1"].contains(value)
         else {
             throw StrictE2EPhotoIdentity.AssertionError.message(
@@ -160,7 +160,7 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     func enterFilterSummary(app: XCUIApplication) {
         chooseOnboardingModeAndContinue(app: app, identifier: "mode.filtered.button")
-        let reached = waitUntil(timeout: TestWait.seconds(.infrastructure(20))) {
+        let reached = waitUntil(timeout: TestWait.seconds(.product(20))) {
             app.buttons["filterSummary.album.button"].exists
                 || app.descendants(matching: .any)["filterSummary.album.button"].exists
         }
@@ -185,7 +185,7 @@ extension StrictE2EFilterIOSUITests {
         while Date() < deadline {
             if isSystemSavePasswordPromptVisible(app: app) {
                 _ = captureNamedPNG(app: app, name: "server-switch-entry-password-prompt")
-                guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.infrastructure(4)))
+                guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(4)))
                 else { break }
                 didTap = false
             }
@@ -206,9 +206,9 @@ extension StrictE2EFilterIOSUITests {
     func openAlbumFilter(app: XCUIApplication) {
         tapElement(app.buttons["filterSummary.album.button"])
         XCTAssertTrue(
-            app.buttons["albumFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(12)))
+            app.buttons["albumFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.product(12)))
                 || app.buttons["albumFilter.selectAll.button"].waitForExistence(
-                    timeout: TestWait.seconds(.infrastructure(2))),
+                    timeout: TestWait.seconds(.product(2))),
             "Album filter page must open"
         )
     }
@@ -217,9 +217,9 @@ extension StrictE2EFilterIOSUITests {
     func openPersonFilter(app: XCUIApplication) {
         tapElement(app.buttons["filterSummary.person.button"])
         XCTAssertTrue(
-            app.buttons["personFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(12)))
+            app.buttons["personFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.product(12)))
                 || app.buttons["personFilter.selectAll.button"].waitForExistence(
-                    timeout: TestWait.seconds(.infrastructure(2))),
+                    timeout: TestWait.seconds(.product(2))),
             "Person filter page must open"
         )
     }
@@ -228,20 +228,20 @@ extension StrictE2EFilterIOSUITests {
     func openAlbumFilterFromEditor(app: XCUIApplication) {
         let entry = app.buttons["filter.editor.album.entry"]
         XCTAssertTrue(
-            entry.waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            entry.waitForExistence(timeout: TestWait.seconds(.product(10))),
             "Filter editor must offer the album entry")
         tapElement(entry)
-        _ = app.buttons["albumFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(12)))
+        _ = app.buttons["albumFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.product(12)))
     }
 
     @MainActor
     func openPersonFilterFromEditor(app: XCUIApplication) {
         let entry = app.buttons["filter.editor.person.entry"]
         XCTAssertTrue(
-            entry.waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            entry.waitForExistence(timeout: TestWait.seconds(.product(10))),
             "Filter editor must offer the person entry")
         tapElement(entry)
-        _ = app.buttons["personFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(12)))
+        _ = app.buttons["personFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.product(12)))
     }
 
     @MainActor
@@ -261,7 +261,7 @@ extension StrictE2EFilterIOSUITests {
             waitUntil(timeout: TestWait.seconds(.product(12))) {
                 if self.isSystemSavePasswordPromptVisible(app: app) {
                     _ = self.dismissSystemSavePasswordPromptIfPresent(
-                        app: app, timeout: TestWait.seconds(.infrastructure(2)))
+                        app: app, timeout: TestWait.seconds(.product(2)))
                     return false
                 }
                 return card.exists && card.isHittable
@@ -289,7 +289,7 @@ extension StrictE2EFilterIOSUITests {
     func selectAlbumHandlingSystemPrompt(app: XCUIApplication, albumID: String) {
         if isSystemSavePasswordPromptVisible(app: app) {
             XCTAssertTrue(
-                dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.infrastructure(6))),
+                dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(6))),
                 "The system Save Password prompt must be closed with 'Not Now'; test credentials must not be saved"
             )
         }
@@ -300,7 +300,7 @@ extension StrictE2EFilterIOSUITests {
         {
             _ = captureNamedPNG(app: app, name: "server-switch-save-password-late-\(albumID)")
             XCTAssertTrue(
-                dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.infrastructure(6))),
+                dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(6))),
                 "A late Save Password prompt allows only this one retry, backed by evidence"
             )
             tapAlbumWhenHittable(app: app, albumID: albumID)
@@ -318,16 +318,16 @@ extension StrictE2EFilterIOSUITests {
     func tapAlbumWhenHittable(app: XCUIApplication, albumID: String) {
         if isSystemSavePasswordPromptVisible(app: app) {
             XCTAssertTrue(
-                dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.infrastructure(6))),
+                dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(6))),
                 "Do not tap the album while the prompt covers it"
             )
         }
         let identifier = "albumFilter.album.\(albumID).button"
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.infrastructure(12))) {
+            waitUntil(timeout: TestWait.seconds(.product(12))) {
                 if self.isSystemSavePasswordPromptVisible(app: app) {
                     _ = self.dismissSystemSavePasswordPromptIfPresent(
-                        app: app, timeout: TestWait.seconds(.infrastructure(2)))
+                        app: app, timeout: TestWait.seconds(.product(2)))
                     return false
                 }
                 let button = app.buttons[identifier]
@@ -397,7 +397,7 @@ extension StrictE2EFilterIOSUITests {
                 let later = prompt.buttons["以后"].exists ? prompt.buttons["以后"] : prompt.buttons["Not Now"]
                 guard later.exists else { continue }
                 later.tap()
-                _ = waitUntil(timeout: TestWait.seconds(.infrastructure(2))) {
+                _ = waitUntil(timeout: TestWait.seconds(.product(2))) {
                     !self.isSystemSavePasswordPromptVisible(app: app)
                 }
                 return !isSystemSavePasswordPromptVisible(app: app)
@@ -436,7 +436,7 @@ extension StrictE2EFilterIOSUITests {
             tapElement(card)
         }
         XCTAssertTrue(
-            toggle.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))),
+            toggle.waitForExistence(timeout: TestWait.seconds(.product(6))),
             "Solo-only switch must appear after selecting the person")
         let isOn = (toggle.value as? String) == "1"
         if isSoloOnly != isOn {
@@ -453,7 +453,7 @@ extension StrictE2EFilterIOSUITests {
     func returnFromAlbumFilter(app: XCUIApplication) {
         let back = app.buttons["albumFilter.back.button"]
         XCTAssertTrue(
-            back.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))), "Album filter must be able to go back"
+            back.waitForExistence(timeout: TestWait.seconds(.product(8))), "Album filter must be able to go back"
         )
         tapElement(back)
     }
@@ -462,7 +462,7 @@ extension StrictE2EFilterIOSUITests {
     func returnFromPersonFilter(app: XCUIApplication) {
         let back = app.buttons["personFilter.back.button"]
         XCTAssertTrue(
-            back.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            back.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Person filter must be able to go back")
         back.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }

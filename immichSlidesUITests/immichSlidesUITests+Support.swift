@@ -125,7 +125,7 @@ extension immichSlidesUITests {
         XCTAssertTrue(modeContinueButton.isEnabled)
         tapElement(modeContinueButton)
 
-        XCTAssertTrue(waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.infrastructure(25))))
+        XCTAssertTrue(waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))))
     }
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {

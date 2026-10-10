@@ -31,7 +31,7 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func pausePlaybackIfNeeded(app: XCUIApplication) {
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        guard playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))) else { return }
+        guard playPause.waitForExistence(timeout: TestWait.seconds(.product(4))) else { return }
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
         }
@@ -66,7 +66,7 @@ extension StrictE2EFirstBatchIOSUITests {
             playbackEntry = app.buttons["settings.item.playback"]
         }
         XCTAssertTrue(
-            playbackEntry.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            playbackEntry.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The settings list must offer the playback settings entry"
         )
         tapElement(playbackEntry)
@@ -110,12 +110,12 @@ extension StrictE2EFirstBatchIOSUITests {
     func selectSinglePhotoDisplayMode(app: XCUIApplication) {
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            picker.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must offer the display mode segmented control."
         )
         let singlePhoto = picker.buttons["settings.playback.displayMode.singlePhoto.option"]
         XCTAssertTrue(
-            singlePhoto.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            singlePhoto.waitForExistence(timeout: TestWait.seconds(.product(3))),
             "Display mode must offer single photo mode.")
         tapElement(singlePhoto)
         XCTAssertTrue(singlePhoto.exists, "The segmented control must remain after selecting single photo mode.")
@@ -127,7 +127,7 @@ extension StrictE2EFirstBatchIOSUITests {
     func confirmExifOnAndFiveSecondInterval(app: XCUIApplication) {
         let exifToggle = app.switches["settings.playback.showExif.toggle"]
         XCTAssertTrue(
-            exifToggle.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            exifToggle.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must offer the EXIF toggle.")
         let toggleValue = ((exifToggle.value as? String) ?? "").lowercased()
         XCTAssertTrue(toggleValue == "1" || toggleValue == "true", "Show EXIF info must be on.")
@@ -159,7 +159,7 @@ extension StrictE2EFirstBatchIOSUITests {
             let maybeA2 = mark == "A2" || (mark == "unknown" && !hasOddFixture)
             if maybeA2 {
                 XCTAssertTrue(
-                    next.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))),
+                    next.waitForExistence(timeout: TestWait.seconds(.product(4))),
                     "After identifying A2, Next must be tappable to check its successor."
                 )
                 tapElement(next)

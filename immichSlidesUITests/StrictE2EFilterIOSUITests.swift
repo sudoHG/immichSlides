@@ -88,7 +88,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openAlbumFilterFromEditor(app: app)
         let clear = app.buttons["albumFilter.clear.button"]
         XCTAssertTrue(
-            clear.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))) && clear.isHittable,
+            clear.waitForExistence(timeout: TestWait.seconds(.product(8))) && clear.isHittable,
             "The real album editor must offer Clear Selection")
         tapElement(clear)
         let clearedTarget = albumCard(app: app, albumID: targetAlbumID)
@@ -132,7 +132,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         enterFilterSummary(app: app)
         let start = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            start.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            start.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Filter summary must show Start Playback")
         XCTAssertFalse(start.isEnabled, "An empty selection must not start")
         attachStrictE2EScreenshot(app: app, name: "filter-empty-\(currentDeviceTag())")
@@ -163,7 +163,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         enterFilterSummary(app: app)
         let start = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            start.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            start.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Filter summary must show Start Playback")
         XCTAssertFalse(start.isEnabled, "Start must be disabled with 0 albums / 0 people")
         attachStrictE2EScreenshot(app: app, name: "album-empty-selection-\(currentDeviceTag())")
@@ -252,7 +252,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let card = personNameElement(app: app, personID: personID)
         attachStrictE2EScreenshot(app: app, name: "person-navigation-before-selection-\(currentDeviceTag())")
         assertPersonNavigation(
-            back.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))) && back.isHittable,
+            back.waitForExistence(timeout: TestWait.seconds(.product(8))) && back.isHittable,
             "Before selection, the person page Back button must be visible and hittable", app: app, personID: personID)
         assertPersonNavigation(
             card.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))) && card.isHittable,
@@ -625,7 +625,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         _ = captureNamedPNG(app: app, name: "server-switch-album-summary-\(albumA)")
         let startA = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startA.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))) && startA.isEnabled,
+            startA.waitForExistence(timeout: TestWait.seconds(.product(8))) && startA.isEnabled,
             "Start Playback must be enabled after selecting the target album")
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)

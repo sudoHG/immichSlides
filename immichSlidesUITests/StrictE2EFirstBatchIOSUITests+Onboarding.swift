@@ -88,7 +88,7 @@ extension StrictE2EFirstBatchIOSUITests {
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-connection-passed-\(currentDeviceTag())")
         tapElement(saveButton)
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
             "After a successful save, the app must reach mode selection."
         )
         XCTAssertTrue(app.buttons["mode.filtered.button"].exists, "The mode page must also offer the filter entry.")
@@ -161,7 +161,7 @@ extension StrictE2EFirstBatchIOSUITests {
     ) {
         let modeButton = firstBootControl(in: app, identifier: identifier)
         XCTAssertTrue(
-            modeButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            modeButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The mode page must offer \(identifier).")
         let continueButton = firstBootControl(
             in: app,
@@ -214,7 +214,7 @@ extension StrictE2EFirstBatchIOSUITests {
             for label in ["以后", "Not Now"] where host.buttons[label].exists {
                 // ui-label-lookup: Dismiss the system Save Password sheet without saving credentials.
                 host.buttons[label].tap()
-                _ = waitUntil(timeout: TestWait.seconds(.infrastructure(2))) {
+                _ = waitUntil(timeout: TestWait.seconds(.product(2))) {
                     !self.isSavePasswordPromptShown(app: app)
                 }
                 return
@@ -229,7 +229,7 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func waitForFilterSummary(app: XCUIApplication) {
-        let reached = waitUntil(timeout: TestWait.seconds(.infrastructure(20))) {
+        let reached = waitUntil(timeout: TestWait.seconds(.product(20))) {
             app.buttons["filterSummary.album.button"].exists
                 || app.descendants(matching: .any)["filterSummary.album.button"].exists
                 || app.staticTexts["filterSummary.page.title"].exists
@@ -251,7 +251,7 @@ extension StrictE2EFirstBatchIOSUITests {
     func returnToModeSelectionFromFilterSummary(app: XCUIApplication) {
         let backButton = app.buttons["global.back.button"]
         XCTAssertTrue(
-            backButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            backButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The first-boot filter summary must offer a way back to mode selection."
         )
         XCTAssertFalse(

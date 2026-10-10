@@ -4,13 +4,13 @@ import XCTest
 
 enum UITestSupportWaitTiming {
     static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.product(1))
-    static let connectionTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(15))
+    static let connectionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(15))
     static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(8))
     static let elementAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(5))
     static let identityPollSeconds: TimeInterval = TestWait.seconds(.product(0.3))
-    static let playbackStartupTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(30))
+    static let playbackStartupTimeoutSeconds: TimeInterval = TestWait.seconds(.product(30))
     static let readbackTimeoutSeconds: TimeInterval = TestWait.seconds(.product(2))
-    static let sceneReadyTimeoutSeconds: TimeInterval = TestWait.seconds(.product(45))
+    static let sceneReadyTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(45))
     static let screenTransitionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(12))
     static let settingsChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.product(6))
     static let shortInteractionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(3))

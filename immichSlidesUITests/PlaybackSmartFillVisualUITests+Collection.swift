@@ -198,7 +198,7 @@ extension PlaybackSmartFillVisualUITests {
         tapElement(app.buttons["mode.continue.button"])
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(30))),
+                timeout: TestWait.seconds(.product(30))),
             "After starting random playback, the playback control bar should appear"
         )
     }
@@ -218,7 +218,7 @@ extension PlaybackSmartFillVisualUITests {
 
         XCTAssertTrue(
             app.buttons["slideshow.control.next.button"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(4))),
+                timeout: TestWait.seconds(.product(4))),
             "\(scenario) control bar should still work after quick switching"
         )
     }
@@ -233,16 +233,16 @@ extension PlaybackSmartFillVisualUITests {
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            startButton.waitForExistence(timeout: TestWait.seconds(.product(20))),
             "Filter summary should show the Start playback button")
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.infrastructure(20))) { startButton.isEnabled },
+            waitUntil(timeout: TestWait.seconds(.product(20))) { startButton.isEnabled },
             "After seeding the people filter, Start playback should be tappable")
         tapElement(startButton)
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(45))),
+                timeout: TestWait.seconds(.product(45))),
             "After starting people-filter playback, the playback control bar should appear"
         )
     }
@@ -466,7 +466,7 @@ extension PlaybackSmartFillVisualUITests {
 
     func tapNext(app: XCUIApplication) {
         let nextButton = app.buttons["slideshow.control.next.button"]
-        if nextButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))) {
+        if nextButton.waitForExistence(timeout: TestWait.seconds(.product(3))) {
             tapElement(nextButton)
             return
         }

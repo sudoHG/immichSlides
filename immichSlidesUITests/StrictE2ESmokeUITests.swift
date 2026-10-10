@@ -124,7 +124,7 @@ final class StrictE2ESmokeUITests: XCTestCase {
             NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])
         ).firstMatch
         XCTAssertTrue(
-            submit.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            submit.waitForExistence(timeout: TestWait.seconds(.product(3))),
             "The system keyboard must have a visible submit button.")
         for _ in 0..<6 {
             if submit.hasFocus { break }

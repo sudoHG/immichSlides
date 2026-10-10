@@ -30,7 +30,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
 
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            randomButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
             "After saving settings, the app must reach the mode selection page."
         )
         XCTAssertTrue(
@@ -48,7 +48,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         )
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(30))),
+            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(30))),
             "A configured cold launch must go straight to the playback page."
         )
         XCTAssertTrue(
@@ -135,7 +135,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            saveButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "After the failure, the app must still be on the connection page."
         )
         XCTAssertFalse(saveButton.isEnabled, "A failed connection test must not save by mistake.")
@@ -147,14 +147,14 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         try relaunchStrictE2EApp(app)
         XCTAssertTrue(
             app.textFields["firstboot.serverURL.field"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(12))),
+                timeout: TestWait.seconds(.product(12))),
             "After a relaunch on the failure path, the app must still be on the first-boot page."
         )
         let saveAfterRelaunch = firstBootControl(
             in: app,
             identifier: "firstboot.saveConfig.button"
         )
-        XCTAssertTrue(saveAfterRelaunch.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))))
+        XCTAssertTrue(saveAfterRelaunch.waitForExistence(timeout: TestWait.seconds(.product(8))))
         XCTAssertFalse(
             saveAfterRelaunch.isEnabled,
             "After a relaunch on the failure path, no half-finished settings may be saveable."
@@ -178,7 +178,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         let randomButton = app.buttons["mode.random.button"]
         let filteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            randomButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
             "After saving settings, the app must reach the mode selection page."
         )
         XCTAssertTrue(
@@ -195,7 +195,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            continueButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "After choosing filtered playback, the Continue button must appear."
         )
         XCTAssertTrue(
@@ -212,7 +212,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
 
         let filterSummaryBackButton = app.buttons["filterSummary.backToMode.button"]
         XCTAssertTrue(
-            filterSummaryBackButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            filterSummaryBackButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
             "Filter mode must reach the filter summary page."
         )
         XCUIRemote.shared.press(.right)
@@ -226,7 +226,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            randomButton.waitForExistence(timeout: TestWait.seconds(.product(10))),
             "Going back from the filter summary must return to the mode selection page."
         )
         XCTAssertTrue(
@@ -250,11 +250,11 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         let nextButton = app.buttons["slideshow.control.next.button"]
         let entryHint = app.otherElements["slideshow.entryHint.banner"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(30))),
+            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(30))),
             "After Continue, the app must reach the playback page and show the control bar."
         )
         XCTAssertTrue(
-            entryHint.waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            entryHint.waitForExistence(timeout: TestWait.seconds(.product(10))),
             "The first playback round must show the one-time remote hint."
         )
         XCTAssertTrue(
@@ -311,7 +311,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
 
         let indexProbe = app.otherElements["slideshow.control.indexProbe"]
         XCTAssertTrue(
-            indexProbe.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            indexProbe.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "The playback page must expose the read-only index probe."
         )
         let indexAtA = try requireIndexValue(indexProbe)
@@ -614,7 +614,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
-            app.buttons["settings.item.playback"].waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            app.buttons["settings.item.playback"].waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The settings button must open the settings page."
         )
         XCUIRemote.shared.press(.menu)
@@ -693,7 +693,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])
         ).firstMatch
         XCTAssertTrue(
-            submit.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))),
+            submit.waitForExistence(timeout: TestWait.seconds(.product(4))),
             "The system keyboard must show Next or Done.")
         for _ in 0..<6 where !submit.hasFocus {
             XCUIRemote.shared.press(.down)

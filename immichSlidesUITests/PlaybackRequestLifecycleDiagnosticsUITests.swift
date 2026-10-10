@@ -266,14 +266,14 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            continueButton.waitForExistence(timeout: TestWait.seconds(.product(10))),
             "Mode selection page should show Continue")
         XCTAssertTrue(continueButton.isEnabled, "After selecting random playback, Continue should be tappable")
         tapElement(continueButton)
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(30))),
+                timeout: TestWait.seconds(.product(30))),
             "After entering playback, the control bar should be shown"
         )
     }
@@ -298,7 +298,7 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
         }
 
         for _ in 0..<count {
-            guard button.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))), button.isEnabled else {
+            guard button.waitForExistence(timeout: TestWait.seconds(.product(5))), button.isEnabled else {
                 break
             }
             tapElement(button)

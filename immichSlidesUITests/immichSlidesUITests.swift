@@ -9,11 +9,11 @@ import XCTest
 
 enum immichSlidesUITestsWaitTiming {
     static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.product(1))
-    static let connectionTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(15))
+    static let connectionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(15))
     static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(8))
     static let elementAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(5))
     static let navigationTimeoutSeconds: TimeInterval = TestWait.seconds(.product(10))
-    static let playbackControlTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(20))
+    static let playbackControlTimeoutSeconds: TimeInterval = TestWait.seconds(.product(20))
     static let pollIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.1))
     static let readbackPollSeconds: TimeInterval = TestWait.seconds(.product(0.2))
     static let readbackTimeoutSeconds: TimeInterval = TestWait.seconds(.product(2))

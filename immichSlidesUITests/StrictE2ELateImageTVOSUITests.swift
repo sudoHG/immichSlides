@@ -104,7 +104,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     private func enterRandomPlayback(app: XCUIApplication) throws {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            randomButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
             "After saving the settings, the mode selection page must open.")
         XCTAssertTrue(
             waitForFocus(on: randomButton, timeout: TestWait.seconds(.product(5))),
@@ -112,7 +112,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            continueButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "After choosing Random Playback, the Continue button must be shown.")
         XCTAssertTrue(continueButton.isEnabled, "After choosing Random Playback, the Continue button must be enabled.")
         moveFocus(
@@ -124,7 +124,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     @MainActor
     private func enterPlaybackThenAdvanceTwice(nextButton: XCUIElement) {
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.infrastructure(30))) { nextButton.exists },
+            waitUntil(timeout: TestWait.seconds(.product(30))) { nextButton.exists },
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests."
         )
         // Default focus is on Settings: only move right to Next and press it twice, without the 4s focus polling.
@@ -204,7 +204,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
             NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])
         ).firstMatch
         XCTAssertTrue(
-            submit.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))),
+            submit.waitForExistence(timeout: TestWait.seconds(.product(4))),
             "The system keyboard must show Next or Done.")
         for _ in 0..<6 where !submit.hasFocus {
             XCUIRemote.shared.press(.down)
@@ -290,12 +290,12 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         let focused = app.descendants(matching: .any)
             .matching(NSPredicate(format: "hasFocus == %@", NSNumber(value: true)))
             .firstMatch
-        if focused.waitForExistence(timeout: TestWait.seconds(.infrastructure(0))) {
+        if focused.waitForExistence(timeout: TestWait.seconds(.product(0))) {
             focusedLines.append(StrictE2ELateImageFocusAudit.auditLine(for: focused))
         } else {
             for identifier in StrictE2ELateImageFocusAudit.knownIdentifiers {
                 let element = app.descendants(matching: .any)[identifier]
-                guard element.waitForExistence(timeout: TestWait.seconds(.infrastructure(0))), element.hasFocus else {
+                guard element.waitForExistence(timeout: TestWait.seconds(.product(0))), element.hasFocus else {
                     continue
                 }
                 focusedLines.append(StrictE2ELateImageFocusAudit.auditLine(for: element))

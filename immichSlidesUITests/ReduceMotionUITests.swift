@@ -189,7 +189,7 @@ private enum MotionTiming {
     static let reducedMotionHold: TimeInterval = TestWait.seconds(.product(3.5))
     static let foregroundTimeout: TimeInterval = TestWait.seconds(.infrastructure(10))
     static let settingsNavigationSteps = 6
-    static let settingsPageTimeout: TimeInterval = TestWait.seconds(.infrastructure(4))
+    static let settingsPageTimeout: TimeInterval = TestWait.seconds(.product(4))
     static let settingsReadbackTimeout: TimeInterval = TestWait.seconds(.product(3))
 }
 

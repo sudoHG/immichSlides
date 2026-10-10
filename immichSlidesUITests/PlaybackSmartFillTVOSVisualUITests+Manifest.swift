@@ -10,7 +10,7 @@ extension PlaybackSmartFillTVOSVisualUITests {
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))),
+            nextButton.waitForExistence(timeout: TestWait.seconds(.product(6))),
             "Apple TV playback page should show the Next button")
 
         for _ in 0..<6 {

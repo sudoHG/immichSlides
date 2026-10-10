@@ -83,10 +83,8 @@ before building when the selected revision does not advertise that option.
 Strict/E2E and evidence suites classify initial fixture and recorder availability
 as infrastructure. Later photo changes, settings readbacks, focus recovery,
 keyboard response, pause holds, motion samples and polling intervals remain
-product timing. Shared constants used for both discovery and a user-visible
-response retain the fixed budget; a dedicated initial-readiness call can resolve
-an infrastructure budget separately. A collection's first manifest uses its
-infrastructure deadline, while subsequent manifests keep the photo-change
+product timing. A collection's first manifest uses its infrastructure deadline,
+while subsequent manifests keep the photo-change
 deadline. Resolving a budget does not alter any elapsed-time assertion or
 sampling interval.
 

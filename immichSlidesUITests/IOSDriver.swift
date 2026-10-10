@@ -336,7 +336,7 @@ struct IOSDriver: PlaybackDriver {
 
     private func waitForPlaybackControls(timeout: TimeInterval) -> Bool {
         Wait.until(timeout: timeout) {
-            dismissSavePasswordPrompt(timeout: TestWait.seconds(.infrastructure(0)))
+            dismissSavePasswordPrompt(timeout: TestWait.seconds(.product(0)))
             let banner = app.descendants(matching: .any).matching(identifier: "slideshow.entryHint.banner").firstMatch
             if banner.exists { tap(banner) }
             if app.buttons["slideshow.control.settings.button"].isHittable { return true }

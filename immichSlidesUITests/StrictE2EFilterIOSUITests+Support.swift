@@ -61,7 +61,7 @@ extension StrictE2EFilterIOSUITests {
     ) {
         let modeButton = firstBootControl(in: app, identifier: identifier)
         XCTAssertTrue(
-            modeButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            modeButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Mode page must offer \(identifier).")
         let continueButton = firstBootControl(in: app, identifier: "mode.continue.button")
         // The system Save Password prompt may cover the card late; after handling the named prompt,
@@ -70,7 +70,7 @@ extension StrictE2EFilterIOSUITests {
         for _ in 0..<2 {
             if isSystemSavePasswordPromptVisible(app: app) {
                 _ = captureNamedPNG(app: app, name: "mode-selection-password-prompt")
-                guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.infrastructure(4)))
+                guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(4)))
                 else {
                     XCTFail("The named Save Password prompt must be gone before choosing a mode")
                     return
@@ -78,7 +78,7 @@ extension StrictE2EFilterIOSUITests {
             }
             if isOnboardingModeSelected(modeButton) { break }
             if waitUntil(
-                timeout: TestWait.seconds(.infrastructure(4)), condition: { modeButton.exists && modeButton.isHittable }
+                timeout: TestWait.seconds(.product(4)), condition: { modeButton.exists && modeButton.isHittable }
             ) {
                 modeButton.tap()
             } else {
@@ -115,7 +115,7 @@ extension StrictE2EFilterIOSUITests {
         }
         if isSystemSavePasswordPromptVisible(app: app) {
             _ = captureNamedPNG(app: app, name: "mode-selection-password-prompt")
-            guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.infrastructure(4)))
+            guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(4)))
             else {
                 XCTFail("The named Save Password prompt must be dismissed before Continue on the mode page")
                 return
@@ -134,7 +134,7 @@ extension StrictE2EFilterIOSUITests {
             if isSystemSavePasswordPromptVisible(app: app) {
                 _ = captureNamedPNG(app: app, name: "mode-departure-password-prompt")
                 guard !didResumeAfterPrompt,
-                    dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.infrastructure(4)))
+                    dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(4)))
                 else {
                     XCTFail("A Save Password prompt shown while leaving the mode page must be dismissed")
                     return
@@ -162,7 +162,7 @@ extension StrictE2EFilterIOSUITests {
     func pausePlaybackIfNeeded(app: XCUIApplication) {
         revealPlaybackControls(app: app)
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        guard playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))) else { return }
+        guard playPause.waitForExistence(timeout: TestWait.seconds(.product(4))) else { return }
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
         }
@@ -205,7 +205,7 @@ extension StrictE2EFilterIOSUITests {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Test Connection must be shown")
         tapElement(testConnectionButton)
     }

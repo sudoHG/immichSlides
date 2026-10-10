@@ -67,7 +67,7 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
         )
         let traceText = try appSmartFillMotionTraceText(
             app: app, timeout: TestWait.seconds(.infrastructure(sampleDuration + 30)))
-        let fallbackManifest = try waitForCurrentManifest(app: app, timeout: TestWait.seconds(.infrastructure(5)))
+        let fallbackManifest = try waitForCurrentManifest(app: app, timeout: TestWait.seconds(.product(5)))
         let traceMotionRows = motionFrameRows(fromTraceText: traceText, fallbackManifest: fallbackManifest)
         let traceProductRows = productSceneSequenceRows(fromTraceText: traceText, fallbackManifest: fallbackManifest)
         let motionRows = traceMotionRows.isEmpty ? evidence.motionRows : traceMotionRows

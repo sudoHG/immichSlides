@@ -293,7 +293,7 @@ final class ScenePresentationContractUITests: XCTestCase {
         let url = try XCTUnwrap(URL(string: input.serverURL + "/test/image-response"))
         var request = URLRequest(url: url)
         request.setValue(input.publicKey, forHTTPHeaderField: "x-api-key")
-        request.timeoutInterval = UITestSupportWaitTiming.connectionTimeoutSeconds
+        request.timeoutInterval = TestWait.seconds(.infrastructure(15))
         if let mode {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -310,7 +310,7 @@ final class ScenePresentationContractUITests: XCTestCase {
             semaphore.signal()
         }
         task.resume()
-        guard semaphore.wait(timeout: .now() + UITestSupportWaitTiming.connectionTimeoutSeconds) == .success else {
+        guard semaphore.wait(timeout: .now() + TestWait.seconds(.infrastructure(15))) == .success else {
             task.cancel()
             throw Failure("Fixture image response control timed out")
         }

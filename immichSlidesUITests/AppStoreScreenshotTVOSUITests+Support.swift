@@ -262,7 +262,7 @@ extension AppStoreScreenshotTVOSUITests {
 
         let serverURLField = app.textFields["firstboot.serverURL.field"]
         try waitOrThrow(
-            serverURLField, timeout: AppStoreScreenshotUITestsWaitTiming.connectionTimeoutSeconds,
+            serverURLField, timeout: TestWait.seconds(.infrastructure(15)),
             "A fresh install should open the tvOS first-launch server setup page")
         let displayedURL = (serverURLField.value as? String) ?? ""
         guard displayedURL.contains(appStoreDemoServerURL) else {

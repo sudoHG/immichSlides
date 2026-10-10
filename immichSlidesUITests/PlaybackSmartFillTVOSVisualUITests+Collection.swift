@@ -119,7 +119,7 @@ extension PlaybackSmartFillTVOSVisualUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            continueButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Continue button should appear after choosing random playback")
         if continueButton.hasFocus == false {
             XCUIRemote.shared.press(.down)
@@ -130,7 +130,7 @@ extension PlaybackSmartFillTVOSVisualUITests {
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(30))),
+                timeout: TestWait.seconds(.product(30))),
             "After starting Apple TV random playback, the playback control bar should appear"
         )
         _ = waitUntil(timeout: TestWait.seconds(.infrastructure(30))) {
@@ -155,7 +155,7 @@ extension PlaybackSmartFillTVOSVisualUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            continueButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Continue button should appear after choosing filtered playback")
         for _ in 0..<4 {
             if continueButton.hasFocus { break }
@@ -167,10 +167,10 @@ extension PlaybackSmartFillTVOSVisualUITests {
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            startButton.waitForExistence(timeout: TestWait.seconds(.product(20))),
             "Apple TV filter summary should show the Start playback button")
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.infrastructure(20))) { startButton.isEnabled },
+            waitUntil(timeout: TestWait.seconds(.product(20))) { startButton.isEnabled },
             "After seeding the people filter, Apple TV Start playback should be enabled")
         for _ in 0..<10 {
             if startButton.hasFocus { break }
@@ -189,7 +189,7 @@ extension PlaybackSmartFillTVOSVisualUITests {
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(45))),
+                timeout: TestWait.seconds(.product(45))),
             "After starting Apple TV people-filter playback, the playback control bar should appear"
         )
         _ = waitUntil(timeout: TestWait.seconds(.infrastructure(30))) {
