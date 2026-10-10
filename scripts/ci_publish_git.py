@@ -38,7 +38,7 @@ if p['operation']=='derive':
     sources=p['sources']
     py={path[8:-3].replace('/', '.'):text for path,text in sources.items() if path.startswith('scripts/') and path.endswith('.py')}
     swift={path:text for path,text in sources.items() if path.startswith('immichSlidesTests/') and path.endswith('.swift')}
-    ui={path:text for path,text in sources.items() if path.startswith(('immichSlidesUITests/','TestSupport/')) and path.endswith('.swift')}
+    ui={path:text for path,text in sources.items() if path.startswith('immichSlidesUITests/') and path.endswith('.swift')}
     population={'host':[test_identity('host',name) for name,_ in HOST_CHECKS]+python_identities(py)}
     for platform in ('ios','tvos'):
         population['unit-'+platform]=swift_identities(swift,platform)
@@ -62,7 +62,10 @@ elif p['operation']=='ui':
         for device in p['shard_devices']:
             platform=DEVICES[device]
             result['populations'][device]=shard_populations(p['populations']['ui-'+platform],p['plans'][platform]['plan'],p['manifest'],device)
-        if p.get('selection_inputs') is not None:
+    except Exception as error:
+        result['error']=str(error)
+    if p.get('selection_inputs') is not None and 'error' not in result:
+        try:
             from ci_ui_selection import select_ui_population
             from ci_summary import identity_key
             selection_inputs=p['selection_inputs']
@@ -77,8 +80,8 @@ elif p['operation']=='ui':
                 selection['shards'][device]={name:[entry for entry in entries if identity_key(entry) in selected]
                     for name,entries in shards.items()}
             result['selection']=selection
-    except Exception as error:
-        result['error']=str(error)
+        except Exception as error:
+            result['selection']={'error':str(error)}
 else:
     if 'evaluated_on' in p['inputs']:
         from datetime import date
@@ -108,7 +111,7 @@ def tree_inputs(commit):
         path = raw_path.decode("utf-8")
         listing.append({"path": path, "mode": mode, "type": kind, "sha": object_sha})
         if ((path.startswith("scripts/") and path.endswith(".py")) or
-                (path.startswith(("immichSlidesTests/", "immichSlidesUITests/", "TestSupport/")) and path.endswith(".swift"))):
+                (path.startswith(("immichSlidesTests/", "immichSlidesUITests/")) and path.endswith(".swift"))):
             require(mode == "100644" or mode == "100755", "test source is not a regular blob")
             sources[path] = read_blob(commit, path)
     return listing, sources

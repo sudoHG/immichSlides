@@ -723,10 +723,13 @@ def main(argv=None):
                        for path in (args.root / "immichSlidesUITests").rglob("*.swift")}
             populations = {"ui-" + platform: ui_identities(sources, platform) for platform in ("ios", "tvos")}
             validate_shard_assignments((args.root / MANIFEST_PATH).read_text(encoding="utf-8"), populations)
-            from ci_ui_selection import check_area_map
-            check_area_map(args.root)
         except (OSError, UnicodeError, ValueError) as error:
             violations.append(Violation(MANIFEST_PATH, "manifest", "ui-shards", str(error)))
+        from ci_ui_selection import AREA_MAP_PATH, check_area_map
+        try:
+            check_area_map(args.root)
+        except (OSError, UnicodeError, ValueError) as error:
+            violations.append(Violation(AREA_MAP_PATH, "map", "ui-areas", str(error)))
     for violation in violations:
         print(violation, file=sys.stderr)
     print(f"Workflow policy {'FAIL' if violations else 'PASS'}: {len(paths)} workflows, {len(violations)} violations")

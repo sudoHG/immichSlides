@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import subprocess
+from functools import lru_cache
 from pathlib import PurePosixPath
 
 from ci_population import ui_identities
@@ -51,12 +52,30 @@ def matches_test(key, selectors):
     return any(key == selector or key.startswith(selector + "/") for selector in selectors)
 
 
+def matches_source(path, pattern):
+    """Only a standalone ** segment may cross a directory boundary."""
+    path_parts, pattern_parts = path.split("/"), pattern.split("/")
+
+    @lru_cache(maxsize=None)
+    def matches(path_index, pattern_index):
+        if pattern_index == len(pattern_parts):
+            return path_index == len(path_parts)
+        if pattern_parts[pattern_index] == "**":
+            return matches(path_index, pattern_index + 1) or (
+                path_index < len(path_parts) and matches(path_index + 1, pattern_index))
+        return (path_index < len(path_parts)
+                and fnmatch.fnmatchcase(path_parts[path_index], pattern_parts[pattern_index])
+                and matches(path_index + 1, pattern_index + 1))
+
+    return matches(0, 0)
+
+
 def affected_areas(path, area_map):
     return sorted(name for name, area in area_map["areas"].items()
-                  if any(fnmatch.fnmatchcase(path, pattern) for pattern in area["sources"]))
+                  if any(matches_source(path, pattern) for pattern in area["sources"]))
 
 
-def validate_area_coverage(raw, source_paths, populations):
+def validate_area_coverage(raw, source_paths, populations, *, plans=None):
     """Check both unfiltered platforms, including Evidence and strict identities."""
     area_map = parse_area_map(raw)
     keys = {entry["key"] for platform in ("ios", "tvos") for entry in populations.get("ui-" + platform, [])}
@@ -67,6 +86,11 @@ def validate_area_coverage(raw, source_paths, populations):
         require(matches_test(key, selectors), f"unmapped UI test: {key}")
     for path in sorted(source_paths):
         require(affected_areas(path, area_map), f"unmapped app source: {path}")
+    if plans is not None:
+        for device, platform in DEVICES.items():
+            entries = default_plan_population(populations["ui-" + platform], plans[platform])
+            require(any(matches_test(entry["key"], area_map["smoke"]) for entry in entries),
+                    f"UI smoke set is absent from default plan on {device}")
     return area_map
 
 
@@ -77,7 +101,10 @@ def check_area_map(root):
     source_paths = subprocess.check_output(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "immichSlides"],
         cwd=root, timeout=30).decode("utf-8").split("\0")
-    validate_area_coverage((root / AREA_MAP_PATH).read_text(encoding="utf-8"), filter(None, source_paths), populations)
+    plans = {platform: (root / ("immichSlides-" + suffix + ".xctestplan")).read_text(encoding="utf-8")
+             for platform, suffix in (("ios", "iOS"), ("tvos", "tvOS"))}
+    validate_area_coverage((root / AREA_MAP_PATH).read_text(encoding="utf-8"), filter(None, source_paths), populations,
+                           plans=plans)
 
 
 def select_ui_population(paths, classification_policy, *, build_target_paths, area_map, populations, plans, event):
@@ -95,14 +122,11 @@ def select_ui_population(paths, classification_policy, *, build_target_paths, ar
     mode = ("full" if event != "pull_request" or classification["ci_changing"] or unknown or "core" in areas else
             "none" if not classification["app_affected"] else "scoped")
     if mode == "scoped":
-        validate_area_coverage(area_map, [], populations)
+        validate_area_coverage(area_map, [], populations, plans=plans)
     selectors = area_map["smoke"] + [selector for name in areas for selector in area_map["areas"][name]["tests"]]
     selected = {}
     for device, platform in DEVICES.items():
         entries = default_plan_population(populations["ui-" + platform], plans[platform])
-        if mode == "scoped":
-            require(any(matches_test(entry["key"], area_map["smoke"]) for entry in entries),
-                    f"UI smoke set is absent from default plan on {device}")
         selected[device] = sorted([test_identity("ui", entry["key"], platform=platform, device=device)
                                    for entry in entries if mode == "full" or
                                    mode == "scoped" and matches_test(entry["key"], selectors)], key=identity_key)

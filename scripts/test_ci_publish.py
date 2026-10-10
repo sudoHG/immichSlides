@@ -1025,10 +1025,10 @@ class PublisherTests(unittest.TestCase):
                 workflow_contract(source, RUN, metadata=True)
 
     def test_area_selection_unions_smoke_and_areas_but_unknown_core_and_non_pr_changes_stay_full(self):
-        from ci_ui_selection import select_ui_population
+        from ci_ui_selection import matches_source, select_ui_population
         from ci_ui_shards import DEVICES
         area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
-                    "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["CoreUITests"]},
+                    "areas": {"core": {"sources": ["immichSlides/Engine.swift", "immichSlides/Models/**"], "tests": ["CoreUITests"]},
                               "settings": {"sources": ["immichSlides/Settings*.swift"], "tests": ["SettingsUITests"]},
                               "filter": {"sources": ["immichSlides/Filter.swift"], "tests": ["FilterUITests"]},
                               "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]}}}
@@ -1045,6 +1045,8 @@ class PublisherTests(unittest.TestCase):
                 (["immichSlides/Settings.swift", "docs/guide.md"], "pull_request", "scoped", keys[:2]),
                 (["immichSlides/Settings.swift", "immichSlides/Filter.swift"], "pull_request", "scoped", keys[:3]),
                 (["immichSlides/Engine.swift"], "pull_request", "full", keys),
+                (["immichSlides/Models/Nested/Engine.swift"], "pull_request", "full", keys),
+                (["immichSlides/SettingsModels/New.swift"], "pull_request", "full", keys),
                 (["new/Unknown.swift"], "pull_request", "full", keys),
                 (["scripts/ci-ui-areas.json"], "pull_request", "full", keys),
                 (["docs/guide.md"], "pull_request", "none", ()),
@@ -1059,6 +1061,16 @@ class PublisherTests(unittest.TestCase):
                     self.assertEqual(actual["populations"][device], sorted(
                         [test_identity("ui", key, platform=platform, device=device) for key in expected],
                         key=lambda entry: json.dumps(entry, sort_keys=True, separators=(",", ":"))))
+        for pattern, path, expected in (
+                ("immichSlides/Settings*.swift", "immichSlides/Settings.swift", True),
+                ("immichSlides/Settings*.swift", "immichSlides/SettingsModels/New.swift", False),
+                ("immichSlides/*/Settings?.swift", "immichSlides/Core/Settings1.swift", True),
+                ("immichSlides/*/Settings?.swift", "immichSlides/Core/Nested/Settings1.swift", False),
+                ("immichSlides/**/Engine.swift", "immichSlides/Engine.swift", True),
+                ("immichSlides/**/Engine.swift", "immichSlides/Models/Nested/Engine.swift", True),
+                ("immichSlides/Models/**", "immichSlides/Models/Nested/Engine.swift", True)):
+            with self.subTest(pattern=pattern, path=path):
+                self.assertEqual(matches_source(path, pattern), expected)
 
     def test_area_coverage_refuses_unmapped_source_test_and_stale_selectors_even_outside_default_plans(self):
         from ci_ui_selection import validate_area_coverage
@@ -1068,6 +1080,14 @@ class PublisherTests(unittest.TestCase):
         populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in
                        ("SmokeUITests/testLaunch", "CoreUITests/testPlay")] for platform in ("ios", "tvos")}
         validate_area_coverage(area_map, ["immichSlides/Engine.swift", "immichSlides/FirstBoot.swift"], populations)
+        plans = {platform: {"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}
+                 for platform in ("ios", "tvos")}
+        validate_area_coverage(area_map, [], populations, plans=plans)
+        for platform, device in (("ios", "iphone"), ("tvos", "appletv")):
+            bad_plans = copy.deepcopy(plans)
+            bad_plans[platform]["testTargets"][0]["skippedTests"] = ["SmokeUITests/testLaunch"]
+            with self.subTest(platform=platform), self.assertRaisesRegex(ContractError, "smoke.*" + device):
+                validate_area_coverage(area_map, [], populations, plans=bad_plans)
         with self.assertRaisesRegex(ContractError, "unmapped app source.*New.swift"):
             validate_area_coverage(area_map, ["immichSlides/New.swift"], populations)
         with self.assertRaisesRegex(ContractError, "unmapped UI test.*EvidenceUITests/testCapture"):
@@ -1081,6 +1101,35 @@ class PublisherTests(unittest.TestCase):
             mutate(bad)
             with self.subTest(mutate=mutate), self.assertRaises(ContractError):
                 validate_area_coverage(bad, [], populations)
+
+    def test_area_map_includes_flows_that_drive_shared_setup_and_settings_screens(self):
+        from ci_ui_selection import AREA_MAP_PATH, affected_areas, matches_test, parse_area_map
+        area_map = parse_area_map((Path(__file__).parent.parent / AREA_MAP_PATH).read_text())
+        cases = [
+            ("iOS/Component/ServerConfigFormViewIOS.swift", "immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton"),
+            ("Shared/Component/ServerConfigFormView.swift", "immichSlidesUITests/testIPhonePortraitAndLandscapeFirstBootElements"),
+            ("iOS/Component/ServerConfigTextInputViewIOS.swift", "FilterSummaryIOSVisualUITests/testIOSFirstBootDebugFillConfigButtonFillsFieldsWhenEnabled"),
+            ("iOS/Component/ServerConfigFormViewIOS.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFirstBootScreenshot"),
+            ("tvOS/Core/SettingsViewTV+PlaybackPages.swift", "FilterSummaryTVOSVisualUITests/testTVOSSettingsAutoPlayUsesDedicatedSubpage"),
+            ("tvOS/Core/SettingsViewTV+PlaybackPages.swift", "FilterSummaryTVOSVisualUITests/testTVOSSettingsFilterConfigButtonCanOpenEditor"),
+            ("tvOS/Core/SettingsViewTV+AccessProtectionPage.swift", "FilterSummaryTVOSVisualUITests/testTVOSEnglishAcceptanceSettingsPagesScreenshots"),
+            ("Shared/Core/SettingsView.swift", "FilterSummaryIOSVisualUITests/testIOSExifAlbumDiagnosticScreenshots"),
+            ("Shared/Core/SettingsView+Sections.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFilterEditorScreenshot"),
+            ("Shared/Core/SettingsView+Helpers.swift", "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow"),
+            ("Shared/Component/SlideshowControlBarView.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
+            ("tvOS/Component/SlideshowControlBarViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerPageShowsFormAndStatusBanner"),
+            ("Shared/Component/ServerConfigFormView.swift", "immichSlidesUITestsLaunchTests/testLaunch"),
+            ("iOS/Component/ServerConfigFormViewIOS.swift", "FilterSummaryIOSVisualUITests/testIOSSettingsOpenSourceLicensesKeepsPadSidebarResponsive"),
+            ("iOS/Core/ModeSelectionViewIOS.swift", "PlaybackHistoryIOSUITests/testPreviousNextRetainedHistoryFromRandomPlayback"),
+            ("iOS/Core/FilterSummaryViewIOS+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
+            ("tvOS/Core/FilterSummaryViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSFullFlowModeSelectionToAccessProtectionCanReachTargetPage"),
+            ("iOS/Component/OnboardingScaffoldIOS.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFilterSummaryScreenshot"),
+        ]
+        for source, key in cases:
+            with self.subTest(source=source, key=key):
+                selectors = area_map["smoke"] + [selector for name in affected_areas("immichSlides/" + source, area_map)
+                                                  for selector in area_map["areas"][name]["tests"]]
+                self.assertTrue(matches_test(key, selectors), f"{source} omits its UI flow {key}")
 
     def test_ui_reader_requires_device_population_union_and_admitted_manifest_hash(self):
         from ci_publish_git import ui_inputs
@@ -1240,6 +1289,26 @@ class PublisherTests(unittest.TestCase):
             jobs, summaries = evidence(False)
             full = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
             self.assertEqual(full["state"], "success")
+            original = admitted
+            bad_plan = copy.deepcopy(UI_PLAN)
+            bad_plan["testTargets"][0]["skippedTests"].append("SmokeUITests/testLaunch")
+            files["immichSlides-iOS.xctestplan"] = json.dumps(bad_plan)
+            with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
+                admitted = ui_inputs(BASE, listing, populations=populations, base_populations=populations,
+                                     workflow=workflow, run=run, modules=modules, selection_inputs=selection_inputs)
+            self.assertNotIn("error", admitted)
+            self.assertIn("smoke", admitted["selection"]["error"])
+            self.assertNotIn("mode", admitted["selection"])
+            record["ui_inputs"] = {"base": admitted, "candidate": admitted}
+            full_jobs, full_summaries = evidence(False)
+            self.assertEqual(evaluate_records(record, run, full_jobs, full_summaries,
+                                             approved=False, fork=False)["state"], "success")
+            scoped_jobs, scoped_summaries = evidence(True)
+            with self.assertRaises(ContractError):
+                evaluate_records(record, run, scoped_jobs, scoped_summaries, approved=False, fork=False)
+            admitted = original
+            record["ui_inputs"] = {"base": admitted, "candidate": admitted}
+            files["immichSlides-iOS.xctestplan"] = json.dumps(UI_PLAN)
             jobs, summaries = evidence(True)
             scoped = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
             self.assertEqual(scoped["state"], "success")
@@ -1294,7 +1363,7 @@ class PublisherTests(unittest.TestCase):
 class NewUITests: XCTestCase { func testLaunch() {} }
 class VisualUITests: XCTestCase { func testFlow() {} }
 class OtherUITests: XCTestCase { func testPlay() {} }
-"""}
+""", "TestSupport/Helpers.swift": "import XCTest\nclass SupportUITests: XCTestCase { func testSupport() {} }"}
         read_maps = []
         def blob(revision, path):
             if path == AREA_MAP_PATH:
@@ -1314,6 +1383,8 @@ class OtherUITests: XCTestCase { func testPlay() {} }
                 patch("ci_publish_git.tree_inputs", return_value=(listing, sources)):
             record = derive_record(identity, RUN)
         self.assertEqual(read_maps, [BASE])
+        for platform in ("ios", "tvos"):
+            self.assertNotIn("SupportUITests/testSupport", {entry["key"] for entry in record["populations"]["ui-" + platform]})
         for side in ("base", "candidate"):
             selection = record["ui_inputs"][side]["selection"]
             self.assertEqual(selection["mode"], "scoped")

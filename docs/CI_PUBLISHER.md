@@ -280,6 +280,12 @@ even after exact-head approval. Both base/candidate shard-rule inputs retain
 that same map revision/hash and their derived selections. Historical bases
 without this reader/map remain full-only.
 
+Shard computation and feature selection have separate failure boundaries. A failed
+selection is stored only in `selection.error`; the complete population remains
+admitted, while scoped evidence fails closed. Host checks require smoke coverage
+in every device's default plan. Admission retains the same `immichSlidesUITests`
+inventory roots as the producer and shard validation; TestSupport is coverage-only.
+
 Publication first recognizes a complete full population for compatibility with
 the existing producer. Otherwise the entire UI population must equal the stored
 selection on iPhone, iPad and Apple TV, and every shard must equal its own selected
