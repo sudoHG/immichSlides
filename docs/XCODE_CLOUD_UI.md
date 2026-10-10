@@ -72,15 +72,19 @@ contain test inputs; keep them private and do not attach them to a public PR.
 ## Routing and trust rollout
 
 `ci-xcode-cloud-dispatch` handles `ci-ui` **requested** events on main and
-dispatches the fixed main router with the producer ID and attempt. In-progress
-events do not dispatch again; non-PR sources are successful no-ops. This
-five-minute bridge has no environment or ASC secrets and alone receives
-`actions: write` for the two fixed dispatches. A successful routed router
-completion dispatches the importer after uploader validation. GitHub documents
-[`workflow_dispatch` as an exception for events sent using `GITHUB_TOKEN`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
-The resulting dispatch-to-`workflow_run` chain still needs runtime proof on main.
+dispatches the fixed main router with the producer ID and attempt. Non-PR
+sources are successful no-ops. This five-minute bridge has no environment or
+ASC secrets and receives `actions: write` only for the fixed router dispatch.
+The router's separate, credential-free `dispatch-import` job follows a successful
+recorded poll and dispatches the fixed importer for a current routed producer.
+It authenticates the main router, its attempt, successful poll job and unique
+artifact before opening the decision. Its only write permission is `actions: write`.
+The documented
+[`workflow_dispatch` exception for events sent using `GITHUB_TOKEN`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)
+permits both API dispatches.
+The automatic importer dispatch still needs runtime proof on main.
 
-The main-only router has two Linux jobs. The short `xcc-start` job holds the
+The main-only router has three Linux jobs. The short `xcc-start` job holds the
 account budget concurrency group while checking the ASC inventory, starting
 or reusing one build, and uploading the start result. The separate poll job
 uses a producer/attempt concurrency group and never holds the account start lock.
@@ -137,7 +141,7 @@ backoff within the deadline. A failed Linux poll round has no conclusion and
 keeps waiting. POST is never automatically retried. Each poll rechecks the producer
 and selection, and stops on completion or supersession. A superseded producer
 logs one line and exits successfully without a new start or verdict; a
-failed/cancelled route's completion is a successful no-op in the bridge. Cloud completion also
+failed/cancelled poll cannot start the downstream dispatch job. Cloud completion also
 waits for the newest matching app check to complete with this Cloud run's link
 before method validation. Failed starts/runs, refused evidence and deadlines
 produce a GitHub fallback decision. The published
@@ -235,8 +239,10 @@ on main before ordinary app-head routed/non-routed/fallback acceptance runs.
 ## Trusted importer and acceptance
 
 `ci-xcode-cloud-import` accepts a same-repository PR's authoritative `ci-ui` run
-ID through a main-only manual/API dispatch, including the credential-free bridge's
-dispatch after successful main router completion.
+ID through a main-only manual/API dispatch, including the router's credential-free
+dispatch after a successful poll. The importer waits up to two minutes for the
+router workflow to finish, repeatedly using the strict successful-uploader reader;
+an in-progress or failed uploader never supplies accepted evidence.
 It checks the full admitted identity,
 archive evidence attempt, exact current PR head and the successful main router's
 artifact before reading App Store Connect. Its protected job checks out main,

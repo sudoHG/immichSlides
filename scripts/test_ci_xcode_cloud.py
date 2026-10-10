@@ -1013,36 +1013,91 @@ class RoutingPolicyTests(unittest.TestCase):
         read.assert_not_called()
         api.dispatch.assert_not_called()
 
-    def test_event_bridge_imports_only_a_successful_dispatch_router_routed_receipt(self):
+    def test_router_forwards_only_its_successful_job_and_routed_receipt(self):
         import ci_xcode_cloud_dispatch as bridge
         api = Mock(repository="owner/repo")
         source = {"id": 456, "path": cloud.ROUTE_PATH, "repository": {"full_name": "owner/repo"},
-                  "head_repository": {"full_name": "owner/repo"}, "run_attempt": 1, "conclusion": "success"}
-        api.repo.return_value = source
-        api.pages.return_value = [{"name": "ci-xcc-route-123-2", "expired": False}]
-        receipt = {"uploader_run_id": 456, "uploader_attempt": 1, "producer_run_id": 123,
-                   "producer_attempt": 2, "decision": "routed"}
-        with patch.object(bridge, "git"), patch.object(bridge, "validate_uploader") as verify, \
-                patch.object(bridge, "json_member", return_value=receipt) as read:
-            bridge.dispatch(api, {"workflow_run": {"id": 456}, "action": "completed"})
+                  "head_repository": {"full_name": "owner/repo"}, "run_attempt": 1, "conclusion": None,
+                  "status": "in_progress", "event": "workflow_dispatch", "head_branch": "main",
+                  "head_sha": "b" * 40, "workflow_id": 789}
+        producer = {"id": 123, "head_sha": "a" * 40, "run_attempt": 2}
+        env = {"GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
+               "GITHUB_WORKFLOW_REF": "owner/repo/" + cloud.ROUTE_PATH + "@refs/heads/main",
+               "GITHUB_JOB": "dispatch-import", "GITHUB_RUN_ID": "456", "GITHUB_RUN_ATTEMPT": "1"}
+        event = {"inputs": {"producer_run_id": "123", "producer_attempt": "2"}}
+        api.repo.side_effect = lambda path: (source if path == "actions/runs/456" else producer
+                                            if path == "actions/runs/123" else {"id": 789, "path": cloud.ROUTE_PATH})
+        job = {"name": "route", "status": "completed", "conclusion": "success"}
+        artifact = {"name": "ci-xcc-route-123-2", "expired": False, "workflow_run": {"id": 456}}
+        api.pages.side_effect = lambda path, *_args, **_kwargs: [job] if path.endswith("/jobs") else [artifact]
+        receipt = {"schema_version": 1, "uploader_run_id": 456, "uploader_attempt": 1, "producer_run_id": 123,
+                   "producer_attempt": 2, "decision": "routed", "terminal": True, "head_sha": "a" * 40}
+        with patch.object(bridge, "git"), patch.object(cloud, "on_main", return_value=True), \
+                patch.object(bridge, "current_producer") as current, patch.object(bridge, "json_member", return_value=receipt) as read:
+            bridge.forward_import(api, env, event)
+            current.assert_called_once_with(api, producer)
             api.dispatch.assert_called_once_with(cloud.IMPORT_PATH, {"producer_run_id": "123", "producer_attempt": "2"})
             api.dispatch.reset_mock()
+            source["status"] = "queued"
+            bridge.forward_import(api, env, event)
+            api.dispatch.assert_called_once_with(cloud.IMPORT_PATH, {"producer_run_id": "123", "producer_attempt": "2"})
+            api.dispatch.reset_mock()
+            source["status"] = "in_progress"
             receipt["decision"] = "fallback"
-            bridge.dispatch(api, {"workflow_run": {"id": 456}, "action": "completed"})
+            bridge.forward_import(api, env, event)
             api.dispatch.assert_not_called()
+            receipt["decision"] = "routed"
             read.reset_mock()
-            verify.side_effect = ContractError("untrusted router")
-            with self.assertRaises(ContractError):
-                bridge.dispatch(api, {"workflow_run": {"id": 456}, "action": "completed"})
-            read.assert_not_called()
-            verify.reset_mock()
+            for field, value in (("head_branch", "candidate"), ("event", "pull_request"), ("run_attempt", 2), ("status", "completed")):
+                original = source[field]
+                source[field] = value
+                with self.subTest(field=field), self.assertRaises(ContractError):
+                    bridge.forward_import(api, env, event)
+                read.assert_not_called()
+                api.dispatch.assert_not_called()
+                source[field] = original
             for conclusion in ("failure", "cancelled", "timed_out"):
-                source["conclusion"] = conclusion
-                with self.subTest(conclusion=conclusion):
-                    bridge.dispatch(api, {"workflow_run": {"id": 456}, "action": "completed"})
-                    verify.assert_not_called()
-                    read.assert_not_called()
-                    api.dispatch.assert_not_called()
+                job["conclusion"] = conclusion
+                with self.subTest(conclusion=conclusion), self.assertRaises(ContractError):
+                    bridge.forward_import(api, env, event)
+                read.assert_not_called()
+                api.dispatch.assert_not_called()
+            job["conclusion"] = "success"
+            for field, value in (("producer_run_id", 999), ("producer_attempt", 3), ("uploader_attempt", 2),
+                                 ("terminal", False), ("head_sha", "c" * 40)):
+                original = receipt[field]
+                receipt[field] = value
+                with self.subTest(field=field), self.assertRaises(ContractError):
+                    bridge.forward_import(api, env, event)
+                api.dispatch.assert_not_called()
+                receipt[field] = original
+
+    def test_router_import_forwarder_refuses_non_main_or_wrong_job_context_before_reads(self):
+        import ci_xcode_cloud_dispatch as bridge
+        api = Mock(repository="owner/repo")
+        env = {"GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
+               "GITHUB_WORKFLOW_REF": "owner/repo/" + cloud.ROUTE_PATH + "@refs/heads/main", "GITHUB_JOB": "dispatch-import"}
+        for field, value in (("GITHUB_REF", "refs/heads/candidate"), ("GITHUB_EVENT_NAME", "pull_request"),
+                             ("GITHUB_WORKFLOW_REF", "owner/repo/" + cloud.ROUTE_PATH + "@refs/heads/candidate"),
+                             ("GITHUB_JOB", "start")):
+            with self.subTest(field=field), self.assertRaises(ContractError):
+                bridge.forward_import(api, dict(env, **{field: value}), {})
+            api.repo.assert_not_called()
+            api.dispatch.assert_not_called()
+
+    def test_import_waits_for_router_finalization_without_accepting_refused_provenance(self):
+        import ci_xcode_cloud_import as importer
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        api = Mock()
+        with patch.object(importer, "trusted_artifact", side_effect=[ContractError("uploader still running"), (fixture.route, 55)]) as read:
+            sleep = Mock()
+            self.assertEqual(importer.completed_route(api, fixture.run, sleep=sleep, monotonic=lambda: 0), (fixture.route, 55))
+            sleep.assert_called_once_with(5)
+            self.assertEqual(read.call_count, 2)
+        with patch.object(importer, "trusted_artifact", side_effect=ContractError("untrusted or failed uploader")), \
+                self.assertRaises(ContractError):
+            importer.completed_route(api, fixture.run, sleep=Mock(), monotonic=Mock(side_effect=[0, 121]))
 
     def test_router_requires_complete_validated_method_evidence_before_routed_receipt(self):
         import ci_xcode_cloud_route as router
