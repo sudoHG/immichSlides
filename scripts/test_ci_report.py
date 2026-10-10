@@ -272,11 +272,27 @@ class ReporterTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             validate_ui_record(stale_capacity, expanded_summaries, policy=policy, registry={"schema_version": 1, "entries": []},
                                evaluated_on=date(2026, 10, 1))
-        for change in ("missing-shard", "missing-sample", "foreign-attempt", "duplicate-shard", "failed-job"):
+        from ci_nightly_change import ui_tier_complete
+        def ui_record(verdict, job_result, skip_interval=None):
+            return {"plan": plan, "verdict": verdict, "matrix_job_result": job_result, "capacity": {"shard_intervals": [
+                {"shard": item["device"] + "/" + item["shard"], "started_epoch": 1, "finished_epoch": 2}
+                for item in plan["shards"] if item["device"] + "/" + item["shard"] != skip_interval]}}
+        self.assertTrue(ui_tier_complete(ui_record(good, "success")))
+        genuine = copy.deepcopy(summaries)
+        genuine[-1]["population"]["observed"] = [observation(genuine[-1]["population"]["declared"][0], "failed", 2)]
+        genuine_result = judge_ui(plan, genuine, policy=policy, registry={"schema_version": 1, "entries": []},
+                                  evaluated_on=date(2026, 10, 1), matrix_job_result="failure")
+        self.assertEqual("failed", genuine_result["status"])
+        self.assertTrue(ui_tier_complete(ui_record(genuine_result, "failure")))
+        for change in ("missing-shard", "missing-sample", "step-timeout", "foreign-attempt", "duplicate-shard", "failed-job"):
             records = copy.deepcopy(summaries)
             job_result = "success"
             if change == "missing-shard":
                 records.pop()
+            elif change == "step-timeout":
+                records[-1]["status"] = "unverified"
+                records[-1]["population"]["observed"] = []
+                job_result = "failure"
             elif change == "missing-sample":
                 records[-1]["population"]["observed"] = []
             elif change == "foreign-attempt":
@@ -291,6 +307,8 @@ class ReporterTests(unittest.TestCase):
                 self.assertEqual("failed", result["status"])
                 self.assertTrue(result["errors"])
                 self.assertEqual(9, len(result["shards"]))
+                self.assertFalse(ui_tier_complete(ui_record(result, job_result)))
+                self.assertFalse(ui_tier_complete(ui_record(result, job_result, skip_interval="appletv/visual")))
         for version in (True, "1", 2):
             with self.subTest(version=version), self.assertRaises(ContractError):
                 parse_ui_plan(dict(plan, schema_version=version))

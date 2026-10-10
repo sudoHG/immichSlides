@@ -156,8 +156,8 @@ jobs:
           if-no-files-found: error
 
   strict:
-    if: github.event_name != 'pull_request' && !inputs.live_only && !inputs.ui_only && !inputs.probe_environment_refusal
-    needs: plan
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && needs.plan.result == 'success' && github.event_name != 'pull_request' && !inputs.live_only && !inputs.ui_only && !inputs.probe_environment_refusal }}
+    needs: [change, plan]
     name: nightly-strict-${{ matrix.id }}
     runs-on: xcode-27
     timeout-minutes: 165
@@ -565,8 +565,8 @@ jobs:
         run: /usr/bin/python3 -B scripts/ci_live_tests.py admit
 
   live-canary:
-    needs: [live-admission, live-build]
-    if: github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true'
+    needs: [change, live-admission, live-build]
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && needs.live-admission.result == 'success' && needs.live-build.result == 'success' && (github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true') }}
     runs-on: xcode-27
     timeout-minutes: 40
     permissions:
@@ -700,8 +700,8 @@ jobs:
         run: rm -rf "$RUNNER_TEMP/live-derived" "$RUNNER_TEMP/live-build"
 
   live-unit:
-    if: needs.live-admission.outputs.admitted == 'true'
-    needs: [live-admission, live-build]
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && needs.live-admission.result == 'success' && needs.live-build.result == 'success' && needs.live-admission.outputs.admitted == 'true' }}
+    needs: [change, live-admission, live-build]
     runs-on: xcode-27
     timeout-minutes: 40
     permissions:

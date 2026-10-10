@@ -499,7 +499,7 @@ class AdmissionVerdictTests(unittest.TestCase):
         def artifact(name, expired=False):
             return {"name": name, "expired": expired}
         night = run(7, old, "2026-10-02T21:15:00Z", "failure")
-        aggregate = {"run": {"id": "7", "attempt": 1}, "status": "failed", "identity": {"commit_sha": old},
+        aggregate = {"schema_version": 1, "run": {"id": "7", "attempt": 1}, "status": "failed", "identity": {"commit_sha": old},
                      "matrix": {"equal": True}, "errors": []}
         skip_record = {"schema_version": 1, "decision": "skip", "reason": "unchanged", "event": "schedule",
                        "repository": "example/photos", "head_sha": old, "run": {"id": "7", "attempt": 1},
@@ -518,7 +518,9 @@ class AdmissionVerdictTests(unittest.TestCase):
                 ("wrong commit", [aggregate_artifact], {**aggregate, "identity": {"commit_sha": head}}, night),
                 ("wrong run", [aggregate_artifact], {**aggregate, "run": {"id": "8", "attempt": 1}}, night),
                 ("matrix incomplete", [aggregate_artifact], {**aggregate, "matrix": {"equal": False}}, night),
-                ("infrastructure error", [aggregate_artifact], {**aggregate, "errors": ["missing shard ui-a"]}, night)):
+                ("infrastructure error", [aggregate_artifact], {**aggregate, "errors": ["missing shard ui-a"]}, night),
+                ("UI aggregate absent", [aggregate_artifact], {**aggregate, "schema_version": 2}, night),
+                ("UI record unreadable", [aggregate_artifact], {**aggregate, "schema_version": 2, "ui": {}}, night)):
             with self.subTest(evidence=label):
                 self.assertIsNone(evidence(item, artifacts, member))
         record_artifact = artifact("nightly-change-7-1")

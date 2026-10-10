@@ -62,7 +62,9 @@ runs the night instead of deciding its own fate.
 newest. A night skipped by this check (a verified `nightly-change` record, no execution
 artifacts) is passed over. The first other night must be the baseline: completed with a
 real result, pass **or** fail, with its aggregate artifact present, for the same run,
-attempt and commit, a complete matrix and no infrastructure error. A cancelled, timed-out,
+attempt and commit, a complete strict matrix and no infrastructure error, and a complete UI
+tier (every planned shard and sample present, timing for every shard, and only genuine test
+failures in its verdict, so a missing shard or a step timeout never counts). A cancelled, timed-out,
 unfinished or infrastructure-incomplete night, or one whose evidence is expired or missing,
 ends the search with no baseline and the nightly runs. The nightly is skipped when:
 
@@ -81,7 +83,10 @@ of a night with a real result.
 Skipping needs all of: the event is `schedule`, `change` succeeded, and its output
 `run_nightly` is exactly `false`. That output is written by a last step that runs only after
 the decision record artifact uploaded, so a failed decision, a failed upload or a missing
-output leaves the job red or the output empty and the full chain runs. When skipped,
+output leaves the job red or the output empty and the full chain runs. Every job below `change`,
+including `strict`, `live-canary` and `live-unit`, has an explicit `!cancelled()` condition with
+the full gate and its direct predecessors' results, because an implicit `success()` would skip
+it when the `change` ancestor failed. When skipped,
 `plan`, `strict`, `ui-archive`, `ui-shards`, `live-admission`, `live-build`, `live-canary`,
 `live-unit` and both aggregates do not run, so the run ends green on Linux within minutes.
 `workflow_dispatch` and `pull_request` always run at the expression level. The policy check

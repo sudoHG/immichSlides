@@ -30,6 +30,9 @@ LIVE_WORKFLOW = ".github/workflows/ci-nightly.yml"
 NIGHTLY_UNGATED_JOBS = {"change", "live-environment-refusal"}
 NIGHTLY_CHANGE_GATE = ("!(github.event_name == 'schedule' && needs.change.result == 'success' "
                        "&& needs.change.outputs.run_nightly == 'false')")
+LIVE_UNIT_NEEDS = ["change", "live-admission", "live-build"]
+LIVE_UNIT_CONDITION = ("${{ !cancelled() && " + NIGHTLY_CHANGE_GATE + " && needs.live-admission.result == 'success' "
+                       "&& needs.live-build.result == 'success' && needs.live-admission.outputs.admitted == 'true' }}")
 NIGHTLY_CHANGE_OUTPUT = "${{ steps.verdict.outputs.run_nightly }}"
 LIVE_ENVIRONMENT = "immich-test-server"
 LIVE_BINDINGS = {"CI_LIVE_URL": "${{ secrets.IMMICH_TEST_SERVER_URL }}",
@@ -477,8 +480,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             refusal = (location == "workflow.jobs.live-environment-refusal" and
                        item.get("if") == "github.event_name == 'workflow_dispatch' && inputs.probe_environment_refusal && github.ref != 'refs/heads/main'" and
                        item.get("permissions") == {} and item.get("steps") == [{"run": "/usr/bin/false"}])
-            consumer = (location == "workflow.jobs.live-unit" and item.get("needs") == ["live-admission", "live-build"] and
-                        item.get("if") == "needs.live-admission.outputs.admitted == 'true'")
+            consumer = (location == "workflow.jobs.live-unit" and item.get("needs") == LIVE_UNIT_NEEDS and
+                        item.get("if") == LIVE_UNIT_CONDITION)
             if path != LIVE_WORKFLOW or name != LIVE_ENVIRONMENT or not (refusal or consumer):
                 flag(location, "live-credential", "Live environment belongs only to guarded nightly units or the credential-free refusal probe")
         env = item.get("env", {})
@@ -487,7 +490,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             steps = consumer.get("steps", [])
             if (path != LIVE_WORKFLOW or env != LIVE_BINDINGS or item.get("id") != "live" or item not in steps
                     or consumer.get("environment") != LIVE_ENVIRONMENT
-                    or consumer.get("if") != "needs.live-admission.outputs.admitted == 'true'"
+                    or consumer.get("if") != LIVE_UNIT_CONDITION
                     or not any(step.get("run") == "/usr/bin/python3 -B scripts/ci_live_tests.py admit" for step in steps[:steps.index(item)])):
                 flag(location, "live-credential", "Live secrets belong only to test-time injection after credential-free admission")
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))

@@ -42,6 +42,41 @@ def artifact_name(run_id, attempt):
     return f"nightly-change-{run_id}-{attempt}"
 
 
+def ui_tier_complete(ui):
+    """The UI tier ran every planned shard and sample; only genuine test failures remain in its verdict."""
+    from ci_report import FAILURES
+    from ci_summary import identity_key
+    from ci_verdict import identity_label
+    try:
+        verdict, planned_shards = ui["verdict"], ui["plan"]["shards"]
+        matrix = verdict["matrix"]
+        if (matrix["equal"] is not True or matrix["missing"] or matrix["unexpected"] or matrix["duplicates"]
+                or len(verdict["shards"]) != len(planned_shards)):
+            return False
+        shard_prefixes = tuple(item["device"] + "/" + item["shard"] + ": " for item in planned_shards)
+        if any(not error.startswith(shard_prefixes + ("nightly UI matrix jobs did not all succeed: ",)) for error in verdict["errors"]):
+            return False
+        failed_somewhere = False
+        for shard, planned in zip(verdict["shards"], planned_shards):
+            if (shard["device"], shard["shard"]) != (planned["device"], planned["shard"]):
+                return False
+            declared = {identity_key(item) for item in planned["declared"]}
+            failures = [item for item in verdict["observed"]
+                        if identity_key(item["identity"]) in declared and item["outcome"] in FAILURES]
+            failed_somewhere = failed_somewhere or bool(failures)
+            expected = {item["outcome"] + ": " + identity_label(item["identity"]) for item in failures}
+            if failures:
+                expected.add("producer status is failed")
+            if any(error not in expected for error in shard["verdict"]["errors"]):
+                return False
+        if {item["shard"] for item in ui["capacity"]["shard_intervals"]} != {
+                item["device"] + "/" + item["shard"] for item in planned_shards}:
+            return False
+        return ui["matrix_job_result"] == "success" or failed_somewhere
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
 def run_evidence(api, run):
     """'real' for a verified executed night, 'skipped' for a verified skipped night, None when unsure."""
     from ci_publish import json_member
@@ -65,7 +100,9 @@ def run_evidence(api, run):
     if (raw.get("run") != {"id": str(run_id), "attempt": attempt} or raw.get("status") not in {"passed", "failed"}
             or not isinstance(identity, dict) or identity.get("commit_sha") != run["head_sha"]
             or not isinstance(matrix, dict) or matrix.get("equal") is not True or not isinstance(raw.get("errors"), list)
-            or any(not isinstance(error, str) or error.startswith(INFRASTRUCTURE_ERROR_PREFIXES) for error in raw["errors"])):
+            or any(not isinstance(error, str) or error.startswith(INFRASTRUCTURE_ERROR_PREFIXES) for error in raw["errors"])
+            or (raw.get("schema_version") == 2) != ("ui" in raw) or raw.get("schema_version") not in {1, 2}
+            or ("ui" in raw and not ui_tier_complete(raw["ui"]))):
         return None
     return "real"
 

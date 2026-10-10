@@ -1,6 +1,7 @@
 """Guard workflow trust boundaries against accidental privilege and code execution."""
 
 import copy
+import re
 import contextlib
 import io
 import sys
@@ -184,6 +185,46 @@ final class LocaleUITests: XCTestCase {
                 changed = copy.deepcopy(document)
                 changed["jobs"][job_id]["if"] = "always()"
                 self.assertIn("nightly-change-gate", self.rules(changed, path))
+        jobs = document["jobs"]
+        class Context(dict):
+            def __getattr__(self, name):
+                return self.get(name, "")
+        def runs(job_id, results, event, change_outputs):
+            expression = " ".join(jobs[job_id]["if"].split())
+            if expression.startswith("${{"):
+                expression = expression[3:-2].strip()
+            expression = expression.replace("!=", "\0").replace("&&", " and ").replace("||", " or ").replace("!", " not ")
+            expression = expression.replace("\0", "!=").replace("cancelled()", "False")
+            expression = re.sub(r"needs\.([\w-]+)", r"needs['\1']", expression)
+            outputs = {"change": Context(change_outputs), "live-admission": Context(admitted="true"),
+                       "ui-archive": Context(run_ui="true"), "plan": Context(matrix="[]")}
+            needs = Context({name: Context(result=results.get(name, "skipped"), outputs=outputs.get(name, Context()))
+                             for name in jobs})
+            return bool(eval(expression, {"__builtins__": {}}, {"needs": needs, "github": Context(event_name=event, ref="refs/heads/main"),
+                                                                   "inputs": Context()}))
+        def simulate(event, change_result, change_outputs):
+            results = {"change": change_result}
+            for job_id in ("plan", "live-admission", "live-build", "strict", "live-canary", "live-unit",
+                           "ui-archive", "ui-shards", "ui-aggregate", "aggregate"):
+                results[job_id] = "success" if runs(job_id, results, event, change_outputs) else "skipped"
+            return {job_id for job_id, result in results.items() if result == "success" and job_id != "change"}
+        everything = {"plan", "live-admission", "live-build", "strict", "live-canary", "live-unit",
+                      "ui-archive", "ui-shards", "ui-aggregate", "aggregate"}
+        with self.subTest(scenario="skipped night"):
+            self.assertEqual(set(), simulate("schedule", "success", {"run_nightly": "false"}))
+        for label, event, result, outputs in (("record upload failed", "schedule", "failure", {}),
+                                              ("change cancelled output", "schedule", "failure", {"run_nightly": "false"}),
+                                              ("verdict missing", "schedule", "success", {}),
+                                              ("dispatch", "workflow_dispatch", "success", {}),
+                                              ("dispatch with a skip-looking output", "workflow_dispatch", "success", {"run_nightly": "false"})):
+            with self.subTest(scenario=label):
+                self.assertEqual(everything, simulate(event, result, outputs))
+        for job_id, job in document["jobs"].items():
+            if job_id not in policy.NIGHTLY_UNGATED_JOBS:
+                with self.subTest(job=job_id, requirement="explicit status condition"):
+                    self.assertIn("!cancelled()", job["if"])
+                    self.assertIn("change", job["needs"] if isinstance(job["needs"], list) else [job["needs"]])
+        jobs = document["jobs"]
         steps = document["jobs"]["change"]["steps"]
         upload = next(index for index, step in enumerate(steps) if str(step.get("uses", "")).startswith("actions/upload-artifact@"))
         for label, mutate in (("verdict before upload", lambda items: items.insert(upload, items.pop(upload + 1))),
