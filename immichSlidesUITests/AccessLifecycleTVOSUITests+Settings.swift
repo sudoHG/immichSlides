@@ -50,7 +50,7 @@ extension AccessLifecycleTVOSUITests {
     func enterRandomPlayback(app: XCUIApplication) throws {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            randomButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
             "After saving settings, mode selection must open.")
         XCTAssertTrue(
             waitForFocus(

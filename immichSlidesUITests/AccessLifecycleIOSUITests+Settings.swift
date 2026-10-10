@@ -19,7 +19,7 @@ extension AccessLifecycleIOSUITests {
             "Save must become enabled after a real connection test succeeds.")
         tapElement(saveButton)
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
             "Must reach mode selection after a successful save.")
         let modeButton = firstBootControl(in: app, identifier: "mode.random.button")
         let continueButton = firstBootControl(in: app, identifier: "mode.continue.button")
@@ -51,7 +51,7 @@ extension AccessLifecycleIOSUITests {
                 if button.exists {
                     button.tap()
                     if waitUntil(
-                        timeout: TestWait.seconds(.infrastructure(2)),
+                        timeout: TestWait.seconds(.product(2)),
                         condition: { !self.isSystemSavePasswordPromptVisible(app: app) })
                     {
                         return
@@ -81,7 +81,7 @@ extension AccessLifecycleIOSUITests {
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
         XCTAssertTrue(
-            autoPlay.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            autoPlay.waitForExistence(timeout: TestWait.seconds(.product(12))),
             "Playback settings must provide the autoplay toggle.")
         if !isToggleOn(autoPlay) {
             tapElement(autoPlay)
@@ -95,7 +95,7 @@ extension AccessLifecycleIOSUITests {
         requests.append("settings.save.interval")
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
         XCTAssertTrue(
-            exif.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            exif.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the EXIF toggle.")
         if isToggleOn(exif) {
             tapElement(exif)
@@ -181,7 +181,7 @@ extension AccessLifecycleIOSUITests {
     func enablePasswordFromSettingsUI(app: XCUIApplication, pin: String) throws {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
-        let isAccessReady = waitUntil(timeout: TestWait.seconds(.infrastructure(12))) {
+        let isAccessReady = waitUntil(timeout: TestWait.seconds(.product(12))) {
             self.dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
             return self.firstExistingSettingsItem(
                 app: app,
@@ -374,7 +374,7 @@ extension AccessLifecycleIOSUITests {
         revealPlaybackControls(app: app)
         let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            playPause.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The playback page must have play/pause.")
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
@@ -512,16 +512,16 @@ extension AccessLifecycleIOSUITests {
         openPlaybackSettings(app: app)
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            picker.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Returning to settings must still allow changing the display policy.")
         let singlePhoto = picker.buttons["settings.playback.displayMode.singlePhoto.option"]
         XCTAssertTrue(
-            singlePhoto.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            singlePhoto.waitForExistence(timeout: TestWait.seconds(.product(3))),
             "The display policy should offer single-photo mode.")
         tapElement(singlePhoto)
         requests.append("settings.save.display_mode")
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
-        if autoPlay.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))), !isToggleOn(autoPlay) {
+        if autoPlay.waitForExistence(timeout: TestWait.seconds(.product(3))), !isToggleOn(autoPlay) {
             tapElement(autoPlay)
             XCTAssertTrue(
                 waitUntil(timeout: TestWait.seconds(.product(4))) { self.isToggleOn(autoPlay) },
@@ -568,7 +568,7 @@ extension AccessLifecycleIOSUITests {
         openSettingsSection(app: app, sectionID: "settings.item.about")
         let openSourceLink = app.descendants(matching: .any)["settings.about.opensource.link"]
         XCTAssertTrue(
-            openSourceLink.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            openSourceLink.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The About page should show the open-source licenses entry.")
         tapElement(openSourceLink)
         requests.append("settings.about.licenses")
@@ -578,7 +578,7 @@ extension AccessLifecycleIOSUITests {
             "Must reach the open-source licenses page."
         )
         let aboutBack = app.navigationBars.buttons["BackButton"].firstMatch
-        if aboutBack.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))) {
+        if aboutBack.waitForExistence(timeout: TestWait.seconds(.product(4))) {
             tapElement(aboutBack)
         } else {
             let back = app.navigationBars.buttons.allElementsBoundByIndex.last { button in
@@ -660,15 +660,15 @@ extension AccessLifecycleIOSUITests {
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
         XCTAssertTrue(
-            autoPlay.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            autoPlay.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the autoplay toggle.")
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
         XCTAssertTrue(
-            exif.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            exif.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the EXIF toggle.")
         let display = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            display.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            display.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the display policy.")
         guard let interval = readIntervalSeconds(app: app) else {
             throw AccessLifecycleContract.AssertionError.message("Missing settings evidence")
@@ -687,7 +687,7 @@ extension AccessLifecycleIOSUITests {
     func setIntervalFromUI(app: XCUIApplication, targetSeconds: Int) throws -> Int {
         let slider = app.sliders["settings.playback.interval.slider"]
         XCTAssertTrue(
-            slider.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            slider.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the interval slider.")
         XCTAssertTrue(slider.isEnabled, "The interval cannot be changed while autoplay is off.")
         let targetLabel = "\(targetSeconds) 秒"

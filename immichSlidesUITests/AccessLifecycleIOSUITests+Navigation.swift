@@ -207,7 +207,7 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func tapSettingsPinInput(app: XCUIApplication, id: String) {
         let pinInputButton = app.buttons[id]
-        let ready = waitUntil(timeout: TestWait.seconds(.infrastructure(8))) {
+        let ready = waitUntil(timeout: TestWait.seconds(.product(8))) {
             self.dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
             return pinInputButton.exists && pinInputButton.isHittable
                 && !self.isSystemSavePasswordPromptVisible(app: app)
@@ -221,7 +221,7 @@ extension AccessLifecycleIOSUITests {
         revealPlaybackControls(app: app)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
             "The playback page must provide a settings entry.")
         tapElement(settingsButton)
     }
@@ -292,10 +292,10 @@ extension AccessLifecycleIOSUITests {
             tapElement(sidebar)
         }
         _ = app.descendants(matching: .any)["settings.item.playback"].waitForExistence(
-            timeout: TestWait.seconds(.infrastructure(3)))
+            timeout: TestWait.seconds(.product(3)))
         let playbackButton = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            playbackButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The settings list must provide the playback settings entry")
         // A full-screen Toolbar swallows coordinate taps; use the element's tap() to activate via accessibility.
         playbackButton.tap()

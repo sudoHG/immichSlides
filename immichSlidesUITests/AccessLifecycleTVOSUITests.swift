@@ -5,14 +5,14 @@ enum AccessLifecycleTVOSUITestsCalibration {
 }
 
 enum AccessLifecycleTVOSUITestsWaitTiming {
-    static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(1))
+    static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.product(1))
     static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(8))
     static let elementAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(5))
     static let navigationFocusSettleSeconds: TimeInterval = TestWait.seconds(.product(0.22))
     static let navigationTimeoutSeconds: TimeInterval = TestWait.seconds(.product(10))
     static let pinDigitSettleSeconds: TimeInterval = TestWait.seconds(.product(0.07))
     static let playbackControlTimeoutSeconds: TimeInterval = TestWait.seconds(.product(20))
-    static let playbackStartupTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(30))
+    static let playbackStartupTimeoutSeconds: TimeInterval = TestWait.seconds(.product(30))
     static let pollIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.1))
     static let readbackPollSeconds: TimeInterval = TestWait.seconds(.product(0.2))
     static let readbackTimeoutSeconds: TimeInterval = TestWait.seconds(.product(2))

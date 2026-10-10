@@ -56,7 +56,7 @@ extension AccessLifecycleIOSUITests {
         )
         let visible = playPauseButton(app)
         XCTAssertTrue(
-            visible.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            visible.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The playback page must have play/pause.")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseButton(app).isHittable },
@@ -85,7 +85,7 @@ extension AccessLifecycleIOSUITests {
         revealPlaybackControls(app: app)
         let playPause = playPauseButton(app)
         XCTAssertTrue(
-            playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            playPause.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The playback page must have play/pause.")
         XCTAssertTrue(playPause.exists, "Play/pause must be in the tree before continuing.")
         XCTAssertTrue(
@@ -132,7 +132,7 @@ extension AccessLifecycleIOSUITests {
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
         XCTAssertTrue(
-            autoPlay.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            autoPlay.waitForExistence(timeout: TestWait.seconds(.product(12))),
             "Playback settings must provide the autoplay toggle.")
         let isInitiallyAutoPlayEnabled = initial["autoPlayEnabled"] as? Bool ?? isToggleOn(autoPlay)
         if isToggleOn(autoPlay) == false {
@@ -152,7 +152,7 @@ extension AccessLifecycleIOSUITests {
 
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
         XCTAssertTrue(
-            exif.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            exif.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the EXIF toggle.")
         let isInitiallyExifEnabled = initial["showExif"] as? Bool ?? isToggleOn(exif)
         if isToggleOn(exif) == isInitiallyExifEnabled {
@@ -166,7 +166,7 @@ extension AccessLifecycleIOSUITests {
 
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            picker.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the display policy.")
         let initialMode = initial["displayMode"] as? String ?? "smartFill"
         let targetIdentifier =
@@ -175,7 +175,7 @@ extension AccessLifecycleIOSUITests {
             : "settings.playback.displayMode.smartFill.option"
         let targetButton = picker.buttons[targetIdentifier]
         XCTAssertTrue(
-            targetButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            targetButton.waitForExistence(timeout: TestWait.seconds(.product(3))),
             "The display policy must be able to switch to the other option.")
         tapElement(targetButton)
         requests.append("settings.save.display_mode")
@@ -203,7 +203,7 @@ extension AccessLifecycleIOSUITests {
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
         XCTAssertTrue(
-            autoPlay.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            autoPlay.waitForExistence(timeout: TestWait.seconds(.product(12))),
             "Playback settings must provide the autoplay toggle.")
         if isToggleOn(autoPlay) != isAutoPlayEnabled {
             tapElement(autoPlay)
@@ -222,11 +222,11 @@ extension AccessLifecycleIOSUITests {
         requests.append("settings.save.interval")
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            picker.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The pause/background cases must be able to switch to single-photo mode.")
         let singlePhoto = picker.buttons["settings.playback.displayMode.singlePhoto.option"]
         XCTAssertTrue(
-            singlePhoto.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            singlePhoto.waitForExistence(timeout: TestWait.seconds(.product(3))),
             "The display policy should offer single-photo mode.")
         tapElement(singlePhoto)
         requests.append("settings.save.display_mode")

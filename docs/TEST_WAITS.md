@@ -39,10 +39,11 @@ remain product timing. A screenshot capture can have its own fixed evidence budg
 without extending the first-transition deadline; preserve both bounds separately.
 Settings-route probes and responses after Back or Playback taps also stay fixed;
 those windows decide the next interaction rather than await fixture availability.
-Shared timing values used by focus or state-response assertions keep the fixed
-product classification even when other callers only discover a control. Classify
-an independent launch/setup wait at its own call site rather than scaling that
-shared product value. Polling and remote-press cadence stay fixed.
+Shared constants used for both machinery readiness and user-visible responses
+stay product. Give genuine first-launch, fixture and connection readiness an
+independent infrastructure budget at the call site. The first assertion after a
+tap or key press, route probes, absence observations and sampling cadence stay
+product; discovering a control before the timed action can be infrastructure.
 
 ## Runner factor and recording
 
@@ -95,8 +96,9 @@ and are excluded; timing window names should include their time unit.
 Choose the classification explicitly during migration.
 Classified `TestWait.seconds`, `until` and `observe` budget/cadence arguments are
 masked before numeric detection. Arithmetic literals outside those regions and
-raw waits inside predicates still count. The baseline inventory is from main
-`7516d4e`, with only the initial migrated sites removed. The allowlist is a
+raw waits inside predicates still count. The original inventory is from main
+`7516d4e`; migrated sites are removed individually while unmigrated and documented
+non-timeout entries remain. The allowlist is a
 [CI-trusted input](CI_POPULATION.md#classification-and-gate-evaluation); every edit
 requires exact-head maintainer approval, including removals during migration.
 

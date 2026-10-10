@@ -38,7 +38,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         try changePlaybackSettingsFromUI(app: app)
         revealPlaybackControls(app: app)
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        XCTAssertTrue(playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))))
+        XCTAssertTrue(playPause.waitForExistence(timeout: TestWait.seconds(.product(8))))
         if playPauseState(playPause) != "play" { tapElement(playPause) }
         XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "play" })
         tapElement(playPause)
