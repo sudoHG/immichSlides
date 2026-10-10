@@ -265,11 +265,13 @@
         "StrictE2EFirstBatchIOSUITests",
         "StrictE2ETVOSFlowUITests",
         "immichSlidesUITests/testFilteredModeKeepsFilterSummaryBackButHidesPlaybackBackButton",
+        "immichSlidesUITests/testIPhonePortraitAndLandscapeModeSelectionFlow",
         "immichSlidesUITests/testIPhonePortraitAndLandscapeSlideshowControls",
         "immichSlidesUITests/testPlaybackSettingAutoPlayAppliesAfterBackToSlideshow",
         "immichSlidesUITests/testPlaybackSettingsBlocksFilteredModeWhenSelectionEmpty",
         "immichSlidesUITests/testPlaybackSettingsDisplayModePickerCanSelectSinglePhoto",
         "immichSlidesUITests/testRandomModeHidesPlaybackBackButtonWithoutPIN",
+        "immichSlidesUITests/testResetStateEnvironmentForcesFirstBootAfterConfigured",
         "immichSlidesUITests/testVisualAuditPack_InteractiveFlowSnapshots"
       ]
     },
@@ -426,6 +428,7 @@
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsAccessProtectionScreenshotDark",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarAccessProtectionScreenshotLight",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDefaultsToPlaybackAndCanMoveToAccessProtection",
+        "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDirectionalRoutingMatchesPressedDirection",
         "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptanceAccessProtectionScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseHKAcceptanceAccessProtectionScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSTraditionalChineseTWAcceptanceAccessProtectionScreenshot",
