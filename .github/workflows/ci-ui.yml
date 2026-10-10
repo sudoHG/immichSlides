@@ -13,10 +13,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  archive:
-    name: ui-archive
+  selection:
+    name: ui-selection
     runs-on: ubuntu-24.04
-    timeout-minutes: 185
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: read
@@ -27,15 +27,10 @@ jobs:
       run_ui: ${{ steps.select.outputs.run_ui }}
       run_ios: ${{ steps.select.outputs.run_ios }}
       run_tvos: ${{ steps.select.outputs.run_tvos }}
-      ios_shards: ${{ steps.select.outputs.ios_shards }}
       iphone_shards: ${{ steps.select.outputs.iphone_shards }}
       ipad_shards: ${{ steps.select.outputs.ipad_shards }}
+      appletv_shards: ${{ steps.select.outputs.appletv_shards }}
       scoped_plan_sha256: ${{ steps.select.outputs.scoped_plan_sha256 }}
-      tvos_shards: ${{ steps.select.outputs.tvos_shards }}
-      ios_artifact_id: ${{ steps.select.outputs.ios_artifact_id }}
-      ios_producer_run_id: ${{ steps.select.outputs.ios_producer_run_id }}
-      tvos_artifact_id: ${{ steps.select.outputs.tvos_artifact_id }}
-      tvos_producer_run_id: ${{ steps.select.outputs.tvos_producer_run_id }}
       selection_artifact: ${{ steps.select.outputs.selection_artifact }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -46,18 +41,18 @@ jobs:
         run: |
           python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ui-python"
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
-      - name: Select trusted reuse, nightly deferral or verified gate archives
+      - name: Derive the functional selection before waiting for either provider
         id: select
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          "$PYTHON" -B scripts/ci_ui_tests.py wait-archive \
-            --output-dir "$RUNNER_TEMP/ui-selection" --timeout-minutes 120 --defer-main-ui --pack-scoped-ui
+          "$PYTHON" -B scripts/ci_ui_tests.py select \
+            --output-dir "$RUNNER_TEMP/ui-selection" --defer-main-ui --pack-scoped-ui
       - name: Publish the bound selection records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ui-archive-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ui-selection-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/ui-selection/summary.json
             ${{ runner.temp }}/ui-selection/summary.md
@@ -75,8 +70,8 @@ jobs:
 
   iphone-shards:
     name: ui-iphone-${{ matrix.shard }}
-    needs: archive
-    if: needs.archive.outputs.run_ios == 'true'
+    needs: [selection, ios-wait]
+    if: ${{ !cancelled() && needs.selection.result == 'success' && needs.ios-wait.result == 'success' && needs.ios-wait.outputs.run_github == 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:
@@ -87,7 +82,7 @@ jobs:
       max-parallel: 2
       matrix:
         device: [iphone]
-        shard: ${{ fromJSON(needs.archive.outputs.iphone_shards) }}
+        shard: ${{ fromJSON(needs.selection.outputs.iphone_shards) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -105,20 +100,20 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
-      - name: Read the retained archive job's selection record
+      - name: Read this group's retained archive selection
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ${{ needs.archive.outputs.selection_artifact }}
+          name: ${{ needs.ios-wait.outputs.selection_artifact }}
           path: ${{ runner.temp }}/ui-selection
       - name: Download by verified immutable archive ID
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          artifact-ids: ${{ matrix.device == 'appletv' && needs.archive.outputs.tvos_artifact_id || needs.archive.outputs.ios_artifact_id }}
+          artifact-ids: ${{ needs.ios-wait.outputs.artifact_id }}
           path: ${{ runner.temp }}/ui-archive
           merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ matrix.device == 'appletv' && needs.archive.outputs.tvos_producer_run_id || needs.archive.outputs.ios_producer_run_id }}
+          run-id: ${{ needs.ios-wait.outputs.producer_run_id }}
       - name: Create only this shard's pinned simulator
         working-directory: ui-source
         run: |
@@ -188,8 +183,8 @@ jobs:
 
   ipad-shards:
     name: ui-ipad-${{ matrix.shard }}
-    needs: archive
-    if: needs.archive.outputs.run_ios == 'true'
+    needs: [selection, ios-wait]
+    if: ${{ !cancelled() && needs.selection.result == 'success' && needs.ios-wait.result == 'success' && needs.ios-wait.outputs.run_github == 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:
@@ -200,7 +195,7 @@ jobs:
       max-parallel: 1
       matrix:
         device: [ipad]
-        shard: ${{ fromJSON(needs.archive.outputs.ipad_shards) }}
+        shard: ${{ fromJSON(needs.selection.outputs.ipad_shards) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -218,20 +213,20 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
-      - name: Read the retained archive job's selection record
+      - name: Read this group's retained archive selection
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ${{ needs.archive.outputs.selection_artifact }}
+          name: ${{ needs.ios-wait.outputs.selection_artifact }}
           path: ${{ runner.temp }}/ui-selection
       - name: Download by verified immutable archive ID
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          artifact-ids: ${{ matrix.device == 'appletv' && needs.archive.outputs.tvos_artifact_id || needs.archive.outputs.ios_artifact_id }}
+          artifact-ids: ${{ needs.ios-wait.outputs.artifact_id }}
           path: ${{ runner.temp }}/ui-archive
           merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ matrix.device == 'appletv' && needs.archive.outputs.tvos_producer_run_id || needs.archive.outputs.ios_producer_run_id }}
+          run-id: ${{ needs.ios-wait.outputs.producer_run_id }}
       - name: Create only this shard's pinned simulator
         working-directory: ui-source
         run: |
@@ -299,19 +294,23 @@ jobs:
           fi
           rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive"
 
-  cloud-wait:
-    name: ui-cloud-wait
-    needs: archive
-    if: ${{ !cancelled() }}
+  ios-wait:
+    name: ui-cloud-wait-ios
+    needs: selection
+    if: ${{ !cancelled() && needs.selection.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 185
     permissions:
       contents: read
       actions: read
       pull-requests: read
       checks: read
     outputs:
-      appletv_routed: ${{ steps.select.outputs.appletv_routed }}
+      routed: ${{ steps.select.outputs.routed }}
+      run_github: ${{ steps.select.outputs.run_github }}
+      artifact_id: ${{ steps.select.outputs.artifact_id }}
+      producer_run_id: ${{ steps.select.outputs.producer_run_id }}
+      selection_artifact: ${{ steps.select.outputs.selection_artifact }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -320,28 +319,87 @@ jobs:
       - run: |
           python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ui-python"
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
-      - name: Verify the Apple TV cloud selection
+      - name: Read the retained functional selection
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.selection.outputs.selection_artifact }}
+          path: ${{ runner.temp }}/ui-selection
+      - name: Verify Cloud proof or wait for this group's GitHub archive
         id: select
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          "$PYTHON" -B scripts/ci_ui_tests.py wait-cloud \
+          "$PYTHON" -B scripts/ci_ui_tests.py wait-group --group ios \
             --output-dir "$RUNNER_TEMP/ui-cloud-selection" \
-            --scoped-plan-sha256 '${{ needs.archive.outputs.scoped_plan_sha256 }}'
+            --selection-path "$RUNNER_TEMP/ui-selection/ui-selection.json" --timeout-minutes 180 --defer-main-ui
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ui-cloud-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ui-group-${{ github.run_id }}-${{ github.run_attempt }}-ios
           path: |
             ${{ runner.temp }}/ui-cloud-selection/summary.json
             ${{ runner.temp }}/ui-cloud-selection/summary.md
+            ${{ runner.temp }}/ui-cloud-selection/archive-selection*.json
+            ${{ runner.temp }}/ui-cloud-selection/archive-refusals*.json
+            ${{ runner.temp }}/ui-cloud-selection/group-selection.json
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
+          if-no-files-found: error
+
+  tvos-wait:
+    name: ui-cloud-wait-tvos
+    needs: selection
+    if: ${{ !cancelled() && needs.selection.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 185
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      checks: read
+    outputs:
+      routed: ${{ steps.select.outputs.routed }}
+      run_github: ${{ steps.select.outputs.run_github }}
+      artifact_id: ${{ steps.select.outputs.artifact_id }}
+      producer_run_id: ${{ steps.select.outputs.producer_run_id }}
+      selection_artifact: ${{ steps.select.outputs.selection_artifact }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: |
+          python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ui-python"
+          echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Read the retained functional selection
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.selection.outputs.selection_artifact }}
+          path: ${{ runner.temp }}/ui-selection
+      - name: Verify Cloud proof or wait for this group's GitHub archive
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py wait-group --group tvos \
+            --output-dir "$RUNNER_TEMP/ui-cloud-selection" \
+            --selection-path "$RUNNER_TEMP/ui-selection/ui-selection.json" --timeout-minutes 180 --defer-main-ui
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-group-${{ github.run_id }}-${{ github.run_attempt }}-tvos
+          path: |
+            ${{ runner.temp }}/ui-cloud-selection/summary.json
+            ${{ runner.temp }}/ui-cloud-selection/summary.md
+            ${{ runner.temp }}/ui-cloud-selection/archive-selection*.json
+            ${{ runner.temp }}/ui-cloud-selection/archive-refusals*.json
+            ${{ runner.temp }}/ui-cloud-selection/group-selection.json
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
           if-no-files-found: error
 
   appletv-shards:
     name: ui-appletv-${{ matrix.shard }}
-    needs: [archive, cloud-wait]
-    if: ${{ !cancelled() && needs.archive.result == 'success' && needs.archive.outputs.run_tvos == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}
+    needs: [selection, tvos-wait]
+    if: ${{ !cancelled() && needs.selection.result == 'success' && needs.tvos-wait.result == 'success' && needs.tvos-wait.outputs.run_github == 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:
@@ -352,7 +410,7 @@ jobs:
       max-parallel: 1
       matrix:
         device: [appletv]
-        shard: ${{ fromJSON(needs.archive.outputs.tvos_shards) }}
+        shard: ${{ fromJSON(needs.selection.outputs.appletv_shards) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -370,20 +428,20 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
-      - name: Read the retained archive job's selection record
+      - name: Read this group's retained archive selection
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ${{ needs.archive.outputs.selection_artifact }}
+          name: ${{ needs.tvos-wait.outputs.selection_artifact }}
           path: ${{ runner.temp }}/ui-selection
       - name: Download by verified immutable archive ID
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          artifact-ids: ${{ matrix.device == 'appletv' && needs.archive.outputs.tvos_artifact_id || needs.archive.outputs.ios_artifact_id }}
+          artifact-ids: ${{ needs.tvos-wait.outputs.artifact_id }}
           path: ${{ runner.temp }}/ui-archive
           merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ matrix.device == 'appletv' && needs.archive.outputs.tvos_producer_run_id || needs.archive.outputs.ios_producer_run_id }}
+          run-id: ${{ needs.tvos-wait.outputs.producer_run_id }}
       - name: Create only this shard's pinned simulator
         working-directory: ui-source
         run: |

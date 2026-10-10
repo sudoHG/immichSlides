@@ -117,16 +117,17 @@ class AppStoreConnect:
             path = next_page
         raise ContractError("ASC pagination limit reached")
 
-    def evidence(self, run_id):
+    def evidence(self, run_id, *, workflow_id=WORKFLOW_ID):
         uuid(run_id)
+        uuid(workflow_id)
         run = self.request("/v1/ciBuildRuns/" + run_id)["data"]
         attributes = run["attributes"]
         # ciBuildRuns exposes builds/actions, not a workflow relationship to
         # Developer keys. Membership in the fixed workflow's paginated build
         # collection independently binds the API results to that workflow.
-        workflow_runs = self.pages("/v1/ciWorkflows/" + WORKFLOW_ID + "/buildRuns?limit=200")
+        workflow_runs = self.pages("/v1/ciWorkflows/" + workflow_id + "/buildRuns?limit=200")
         require(sum(row["id"] == run_id for row in workflow_runs) == 1, "cloud run is outside the overflow workflow")
-        result = {"id": run["id"], "workflow_id": WORKFLOW_ID,
+        result = {"id": run["id"], "workflow_id": workflow_id,
                   "is_pull_request_build": attributes.get("isPullRequestBuild"),
                   "head_sha": attributes.get("sourceCommit", {}).get("commitSha"),
                   "progress": attributes.get("executionProgress"), "status": attributes.get("completionStatus"),

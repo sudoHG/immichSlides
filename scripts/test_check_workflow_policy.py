@@ -278,14 +278,14 @@ final class LocaleUITests: XCTestCase {
         path = ".github/workflows/ci-ui.yml"
         document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
         self.assertNotIn("xcc-dependencies", self.rules(document, path))
-        for job in ("cloud-wait", "appletv-shards"):
+        for job in ("ios-wait", "tvos-wait", "iphone-shards", "ipad-shards", "appletv-shards"):
             changed = copy.deepcopy(document)
             changed["jobs"][job]["needs"] = ["archive", "shards"]
             with self.subTest(job=job):
                 self.assertIn("xcc-dependencies", self.rules(changed, path))
         changed = copy.deepcopy(document)
         changed["jobs"]["appletv-shards"]["if"] = changed["jobs"]["appletv-shards"]["if"].replace(
-            "needs.archive.result == 'success' && ", "")
+            "needs.selection.result == 'success' && ", "")
         self.assertIn("xcc-dependencies", self.rules(changed, path))
 
     def test_ui_failure_cannot_cancel_other_partition_results(self):
@@ -316,7 +316,7 @@ final class LocaleUITests: XCTestCase {
         self.assertIn('ui-capacity', self.rules(split, path))
 
     def test_packed_ui_requires_independent_device_outputs_and_reports_string_matrices(self):
-        from ci_publish_git import DYNAMIC_UI_SHARDS
+        from ci_publish_git import SELECTION_UI_SHARDS as DYNAMIC_UI_SHARDS
         root = Path(__file__).resolve().parent.parent
         path = '.github/workflows/ci-ui.yml'
         document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
@@ -382,23 +382,23 @@ final class LocaleUITests: XCTestCase {
                 self.assertIn('ui-capacity', self.rules(bad, path))
 
     def test_ui_matrix_cannot_omit_a_manifest_partition_or_unbind_its_selection(self):
-        from ci_publish_git import DYNAMIC_UI_SHARDS
+        from ci_publish_git import SELECTION_UI_SHARDS as DYNAMIC_UI_SHARDS
         from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest
         root = Path(__file__).resolve().parent.parent
         path = ".github/workflows/ci-ui.yml"
         document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
         shards = list(parse_shard_manifest((root / MANIFEST_PATH).read_text())["shards"])
         for job, platform, output in (("iphone-shards", "ios", "iphone"), ("ipad-shards", "ios", "ipad"),
-                                      ("appletv-shards", "tvos", "tvos")):
+                                      ("appletv-shards", "tvos", "appletv")):
             literal = copy.deepcopy(document)
             literal["jobs"][job]["strategy"]["matrix"]["shard"] = list(shards)
             # Historical full matrices remain valid without the packed intent.
-            for step in literal['jobs']['archive']['steps']:
+            for step in literal['jobs']['selection']['steps']:
                 if 'run' in step:
                     step['run'] = step['run'].replace(' --pack-scoped-ui', '')
             dynamic = copy.deepcopy(document)
             dynamic["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS[output]
-            dynamic["jobs"]["archive"]["outputs"].update({name: "${{ steps.select.outputs." + name + " }}"
+            dynamic["jobs"]["selection"]["outputs"].update({name: "${{ steps.select.outputs." + name + " }}"
                                                           for name in (output + "_shards", "run_" + platform)})
             with self.subTest(job=job):
                 for accepted in (literal, dynamic):
@@ -406,7 +406,7 @@ final class LocaleUITests: XCTestCase {
                 omitted = copy.deepcopy(literal)
                 omitted["jobs"][job]["strategy"]["matrix"]["shard"].pop()
                 unbound = copy.deepcopy(dynamic)
-                del unbound["jobs"]["archive"]["outputs"][output + "_shards"]
+                del unbound["jobs"]["selection"]["outputs"][output + "_shards"]
                 other = copy.deepcopy(dynamic)
                 other["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS["tvos" if platform == "ios" else "ios"]
                 for refused in (omitted, unbound, other):

@@ -206,6 +206,8 @@ The producer must emit these literal summary fields and hash logical names:
 | Producer | `run.tier` | `run.job` | `run.shard` | Required identities / hashes |
 | --- | --- | --- | --- | --- |
 | `wait-archive` | `ui-infrastructure` | `ui-archive` | `null` | One `host` identity with key `UI archive selection` and empty dimensions; `hashes.manifests.ui-shards` |
+| `select --pack-scoped-ui` | `ui-infrastructure` | `ui-selection` | `null` | One `host` identity `UI selection`; shard manifest and packed plan hashes |
+| `wait-group --group ios` / `tvos` | `ui-infrastructure` | `ui-cloud-wait-ios` / `ui-cloud-wait-tvos` | `null` | One `host` identity `UI cloud selection (ios)` / `(tvos)`; shard manifest and packed plan hashes |
 | `run --device DEVICE --shard SHARD` | `ui` | `ui-<device>` | The literal manifest shard | Complete shard UI identities with `platform` and `device`; `hashes.manifests.ui-shards` and `hashes.manifests.test-plan` |
 
 The archive-selection summary still carries the consumer's complete PR
@@ -345,7 +347,7 @@ through reuse or nightly deferral.
 ### Packed scoped UI protocol
 
 The reader recognizes `--pack-scoped-ui` only as one literal flag on the admitted
-workflow's `ci_ui_tests.py wait-archive` command. The current producer activates
+workflow's `ci_ui_tests.py select` command (historically `wait-archive`). The current producer activates
 this flag after the reader landed separately. Historical and
 unflagged producers retain the existing full-or-exact-selection compatibility.
 
@@ -442,11 +444,14 @@ cannot supply a full identical-tree reuse receipt or daily main history.
 
 The reader additionally recognizes `ci_ui_tests.py select --pack-scoped-ui`,
 `wait-group --group ios|tvos` and bounded `needs.selection.outputs` shard matrices.
-It accepts one `ui-selection` anchor instead of the legacy `ui-archive`, so later
+It accepts one `ui-selection` anchor instead of the legacy `ui-archive`, so
 Cloud groups need not wait for a GitHub gate archive. Independent matrices require
 distinct literal name prefixes to authenticate collapsed skips. These are prepared
-reader contracts: the registry, commands, pointers and producers are not activated
-here. The existing v1 full Apple TV reader remains unchanged in behavior.
+contracts used by the producer. Routing and pointer writes remain inactive while
+the reviewed registry is absent. Both route and import JSON bind their main
+uploader run/attempt. Public pointer descriptions explicitly say `Selection only`;
+they never report a test outcome. Grouped compute is a destination-weighted upper
+bound. The existing v1 full Apple TV reader remains unchanged in behavior.
 
 The gate reader also supports a Linux `ci_gate.py classify` producer with one
 `host` identity, `Gate change classification`, tier `gate-infrastructure`, job

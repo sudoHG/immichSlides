@@ -35,7 +35,7 @@ class GroupEvidenceTests(unittest.TestCase):
                     platform="ios", device=device)]} for device in devices}
         selected["appletv"] = {}
         self.record = {"identity": self.identity, "run_id": 123,
-                       "cloud_pr_author": {"login": "sudoHG", "id": 42},
+                       "cloud_pr_author": {"login": "sudoHG", "id": 279902076},
                        "cloud_v2_inputs": {"registry": self.registry, "head_tree_sha": "b" * 40,
                                            "files": {"ci_scripts/ci_post_clone.sh": "e" * 64},
                                            "plans": {"Cloud-iOS.xctestplan": template}},
@@ -46,7 +46,7 @@ class GroupEvidenceTests(unittest.TestCase):
         self.digest = groups.canonical_hash(self.descriptor)
         self.pointer = {"id": 56, "context": "ci-xcc-selection/123/2/ios", "state": "success",
                         "creator": {"login": groups.PUBLISHER_LOGIN, "id": groups.PUBLISHER_ID},
-                        "description": "c" * 40 + " " + self.digest,
+                        "description": "Selection only: " + "c" * 40 + " " + self.digest,
                         "target_url": "https://github.com/owner/repo/commit/" + "d" * 40,
                         "url": "https://api.github.com/repos/owner/repo/statuses/" + "a" * 40}
         self.route = {"schema_version": 2, "identity": self.identity, "producer_run_id": 123,
@@ -78,7 +78,8 @@ class GroupEvidenceTests(unittest.TestCase):
         proof = self.validate()
         self.assertEqual({entry["dimensions"]["device"] for entry in proof["identities"]}, {"iphone", "ipad"})
         self.assertEqual(proof["selection_sha256"], self.digest)
-        self.assertEqual(proof["compute_minutes"], 15)
+        self.assertEqual(proof["action_minutes"], 15)
+        self.assertEqual(proof["compute_upper_minutes"], 30)
         original = copy.deepcopy(self.evidence)
         for mutation in ("missing-device", "extra-device", "duplicate-device", "os", "failed", "skipped",
                          "missing-method", "extra-method", "duplicate-method", "extra-action", "pr-build", "head"):
@@ -127,7 +128,7 @@ class GroupEvidenceTests(unittest.TestCase):
                                          [original, dict(original, id=57)], pointer_id=56)
 
     def test_admission_not_receipt_selects_methods_and_registered_workflow(self):
-        for mutation in ("selection", "workflow", "attempt", "tree", "fork", "external", "screenshot"):
+        for mutation in ("selection", "workflow", "attempt", "tree", "fork", "external", "author-id", "screenshot"):
             record, run, route = copy.deepcopy((self.record, self.run, self.route))
             if mutation == "selection":
                 route["selection_sha256"] = "0" * 64
@@ -141,6 +142,8 @@ class GroupEvidenceTests(unittest.TestCase):
                 run["head_repository"]["full_name"] = "fork/repo"
             elif mutation == "external":
                 record["cloud_pr_author"]["login"] = "contributor"
+            elif mutation == "author-id":
+                record["cloud_pr_author"]["id"] = 42
             else:
                 record["ui_inputs"]["base"]["selection"]["shards"]["iphone"]["scoped-a"][0]["key"] = "SettingsTests/testScreenshot"
             with self.subTest(mutation=mutation), self.assertRaises(ContractError):
@@ -255,12 +258,20 @@ class GroupEvidenceTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             expand_skipped_ui_matrix(source, self.run, [skipped, dict(normalized[0])], complete=False, cloud=proof)
         # A later GitHub fallback must execute after the historical collapsed skip.
-        discarded = set()
-        self.assertEqual(expand_skipped_ui_matrix(source, self.run, [skipped], complete=False, historical=True,
-                         group_history=True, discarded_shards=discarded), [])
-        self.assertEqual(discarded, {"ui-iphone-scoped-a"})
+        for current in (None, {"schema_version": 2, "groups": {"tvos": {}}}):
+            discarded = set()
+            with self.subTest(current=current):
+                self.assertEqual(expand_skipped_ui_matrix(source, self.run, [skipped], complete=False, historical=True,
+                                 group_history=True, cloud=current, discarded_shards=discarded), [])
+                self.assertEqual(discarded, {"ui-iphone-scoped-a"})
         with self.assertRaises(ContractError):
             expand_skipped_ui_matrix(source, self.run, [skipped], cloud={"schema_version": 2, "groups": {"tvos": {}}})
+        tv_source = source.replace("name: ui-${{ matrix.device }}-${{ matrix.shard }}", "name: ui-appletv-${{ matrix.shard }}")
+        discarded = set()
+        self.assertEqual(expand_skipped_ui_matrix(tv_source, self.run,
+            [dict(skipped, name="ui-appletv-${{ matrix.shard }}")], complete=False, historical=True,
+            group_history=True, cloud=proof, discarded_shards=discarded), [])
+        self.assertEqual(discarded, {"ui-appletv-scoped-a"})
 
     def test_linux_selection_contract_and_anchor_do_not_require_the_github_archive(self):
         from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES, bind_ui_shards, evaluate_records, scoped_packing_intent, workflow_contract
@@ -323,7 +334,7 @@ class GroupEvidenceTests(unittest.TestCase):
         read = lambda revision, path: files[path]
         self.assertEqual(self.groups.snapshot("c" * 40, "a" * 40, listing, listing, read, "b" * 40)["registry"], self.registry)
         self.assertIsNone(self.groups.snapshot("c" * 40, "a" * 40, [], listing, read, "b" * 40))
-        for mutation in ("hook", "symlink", "case-shadow", "extra-hook", "redirect", "fixture", "duplicate-json"):
+        for mutation in ("hook", "symlink", "case-shadow", "extra-hook", "extra-symlink", "redirect", "fixture", "duplicate-json"):
             head = copy.deepcopy(listing)
             changed = dict(files)
             if mutation == "hook":
@@ -334,6 +345,8 @@ class GroupEvidenceTests(unittest.TestCase):
                 head.append({"path": plan_path.lower(), "type": "blob", "mode": "100644"})
             elif mutation == "extra-hook":
                 head.append({"path": "ci_scripts/unreviewed.sh", "type": "blob", "mode": "100644"})
+            elif mutation == "extra-symlink":
+                head.append({"path": "ci_scripts/unreviewed.sh", "type": "blob", "mode": "120000"})
             elif mutation == "redirect":
                 changed[scheme_path] = files[scheme_path].replace("container:", "container:other/")
             elif mutation == "fixture":
@@ -384,7 +397,7 @@ class GroupEvidenceTests(unittest.TestCase):
             test_identity("ui", "SettingsTests/testOther", platform="ios", device="ipad"))
         descriptor = self.groups.selection(self.record, self.run, "ios", approved=False)
         self.route.update(selection_sha256=self.groups.canonical_hash(descriptor), runtime_plan_sha256=descriptor["runtime_plan_sha256"])
-        self.pointer["description"] = "c" * 40 + " " + self.route["selection_sha256"]
+        self.pointer["description"] = "Selection only: " + "c" * 40 + " " + self.route["selection_sha256"]
         first = self.evidence["actions"][0]
         first["tests"][0]["destinations"] = [dict(action["devices"]["iphone"], status="SUCCESS")]
         other = copy.deepcopy(first)
@@ -396,7 +409,8 @@ class GroupEvidenceTests(unittest.TestCase):
         proof = self.groups.validate_evidence(self.record, self.run, self.route, self.evidence,
                                               [self.check, check], [self.pointer], approved=False)
         self.assertEqual(len(proof["identities"]), 3)
-        self.assertEqual(proof["compute_minutes"], 30)
+        self.assertEqual(proof["action_minutes"], 30)
+        self.assertEqual(proof["compute_upper_minutes"], 30)
         self.assertEqual(len(proof["runtime_plan_sha256"]), 2)
 
     def test_group_diagnostics_preserve_counts_without_inventing_compiled_samples(self):
@@ -434,12 +448,304 @@ class GroupEvidenceTests(unittest.TestCase):
             record.update(workflow_id=42, workflow_path=cloud.UI_PATH)
             with patch("ci_publish.trusted_admissions", return_value={123: record}), \
                     patch("ci_publish.producer_evidence", return_value=(jobs, summaries)):
-                self.assertEqual(compute(api, 7, "", "publisher")[1]["ci-ui"]["state"], "failure")
+                status = compute(api, 7, "", "publisher")[1]["ci-ui"]
+                self.assertEqual(status["state"], "failure")
+                self.assertIn("Cloud ios", status["description"])
+                self.assertIn("NOT_RUN", status["description"])
+                self.assertEqual({item["identity"]["dimensions"]["device"] for item in status["diagnostics"]["missing"]},
+                                 {"iphone", "ipad"})
                 self.assertEqual(read_cloud.call_args.args[3], {"ios"})
             record["ui_inputs"]["base"]["selection"]["shards"]["appletv"] = {}
             tv_skip = {"name": "ui-appletv-scoped-a", "conclusion": "skipped"}
             source = record["workflows"][cloud.UI_PATH]["base"]
             self.assertEqual(self.groups.skipped_groups(source, run, jobs + [tv_skip], record, approved=False), {"ios"})
+
+
+class GroupProducerTests(unittest.TestCase):
+    """Guard scheduling, pointer provenance and exact plan materialization."""
+
+    def setUp(self):
+        GroupEvidenceTests.setUp(self)
+
+    def test_pointer_writer_reuses_identical_status_and_refuses_conflicting_history(self):
+        from ci_xcode_cloud_selection import write_pointer
+        api, app = Mock(), Mock()
+        api.repository = "owner/repo"
+        api.pages.return_value = [self.pointer]
+        self.assertEqual(write_pointer(api, app, self.record, self.run, "ios"), 56)
+        app.status.assert_not_called()
+        api.pages.return_value = [dict(self.pointer, description="wrong")]
+        with self.assertRaises(ContractError):
+            write_pointer(api, app, self.record, self.run, "ios")
+        app.status.assert_not_called()
+        api.pages.side_effect = [[], [self.pointer]]
+        self.assertEqual(write_pointer(api, app, self.record, self.run, "ios"), 56)
+        self.assertEqual(app.status.call_args.args[1], self.pointer["context"])
+
+    def test_rendering_uses_exact_device_population_and_rejects_pointer_hash_drift(self):
+        from ci_xcode_cloud_selection import runtime_plans
+        plans = runtime_plans(self.record, self.descriptor)
+        self.assertEqual(plans["Cloud-iOS.xctestplan"]["testTargets"][0]["selectedTests"],
+                         ["SettingsTests/testToggle()"])
+        self.assertEqual(self.groups.canonical_hash(plans["Cloud-iOS.xctestplan"]),
+                         self.descriptor["runtime_plan_sha256"]["Cloud-iOS.xctestplan"])
+        descriptor = copy.deepcopy(self.descriptor)
+        descriptor["runtime_plan_sha256"]["Cloud-iOS.xctestplan"] = "0" * 64
+        with self.assertRaises(ContractError):
+            runtime_plans(self.record, descriptor)
+
+    def test_live_queue_estimate_deduplicates_attempt_jobs_and_does_not_count_unassigned_jobs_running(self):
+        from ci_xcode_cloud_schedule import github_estimate
+        now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+        jobs = [{"id": index, "run_id": index, "status": "in_progress", "labels": ["xcode-27"],
+                 "runner_id": index, "name": "ui-iphone-scoped-a", "created_at": "2026-10-09T23:59:00Z",
+                 "started_at": "2026-10-09T23:59:00Z", "steps": [{"status": "in_progress"}]}
+                for index in range(1, 6)]
+        result = github_estimate(jobs + [jobs[0]], now, [600, 600], history={"ui-iphone-scoped-a": [3600]})
+        self.assertEqual(result["running_mac_jobs"], 5)
+        self.assertEqual(result["free_slots"], 0)
+        self.assertGreater(result["seconds"], 3600)
+        jobs[0] = dict(jobs[0], runner_id=0, steps=[])
+        result = github_estimate(jobs, now, [600], history={"ui-iphone-scoped-a": [3600]})
+        self.assertEqual(result["running_mac_jobs"], 4)
+        self.assertFalse(result["can_prove_saturation"])
+
+    def test_two_minute_margin_free_capacity_budget_and_confirmed_month_end_rules(self):
+        from ci_xcode_cloud_schedule import choose_cloud, month_policy
+        now = datetime(2026, 10, 30, tzinfo=timezone.utc)
+        normal = month_policy(now, None)
+        self.assertEqual((normal["reserve_minutes"], normal["margin_seconds"]), (120, 120))
+        end = month_policy(now, {"start": "2026-10-01T00:00:00Z", "end": "2026-11-01T00:00:00Z"})
+        self.assertEqual((end["reserve_minutes"], end["margin_seconds"]), (0, 0))
+        busy = {"can_prove_saturation": True, "free_slots": 0, "seconds": 1500}
+        cloud_estimate = {"seconds": 1400, "reservation_minutes": 60}
+        self.assertFalse(choose_cloud(busy, cloud_estimate, 0, normal)["route"])
+        self.assertTrue(choose_cloud(busy, cloud_estimate, 0, end)["route"])
+        self.assertFalse(choose_cloud(dict(busy, free_slots=1), cloud_estimate, 0, end)["route"])
+        self.assertFalse(choose_cloud(dict(busy, seconds=5000), cloud_estimate, 2580, normal)["route"])
+        self.assertTrue(choose_cloud(dict(busy, seconds=5000), cloud_estimate, 2520, normal)["route"])
+
+    def test_cloud_compute_reservation_counts_destinations_and_rounds_up(self):
+        from ci_xcode_cloud_schedule import cloud_estimate
+        selected = self.record["ui_inputs"]["base"]["selection"]
+        selected["packing"].update(estimated_test_seconds={"iphone": 60, "ipad": 120, "appletv": 0})
+        self.descriptor["registration"]["destinations_parallel"] = True
+        result = cloud_estimate(self.descriptor, selected)
+        self.assertEqual(result["seconds"], (13 + 9 + 2 + 3) * 60)
+        self.assertEqual(result["destination_count"], 2)
+        self.assertEqual(result["reservation_minutes"] % 5, 0)
+        self.assertGreaterEqual(result["reservation_minutes"], 2 * 24 * 1.3 + 5)
+        self.descriptor["registration"]["destinations_parallel"] = False
+        serialized = cloud_estimate(self.descriptor, selected)
+        self.assertGreater(serialized["seconds"], result["seconds"])
+        self.assertGreater(serialized["reservation_minutes"], result["reservation_minutes"])
+
+    def test_absent_or_disabled_registry_never_reads_asc_and_each_group_freezes_on_github(self):
+        import ci_xcode_cloud_group_route as router
+        api, factory = Mock(), Mock()
+        self.record["classification"] = {"app_affected": True}
+        with patch.object(router, "current_producer"), patch.object(router, "trusted_admissions", return_value={123: self.record}):
+            result = router.prepare_group(api, factory, self.run, "ios")
+            self.assertEqual((result["decision"], result["reason"]), ("github", "routing-inactive"))
+            factory.assert_not_called()
+            api.pages.assert_not_called()
+
+    def test_account_usage_counts_both_destinations_and_keeps_cross_window_active_reservations(self):
+        from ci_xcode_cloud_group_route import account_usage
+        now = datetime(2026, 10, 10, 1, tzinfo=timezone.utc)
+        registration = {"account_product_ids": ["33333333-3333-3333-3333-333333333333"],
+                        "account_action_destinations": {"Functional - iOS": 2}, "unknown_active_minutes": 250,
+                        "account_workflow_attributes_sha256": {cloud.WORKFLOW_ID: self.groups.canonical_hash({"reviewed": True})}}
+        active = {"id": "44444444-4444-4444-4444-444444444444", "attributes": {"executionProgress": "RUNNING"}}
+        action = {"id": "55555555-5555-5555-5555-555555555555", "attributes": {"name": "Functional - iOS",
+                  "executionProgress": "RUNNING", "startedDate": "2026-10-10T00:30:00Z", "finishedDate": None}}
+        asc = Mock()
+        asc.pages.side_effect = [[{"id": registration["account_product_ids"][0]}],
+                                [{"id": cloud.WORKFLOW_ID, "attributes": {"reviewed": True}}], [active], [action]]
+        usage = account_usage(asc, registration, now, "2026-10-01T00:00:00Z")
+        self.assertEqual(usage["elapsed_minutes"], 60)
+        self.assertGreaterEqual(usage["minutes"], 250)
+        asc.pages.side_effect = [[{"id": registration["account_product_ids"][0]}],
+                                [{"id": cloud.WORKFLOW_ID, "attributes": {"reviewed": False}}]]
+        with self.assertRaises(ContractError):
+            account_usage(asc, registration, now, "2026-10-01T00:00:00Z")
+        asc.pages.side_effect = [[{"id": "66666666-6666-6666-6666-666666666666"}]]
+        with self.assertRaises(ContractError):
+            account_usage(asc, registration, now, "2026-10-01T00:00:00Z")
+
+    def test_ambiguous_post_is_never_replayed_and_failed_cloud_returns_the_group_to_github(self):
+        import ci_xcode_cloud_group_route as router
+        asc = Mock()
+        asc.request.side_effect = ContractError("ASC POST refused request (HTTP 503)")
+        prepared = dict(self.route, decision="pending", reference_id="registered-branch")
+        prepared["selection"] = self.descriptor
+        result = router.post_group(asc, prepared)
+        self.assertEqual(result["reason"], "start-outcome-unknown")
+        self.assertEqual(asc.request.call_count, 1)
+        asc.request.side_effect = ContractError("ASC POST refused request (HTTP 404)")
+        result = router.post_group(asc, prepared)
+        self.assertEqual((result["decision"], result["http_status"]), ("fallback", 404))
+
+    def test_unknown_post_reservation_is_recomputed_and_never_refunded_by_age(self):
+        import ci_xcode_cloud_group_route as router
+        self.record["ui_inputs"]["base"]["selection"]["packing"].update(
+            estimated_test_seconds={"iphone": 60, "ipad": 120, "appletv": 0})
+        marker = dict(self.route, head_sha=self.run["head_sha"], posted_at="2026-01-01T00:00:00Z",
+                      reservation_minutes=1)
+        source = {"id": 900, "run_attempt": 1}
+        api = Mock()
+        api.pages.side_effect = [[source], []]
+        api.repo.side_effect = [{"id": 42}, self.run]
+        with patch.object(router.state, "receipt", side_effect=[marker, None]), \
+                patch.object(router, "trusted_admissions", return_value={123: self.record}):
+            reservations = router.unknown_starts(api, self.registry, {"ios": []})
+        expected = router.cloud_estimate(self.descriptor, self.record["ui_inputs"]["base"]["selection"])["reservation_minutes"]
+        self.assertEqual(reservations[0]["minutes"], expected)
+        self.assertGreater(reservations[0]["minutes"], marker["reservation_minutes"])
+
+    def test_cloud_bootstrap_pointer_does_not_trust_login_or_other_workflow(self):
+        import importlib.util
+        path = Path(__file__).resolve().parent.parent / "ci_scripts/cloud_selection.py"
+        spec = importlib.util.spec_from_file_location("cloud_bootstrap_probe", path)
+        bootstrap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bootstrap)
+        pointer = dict(self.pointer, url=bootstrap.ORIGIN + "statuses/" + self.run["head_sha"],
+                       target_url="https://github.com/" + bootstrap.REPOSITORY + "/commit/" + self.identity["merge_sha"])
+        selected = bootstrap.pointer_for([pointer], self.run["head_sha"], workflow_id=cloud.WORKFLOW_ID,
+                                         registry_value=self.registry)
+        self.assertEqual(selected[3:6], ("ios", self.identity["base_sha"], self.digest))
+        for bad in (dict(pointer, creator={"login": self.groups.PUBLISHER_LOGIN, "id": 1}),
+                    dict(pointer, description=pointer["description"].removeprefix("Selection only: ")),
+                    dict(pointer, url=bootstrap.ORIGIN + "statuses/" + "f" * 40)):
+            with self.subTest(pointer=bad), self.assertRaises(ValueError):
+                bootstrap.pointer_for([bad], self.run["head_sha"], workflow_id=cloud.WORKFLOW_ID,
+                                      registry_value=self.registry)
+
+    def test_cloud_recomputation_matches_the_github_functional_packed_selection(self):
+        import json
+        import subprocess
+        import ci_ui_tests as producer
+        from ci_xcode_cloud_selection import recompute
+        root = Path(__file__).resolve().parent.parent
+        files = {path: (root / path).read_text() for path in subprocess.check_output(
+                 ["git", "ls-files"], cwd=root, text=True).splitlines()
+                 if path.startswith(("scripts/", "ci_scripts/", "immichSlidesUITests/")) and path.endswith((".py", ".json", ".swift"))}
+        for path in ("immichSlides-iOS.xctestplan", "immichSlides-tvOS.xctestplan", "immichSlides.xcodeproj/project.pbxproj"):
+            files[path] = (root / path).read_text()
+        for path in (root / "ci_scripts").iterdir():
+            if path.is_file():
+                files[path.relative_to(root).as_posix()] = path.read_text()
+        files[self.groups.REGISTRY_PATH] = json.dumps(self.registry)
+        files["Cloud-iOS.xctestplan"] = json.dumps(self.record["cloud_v2_inputs"]["plans"]["Cloud-iOS.xctestplan"])
+        scheme = self.registration["actions"][0]["scheme_path"]
+        files[scheme] = '<Scheme><TestAction><TestPlans><TestPlanReference reference="container:Cloud-iOS.xctestplan"/></TestPlans></TestAction></Scheme>'
+        members = [path.relative_to(root).as_posix() for path in (root / "immichSlides").rglob("*.swift")]
+        listing = [{"path": path, "type": "blob", "mode": "100644"} for path in set(files) | set(members)]
+        for changed in ("immichSlides/iOS/Settings/SettingsViewIOS.swift", "immichSlides/tvOS/Filter/AlbumFilterViewTV.swift",
+                        "immichSlides/Shared/Models/Album.swift"):
+            record = recompute(self.identity, self.run, self.record["cloud_pr_author"], listing=lambda revision: listing,
+                read_blob=lambda revision, path: files[path], changed_paths=[changed], head_tree=self.identity["tree_sha"])
+            with patch.object(producer, "git_blob", side_effect=lambda revision, path: files[path].encode()), \
+                    patch.object(producer.subprocess, "check_output", side_effect=[changed + "\n", "\n".join(members), "\n".join(members)]):
+                planned = producer.planned_ui_selection(self.identity, pack_scoped_ui=True)
+            self.assertEqual(record["ui_inputs"]["base"]["selection"]["packing"], planned["packing"])
+
+    def test_group_waits_do_not_wait_for_an_archive_when_cloud_is_verified_and_fallback_is_exact(self):
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        import ci_ui_tests as producer
+        import ci_xcode_cloud_ui as consumer
+        context = {"identity": self.identity, "source": {"repository": "owner/repo", "event": "pull_request",
+            "workflow_path": cloud.UI_PATH, "fork_originated": False, "ci_changing": None},
+            "run": {"id": "123", "attempt": 2, "tier": "ui-infrastructure", "job": "ui-selection", "shard": None}}
+        for group in ("ios", "tvos"):
+            for decision in ("routed", "github"):
+                with self.subTest(group=group, decision=decision), tempfile.TemporaryDirectory() as directory:
+                    selection = Path(directory, "ui-selection.json")
+                    selection.write_text(json.dumps({"identity": self.identity, "run_ui": True,
+                        "platform_shards": {group: ["scoped-a"]}, "keys": {group: ["SettingsTests/testToggle"]},
+                        "packing": {"sha256": "e" * 64}}))
+                    arguments = SimpleNamespace(group=group, output_dir=Path(directory, "records"), selection_path=selection,
+                                                timeout_minutes=180, defer_main_ui=True)
+                    with patch.object(producer, "context", return_value=copy.deepcopy(context)), \
+                            patch.object(producer, "workspace_preflight"), patch.object(consumer, "RetryingGitHub"), \
+                            patch.object(consumer, "wait_cloud_group", return_value=decision), patch.object(producer, "output"), \
+                            patch.dict(consumer.os.environ, {"GH_TOKEN": "test-placeholder"}), \
+                            patch.object(producer, "select_archive", return_value={"artifact_id": 9, "producer_run_id": 99,
+                                                                                  "producer_attempt": 1}) as archive:
+                        self.assertEqual(consumer.wait_group(arguments), 0)
+                    self.assertEqual(archive.call_count, int(decision == "github"))
+                    summary = json.loads((arguments.output_dir / "summary.json").read_text())
+                    self.assertEqual(summary["run"]["job"], "ui-cloud-wait-" + group)
+                    if decision == "github":
+                        self.assertEqual(archive.call_args.kwargs["platform_name"], group)
+                        receipt = json.loads((arguments.output_dir / ("archive-selection-" + group + ".json")).read_text())
+                        self.assertEqual(receipt["selected_keys"], ["SettingsTests/testToggle"])
+                        self.assertEqual(receipt["packing"]["sha256"], "e" * 64)
+
+    def test_fork_nightly_and_unregistered_waits_never_consume_cloud_proof(self):
+        from ci_xcode_cloud_ui import wait_cloud_group
+        for event, fork in (("schedule", False), ("pull_request", True)):
+            api = Mock()
+            self.assertEqual(wait_cloud_group({"identity": {"event": event}, "source": {"fork_originated": fork}}, api, "ios"), "github")
+            api.assert_not_called()
+            self.assertEqual(api.method_calls, [])
+
+    def test_same_selection_cannot_post_again_but_a_full_rerun_can_choose_another_provider(self):
+        import ci_xcode_cloud_group_route as router
+        api = Mock()
+        api.repo.return_value = {"id": 42}
+        old = {"id": 900, "run_attempt": 1, "display_title": "xcc-route-123-1-ios"}
+        api.pages.return_value = [old]
+        with patch.object(router.state, "receipt") as read:
+            self.assertFalse(router.group_started(api, self.run, "ios"))
+            read.assert_not_called()
+        current = dict(old, display_title="xcc-route-123-2-ios")
+        api.pages.side_effect = [[current], []]
+        with patch.object(router.state, "receipt", return_value=dict(self.route, head_sha=self.run["head_sha"])):
+            self.assertTrue(router.group_started(api, self.run, "ios"))
+
+    def test_new_main_selection_and_both_group_waits_supply_complete_deferral_evidence(self):
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        import ci_ui_tests as producer
+        import ci_xcode_cloud_ui as consumer
+        from ci_publish_git import bind_ui_shards, workflow_contract
+        from ci_ui_reuse import evaluate_reused_push
+        push = {"schema_version": 1, "repository": "owner/repo", "event": "push", "ref": "refs/heads/main",
+                "pushed_sha": "a" * 40, "tree_sha": "b" * 40}
+        context = {"identity": push, "source": {"repository": "owner/repo", "event": "push", "workflow_path": cloud.UI_PATH,
+            "fork_originated": False, "ci_changing": None},
+            "run": {"id": "123", "attempt": 2, "tier": "ui-infrastructure", "job": "ui-selection", "shard": None}}
+        with tempfile.TemporaryDirectory() as directory, patch.object(producer, "context", side_effect=lambda: copy.deepcopy(context)), \
+                patch.object(producer, "workspace_preflight"), patch.object(producer, "output"), \
+                patch.object(consumer, "RetryingGitHub"), patch("ci_ui_reuse.find_reuse", return_value=None), \
+                patch.dict(consumer.os.environ, {"GH_TOKEN": "test-placeholder"}), \
+                patch.object(producer, "select_archive") as archive:
+            selected = Path(directory, "selection")
+            self.assertEqual(consumer.select(SimpleNamespace(output_dir=selected, pack_scoped_ui=True, defer_main_ui=True)), 0)
+            planned = json.loads((selected / "ui-selection.json").read_text())
+            self.assertFalse(planned["run_ui"])
+            records = [json.loads((selected / "summary.json").read_text())]
+            for group in ("ios", "tvos"):
+                output = Path(directory, group)
+                self.assertEqual(consumer.wait_group(SimpleNamespace(output_dir=output, group=group, timeout_minutes=180,
+                    defer_main_ui=True, selection_path=selected / "ui-selection.json")), 0)
+                records.append(json.loads((output / "summary.json").read_text()))
+            archive.assert_not_called()
+            source = bind_ui_shards((producer.ROOT / cloud.UI_PATH).read_text(), planned["device_shards"])
+            run = dict(self.run, event="push", head_branch="main", status="completed", conclusion="success")
+            names, _, _, metadata = workflow_contract(source, run, metadata=True)
+            jobs = [{"name": name, "status": "completed", "conclusion": "skipped" if metadata[name]["tier"] == "ui" else "success",
+                     "runner_id": 0, "steps": []} for name in names]
+            record = {"identity": push, "workflows": {cloud.UI_PATH: {"base": source}},
+                      "ui_inputs": {"base": {"manifest_sha256": records[0]["hashes"]["manifests"]["ui-shards"]}}}
+            self.assertEqual(evaluate_reused_push(Mock(repository="owner/repo"), record, run, jobs, records)["state"], "pending")
+            with self.assertRaises(ContractError):
+                evaluate_reused_push(Mock(repository="owner/repo"), record, run, jobs, records[:-1])
+
 
 
 class CloudEvidenceTests(unittest.TestCase):
@@ -1080,13 +1386,13 @@ class RoutingPolicyTests(unittest.TestCase):
         api.repo.return_value = fixture.run
         with tempfile.TemporaryDirectory() as directory:
             event, output = Path(directory, "event.json"), Path(directory, "output")
-            event.write_text(json.dumps({"inputs": {"producer_run_id": "123", "producer_attempt": "2"}}))
+            event.write_text(json.dumps({"inputs": {"producer_run_id": "123", "producer_attempt": "2", "group": "ios"}}))
             environment = {"GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output), "GITHUB_REPOSITORY": "owner/repo",
                            "CI_WORKFLOW_TOKEN": "test-token", "GITHUB_RUN_ID": "456", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_TEMP": directory}
             with patch.dict(os.environ, environment), patch.object(router.sys, "argv", ["router", "prepare"]), \
                     patch.object(router, "credential_context"), patch("ci_publish.git"), patch.object(router, "RetryingGitHub", return_value=api), \
                     patch.object(router, "verify_workflow"), patch.object(router, "recorded_decision", return_value=False), \
-                    patch.object(router, "route_run", side_effect=router.SupersededProducer("old head")), patch.object(router, "jwt") as sign, \
+                    patch("ci_xcode_cloud_group_route.phase", side_effect=router.SupersededProducer("old head")), patch.object(router, "jwt") as sign, \
                     patch("builtins.print") as log:
                 self.assertEqual(router.main(), 0)
                 sign.assert_not_called()
@@ -1480,10 +1786,13 @@ class RoutingPolicyTests(unittest.TestCase):
         source = {"id": 123, "run_attempt": 2, "event": "pull_request", "path": cloud.UI_PATH, "repository": {"full_name": "owner/repo"},
                   "head_repository": {"full_name": "owner/repo"}}
         api.repo.return_value = source
-        with patch.object(bridge, "current_producer") as current:
+        with patch.object(bridge, "current_producer") as current, patch.object(bridge, "active_groups", return_value=["ios", "tvos"]):
             bridge.dispatch(api, {"workflow_run": {"id": 123}, "action": "requested"})
             current.assert_called_once_with(api, source)
-        api.dispatch.assert_called_once_with(cloud.ROUTE_PATH, {"producer_run_id": "123", "producer_attempt": "2", "mode": "auto"})
+        self.assertEqual(api.dispatch.call_count, 2)
+        self.assertEqual({call.args[1]["group"] for call in api.dispatch.call_args_list}, {"ios", "tvos"})
+        self.assertTrue(all(call.args[0] == cloud.ROUTE_PATH and call.args[1]["producer_run_id"] == "123"
+                            and call.args[1]["producer_attempt"] == "2" for call in api.dispatch.call_args_list))
         api.dispatch.reset_mock()
         source["event"] = "push"
         bridge.dispatch(api, {"workflow_run": {"id": 123}, "action": "requested"})

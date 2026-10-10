@@ -7,8 +7,10 @@ case "${CI_XCODEBUILD_ACTION:-}" in
   *) exit 0 ;;
 esac
 [ "${CI_XCODE_CLOUD:-}" = "TRUE" ] || exit 1
-[ "${CI_PRODUCT_PLATFORM:-}" = "tvOS" ] || exit 1
-[ "${CI_XCODE_SCHEME:-}" = "immichSlides-tvOS" ] || exit 1
+case "${CI_PRODUCT_PLATFORM:-}:${CI_XCODE_SCHEME:-}" in
+  iOS:immichSlides-iOS|tvOS:immichSlides-tvOS) ;;
+  *) exit 1 ;;
+esac
 state=/tmp/immichslides-xcc-fixture
 [ -f "$state/pid" ] || exit 0
 fixture_pid=$(cat "$state/pid")
@@ -30,4 +32,4 @@ if kill -0 "$fixture_pid" 2>/dev/null; then
   done
 fi
 rm -rf "$state"
-echo "Xcode Cloud Apple TV fixture server stopped"
+echo "Xcode Cloud fixture server stopped"

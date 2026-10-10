@@ -21,6 +21,8 @@ GROUPS = {"ios": ("iphone", "ipad"), "tvos": ("appletv",)}
 PUBLISHER_LOGIN = "sudohg-ci[bot]"
 PUBLISHER_ID = 339382712
 MAINTAINER_LOGIN = "sudoHG"
+MAINTAINER_ID = 279902076
+POINTER_DESCRIPTION_PREFIX = "Selection only: "
 
 
 def canonical_hash(value):
@@ -78,8 +80,10 @@ def snapshot(base, head, base_listing, head_listing, read_blob, head_tree):
     require(all(len({entry["path"].casefold() for entry in listing}) == len(listing)
                 for listing in (base_listing, head_listing)), "ambiguous Cloud checkout paths")
     registration = registry(decode(read_blob(base, REGISTRY_PATH)))
-    hooks = {path for path in base_paths if path.startswith("ci_scripts/")}
-    require(hooks == {path for path in head_paths if path.startswith("ci_scripts/")}, "Cloud hook population changed")
+    hook_entries = lambda listing: {(entry["path"], entry["mode"], entry["type"])
+                                   for entry in listing if entry["path"].startswith("ci_scripts/")}
+    require(hook_entries(base_listing) == hook_entries(head_listing), "Cloud hook population changed")
+    hooks = {entry[0] for entry in hook_entries(base_listing)}
     required = hooks | {REGISTRY_PATH, "scripts/strict_e2e_server.py", "ci_scripts/fixture_server.py"}
     required |= {path for path in base_paths if path.startswith("scripts/ci_xcode_cloud") and path.endswith(".py")}
     required |= {"scripts/ci_ui_selection.py", "scripts/ci_ui_packing.py", "scripts/ci_ui_test_kinds.py",
@@ -117,7 +121,9 @@ def selection(record, run, group, *, approved):
     identity = record["identity"]
     require(group in GROUPS and run["path"] == legacy.UI_PATH and identity["event"] == run["event"] == "pull_request"
             and run["repository"]["full_name"] == run["head_repository"]["full_name"] == identity["repository"]
-            and record.get("cloud_pr_author", {}).get("login") == MAINTAINER_LOGIN, "Cloud groups are maintainer PRs only")
+            and record.get("cloud_pr_author", {}).get("login") == MAINTAINER_LOGIN
+            and type(record.get("cloud_pr_author", {}).get("id")) is int
+            and record["cloud_pr_author"]["id"] == MAINTAINER_ID, "Cloud groups are maintainer PRs only")
     require(record["run_id"] == run["id"] and run["head_sha"] == identity["head_sha"]
             and type(run["run_attempt"]) is int and run["run_attempt"] > 0, "Cloud group producer is stale")
     for field in ("base_sha", "head_sha", "merge_sha", "tree_sha"):
@@ -174,7 +180,7 @@ def validate_pointer(record, run, group, digest, statuses, *, pointer_id):
     for status in trusted:
         require(status["state"] == "success"
                 and status.get("url") == "https://api.github.com/repos/" + identity["repository"] + "/statuses/" + identity["head_sha"]
-                and status["description"] == identity["base_sha"] + " " + digest
+                and status["description"] == POINTER_DESCRIPTION_PREFIX + identity["base_sha"] + " " + digest
                 and status["target_url"] == "https://github.com/" + identity["repository"] + "/commit/" + identity["merge_sha"],
                 "Cloud selection pointer differs from admission")
 
@@ -243,14 +249,16 @@ def validate_evidence(record, run, route, evidence, checks, statuses, *, approve
         newest = [check for check in matching if check["id"] == max(item["id"] for item in matching)]
         require(len(newest) == 1 and newest[0]["status"] == "completed" and newest[0]["conclusion"] == "success"
                 and newest[0].get("details_url") == details, "newest Cloud app check differs from this action")
-        action_proofs.append({"action_id": action["id"], "details_url": details, "compute_minutes": compute})
+        action_proofs.append({"action_id": action["id"], "details_url": details, "action_minutes": compute,
+                              "compute_upper_minutes": len(registered["devices"]) * compute})
     population = sorted([entry for entries in descriptor["populations"].values() for entry in entries], key=identity_key)
     require(len({identity_key(entry) for entry in observed}) == len(observed)
             and sorted(observed, key=identity_key) == population, "Cloud executed per-device selection differs from admission")
     return {"group": group, "identities": population, "selection_sha256": canonical_hash(descriptor),
             "runtime_plan_sha256": descriptor["runtime_plan_sha256"], "pointer_id": route["pointer_id"],
             "cloud_run_id": evidence["id"], "actions": action_proofs, "wall_minutes": wall,
-            "compute_minutes": sum(action["compute_minutes"] for action in action_proofs)}
+            "action_minutes": sum(action["action_minutes"] for action in action_proofs),
+            "compute_upper_minutes": sum(action["compute_upper_minutes"] for action in action_proofs)}
 
 
 def trusted_groups(api, record, run, groups, *, approved):
