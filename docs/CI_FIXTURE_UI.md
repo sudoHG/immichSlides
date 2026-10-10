@@ -106,7 +106,9 @@ the runner runs the enumeration command once more. No other enumeration error is
 retried, tests are never retried by this path, and a second failure fails the run
 as before. The first attempt stays in `compiled-tests-attempt-1.json` and the
 retry is recorded in `enumeration-retry.json`; it is not added to the summary's
-`infrastructure` list, because any entry there fails the verdict.
+`infrastructure` list, because any entry there fails the verdict. Both files are
+uploaded with the shard's fixture records, after the same sensitive scan, so a
+recovered run leaves its evidence behind.
 
 `--mode measure` attempts every selected test, including active tier deselections.
 All skips fail measurement, including approved environment skips.
