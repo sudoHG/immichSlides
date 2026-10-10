@@ -1,4 +1,4 @@
-"""Trusted UI verdict receipts and conservative identical-tree main-push reuse."""
+"""Trusted main-push UI reuse and explicit deferral to the nightly UI tier."""
 
 from __future__ import annotations
 
@@ -234,6 +234,17 @@ def validate_infrastructure_summary(record, summary, name):
             "reuse selection evidence is incomplete or invalid")
 
 
+def main_ui_deferral(source):
+    """Read scheduling intent only from the admitted base workflow."""
+    from check_workflow_policy import WorkflowLoader
+    from ci_publish_git import producer_commands
+    workflow = yaml.load(source, Loader=WorkflowLoader)
+    commands = [arguments for job in workflow["jobs"].values() for step in job.get("steps", [])
+                for script, arguments in producer_commands(step.get("run", ""))
+                if script == "ci_ui_tests.py" and arguments and arguments[0] == "wait-archive"]
+    return len(commands) == 1 and commands[0].count("--defer-main-ui") == 1
+
+
 def evaluate_reused_push(api, record, run, jobs, summaries):
     source = record["workflows"][UI_WORKFLOW]["base"]
     jobs = expand_skipped_ui_matrix(source, run, jobs)
@@ -252,6 +263,26 @@ def evaluate_reused_push(api, record, run, jobs, summaries):
         seen.add(name)
         validate_infrastructure_summary(record, summary, name)
     receipt = find_reuse(api, record["identity"])
+    if receipt is None and main_ui_deferral(source):
+        identity = parse_identity(record["identity"])
+        require(identity["event"] == "push" and identity["ref"] == "refs/heads/main"
+                and identity["repository"] == api.repository
+                and run["event"] == "push" and run["head_branch"] == "main" and run["path"] == UI_WORKFLOW
+                and run["head_sha"] == identity["pushed_sha"] and run["status"] == "completed"
+                and run["conclusion"] == "success"
+                and run["repository"]["full_name"] == run["head_repository"]["full_name"] == api.repository,
+                "UI deferral requires a completed same-repository main push")
+        require(all((job.get("runner_id") is None or type(job.get("runner_id")) is int and job["runner_id"] == 0)
+                    and job.get("steps") == [] for job in jobs if metadata[job["name"]]["tier"] == "ui"),
+                "deferred UI shard may have executed")
+        for raw in summaries:
+            job = next(item for item in jobs if item["name"] == raw["run"]["job"])
+            require(raw["run"]["id"] == str(run["id"])
+                    and raw["run"]["attempt"] == job.get("evidence_attempt", run["run_attempt"]),
+                    "deferred UI selection differs from its execution attempt")
+        return {"state": "pending", "description": "UI deferred to nightly: no trusted identical-tree PR verdict",
+                "deferred_to": "nightly-ui",
+                "target_url": f"https://github.com/{api.repository}/actions/workflows/ci-nightly.yml?query=branch%3Amain"}
     require(receipt is not None, "skipped UI shards have no complete trusted identical-tree verdict")
     return {"state": "success", "description": "UI reused: complete trusted identical-tree PR verdict",
             "target_url": f"https://github.com/{api.repository}/actions/runs/{receipt['source']['run_id']}",

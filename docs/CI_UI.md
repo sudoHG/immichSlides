@@ -6,6 +6,23 @@ commit status. No required check or repository setting changes here. All three
 devices use the same archive validation, fixture runner, selection and verdict
 path. The trusted reuse reader must land on main before this producer is activated.
 
+## Main UI scheduling contract
+
+The trusted reader recognizes `--defer-main-ui` only on the admitted base workflow's
+`ci_ui_tests.py wait-archive` command. A completed, successful same-repository main
+push with that intent may skip its UI matrix after every required Linux selection
+job has published valid, attempt-bound evidence. The publisher first checks the
+existing [identical-tree reuse proof](CI_PUBLISHER.md). A valid proof is success
+linked to the original PR run; otherwise the UI status is **pending**, explicitly
+"UI deferred to nightly", linked to the main nightly workflow. Deferral supplies
+no passing UI samples. Missing or invalid selection evidence still fails, and a
+workflow without this explicit trusted intent retains the full UI/reuse contract.
+
+The [nightly UI aggregate](CI_NIGHTLY.md#complete-fixture-ui) is the verification of
+record for deferred UI. Main build, unit and host checks retain their own verdicts.
+Pull-request and nightly population selection is independent of this main-only
+contract. Reader changes precede producer activation in a separate PR.
+
 The [Xcode Cloud Apple TV overflow path](XCODE_CLOUD_UI.md) runs the same fixture
 methods under macOS congestion. Only a main router decision plus independently
 validated API results and the exact-head app check can suppress Apple TV shards.

@@ -250,18 +250,23 @@ the same tree cannot authorize reuse. It verifies that the upstream UI producer 
 successful run and exact attempt. A rerun in progress invalidates the receipt.
 Unknown versions, missing/expired proof, red/cancelled runs, forks, CI changes,
 approval-based verdicts, different trees or inputs, incomplete device coverage,
-or observed toolchains that disagree with current pins all mean run the UI tier.
-Malformed nested receipt fields and corrupt ZIP or compressed data also fall
-back to running UI.
+or observed toolchains that disagree with current pins all mean reuse is unavailable.
+Malformed nested receipt fields and corrupt ZIP or compressed data also refuse reuse.
+Without explicit trusted deferral intent, unavailable proof means run the UI tier;
+skipped shards without proof fail. The [main UI scheduling contract](CI_UI.md#main-ui-scheduling-contract)
+additionally recognizes the literal `--defer-main-ui` flag in the admitted base's
+archive-selection command. Complete, passed infrastructure records and entirely
+unexecuted skipped shards permit a pending "UI deferred to nightly" status when
+no trusted identical-tree proof exists. Missing records, invalid provenance and
+failed jobs cannot claim this state. A PR or candidate-only flag cannot authorize it.
 The publisher repeats this decision before accepting skipped shards and links
 the status to the original successful UI run.
 The publication summary displays the reused producer run/attempt, verdict artifact,
 tree and approval/fork/CI-change provenance alongside that link.
 
-This reader lands before a producer starts skipping shards. Existing iPhone
-producers keep running normally; the separate iPad/Apple TV and reuse producer
-rollout activates the new path after the reader is on main. A CI-changing reader
-PR still requires maintainer approval of its exact head and cannot approve itself.
+Reader changes land in a separate PR before a producer activates new skipping or
+deferral behavior. A CI-changing reader PR requires maintainer approval of its
+exact head and cannot approve itself.
 The [UI producer](CI_UI.md) uses this contract with a Linux archive-selection job
 and three literal shards on each of iPhone, iPad and Apple TV. Publisher trust and
 exact-head approval rules apply to every device. The producer is activated only

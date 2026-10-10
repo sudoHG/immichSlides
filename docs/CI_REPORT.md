@@ -32,8 +32,12 @@ the aggregate is missing; a manual dispatch without a verified plan is ineligibl
 The reporter never crawls PR runs. Producers retain their own per-run JSON artifacts
 and step summaries for 30 days.
 For a main UI matrix skipped through trusted identical-tree reuse, reporting calls
-the existing publisher reuse reader; a skip without its verified proof still fails.
-This does not activate skipping or change the producer's matrix.
+the publisher reuse reader. Under the [explicit main UI scheduling contract](CI_UI.md#main-ui-scheduling-contract),
+valid selection evidence without reusable proof is `not-run`, with "UI deferred to
+nightly" retained in compact history. This supplies no passing UI recovery samples
+and cannot open a post-merge failure issue. Missing or invalid evidence still fails.
+The nightly UI aggregate supplies per-method verification and the existing nightly
+failure issue lifecycle; main build, unit and host failures retain their own reporting.
 
 The reader supports strict nightly aggregate version 1 and the explicit version 2
 successor containing a fixture UI aggregate. Version 2 binds the embedded `ui` record

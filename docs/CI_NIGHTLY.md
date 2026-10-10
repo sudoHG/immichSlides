@@ -168,6 +168,12 @@ reporting accepts only main; a branch result does not replace a main nightly.
 
 ## Results, scope and eligibility
 
+Before a release, the latest nightly run on main must have a verified passing full
+fixture UI aggregate for iPhone, iPad and Apple TV, with no missing shards or samples.
+An older green run, a diagnostic dispatch or a main UI status deferred to nightly
+cannot satisfy this prerequisite. Existing source binding, qualifying-run and
+maintainer P2 review requirements still apply.
+
 After finalization, the tracer reads official summary and test identity exports whatever
 the runner exit code. It validates integer counts, their sum/result and selected method.
 Filter-person combines three session exports, keeps partial counts on failure and checks

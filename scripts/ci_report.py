@@ -730,7 +730,10 @@ def read_run(api, run, admissions, previous=None):
                     else:
                         result = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
                     entry["evaluation"] = result
-                    entry["status"] = "passed" if result["state"] == "success" and run["conclusion"] == "success" else "failed"
+                    if reused_ui and result["state"] == "pending" and result.get("deferred_to") == "nightly-ui":
+                        entry.update(status="not-run", not_evaluated_reason=result["description"])
+                    else:
+                        entry["status"] = "passed" if result["state"] == "success" and run["conclusion"] == "success" else "failed"
                 elif not entry["diagnostics"]["failures"]:
                     entry["diagnostics"]["infrastructure"].append("required job failed, skipped or cancelled without an official test failure")
     except EvidenceExpired:

@@ -1214,14 +1214,22 @@ class ReporterTests(unittest.TestCase):
         summary["identity"] = identity
         summary["source"].update(event="push", workflow_path=run["path"])
         summary["run"]["id"] = str(run["id"])
-        for verdict in ({"state": "success", "reuse": {"producer_run_id": 10}}, ContractError("no trusted proof")):
+        for verdict, status in (({"state": "success", "reuse": {"producer_run_id": 10}}, "passed"),
+                                ({"state": "pending", "deferred_to": "nightly-ui",
+                                  "description": "UI deferred to nightly: no trusted identical-tree PR verdict"}, "not-run"),
+                                ({"state": "pending"}, "failed"), (ContractError("no trusted proof"), "failed")):
             with self.subTest(verdict=verdict), patch("ci_report.on_main", return_value=True), \
                     patch("ci_publish.producer_evidence", return_value=(jobs, [summary])), \
                     patch("ci_ui_reuse.evaluate_reused_push", side_effect=verdict if isinstance(verdict, Exception) else None,
                           return_value=verdict) as reuse:
                 report = read_run(api, run, {12: record})
-                self.assertEqual("passed" if isinstance(verdict, dict) else "failed", report["status"])
+                self.assertEqual(status, report["status"])
                 reuse.assert_called_once_with(api, record, run, jobs, [summary])
+                if status == "not-run":
+                    self.assertIn("deferred to nightly", report["not_evaluated_reason"])
+                    self.assertFalse(ci_report.issue_eligible(report))
+                    self.assertEqual([], ci_report.notification_entries([report], "2026-09-01T00:00:00Z"))
+                    self.assertEqual(report["not_evaluated_reason"], ci_report.compact_entry(report, set())["not_evaluated_reason"])
 
     def test_parameterized_swift_observations_cover_the_declared_function(self):
         summary = valid_summary()
