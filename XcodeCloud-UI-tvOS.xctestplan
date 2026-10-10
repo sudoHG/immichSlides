@@ -110,6 +110,7 @@
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDirectionalRoutingMatchesPressedDirection()",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarButtonsCanActivateOnSelect()",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarFocusStatesScreenshot()",
+        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarStaysWhileFocusKeepsMoving()",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowHasNoBackButtonScreenshot()",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowInitialDefaultFocusIsPlayPause()",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlayPauseCanToggleAndWakeControlBar()",
