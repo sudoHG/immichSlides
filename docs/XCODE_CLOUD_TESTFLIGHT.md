@@ -181,6 +181,10 @@ reviews, enforce GitHub tag immutability, or create release tags. That belongs t
 #115 and its maintainer gates. Do not manually create `v*` tags to bypass it.
 App Store submission remains manual and requires separate explicit approval.
 
+Main-push `ci-gate` and `ci-ui` runs replace a pending predecessor, so not every main SHA is
+evaluated. Tag a SHA whose gate and UI runs both evaluated, or re-run both for the SHA first
+([rules](CI_PUBLISHER.md#main-push-coalescing)).
+
 ## Failures and stopping delivery
 
 If the preflight fails, inspect only the public pin/lock state and the names of

@@ -388,47 +388,69 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual("failure", latest["ci-pr-gate"]["state"])
 
     def test_unstarted_cancellation_requires_complete_first_attempt_job_and_source_proof(self):
-        from ci_publish import cancelled_unstarted_gate
+        from ci_publish import cancelled_unstarted_run
         run = dict(RUN, event="push", head_branch="main", conclusion="cancelled")
         api = UnstartedGateAPI()
         for jobs in (UNSTARTED_GATE_JOBS, []):
             api.jobs = jobs
             api.total_count = len(jobs)
-            self.assertTrue(cancelled_unstarted_gate(api, run))
+            self.assertTrue(cancelled_unstarted_run(api, run))
         for jobs, count in (([], None), ([], 1), (UNSTARTED_GATE_JOBS, 6),
                             (UNSTARTED_GATE_JOBS + [UNSTARTED_GATE_JOBS[0]], 6)):
             api.jobs, api.total_count = jobs, count
-            self.assertFalse(cancelled_unstarted_gate(api, run))
+            self.assertFalse(cancelled_unstarted_run(api, run))
         api.total_count = 1
         for mutation in ({"runner_id": 123}, {"steps": [{"status": "completed"}]},
                          {"status": "queued"}, {"conclusion": "failure"},
                          {"run_attempt": 2}, {"run_id": 102}, {"runner_id": False}):
             with self.subTest(job=mutation):
                 api.jobs = [dict(UNSTARTED_GATE_JOBS[0], **mutation)]
-                self.assertFalse(cancelled_unstarted_gate(api, run))
+                self.assertFalse(cancelled_unstarted_run(api, run))
         for missing in ("runner_id", "steps", "run_id", "run_attempt"):
             api.jobs = [copy.deepcopy(UNSTARTED_GATE_JOBS[0])]
             del api.jobs[0][missing]
-            self.assertFalse(cancelled_unstarted_gate(api, run))
+            self.assertFalse(cancelled_unstarted_run(api, run))
         api.jobs = None
-        self.assertFalse(cancelled_unstarted_gate(api, run))
+        self.assertFalse(cancelled_unstarted_run(api, run))
         api.jobs = UNSTARTED_GATE_JOBS
         api.total_count = len(api.jobs)
         for newer in ([], [dict(RUN, id=102, event="push", head_branch="main")],
                       [dict(RUN, id=100, event="push", head_branch="main", head_sha="e" * 40)],
                       [dict(RUN, id=102, event="pull_request", head_branch="main", head_sha="e" * 40)]):
             api.newer = newer
-            self.assertFalse(cancelled_unstarted_gate(api, run))
+            self.assertFalse(cancelled_unstarted_run(api, run))
         api.newer = [dict(RUN, id=102, event="push", head_branch="main", head_sha="e" * 40)]
         for mutation in ({"event": "pull_request"}, {"event": "schedule"}, {"head_branch": "feature"},
                          {"path": ".github/workflows/ci-ui.yml"}, {"run_attempt": 2},
                          {"status": "in_progress"}, {"conclusion": "failure"},
                          {"head_repository": {"full_name": "fork/photos"}}):
             with self.subTest(run=mutation):
-                self.assertFalse(cancelled_unstarted_gate(api, dict(run, **mutation)))
+                self.assertFalse(cancelled_unstarted_run(api, dict(run, **mutation)))
         for mutation in ({"id": 43}, {"path": ".github/workflows/ci-ui.yml"}):
             api.workflow = dict(WORKFLOW, **mutation)
-            self.assertFalse(cancelled_unstarted_gate(api, run))
+            self.assertFalse(cancelled_unstarted_run(api, run))
+
+    def test_replaced_pending_ui_run_is_recognized_like_a_replaced_pending_gate(self):
+        from ci_publish import cancelled_unstarted_run
+        ui_path = ".github/workflows/ci-ui.yml"
+        ui_workflow = {"id": 43, "path": ui_path, "state": "active"}
+        run = dict(RUN, id=201, workflow_id=43, path=ui_path, event="push", head_branch="main",
+                   conclusion="cancelled")
+        api = UnstartedGateAPI()
+        api.workflow = ui_workflow
+        api.newer = [dict(run, id=202, head_sha="e" * 40, status="in_progress", conclusion=None)]
+        api.jobs, api.total_count = [], 0
+        self.assertTrue(cancelled_unstarted_run(api, run))
+        api.jobs = [dict(UNSTARTED_GATE_JOBS[0], run_id=201)]
+        api.total_count = 1
+        self.assertTrue(cancelled_unstarted_run(api, run))
+        api.jobs = [dict(api.jobs[0], runner_id=123)]
+        self.assertFalse(cancelled_unstarted_run(api, run))
+        api.jobs = []
+        api.total_count = 0
+        api.workflow = WORKFLOW
+        self.assertFalse(cancelled_unstarted_run(api, run))
+        self.assertFalse(cancelled_unstarted_run(api, dict(run, path=".github/workflows/ci-nightly.yml")))
 
     def test_gate_classification_infrastructure_requires_its_own_bound_successful_summary(self):
         record, jobs, summaries = gate_fixture(units=True)

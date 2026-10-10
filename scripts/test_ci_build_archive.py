@@ -1,4 +1,5 @@
 """Regression checks for workspace preflight, artifact selection and extraction safety."""
+import contextlib
 import copy
 import io
 import json
@@ -353,6 +354,97 @@ class BuildArchiveTests(unittest.TestCase):
                     with patch.object(API, "pages", side_effect=pages), patch.object(ui, "build_job_attempt", side_effect=jobs), \
                             patch.object(ui, "json_member", return_value=other), self.assertRaisesRegex(ContractError, "did not succeed"):
                         ui.select_archive(API(), self.identity, timeout_seconds=1)
+
+    def test_main_push_archive_wait_ends_when_the_gate_is_superseded_and_pauses_while_it_is_held(self):
+        head = "d" * 40
+        identity = {"schema_version": 1, "event": "push", "repository": "owner/repo",
+                    "ref": "refs/heads/main", "pushed_sha": head, "tree_sha": "c" * 40}
+        def gate(status, conclusion=None):
+            return {"id": 300, "workflow_id": 42, "path": ui.GATE_WORKFLOW, "event": "push", "head_sha": head,
+                    "head_branch": "main", "run_attempt": 1, "status": status, "conclusion": conclusion,
+                    "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}}
+        def wait(run):
+            clock = [1000.0]
+            class API:
+                repository = "owner/repo"
+                def repo(self, path):
+                    return {"id": 42, "path": ui.GATE_WORKFLOW, "state": "active"}
+                def pages(self, path, collection, **filters):
+                    return [run] if collection == "workflow_runs" else []
+            def sleep(seconds):
+                clock[0] += seconds
+            with patch.object(ui.time, "monotonic", side_effect=lambda: clock[0]), patch.object(ui.time, "sleep", side_effect=sleep), \
+                    patch.object(ui, "build_job_attempt", return_value=None), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    self.assertRaisesRegex(ContractError, "archive-unavailable"):
+                ui.select_archive(API(), identity, timeout_seconds=600, poll_seconds=20)
+            return clock[0] - 1000.0
+        self.assertEqual(0, wait(gate("completed", "cancelled")))
+        self.assertAlmostEqual(600, wait(gate("in_progress")), delta=20)
+        waited = wait(gate("pending"))
+        self.assertAlmostEqual(ui.GATE_PENDING_PAUSE_SECONDS + 600, waited, delta=20)
+
+    def test_both_platforms_share_one_archive_deadline_that_includes_the_pending_gate_pause(self):
+        head = "d" * 40
+        identity = {"schema_version": 1, "event": "push", "repository": "owner/repo",
+                    "ref": "refs/heads/main", "pushed_sha": head, "tree_sha": "c" * 40}
+        ready_at = {"ios": 90 * 60, "tvos": 125 * 60}
+        def scenario(gate_pending_seconds):
+            clock = [1000.0]
+            now = lambda: clock[0] - 1000.0
+            def gate():
+                return {"id": 300, "workflow_id": 42, "path": ui.GATE_WORKFLOW, "event": "push", "head_sha": head,
+                        "head_branch": "main", "run_attempt": 1, "repository": {"full_name": "owner/repo"},
+                        "head_repository": {"full_name": "owner/repo"}, "conclusion": None,
+                        "status": "pending" if now() < gate_pending_seconds else "in_progress"}
+            class API:
+                repository = "owner/repo"
+                def repo(self, path):
+                    return {"id": 42, "path": ui.GATE_WORKFLOW, "state": "active"}
+                def pages(self, path, collection, **filters):
+                    if collection == "workflow_runs":
+                        return [gate()]
+                    return [{"id": 1000 + index, "name": name, "expired": False}
+                            for index, name in enumerate(
+                                [f"build-{p}-records-300-1" for p in ready_at if now() >= ready_at[p]]
+                                + [ui.artifact_name(p, "300", 1) for p in ready_at if now() >= ready_at[p]])]
+            build = {"source": {"workflow_path": ui.GATE_WORKFLOW, "repository": "owner/repo", "event": "push",
+                                "fork_originated": False}, "identity": identity, "status": "passed",
+                     "hashes": {"manifests": {"build": "a" * 64}}}
+            def parse(_):
+                return dict(build, run={"id": "300", "attempt": 1, "tier": "build",
+                                        "job": "build-" + self.platform, "shard": self.platform})
+            result = {}
+            with patch.object(ui.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(ui.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                    patch.object(ui, "build_job_attempt", return_value={"status": "completed", "conclusion": "success", "evidence_attempt": 1}), \
+                    patch.object(ui, "json_member", return_value={}), patch.object(ui, "parse_summary", side_effect=parse), \
+                    patch.object(ui, "validate_artifact"), patch.object(ui, "downloaded_archive", return_value=({}, "a" * 64)), \
+                    patch.object(ui, "check_cross_run_identity"), patch.object(ui, "file_hash", return_value="f" * 64), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                wait = ui.ArchiveWait(120 * 60)
+                for self.platform in ready_at:
+                    try:
+                        ui.select_archive(API(), identity, platform_name=self.platform, wait=wait)
+                        result[self.platform] = now()
+                    except ContractError as error:
+                        result[self.platform] = str(error)
+                        break
+            return result, wait
+        selected, wait = scenario(60 * 60)
+        self.assertEqual(["ios", "tvos"], list(selected))
+        self.assertTrue(all(isinstance(value, float) for value in selected.values()), selected)
+        self.assertGreaterEqual(selected["tvos"], ready_at["tvos"])
+        self.assertEqual(ui.GATE_PENDING_PAUSE_SECONDS, wait.paused)
+        # Without a pending gate the unextended 120-minute deadline ends before tvOS is ready.
+        unpaused, _ = scenario(0)
+        self.assertRegex(unpaused["tvos"], "archive-unavailable")
+        # A gate that stays pending can extend the shared deadline by the single allowance only.
+        ready_at.update(ios=10 ** 6, tvos=10 ** 6)
+        stuck, wait = scenario(10 ** 6)
+        self.assertRegex(stuck["ios"], "archive-unavailable")
+        self.assertEqual(ui.GATE_PENDING_PAUSE_SECONDS, wait.paused)
+        self.assertAlmostEqual(170 * 60, wait.deadline - 1000.0, delta=1)
 
     def test_ui_reproduction_checks_revision_pins_and_exact_destination_before_build(self):
         pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())

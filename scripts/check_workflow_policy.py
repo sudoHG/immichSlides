@@ -44,6 +44,22 @@ WORKFLOW_RUN_SOURCES = {
     ".github/workflows/ci-publish.yml": {"ci-gate", "ci-ui"},
     REPORT_WORKFLOW: {"ci-nightly", "ci-gate", "ci-ui"},
 }
+# Main pushes share one first-attempt queue (superseding only pending runs); pull requests cancel
+# within their own PR; reruns and nightly runs get a group of their own and are never cancelled.
+CANCEL_PULL_REQUESTS_ONLY = "${{ github.event_name == 'pull_request' }}"
+CONCURRENCY_WORKFLOWS = {
+    ".github/workflows/ci-gate.yml": {
+        "group": "ci-gate-${{ github.event_name }}-${{ github.event.pull_request.number || "
+                 "(github.event_name == 'push' && github.run_attempt == 1 && 'main') || github.run_id }}",
+        "cancel-in-progress": CANCEL_PULL_REQUESTS_ONLY},
+    ".github/workflows/ci-ui.yml": {
+        "group": "ci-ui-${{ github.event_name }}-${{ github.event.pull_request.number || "
+                 "(github.event_name == 'push' && github.run_attempt == 1 && 'main') || github.run_id }}",
+        "cancel-in-progress": CANCEL_PULL_REQUESTS_ONLY},
+    LIVE_WORKFLOW: {
+        "group": "ci-nightly-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}",
+        "cancel-in-progress": CANCEL_PULL_REQUESTS_ONLY},
+}
 ENVIRONMENT_WORKFLOWS = {
     "xcode-cloud": XCC_WORKFLOWS,
     "ci-publisher": {".github/workflows/ci-publish.yml", ".github/workflows/ci-approval.yml",
@@ -328,6 +344,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
                 "required": False, "default": "", "type": "string"}}}
             or document.get("permissions") != {}):
         flag("workflow", "report-contract", "ci-report needs main-filtered completion/daily/manual triggers and no workflow-level grants")
+    if path in CONCURRENCY_WORKFLOWS and document.get("concurrency") != CONCURRENCY_WORKFLOWS[path]:
+        flag("concurrency", "concurrency-queue", "Producer concurrency is fixed: main pushes supersede only pending main runs, "
+             "reruns and nightly runs are never cancelled, and only pull requests cancel in progress")
     if approval_workflow and "concurrency" in document:
         flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
     if path == XCC_IMPORT_WORKFLOW and (document.get("name") != "ci-xcode-cloud-import"
@@ -427,6 +446,8 @@ def check_workflow(path: str, source: str) -> list[Violation]:
         if path in PUBLISHER_COMMANDS and isinstance(job.get("env"), dict):
             if any(isinstance(key, str) and key.startswith("CI_APP_") for key in job["env"]):
                 flag(location, "publisher-credential", "App credentials cannot be inherited from job environment")
+        if path in CONCURRENCY_WORKFLOWS and "concurrency" in job:
+            flag(location, "concurrency-queue", "Producer jobs cannot override the workflow concurrency contract")
         if approval_workflow and "concurrency" in job:
             flag(location, "approval-queue", "Approval jobs cannot enter a replaceable concurrency queue")
         permissions = job.get("permissions", document.get("permissions"))

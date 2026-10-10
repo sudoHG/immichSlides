@@ -203,7 +203,7 @@ then can producers emit the successor. A version number alone never enables pars
 ## Current workflow boundary
 
 `ci-gate` runs this host job on PR merge commits and pushes to main. It has read-only
-contents permission, bounded job/script budgets, PR-specific cancellation, and no
+contents permission, bounded job/script budgets, PR-specific cancellation (main pushes replace only a pending run, see [coalescing](CI_PUBLISHER.md#main-push-coalescing)), and no
 secrets or status-writing identity. It uploads only `summary.json`, `summary.md` and
 `run-identity.json`, with run/attempt-specific names, retained 30 days for PRs and
 7 days for pushes. Successful Python and Swift identities are kept in JSON; the short

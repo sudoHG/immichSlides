@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-ui.yml"
 GATE_WORKFLOW = ".github/workflows/ci-gate.yml"
 NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
+GATE_PENDING_PAUSE_SECONDS = 50 * 60  # 120 + 50 = 170-minute cap leaves 15 minutes of the 185-minute job for final reads and downloads
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 
 
@@ -128,7 +129,24 @@ def build_job_attempt(api, run, *, platform_name="ios"):
     return retained
 
 
-def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_seconds=20, record_refusals=None):
+class ArchiveWait:
+    """One deadline shared by both platforms; pending-gate pauses extend it up to a single allowance."""
+
+    def __init__(self, timeout_seconds):
+        self.deadline = time.monotonic() + timeout_seconds
+        self.paused = 0.0
+
+    def remaining(self):
+        return self.deadline - time.monotonic()
+
+    def pause(self, seconds):
+        granted = max(0.0, min(seconds, GATE_PENDING_PAUSE_SECONDS - self.paused))
+        self.paused += granted
+        self.deadline += granted
+
+
+def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", poll_seconds=20, record_refusals=None, wait=None):
+    wait = wait or ArchiveWait(timeout_seconds)
     require(platform_name in {"ios", "tvos"}, "unsupported UI archive platform")
     workflow = api.repo("actions/workflows/ci-gate.yml")
     require(workflow["path"] == GATE_WORKFLOW and workflow["state"] == "active", "gate workflow is not active at its expected path")
@@ -150,6 +168,13 @@ def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_
         runs = [run for run in runs if run.get("head_sha") == head and
                 (identity["event"] != "pull_request" or not run.get("pull_requests") or
                  any(pr["number"] == identity["pull_request"] for pr in run["pull_requests"]))]
+        newest = max(runs, key=lambda value: value["id"], default=None)
+        # Main-push gate runs queue behind the previous main run (see docs/CI_UI.md). The wait for a
+        # gate that GitHub holds pending is not counted against the deadline, and a cancelled gate never
+        # produces an archive, so that wait ends at once instead of idling for the full deadline.
+        main_push = identity["event"] == "push" and newest is not None
+        held = main_push and newest.get("status") == "pending"
+        superseded = (main_push and newest.get("status") == "completed" and newest.get("conclusion") == "cancelled")
         # Refuse older-base artifacts instead of reusing an arbitrary same-head build.
         # The newest available matching identity is selected; newer in-progress
         # matching runs must finish their build before older runs can be reused.
@@ -197,7 +222,11 @@ def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_
                     "producer_attempt": attempt, "artifact_id": archive["id"], "artifact_name": archive["name"],
                     "build_manifest_sha256": manifest_hash, "pins_sha256": file_hash(ROOT / "scripts/ci-pins.json"),
                     "wait_seconds": time.monotonic() - started, "refusals": refusals}
-        remaining = timeout_seconds - (time.monotonic() - started)
+        if superseded:
+            break
+        if held:
+            wait.pause(poll_seconds)
+        remaining = wait.remaining()
         if remaining <= 0:
             break
         print("Waiting for the matching ci-gate " + platform_name + " archive", flush=True)
@@ -255,9 +284,9 @@ def wait_archive(args):
                            "status": "reused", "verdict": reuse})
                 print(f"Reused trusted UI verdict from run {reuse['source']['run_id']}", flush=True)
             else:
-                deadline = started + args.timeout_minutes * 60
+                wait = ArchiveWait(max(0, started + args.timeout_minutes * 60 - time.monotonic()))
                 for platform_name in ("ios", "tvos"):
-                    selection = select_nightly_archive(api, ctx, platform_name) if nightly else select_archive(api, ctx["identity"], timeout_seconds=max(0, deadline - time.monotonic()),
+                    selection = select_nightly_archive(api, ctx, platform_name) if nightly else select_archive(api, ctx["identity"], wait=wait,
                                                platform_name=platform_name,
                                                record_refusals=lambda rows, name=platform_name: write_json(records / ("archive-refusals-" + name + ".json"), rows))
                     selection["timeout_minutes"] = args.timeout_minutes
