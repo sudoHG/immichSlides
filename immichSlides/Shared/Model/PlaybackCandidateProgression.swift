@@ -258,6 +258,8 @@ final class PlaybackCandidateProgression {
         lookaheadProposal.map { ($0.request.candidateCursor, $0.result.selectedAssetIds.count) }
     }
 
+    var hasInFlightPlanningForTesting: Bool { preparedRefreshTask != nil || !lookaheadTasks.isEmpty }
+
     func markPoolConsumedForTesting(assets: [Asset], candidateCursorIndex: Int) {
         displayedAssetIds = Set(assets.map(\.id))
         self.candidateCursorIndex = min(max(0, candidateCursorIndex), max(0, assets.count - 1))

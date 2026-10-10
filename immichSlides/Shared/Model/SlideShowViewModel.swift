@@ -598,6 +598,8 @@ class SlideShowViewModel: ObservableObject {
         )
     }
 
+    var hasInFlightPreparedPlanningForTesting: Bool { candidateProgression.hasInFlightPlanningForTesting }
+
     var preparedSmartFillNextAssetIdsForTesting: [String]? {
         playbackSession.preparedNext?.scene.assetIds
     }
