@@ -16,27 +16,32 @@ struct PausedPhotoPixelComparison {
     let totalPixelCount: Int
     let differingBounds: CGRect?
     let isComparable: Bool
+    var chromeFrameCount = 0
 
     var summary: String {
         isComparable
-            ? "differing=\(differingPixelCount) compared=\(comparedPixelCount) of \(totalPixelCount) bounds=\(differingBounds.map { "\($0)" } ?? "none")"
+            ? "chromeFrames=\(chromeFrameCount) differing=\(differingPixelCount) compared=\(comparedPixelCount) of \(totalPixelCount) bounds=\(differingBounds.map { "\($0)" } ?? "none")"
             : "screenshots are not comparable (decode failure or different size)"
     }
 }
 
 extension PlaybackHistoryIOSUITests {
-    static let pausedChromeIdentifierPrefixes = ["slideshow.control.", "slideshow.entryHint."]
     // The control bar casts a 50 pt shadow (SlideshowControlBarView), so its pixels reach past its buttons.
     static let pausedChromeMarginPoints: CGFloat = 80
 
+    // Read from one hierarchy dump: querying elements one by one records a test failure when the bar fades out
+    // between the query and the frame read, and a hidden bar is normal here.
     func pausedChromeFrames(app: XCUIApplication) -> [CGRect] {
-        let predicate = NSPredicate(
-            format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",
-            Self.pausedChromeIdentifierPrefixes[0], Self.pausedChromeIdentifierPrefixes[1])
-        let chrome = app.descendants(matching: .any).matching(predicate)
-        // allElementsBoundByIndex records a test failure when nothing matches, and a hidden control bar is normal here.
-        guard chrome.count > 0 else { return [] }
-        return chrome.allElementsBoundByIndex.map(\.frame).filter { !$0.isEmpty }
+        let pattern =
+            #"\{\{(-?[0-9.]+), (-?[0-9.]+)\}, \{(-?[0-9.]+), (-?[0-9.]+)\}\}, identifier: '(slideshow\.(?:control|entryHint)\.[^']*)'"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let dump = app.debugDescription as NSString
+        return expression.matches(in: dump as String, range: NSRange(location: 0, length: dump.length)).compactMap {
+            match in
+            let numbers = (1...4).compactMap { Double(dump.substring(with: match.range(at: $0))) }
+            guard numbers.count == 4, numbers[2] > 0, numbers[3] > 0 else { return nil }
+            return CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3])
+        }
     }
 
     // The chrome is read before and after the screenshot, so a bar that fades in or out during it is still covered.
@@ -97,7 +102,7 @@ extension PlaybackHistoryIOSUITests {
         }
         return PausedPhotoPixelComparison(
             differingPixelCount: differing, comparedPixelCount: compared, totalPixelCount: width * height,
-            differingBounds: bounds, isComparable: true)
+            differingBounds: bounds, isComparable: true, chromeFrameCount: excluded.count)
     }
 
     private static func rgbaPixels(of png: Data) -> (width: Int, height: Int, bytes: [UInt8])? {
