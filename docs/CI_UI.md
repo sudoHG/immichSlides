@@ -151,19 +151,32 @@ behavior needs full coverage. Cross-area selectors are allowed; duplicates withi
 one selector list are rejected. The identifier-to-flow check below then confirms the
 assignment against the identifiers the test actually uses.
 
-This is the reader rollout only: **producers still schedule the complete UI
-population**. Admission stores full populations and the base-map selection;
-publication accepts either the complete full set or the exact trusted selected
+### Scheduling the selection
+
+Pull-request UI runs schedule only the trusted selection. The Linux `ui-archive`
+job repeats admission's selection from base data (`shard_selection` in
+`ci_ui_tests.py`): the base map, classification policy, shard manifest and default
+plans, the `base...head` diff and the tested tree's UI inventory. It publishes
+`ios_shards`/`tvos_shards`, the manifest-ordered shards that contain selected tests,
+and `run_ios`/`run_tvos`. Each matrix takes its platform's list through
+`fromJSON(...)` and keeps its `max-parallel` cap, so an empty shard never takes a
+macOS runner. A platform with no selected test skips its whole matrix. Each shard
+runs only its selected tests (`selected_keys` in the platform's archive selection
+record); `ui-selection.json` in the archive artifact records the mode, lists and
+keys. Pushes, nightly, manual runs, CI-changing PRs, unknown paths and selection
+errors schedule every shard and test. Docs-only PRs schedule none.
+
+Admission binds the same lists from its own base reader. The producer cannot widen
+or narrow its own population: any difference fails the required-job check.
+Publication accepts either the complete full set or the exact trusted selected
 set across every device and shard. A selection error refuses scoped evidence while
 preserving full-population admission. Partial, mixed or extra populations fail.
 Only independently empty selected shards may be unexecuted literal skips.
 Scoped success cannot supply a full post-merge reuse receipt.
-Because GitHub cannot skip one entry of a static matrix, the reader also accepts
-[bound dynamic shard lists](CI_PUBLISHER.md#bound-dynamic-ui-shards): admission
-replaces the producer's `fromJSON(needs.archive.outputs.<platform>_shards)` with the
-trusted non-empty selected shards, or every manifest shard when the run is full,
-and the main Cloud router keeps scoped pull requests on GitHub. Producer selection
-and settings/core/docs timing acceptance follow in a separate producer change.
+GitHub cannot skip one entry of a static matrix, so the reader accepts
+[bound dynamic shard lists](CI_PUBLISHER.md#bound-dynamic-ui-shards). The main Cloud
+router keeps scoped pull requests on GitHub, so a selection never starts a Cloud
+build; full selections keep the [overflow path](XCODE_CLOUD_UI.md).
 
 The nightly full UI tier is the safety net for cross-area regressions. The release
 rule still requires a green, release-eligible nightly for the exact release SHA
@@ -189,7 +202,11 @@ the base map does not know yet. The [nightly full UI](CI_NIGHTLY.md#complete-fix
 runs every locale method. No
 test policy deselection is involved: the methods stay declared in the default plans.
 Adding a test to a nightly-default area is a CI-trusted map change; list every such
-method in the PR for maintainer approval.
+method in the PR for maintainer approval. The settings-family screenshots also capture
+the slideshow frame before opening settings. Its localized content is the control bar,
+which belongs to `localization-settings`. The slideshow host files
+(`SlideShowViewIOS.swift`, `SlideShowViewTV.swift`) define no identifier those tests
+reach, so they select only the playback family's entry-hint screenshots.
 
 ### Identifier-to-flow check
 
@@ -348,8 +365,8 @@ they allow at most four macOS jobs per producer, leaving one of the account's
 five slots for other runs. Giving the larger iOS population three slots produces
 a minimum of four scheduling waves after splitting the visual class.
 Host policy checks require both matrices to retain every partition after a
-failure, their combined capacity to stay at most four, and their shard lists
-to match the manifest.
+failure and their combined capacity to stay at most four. Each shard list is either
+the ordered manifest keys or the bound archive output that admission resolves.
 Nightly retains its independent cap of two. Two independent matrices let iOS
 start without waiting for Cloud selection; only Apple TV waits for that decision.
 Apple TV still executes after an iOS failure when cloud proof is absent.
@@ -401,8 +418,8 @@ Apple TV jobs run sequentially. The matrices can overlap; only Apple TV
 waits for Cloud selection. Shared-runner queueing and archive selection still
 contribute to full-matrix feedback; [PR #247](https://github.com/sudoHG/immichSlides/pull/247) measures that latency and
 its overlap with the gate rather than claiming a 30-minute result from sizing
-alone. Feature-scoped selection and
-overflow capacity are separate changes. [PR #247](https://github.com/sudoHG/immichSlides/pull/247)
+alone. Scoped pull requests schedule fewer, non-empty shards; their
+[selection](#scheduling-the-selection) decides the job count. [PR #247](https://github.com/sudoHG/immichSlides/pull/247)
 includes all 147 methods' measured maximum durations and partition loads.
 
 The archive wait shares the repository's `GITHUB_TOKEN` budget of 1,000 requests per

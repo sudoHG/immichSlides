@@ -25,6 +25,10 @@ jobs:
     outputs:
       app_affected: ${{ steps.select.outputs.app_affected }}
       run_ui: ${{ steps.select.outputs.run_ui }}
+      run_ios: ${{ steps.select.outputs.run_ios }}
+      run_tvos: ${{ steps.select.outputs.run_tvos }}
+      ios_shards: ${{ steps.select.outputs.ios_shards }}
+      tvos_shards: ${{ steps.select.outputs.tvos_shards }}
       ios_artifact_id: ${{ steps.select.outputs.ios_artifact_id }}
       ios_producer_run_id: ${{ steps.select.outputs.ios_producer_run_id }}
       tvos_artifact_id: ${{ steps.select.outputs.tvos_artifact_id }}
@@ -56,6 +60,7 @@ jobs:
             ${{ runner.temp }}/ui-selection/summary.md
             ${{ runner.temp }}/ui-selection/archive-selection*.json
             ${{ runner.temp }}/ui-selection/archive-refusals*.json
+            ${{ runner.temp }}/ui-selection/ui-selection.json
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
           if-no-files-found: error
       - name: Display selection summary
@@ -68,7 +73,7 @@ jobs:
   shards:
     name: ui-${{ matrix.device }}-${{ matrix.shard }}
     needs: archive
-    if: needs.archive.outputs.run_ui == 'true'
+    if: needs.archive.outputs.run_ios == 'true'
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:
@@ -79,7 +84,7 @@ jobs:
       max-parallel: 3
       matrix:
         device: [iphone, ipad]
-        shard: [default, navigation, visual-a, visual-b, visual-c, visual-d]
+        shard: ${{ fromJSON(needs.archive.outputs.ios_shards) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -219,7 +224,7 @@ jobs:
   appletv-shards:
     name: ui-appletv-${{ matrix.shard }}
     needs: [archive, cloud-wait]
-    if: ${{ !cancelled() && needs.archive.result == 'success' && needs.archive.outputs.run_ui == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}
+    if: ${{ !cancelled() && needs.archive.result == 'success' && needs.archive.outputs.run_tvos == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:
@@ -230,7 +235,7 @@ jobs:
       max-parallel: 1
       matrix:
         device: [appletv]
-        shard: [default, navigation, visual-a, visual-b, visual-c, visual-d]
+        shard: ${{ fromJSON(needs.archive.outputs.tvos_shards) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
