@@ -237,7 +237,7 @@ extension AccessLifecycleIOSUITests {
             if !isOnSettingsSurface(app: app) {
                 revealPlaybackControls(app: app)
                 if app.buttons["slideshow.control.settings.button"].waitForExistence(
-                    timeout: TestWait.seconds(.infrastructure(2)))
+                    timeout: TestWait.seconds(.product(2)))
                 {
                     return
                 }
@@ -274,7 +274,7 @@ extension AccessLifecycleIOSUITests {
         }
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(8))),
+                timeout: TestWait.seconds(.product(8))),
             "Must be able to return from settings to the playback page."
         )
     }
@@ -282,7 +282,8 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func openPlaybackSettings(app: XCUIApplication) {
         let toggle = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
-        if toggle.waitForExistence(timeout: TestWait.seconds(.infrastructure(2))) {
+        // This probe decides whether to navigate again; keep its observation window fixed.
+        if toggle.waitForExistence(timeout: TestWait.seconds(.product(2))) {
             return
         }
         let sidebar = app.buttons["ToggleSidebar"]
@@ -299,12 +300,12 @@ extension AccessLifecycleIOSUITests {
         // A full-screen Toolbar swallows coordinate taps; use the element's tap() to activate via accessibility.
         playbackButton.tap()
         if !waitUntil(
-            timeout: TestWait.seconds(.infrastructure(2)),
+            timeout: TestWait.seconds(.product(2)),
             condition: { toggle.exists || app.staticTexts["settings.playback.title"].exists })
         {
             app.cells.element(boundBy: 0).tap()
         }
-        let opened = waitUntil(timeout: TestWait.seconds(.infrastructure(10))) {
+        let opened = waitUntil(timeout: TestWait.seconds(.product(10))) {
             toggle.exists || app.staticTexts["settings.playback.title"].exists
         }
         if !opened {
