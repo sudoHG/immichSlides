@@ -6,12 +6,15 @@ import json
 import os
 import subprocess
 import time
+from datetime import timedelta
 from pathlib import Path
 from urllib.error import URLError
+from urllib.parse import urlencode
 
 from ci_summary import ContractError, decode, observation, require, test_identity, write_summary
 from ci_xcode_cloud import ROUTE_PATH, archive_evidence_run, trusted_artifact
 from ci_xcode_cloud_client import RetryingGitHub, transient
+from ci_xcode_cloud_schedule import timestamp
 import ci_xcode_cloud_groups as groups
 
 FAILURES = (ContractError, KeyError, TypeError, ValueError, OSError, URLError, subprocess.SubprocessError)
@@ -120,7 +123,10 @@ def wait_cloud_group(ctx, api, group, *, sleep=time.sleep, monotonic=time.monoto
         importer = api.repo("actions/workflows/ci-xcode-cloud-import.yml")
         if workflow["state"] != "active" or importer["state"] != "active":
             return "github"
+        cutoff = timestamp(run["run_started_at"]) - timedelta(minutes=5)
+        query = urlencode({"event": "workflow_dispatch", "created": ">=" + cutoff.isoformat(), "per_page": 100})
         deadline, start_deadline = monotonic() + 110 * 60, monotonic() + 5 * 60
+        delay = 60
         while monotonic() < deadline:
             try:
                 fresh = api.repo("actions/runs/" + str(run["id"]))
@@ -140,13 +146,13 @@ def wait_cloud_group(ctx, api, group, *, sleep=time.sleep, monotonic=time.monoto
                     # A route alone never authorizes skipped GitHub tests. A
                     # still-running importer may yet produce complete evidence.
                     if route is not None:
-                        imports = api.pages(f"actions/workflows/{importer['id']}/runs", "workflow_runs", event="workflow_dispatch")
+                        imports = api.repo(f"actions/workflows/{importer['id']}/runs?" + query)["workflow_runs"]
                         matching = [row for row in imports if row.get("display_title") == "xcc-import-" + suffix]
                         if matching and all(row["status"] == "completed" for row in matching):
                             return "github"
                 if evidence_run["run_attempt"] != run["run_attempt"]:
                     return "github"  # Retained evidence is usable only if revalidation already passed.
-                sources = api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", event="workflow_dispatch")
+                sources = api.repo(f"actions/workflows/{workflow['id']}/runs?" + query)["workflow_runs"]
                 matching = [row for row in sources if row.get("display_title") == "xcc-route-" + suffix]
                 if matching:
                     if all(row["status"] == "completed" for row in matching) and route is None:
@@ -165,7 +171,8 @@ def wait_cloud_group(ctx, api, group, *, sleep=time.sleep, monotonic=time.monoto
             except FAILURES as error:
                 if not transient(error):
                     raise
-            sleep(min(30, max(0, deadline - monotonic())))
+            sleep(min(delay, max(0, deadline - monotonic())))
+            delay = min(300, delay * 2)
         return "github"
     except FAILURES:
         return "github"

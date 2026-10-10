@@ -476,7 +476,7 @@ class GroupProducerTests(unittest.TestCase):
         from ci_xcode_cloud_schedule import choose_cloud, month_policy
         now = datetime(2026, 10, 10, tzinfo=timezone.utc)
         running = [{"id": i, "status": "in_progress", "conclusion": None, "labels": ["xcode-27"],
-                    "runner_id": i, "name": "ui-" + ("iphone" if i % 2 else "ipad") + "-scoped-a",
+                    "runner_id": i, "name": "ui-" + ("iphone" if i % 2 else "ipad") + "-default",
                     "started_at": "2026-10-09T23:59:00Z", "steps": [{}]} for i in range(1, 6)]
         queued = [dict(running[i % 5], id=20 + i, status="queued", runner_id=0, steps=[],
                        created_at="2026-10-09T23:00:00Z") for i in range(10)]
@@ -501,9 +501,27 @@ class GroupProducerTests(unittest.TestCase):
             estimate = router.queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"],
                                              base_sha=self.identity["base_sha"], ui_inputs=base_ui)
         read.assert_called_once_with(self.identity["base_sha"], "scripts/ci-ui-durations.json")
-        self.assertEqual(estimate["duration_history"]["ui-iphone-scoped-a"], [1440])
+        self.assertEqual(estimate["duration_history"]["ui-iphone-default"], [1440])
         self.assertTrue(choose_cloud(estimate, {"seconds": 1700, "reservation_minutes": 80}, 0,
                                      month_policy(now, self.registry["billing_anchor"]))["route"])
+        for job in running + queued:
+            job["name"] = job["name"].replace("-default", "-scoped-a")
+        sampled = [dict(running[0], id=300 + i, name="ui-iphone-scoped-" + str(i), status="completed", conclusion="success",
+                        started_at=now.isoformat(), completed_at=(now + timedelta(minutes=minutes)).isoformat())
+                   for i, minutes in enumerate((15.9, 16.3, 17.0, 18.6, 21.9, 26.5, 27.4))]
+        for recent, expected in ((skipped + sampled, 18.6 * 60), (skipped, 120)):
+            with self.subTest(samples=len(recent)):
+                api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
+                    [{"id": 900, "run_attempt": 1}] if path == "actions/runs" else
+                    recent if "/901/" in path else completed if "/902/" in path else running + queued)
+                with patch("ci_publish_git.read_blob", return_value=json.dumps(durations)):
+                    estimate = router.queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"],
+                                                     base_sha=self.identity["base_sha"], ui_inputs=base_ui)
+                self.assertAlmostEqual(estimate["duration_history"]["ui-iphone-scoped-a"][0], expected)
+                self.assertEqual(estimate["duration_history"]["ui-ipad-scoped-a"], [120])
+                if recent == skipped:
+                    self.assertFalse(choose_cloud(estimate, {"seconds": 1700, "reservation_minutes": 80}, 0,
+                                                 month_policy(now, self.registry["billing_anchor"]))["route"])
 
     def test_job_phases_share_the_runner_job_deadline_and_leave_upload_time(self):
         import json
@@ -539,6 +557,7 @@ class GroupProducerTests(unittest.TestCase):
                         reference_id="branch")
         uploader = {"uploader_run_id": 900, "uploader_attempt": 1}
         api, asc = Mock(), Mock()
+        api.request.return_value = {"resources": {"core": {"remaining": 1000}}}
         api.pages.return_value = [self.pointer]
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory, "ci-xcc-route")
@@ -599,7 +618,25 @@ class GroupProducerTests(unittest.TestCase):
         self.assertEqual(router.route_sources(api, {"id": 42}), [])
         cutoff = parse_qs(urlsplit(api.repo.call_args.args[0]).query)["created"][0].removeprefix(">=")
         self.assertLess((datetime.now(timezone.utc) - router.timestamp(cutoff)).total_seconds(), 3 * 3600)
+        peak = [{"id": 900 + i, "run_attempt": 1} for i in range(46)]
+        api.repo.return_value = {"total_count": 46, "workflow_runs": peak}
+        self.assertEqual(router.route_sources(api, {"id": 42}), peak)
+        api.pages.return_value = []
+        self.assertEqual(len(list(router.scheduling_attempts(api, peak))), 46)
+        api.request.return_value["resources"]["core"]["remaining"] = 500
+        with self.assertRaises(ContractError):
+            router.route_sources(api, {"id": 42})
+        api.request.return_value["resources"]["core"]["remaining"] = 2500
+        paginated = [{"id": 900 + i, "run_attempt": 1} for i in range(101)]
+        api.repo.side_effect = [{"total_count": 101, "workflow_runs": paginated[:100]},
+                               {"total_count": 101, "workflow_runs": paginated[100:]}]
+        self.assertEqual(router.route_sources(api, {"id": 42}), paginated)
+        for call in api.repo.call_args_list[-2:]:
+            self.assertEqual(parse_qs(urlsplit(call.args[0]).query)["per_page"], ["100"])
+        api.repo.side_effect = None
         api.pages.return_value = [{"name": "ci-xcc-post-900-" + str(attempt)} for attempt in range(1, 27)]
+        self.assertEqual(len(list(router.scheduling_attempts(api, [{"id": 900, "run_attempt": 26}]))), 26)
+        api.request.return_value["resources"]["core"]["remaining"] = 500
         with self.assertRaises(ContractError):
             list(router.scheduling_attempts(api, [{"id": 900, "run_attempt": 26}]))
 
@@ -610,6 +647,7 @@ class GroupProducerTests(unittest.TestCase):
                       start_deadline="2026-10-10T00:50:00Z")
         self.record["ui_inputs"]["base"]["selection"]["packing"]["estimated_test_seconds"] = {"iphone": 60, "ipad": 120}
         api = Mock()
+        api.request.return_value = {"resources": {"core": {"remaining": 1000}}}
         api.pages.return_value = []
         api.repo.side_effect = [{"id": 42}, self.run]
         with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
@@ -639,6 +677,7 @@ class GroupProducerTests(unittest.TestCase):
         row = {"id": self.route["cloud_run_id"], "attributes": {"createdDate": "2026-10-09T23:59:55Z",
                "sourceCommit": {"commitSha": self.run["head_sha"]}}}
         api = Mock()
+        api.request.return_value = {"resources": {"core": {"remaining": 1000}}}
         api.pages.return_value = []
         api.repo.return_value = {"id": 42}
         for rows in ([row], [row, dict(row, id="22222222-2222-2222-2222-222222222222")]):
@@ -727,6 +766,18 @@ class GroupProducerTests(unittest.TestCase):
         api.repo.reset_mock()
         queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"], history=cached)
         self.assertFalse(any("status=success" in call.args[0] for call in api.repo.call_args_list))
+        names = ("nightly-strict-ipad-immichSlides-iOS-debug-4", "nightly-strict-ipad-immichSlides-iOS-debug-6",
+                 "nightly-strict-iphone-immichSlides-iOS-debug-0", "nightly-strict-tv-immichSlides-tvOS-debug-0",
+                 "live-unit (ios)", "live-unit (tvos)", "live-build (tvos)", "ci-p2-review", "ci-probe", "ci-strict-tracer")
+        running[0]["name"] = names[0]
+        queued = [dict(blocked, id=20 + i, name=name) for i, name in enumerate(names[1:])]
+        api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
+            [{"id": 38088674819, "run_attempt": 1}] if path == "actions/runs" else
+            [archive, unit] if "/902/" in path else running + queued)
+        estimate = queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"], history=cached)
+        self.assertTrue(estimate["can_prove_saturation"])
+        self.assertEqual(estimate["queued_mac_jobs"], len(queued))
+        self.assertLess(estimate["seconds"], result["seconds"])
 
     def test_two_minute_margin_free_capacity_budget_and_confirmed_month_end_rules(self):
         from ci_xcode_cloud_schedule import choose_cloud, month_policy
@@ -812,6 +863,7 @@ class GroupProducerTests(unittest.TestCase):
                       reservation_minutes=1)
         source = {"id": 900, "run_attempt": 1}
         api = Mock()
+        api.request.return_value = {"resources": {"core": {"remaining": 1000}}}
         api.pages.return_value = []
         api.repo.side_effect = [{"id": 42}, self.run]
         with patch.object(router.state, "receipt", side_effect=[marker, None]), \
@@ -928,7 +980,7 @@ class GroupProducerTests(unittest.TestCase):
     def test_group_wait_allows_admission_to_arrive_after_the_linux_selection(self):
         import ci_xcode_cloud_ui as consumer
         self.registry["routing_enabled"] = True
-        run = dict(self.run, status="in_progress")
+        run = dict(self.run, status="in_progress", run_started_at="2026-10-10T00:00:00Z")
         api = Mock(repository="owner/repo")
         api.repo.side_effect = lambda path: run if path.startswith("actions/runs/") else {"id": 42, "state": "active"}
         context = {"identity": self.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 2}}
@@ -941,6 +993,43 @@ class GroupProducerTests(unittest.TestCase):
                 patch.object(self.groups, "trusted_groups", return_value={"schema_version": 2, "groups": {"ios": {}}}):
             self.assertEqual(consumer.wait_cloud_group(context, api, "ios", sleep=sleep, monotonic=lambda: 0), "routed")
         sleep.assert_called_once_with(15)
+
+    def test_group_wait_filters_single_pages_and_backs_off_until_import_proof_arrives(self):
+        from urllib.parse import parse_qs, urlsplit
+        import ci_xcode_cloud_ui as consumer
+        self.registry["routing_enabled"] = True
+        run = dict(self.run, run_attempt=1, status="in_progress", run_started_at="2026-10-10T00:00:00Z")
+        api = Mock(repository="owner/repo")
+        def response(path):
+            if path.startswith("actions/runs/"):
+                return run
+            if "/runs?" in path:
+                return {"workflow_runs": [{"id": 900, "run_attempt": 1, "display_title": "xcc-route-123-1-ios",
+                                          "status": "in_progress"}] if "/42/" in path else []}
+            return {"id": 42 if path.endswith("route.yml") else 43, "state": "active"}
+        api.repo.side_effect = response
+        api.pages.return_value = []
+        context = {"identity": self.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 1}}
+        elapsed, pauses = [0], []
+        def sleep(seconds):
+            pauses.append(seconds)
+            elapsed[0] += seconds
+        with patch.object(consumer, "registration_hint", return_value=True), patch("ci_publish.verify_workflow"), \
+                patch("ci_publish.trusted_admissions", return_value={123: self.record}), \
+                patch("ci_xcode_cloud_group_route.anchor", return_value="ui-selection"), \
+                patch.object(consumer, "archive_evidence_run", return_value=run), \
+                patch.object(consumer, "trusted_artifact", return_value=(self.route, 99)), \
+                patch.object(self.groups, "trusted_groups", side_effect=[ContractError("import pending")] * 5 + [{}]):
+            self.assertEqual(consumer.wait_cloud_group(context, api, "ios", sleep=sleep, monotonic=lambda: elapsed[0]), "routed")
+        self.assertEqual(pauses, [60, 120, 240, 300, 300])
+        self.assertEqual(api.pages.call_count, 5)
+        self.assertTrue(all(call.args[0] == "actions/runs/900/artifacts" for call in api.pages.call_args_list))
+        queries = [parse_qs(urlsplit(call.args[0]).query) for call in api.repo.call_args_list if "/runs?" in call.args[0]]
+        self.assertEqual(len(queries), 10)
+        self.assertTrue(all(query["per_page"] == ["100"] and query["event"] == ["workflow_dispatch"]
+                            and query["created"] == [">=2026-10-09T23:55:00+00:00"] for query in queries))
+        queried = [call.args[0] for call in api.repo.call_args_list if "/runs?" in call.args[0]]
+        self.assertTrue(any("/42/" in path for path in queried) and any("/43/" in path for path in queried))
 
     def test_router_waits_for_the_publishers_pointer_before_releasing_the_group(self):
         import ci_xcode_cloud_group_route as router
@@ -1045,6 +1134,7 @@ class GroupProducerTests(unittest.TestCase):
         prepared = dict(self.route, decision="pending", head_sha=self.run["head_sha"], reason="cloud-estimated-faster")
         uploader = {"uploader_run_id": 900, "uploader_attempt": 1}
         api, asc = Mock(), Mock()
+        api.request.return_value = {"resources": {"core": {"remaining": 1000}}}
         api.pages.return_value = [self.pointer]
         pr = {"user": self.record["cloud_pr_author"], "base": {"sha": self.identity["base_sha"]}}
         for error in (router.SupersededProducer("head changed"), RuntimeError("unexpected pre-POST error")):
@@ -1114,6 +1204,7 @@ class GroupProducerTests(unittest.TestCase):
         uploader = {"uploader_run_id": 900, "uploader_attempt": 1}
         marker = dict(prepared, posted_at="2026-10-10T00:00:00Z", **uploader)
         api, asc = Mock(), Mock()
+        api.request.return_value = {"resources": {"core": {"remaining": 1000}}}
         api.repo.return_value = {"id": 42}
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory, "ci-xcc-route")

@@ -14,6 +14,7 @@ CAP_MINUTES = 45 * 60
 RESERVE_MINUTES = 120
 BUILD_SECONDS = 13 * 60
 IMPORT_SECONDS = 3 * 60
+MIN_JOB_SECONDS = 120
 OVERHEAD_SECONDS = {"iphone": 9 * 60, "ipad": 9 * 60, "appletv": 4 * 60}
 
 
@@ -74,14 +75,16 @@ def github_estimate(jobs, now, test_seconds, *, history, matrix_cap=3, gate=None
         if not (own or "xcode-27" in labels or any(label.startswith("macos-") for label in labels)):
             unknown += int(not labels and job["status"] in {"queued", "in_progress"})
             continue
-        samples = history.get(job["name"], [])
-        require(samples and len(samples) <= 100, "queue job has no bounded duration history")
+        # Unknown macOS workloads may only shorten the GitHub forecast. Refusing
+        # them would disable overflow precisely when nightly fills the queue.
+        samples = history.get(job["name"], []) or [MIN_JOB_SECONDS]
+        require(len(samples) <= 100, "queue job has unbounded duration history")
         ordered = sorted(positive(value) for value in samples)
         duration = ordered[max(0, math.ceil(len(ordered) * .9) - 1)]
         if job["status"] == "in_progress" and type(job.get("runner_id")) is int and job["runner_id"] > 0 and job.get("steps"):
             elapsed = (now - timestamp(job["started_at"])).total_seconds()
             require(elapsed >= 0, "queue execution starts in the future")
-            remaining = max(120, duration - elapsed)
+            remaining = max(MIN_JOB_SECONDS, duration - elapsed)
             running.append(remaining)
             if own:
                 completed[own] = remaining

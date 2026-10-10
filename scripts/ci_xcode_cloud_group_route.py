@@ -10,6 +10,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from statistics import median
 from urllib.error import URLError
 from urllib.parse import urlencode
 
@@ -18,21 +19,23 @@ from ci_summary import ContractError, require
 from ci_xcode_cloud import ROUTE_PATH, archive_evidence_run, trusted_artifact, uuid
 from ci_xcode_cloud_route import (SupersededProducer, action_minutes, build_receipt, current_producer,
                                   refresh_producer, remaining_seconds, timestamp, write_phase)
-from ci_xcode_cloud_schedule import choose_cloud, cloud_estimate, github_estimate, month_policy
+from ci_xcode_cloud_schedule import MIN_JOB_SECONDS, choose_cloud, cloud_estimate, github_estimate, month_policy
 import ci_xcode_cloud_groups as groups
 import ci_xcode_cloud_state as state
 
 FAILURES = (ContractError, KeyError, TypeError, ValueError, OSError, URLError, subprocess.SubprocessError)
 RECONCILIATION_HOURS = 2
-MAX_RECENT_ROUTES = 25
-MIN_SCAN_RATE_REMAINING = 500
+SCAN_RATE_RESERVE = 200
+# Two artifact-list reads, authentication/download of both receipts in both checks,
+# and a matching admission/producer lookup. Extra attempts consume this again.
+SCAN_REQUESTS_PER_ATTEMPT = 16
 CLOCK_SKEW_SECONDS = 10
 
 
 def ui_job_estimates(base_sha, ui_inputs):
     """Other PRs' UI populations are unknown; model each base-owned shard/family."""
     from ci_publish_git import read_blob
-    from ci_ui_packing import DURATIONS_PATH, MAX_JOB_SECONDS, OVERHEAD_SECONDS, parse_durations
+    from ci_ui_packing import DURATIONS_PATH, OVERHEAD_SECONDS, parse_durations
     require(base_sha and ui_inputs, "UI queue estimation requires trusted base inputs")
     durations = parse_durations(read_blob(base_sha, DURATIONS_PATH))
     manifest = ui_inputs["manifest"]
@@ -49,8 +52,6 @@ def ui_job_estimates(base_sha, ui_inputs):
         if values:
             estimates.update(values)
             estimates["ui-" + device] = max(values.values())
-            # Scoped packing never admits jobs above its own estimated limit.
-            estimates["ui-" + device + "-scoped"] = min(MAX_JOB_SECONDS, sum(loads.values()) + OVERHEAD_SECONDS[device])
     return estimates
 
 
@@ -89,29 +90,31 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
                 for job in api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"):
                     if job["id"] in seen or job["conclusion"] != "success" or not job.get("runner_id"):
                         continue
-                    if re.match(r"^ui-(iphone|ipad|appletv)-", job["name"]):
-                        continue  # Sparse successful UI history is not the queue duration model.
                     seen.add(job["id"])
                     labels = job.get("labels", [])
                     if not ("xcode-27" in labels or any(label.startswith("macos-") for label in labels)):
                         continue
                     duration = (timestamp(job["completed_at"]) - timestamp(job["started_at"])).total_seconds()
                     require(duration > 0, "GitHub history has reversed execution timing")
-                    history.setdefault(job["name"], []).append(duration)
-                    family = re.sub(r"^(ui-(?:iphone|ipad|appletv))-.*$", r"\1", job["name"])
-                    if family != job["name"]:
-                        history.setdefault(family, []).append(duration)
+                    scoped = re.match(r"^(ui-(iphone|ipad|appletv)-scoped)-", job["name"])
+                    if scoped:
+                        history.setdefault(scoped[1], []).append(duration)
+                    elif not re.match(r"^ui-(iphone|ipad|appletv)-", job["name"]):
+                        history.setdefault(job["name"], []).append(duration)
     else:
         history = {name: list(seconds) for name, seconds in history.items()}
     history = {name: seconds[-100:] for name, seconds in history.items()}
     ui_jobs = [job for job in jobs if job["status"] != "completed" and re.match(r"^ui-(iphone|ipad|appletv)-", job["name"])]
-    estimates = ui_job_estimates(base_sha, ui_inputs) if ui_jobs else {}
+    static_jobs = [job for job in ui_jobs if not re.match(r"^ui-(iphone|ipad|appletv)-scoped-", job["name"])]
+    estimates = ui_job_estimates(base_sha, ui_inputs) if static_jobs else {}
     for job in jobs:
         if job in ui_jobs:
             family = re.sub(r"^(ui-(?:iphone|ipad|appletv))-.*$", r"\1", job["name"])
-            key = family + "-scoped" if job["name"].startswith(family + "-scoped-") else job["name"]
-            require(key in estimates or family in estimates, "UI queue family has no trusted base duration estimate")
-            history[job["name"]] = [estimates.get(key, estimates[family])]
+            if job["name"].startswith(family + "-scoped-"):
+                history[job["name"]] = [median(history.get(family + "-scoped", []) or [MIN_JOB_SECONDS])]
+            else:
+                require(job["name"] in estimates or family in estimates, "UI queue family has no trusted base duration estimate")
+                history[job["name"]] = [estimates.get(job["name"], estimates[family])]
     seconds = {device: selection["packing"]["estimated_job_seconds"][device] for device in groups.GROUPS[group]}
     gates = api.repo("actions/workflows/ci-gate.yml/runs?event=pull_request&head_sha=" + head_sha + "&per_page=5")["workflow_runs"]
     gates = [run for run in gates if run["head_sha"] == head_sha and run["path"] == ".github/workflows/ci-gate.yml"]
@@ -120,8 +123,8 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
     own_jobs = api.pages(f"actions/runs/{gate['id']}/attempts/{gate['run_attempt']}/jobs", "jobs")
     result = github_estimate(jobs, now, seconds, history=history,
         matrix_cap={device: 2 if device == "iphone" else 1 for device in seconds}, gate=dict(gate, jobs=own_jobs), platform=group)
-    return dict(result, duration_history=history, duration_model="base-ui-weights-and-non-ui-job-p90",
-                ui_duration_base_sha=base_sha if ui_jobs else None)
+    return dict(result, duration_history=history, duration_model="base-static-ui-scoped-median-non-ui-p90-or-floor",
+                ui_duration_base_sha=base_sha if static_jobs else None)
 
 
 def inventories(asc, registration):
@@ -249,15 +252,26 @@ def unknown_starts(api, registration, inventory, *, current_uploader=None, histo
 
 def route_sources(api, workflow):
     remaining = api.request("/rate_limit")["resources"]["core"]["remaining"]
-    require(type(remaining) is int and remaining >= MIN_SCAN_RATE_REMAINING,
+    require(type(remaining) is int and remaining > SCAN_RATE_RESERVE,
             "GitHub rate budget is too low for Cloud reconciliation")
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=RECONCILIATION_HOURS)).isoformat()
-    query = urlencode({"event": "workflow_dispatch", "created": ">=" + cutoff, "per_page": 100})
-    response = api.repo(f"actions/workflows/{workflow['id']}/runs?" + query)
-    count, rows = response["total_count"], response["workflow_runs"]
-    require(type(count) is int and 0 <= count <= MAX_RECENT_ROUTES and isinstance(rows, list) and len(rows) == count,
-            "recent Cloud reconciliation run list is excessive or incomplete")
-    return rows
+    rows, count = [], None
+    for page in range(1, 11):
+        query = urlencode({"event": "workflow_dispatch", "created": ">=" + cutoff, "per_page": 100, "page": page})
+        response = api.repo(f"actions/workflows/{workflow['id']}/runs?" + query)
+        total, batch = response["total_count"], response["workflow_runs"]
+        require(type(total) is int and 0 <= total < 1000 and (count is None or count == total),
+                "recent Cloud reconciliation run list is truncated or changed during pagination")
+        count = total
+        require(max(1, math.ceil(count / 100)) + SCAN_REQUESTS_PER_ATTEMPT * count + SCAN_RATE_RESERVE <= remaining,
+                "GitHub rate budget cannot cover recent Cloud reconciliation runs")
+        require(isinstance(batch, list) and len(batch) == min(100, max(0, count - len(rows))),
+                "recent Cloud reconciliation run page is incomplete")
+        rows.extend(batch)
+        if len(rows) == count:
+            require(len({positive(row["id"]) for row in rows}) == count, "recent Cloud reconciliation run list has duplicates")
+            return rows
+    require(False, "recent Cloud reconciliation pagination is incomplete")
 
 
 def route_history(api):
@@ -273,6 +287,10 @@ def visibility_delay(registration):
 
 def scheduling_attempts(api, sources, *, current_uploader=None):
     """Run lists expose only the latest attempt; retained markers bind older ones."""
+    if not sources:
+        return
+    remaining = api.request("/rate_limit")["resources"]["core"]["remaining"]
+    require(type(remaining) is int, "GitHub reconciliation rate budget is unavailable")
     count = 0
     for source in sources:
         latest = positive(source["run_attempt"])
@@ -289,7 +307,8 @@ def scheduling_attempts(api, sources, *, current_uploader=None):
             if current_uploader == (source["id"], attempt):
                 continue
             count += 1
-            require(count <= MAX_RECENT_ROUTES, "recent Cloud scheduling attempts exceed the scan budget")
+            require(SCAN_REQUESTS_PER_ATTEMPT * count + SCAN_RATE_RESERVE <= remaining,
+                    "recent Cloud scheduling attempts exceed the remaining rate budget")
             yield dict(source, run_attempt=attempt), artifacts
 
 

@@ -124,18 +124,23 @@ platform is never awaited. Main pushes retain explicit nightly deferral, nightly
 runs all default-plan tests on GitHub, and forks/external authors never route.
 
 `ci_xcode_cloud_schedule.py` simulates five repository-visible macOS slots from
-live assigned jobs and ready queued jobs. UI duration estimates use the admitted
+live assigned jobs and ready queued jobs. Static UI duration estimates use the admitted
 base's `scripts/ci-ui-durations.json`, default-plan population and static shard
 assignments, with the same device startup overhead as trusted packing. Static
-jobs use their shard estimate; scoped jobs use the device's total base estimate,
-capped by packing's 28-minute estimated job limit. Unknown shard suffixes use
+jobs use their shard estimate; scoped jobs use the median of at most 100 recent
+successful assigned scoped jobs for their device family (iPhone, iPad or Apple TV).
+Without scoped samples, the estimate uses the 120-second lower bound instead of
+packing's 28-minute cap, so uncertainty shortens the GitHub forecast. Unknown static shard suffixes use
 the device family's largest static shard. These are predictions for another
-PR's unknown selection, not observed runtimes. Skipped jobs and unexpanded UI
+PR's unknown selection; scoped medians reflect earlier jobs, not this PR's runtime. Skipped jobs and unexpanded UI
 template names cannot remove this model. Non-UI jobs use successful job duration
 p90s from at most three recent runs of each of `ci-gate`, `ci-ui`, `ci-nightly`
 and `ci-toolchain`; publisher/privacy runs cannot displace these samples.
+Any macOS job without duration samples, including nightly, live, review, probe
+and tracer jobs, also uses the 120-second lower bound. This can underestimate
+GitHub waiting and cannot increase Cloud spending through missing history.
 Per-device UI caps are two iPhone, one iPad and one Apple TV. A queue job without
-known labels/duration estimates or fewer than five assigned macOS jobs keeps GitHub.
+known labels or fewer than five assigned macOS jobs keeps GitHub.
 Account-wide free slots and exact FIFO order are not exposed; predictions state
 this limit. The newest same-head `ci-gate` run supplies the archive dependency:
 `build-<platform>` is ready at zero if successful, or at its simulated completion
@@ -155,16 +160,28 @@ measured wall times.
 
 The start job holds the shared account lock and refreshes head, pointer, queue,
 inventory and budget immediately before its single POST. Reconciliation scans
-only route runs created in the last two hours, once per preparation. It requires
-at least 500 remaining core requests before that scan and refuses more than 25
-runs or an incomplete result, including GitHub's silently truncated filtered
-lists. Retained scheduling artifacts identify older attempts after a router
-rerun; their exact attempts remain authenticated, with at most 25 attempts across
-the scan. Excluding the current uploader never excludes its older markers.
+only route runs created in the last two hours, once per preparation. Its count
+limit comes from the measured remaining core rate budget: run-list pages
+(at most 100 runs each), 16 estimated requests per scheduling attempt and a
+200-request reserve must fit. The per-attempt estimate covers artifact lists,
+both receipts' authentication/download in both checks and admission/producer
+lookups. At 1,000 remaining requests, the observed peak of 46 runs fits; a lower
+budget, incomplete or changing pages, duplicate runs, or the filtered-list
+1,000-result ceiling selects GitHub. Retained scheduling artifacts identify
+older attempts after a router rerun; their exact attempts remain authenticated
+and each consumes the same allowance against a freshly measured budget.
+Excluding the current uploader never excludes its older markers.
 The start refresh reuses authenticated history and duration samples under
 the same lock. These bounds limit scan pressure on the shared 1,000-request/hour
-repository token; concurrent consumers can still exhaust it, which selects
-GitHub. A complete refreshed ASC workflow inventory remains the source of active
+repository token; exceptional artifact pagination and concurrent consumers can
+still exhaust it, which selects GitHub. A persisted, authenticated reconciliation
+ledger is the long-term way to avoid scan cost growing with window traffic
+(Refs #297); this slice does not introduce one.
+The Linux group waiter reads just one page each of route/import runs, filtered
+to creation after the producer attempt start minus five minutes. Its polling
+delay doubles from 60 seconds to a maximum of 300 seconds. Missing final import
+proof still selects GitHub within the existing 110-minute deadline.
+A complete refreshed ASC workflow inventory remains the source of active
 compute evidence. Missing history, pagination or API limits select GitHub. The policy cap is
 2,700 compute minutes, reduced when the confirmed account allowance is smaller.
 Missing confirmed `cap_minutes`, a valid Apple `billing_anchor`, an explicit
