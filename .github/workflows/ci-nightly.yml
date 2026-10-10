@@ -433,7 +433,7 @@ jobs:
 
 
   ui-aggregate:
-    if: always() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal }}
     needs: [plan, ui-archive, ui-shards]
     name: nightly-ui-aggregate
     runs-on: xcode-27

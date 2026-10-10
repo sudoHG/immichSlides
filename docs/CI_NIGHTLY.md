@@ -134,10 +134,10 @@ and `fail-fast: false`. Minimum waves round the actual shard count up after divi
 by two: the current nine shards require five start-order waves, without
 reserved runner slots. Existing invocation, export and job timeouts remain bounded.
 Each shard publishes timing and its bound summary even after a test failure when
-the sensitive scan succeeds. The always-run UI aggregate checks each shard verdict,
-compiled population and executed/default-plan union, retaining approved skips and
-both retry attempts. Missing shards or samples, duplicate/foreign records, missing
-timing and failed/cancelled matrix jobs remain red.
+the sensitive scan succeeds. When the workflow has not been cancelled, the UI
+aggregate checks each shard verdict, compiled population and executed/default-plan
+union, retaining approved skips and both retry attempts. Missing shards or samples,
+duplicate/foreign records, missing timing and failed/cancelled matrix jobs remain red.
 
 `nightly-ui.json` and `nightly-ui.md` record every shard verdict, scheduled/executed/
 deselected/missing counts, wall seconds from UI planning through aggregation, shard
@@ -170,8 +170,9 @@ any suite total. Valid failed exports still record compilation and official coun
 Nonzero exits remain failures even with passing XCTest counts. Missing/malformed exports
 fail. Timeouts/interruptions preserve completed outcomes; unfinished cases are `not-run`.
 
-The always-run aggregate downloads only this attempt's compact records, including
-P2 package hash bindings written before upload. It carries the bindings into its
+When the workflow has not been cancelled, the aggregate downloads only this
+attempt's compact records, including P2 package hash bindings written before upload.
+It carries the bindings into its
 aggregate and rollup metadata for review validation after media expiry. It validates
 every expected shard's identity, run, hashes and declared population, then checks
 compilation per entry and compares executed identities with scheduling. A missing
