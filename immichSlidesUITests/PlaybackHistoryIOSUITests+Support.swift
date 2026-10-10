@@ -342,7 +342,8 @@ extension PlaybackHistoryIOSUITests {
             comparisonAttachment.name = "\(evidenceEventPrefix)-photo-pixels-sample-\(sample)"
             comparisonAttachment.lifetime = .keepAlways
             add(comparisonAttachment)
-            XCTAssertTrue(pixelComparison.isComparable, "Paused screenshots must decode at the same size")
+            XCTAssertNil(
+                pixelComparison.failureReason, "Paused screenshots must be comparable: \(pixelComparison.summary)")
             XCTAssertEqual(
                 pixelComparison.differingPixelCount, 0,
                 "After pausing, the photo pixels outside the control bar and entry hint must stay frozen: \(pixelComparison.summary)"
