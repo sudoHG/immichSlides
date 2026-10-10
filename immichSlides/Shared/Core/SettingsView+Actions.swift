@@ -32,6 +32,7 @@ extension SettingsView {
     }
 
     func selectDefaultPlaybackMode(_ mode: DefaultPlaybackMode) {
+        // Configure an empty filter before making filtered playback the default.
         if mode == .filtered && filterVM.selection.isEmpty {
             promptState.shouldSwitchToFilteredAfterConfig = true
             promptState.shouldShowFilterModeBlockedAlert = true
