@@ -52,8 +52,8 @@ def dynamic_ui_workflow(*, split_ios=False):
                 f"        device: [{devices}]\n        shard: ${{{{ fromJSON(needs.archive.outputs.{platform}_shards) }}}}\n"
                 "    steps:\n      - run: python3 scripts/ci_ui_tests.py run --device '${{ matrix.device }}' "
                 "--shard '${{ matrix.shard }}'\n" + upload)
-    ios = (matrix_job("iphone-shards", "ui-${{ matrix.device }}-${{ matrix.shard }}", "iphone", "iphone")
-           + matrix_job("ipad-shards", "ui-${{ matrix.device }}-${{ matrix.shard }}", "ipad", "ipad") if split_ios else
+    ios = (matrix_job("iphone-shards", "ui-iphone-${{ matrix.shard }}", "iphone", "iphone")
+           + matrix_job("ipad-shards", "ui-ipad-${{ matrix.shard }}", "ipad", "ipad") if split_ios else
            matrix_job("shards", "ui-${{ matrix.device }}-${{ matrix.shard }}", "iphone, ipad", "ios"))
     return (FIXTURE_UI.split("  shards:")[0] + ios
             + matrix_job("appletv-shards", "ui-appletv-${{ matrix.shard }}", "appletv", "tvos"))
@@ -1799,6 +1799,15 @@ class PublisherTests(unittest.TestCase):
             bind_ui_shards(dynamic_ui_workflow(), ui_shard_lists(admitted, identity, classification))
         bound = bind_ui_shards(workflow, ui_shard_lists(admitted, identity, classification))
         names, _, _, metadata = workflow_contract(bound, run, metadata=True)
+        from ci_ui_reuse import expand_skipped_ui_matrix
+        tv_only = bind_ui_shards(workflow, {"iphone": [], "ipad": [], "appletv": ["scoped-a"]})
+        tv_jobs = [{"name": "ui-archive", "status": "completed", "conclusion": "success"},
+                   {"name": "ui-appletv-scoped-a", "status": "completed", "conclusion": "success"}]
+        collapsed_ios = [{"name": "ui-" + device + "-${{ matrix.shard }}", "status": "completed",
+                          "conclusion": "skipped", "runner_id": None, "steps": []} for device in ("iphone", "ipad")]
+        self.assertEqual(expand_skipped_ui_matrix(tv_only, run, tv_jobs + collapsed_ios), tv_jobs)
+        with self.assertRaises(ContractError):
+            expand_skipped_ui_matrix(tv_only, run, tv_jobs + [dict(row, runner_id=7, steps=[{}]) for row in collapsed_ios])
         jobs, summaries = [], []
         for name in names:
             meta = metadata[name]

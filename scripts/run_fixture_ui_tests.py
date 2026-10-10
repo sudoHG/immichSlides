@@ -347,7 +347,8 @@ def write_json(path, payload):
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, mode="measure", listed_only_retry=False):
+def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, mode="measure", listed_only_retry=False,
+                   scoped_plan_sha256=None):
     """Bind static evidence before simulator, service, archive or Xcode preflight."""
     platform = DEVICES[device]
     plan_path = root / ("immichSlides-" + ("tvOS" if platform == "tvos" else "iOS") + ".xctestplan")
@@ -369,6 +370,10 @@ def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, 
               "policies": {"test-policy": hashlib.sha256(policy_path.read_bytes()).hexdigest()}}
     if shard_manifest:
         hashes["manifests"]["ui-shards"] = hashlib.sha256(shard_manifest.read_bytes()).hexdigest()
+    if scoped_plan_sha256:
+        require(isinstance(scoped_plan_sha256, str) and re.fullmatch(r"[0-9a-f]{64}", scoped_plan_sha256) is not None,
+                "invalid scoped UI plan hash")
+        hashes["manifests"]["ui-scoped-plan"] = scoped_plan_sha256
     registry, revision = None, None
     if listed_only_retry:
         revision = registry_revision(root, os.environ)
@@ -397,6 +402,7 @@ def main(argv=None):
     parser.add_argument("--failure-screenshots", action="store_true", help="Export public fixture failure attachments before scanning")
     parser.add_argument("--shard")
     parser.add_argument("--shard-manifest", type=Path)
+    parser.add_argument("--scoped-plan-sha256")
     parser.add_argument("--min-free-gib", type=int, default=80,
                         help="Disk guard; thresholds below 80 require a GitHub-hosted runner")
     args = parser.parse_args(argv)
@@ -420,7 +426,8 @@ def main(argv=None):
         identity = run_identity(os.environ, ci=bool(os.environ.get("GITHUB_ACTIONS")))
         workflow, fork = source_metadata(identity, os.environ, None)
         inputs_record = fixture_inputs(ROOT, args.device, args.only_testing, shard=args.shard,
-                                       shard_manifest=args.shard_manifest, mode=args.mode, listed_only_retry=args.listed_only_retry)
+                                       shard_manifest=args.shard_manifest, mode=args.mode, listed_only_retry=args.listed_only_retry,
+                                       scoped_plan_sha256=args.scoped_plan_sha256)
         declared = inputs_record["population"]["declared"]
         policy, deselections = inputs_record["policy"], inputs_record["deselections"]
         registry, revision = inputs_record["registry"], inputs_record["registry_revision"]

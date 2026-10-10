@@ -341,8 +341,8 @@ through reuse or nightly deferral.
 ### Packed scoped UI protocol
 
 The reader recognizes `--pack-scoped-ui` only as one literal flag on the admitted
-workflow's `ci_ui_tests.py wait-archive` command. The current producer has no flag;
-the reader must land before a separate producer PR activates it. Historical and
+workflow's `ci_ui_tests.py wait-archive` command. The current producer activates
+this flag after the reader landed separately. Historical and
 unflagged producers retain the existing full-or-exact-selection compatibility.
 
 Admission reads the area map, synchronized app platform filters and
@@ -353,7 +353,7 @@ and project file come only from the base; an approved candidate workflow may
 enable the packing protocol for its own run. The deterministic plan
 contains exact per-device shard identities, frozen duration hash and predicted
 costs, with a canonical SHA-256 over all these fields. The
-[selection and packing rules](CI_UI.md#prepared-platform-selection-and-capacity-packing)
+[selection and packing rules](CI_UI.md#platform-selection-and-capacity-packing)
 define its bounded scheduling behavior. Full default-plan partitions remain v2.
 
 For an activated scoped PR the job union must be exactly the nonempty packed

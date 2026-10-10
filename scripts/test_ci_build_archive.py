@@ -25,6 +25,126 @@ from ci_summary import ContractError
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_packed_reproduction_refuses_another_tested_tree_before_building(self):
+        from types import SimpleNamespace
+        selection = self.root / 'ui-selection.json'
+        selection.write_text(json.dumps({'identity': {'tree_sha': 'e' * 40}}))
+        args = SimpleNamespace(manifest_revision=None, output_dir=self.root / 'reproduction',
+            selection_path=selection, device='iphone', shard='scoped-a', destination='unused', wait_factor=2)
+        with patch.object(ui, 'workspace_preflight'), patch.object(ui, 'selected_shard'), \
+                patch.object(ui.subprocess, 'check_output', side_effect=['a' * 40, 'f' * 40]), \
+                patch.object(ui.subprocess, 'run') as build, \
+                self.assertRaisesRegex(ContractError, 'selection.*tested tree'):
+            ui.reproduce(args)
+        build.assert_not_called()
+
+    def test_functional_producer_plan_and_serialized_fixture_population_equal_the_base_reader(self):
+        from ci_population import ui_identities
+        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES, ui_inputs
+        from ci_summary import identity_key
+        from run_fixture_ui_tests import fixture_inputs
+        root = Path(ui.__file__).resolve().parent.parent
+        sources = {path.relative_to(root).as_posix(): path.read_text()
+                   for path in (root / 'immichSlidesUITests').rglob('*.swift')}
+        populations = {'ui-' + platform: ui_identities(sources, platform) for platform in ('ios', 'tvos')}
+        modules = {name: (root / 'scripts' / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        paths = ['scripts/ci-ui-shards.json', 'immichSlides-iOS.xctestplan', 'immichSlides-tvOS.xctestplan']
+        listing = [{'path': path, 'type': 'blob', 'mode': '100644'} for path in paths]
+        members = sorted(path.relative_to(root).as_posix() for path in (root / 'immichSlides').rglob('*') if path.is_file())
+        workflow = (root / ui.WORKFLOW).read_text()
+        cases = ('immichSlides/iOS/Core/SettingsViewIOS.swift', 'immichSlides/tvOS/Core/AlbumFilterViewTV.swift',
+                 'immichSlides/Shared/Core/SettingsView+Actions.swift', 'immichSlides/Shared/Model/PlaybackSessionEngine.swift')
+        for changed in cases:
+            with self.subTest(path=changed):
+                inputs = {'paths': [changed], 'event': 'pull_request', 'build_target_paths': members,
+                          'area_map': (root / 'scripts/ci-ui-areas.json').read_text(),
+                          'classification_policy': json.loads((root / 'scripts/ci-classification.json').read_text()),
+                          'map_revision': self.identity['base_sha'], 'map_sha256': 'd' * 64,
+                          'project': (root / 'immichSlides.xcodeproj/project.pbxproj').read_text(),
+                          'expected_skips': json.loads((root / 'scripts/ci-test-policy.json').read_text())['expected_skips'],
+                          'durations': (root / 'scripts/ci-ui-durations.json').read_text()}
+                with patch.object(ui, 'ROOT', root), \
+                        patch.object(ui, 'git_blob', side_effect=lambda revision, path: (root / path).read_bytes()), \
+                        patch.object(ui.subprocess, 'check_output', side_effect=lambda command, **kwargs:
+                                     changed + '\n' if command[1] == 'diff' else '\n'.join(members)), \
+                        patch('ci_publish_git.read_blob', side_effect=lambda revision, path: (root / path).read_text()):
+                    produced = ui.planned_ui_selection(self.identity, pack_scoped_ui=True)
+                    admitted = ui_inputs(self.identity['base_sha'], listing, populations=populations,
+                        base_populations=populations, workflow=workflow,
+                        run={'path': ui.WORKFLOW, 'event': 'pull_request', 'id': 100, 'run_attempt': 1},
+                        modules=modules, selection_inputs=inputs)
+                self.assertEqual(produced['packing'], admitted['selection']['packing'])
+                recorded = json.loads(json.dumps({'packing': produced['packing']}))
+                for device, shards in produced['packing']['shards'].items():
+                    platform = ui.DEVICES[device]
+                    plan = json.loads((root / ('immichSlides-' + ('iOS' if platform == 'ios' else 'tvOS') + '.xctestplan')).read_text())
+                    for name, expected in shards.items():
+                        selected = ui.selected_shard(populations['ui-' + platform], plan, admitted['manifest'],
+                                                     device, name, recorded)
+                        evidence = fixture_inputs(root, device, ['immichSlidesUITests/' + entry['key'] for entry in selected],
+                            shard=name, shard_manifest=root / 'scripts/ci-ui-shards.json',
+                            scoped_plan_sha256=produced['packing']['sha256'])
+                        self.assertEqual({identity_key(entry) for entry in evidence['population']['declared']},
+                                         {identity_key(entry) for entry in expected})
+                        self.assertEqual(evidence['hashes']['manifests']['ui-scoped-plan'], produced['packing']['sha256'])
+
+    def test_functional_archive_selection_waits_only_for_platforms_with_selected_jobs(self):
+        from types import SimpleNamespace
+        from ci_ui_packing import pack_scoped_selection
+        from ci_summary import test_identity
+        for selected_platform in ('ios', 'tvos'):
+            with self.subTest(platform=selected_platform):
+                devices = {'iphone': 'ios', 'ipad': 'ios', 'appletv': 'tvos'}
+                populations = {device: ([test_identity('ui', 'SmokeUITests/testLaunch', platform=platform, device=device)]
+                                       if platform == selected_platform else []) for device, platform in devices.items()}
+                packing = pack_scoped_selection(populations, {'schema_version': 1, 'revision': 'test-v1',
+                    'default_seconds': 120, 'seconds': {device: {} for device in devices}})
+                lists = {device: list(shards) for device, shards in packing['shards'].items()}
+                planned = {'mode': 'scoped', 'packing': packing, 'device_shards': lists,
+                           'platform_shards': {platform: (['scoped-a'] if platform == selected_platform else [])
+                                               for platform in ('ios', 'tvos')},
+                           'keys': {platform: (['SmokeUITests/testLaunch'] if platform == selected_platform else [])
+                                    for platform in ('ios', 'tvos')}}
+                context = {'identity': self.identity, 'source': {'repository': 'owner/repo', 'event': 'pull_request',
+                           'workflow_path': ui.WORKFLOW, 'fork_originated': False, 'ci_changing': None},
+                           'run': {'id': '100', 'attempt': 1, 'tier': 'ui-infrastructure', 'job': 'ui-archive', 'shard': None}}
+                with patch.object(ui, 'context', return_value=context), patch.object(ui, 'workspace_preflight'), \
+                        patch.object(ui, 'app_affected', return_value=True), patch.object(ui, 'output'), \
+                        patch.object(ui, 'planned_ui_selection', return_value=planned, create=True), \
+                        patch.object(ui, 'RateLimitWaitingGitHub'), patch.dict(ui.os.environ, {'GH_TOKEN': 'test-placeholder'}), \
+                        patch.object(ui, 'select_archive', return_value={'artifact_id': 9, 'producer_run_id': '123',
+                                                                       'producer_attempt': 1}) as select:
+                    directory = self.root / ('functional-' + selected_platform)
+                    self.assertEqual(ui.wait_archive(SimpleNamespace(output_dir=directory, timeout_minutes=1,
+                                                                    pack_scoped_ui=True)), 0)
+                self.assertEqual([call.kwargs['platform_name'] for call in select.call_args_list], [selected_platform])
+                summary = json.loads((directory / 'summary.json').read_text())
+                self.assertEqual(summary['hashes']['manifests']['ui-scoped-plan'], packing['sha256'])
+
+    def test_packed_shard_selects_exact_device_methods_and_refuses_corrupt_plan_evidence(self):
+        from ci_ui_packing import canonical_hash, pack_scoped_selection
+        from ci_summary import test_identity
+        populations = {'ui-'+platform: [test_identity('ui', key, platform=platform) for key in
+                       ('SmokeUITests/testLaunch', 'VisualUITests/testScreenshot')] for platform in ('ios', 'tvos')}
+        selected = {device: [test_identity('ui', 'SmokeUITests/testLaunch', platform=platform, device=device)]
+                    for device, platform in {'iphone': 'ios', 'ipad': 'ios', 'appletv': 'tvos'}.items()}
+        packing = pack_scoped_selection(selected, {'schema_version': 1, 'revision': 'test-v1', 'default_seconds': 120,
+                                                  'seconds': {device: {} for device in selected}})
+        manifest = {'schema_version': 2, 'revision': 'full-v2', 'default_shard': 'default', 'shards': {'default': []}}
+        plan = {'testTargets': [{'target': {'name': 'immichSlidesUITests'}}]}
+        self.assertEqual(ui.selected_shard(populations['ui-ios'], plan, manifest, 'iphone', 'scoped-a',
+                                          {'packing': packing}), selected['iphone'])
+        for mutate in (lambda value: value.update(sha256='f'*64),
+                       lambda value: value['shards']['iphone']['scoped-a'][0]['dimensions'].update(device='ipad'),
+                       lambda value: value['shards']['iphone']['scoped-a'].append(value['shards']['iphone']['scoped-a'][0]),
+                       lambda value: value['shards']['iphone']['scoped-a'][0].update(key='DeletedUITests/testGone')):
+            bad = copy.deepcopy(packing)
+            mutate(bad)
+            if bad['sha256'] != 'f'*64:
+                bad['sha256'] = canonical_hash({key: value for key, value in bad.items() if key != 'sha256'})
+            with self.subTest(mutate=mutate), self.assertRaises(ContractError):
+                ui.selected_shard(populations['ui-ios'], plan, manifest, 'iphone', 'scoped-a', {'packing': bad})
+
     def test_nightly_ui_requires_its_exact_attempt_archive_and_never_reuses_a_pr_verdict(self):
         identity = {"schema_version": 1, "repository": "owner/repo", "event": "schedule", "ref": "refs/heads/main",
                     "commit_sha": "a" * 40, "tree_sha": "d" * 40}
