@@ -516,6 +516,16 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                 or any(type(capacity) is not int or capacity <= 0 for capacity in capacities)
                 or sum(capacities) > 4):
             flag("jobs", "ui-capacity", "Independent UI matrices need positive literal capacities totaling at most four")
+        if packed:
+            from ci_ui_packing import DEVICE_SLOTS
+            for device, expected in DEVICE_SLOTS.items():
+                job_id = device + "-shards"
+                job = jobs.get(job_id)
+                strategy = job.get("strategy") if isinstance(job, dict) else None
+                capacity = strategy.get("max-parallel") if isinstance(strategy, dict) else None
+                if type(capacity) is not int or capacity != expected:
+                    flag(f"jobs.{job_id}.strategy.max-parallel", "ui-capacity",
+                         f"Packed {device} jobs need the literal packing capacity {expected}")
     if path == LIVE_WORKFLOW and "change" not in jobs:
         flag("jobs", "nightly-change-gate", "The nightly needs its change check job")
     elif path == LIVE_WORKFLOW and (not isinstance(jobs["change"], dict) or jobs["change"].get("outputs") != {"run_nightly": NIGHTLY_CHANGE_OUTPUT}):

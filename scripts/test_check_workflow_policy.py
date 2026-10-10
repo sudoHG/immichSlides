@@ -311,6 +311,9 @@ final class LocaleUITests: XCTestCase {
         self.assertNotIn('ui-capacity', self.rules(split, path))
         split['jobs']['ipad-shards']['strategy']['max-parallel'] = 2
         self.assertIn('ui-capacity', self.rules(split, path))
+        split['jobs']['iphone-shards']['strategy']['max-parallel'] = 1
+        # The total is still four, but serial iPhone jobs violate the packing budget.
+        self.assertIn('ui-capacity', self.rules(split, path))
 
     def test_packed_ui_requires_independent_device_outputs_and_reports_string_matrices(self):
         from ci_publish_git import DYNAMIC_UI_SHARDS

@@ -29,10 +29,14 @@ record for deferred UI. Main build, unit and host checks retain their own verdic
 Pull-request and nightly population selection is independent of this main-only
 contract. Reader changes precede producer activation in a separate PR.
 
-The [Xcode Cloud Apple TV overflow path](XCODE_CLOUD_UI.md) runs the same fixture
-methods under macOS congestion. Only a main router decision plus independently
-validated API results and the exact-head app check can suppress Apple TV shards.
-iPhone and iPad remain on GitHub; failed or absent cloud proof runs Apple TV here.
+Until #283 adds scoped Cloud routing, all pull-request UI runs stay on GitHub,
+including core, unknown and CI-changing PRs. Activating functional packing makes
+every app-affecting PR scoped, so the existing
+[Xcode Cloud Apple TV overflow path](XCODE_CLOUD_UI.md) cannot route those PRs.
+Nightly and main-push scheduling are unaffected. Historical full selections retain
+the overflow protocol: only a main router decision plus independently validated
+API results and the exact-head app check can suppress Apple TV shards. Failed or
+absent cloud proof runs Apple TV here.
 Cloud waiting runs in a separate Linux job, so iPhone/iPad start when archive
 selection finishes. That job publishes its own operational summary and gates only
 Apple TV using `!cancelled()`. Cloud selection depends only on the archive, so
@@ -125,7 +129,7 @@ Review the helpers a test calls,
 not just the screen named by its method, when checking these relationships.
 
 The applicable platform's functional smoke set explicitly names
-`immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton`
+`ServerConfigFormIOSUITests/testIOSFirstBootServerFieldsKeyboardAppear`
 (iPhone/iPad) and
 `ServerConfigFormTVOSUITests/testTVOSFirstBootCoreElementsAndDisabledSave`
 (Apple TV). For ordinary app-affecting PRs the trusted selection is the union of
@@ -180,8 +184,10 @@ Only independently empty selected shards may be unexecuted literal skips.
 Scoped success cannot supply a full post-merge reuse receipt.
 GitHub cannot skip one entry of a static matrix, so the reader accepts
 [bound dynamic shard lists](CI_PUBLISHER.md#bound-dynamic-ui-shards). The main Cloud
-router keeps scoped pull requests on GitHub, so a selection never starts a Cloud
-build; full selections keep the [overflow path](XCODE_CLOUD_UI.md).
+router keeps scoped pull requests on GitHub. Every app-affecting PR now has a
+scoped functional selection, so all PR UI stays on GitHub until #283 extends
+[Cloud routing](XCODE_CLOUD_UI.md) to scoped selections. Nightly and main pushes
+are unaffected; historical full selections retain the overflow protocol.
 
 The nightly full UI tier is the safety net for cross-area regressions. The release
 rule still requires a green, release-eligible nightly for the exact release SHA
@@ -228,8 +234,10 @@ its method count. Candidate counts must fit the existing 28-minute estimated job
 budget; impossible packing or classification fails the activated PR admission.
 No method is dropped, duplicated, replaced or borrowed from another device.
 
-The planner accounts for two iPhone slots, one iPad slot and one Apple TV slot,
-with nine minutes of fixed overhead per iOS job and four per Apple TV job. It
+The planner accounts for two iPhone slots, one iPad slot and one Apple TV slot;
+host policy requires each packed device job's literal `max-parallel` to equal
+that device's `DEVICE_SLOTS` capacity. It allows nine minutes of fixed overhead
+per iOS job and four per Apple TV job. It
 chooses the fewest jobs when predicted UI time fits 25 minutes, leaving five for
 the gate build. Otherwise it minimizes predicted UI wall time, then runner
 minutes, within the same caps. Predictions do **not** establish a 30-minute pass.

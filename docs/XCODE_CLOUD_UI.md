@@ -116,9 +116,13 @@ is accepted: the global start lock, one in-flight rule and 45-hour cap bound thi
 risk once builds are visible. Test acceptance still verifies the chosen run's
 exact head, population and newest app check independently.
 
-Routing requires trusted `app_affected is True`, a base selection that is not
-[scoped](CI_PUBLISHER.md#bound-dynamic-ui-shards) (otherwise `scoped-ui-selection`
-keeps Apple TV on GitHub), a same-repository current PR,
+Until #283 adds scoped Cloud support, pull-request UI runs on GitHub only.
+Functional packing makes every app-affecting PR
+[scoped](CI_PUBLISHER.md#bound-dynamic-ui-shards), including core, unknown and
+CI-changing PRs, and the current router returns `scoped-ui-selection` for them.
+Nightly and main-push scheduling are unaffected. The historical full-selection
+overflow protocol below requires trusted `app_affected is True`, a base selection
+that is not scoped, a same-repository current PR,
 matching head/merge tree and the admitted exact population. It also requires at
 least **five running macOS jobs** and one macOS job queued for **120 seconds**,
 measured across repository attempts using `xcode-27` and `macos-*` runner labels.
@@ -167,9 +171,11 @@ archive failure or cancellation cannot start new macOS work. Linux cloud-wait
 immediately selects GitHub when the archive conclusion is not success, preserving
 the publisher's neutral `archive_blocked_ui` path.
 Apple TV runs the shards admission bound for the run: every manifest shard
-(`default`, `navigation`, `visual-a` through `visual-d`) when full, or only the
-non-empty selected shards on a scoped pull request, which never routes to Cloud.
-A full run skips them when the current selection validates Cloud;
+(`default`, `navigation`, `visual-a` through `visual-d`) for historical full
+selections, or the packed functional shards for current app-affecting PRs. Until
+#283 lands, every PR UI run stays on GitHub, so none uses Cloud overflow; nightly
+and main-push scheduling are unaffected. A historical full run skips its TV shards
+when the current selection validates Cloud;
 the publisher repeats the full trust check independently of the producer output.
 
 Route/import run names include the producer ID and evidence attempt. The Linux
