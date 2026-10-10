@@ -624,7 +624,7 @@ def nightly_attempt(api, run, attempt, artifacts):
 
 def read_run(api, run, admissions, previous=None):
     """Only bounded JSON data is read; artifact files are never extracted or executed."""
-    from ci_publish import producer_evidence, cancelled_unstarted_gate, archive_blocked_ui
+    from ci_publish import producer_evidence, cancelled_unstarted_run, archive_blocked_ui
     from ci_publish_git import evaluate_records
     from ci_health import first_execution_metrics, observation_metrics, run_metrics, unexpected_skips
     entry = report_base(run, api.repository)
@@ -634,9 +634,10 @@ def read_run(api, run, admissions, previous=None):
         entry["first_execution_health"] = saved_first
         if run["status"] == "completed" and run.get("conclusion") == "cancelled":
             try:
-                if cancelled_unstarted_gate(api, run) and on_main(run["head_sha"]):
+                if cancelled_unstarted_run(api, run) and on_main(run["head_sha"]):
                     entry.update(status="not-run", pushed_sha=run["head_sha"],
-                                 not_evaluated_reason="gate cancelled before any job executed")
+                                 not_evaluated_reason=("gate" if run["path"] == PRODUCER_PATHS[0] else "UI run")
+                                 + " cancelled before any job executed")
             except RateLimitLow:
                 raise
             except (ContractError, KeyError, ValueError, TypeError):

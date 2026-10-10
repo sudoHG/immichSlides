@@ -48,6 +48,56 @@ keep the ordinary fail-closed path. This reader does not change producer schedul
 The reporter retains its separate rule that every cancelled main push is
 ineligible for notification; see [CI reporting](CI_REPORT.md).
 
+The same predicate, with the same proof, applies to a first-attempt main `ci-ui`
+run replaced while pending, checked against the `ci-ui` workflow and its own newer
+main-push run. Its UI status is then pending with "Not evaluated: UI run cancelled
+before any job executed" instead of a failure.
+
+### Main-push coalescing
+
+Main history is protected and linear, so a newer pushed SHA contains every older
+one. Piling up one `ci-gate` and one `ci-ui` run per merge only spends the five
+scarce hosted macOS slots on SHAs nobody will release. Both workflows therefore use
+one shared concurrency group for first-attempt main pushes, with
+`cancel-in-progress: false` (`scripts/check_workflow_policy.py` enforces the exact
+expressions):
+
+```yaml
+group: ci-gate-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.run_attempt == 1 && 'main') || github.run_id }}
+cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+```
+
+- **What may be superseded:** only a run that is still pending in the group, meaning
+  no job has started. GitHub allows one running and one pending run per group; a
+  newer push replaces the pending one, which ends `cancelled` with no jobs. A run
+  counts as running as soon as any job starts, even while its macOS jobs wait.
+- **What is never cancelled:** a run that has started. It finishes, so its evidence
+  is complete rather than a partial run killed mid-build. The newest main SHA is
+  never replaced by an older one and always gets its full evaluation.
+- **Why not also cancel in-progress runs:** a rolling burst of merges would then
+  cancel every SHA before it finished, and nothing would be evaluated. Pending-only
+  replacement keeps one finished evaluation per drain. The cost is that one
+  started run per workflow keeps its queued macOS jobs until it ends.
+- **Reruns and other events:** a rerun has `run_attempt` above 1, so it keys on its
+  own run ID, cannot displace the newest pending run and cannot be replaced by a
+  later push. Pull requests keep per-PR cancellation. Nightly runs, which stay
+  uncancellable, and the trusted publisher, importer and router workflows keep their
+  groups.
+- **Publication:** a replaced run is not evaluated; the publisher keeps that SHA
+  pending with a link and the reporter records `not-run` without a notification.
+  The post-merge notification covers evaluated SHAs only.
+- **ci-ui:** its group coalesces separately from the gate's, so a replaced UI run
+  needs no archive. The final SHA's UI run starts waiting for the gate archive at
+  push time while the gate may still queue behind an older run. While the same-head
+  gate run is `pending`, the archive selection deadline is paused for at most
+  60 minutes (the Linux job timeout is 185 minutes to fit that pause plus the
+  120-minute deadline), and the wait ends immediately when the same-head gate run
+  was cancelled.
+- **Release:** the maintainer tags `v*` on main. Tag the newest SHA whose gate and
+  UI runs both evaluated. For a SHA that was replaced, use "Re-run all jobs" on its
+  cancelled `ci-gate` and `ci-ui` runs; the rerun is attempt 2 in its own group, so
+  later pushes cannot cancel it.
+
 For the same SHA, a first-attempt main UI run is also **not evaluated** only when
 its complete jobs listing shows a failed `ui-archive` and every admitted UI shard
 skipped without a runner or steps. The sole archive summary must bind to the run,

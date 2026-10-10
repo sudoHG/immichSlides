@@ -523,6 +523,24 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual("failed", rejected["status"])
         self.assertTrue(ci_report.issue_eligible(rejected))
 
+    def test_replaced_pending_main_ui_run_is_not_run_and_never_notifies(self):
+        from test_ci_publish import RUN, UnstartedGateAPI
+        ui_path = ".github/workflows/ci-ui.yml"
+        run = dict(RUN, id=201, workflow_id=43, path=ui_path, event="push", head_branch="main",
+                   conclusion="cancelled", created_at="2026-10-09T02:57:13Z")
+        api = UnstartedGateAPI()
+        api.workflow = {"id": 43, "path": ui_path, "state": "active"}
+        api.newer = [dict(run, id=202, head_sha="e" * 40, status="in_progress", conclusion=None)]
+        api.jobs, api.total_count = [], 0
+        with patch("ci_report.on_main", return_value=True):
+            report = read_run(api, run, {})
+        self.assertEqual("not-run", report["status"])
+        self.assertIn("UI run cancelled before any job executed", report["not_evaluated_reason"])
+        self.assertFalse(ci_report.issue_eligible(report))
+        with patch("ci_report.ensure_label", side_effect=AssertionError("replaced run cannot notify")):
+            self.assertEqual(([], {}), synchronize_issues(api, [report], {"entries": []},
+                                                        post_merge_since="2026-10-09T00:00:00Z"))
+
     def test_unstarted_main_gate_is_not_run_and_all_cancellations_remain_ineligible(self):
         from test_ci_publish import RUN, UNSTARTED_GATE_JOBS, UnstartedGateAPI
         run = dict(RUN, event="push", head_branch="main", conclusion="cancelled",

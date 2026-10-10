@@ -269,6 +269,23 @@ class WorkflowPolicyTests(unittest.TestCase):
         document["jobs"]["check"]["runs-on"] = "ubuntu-24.04"
         return document
 
+    def test_main_push_producers_coalesce_by_replacing_only_pending_runs(self):
+        root = Path(__file__).resolve().parent.parent
+        for path in (".github/workflows/ci-gate.yml", ".github/workflows/ci-ui.yml"):
+            document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
+            self.assertNotIn("concurrency-queue", self.rules(document, path))
+            for mutation in (
+                    lambda doc: doc["concurrency"].update({"cancel-in-progress": True}),
+                    lambda doc: doc["concurrency"].update({"cancel-in-progress": False}),
+                    lambda doc: doc["concurrency"].update(group=doc["concurrency"]["group"].replace("run_attempt == 1", "true")),
+                    lambda doc: doc["concurrency"].update(group="shared"),
+                    lambda doc: doc.pop("concurrency"),
+                    lambda doc: next(iter(doc["jobs"].values())).update(concurrency={"group": "x", "cancel-in-progress": True})):
+                changed = copy.deepcopy(document)
+                mutation(changed)
+                with self.subTest(path=path):
+                    self.assertIn("concurrency-queue", self.rules(changed, path))
+
     def test_remote_actions_and_reusable_workflows_require_full_commit_pins(self):
         for uses in ["actions/checkout@v4", "owner/repo@main", "owner/repo@abc123",
                      "owner/repo/.github/workflows/test.yml@v1", "${{ inputs.action }}",

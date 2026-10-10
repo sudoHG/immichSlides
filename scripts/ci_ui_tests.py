@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-ui.yml"
 GATE_WORKFLOW = ".github/workflows/ci-gate.yml"
 NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
+GATE_PENDING_PAUSE_SECONDS = 60 * 60  # keeps the job inside its 185-minute timeout
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 
 
@@ -135,7 +136,7 @@ def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_
     head = identity.get("head_sha", identity.get("pushed_sha"))
     head_repository = (api.repo(f"pulls/{identity['pull_request']}")["head"]["repo"]["full_name"]
                        if identity["event"] == "pull_request" else api.repository)
-    started, refusals = time.monotonic(), []
+    started, refusals, paused = time.monotonic(), [], 0.0
     pins = decode((ROOT / "scripts/ci-pins.json").read_text())
     def refuse(run, outcome, **details):
         refusal = {"run_id": run["id"], "head_sha": head, "consumer_identity": identity,
@@ -150,6 +151,13 @@ def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_
         runs = [run for run in runs if run.get("head_sha") == head and
                 (identity["event"] != "pull_request" or not run.get("pull_requests") or
                  any(pr["number"] == identity["pull_request"] for pr in run["pull_requests"]))]
+        newest = max(runs, key=lambda value: value["id"], default=None)
+        # Main-push gate runs queue behind the previous main run (see docs/CI_UI.md). The wait for a
+        # gate that GitHub holds pending is not counted against the deadline, and a cancelled gate never
+        # produces an archive, so that wait ends at once instead of idling for the full deadline.
+        main_push = identity["event"] == "push" and newest is not None
+        held = main_push and newest.get("status") == "pending"
+        superseded = (main_push and newest.get("status") == "completed" and newest.get("conclusion") == "cancelled")
         # Refuse older-base artifacts instead of reusing an arbitrary same-head build.
         # The newest available matching identity is selected; newer in-progress
         # matching runs must finish their build before older runs can be reused.
@@ -197,6 +205,11 @@ def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_
                     "producer_attempt": attempt, "artifact_id": archive["id"], "artifact_name": archive["name"],
                     "build_manifest_sha256": manifest_hash, "pins_sha256": file_hash(ROOT / "scripts/ci-pins.json"),
                     "wait_seconds": time.monotonic() - started, "refusals": refusals}
+        if superseded:
+            break
+        if held and paused < GATE_PENDING_PAUSE_SECONDS:
+            pause = min(poll_seconds, GATE_PENDING_PAUSE_SECONDS - paused)
+            paused, started = paused + pause, started + pause
         remaining = timeout_seconds - (time.monotonic() - started)
         if remaining <= 0:
             break

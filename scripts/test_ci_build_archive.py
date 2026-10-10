@@ -1,4 +1,5 @@
 """Regression checks for workspace preflight, artifact selection and extraction safety."""
+import contextlib
 import copy
 import io
 import json
@@ -353,6 +354,35 @@ class BuildArchiveTests(unittest.TestCase):
                     with patch.object(API, "pages", side_effect=pages), patch.object(ui, "build_job_attempt", side_effect=jobs), \
                             patch.object(ui, "json_member", return_value=other), self.assertRaisesRegex(ContractError, "did not succeed"):
                         ui.select_archive(API(), self.identity, timeout_seconds=1)
+
+    def test_main_push_archive_wait_ends_when_the_gate_is_superseded_and_pauses_while_it_is_held(self):
+        head = "d" * 40
+        identity = {"schema_version": 1, "event": "push", "repository": "owner/repo",
+                    "ref": "refs/heads/main", "pushed_sha": head, "tree_sha": "c" * 40}
+        def gate(status, conclusion=None):
+            return {"id": 300, "workflow_id": 42, "path": ui.GATE_WORKFLOW, "event": "push", "head_sha": head,
+                    "head_branch": "main", "run_attempt": 1, "status": status, "conclusion": conclusion,
+                    "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}}
+        def wait(run):
+            clock = [1000.0]
+            class API:
+                repository = "owner/repo"
+                def repo(self, path):
+                    return {"id": 42, "path": ui.GATE_WORKFLOW, "state": "active"}
+                def pages(self, path, collection, **filters):
+                    return [run] if collection == "workflow_runs" else []
+            def sleep(seconds):
+                clock[0] += seconds
+            with patch.object(ui.time, "monotonic", side_effect=lambda: clock[0]), patch.object(ui.time, "sleep", side_effect=sleep), \
+                    patch.object(ui, "build_job_attempt", return_value=None), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    self.assertRaisesRegex(ContractError, "archive-unavailable"):
+                ui.select_archive(API(), identity, timeout_seconds=600, poll_seconds=20)
+            return clock[0] - 1000.0
+        self.assertEqual(0, wait(gate("completed", "cancelled")))
+        self.assertAlmostEqual(600, wait(gate("in_progress")), delta=20)
+        waited = wait(gate("pending"))
+        self.assertAlmostEqual(ui.GATE_PENDING_PAUSE_SECONDS + 600, waited, delta=20)
 
     def test_ui_reproduction_checks_revision_pins_and_exact_destination_before_build(self):
         pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())

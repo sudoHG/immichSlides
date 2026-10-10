@@ -124,16 +124,17 @@ def complete_attempt_jobs(api, run):
     raise ContractError("attempt jobs pagination limit reached")
 
 
-def cancelled_unstarted_gate(api, run):
-    """Recognize an unexecuted first-attempt main gate superseded by a push."""
+def cancelled_unstarted_run(api, run):
+    """Recognize an unexecuted first-attempt main gate or UI run superseded by a push."""
     try:
-        if (run["path"] != PRODUCERS["ci-pr-gate"] or run["event"] != "push"
+        workflow_file = {path: path.rpartition("/")[2] for path in PRODUCERS.values()}.get(run["path"])
+        if (workflow_file is None or run["event"] != "push"
                 or run["head_branch"] != "main" or run["head_repository"]["full_name"] != api.repository
                 or run["repository"]["full_name"] != api.repository
                 or run["status"] != "completed" or run["conclusion"] != "cancelled"
                 or type(run["run_attempt"]) is not int or run["run_attempt"] != 1):
             return False
-        workflow = api.repo("actions/workflows/ci-gate.yml")
+        workflow = api.repo("actions/workflows/" + workflow_file)
         verify_workflow(run, workflow, api.repository)
         for job in complete_attempt_jobs(api, run):
             require(job["status"] == "completed" and job["conclusion"] in {"cancelled", "skipped"}
@@ -572,7 +573,7 @@ def archive_blocked_ui(api, record, run, jobs, summaries):
         candidates = api.pages(f"actions/workflows/{positive(gate_workflow['id'])}/runs", "workflow_runs",
                                head_sha=run["head_sha"], branch="main", event="push")
         gate = authoritative_run(candidates, run["head_sha"], gate_workflow, api.repository)
-        return gate is not None and cancelled_unstarted_gate(api, gate)
+        return gate is not None and cancelled_unstarted_run(api, gate)
     except (ContractError, KeyError, ValueError, TypeError, zipfile.BadZipFile):
         return False
 
@@ -604,9 +605,10 @@ def compute(api, pr_number, pushed, login):
                           any(p["number"] == pr_number for p in run["pull_requests"]))
                           and run["head_repository"]["full_name"] == pr["head"]["repo"]["full_name"]]
         runs[context] = authoritative_run(candidates, head, workflow, api.repository)
-    not_evaluated = {context: {"state": "pending", "description": "Not evaluated: gate cancelled before any job executed",
+    not_evaluated = {context: {"state": "pending",
+        "description": "Not evaluated: " + ("gate" if context == "ci-pr-gate" else "UI run") + " cancelled before any job executed",
         "target_url": f"https://github.com/{api.repository}/actions/runs/{run['id']}"}
-        for context, run in runs.items() if not pr and run and cancelled_unstarted_gate(api, run)}
+        for context, run in runs.items() if not pr and run and cancelled_unstarted_run(api, run)}
     admissions = trusted_admissions(api, [run["id"] for context, run in runs.items() if run and context not in not_evaluated])
     approved = approved_status(api, pr, login) if pr else False
     records = [admissions[run["id"]] for run in runs.values() if run and run["id"] in admissions]

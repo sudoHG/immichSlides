@@ -201,8 +201,9 @@ the recent discovery window are refreshed once to record their creation time and
 conclusion. Aggregate reporting remains separate from verified test failures.
 Post-merge notifications remain for human triage.
 
-Cancelled first-attempt main gate runs whose complete GitHub jobs list proves
-that no runner or step executed, and which have a newer main-push gate run with
+Cancelled first-attempt main gate or UI runs (a pending main run replaced by a newer
+push, see [coalescing](CI_PUBLISHER.md#main-push-coalescing)) whose complete GitHub jobs list proves
+that no runner or step executed, and which have a newer main-push run of the same workflow with
 a greater run ID and a different head SHA, are retained as `not-run`, with an empty test
 population and an explicit not-evaluated reason. They do not open post-merge
 failure notifications or count as passes. This label does not change the rule

@@ -124,7 +124,9 @@ one-command shard reproduction by Git revision, listed-only retry, artifact
 retention and the trusted identical-tree post-merge reuse rule.
 
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
-run on pull requests and pushes to `main`. Separate hosted runners execute the
+run on pull requests and pushes to `main`. Pushes to `main` replace a still-pending
+`ci-gate` or `ci-ui` run instead of queueing behind it, so superseded SHAs are
+"not evaluated" ([rules](docs/CI_PUBLISHER.md#main-push-coalescing)). Separate hosted runners execute the
 [complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
 Every `ci-gate` run first classifies changes on Linux with the base reader before
 scheduling builds. On app-unaffected pull requests, both build/unit platform paths
