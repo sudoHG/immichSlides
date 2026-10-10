@@ -130,7 +130,7 @@ extension AccessLifecycleTVOSUITests {
         initial: [String: Any]
     ) throws -> [String: Any] {
         let isInitiallyAutoPlayEnabled = initial["autoPlayEnabled"] as? Bool ?? true
-        let initialInterval = initial["intervalSeconds"] as? Int ?? 5
+        let initialInterval = initial["intervalSeconds"] as? Int ?? Int(TestWait.seconds(.product(5)))
         let isInitiallyExifEnabled = initial["showExif"] as? Bool ?? true
         let initialMode = initial["displayMode"] as? String ?? "smartFill"
         let intervalTarget = initialInterval == 10 ? 15 : 10
@@ -317,7 +317,7 @@ extension AccessLifecycleTVOSUITests {
                 "Must be playing before the mid-interval timing."
             )
         }
-        RunLoop.current.run(until: Date().addingTimeInterval(interval / 2))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(interval / 2))))
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: playPauseButton, maximumPresses: 3, message: "At midpoint, focus must reach play/pause.")
         XCUIRemote.shared.press(.select)
@@ -387,7 +387,7 @@ extension AccessLifecycleTVOSUITests {
         let latest = interval + AccessLifecycleContract.continueCaptureSlackSeconds
         var samples: [(elapsed: TimeInterval, mark: String)] = []
         var earlyMark = ""
-        var earlyElapsed: TimeInterval = 0
+        var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
         while Date().timeIntervalSince(continueAt) <= latest {
             let elapsed = Date().timeIntervalSince(continueAt)
             let png = app.screenshot().pngRepresentation

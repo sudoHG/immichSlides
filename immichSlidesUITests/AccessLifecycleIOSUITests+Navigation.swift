@@ -30,13 +30,13 @@ extension AccessLifecycleIOSUITests {
     func readSceneProgress(app: XCUIApplication) throws -> (value: Double, raw: String, source: String) {
         revealPlaybackControls(app: app)
         let contractProbe = app.descendants(matching: .any)["slideshow.scenePresentation.contract.summary"]
-        if contractProbe.waitForExistence(timeout: 4),
+        if contractProbe.waitForExistence(timeout: TestWait.seconds(.product(4))),
             let parsed = progressValue(in: contractProbe.label)
         {
             return (parsed.value, parsed.raw, "slideshow.scenePresentation.contract.summary")
         }
         let motionSummary = app.descendants(matching: .any)["slideshow.smartfill.motionFrame.summary"]
-        if motionSummary.waitForExistence(timeout: 2),
+        if motionSummary.waitForExistence(timeout: TestWait.seconds(.product(2))),
             let parsed = progressValue(in: motionSummary.label)
         {
             return (parsed.value, parsed.raw, "slideshow.smartfill.motionFrame.summary")
@@ -86,7 +86,7 @@ extension AccessLifecycleIOSUITests {
         var png = Data()
         var identity = StrictE2EPhotoIdentity.classify(png: Data())
         var mark = ""
-        let deadline = Date().addingTimeInterval(4)
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
         while Date() < deadline {
             png = try captureRequiredPNG(app: app, name: name)
             identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
@@ -94,7 +94,7 @@ extension AccessLifecycleIOSUITests {
             if identity.status == .match, !mark.isEmpty {
                 return (mark, png)
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.4))))
         }
         if mark == "BLACK" || mark == "BLANK" || mark == "UNRECOGNIZABLE" || mark.isEmpty {
             XCTFail(
@@ -199,7 +199,7 @@ extension AccessLifecycleIOSUITests {
     func enterPin(app: XCUIApplication, pin: String) {
         for digit in pin {
             let key = app.buttons["pinEntry.digit.\(digit).button"]
-            XCTAssertTrue(key.waitForExistence(timeout: 3), "PIN digit key does not exist.")
+            XCTAssertTrue(key.waitForExistence(timeout: TestWait.seconds(.product(3))), "PIN digit key does not exist.")
             tapElement(key)
         }
     }
@@ -207,8 +207,8 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func tapSettingsPinInput(app: XCUIApplication, id: String) {
         let pinInputButton = app.buttons[id]
-        let ready = waitUntil(timeout: 8) {
-            self.dismissSystemSavePromptIfPresent(app: app, timeout: 0)
+        let ready = waitUntil(timeout: TestWait.seconds(.product(8))) {
+            self.dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
             return pinInputButton.exists && pinInputButton.isHittable
                 && !self.isSystemSavePasswordPromptVisible(app: app)
         }
@@ -220,7 +220,9 @@ extension AccessLifecycleIOSUITests {
     func openSettingsFromSlideshow(app: XCUIApplication) {
         revealPlaybackControls(app: app)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 15), "The playback page must provide a settings entry.")
+        XCTAssertTrue(
+            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
+            "The playback page must provide a settings entry.")
         tapElement(settingsButton)
     }
 
@@ -234,19 +236,21 @@ extension AccessLifecycleIOSUITests {
             }
             if !isOnSettingsSurface(app: app) {
                 revealPlaybackControls(app: app)
-                if app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 2) {
+                if app.buttons["slideshow.control.settings.button"].waitForExistence(
+                    timeout: TestWait.seconds(.product(2)))
+                {
                     return
                 }
             }
             if app.buttons["pinEntry.close.button"].exists {
                 tapElement(app.buttons["pinEntry.close.button"])
-                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+                RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
                 continue
             }
             let globalBack = app.buttons["global.back.button"]
             if globalBack.exists && globalBack.isHittable {
                 tapElement(globalBack)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
                 continue
             }
             let backButton =
@@ -260,7 +264,7 @@ extension AccessLifecycleIOSUITests {
                 }
             if let backButton {
                 tapElement(backButton)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
                 continue
             }
             app.swipeDown()
@@ -269,7 +273,8 @@ extension AccessLifecycleIOSUITests {
             revealPlaybackControls(app: app)
         }
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 8),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.product(8))),
             "Must be able to return from settings to the playback page."
         )
     }
@@ -277,7 +282,8 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func openPlaybackSettings(app: XCUIApplication) {
         let toggle = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
-        if toggle.waitForExistence(timeout: 2) {
+        // This probe decides whether to navigate again; keep its observation window fixed.
+        if toggle.waitForExistence(timeout: TestWait.seconds(.product(2))) {
             return
         }
         let sidebar = app.buttons["ToggleSidebar"]
@@ -285,16 +291,21 @@ extension AccessLifecycleIOSUITests {
         if sidebar.exists && ["显示边栏", "Show Sidebar"].contains(sidebar.label) {
             tapElement(sidebar)
         }
-        _ = app.descendants(matching: .any)["settings.item.playback"].waitForExistence(timeout: 3)
+        _ = app.descendants(matching: .any)["settings.item.playback"].waitForExistence(
+            timeout: TestWait.seconds(.product(3)))
         let playbackButton = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackButton.waitForExistence(timeout: 8), "The settings list must provide the playback settings entry")
+            playbackButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            "The settings list must provide the playback settings entry")
         // A full-screen Toolbar swallows coordinate taps; use the element's tap() to activate via accessibility.
         playbackButton.tap()
-        if !waitUntil(timeout: 2, condition: { toggle.exists || app.staticTexts["settings.playback.title"].exists }) {
+        if !waitUntil(
+            timeout: TestWait.seconds(.product(2)),
+            condition: { toggle.exists || app.staticTexts["settings.playback.title"].exists })
+        {
             app.cells.element(boundBy: 0).tap()
         }
-        let opened = waitUntil(timeout: 10) {
+        let opened = waitUntil(timeout: TestWait.seconds(.product(10))) {
             toggle.exists || app.staticTexts["settings.playback.title"].exists
         }
         if !opened {
@@ -367,7 +378,7 @@ extension AccessLifecycleIOSUITests {
         // While the Save Password prompt covers the screen the hit point is {-1,-1}; tap "Not Now" first,
         // then Access Protection.
         for attempt in 0..<20 {
-            dismissSystemSavePromptIfPresent(app: app, timeout: 0)
+            dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
             if let candidate = firstExistingSettingsItem(
                 app: app,
                 identifier: sectionID
@@ -378,7 +389,7 @@ extension AccessLifecycleIOSUITests {
             if isSystemSavePasswordPromptVisible(app: app)
                 || settingsControl(app: app, identifier: sectionID).exists
             {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
                 continue
             }
             if attempt % 2 == 0 {
@@ -408,7 +419,7 @@ extension AccessLifecycleIOSUITests {
             )
         )
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-        _ = waitUntil(timeout: 3) {
+        _ = waitUntil(timeout: TestWait.seconds(.product(3))) {
             let button = self.playPauseButton(app)
             return button.exists && button.isHittable
         }
@@ -419,7 +430,7 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func waitForPlaybackControls(app: XCUIApplication, timeout: TimeInterval) -> Bool {
         waitUntil(timeout: timeout) {
-            self.dismissSystemSavePromptIfPresent(app: app, timeout: 0)
+            self.dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
             return AccessLifecycleContract.hasPlaybackPageArrived(
                 isSettingsPresent: app.buttons["slideshow.control.settings.button"].exists,
                 isNextPresent: app.buttons["slideshow.control.next.button"].exists,
@@ -433,13 +444,16 @@ extension AccessLifecycleIOSUITests {
     func fillFirstBootForm(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: 20), "A fresh install must reach the normal first-boot page.")
+            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            "A fresh install must reach the normal first-boot page.")
         replaceText(in: serverField, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "The first-boot page must show the API Key field.")
+        XCTAssertTrue(
+            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "The first-boot page must show the API Key field.")
         replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
-            waitUntil(timeout: 3) { self.hasSecureFieldEnteredValue(apiKeyField) },
+            waitUntil(timeout: TestWait.seconds(.product(3))) { self.hasSecureFieldEnteredValue(apiKeyField) },
             "The API Key must be entered into the secure field.")
         commitFocusedInputIfNeeded(app: app)
     }
@@ -450,7 +464,9 @@ extension AccessLifecycleIOSUITests {
             in: app,
             identifier: "firstboot.testConnection.button"
         )
-        XCTAssertTrue(testConnectionButton.waitForExistence(timeout: 8), "Test Connection must be shown")
+        XCTAssertTrue(
+            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "Test Connection must be shown")
         tapElement(testConnectionButton)
     }
 
@@ -468,7 +484,7 @@ extension AccessLifecycleIOSUITests {
                 XCTFail("Connection test showed a failure alert: \(alert.label) | \(details)")
                 return false
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
         }
         return saveButton.exists && saveButton.isEnabled
     }
@@ -549,7 +565,7 @@ extension AccessLifecycleIOSUITests {
                 let text = app.staticTexts[identifier]
                 if text.exists { return text }
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
         return nil
     }

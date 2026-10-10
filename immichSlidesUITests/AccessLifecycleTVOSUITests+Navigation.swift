@@ -423,7 +423,7 @@ extension AccessLifecycleTVOSUITests {
         // Recognize the playback layer/screen identity. That the first wake after the bar hides keeps the scene is
         // verified separately, so do not wake the control bar here.
         for _ in 0..<8 {
-            if waitUntil(timeout: 0.8, condition: { isOnSlideShowLayer(app: app) }) {
+            if waitUntil(timeout: TestWait.seconds(.product(0.8)), condition: { isOnSlideShowLayer(app: app) }) {
                 finishReturnToSlideShow(app: app)
                 return
             }

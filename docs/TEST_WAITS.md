@@ -30,11 +30,20 @@ elapsed-time bounds and assertions remain in force.
 Legacy helpers can continue to accept resolved seconds. Classify at their callers
 or timing declarations and pass the result through unchanged; wrapping an already
 resolved infrastructure value in another infrastructure budget would scale it twice.
-When one constant serves both initial fixture readiness and a later photo-change
-deadline, split those call sites: discovering the initial scene is infrastructure,
-but waiting for a new photo after Next keeps the original product deadline.
 Scene-presentation sampling spans, screenshot stability spans and first-visible-tick
 offsets remain fixed product timing even when they help collect diagnostic evidence.
+
+Access-lifecycle timing starts at the original user action. Pause holds, background
+holds, first-wake evidence, PIN-gate responses and the resume interval's tolerance
+remain product timing. A screenshot capture can have its own fixed evidence budget
+without extending the first-transition deadline; preserve both bounds separately.
+Settings-route probes and responses after Back or Playback taps also stay fixed;
+those windows decide the next interaction rather than await fixture availability.
+Shared constants used for both machinery readiness and user-visible responses
+stay product. Give genuine first-launch, fixture and connection readiness an
+independent infrastructure budget at the call site. The first assertion after a
+tap or key press, route probes, absence observations and sampling cadence stay
+product; discovering a control before the timed action can be infrastructure.
 
 ## Runner factor and recording
 
@@ -87,8 +96,9 @@ and are excluded; timing window names should include their time unit.
 Choose the classification explicitly during migration.
 Classified `TestWait.seconds`, `until` and `observe` budget/cadence arguments are
 masked before numeric detection. Arithmetic literals outside those regions and
-raw waits inside predicates still count. The baseline inventory is from main
-`7516d4e`, with only the initial migrated sites removed. The allowlist is a
+raw waits inside predicates still count. The original inventory is from main
+`7516d4e`; migrated sites are removed individually while unmigrated and documented
+non-timeout entries remain. The allowlist is a
 [CI-trusted input](CI_POPULATION.md#classification-and-gate-evaluation); every edit
 requires exact-head maintainer approval, including removals during migration.
 
