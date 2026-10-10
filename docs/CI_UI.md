@@ -166,7 +166,7 @@ The six iOS jobs and three Apple TV jobs form sequential matrices, each with
 Apple TV still executes after an iOS failure when cloud proof is absent.
 Superseded runs
 cancel only within the same PR; main pushes and unrelated PRs are not cancelled.
-The Linux selection timeout is 120 minutes inside a 130-minute job. Xcode calls
+The Linux selection timeout is 120 minutes inside a 125-minute job. Xcode calls
 have a 65-minute timeout and share an 85-minute shard budget inside a 110-minute
 job. The earlier visual invocation consumed 2,643 seconds of its 2,700-second
 budget and was stopped at 2,715 seconds in [the hosted run](https://github.com/sudoHG/immichSlides/actions/runs/37796334799/job/113382323589).
