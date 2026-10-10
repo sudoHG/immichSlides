@@ -8,15 +8,15 @@
 import XCTest
 
 private enum WaitTiming {
-    static let minimumSamplingWindowSeconds: TimeInterval = 4.2
-    static let samplingTimeoutSeconds: TimeInterval = 15
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let focusPollSeconds: TimeInterval = 0.08
-    static let focusSettleSeconds: TimeInterval = 0.16
-    static let inputSettleSeconds: TimeInterval = 0.05
-    static let remotePressSettleSeconds: TimeInterval = 0.12
-    static let sceneReadyTimeoutSeconds: TimeInterval = 45
-    static let screenTransitionTimeoutSeconds: TimeInterval = 12
+    static let minimumSamplingWindowSeconds = TestWait.seconds(.product(4.2))
+    static let samplingTimeoutSeconds = TestWait.seconds(.product(15))
+    static let controlAppearanceTimeoutSeconds = TestWait.seconds(.infrastructure(8))
+    static let focusPollSeconds = TestWait.seconds(.product(0.08))
+    static let focusSettleSeconds = TestWait.seconds(.product(0.16))
+    static let inputSettleSeconds = TestWait.seconds(.product(0.05))
+    static let remotePressSettleSeconds = TestWait.seconds(.product(0.12))
+    static let sceneReadyTimeoutSeconds = TestWait.seconds(.product(45))
+    static let screenTransitionTimeoutSeconds = TestWait.seconds(.infrastructure(12))
 }
 
 #if os(iOS) || os(tvOS)
@@ -208,7 +208,9 @@ final class ScenePresentationContractUITests: XCTestCase {
         _ = try imageResponse(input: input, mode: "http", assetID: failedAssetID)
         try relaunchStrictE2EApp(app)
         // In portrait the classifier reads A1's letterboxed frame as A2, so its visible EXIF caption identifies it.
-        func failIfFailedTargetCaptionIsShown(within captionTimeout: TimeInterval = 0) throws {
+        func failIfFailedTargetCaptionIsShown(within captionTimeout: TimeInterval = TestWait.seconds(.product(0)))
+            throws
+        {
             guard Wait.until(timeout: captionTimeout, { driver.visibleOverlayText().contains(failedExifModel) })
             else { return }
             try evidence.reject("singlePhoto-recovered", png: app.screenshot().pngRepresentation)
@@ -357,10 +359,10 @@ final class ScenePresentationContractUITests: XCTestCase {
 
         let probe = app.descendants(matching: .any)["slideshow.scenePresentation.contract.summary"]
         XCTAssertTrue(
-            probe.waitForExistence(timeout: WaitTiming.sceneReadyTimeoutSeconds),
+            probe.waitForExistence(timeout: TestWait.seconds(.infrastructure(45))),
             "The product host must expose the read-only contract probe")
         XCTAssertTrue(
-            waitUntil(timeout: WaitTiming.sceneReadyTimeoutSeconds) {
+            waitUntil(timeout: TestWait.seconds(.infrastructure(45))) {
                 guard let state = self.probeState(from: probe.label, elapsedSeconds: 0) else { return false }
                 return state.sample.phase == "stablePhoto" && state.sample.layerOpacities.contains(where: { $0 > 0 })
             },
@@ -604,7 +606,7 @@ final class ScenePresentationContractUITests: XCTestCase {
     @MainActor
     private func enterPlaybackFromFilteredMode(app: XCUIApplication) {
         let filteredButton = app.buttons["mode.filtered.button"]
-        XCTAssertTrue(filteredButton.waitForExistence(timeout: 20))
+        XCTAssertTrue(filteredButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))))
         let continueButton = app.buttons["mode.continue.button"]
         let startButton = app.buttons["filterSummary.startPlayback.button"]
 
@@ -621,7 +623,9 @@ final class ScenePresentationContractUITests: XCTestCase {
         for marker in ["filterSummary.album.ready", "filterSummary.people.ready"] {
             let readiness = app.staticTexts[marker]
             XCTAssertTrue(
-                waitUntil(timeout: 30) { readiness.exists && readiness.label == "ready" },
+                waitUntil(timeout: TestWait.seconds(.infrastructure(30))) {
+                    readiness.exists && readiness.label == "ready"
+                },
                 "The filter summary must select a real album and person before playback starts: \(marker)"
             )
         }
@@ -646,7 +650,7 @@ final class ScenePresentationContractUITests: XCTestCase {
     @MainActor
     private func prepareNextButton(app: XCUIApplication) -> XCUIElement {
         let nextButton = app.buttons["slideshow.control.next.button"]
-        XCTAssertTrue(nextButton.waitForExistence(timeout: 6))
+        XCTAssertTrue(nextButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
 
         #if os(tvOS)
         for _ in 0..<4 where !nextButton.hasFocus {

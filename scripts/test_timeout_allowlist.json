@@ -1836,84 +1836,6 @@
     "count": 1
   },
   {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "ScenePresentationContractUITests.enterPlaybackFromFilteredMode",
-    "literal": "timeout:20",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "ScenePresentationContractUITests.enterPlaybackFromFilteredMode",
-    "literal": "timeout:30",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "ScenePresentationContractUITests.prepareNextButton",
-    "literal": "timeout:6",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "ScenePresentationContractUITests.runImageFailureRecovery.failIfFailedTargetCaptionIsShown",
-    "literal": "captionTimeout:TimeInterval=0",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "WaitTiming.<scope>",
-    "literal": "letcontrolAppearanceTimeoutSeconds:TimeInterval=8",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "WaitTiming.<scope>",
-    "literal": "letfocusPollSeconds:TimeInterval=0.08",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "WaitTiming.<scope>",
-    "literal": "letfocusSettleSeconds:TimeInterval=0.16",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "WaitTiming.<scope>",
-    "literal": "letinputSettleSeconds:TimeInterval=0.05",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "WaitTiming.<scope>",
-    "literal": "letminimumSamplingWindowSeconds:TimeInterval=4.2",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "WaitTiming.<scope>",
-    "literal": "letremotePressSettleSeconds:TimeInterval=0.12",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "WaitTiming.<scope>",
-    "literal": "letsamplingTimeoutSeconds:TimeInterval=15",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "WaitTiming.<scope>",
-    "literal": "letsceneReadyTimeoutSeconds:TimeInterval=45",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesUITests/ScenePresentationContractUITests.swift",
-    "function": "WaitTiming.<scope>",
-    "literal": "letscreenTransitionTimeoutSeconds:TimeInterval=12",
-    "count": 1
-  },
-  {
     "path": "immichSlidesUITests/ServerConfigFormIOSUITests.swift",
     "function": "ServerConfigFormIOSUITests.startRandomPlaybackFromModeSelection",
     "literal": "timeout:25",
@@ -4101,12 +4023,6 @@
     "path": "TestSupport/AccessLifecycleContract.swift",
     "function": "AccessLifecycleContract.assertSystemPauseIdentityTiming",
     "literal": "letwindow=screenshotOrder[(before+1)..<after]",
-    "count": 1
-  },
-  {
-    "path": "TestSupport/SceneTransitionDiagnostic.swift",
-    "function": "SceneTransitionDiagnostic.<scope>",
-    "literal": "letfirstVisibleTickOffsetSeconds:TimeInterval=0.5",
     "count": 1
   }
 ]
