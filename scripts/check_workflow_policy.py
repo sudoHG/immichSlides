@@ -27,6 +27,13 @@ XCC_BINDINGS = {"CI_WORKFLOW_TOKEN": "${{ github.token }}",
                 "ASC_PRIVATE_KEY": "${{ secrets.ASC_PRIVATE_KEY }}"}
 XCC_CONTROL_BINDINGS = {**XCC_BINDINGS, "CI_XCC_ROUTING_OVERRIDE": "${{ vars.CI_XCC_ROUTING_OVERRIDE }}"}
 LIVE_WORKFLOW = ".github/workflows/ci-nightly.yml"
+NIGHTLY_UNGATED_JOBS = {"change", "live-environment-refusal"}
+NIGHTLY_CHANGE_GATE = ("!(github.event_name == 'schedule' && needs.change.result == 'success' "
+                       "&& needs.change.outputs.run_nightly == 'false')")
+LIVE_UNIT_NEEDS = ["change", "live-admission", "live-build"]
+LIVE_UNIT_CONDITION = ("${{ !cancelled() && " + NIGHTLY_CHANGE_GATE + " && needs.live-admission.result == 'success' "
+                       "&& needs.live-build.result == 'success' && needs.live-admission.outputs.admitted == 'true' }}")
+NIGHTLY_CHANGE_OUTPUT = "${{ steps.verdict.outputs.run_nightly }}"
 LIVE_ENVIRONMENT = "immich-test-server"
 LIVE_BINDINGS = {"CI_LIVE_URL": "${{ secrets.IMMICH_TEST_SERVER_URL }}",
                  "CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}
@@ -285,6 +292,68 @@ def trusted_action_allowed(uses, options):
     return allowed_inputs is not None and set(options) <= allowed_inputs
 
 
+def top_level_terms(condition, operator):
+    """Split at an operator outside quotes and parentheses; None when the text is malformed."""
+    terms, depth, quote, start, index = [], 0, None, 0, 0
+    while index < len(condition):
+        character = condition[index]
+        if quote:
+            quote = None if character == quote else quote
+        elif character in "'\"":
+            quote = character
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif depth == 0 and condition.startswith(operator, index):
+            terms.append(condition[start:index].strip())
+            start, index = index + len(operator), index + len(operator) - 1
+        index += 1
+    if depth or quote:
+        return None
+    return terms + [condition[start:].strip()]
+
+
+def condition_requires_gate(condition):
+    """The exact gate must be one conjunct of a pure `&&` chain, so `|| true` and negation cannot bypass it."""
+    text = " ".join(condition.split())
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2].strip()
+    alternatives = top_level_terms(text, "||")
+    terms = top_level_terms(text, "&&")
+    return alternatives == [text] and terms is not None and NIGHTLY_CHANGE_GATE in terms
+
+
+def change_verdict_follows_upload(steps):
+    """A skip verdict is exported only by a step that follows the record upload and cannot run after its failure."""
+    steps = steps if isinstance(steps, list) else []
+    uploads = [index for index, step in enumerate(steps) if isinstance(step, dict)
+               and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+               and str(step.get("with", {}).get("name", "")).startswith("nightly-change-")
+               and step.get("with", {}).get("if-no-files-found") == "error"
+               and not re.search(r"\b(?:always|cancelled|failure)\(\)", str(step.get("if", "")))]
+    verdicts = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "verdict"]
+    return (len(uploads) == 1 and len(verdicts) == 1 and uploads[0] < verdicts[0]
+            and not re.search(r"\b(?:always|cancelled|failure)\(\)", str(steps[verdicts[0]].get("if", ""))))
+
+
+def nightly_job_gated(job_id, jobs, visited=frozenset()):
+    """Gated directly by the change check, or skipped with a gated job because its condition keeps the implicit success()."""
+    job = jobs.get(job_id)
+    if not isinstance(job, dict) or job_id in visited:
+        return False
+    needs = job.get("needs")
+    needs = [needs] if isinstance(needs, str) else needs if isinstance(needs, list) else []
+    condition = job.get("if") if isinstance(job.get("if"), str) else ""
+    if "change" in needs and condition_requires_gate(condition):
+        return True
+    if re.search(r"\b(?:always|cancelled|failure)\(\)", condition):
+        return False
+    return any(nightly_job_gated(name, jobs, visited | {job_id}) for name in needs if isinstance(name, str))
+
+
 def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]:
     violations = []
 
@@ -411,8 +480,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             refusal = (location == "workflow.jobs.live-environment-refusal" and
                        item.get("if") == "github.event_name == 'workflow_dispatch' && inputs.probe_environment_refusal && github.ref != 'refs/heads/main'" and
                        item.get("permissions") == {} and item.get("steps") == [{"run": "/usr/bin/false"}])
-            consumer = (location == "workflow.jobs.live-unit" and item.get("needs") == ["live-admission", "live-build"] and
-                        item.get("if") == "needs.live-admission.outputs.admitted == 'true'")
+            consumer = (location == "workflow.jobs.live-unit" and item.get("needs") == LIVE_UNIT_NEEDS and
+                        item.get("if") == LIVE_UNIT_CONDITION)
             if path != LIVE_WORKFLOW or name != LIVE_ENVIRONMENT or not (refusal or consumer):
                 flag(location, "live-credential", "Live environment belongs only to guarded nightly units or the credential-free refusal probe")
         env = item.get("env", {})
@@ -421,7 +490,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             steps = consumer.get("steps", [])
             if (path != LIVE_WORKFLOW or env != LIVE_BINDINGS or item.get("id") != "live" or item not in steps
                     or consumer.get("environment") != LIVE_ENVIRONMENT
-                    or consumer.get("if") != "needs.live-admission.outputs.admitted == 'true'"
+                    or consumer.get("if") != LIVE_UNIT_CONDITION
                     or not any(step.get("run") == "/usr/bin/python3 -B scripts/ci_live_tests.py admit" for step in steps[:steps.index(item)])):
                 flag(location, "live-credential", "Live secrets belong only to test-time injection after credential-free admission")
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
@@ -447,6 +516,12 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                 or any(type(capacity) is not int or capacity <= 0 for capacity in capacities)
                 or sum(capacities) > 4):
             flag("jobs", "ui-capacity", "Independent UI matrices need positive literal capacities totaling at most four")
+    if path == LIVE_WORKFLOW and "change" not in jobs:
+        flag("jobs", "nightly-change-gate", "The nightly needs its change check job")
+    elif path == LIVE_WORKFLOW and (not isinstance(jobs["change"], dict) or jobs["change"].get("outputs") != {"run_nightly": NIGHTLY_CHANGE_OUTPUT}):
+        flag("jobs.change", "nightly-change-gate", "The change job must publish only the verdict step's output")
+    elif path == LIVE_WORKFLOW and not change_verdict_follows_upload(jobs["change"].get("steps")):
+        flag("jobs.change", "nightly-change-gate", "The verdict step must run only after the decision record upload succeeded")
     for job_id, job in jobs.items():
         location = f"jobs.{job_id}"
         if not isinstance(job, dict):
@@ -454,7 +529,9 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             continue
         if path in PUBLISHER_COMMANDS and job.get("runs-on") != "ubuntu-24.04":
             flag(location, "publisher-runner", "Publisher and approval jobs use the pinned Linux runner")
-        if path == LIVE_WORKFLOW and job_id in {"aggregate", "ui-aggregate"}:
+        if path == LIVE_WORKFLOW and job_id not in NIGHTLY_UNGATED_JOBS and not nightly_job_gated(job_id, jobs):
+            flag(location, "nightly-change-gate", "Every nightly job must be gated by the change check, directly or through a job that is")
+        if path == LIVE_WORKFLOW and job_id in {"change", "aggregate", "ui-aggregate"}:
             commands = [step["run"] for step in job.get("steps", [])
                         if isinstance(step, dict) and isinstance(step.get("run"), str)]
             bootstrap = '/usr/bin/python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/nightly-python"'

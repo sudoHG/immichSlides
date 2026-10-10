@@ -34,6 +34,7 @@ on:
     paths:
       - .github/workflows/ci-nightly.yml
       - scripts/ci_nightly.py
+      - scripts/ci_nightly_change.py
       - scripts/ci_nightly_ui.py
       - scripts/ci_ui_tests.py
       - scripts/ci-ui-shards.json
@@ -53,8 +54,57 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  change:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run_nightly: ${{ steps.verdict.outputs.run_nightly }}
+    steps:
+      # Only a scheduled run on main reads history; every other event leaves the verdict empty, which runs the nightly.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/main' }}
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject private configuration and set up pinned reader packages
+        if: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/main' }}
+        run: |
+          /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
+          /usr/bin/python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/nightly-python"
+      - name: Compare this commit with the last scheduled nightly that produced a real result
+        id: decision
+        if: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_nightly_change.py \
+            --output-dir "$RUNNER_TEMP/nightly-change"
+      - name: Publish the change decision
+        if: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-change-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-change/nightly-change.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Confirm the skip after the record is stored
+        id: verdict
+        if: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/main' && steps.decision.outputs.skip == 'true' }}
+        run: echo "run_nightly=false" >> "$GITHUB_OUTPUT"
+      - name: Display the decision
+        if: ${{ always() && github.event_name == 'schedule' }}
+        run: |
+          if test -f "$RUNNER_TEMP/nightly-change/nightly-change.md"; then
+            cat "$RUNNER_TEMP/nightly-change/nightly-change.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          rm -rf "$RUNNER_TEMP/nightly-change"
+
   plan:
-    if: ${{ !inputs.probe_environment_refusal }}
+    if: ${{ !cancelled() && !inputs.probe_environment_refusal && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') }}
+    needs: change
     runs-on: xcode-27
     timeout-minutes: 15
     permissions:
@@ -106,8 +156,8 @@ jobs:
           if-no-files-found: error
 
   strict:
-    if: github.event_name != 'pull_request' && !inputs.live_only && !inputs.ui_only && !inputs.probe_environment_refusal
-    needs: plan
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && needs.plan.result == 'success' && github.event_name != 'pull_request' && !inputs.live_only && !inputs.ui_only && !inputs.probe_environment_refusal }}
+    needs: [change, plan]
     name: nightly-strict-${{ matrix.id }}
     runs-on: xcode-27
     timeout-minutes: 165
@@ -206,8 +256,8 @@ jobs:
           rm -rf "$RUNNER_TEMP/p2-review-packages"
 
   aggregate:
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.probe_environment_refusal }}
-    needs: [plan, strict, ui-aggregate]
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && github.event_name != 'pull_request' && !inputs.live_only && !inputs.probe_environment_refusal }}
+    needs: [change, plan, strict, ui-aggregate]
     name: nightly-aggregate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -268,8 +318,8 @@ jobs:
 
 
   ui-archive:
-    needs: live-build
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal && needs.live-build.result == 'success' }}
+    needs: [change, live-build]
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal && needs.live-build.result == 'success' }}
     name: ui-archive
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -321,8 +371,8 @@ jobs:
 
   ui-shards:
     name: ui-${{ matrix.device }}-${{ matrix.shard }}
-    needs: [plan, ui-archive, strict]
-    if: ${{ !cancelled() && needs.ui-archive.result == 'success' && needs.ui-archive.outputs.run_ui == 'true' }}
+    needs: [change, plan, ui-archive, strict]
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && needs.ui-archive.result == 'success' && needs.ui-archive.outputs.run_ui == 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:
@@ -431,8 +481,8 @@ jobs:
 
 
   ui-aggregate:
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal }}
-    needs: [plan, ui-archive, ui-shards]
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal }}
+    needs: [change, plan, ui-archive, ui-shards]
     name: nightly-ui-aggregate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -497,7 +547,8 @@ jobs:
           rm -rf "$RUNNER_TEMP/nightly-ui-plan" "$RUNNER_TEMP/nightly-ui-records" "$RUNNER_TEMP/nightly-ui-aggregate"
 
   live-admission:
-    if: ${{ !inputs.strict_only && !inputs.ui_only && !inputs.shard && !inputs.probe_environment_refusal }}
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && !inputs.strict_only && !inputs.ui_only && !inputs.shard && !inputs.probe_environment_refusal }}
+    needs: change
     runs-on: xcode-27
     timeout-minutes: 5
     permissions:
@@ -514,8 +565,8 @@ jobs:
         run: /usr/bin/python3 -B scripts/ci_live_tests.py admit
 
   live-canary:
-    needs: [live-admission, live-build]
-    if: github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true'
+    needs: [change, live-admission, live-build]
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && needs.live-admission.result == 'success' && needs.live-build.result == 'success' && (github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true') }}
     runs-on: xcode-27
     timeout-minutes: 40
     permissions:
@@ -597,9 +648,9 @@ jobs:
 
   live-build:
     if: >-
-      ${{ !cancelled() && (github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true' ||
+      ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && (github.event_name == 'pull_request' || needs.live-admission.outputs.admitted == 'true' ||
       (github.event_name != 'pull_request' && !inputs.live_only && !inputs.strict_only && !inputs.shard && !inputs.probe_environment_refusal)) }}
-    needs: live-admission
+    needs: [change, live-admission]
     runs-on: xcode-27
     timeout-minutes: 40
     permissions:
@@ -649,8 +700,8 @@ jobs:
         run: rm -rf "$RUNNER_TEMP/live-derived" "$RUNNER_TEMP/live-build"
 
   live-unit:
-    if: needs.live-admission.outputs.admitted == 'true'
-    needs: [live-admission, live-build]
+    if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && needs.live-admission.result == 'success' && needs.live-build.result == 'success' && needs.live-admission.outputs.admitted == 'true' }}
+    needs: [change, live-admission, live-build]
     runs-on: xcode-27
     timeout-minutes: 40
     permissions:

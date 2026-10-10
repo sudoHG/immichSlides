@@ -1,6 +1,7 @@
 """Guard workflow trust boundaries against accidental privilege and code execution."""
 
 import copy
+import re
 import contextlib
 import io
 import sys
@@ -159,6 +160,96 @@ final class LocaleUITests: XCTestCase {
                     else:
                         job["steps"].append({"run": "xcrun simctl list" if mutation == "xcode" else "python3 setup.py --verify-toolchain"})
                     self.assertIn("nightly-aggregate-platform", self.rules(changed, path))
+
+    def test_nightly_jobs_cannot_bypass_the_change_check(self):
+        path = policy.LIVE_WORKFLOW
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual("ubuntu-24.04", document["jobs"]["change"]["runs-on"])
+        for job_id in ("plan", "aggregate", "ui-archive", "ui-shards", "ui-aggregate", "live-admission", "live-build"):
+            with self.subTest(job=job_id, mutation="dropped gate"):
+                changed = copy.deepcopy(document)
+                changed["jobs"][job_id]["if"] = changed["jobs"][job_id]["if"].replace(policy.NIGHTLY_CHANGE_GATE, "true")
+                self.assertIn("nightly-change-gate", self.rules(changed, path))
+            for label, replacement in (("or true", f"({policy.NIGHTLY_CHANGE_GATE} || true)"),
+                                       ("negated", f"!({policy.NIGHTLY_CHANGE_GATE})"),
+                                       ("output only", "needs.change.outputs.run_nightly != 'false'"),
+                                       ("any event", policy.NIGHTLY_CHANGE_GATE.replace("github.event_name == 'schedule' && ", "")),
+                                       ("no result check", policy.NIGHTLY_CHANGE_GATE.replace("needs.change.result == 'success' && ", "")),
+                                       ("top-level or", f"{policy.NIGHTLY_CHANGE_GATE} || github.event_name == 'schedule'")):
+                with self.subTest(job=job_id, mutation=label):
+                    changed = copy.deepcopy(document)
+                    changed["jobs"][job_id]["if"] = changed["jobs"][job_id]["if"].replace(policy.NIGHTLY_CHANGE_GATE, replacement)
+                    self.assertIn("nightly-change-gate", self.rules(changed, path))
+        for job_id in ("strict", "live-canary", "live-unit"):
+            with self.subTest(job=job_id, mutation="status function"):
+                changed = copy.deepcopy(document)
+                changed["jobs"][job_id]["if"] = "always()"
+                self.assertIn("nightly-change-gate", self.rules(changed, path))
+        jobs = document["jobs"]
+        class Context(dict):
+            def __getattr__(self, name):
+                return self.get(name, "")
+        def runs(job_id, results, event, change_outputs):
+            expression = " ".join(jobs[job_id]["if"].split())
+            if expression.startswith("${{"):
+                expression = expression[3:-2].strip()
+            expression = expression.replace("!=", "\0").replace("&&", " and ").replace("||", " or ").replace("!", " not ")
+            expression = expression.replace("\0", "!=").replace("cancelled()", "False")
+            expression = re.sub(r"needs\.([\w-]+)", r"needs['\1']", expression)
+            outputs = {"change": Context(change_outputs), "live-admission": Context(admitted="true"),
+                       "ui-archive": Context(run_ui="true"), "plan": Context(matrix="[]")}
+            needs = Context({name: Context(result=results.get(name, "skipped"), outputs=outputs.get(name, Context()))
+                             for name in jobs})
+            return bool(eval(expression, {"__builtins__": {}}, {"needs": needs, "github": Context(event_name=event, ref="refs/heads/main"),
+                                                                   "inputs": Context()}))
+        def simulate(event, change_result, change_outputs):
+            results = {"change": change_result}
+            for job_id in ("plan", "live-admission", "live-build", "strict", "live-canary", "live-unit",
+                           "ui-archive", "ui-shards", "ui-aggregate", "aggregate"):
+                results[job_id] = "success" if runs(job_id, results, event, change_outputs) else "skipped"
+            return {job_id for job_id, result in results.items() if result == "success" and job_id != "change"}
+        everything = {"plan", "live-admission", "live-build", "strict", "live-canary", "live-unit",
+                      "ui-archive", "ui-shards", "ui-aggregate", "aggregate"}
+        with self.subTest(scenario="skipped night"):
+            self.assertEqual(set(), simulate("schedule", "success", {"run_nightly": "false"}))
+        for label, event, result, outputs in (("record upload failed", "schedule", "failure", {}),
+                                              ("change cancelled output", "schedule", "failure", {"run_nightly": "false"}),
+                                              ("verdict missing", "schedule", "success", {}),
+                                              ("dispatch", "workflow_dispatch", "success", {}),
+                                              ("dispatch with a skip-looking output", "workflow_dispatch", "success", {"run_nightly": "false"})):
+            with self.subTest(scenario=label):
+                self.assertEqual(everything, simulate(event, result, outputs))
+        for job_id, job in document["jobs"].items():
+            if job_id not in policy.NIGHTLY_UNGATED_JOBS:
+                with self.subTest(job=job_id, requirement="explicit status condition"):
+                    self.assertIn("!cancelled()", job["if"])
+                    self.assertIn("change", job["needs"] if isinstance(job["needs"], list) else [job["needs"]])
+        jobs = document["jobs"]
+        steps = document["jobs"]["change"]["steps"]
+        upload = next(index for index, step in enumerate(steps) if str(step.get("uses", "")).startswith("actions/upload-artifact@"))
+        for label, mutate in (("verdict before upload", lambda items: items.insert(upload, items.pop(upload + 1))),
+                              ("verdict after failure", lambda items: items[upload + 1].update({"if": "${{ always() }}"})),
+                              ("upload tolerates a missing record", lambda items: items[upload]["with"].update({"if-no-files-found": "ignore"})),
+                              ("upload continues after failure", lambda items: items[upload].update({"if": "${{ always() }}"})),
+                              ("job output skips the verdict step", lambda items: None)):
+            with self.subTest(job="change", mutation=label):
+                changed = copy.deepcopy(document)
+                mutate(changed["jobs"]["change"]["steps"])
+                if label.startswith("job output"):
+                    changed["jobs"]["change"]["outputs"]["run_nightly"] = "${{ steps.decision.outputs.run_nightly }}"
+                self.assertIn("nightly-change-gate", self.rules(changed, path))
+        with self.subTest(mutation="missing job"):
+            changed = copy.deepcopy(document)
+            del changed["jobs"]["change"]
+            self.assertIn("nightly-change-gate", self.rules(changed, path))
+        for mutation in ("runner", "xcode"):
+            with self.subTest(job="change", mutation=mutation):
+                changed = copy.deepcopy(document)
+                if mutation == "runner":
+                    changed["jobs"]["change"]["runs-on"] = "xcode-27"
+                else:
+                    changed["jobs"]["change"]["steps"].append({"run": "xcrun simctl list"})
+                self.assertIn("nightly-aggregate-platform", self.rules(changed, path))
 
     def test_macos_jobs_cannot_survive_cancellation_through_always(self):
         document = workflow()
