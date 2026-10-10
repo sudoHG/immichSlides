@@ -157,6 +157,8 @@ def unknown_starts(api, registration, inventory, *, current_uploader=None):
             continue
         if started and type(started.get("http_status")) is int and 400 <= started["http_status"] < 500:
             continue
+        if started and started.get("schema_version") == 2 and started.get("post_attempted") is False:
+            continue  # The authenticated main start refused before sending POST.
         rows = inventory.get(marker.get("group", "tvos"), [])
         matches = [row for row in rows
                    if (row["attributes"].get("sourceCommit") or {}).get("commitSha") == marker["head_sha"]
@@ -366,7 +368,18 @@ def phase(api, asc, run, event, name, uploader):
         value = json.loads((directory / "prepared.json").read_text())
         require(value["producer_run_id"] == run["id"] and value["producer_attempt"] == run["run_attempt"]
                 and value["group"] == group, "group prepared identity differs")
-        if value["decision"] == "pending":
+        if value["decision"] == "pending" and name == "arm":
+            pr = refresh_producer(api, run)
+            require(pr["user"]["login"] == groups.MAINTAINER_LOGIN and pr["user"]["id"] == groups.MAINTAINER_ID
+                    and pr["base"]["sha"] == value["identity"]["base_sha"]
+                    and selection_open(api, run, group) and remaining_seconds(run, datetime.now(timezone.utc)) > 0,
+                    "group changed before marker")
+            groups.validate_pointer({"identity": value["identity"]}, run, group, value["selection_sha256"],
+                api.pages("commits/" + run["head_sha"] + "/statuses"), pointer_id=value["pointer_id"])
+            write_phase("post", dict(value, posted_at=datetime.now(timezone.utc).isoformat(), **uploader))
+        if name == "start":
+            value["post_attempted"] = False
+        if value["decision"] == "pending" and name == "start":
             # The entire main start job holds the account lock. Refresh the head,
             # pointer, queue, usage and all reservations immediately before POST.
             fresh = prepare_group(api, lambda: asc, run, group, mode=event["inputs"].get("mode", "auto"),
@@ -377,14 +390,13 @@ def phase(api, asc, run, event, name, uploader):
                 require(all(fresh[key] == value[key] for key in ("identity", "selection_sha256", "pointer_id", "reference_id")),
                         "group changed before POST")
                 value.update(fresh)
-            if name == "arm" and value["decision"] == "pending":
-                write_phase("post", dict(value, posted_at=datetime.now(timezone.utc).isoformat(), **uploader))
-            elif name == "start" and value["decision"] == "pending":
+            if value["decision"] == "pending":
                 artifacts = api.pages(f"actions/runs/{uploader['uploader_run_id']}/artifacts", "artifacts")
                 marker = state.receipt(api, artifacts, {"id": uploader["uploader_run_id"], "run_attempt": uploader["uploader_attempt"]},
                     api.repo("actions/workflows/ci-xcode-cloud-route.yml"), prefix=state.POST_PREFIX, member="post.json")
                 require(marker is not None and all(marker[key] == value[key] for key in ("identity", "group", "selection_sha256", "pointer_id")),
                         "Cloud group POST marker differs")
+                value["post_attempted"] = True
                 value.update(post_group(asc, value))
         if name == "arm":
             write_phase("prepared", dict(value, **uploader))

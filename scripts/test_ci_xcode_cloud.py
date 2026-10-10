@@ -602,6 +602,10 @@ class GroupProducerTests(unittest.TestCase):
         expected = router.cloud_estimate(self.descriptor, self.record["ui_inputs"]["base"]["selection"])["reservation_minutes"]
         self.assertEqual(reservations[0]["minutes"], expected)
         self.assertGreater(reservations[0]["minutes"], marker["reservation_minutes"])
+        api.pages.side_effect = [[source], []]
+        api.repo.side_effect = [{"id": 42}]
+        with patch.object(router.state, "receipt", side_effect=[marker, dict(marker, post_attempted=False)]):
+            self.assertEqual(router.unknown_starts(api, self.registry, {"ios": []}), [])
 
     def test_cloud_bootstrap_pointer_does_not_trust_login_or_other_workflow(self):
         import importlib.util
@@ -705,6 +709,31 @@ class GroupProducerTests(unittest.TestCase):
         api.pages.side_effect = [[current], []]
         with patch.object(router.state, "receipt", return_value=dict(self.route, head_sha=self.run["head_sha"])):
             self.assertTrue(router.group_started(api, self.run, "ios"))
+
+    def test_post_marker_phase_never_needs_asc_credentials(self):
+        import json
+        import tempfile
+        import ci_xcode_cloud_group_route as router
+        prepared = dict(self.route, decision="pending", head_sha=self.run["head_sha"], reason="cloud-estimated-faster")
+        asc = Mock()
+        api = Mock()
+        api.pages.return_value = [self.pointer]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory, "output")
+            state = Path(directory, "ci-xcc-route")
+            state.mkdir()
+            (state / "prepared.json").write_text(json.dumps(prepared))
+            with patch.dict(router.os.environ, {"RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(output)}, clear=True), \
+                    patch.object(router, "refresh_producer", return_value={"user": self.record["cloud_pr_author"],
+                                                                           "base": {"sha": self.identity["base_sha"]}}), \
+                    patch.object(router, "selection_open", return_value=True), \
+                    patch.object(router, "remaining_seconds", return_value=100), \
+                    patch.object(router, "prepare_group", side_effect=AssertionError("credential-free arm must not refresh ASC")):
+                self.assertEqual(router.phase(api, asc, self.run, {"inputs": {"group": "ios"}}, "arm",
+                                             {"uploader_run_id": 900, "uploader_attempt": 1}), 0)
+            self.assertEqual(asc.method_calls, [])
+            marker = json.loads((state / "post.json").read_text())
+            self.assertEqual(marker["pointer_id"], 56)
 
     def test_new_main_selection_and_both_group_waits_supply_complete_deferral_evidence(self):
         import json

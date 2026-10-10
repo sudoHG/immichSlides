@@ -151,8 +151,9 @@ reduces the comparison margin to zero; Cloud still must be faster.
 
 An authenticated before-POST marker reserves work if POST outcome is unknown.
 Its reservation is recomputed from trusted admission; expiry never refunds it.
-No POST retry is automatic. A definitive 4xx or unique visible matching build
-allows reconciliation; unresolved markers block further starts. Active work uses
+No POST retry is automatic. An authenticated main start that refused before POST,
+a definitive 4xx or unique visible matching build allows reconciliation;
+unresolved markers block further starts. Active work uses
 a reviewed upper reservation, at least `110 * largest destination count + 5`
 minutes, increasing with elapsed time. The API exposes action elapsed time rather
 than billing totals, and cannot bound a stalled service's final charge or cancel
