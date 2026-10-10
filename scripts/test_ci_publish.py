@@ -1194,6 +1194,7 @@ class PublisherTests(unittest.TestCase):
     def test_area_map_includes_flows_that_drive_shared_setup_and_settings_screens(self):
         from ci_ui_selection import AREA_MAP_PATH, affected_areas, matches_test, parse_area_map
         area_map = parse_area_map((Path(__file__).parent.parent / AREA_MAP_PATH).read_text())
+        locales = ("Japanese", "Spanish", "TraditionalChineseHK", "TraditionalChineseTW")
         cases = [
             ("iOS/Component/ServerConfigFormViewIOS.swift", "immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton"),
             ("Shared/Component/ServerConfigFormView.swift", "immichSlidesUITests/testIPhonePortraitAndLandscapeFirstBootElements"),
@@ -1220,7 +1221,10 @@ class PublisherTests(unittest.TestCase):
             ("tvOS/Core/AlbumFilterViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSJapaneseAcceptanceCoreScreenshots"),
             ("tvOS/Core/PersonFilterViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptanceCoreScreenshots"),
             ("Localizable.xcstrings", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
-        ]
+        ] + [("Shared/Component/SlideshowControlBarView.swift",
+              f"FilterSummaryIOSVisualUITests/testIOS{locale}AcceptanceSettingsPrimaryScreenshots") for locale in locales] + [
+             ("tvOS/Component/SlideshowControlBarViewTV.swift",
+              f"FilterSummaryTVOSVisualUITests/testTVOS{locale}AcceptancePlaybackSettingsScreenshots") for locale in locales]
         omitted = [
             ("Shared/Core/SettingsView+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceSettingsPrimaryScreenshots"),
             ("Shared/Core/SettingsView+Actions.swift", "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptancePlaybackSettingsScreenshots"),

@@ -77,16 +77,14 @@
       "navigation": "immichSlides/Shared/Component/SlideshowControlBarView.swift",
       "areas": [
         "localization-about",
-        "localization-filter",
-        "localization-settings"
+        "localization-filter"
       ],
       "reason": "Settings is opened from the slideshow control bar; settings and playback tests cover it."
     },
     {
       "navigation": "immichSlides/tvOS/Component/SlideshowControlBarViewTV.swift",
       "areas": [
-        "localization-about",
-        "localization-settings"
+        "localization-about"
       ],
       "reason": "Settings is opened from the slideshow control bar; settings and playback tests cover it."
     },

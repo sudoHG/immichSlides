@@ -622,7 +622,9 @@
         "immichSlides/tvOS/Component/TVSettingsPrimitives.swift",
         "immichSlides/Shared/Component/ServerConfigFormView.swift",
         "immichSlides/iOS/Component/ServerConfig*.swift",
-        "immichSlides/tvOS/Component/ServerConfigFormViewTV.swift"
+        "immichSlides/tvOS/Component/ServerConfigFormViewTV.swift",
+        "immichSlides/Shared/Component/SlideshowControlBarView.swift",
+        "immichSlides/tvOS/Component/SlideshowControlBarViewTV.swift"
       ],
       "tests": [
         "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceSettingsPrimaryScreenshots",
