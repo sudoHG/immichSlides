@@ -76,7 +76,7 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 3
       matrix:
         device: [iphone, ipad]
         shard: [default, navigation, visual-a, visual-b, visual-c, visual-d]
@@ -227,7 +227,7 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
         device: [appletv]
         shard: [default, navigation, visual-a, visual-b, visual-c, visual-d]

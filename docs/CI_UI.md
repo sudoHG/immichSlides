@@ -36,7 +36,8 @@ Cloud waiting runs in a separate Linux job, so iPhone/iPad start when archive
 selection finishes. That job publishes its own operational summary and gates only
 Apple TV using `!cancelled()`. Cloud selection depends only on the archive, so
 failed iOS-job reruns retain successful TV results; invalid retained Cloud proof
-requires a full rerun. Each UI matrix retains `max-parallel: 2`.
+requires a full rerun. The independent matrices allow three iOS jobs and one
+Apple TV job concurrently, for a combined cap of four.
 
 The [nightly fixture UI tier](CI_NIGHTLY.md#complete-fixture-ui) reuses these shard
 consumers and complete default-plan populations on all three devices. It consumes
@@ -230,7 +231,7 @@ assignments use the reader shipped in [PR #232](https://github.com/sudoHG/immich
 | `visual-b` | Exact methods in the two filter-summary visual classes | 16 | 21 |
 | `visual-c` | Exact methods in the two filter-summary visual classes | 15 | 22 |
 | `visual-d` | Exact methods in the two filter-summary visual classes | 15 | 21 |
-| `default` | Every unassigned or newly introduced class/method | 21 | 20 |
+| `default` | Every unassigned class/method, including new methods outside class assignments | 21 | 20 |
 
 The named revision describes the assignment. The exact Git revision and
 SHA-256 of the manifest bytes identify a reproduction. Every default-plan
@@ -338,9 +339,11 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 
 ## Capacity, timeouts and measurement
 
-The twelve iOS jobs and six Apple TV jobs run in independent matrices, each with
-`max-parallel: 2` and `fail-fast: false`. Together they allow at most four macOS
-jobs per producer, leaving one of the account's five slots for other runs.
+The twelve iOS jobs use `max-parallel: 3`; the six Apple TV jobs use
+`max-parallel: 1`. Both independent matrices retain `fail-fast: false`. Together
+they allow at most four macOS jobs per producer, leaving one of the account's
+five slots for other runs. The larger iOS population receives three slots to
+keep its minimum wave count at four after splitting the visual class.
 Nightly retains its independent cap of two. Two independent matrices let iOS
 start without waiting for Cloud selection; only Apple TV waits for that decision.
 Apple TV still executes after an iOS failure when cloud proof is absent.
@@ -375,7 +378,7 @@ No assertion, default plan, approved skip or device was removed.
 For each method, take its maximum duration across these runs on its platform.
 Sort by descending duration, then exact method identity; assign to the partition
 with the smallest accumulated duration, breaking ties by shard order. Freeze
-the resulting selectors in the manifest. New methods still go to `default`.
+the resulting selectors in the manifest. New unassigned methods go to `default`.
 Apple TV is balanced separately into the same four names; iPhone and iPad share
 the iOS balance. The non-method overhead is shard wall time minus the sum of
 observed method durations.
@@ -386,8 +389,8 @@ non-method overhead for each partition. Three projects up to 28.97 minutes on
 the latest iPad baseline. Four projects at most 19.99 minutes on iPhone, 24.22
 on iPad and 16.84 on Apple TV. These are conservative sizing estimates; the
 producer PR reports real partition measurements and complete official results.
-At concurrency two per matrix, the twelve iOS jobs require at least six waves and
-the six Apple TV jobs at least three. The matrices can overlap; only Apple TV
+At concurrency three, the twelve iOS jobs require at least four waves; the six
+Apple TV jobs run sequentially. The matrices can overlap; only Apple TV
 waits for Cloud selection. Shared-runner queueing and archive selection still
 contribute to full-matrix feedback; the producer PR measures that latency and
 its overlap with the gate rather than claiming a 30-minute result from sizing
