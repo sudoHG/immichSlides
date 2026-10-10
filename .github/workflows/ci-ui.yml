@@ -146,6 +146,8 @@ jobs:
             ${{ runner.temp }}/ui-records/fixture-coverage.md
             ${{ runner.temp }}/ui-records/coverage-verdict.json
             ${{ runner.temp }}/ui-records/compiled-tests.json
+            ${{ runner.temp }}/ui-records/compiled-tests-attempt-1.json
+            ${{ runner.temp }}/ui-records/enumeration-retry.json
             ${{ runner.temp }}/ui-records/official-*.json
             ${{ runner.temp }}/ui-records/retry-invocations.json
             ${{ runner.temp }}/ui-records/shard-timing.json
@@ -294,6 +296,8 @@ jobs:
             ${{ runner.temp }}/ui-records/fixture-coverage.md
             ${{ runner.temp }}/ui-records/coverage-verdict.json
             ${{ runner.temp }}/ui-records/compiled-tests.json
+            ${{ runner.temp }}/ui-records/compiled-tests-attempt-1.json
+            ${{ runner.temp }}/ui-records/enumeration-retry.json
             ${{ runner.temp }}/ui-records/official-*.json
             ${{ runner.temp }}/ui-records/retry-invocations.json
             ${{ runner.temp }}/ui-records/shard-timing.json

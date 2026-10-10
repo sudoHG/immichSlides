@@ -160,6 +160,31 @@ def coverage_rows(declared, compiled, official, device):
                               else "compiled but no official result"}) for key, entry in sorted(expected.items())]
 
 
+# The simulator's test runner sometimes aborts before any test is enumerated (#257); no other error text qualifies.
+ENUMERATION_BOOTSTRAP_CRASH_MARKERS = ("never finished bootstrapping", "signal abrt while preparing to run tests")
+
+
+def enumeration_bootstrap_crashed(payload):
+    errors = payload.get("errors") if isinstance(payload, dict) else None
+    return (isinstance(errors, list) and bool(errors)
+            and all(isinstance(error, str) and all(marker in error for marker in ENUMERATION_BOOTSTRAP_CRASH_MARKERS)
+                    for error in errors))
+
+
+def enumerate_tests_with_bootstrap_retry(run, enumeration):
+    """Run the enumeration command once more, and only once, after a runner bootstrap crash; return (exit code, retry record)."""
+    code = run("enumerate")
+    try:
+        crashed = enumeration_bootstrap_crashed(json.loads(enumeration.read_text()))
+    except (OSError, ValueError):
+        crashed = False
+    if not crashed:
+        return code, None
+    enumeration.replace(enumeration.with_name("compiled-tests-attempt-1.json"))
+    return run("enumerate-retry"), {"code": "enumeration-bootstrap-retry", "first_exit_code": code,
+                                    "message": "XCTest runner crashed while bootstrapping enumeration; enumeration was run once more"}
+
+
 def compiled_tests(payload, declared):
     expected = {entry["key"]: entry for entry in declared}
     found = []
@@ -461,9 +486,15 @@ def main(argv=None):
                 "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never"]
         selections = ["-only-testing:immichSlidesUITests/" + entry["key"] for entry in declared]
         enumeration = output / "compiled-tests.json"
-        code = execute(base + selections + ["-enumerate-tests", "-test-enumeration-style", "flat",
-                       "-test-enumeration-format", "json", "-test-enumeration-output-path", str(enumeration),
-                       "-resultBundlePath", str(work / "enumeration.xcresult")], "enumerate")
+        def enumerate_tests(name):
+            return execute(base + selections + ["-enumerate-tests", "-test-enumeration-style", "flat",
+                           "-test-enumeration-format", "json", "-test-enumeration-output-path", str(enumeration),
+                           "-resultBundlePath", str(work / (name + ".xcresult"))], name)
+        code, enumeration_retry = enumerate_tests_with_bootstrap_retry(enumerate_tests, enumeration)
+        if enumeration_retry:
+            # Kept out of summary["infrastructure"]: any entry there fails the verdict, which would make the retry pointless.
+            write_json(output / "enumeration-retry.json", dict(enumeration_retry, schema_version=1))
+            print("Infrastructure: " + enumeration_retry["message"], flush=True)
         require(code == 0, "compiled enumeration failed")
         summary["population"]["compiled"] = compiled_tests(json.loads(enumeration.read_text()), declared)
         rows = coverage_rows(declared, summary["population"]["compiled"], {"testNodes": []}, args.device)

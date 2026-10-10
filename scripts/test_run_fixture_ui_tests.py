@@ -1,6 +1,7 @@
 """Guard per-test fixture coverage against missing, duplicate and skipped results."""
 
 import copy
+import json
 import os
 import plistlib
 import tempfile
@@ -157,6 +158,30 @@ class FixtureCoverageTests(unittest.TestCase):
         self.assertEqual(compiled_tests(payload, expected), expected)
         with self.assertRaises(ContractError):
             compiled_tests(dict(payload, errors=["enumeration failed"]), expected)
+
+    def test_enumeration_is_rerun_once_only_after_a_runner_bootstrap_crash(self):
+        crash = {"errors": ["Runner (1) encountered an error. (Underlying Error: Early unexpected exit, operation never "
+                            "finished bootstrapping - no restart will be attempted. (Underlying Error: Test crashed with "
+                            "signal abrt while preparing to run tests.))"], "values": []}
+        other = {"errors": ["enumeration failed"], "values": []}
+        clean = {"errors": [], "values": []}
+        for name, outputs, calls, retried in (("recovered", [crash, clean], 2, True), ("persistent", [crash, crash], 2, True),
+                                              ("other error", [other, clean], 1, False), ("clean", [clean, clean], 1, False)):
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                enumeration = Path(directory) / "compiled-tests.json"
+                names = []
+                def run(command_name):
+                    enumeration.write_text(json.dumps(outputs[len(names)]))
+                    names.append(command_name)
+                    return 0
+                code, record = runner.enumerate_tests_with_bootstrap_retry(run, enumeration)
+                self.assertEqual((code, len(names), record is not None), (0, calls, retried))
+                self.assertEqual(json.loads(enumeration.read_text()), outputs[calls - 1])
+                if retried:
+                    self.assertEqual((names, record["code"]), (["enumerate", "enumerate-retry"], "enumeration-bootstrap-retry"))
+                    self.assertEqual(json.loads((Path(directory) / "compiled-tests-attempt-1.json").read_text()), crash)
+        with self.assertRaises(ContractError):
+            compiled_tests(crash, [])
 
     def test_default_plan_exclusions_and_explicit_selection_define_the_population(self):
         files = {"Tests.swift": "class Flow: XCTestCase { func testFirst() {} func testSecond() {} }"}
