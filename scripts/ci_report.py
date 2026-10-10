@@ -416,6 +416,32 @@ def report_base(run, repository):
             "diagnostic_shard": "unverified-dispatch-plan" if run["path"] == NIGHTLY_PATH and run["event"] == "workflow_dispatch" else None}
 
 
+def nightly_skip_attempt(api, run, attempt, artifacts):
+    """A skipped night is `not-run`: it carries no evidence for its source commit and is never a pass."""
+    from ci_nightly_change import NO_CHANGE_REASON, RECORD_FILE, artifact_name, validate_record
+    from ci_publish import json_member
+    matches = [item for item in artifacts if item["name"] == artifact_name(run["id"], attempt)]
+    if not matches:
+        return None  # Runs before the change check, or a failed check that fell open to running.
+    require(len(matches) == 1, "duplicate nightly change record")
+    aggregate = f"nightly-aggregate-{run['id']}-{attempt}"
+    if matches[0]["expired"]:
+        if any(item["name"] == aggregate for item in artifacts):
+            return None
+        raise EvidenceExpired("nightly change record expired")
+    raw = validate_record(json_member(api, matches[0], RECORD_FILE), repository=api.repository, run_id=run["id"],
+                          attempt=attempt, event=run["event"], head_sha=run["head_sha"])
+    if raw["decision"] != "skip":
+        return None
+    require(not any(item["name"] == aggregate or item["name"].startswith(("nightly-strict-", "nightly-ui-aggregate-"))
+                    and item["name"].endswith(f"-{run['id']}-{attempt}") for item in artifacts),
+            "skipped nightly has execution evidence")
+    require(on_main(raw["baseline"]["sha"]), "skip baseline is outside main history")
+    entry = report_base({**run, "run_attempt": attempt}, api.repository)
+    entry.update(status="not-run", not_evaluated_reason=NO_CHANGE_REASON, diagnostic_shard=None)
+    return entry
+
+
 def dispatch_shard(api, run, attempt, artifacts):
     from ci_publish import json_member
     if run["event"] != "workflow_dispatch":
@@ -663,9 +689,11 @@ def read_run(api, run, admissions, previous=None):
             for attempt in range(1, run["run_attempt"] + 1):
                 diagnostic = "unverified-dispatch-plan" if run["event"] == "workflow_dispatch" else None
                 try:
-                    diagnostic = dispatch_shard(api, run, attempt, artifacts)
-                    value = nightly_attempt(api, run, attempt, artifacts)
-                    require(value.get("diagnostic_shard") == diagnostic, "aggregate differs from dispatch plan")
+                    value = nightly_skip_attempt(api, run, attempt, artifacts)
+                    if value is None:
+                        diagnostic = dispatch_shard(api, run, attempt, artifacts)
+                        value = nightly_attempt(api, run, attempt, artifacts)
+                        require(value.get("diagnostic_shard") == diagnostic, "aggregate differs from dispatch plan")
                 except EvidenceExpired:
                     if attempt not in cached:
                         raise

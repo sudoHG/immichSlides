@@ -39,6 +39,13 @@ and cannot open a post-merge failure issue. Missing or invalid evidence still fa
 The nightly UI aggregate supplies per-method verification and the existing nightly
 failure issue lifecycle; main build, unit and host failures retain their own reporting.
 
+A scheduled nightly that the [change check](CI_NIGHTLY.md#skipping-an-unchanged-night) skipped
+has a `nightly-change-<run>-<attempt>` record and no aggregate. A record that matches the run
+attempt, repository, event and source commit, names a baseline on main and has no execution
+artifacts is `not-run` with "no change since the last nightly". It has an empty test
+population, is not issue-eligible, and counts as neither a pass nor a failure; monthly
+health counts it as incomplete evidence. Any mismatch reads as failed evidence.
+
 The reader supports strict nightly aggregate version 1 and the explicit version 2
 successor containing a fixture UI aggregate. Version 2 binds the embedded `ui` record
 to `nightly-ui-aggregate-<run>-<attempt>/nightly-ui.json`, with a complete manifest-derived

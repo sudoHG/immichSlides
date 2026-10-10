@@ -27,6 +27,8 @@ XCC_BINDINGS = {"CI_WORKFLOW_TOKEN": "${{ github.token }}",
                 "ASC_PRIVATE_KEY": "${{ secrets.ASC_PRIVATE_KEY }}"}
 XCC_CONTROL_BINDINGS = {**XCC_BINDINGS, "CI_XCC_ROUTING_OVERRIDE": "${{ vars.CI_XCC_ROUTING_OVERRIDE }}"}
 LIVE_WORKFLOW = ".github/workflows/ci-nightly.yml"
+NIGHTLY_UNGATED_JOBS = {"change", "live-environment-refusal"}
+NIGHTLY_CHANGE_GATE = "needs.change.outputs.run_nightly != 'false'"
 LIVE_ENVIRONMENT = "immich-test-server"
 LIVE_BINDINGS = {"CI_LIVE_URL": "${{ secrets.IMMICH_TEST_SERVER_URL }}",
                  "CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}
@@ -285,6 +287,21 @@ def trusted_action_allowed(uses, options):
     return allowed_inputs is not None and set(options) <= allowed_inputs
 
 
+def nightly_job_gated(job_id, jobs, visited=frozenset()):
+    """Gated directly by the change check, or skipped with a gated job because its condition keeps the implicit success()."""
+    job = jobs.get(job_id)
+    if not isinstance(job, dict) or job_id in visited:
+        return False
+    needs = job.get("needs")
+    needs = [needs] if isinstance(needs, str) else needs if isinstance(needs, list) else []
+    condition = job.get("if") if isinstance(job.get("if"), str) else ""
+    if "change" in needs and NIGHTLY_CHANGE_GATE in condition:
+        return True
+    if re.search(r"\b(?:always|cancelled|failure)\(\)", condition):
+        return False
+    return any(nightly_job_gated(name, jobs, visited | {job_id}) for name in needs if isinstance(name, str))
+
+
 def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]:
     violations = []
 
@@ -436,6 +453,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
         if (len(capacities) != 2 or any(type(capacity) is not int or capacity <= 0 for capacity in capacities)
                 or sum(capacities) > 4):
             flag("jobs", "ui-capacity", "Independent UI matrices need positive literal capacities totaling at most four")
+    if path == LIVE_WORKFLOW and "change" not in jobs:
+        flag("jobs", "nightly-change-gate", "The nightly needs its change check job")
     for job_id, job in jobs.items():
         location = f"jobs.{job_id}"
         if not isinstance(job, dict):
@@ -443,7 +462,9 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             continue
         if path in PUBLISHER_COMMANDS and job.get("runs-on") != "ubuntu-24.04":
             flag(location, "publisher-runner", "Publisher and approval jobs use the pinned Linux runner")
-        if path == LIVE_WORKFLOW and job_id in {"aggregate", "ui-aggregate"}:
+        if path == LIVE_WORKFLOW and job_id not in NIGHTLY_UNGATED_JOBS and not nightly_job_gated(job_id, jobs):
+            flag(location, "nightly-change-gate", "Every nightly job must be gated by the change check, directly or through a job that is")
+        if path == LIVE_WORKFLOW and job_id in {"change", "aggregate", "ui-aggregate"}:
             commands = [step["run"] for step in job.get("steps", [])
                         if isinstance(step, dict) and isinstance(step.get("run"), str)]
             bootstrap = '/usr/bin/python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/nightly-python"'

@@ -47,6 +47,62 @@ The optional dispatch `shard` input diagnoses one known shard exactly once. It r
 the complete scheduling record; missing shards and the diagnostic marker make aggregate
 equality fail. This run cannot substitute for a complete nightly, and does not retry cases.
 
+## Skipping an unchanged night
+
+The scheduled nightly first runs a Linux `change` job that uses only the checked-out main
+commit, the pinned reader packages and the GitHub API with the job token; it needs no
+macOS capacity, Xcode Cloud build or credentials. `scripts/ci_nightly_change.py` takes the
+newest **successful scheduled** `ci-nightly` run on main as the baseline and compares its
+source SHA with this run's. The nightly is skipped when:
+
+- the SHA is unchanged, or
+- every path changed since the baseline is not app-affecting and not CI-trusted. The
+  *baseline's* reader modules and `ci-classification.json` classify the diff, as the gate
+  does, so a commit cannot loosen its own classification. Unknown paths, build-target
+  files, workflow and test-infrastructure files, and an empty path list all count as affecting.
+
+Otherwise, and on any doubt, it runs: no baseline, a baseline that is not an ancestor,
+a classification or API error, or a rate limit that outlasts the two-minute budget. The
+job fails open (`run_nightly=true` is written first), so an unavailable check can never
+hide a night. A failed, cancelled or timed-out scheduled night is never a baseline: a
+red or interrupted night runs again, as before, instead of waiting for a code change.
+Consecutive skipped nights chain safely because every skip is within non-affecting
+changes of a successful executed night.
+
+When skipped, `plan`, `strict`, `ui-archive`, `ui-shards`, `live-admission`, `live-build`,
+`live-canary`, `live-unit` and both aggregates do not run, so the run ends green on Linux
+within minutes. `workflow_dispatch` and `pull_request` always run: the check records the
+reason `event-not-schedule` and nothing else changes. The policy check fails any nightly
+job that is not gated by the `change` output directly or through a gated job
+(`nightly-change-gate`), and requires the job to stay on Linux without Xcode.
+
+The `nightly-change-<run>-<attempt>` artifact holds the decision; the step summary shows it.
+The [reporter](CI_REPORT.md) turns a validated skip into a `not-run` entry with "no change
+since the last nightly". It is never a pass for the new SHA, creates no issue outcome, and
+supplies no explicit-pass night. Closing a nightly issue needs three executed nights, so
+quiet stretches delay closure rather than counting toward it. A skip record is rejected
+(the night reads as failed evidence) if it names another run, commit, repository or event,
+a baseline outside main, or sits next to aggregate or shard artifacts.
+
+Release eligibility is unchanged and keeps pointing at the **last executed** nightly:
+a skip adds no evidence, so a release candidate must still be that nightly's source SHA.
+After a non-affecting commit lands, dispatch the nightly (`gh workflow run ci-nightly.yml --ref main`)
+if a release needs a fresh run on the new SHA; dispatches always execute.
+
+Diagnose the decision without any GitHub write or workflow output. It reads the real run
+history and prints what a scheduled run at the chosen commit would do:
+
+```bash
+python3 -B scripts/ci_nightly_change.py --dry-run --repository <owner>/<name> \
+    [--head-sha <commit>] [--event schedule]
+```
+
+Set `GH_TOKEN` to avoid unauthenticated rate limits. A real `workflow_dispatch` runs the job
+but cannot prove the schedule path (the event differs, and a dispatch is never a baseline),
+so the first scheduled nights after this lands are the real acceptance: check the
+`nightly-change-*` artifact and summary of each, and that a skipped night shows only the
+`change` job.
+
 ## Population and capacity
 
 [`nightly-matrix.json`](../scripts/nightly-matrix.json) explicitly versions device,

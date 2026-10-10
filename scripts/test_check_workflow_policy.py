@@ -160,6 +160,33 @@ final class LocaleUITests: XCTestCase {
                         job["steps"].append({"run": "xcrun simctl list" if mutation == "xcode" else "python3 setup.py --verify-toolchain"})
                     self.assertIn("nightly-aggregate-platform", self.rules(changed, path))
 
+    def test_nightly_jobs_cannot_bypass_the_change_check(self):
+        path = policy.LIVE_WORKFLOW
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual("ubuntu-24.04", document["jobs"]["change"]["runs-on"])
+        for job_id in ("plan", "aggregate", "ui-archive", "ui-shards", "ui-aggregate", "live-admission", "live-build"):
+            with self.subTest(job=job_id, mutation="dropped gate"):
+                changed = copy.deepcopy(document)
+                changed["jobs"][job_id]["if"] = changed["jobs"][job_id]["if"].replace(policy.NIGHTLY_CHANGE_GATE, "true")
+                self.assertIn("nightly-change-gate", self.rules(changed, path))
+        for job_id in ("strict", "live-canary", "live-unit"):
+            with self.subTest(job=job_id, mutation="status function"):
+                changed = copy.deepcopy(document)
+                changed["jobs"][job_id]["if"] = "always()"
+                self.assertIn("nightly-change-gate", self.rules(changed, path))
+        with self.subTest(mutation="missing job"):
+            changed = copy.deepcopy(document)
+            del changed["jobs"]["change"]
+            self.assertIn("nightly-change-gate", self.rules(changed, path))
+        for mutation in ("runner", "xcode"):
+            with self.subTest(job="change", mutation=mutation):
+                changed = copy.deepcopy(document)
+                if mutation == "runner":
+                    changed["jobs"]["change"]["runs-on"] = "xcode-27"
+                else:
+                    changed["jobs"]["change"]["steps"].append({"run": "xcrun simctl list"})
+                self.assertIn("nightly-aggregate-platform", self.rules(changed, path))
+
     def test_macos_jobs_cannot_survive_cancellation_through_always(self):
         document = workflow()
         for condition in ("always()", "${{ always() && needs.archive.outputs.run_ui == 'true' }}"):

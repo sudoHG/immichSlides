@@ -438,6 +438,106 @@ class AdmissionVerdictTests(unittest.TestCase):
             self.assertTrue(classify({"event": "push"})["app_affected"])
             diff.assert_not_called()
 
+    def test_nightly_change_check_skips_only_a_proven_unchanged_or_non_affecting_main(self):
+        import ci_nightly_change as change
+        head, old, older = "c" * 40, "b" * 40, "a" * 40
+        def run(number, sha, created, conclusion="success", event="schedule", branch="main", repository="example/photos"):
+            return {"id": number, "event": event, "head_branch": branch, "status": "completed", "conclusion": conclusion,
+                    "head_repository": {"full_name": repository}, "created_at": created, "head_sha": sha}
+        history = [run(1, older, "2026-10-01T21:15:00Z"), run(2, old, "2026-10-02T21:15:00Z"),
+                   run(3, head, "2026-10-03T21:15:00Z", "failure"), run(4, head, "2026-10-03T22:00:00Z", "cancelled"),
+                   run(5, head, "2026-10-04T21:15:00Z", event="workflow_dispatch"),
+                   run(6, head, "2026-10-04T21:16:00Z", branch="topic"), run(7, head, "2026-10-04T21:17:00Z", repository="other/photos")]
+        calls = []
+        def classify(baseline, source):
+            calls.append((baseline, source))
+            return affecting
+        def decide(**changes):
+            options = {"event": "schedule", "head_sha": head, "runs": history, "repository": "example/photos",
+                       "current_run_id": 10, "is_ancestor": lambda *args: True, "classify": classify}
+            return change.decide(**{**options, **changes})
+        affecting = {"app_affected": False, "ci_changing": False, "affected_paths": [], "ci_paths": [], "paths": 2}
+        self.assertEqual(("skip", "unchanged"), tuple(decide(runs=history[:1] + [run(8, head, "2026-10-04T21:15:00Z")])[key] for key in ("decision", "reason")))
+        self.assertEqual([], calls)
+        self.assertEqual(("run", "no-baseline"), tuple(decide(runs=history[2:])[key] for key in ("decision", "reason")))
+        self.assertEqual(("run", "event-not-schedule"), tuple(decide(event="workflow_dispatch")[key] for key in ("decision", "reason")))
+        self.assertEqual(("run", "event-not-schedule"), tuple(decide(event="pull_request")[key] for key in ("decision", "reason")))
+        # The newest successful scheduled main run is the baseline; a failed or cancelled night never counts as verified.
+        skipped = decide(runs=history, current_run_id=10)
+        self.assertEqual(("skip", "non-affecting-changes"), (skipped["decision"], skipped["reason"]))
+        self.assertEqual({"run_id": 2, "sha": old, "created_at": "2026-10-02T21:15:00Z"}, skipped["baseline"])
+        self.assertEqual([(old, head)], calls)
+        self.assertEqual(("run", "baseline-not-ancestor"), tuple(decide(runs=history[:2], is_ancestor=lambda *args: False)[key] for key in ("decision", "reason")))
+        for flag in ("app_affected", "ci_changing"):
+            with self.subTest(flag=flag):
+                affecting = {**affecting, flag: True, "affected_paths": ["immichSlides/App.swift"], "ci_paths": [], "paths": 3}
+                result = decide(runs=history[:2])
+                self.assertEqual(("run", "changes-affect-app-or-ci"), (result["decision"], result["reason"]))
+                self.assertEqual(["immichSlides/App.swift"], result["changes"]["affected"])
+        # The current run is never its own baseline, so a rerun cannot skip itself.
+        self.assertEqual(("run", "no-baseline"), tuple(decide(runs=[run(10, old, "2026-10-02T21:15:00Z")])[key] for key in ("decision", "reason")))
+
+    def test_nightly_change_check_fails_open_and_records_the_decision(self):
+        import ci_nightly_change as change
+        head, old = "c" * 40, "b" * 40
+        environment = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_REPOSITORY": "example/photos", "GITHUB_SHA": head,
+                       "GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "2"}
+        import tempfile
+        for outcome, expected in (("unchanged", ("skip", "unchanged", "false")), ("unavailable", ("run", "decision-unavailable", "true"))):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                output, records = Path(directory, "output"), Path(directory, "records")
+                runs = [{"id": 2, "event": "schedule", "head_branch": "main", "status": "completed", "conclusion": "success",
+                         "head_repository": {"full_name": "example/photos"}, "created_at": "2026-10-02T21:15:00Z", "head_sha": head}]
+                reader = (patch.object(change, "recent_scheduled_runs", return_value=runs) if outcome == "unchanged"
+                          else patch.object(change, "recent_scheduled_runs", side_effect=OSError("network down")))
+                with reader, patch.dict("os.environ", {}, clear=True):
+                    self.assertEqual(0, change.main(["--output-dir", str(records)], {**environment, "GITHUB_OUTPUT": str(output)}))
+                decision, reason, run_nightly = expected
+                self.assertEqual(f"run_nightly=true\nrun_nightly={run_nightly}\n", output.read_text())
+                record = json.loads((records / "nightly-change.json").read_text())
+                self.assertEqual((decision, reason, {"id": "10", "attempt": 2}), (record["decision"], record["reason"], record["run"]))
+                self.assertNotIn("network down", (records / "nightly-change.md").read_text())
+                change.validate_record(record, repository="example/photos", run_id=10, attempt=2, event="schedule", head_sha=head)
+                if decision == "skip":
+                    self.assertIn(change.NO_CHANGE_REASON, (records / "nightly-change.md").read_text())
+        # Nothing but the diagnostic prints and nothing is written or exported in a dry run.
+        with tempfile.TemporaryDirectory() as directory, patch.object(change, "recent_scheduled_runs", return_value=[]), \
+                patch.dict("os.environ", {"GITHUB_OUTPUT": str(Path(directory, "output"))}):
+            self.assertEqual(0, change.main(["--dry-run", "--repository", "example/photos", "--head-sha", head], {}))
+            self.assertFalse(Path(directory, "output").exists())
+        for changes in ({"decision": "skip", "reason": "unchanged"}, {"head_sha": old}, {"run": {"id": "11", "attempt": 2}},
+                        {"repository": "other/photos"}, {"event": "workflow_dispatch"}):
+            with self.subTest(changes=changes), self.assertRaises(ci_summary.ContractError):
+                change.validate_record({"schema_version": 1, "decision": "skip", "reason": "non-affecting-changes",
+                                        "event": "schedule", "repository": "example/photos", "head_sha": head,
+                                        "run": {"id": "10", "attempt": 2},
+                                        "baseline": {"run_id": 2, "sha": old, "created_at": "2026-10-02T21:15:00Z"}, **changes},
+                                       repository="example/photos", run_id=10, attempt=2, event="schedule", head_sha=head)
+
+    def test_nightly_change_classification_binds_the_baseline_reader_policy_and_both_trees(self):
+        import ci_nightly_change as change
+        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES
+        modules = {name: Path(__file__).with_name(name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        allowlist = Path(__file__).with_name("ci-classification.json").read_text()
+        baseline, head = "a" * 40, "b" * 40
+        def repository_input(*args, **options):
+            if args[0] == "diff":
+                return "docs/note.md\0docs/other.md\0"
+            return "immichSlides/base-only.swift\ndocs/base.md" if args[-1] == baseline else "immichSlides/head-only.swift"
+        with patch.object(change, "revision_modules", return_value=modules) as reader, \
+                patch.object(change, "read_blob", return_value=allowlist) as policy, \
+                patch.object(change, "git", side_effect=repository_input) as repository, \
+                patch.object(change, "base_reader", return_value={"app_affected": False, "ci_changing": False,
+                                                                  "affected_paths": [], "ci_paths": []}) as evaluate:
+            self.assertEqual(2, change.classify_between(baseline, head)["paths"])
+            reader.assert_called_once_with(baseline)
+            policy.assert_called_once_with(baseline, "scripts/ci-classification.json")
+            repository.assert_any_call("diff", "-z", "--name-only", "--no-renames", baseline + ".." + head)
+            evaluate.assert_called_once_with(modules, {
+                "operation": "classify", "paths": ["docs/note.md", "docs/other.md"],
+                "classification_policy": json.loads(allowlist),
+                "build_target_paths": ["immichSlides/base-only.swift", "immichSlides/head-only.swift"]})
+
     def setUp(self):
         self.summary = valid_summary()
         self.identity = self.summary["identity"]

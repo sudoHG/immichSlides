@@ -1156,6 +1156,42 @@ class ReporterTests(unittest.TestCase):
                 self.assertFalse(ci_report.issue_eligible(report))
                 self.assertEqual("none", issue_decision(None, NIGHTLY_INFRASTRUCTURE, [report], registry_referenced=False)["action"])
 
+    def test_skipped_nightly_is_not_run_without_a_pass_or_an_issue_outcome(self):
+        import ci_nightly_change as change
+        repository, head, baseline = "sudoHG/immichSlides", "a" * 40, "b" * 40
+        record = {"schema_version": 1, "decision": "skip", "reason": "non-affecting-changes", "event": "schedule",
+                  "repository": repository, "head_sha": head, "run": {"id": "10", "attempt": 1},
+                  "baseline": {"run_id": 2, "sha": baseline, "created_at": "2026-10-01T21:15:00Z"}}
+        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-02T21:15:00Z", "head_sha": head,
+               "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
+               "head_repository": {"full_name": repository}, "status": "completed", "conclusion": "success"}
+        def artifact(name, expired=False):
+            return {"id": 1, "name": name, "expired": expired, "size_in_bytes": 10}
+        change_name = change.artifact_name(10, 1)
+        for label, artifacts, saved, expected in (
+                ("skipped", [artifact(change_name)], record, "not-run"),
+                ("executed", [artifact(change_name)], {**record, "decision": "run", "reason": "changes-affect-app-or-ci"}, "failed"),
+                ("no record", [], record, "failed"),
+                ("skip with execution evidence", [artifact(change_name), artifact("nightly-aggregate-10-1")], record, "failed"),
+                ("foreign run", [artifact(change_name)], {**record, "run": {"id": "11", "attempt": 1}}, "failed"),
+                ("other commit", [artifact(change_name)], {**record, "head_sha": baseline}, "failed"),
+                ("baseline outside main", [artifact(change_name)], record, "failed")):
+            api = type("API", (), {"repository": repository, "pages": lambda *args, found=artifacts: found})()
+            with self.subTest(label), patch("ci_publish.json_member", return_value=saved), \
+                    patch("ci_report.on_main", side_effect=lambda revision: label != "baseline outside main"):
+                report = read_run(api, run, {})
+                self.assertEqual(expected, report["status"])
+                if expected == "not-run":
+                    self.assertEqual(change.NO_CHANGE_REASON, report["not_evaluated_reason"])
+                    compact = ci_report.compact_entry(report, set())
+                    self.assertEqual(change.NO_CHANGE_REASON, compact["not_evaluated_reason"])
+                    self.assertFalse(ci_report.issue_eligible(compact))
+                    self.assertEqual([], compact["observed"])
+                    self.assertIn("Not evaluated: " + change.NO_CHANGE_REASON, ci_report.render_entry(report))
+                    self.assertEqual("none", issue_decision(None, NIGHTLY_INFRASTRUCTURE, [compact], registry_referenced=False)["action"])
+                else:
+                    self.assertTrue(report["diagnostics"]["infrastructure"])
+
     def test_legacy_reset_point_uses_one_verified_read_and_is_cached_for_replay(self):
         reset = {"actor": "sudoHG", "day": "2026-10-09", "run": "37868827278"}
         run = {"id": 37868827278, "path": ci_report.REPORT_PATH, "event": "workflow_dispatch",
