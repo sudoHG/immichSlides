@@ -98,6 +98,7 @@ class LocalModeTests(unittest.TestCase):
                               "    parser.add_argument('--full-plan', action='store_true')\n"
                               "    parser.add_argument('--check', action='store_true')\n"
                               "    parser.add_argument('--manifest')\n"
+                              "    parser.add_argument('--ui-record')\n"
                               "    parser.add_argument('--output-dir')\n"
                               "    parser.add_argument('--shard')\n"
                               "    parser.add_argument('command', nargs='?')\n"
@@ -105,6 +106,7 @@ class LocalModeTests(unittest.TestCase):
                               "    print('DERIVED_DATA=' + str(args.derived_data_path))\n"
                               "    print('RESULT_BUNDLE=' + str(args.result_bundle_path))\n"
                               "    print('MANIFEST=' + str(args.manifest))\n"
+                              "    print('UI_RECORD=' + str(args.ui_record))\n"
                               "    if args.prepare_example_config and (args.platform or args.full_plan):\n"
                               "        return 71\n"
                               "    if args.project and Path(args.project).resolve() != root / 'immichSlides.xcodeproj':\n"
@@ -189,13 +191,16 @@ class LocalModeTests(unittest.TestCase):
                                         "IMMICH_TEST_API_KEY=explicit"], cwd=root, env=test_environment,
                                        capture_output=True, text=True, timeout=15)
             self.assertIn("DERIVED_DATA=" + str((root / ".derivedData/offline-local").resolve()), completed.stdout)
-            for manifest_args in (["--manifest", "m.json"], ["--manifest=m.json"]):
-                with self.subTest(manifest_args=manifest_args):
+            for input_args, label, filename in ((["--manifest", "m.json"], "MANIFEST", "m.json"),
+                                                (["--manifest=m.json"], "MANIFEST", "m.json"),
+                                                (["--ui-record", "ui.json"], "UI_RECORD", "ui.json"),
+                                                (["--ui-record=ui.json"], "UI_RECORD", "ui.json")):
+                with self.subTest(input_args=input_args):
                     completed = subprocess.run([sys.executable, "-B", str(runner), "--config",
-                                                "IMMICH_TEST_API_KEY=explicit", *manifest_args], cwd=scripts,
+                                                "IMMICH_TEST_API_KEY=explicit", *input_args], cwd=scripts,
                                                env=test_environment, capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 0, completed.stderr)
-                    self.assertIn("MANIFEST=" + str((scripts / "m.json").resolve()), completed.stdout)
+                    self.assertIn(label + "=" + str((scripts / filename).resolve()), completed.stdout)
             written = Path(directory, "written")
             written.mkdir()
             receipt_path = written / "local-snapshot.json"

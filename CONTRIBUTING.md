@@ -94,7 +94,7 @@ keep the source tree unchanged between commands, as described in
   Explicit warm-build reuse and the informational hosted tracer are documented in
   [Strict runner warm-build tracer](docs/CI_STRICT_RUNNER.md).
   Versioned matrix reproduction and on-demand hosted runs are documented in
-  [Skeleton nightly](docs/CI_NIGHTLY.md); a skeleton run is never release-eligible.
+  [Nightly matrix and fixture UI](docs/CI_NIGHTLY.md); these runs remain release-ineligible.
 - Optional, once per clone: `scripts/install_git_privacy_hooks.sh` installs the hooks that block secrets and private data from being committed or pushed.
 
 ## Using AI coding agents

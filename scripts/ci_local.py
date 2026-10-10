@@ -22,7 +22,7 @@ RUN_TOKEN = "_IMMICHSLIDES_CI_LOCAL_RUN"
 PATH_OPTIONS = {"--output-dir", "--evidence-dir", "--derived-data-path", "--result-bundle-path",
                 "--cloned-source-packages-path", "--cloned-source-packages", "--xctestrun",
                 "--archive-dir", "--selection-path", "--relocated-path", "--shard-manifest", "--plan", "--records-dir",
-                "--manifest"}
+                "--manifest", "--ui-record"}
 # Subcommands (by entry point) that only check results an earlier run wrote and so keep that run's receipt.
 RESULT_CHECK_COMMANDS = {"ci_ui_tests.py": "check-upload"}
 PATH_ALIASES = {"--derived-data": "--derived-data-path", "--result-bundle": "--result-bundle-path"}

@@ -16,6 +16,11 @@ Apple TV using `!cancelled()`. Cloud selection depends only on the archive, so
 failed iOS-job reruns retain successful TV results; invalid retained Cloud proof
 requires a full rerun. Each UI matrix retains `max-parallel: 2`.
 
+The [nightly fixture UI tier](CI_NIGHTLY.md#complete-fixture-ui) reuses these shard
+consumers and complete default-plan populations on all three devices. It consumes
+its own run's existing iOS/tvOS archives and always executes every shard, with no
+post-merge verdict reuse. Its UI aggregate is independently judged by `ci-report`.
+
 ## Classification and archive selection
 
 The Linux `ui-archive` job reads the PR's base classification policy. A docs-only

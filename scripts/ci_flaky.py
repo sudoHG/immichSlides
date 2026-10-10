@@ -203,7 +203,11 @@ def registry_revision(root, environment, local_ref=None):
             parents = [line[7:] for line in headers.splitlines() if line.startswith("parent ")]
             require(len(parents) == 2, "PR registry requires the merge commit's base parent")
             return parents[0]
-        require(event in {"push", "workflow_dispatch", "schedule"} and environment.get("GITHUB_REF") == "refs/heads/main",
+        ref, repository = environment.get("GITHUB_REF", ""), environment.get("GITHUB_REPOSITORY", "")
+        diagnostic_ui = (event == "workflow_dispatch" and ref.startswith("refs/heads/") and bool(repository)
+                         and environment.get("GITHUB_JOB") == "ui-shards"
+                         and environment.get("GITHUB_WORKFLOW_REF") == repository + "/.github/workflows/ci-nightly.yml@" + ref)
+        require(event in {"push", "workflow_dispatch", "schedule"} and (ref == "refs/heads/main" or diagnostic_ui),
                 "CI registry consumption requires PR or main")
         return head
     ref = local_ref or "HEAD"
