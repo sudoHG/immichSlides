@@ -573,6 +573,7 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
 
 def nightly_attempt(api, run, attempt, artifacts):
     from ci_health import observation_metrics
+    from ci_nightly_change import INFRASTRUCTURE_ERROR_PREFIXES
     from ci_publish import json_member
     entry = report_base({**run, "run_attempt": attempt}, api.repository)
     name = f"nightly-aggregate-{run['id']}-{attempt}"
@@ -629,7 +630,7 @@ def nightly_attempt(api, run, attempt, artifacts):
     counts.update(declared=len(declared_keys), observed=len(observed),
                   scheduled_cases=raw["matrix"].get("scheduled", 0), executed_cases=raw["matrix"].get("executed", 0))
     infrastructure = [] if raw["matrix"].get("equal") else ["nightly matrix evidence incomplete"]
-    if any(error.startswith(("missing shard", "invalid or missing", "producer infrastructure", "single-shard")) for error in raw["errors"]):
+    if any(error.startswith(INFRASTRUCTURE_ERROR_PREFIXES) for error in raw["errors"]):
         infrastructure.append("nightly infrastructure or scheduling failure")
     if missing:
         infrastructure.append("nightly official method evidence incomplete")

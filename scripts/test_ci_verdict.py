@@ -441,41 +441,94 @@ class AdmissionVerdictTests(unittest.TestCase):
     def test_nightly_change_check_skips_only_a_proven_unchanged_or_non_affecting_main(self):
         import ci_nightly_change as change
         head, old, older = "c" * 40, "b" * 40, "a" * 40
-        def run(number, sha, created, conclusion="success", event="schedule", branch="main", repository="example/photos"):
-            return {"id": number, "event": event, "head_branch": branch, "status": "completed", "conclusion": conclusion,
+        def run(number, sha, created, conclusion="success", event="schedule", branch="main", repository="example/photos", status="completed"):
+            return {"id": number, "event": event, "head_branch": branch, "status": status, "conclusion": conclusion, "run_attempt": 1,
                     "head_repository": {"full_name": repository}, "created_at": created, "head_sha": sha}
-        history = [run(1, older, "2026-10-01T21:15:00Z"), run(2, old, "2026-10-02T21:15:00Z"),
-                   run(3, head, "2026-10-03T21:15:00Z", "failure"), run(4, head, "2026-10-03T22:00:00Z", "cancelled"),
-                   run(5, head, "2026-10-04T21:15:00Z", event="workflow_dispatch"),
-                   run(6, head, "2026-10-04T21:16:00Z", branch="topic"), run(7, head, "2026-10-04T21:17:00Z", repository="other/photos")]
+        verdicts = {1: "real", 2: "real", 3: "skipped", 4: "real", 5: None}
+        ignored = [run(20, head, "2026-10-04T21:15:00Z", event="workflow_dispatch"),
+                   run(21, head, "2026-10-04T21:16:00Z", branch="topic"), run(22, head, "2026-10-04T21:17:00Z", repository="other/photos")]
         calls = []
         def classify(baseline, source):
             calls.append((baseline, source))
             return affecting
-        def decide(**changes):
-            options = {"event": "schedule", "head_sha": head, "runs": history, "repository": "example/photos",
-                       "current_run_id": 10, "is_ancestor": lambda *args: True, "classify": classify}
+        def decide(runs, **changes):
+            options = {"event": "schedule", "head_sha": head, "runs": runs + ignored, "repository": "example/photos",
+                       "current_run_id": 10, "is_ancestor": lambda *args: True, "classify": classify,
+                       "evidence": lambda item: verdicts[item["id"]]}
             return change.decide(**{**options, **changes})
+        def outcome(result):
+            return result["decision"], result["reason"]
         affecting = {"app_affected": False, "ci_changing": False, "affected_paths": [], "ci_paths": [], "paths": 2}
-        self.assertEqual(("skip", "unchanged"), tuple(decide(runs=history[:1] + [run(8, head, "2026-10-04T21:15:00Z")])[key] for key in ("decision", "reason")))
+        real_older, real_old = run(1, older, "2026-10-01T21:15:00Z"), run(2, old, "2026-10-02T21:15:00Z")
+        self.assertEqual(("skip", "unchanged"), outcome(decide([real_older, run(4, head, "2026-10-04T21:15:00Z")])))
         self.assertEqual([], calls)
-        self.assertEqual(("run", "no-baseline"), tuple(decide(runs=history[2:])[key] for key in ("decision", "reason")))
-        self.assertEqual(("run", "event-not-schedule"), tuple(decide(event="workflow_dispatch")[key] for key in ("decision", "reason")))
-        self.assertEqual(("run", "event-not-schedule"), tuple(decide(event="pull_request")[key] for key in ("decision", "reason")))
-        # The newest successful scheduled main run is the baseline; a failed or cancelled night never counts as verified.
-        skipped = decide(runs=history, current_run_id=10)
-        self.assertEqual(("skip", "non-affecting-changes"), (skipped["decision"], skipped["reason"]))
+        self.assertEqual(("run", "no-baseline"), outcome(decide([])))
+        self.assertEqual(("run", "event-not-schedule"), outcome(decide([real_old], event="workflow_dispatch")))
+        self.assertEqual(("run", "event-not-schedule"), outcome(decide([real_old], event="pull_request")))
+        # A skipped night is passed over to the real night behind it, so skips chain without moving the baseline.
+        skipped = decide([real_older, real_old, run(3, head, "2026-10-03T21:15:00Z")], current_run_id=10)
+        self.assertEqual(("skip", "non-affecting-changes"), outcome(skipped))
         self.assertEqual({"run_id": 2, "sha": old, "created_at": "2026-10-02T21:15:00Z"}, skipped["baseline"])
         self.assertEqual([(old, head)], calls)
-        self.assertEqual(("run", "baseline-not-ancestor"), tuple(decide(runs=history[:2], is_ancestor=lambda *args: False)[key] for key in ("decision", "reason")))
+        # A completed night that failed with a real result is a baseline.
+        failed = decide([real_older, real_old, run(4, older, "2026-10-03T21:30:00Z", "failure")])
+        self.assertEqual((4, older), (failed["baseline"]["run_id"], failed["baseline"]["sha"]))
+        # The newest night that is cancelled, unfinished, unverifiable or concluded another way ends the search: run.
+        for label, newest in (("cancelled", run(4, head, "2026-10-05T21:15:00Z", "cancelled")),
+                              ("timed out", run(4, head, "2026-10-05T21:15:00Z", "timed_out")),
+                              ("unfinished", run(4, head, "2026-10-05T21:15:00Z", None, status="in_progress")),
+                              ("unverified", run(5, head, "2026-10-05T21:15:00Z", "failure"))):
+            with self.subTest(newest=label):
+                self.assertEqual(("run", "no-baseline"), outcome(decide([real_older, real_old, newest])))
+        self.assertEqual(("run", "baseline-not-ancestor"), outcome(decide([real_older, real_old], is_ancestor=lambda *args: False)))
         for flag in ("app_affected", "ci_changing"):
             with self.subTest(flag=flag):
                 affecting = {**affecting, flag: True, "affected_paths": ["immichSlides/App.swift"], "ci_paths": [], "paths": 3}
-                result = decide(runs=history[:2])
-                self.assertEqual(("run", "changes-affect-app-or-ci"), (result["decision"], result["reason"]))
+                result = decide([real_older, real_old])
+                self.assertEqual(("run", "changes-affect-app-or-ci"), outcome(result))
                 self.assertEqual(["immichSlides/App.swift"], result["changes"]["affected"])
         # The current run is never its own baseline, so a rerun cannot skip itself.
-        self.assertEqual(("run", "no-baseline"), tuple(decide(runs=[run(10, old, "2026-10-02T21:15:00Z")])[key] for key in ("decision", "reason")))
+        self.assertEqual(("run", "no-baseline"), outcome(decide([run(10, old, "2026-10-02T21:15:00Z")])))
+
+        class Api:
+            repository = "example/photos"
+            def __init__(self, artifacts):
+                self.artifacts = artifacts
+            def pages(self, path, collection):
+                return self.artifacts
+        def artifact(name, expired=False):
+            return {"name": name, "expired": expired}
+        night = run(7, old, "2026-10-02T21:15:00Z", "failure")
+        aggregate = {"run": {"id": "7", "attempt": 1}, "status": "failed", "identity": {"commit_sha": old},
+                     "matrix": {"equal": True}, "errors": []}
+        skip_record = {"schema_version": 1, "decision": "skip", "reason": "unchanged", "event": "schedule",
+                       "repository": "example/photos", "head_sha": old, "run": {"id": "7", "attempt": 1},
+                       "baseline": {"run_id": 2, "sha": old, "created_at": "2026-10-01T21:15:00Z"}}
+        def evidence(item, artifacts, member):
+            with patch("ci_publish.json_member", return_value=member):
+                return change.run_evidence(Api(artifacts), item)
+        shard, aggregate_artifact = artifact("nightly-strict-a-7-1"), artifact("nightly-aggregate-7-1")
+        self.assertEqual("real", evidence(night, [aggregate_artifact, shard], aggregate))
+        self.assertEqual("real", evidence(dict(night, conclusion="success"), [aggregate_artifact], {**aggregate, "status": "passed"}))
+        for label, artifacts, member, item in (
+                ("no aggregate", [shard], aggregate, night),
+                ("expired aggregate", [artifact("nightly-aggregate-7-1", True)], aggregate, night),
+                ("other attempt", [artifact("nightly-aggregate-7-2")], aggregate, night),
+                ("cancelled", [aggregate_artifact], aggregate, dict(night, conclusion="cancelled")),
+                ("wrong commit", [aggregate_artifact], {**aggregate, "identity": {"commit_sha": head}}, night),
+                ("wrong run", [aggregate_artifact], {**aggregate, "run": {"id": "8", "attempt": 1}}, night),
+                ("matrix incomplete", [aggregate_artifact], {**aggregate, "matrix": {"equal": False}}, night),
+                ("infrastructure error", [aggregate_artifact], {**aggregate, "errors": ["missing shard ui-a"]}, night)):
+            with self.subTest(evidence=label):
+                self.assertIsNone(evidence(item, artifacts, member))
+        record_artifact = artifact("nightly-change-7-1")
+        skipped_night = dict(night, conclusion="success")
+        self.assertEqual("skipped", evidence(skipped_night, [record_artifact], skip_record))
+        self.assertIsNone(evidence(skipped_night, [artifact("nightly-change-7-1", True)], skip_record))
+        self.assertIsNone(evidence(skipped_night, [record_artifact, aggregate_artifact], skip_record))
+        self.assertIsNone(evidence(dict(skipped_night, conclusion="failure"), [record_artifact], skip_record))
+        with self.assertRaises(ci_summary.ContractError):
+            evidence(skipped_night, [record_artifact], {**skip_record, "head_sha": head})
 
     def test_nightly_change_check_fails_open_and_records_the_decision(self):
         import ci_nightly_change as change
@@ -483,17 +536,17 @@ class AdmissionVerdictTests(unittest.TestCase):
         environment = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_REPOSITORY": "example/photos", "GITHUB_SHA": head,
                        "GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "2"}
         import tempfile
-        for outcome, expected in (("unchanged", ("skip", "unchanged", "false")), ("unavailable", ("run", "decision-unavailable", "true"))):
+        for outcome, expected in (("unchanged", ("skip", "unchanged", "skip=true\n")), ("unavailable", ("run", "decision-unavailable", "skip=false\n"))):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
                 output, records = Path(directory, "output"), Path(directory, "records")
                 runs = [{"id": 2, "event": "schedule", "head_branch": "main", "status": "completed", "conclusion": "success",
                          "head_repository": {"full_name": "example/photos"}, "created_at": "2026-10-02T21:15:00Z", "head_sha": head}]
-                reader = (patch.object(change, "recent_scheduled_runs", return_value=runs) if outcome == "unchanged"
-                          else patch.object(change, "recent_scheduled_runs", side_effect=OSError("network down")))
+                reader = (patch.object(change, "scheduled_history", return_value=(runs, lambda item: "real")) if outcome == "unchanged"
+                          else patch.object(change, "scheduled_history", side_effect=OSError("network down")))
                 with reader, patch.dict("os.environ", {}, clear=True):
                     self.assertEqual(0, change.main(["--output-dir", str(records)], {**environment, "GITHUB_OUTPUT": str(output)}))
-                decision, reason, run_nightly = expected
-                self.assertEqual(f"run_nightly=true\nrun_nightly={run_nightly}\n", output.read_text())
+                decision, reason, exported = expected
+                self.assertEqual(exported, output.read_text())
                 record = json.loads((records / "nightly-change.json").read_text())
                 self.assertEqual((decision, reason, {"id": "10", "attempt": 2}), (record["decision"], record["reason"], record["run"]))
                 self.assertNotIn("network down", (records / "nightly-change.md").read_text())
@@ -501,7 +554,7 @@ class AdmissionVerdictTests(unittest.TestCase):
                 if decision == "skip":
                     self.assertIn(change.NO_CHANGE_REASON, (records / "nightly-change.md").read_text())
         # Nothing but the diagnostic prints and nothing is written or exported in a dry run.
-        with tempfile.TemporaryDirectory() as directory, patch.object(change, "recent_scheduled_runs", return_value=[]), \
+        with tempfile.TemporaryDirectory() as directory, patch.object(change, "scheduled_history", return_value=([], lambda item: None)), \
                 patch.dict("os.environ", {"GITHUB_OUTPUT": str(Path(directory, "output"))}):
             self.assertEqual(0, change.main(["--dry-run", "--repository", "example/photos", "--head-sha", head], {}))
             self.assertFalse(Path(directory, "output").exists())

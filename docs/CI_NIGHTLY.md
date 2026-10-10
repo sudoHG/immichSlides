@@ -49,32 +49,46 @@ equality fail. This run cannot substitute for a complete nightly, and does not r
 
 ## Skipping an unchanged night
 
-The scheduled nightly first runs a Linux `change` job that uses only the checked-out main
+The scheduled nightly first runs a Linux `change` job that uses only the scheduled main
 commit, the pinned reader packages and the GitHub API with the job token; it needs no
-macOS capacity, Xcode Cloud build or credentials. `scripts/ci_nightly_change.py` takes the
-newest **successful scheduled** `ci-nightly` run on main as the baseline and compares its
-source SHA with this run's. The nightly is skipped when:
+macOS capacity, Xcode Cloud build or credentials. Nothing in it runs for any other event:
+every step is conditioned on `schedule` on `main`, so pull requests and dispatches never
+execute the decision program, and their verdict is empty. The decision program and its
+dependencies are `scripts/ci_*.py`, the setup scripts and the pins, all CI-trusted paths,
+so a commit that edits any of them is classified as affecting by the baseline's policy and
+runs the night instead of deciding its own fate.
 
-- the SHA is unchanged, or
+`scripts/ci_nightly_change.py` walks the recent scheduled `ci-nightly` runs on main from the
+newest. A night skipped by this check (a verified `nightly-change` record, no execution
+artifacts) is passed over. The first other night must be the baseline: completed with a
+real result, pass **or** fail, with its aggregate artifact present, for the same run,
+attempt and commit, a complete matrix and no infrastructure error. A cancelled, timed-out,
+unfinished or infrastructure-incomplete night, or one whose evidence is expired or missing,
+ends the search with no baseline and the nightly runs. The nightly is skipped when:
+
+- the SHA equals the baseline's, or
 - every path changed since the baseline is not app-affecting and not CI-trusted. The
   *baseline's* reader modules and `ci-classification.json` classify the diff, as the gate
   does, so a commit cannot loosen its own classification. Unknown paths, build-target
   files, workflow and test-infrastructure files, and an empty path list all count as affecting.
 
 Otherwise, and on any doubt, it runs: no baseline, a baseline that is not an ancestor,
-a classification or API error, or a rate limit that outlasts the two-minute budget. The
-job fails open (`run_nightly=true` is written first), so an unavailable check can never
-hide a night. A failed, cancelled or timed-out scheduled night is never a baseline: a
-red or interrupted night runs again, as before, instead of waiting for a code change.
-Consecutive skipped nights chain safely because every skip is within non-affecting
-changes of a successful executed night.
+a classification or API error, or a rate limit that outlasts the two-minute budget. A night
+that failed with a real result is a baseline, so an unchanged main does not rerun it.
+Consecutive skipped nights chain safely because every skip is within non-affecting changes
+of a night with a real result.
 
-When skipped, `plan`, `strict`, `ui-archive`, `ui-shards`, `live-admission`, `live-build`,
-`live-canary`, `live-unit` and both aggregates do not run, so the run ends green on Linux
-within minutes. `workflow_dispatch` and `pull_request` always run: the check records the
-reason `event-not-schedule` and nothing else changes. The policy check fails any nightly
-job that is not gated by the `change` output directly or through a gated job
-(`nightly-change-gate`), and requires the job to stay on Linux without Xcode.
+Skipping needs all of: the event is `schedule`, `change` succeeded, and its output
+`run_nightly` is exactly `false`. That output is written by a last step that runs only after
+the decision record artifact uploaded, so a failed decision, a failed upload or a missing
+output leaves the job red or the output empty and the full chain runs. When skipped,
+`plan`, `strict`, `ui-archive`, `ui-shards`, `live-admission`, `live-build`, `live-canary`,
+`live-unit` and both aggregates do not run, so the run ends green on Linux within minutes.
+`workflow_dispatch` and `pull_request` always run at the expression level. The policy check
+(`nightly-change-gate`) parses every job condition and requires that exact gate as one
+conjunct of a pure `&&` chain, so `|| true`, negation or a weaker variant is rejected. It
+also checks that the verdict step follows the upload and that the job exports only that
+step's output, and it requires the job to stay on Linux without Xcode.
 
 The `nightly-change-<run>-<attempt>` artifact holds the decision; the step summary shows it.
 The [reporter](CI_REPORT.md) turns a validated skip into a `not-run` entry with "no change

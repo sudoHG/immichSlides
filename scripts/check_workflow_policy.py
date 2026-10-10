@@ -28,7 +28,9 @@ XCC_BINDINGS = {"CI_WORKFLOW_TOKEN": "${{ github.token }}",
 XCC_CONTROL_BINDINGS = {**XCC_BINDINGS, "CI_XCC_ROUTING_OVERRIDE": "${{ vars.CI_XCC_ROUTING_OVERRIDE }}"}
 LIVE_WORKFLOW = ".github/workflows/ci-nightly.yml"
 NIGHTLY_UNGATED_JOBS = {"change", "live-environment-refusal"}
-NIGHTLY_CHANGE_GATE = "needs.change.outputs.run_nightly != 'false'"
+NIGHTLY_CHANGE_GATE = ("!(github.event_name == 'schedule' && needs.change.result == 'success' "
+                       "&& needs.change.outputs.run_nightly == 'false')")
+NIGHTLY_CHANGE_OUTPUT = "${{ steps.verdict.outputs.run_nightly }}"
 LIVE_ENVIRONMENT = "immich-test-server"
 LIVE_BINDINGS = {"CI_LIVE_URL": "${{ secrets.IMMICH_TEST_SERVER_URL }}",
                  "CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}
@@ -287,6 +289,53 @@ def trusted_action_allowed(uses, options):
     return allowed_inputs is not None and set(options) <= allowed_inputs
 
 
+def top_level_terms(condition, operator):
+    """Split at an operator outside quotes and parentheses; None when the text is malformed."""
+    terms, depth, quote, start, index = [], 0, None, 0, 0
+    while index < len(condition):
+        character = condition[index]
+        if quote:
+            quote = None if character == quote else quote
+        elif character in "'\"":
+            quote = character
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif depth == 0 and condition.startswith(operator, index):
+            terms.append(condition[start:index].strip())
+            start, index = index + len(operator), index + len(operator) - 1
+        index += 1
+    if depth or quote:
+        return None
+    return terms + [condition[start:].strip()]
+
+
+def condition_requires_gate(condition):
+    """The exact gate must be one conjunct of a pure `&&` chain, so `|| true` and negation cannot bypass it."""
+    text = " ".join(condition.split())
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2].strip()
+    alternatives = top_level_terms(text, "||")
+    terms = top_level_terms(text, "&&")
+    return alternatives == [text] and terms is not None and NIGHTLY_CHANGE_GATE in terms
+
+
+def change_verdict_follows_upload(steps):
+    """A skip verdict is exported only by a step that follows the record upload and cannot run after its failure."""
+    steps = steps if isinstance(steps, list) else []
+    uploads = [index for index, step in enumerate(steps) if isinstance(step, dict)
+               and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+               and str(step.get("with", {}).get("name", "")).startswith("nightly-change-")
+               and step.get("with", {}).get("if-no-files-found") == "error"
+               and not re.search(r"\b(?:always|cancelled|failure)\(\)", str(step.get("if", "")))]
+    verdicts = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "verdict"]
+    return (len(uploads) == 1 and len(verdicts) == 1 and uploads[0] < verdicts[0]
+            and not re.search(r"\b(?:always|cancelled|failure)\(\)", str(steps[verdicts[0]].get("if", ""))))
+
+
 def nightly_job_gated(job_id, jobs, visited=frozenset()):
     """Gated directly by the change check, or skipped with a gated job because its condition keeps the implicit success()."""
     job = jobs.get(job_id)
@@ -295,7 +344,7 @@ def nightly_job_gated(job_id, jobs, visited=frozenset()):
     needs = job.get("needs")
     needs = [needs] if isinstance(needs, str) else needs if isinstance(needs, list) else []
     condition = job.get("if") if isinstance(job.get("if"), str) else ""
-    if "change" in needs and NIGHTLY_CHANGE_GATE in condition:
+    if "change" in needs and condition_requires_gate(condition):
         return True
     if re.search(r"\b(?:always|cancelled|failure)\(\)", condition):
         return False
@@ -455,6 +504,10 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             flag("jobs", "ui-capacity", "Independent UI matrices need positive literal capacities totaling at most four")
     if path == LIVE_WORKFLOW and "change" not in jobs:
         flag("jobs", "nightly-change-gate", "The nightly needs its change check job")
+    elif path == LIVE_WORKFLOW and (not isinstance(jobs["change"], dict) or jobs["change"].get("outputs") != {"run_nightly": NIGHTLY_CHANGE_OUTPUT}):
+        flag("jobs.change", "nightly-change-gate", "The change job must publish only the verdict step's output")
+    elif path == LIVE_WORKFLOW and not change_verdict_follows_upload(jobs["change"].get("steps")):
+        flag("jobs.change", "nightly-change-gate", "The verdict step must run only after the decision record upload succeeded")
     for job_id, job in jobs.items():
         location = f"jobs.{job_id}"
         if not isinstance(job, dict):

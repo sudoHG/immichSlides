@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Decide whether a scheduled nightly has anything new to verify.
 
-Runs on Linux from the checked-out main commit with the GitHub API only. The
-baseline is the newest successful scheduled nightly on main. The nightly is
-skipped when main is still that commit or when every change since it is
+Runs on Linux from the scheduled main commit with the GitHub API only; the
+workflow never runs it for another event. The baseline is the newest scheduled
+nightly on main that completed with a verified real result (pass or fail).
+Nights skipped by this check are passed over; the first cancelled, unfinished,
+infrastructure-incomplete or unverifiable night ends the search. The nightly is
+skipped when main is still the baseline commit or when every change since it is
 classified as not affecting the app or its tests by the baseline's own
 classification policy and reader. Any doubt means the nightly runs.
 """
@@ -27,6 +30,9 @@ NO_CHANGE_REASON = "no change since the last nightly"
 SKIP_REASONS = {"unchanged", "non-affecting-changes"}
 RUN_REASONS = {"event-not-schedule", "no-baseline", "baseline-not-ancestor", "changes-affect-app-or-ci",
                "decision-unavailable"}
+REAL_RESULT_CONCLUSIONS = {"success", "failure"}
+INFRASTRUCTURE_ERROR_PREFIXES = ("missing shard", "invalid or missing", "producer infrastructure", "single-shard")
+EXECUTION_ARTIFACT_PREFIXES = ("nightly-aggregate-", "nightly-strict-", "nightly-ui-aggregate-")
 RECENT_RUNS = 20
 API_DEADLINE_SECONDS = 120
 AFFECTED_PATH_SAMPLE = 10
@@ -36,25 +42,59 @@ def artifact_name(run_id, attempt):
     return f"nightly-change-{run_id}-{attempt}"
 
 
-def pick_baseline(runs, repository, current_run_id):
-    """Newest successful scheduled main run; a failed or cancelled night never counts as verified."""
-    candidates = [run for run in runs
-                  if run.get("event") == "schedule" and run.get("head_branch") == "main"
-                  and run.get("status") == "completed" and run.get("conclusion") == "success"
-                  and run.get("id") != current_run_id
-                  and (run.get("head_repository") or {}).get("full_name") == repository]
-    if not candidates:
+def run_evidence(api, run):
+    """'real' for a verified executed night, 'skipped' for a verified skipped night, None when unsure."""
+    from ci_publish import json_member
+    attempt, run_id = run["run_attempt"], run["id"]
+    suffix = f"-{run_id}-{attempt}"
+    artifacts = api.pages(f"actions/runs/{run_id}/artifacts", "artifacts")
+    executed = [item for item in artifacts if item["name"].startswith(EXECUTION_ARTIFACT_PREFIXES) and item["name"].endswith(suffix)]
+    records = [item for item in artifacts if item["name"] == artifact_name(run_id, attempt)]
+    if records and not executed:
+        if len(records) != 1 or records[0]["expired"] or run.get("conclusion") != "success":
+            return None
+        record = validate_record(json_member(api, records[0], RECORD_FILE), repository=api.repository, run_id=run_id,
+                                 attempt=attempt, event=run["event"], head_sha=run["head_sha"])
+        return "skipped" if record["decision"] == "skip" else None
+    aggregates = [item for item in executed if item["name"] == f"nightly-aggregate{suffix}"]
+    if len(aggregates) != 1 or aggregates[0]["expired"] or run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
         return None
-    newest = max(candidates, key=lambda run: (run["created_at"], run["id"]))
-    sha(newest["head_sha"])
-    require(type(newest["id"]) is int and newest["id"] > 0, "invalid baseline run")
-    return {"run_id": newest["id"], "sha": newest["head_sha"], "created_at": newest["created_at"]}
+    raw = json_member(api, aggregates[0], "nightly.json")
+    identity = raw.get("identity")
+    matrix = raw.get("matrix")
+    if (raw.get("run") != {"id": str(run_id), "attempt": attempt} or raw.get("status") not in {"passed", "failed"}
+            or not isinstance(identity, dict) or identity.get("commit_sha") != run["head_sha"]
+            or not isinstance(matrix, dict) or matrix.get("equal") is not True or not isinstance(raw.get("errors"), list)
+            or any(not isinstance(error, str) or error.startswith(INFRASTRUCTURE_ERROR_PREFIXES) for error in raw["errors"])):
+        return None
+    return "real"
 
 
-def decide(*, event, head_sha, runs, repository, current_run_id, is_ancestor, classify):
+def pick_baseline(runs, repository, current_run_id, evidence):
+    """Newest verified real-result scheduled main night; skipped nights are passed over and doubt ends the search."""
+    candidates = sorted((run for run in runs
+                         if run.get("event") == "schedule" and run.get("head_branch") == "main"
+                         and run.get("id") != current_run_id
+                         and (run.get("head_repository") or {}).get("full_name") == repository),
+                        key=lambda run: (run["created_at"], run["id"]), reverse=True)
+    for run in candidates:
+        if run.get("status") != "completed" or run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
+            return None
+        verdict = evidence(run)
+        if verdict == "skipped":
+            continue
+        if verdict != "real":
+            return None
+        sha(run["head_sha"])
+        require(type(run["id"]) is int and run["id"] > 0, "invalid baseline run")
+        return {"run_id": run["id"], "sha": run["head_sha"], "created_at": run["created_at"]}
+    return None
+
+
+def decide(*, event, head_sha, runs, repository, current_run_id, is_ancestor, classify, evidence):
     if event != "schedule":
         return {"decision": "run", "reason": "event-not-schedule", "baseline": None}
-    baseline = pick_baseline(runs, repository, current_run_id)
+    baseline = pick_baseline(runs, repository, current_run_id, evidence)
     if baseline is None:
         return {"decision": "run", "reason": "no-baseline", "baseline": None}
     result = {"baseline": baseline}
@@ -90,13 +130,15 @@ def classify_between(baseline_sha, head_sha):
     return {**classification, "paths": len(paths)}
 
 
-def recent_scheduled_runs(repository, token):
+def scheduled_history(repository, token):
+    """Recent scheduled main runs plus the evidence reader that shares their rate-limit budget."""
     from ci_publish import RateLimitWaitingGitHub
     from urllib.parse import urlencode
     deadline = time.monotonic() + API_DEADLINE_SECONDS
     api = RateLimitWaitingGitHub(repository, token, lambda: deadline - time.monotonic())
-    query = urlencode({"event": "schedule", "branch": "main", "status": "success", "per_page": RECENT_RUNS})
-    return api.repo(f"actions/workflows/{NIGHTLY_WORKFLOW_FILE}/runs?{query}")["workflow_runs"]
+    query = urlencode({"event": "schedule", "branch": "main", "per_page": RECENT_RUNS})
+    runs = api.repo(f"actions/workflows/{NIGHTLY_WORKFLOW_FILE}/runs?{query}")["workflow_runs"]
+    return runs, lambda run: run_evidence(api, run)
 
 
 def make_record(result, *, event, repository, head_sha, run_id, attempt):
@@ -152,11 +194,11 @@ def evaluate(environment, *, event, repository, head_sha):
     """Fail open: an unavailable decision always runs the nightly."""
     try:
         sha(head_sha)
-        runs = (recent_scheduled_runs(repository, environment.get("GH_TOKEN") or environment.get("CI_REPORT_TOKEN"))
-                if event == "schedule" else [])
+        runs, evidence = (scheduled_history(repository, environment.get("GH_TOKEN") or environment.get("CI_REPORT_TOKEN"))
+                          if event == "schedule" else ([], None))
         return decide(event=event, head_sha=head_sha, runs=runs, repository=repository,
                       current_run_id=int(environment.get("GITHUB_RUN_ID", "0")),
-                      is_ancestor=git_is_ancestor, classify=classify_between)
+                      is_ancestor=git_is_ancestor, classify=classify_between, evidence=evidence)
     except Exception:
         # Do not echo API or Git details into public records.
         print("Nightly change decision unavailable; the nightly runs", file=sys.stderr)
@@ -183,8 +225,6 @@ def main(argv=None, environment=None):
     repository = args.repository or environment.get("GITHUB_REPOSITORY", "")
     require(repository, "a repository is required")
     run_id, attempt = environment.get("GITHUB_RUN_ID", "0"), int(environment.get("GITHUB_RUN_ATTEMPT", "1"))
-    if not args.dry_run:
-        github_output(environment, "run_nightly", "true")
     result = evaluate(environment, event=event, repository=repository, head_sha=head_sha)
     record = make_record(result, event=event, repository=repository, head_sha=head_sha, run_id=run_id, attempt=attempt)
     print(summary_markdown(record))
@@ -196,7 +236,7 @@ def main(argv=None, environment=None):
     output.mkdir(parents=True)
     (output / RECORD_FILE).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (output / "nightly-change.md").write_text(summary_markdown(record), encoding="utf-8")
-    github_output(environment, "run_nightly", "false" if record["decision"] == "skip" else "true")
+    github_output(environment, "skip", "true" if record["decision"] == "skip" else "false")
     return 0
 
 

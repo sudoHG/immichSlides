@@ -169,10 +169,33 @@ final class LocaleUITests: XCTestCase {
                 changed = copy.deepcopy(document)
                 changed["jobs"][job_id]["if"] = changed["jobs"][job_id]["if"].replace(policy.NIGHTLY_CHANGE_GATE, "true")
                 self.assertIn("nightly-change-gate", self.rules(changed, path))
+            for label, replacement in (("or true", f"({policy.NIGHTLY_CHANGE_GATE} || true)"),
+                                       ("negated", f"!({policy.NIGHTLY_CHANGE_GATE})"),
+                                       ("output only", "needs.change.outputs.run_nightly != 'false'"),
+                                       ("any event", policy.NIGHTLY_CHANGE_GATE.replace("github.event_name == 'schedule' && ", "")),
+                                       ("no result check", policy.NIGHTLY_CHANGE_GATE.replace("needs.change.result == 'success' && ", "")),
+                                       ("top-level or", f"{policy.NIGHTLY_CHANGE_GATE} || github.event_name == 'schedule'")):
+                with self.subTest(job=job_id, mutation=label):
+                    changed = copy.deepcopy(document)
+                    changed["jobs"][job_id]["if"] = changed["jobs"][job_id]["if"].replace(policy.NIGHTLY_CHANGE_GATE, replacement)
+                    self.assertIn("nightly-change-gate", self.rules(changed, path))
         for job_id in ("strict", "live-canary", "live-unit"):
             with self.subTest(job=job_id, mutation="status function"):
                 changed = copy.deepcopy(document)
                 changed["jobs"][job_id]["if"] = "always()"
+                self.assertIn("nightly-change-gate", self.rules(changed, path))
+        steps = document["jobs"]["change"]["steps"]
+        upload = next(index for index, step in enumerate(steps) if str(step.get("uses", "")).startswith("actions/upload-artifact@"))
+        for label, mutate in (("verdict before upload", lambda items: items.insert(upload, items.pop(upload + 1))),
+                              ("verdict after failure", lambda items: items[upload + 1].update({"if": "${{ always() }}"})),
+                              ("upload tolerates a missing record", lambda items: items[upload]["with"].update({"if-no-files-found": "ignore"})),
+                              ("upload continues after failure", lambda items: items[upload].update({"if": "${{ always() }}"})),
+                              ("job output skips the verdict step", lambda items: None)):
+            with self.subTest(job="change", mutation=label):
+                changed = copy.deepcopy(document)
+                mutate(changed["jobs"]["change"]["steps"])
+                if label.startswith("job output"):
+                    changed["jobs"]["change"]["outputs"]["run_nightly"] = "${{ steps.decision.outputs.run_nightly }}"
                 self.assertIn("nightly-change-gate", self.rules(changed, path))
         with self.subTest(mutation="missing job"):
             changed = copy.deepcopy(document)
