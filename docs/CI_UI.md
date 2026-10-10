@@ -173,8 +173,9 @@ Superseded runs
 cancel only within the same PR. First-attempt main pushes share one group per
 workflow with `cancel-in-progress: false`: a run waiting in the group is replaced by
 the next push, a started run finishes ([coalescing rules](CI_PUBLISHER.md#main-push-coalescing)).
-The Linux selection timeout is 120 minutes plus up to 60 minutes paused while the
-same-head gate run is held pending, inside a 185-minute job. Xcode calls
+The Linux selection timeout is one 120-minute deadline shared by both archive
+platforms, extended by up to 60 minutes in total while the same-head gate run is held
+pending, inside a 185-minute job. Xcode calls
 have a 65-minute timeout and share an 85-minute shard budget inside a 110-minute
 job. The earlier visual invocation consumed 2,643 seconds of its 2,700-second
 budget and was stopped at 2,715 seconds in [the hosted run](https://github.com/sudoHG/immichSlides/actions/runs/37796334799/job/113382323589).

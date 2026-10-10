@@ -72,8 +72,15 @@ cancel-in-progress: ${{ github.event_name == 'pull_request' }}
   newer push replaces the pending one, which ends `cancelled` with no jobs. A run
   counts as running as soon as any job starts, even while its macOS jobs wait.
 - **What is never cancelled:** a run that has started. It finishes, so its evidence
-  is complete rather than a partial run killed mid-build. The newest main SHA is
-  never replaced by an older one and always gets its full evaluation.
+  is complete rather than a partial run killed mid-build. Merges are normally
+  minutes apart, so the newest main SHA is evaluated in full.
+- **Residual race:** GitHub does not guarantee that runs enter a concurrency group
+  in push order. In a rare race an older first-attempt run can replace the newest
+  pending one, leaving the newest SHA unevaluated. That SHA is reported "not
+  evaluated", never success; the next main push or the nightly full tier evaluates
+  the code. When a specific SHA needs a verdict (for example before tagging a
+  release), the maintainer uses "Re-run all jobs" (attempt 2, own group). No trusted
+  re-dispatch is added for a race this unlikely.
 - **Why not also cancel in-progress runs:** a rolling burst of merges would then
   cancel every SHA before it finished, and nothing would be evaluated. Pending-only
   replacement keeps one finished evaluation per drain. The cost is that one
@@ -90,8 +97,9 @@ cancel-in-progress: ${{ github.event_name == 'pull_request' }}
   needs no archive. The final SHA's UI run starts waiting for the gate archive at
   push time while the gate may still queue behind an older run. While the same-head
   gate run is `pending`, the archive selection deadline is paused for at most
-  60 minutes (the Linux job timeout is 185 minutes to fit that pause plus the
-  120-minute deadline), and the wait ends immediately when the same-head gate run
+  60 minutes in total. The iPhone/iPad and Apple TV selections share one deadline
+  that includes the accumulated pause, so the total wall-clock cap is 180 minutes
+  inside the 185-minute Linux job timeout, and the wait ends immediately when the same-head gate run
   was cancelled.
 - **Release:** the maintainer tags `v*` on main. Tag the newest SHA whose gate and
   UI runs both evaluated. For a SHA that was replaced, use "Re-run all jobs" on its

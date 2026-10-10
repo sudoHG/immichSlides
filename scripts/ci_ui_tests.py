@@ -129,14 +129,31 @@ def build_job_attempt(api, run, *, platform_name="ios"):
     return retained
 
 
-def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_seconds=20, record_refusals=None):
+class ArchiveWait:
+    """One deadline shared by both platforms; pending-gate pauses extend it up to a single allowance."""
+
+    def __init__(self, timeout_seconds):
+        self.deadline = time.monotonic() + timeout_seconds
+        self.paused = 0.0
+
+    def remaining(self):
+        return self.deadline - time.monotonic()
+
+    def pause(self, seconds):
+        granted = max(0.0, min(seconds, GATE_PENDING_PAUSE_SECONDS - self.paused))
+        self.paused += granted
+        self.deadline += granted
+
+
+def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", poll_seconds=20, record_refusals=None, wait=None):
+    wait = wait or ArchiveWait(timeout_seconds)
     require(platform_name in {"ios", "tvos"}, "unsupported UI archive platform")
     workflow = api.repo("actions/workflows/ci-gate.yml")
     require(workflow["path"] == GATE_WORKFLOW and workflow["state"] == "active", "gate workflow is not active at its expected path")
     head = identity.get("head_sha", identity.get("pushed_sha"))
     head_repository = (api.repo(f"pulls/{identity['pull_request']}")["head"]["repo"]["full_name"]
                        if identity["event"] == "pull_request" else api.repository)
-    started, refusals, paused = time.monotonic(), [], 0.0
+    started, refusals = time.monotonic(), []
     pins = decode((ROOT / "scripts/ci-pins.json").read_text())
     def refuse(run, outcome, **details):
         refusal = {"run_id": run["id"], "head_sha": head, "consumer_identity": identity,
@@ -207,10 +224,9 @@ def select_archive(api, identity, *, timeout_seconds, platform_name="ios", poll_
                     "wait_seconds": time.monotonic() - started, "refusals": refusals}
         if superseded:
             break
-        if held and paused < GATE_PENDING_PAUSE_SECONDS:
-            pause = min(poll_seconds, GATE_PENDING_PAUSE_SECONDS - paused)
-            paused, started = paused + pause, started + pause
-        remaining = timeout_seconds - (time.monotonic() - started)
+        if held:
+            wait.pause(poll_seconds)
+        remaining = wait.remaining()
         if remaining <= 0:
             break
         print("Waiting for the matching ci-gate " + platform_name + " archive", flush=True)
@@ -268,9 +284,9 @@ def wait_archive(args):
                            "status": "reused", "verdict": reuse})
                 print(f"Reused trusted UI verdict from run {reuse['source']['run_id']}", flush=True)
             else:
-                deadline = started + args.timeout_minutes * 60
+                wait = ArchiveWait(max(0, started + args.timeout_minutes * 60 - time.monotonic()))
                 for platform_name in ("ios", "tvos"):
-                    selection = select_nightly_archive(api, ctx, platform_name) if nightly else select_archive(api, ctx["identity"], timeout_seconds=max(0, deadline - time.monotonic()),
+                    selection = select_nightly_archive(api, ctx, platform_name) if nightly else select_archive(api, ctx["identity"], wait=wait,
                                                platform_name=platform_name,
                                                record_refusals=lambda rows, name=platform_name: write_json(records / ("archive-refusals-" + name + ".json"), rows))
                     selection["timeout_minutes"] = args.timeout_minutes
