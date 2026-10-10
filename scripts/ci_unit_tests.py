@@ -46,8 +46,9 @@ HOSTED_ENUMERATION_SAMPLES = {
 # Job overhead is the failed iOS job duration minus its independently measured phases.
 HOSTED_BOOT_MAX_SECONDS = 110.186966041
 HOSTED_JOB_OVERHEAD_SECONDS = 556 - (110.186966041 + 251.284679625 + 70.472742334)
-SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS = 15
-# A hosted delete exceeded its former 15-second bound; allow recovery before recording failure.
+# Hosted iOS shutdowns took 4.3-11.8 s in 20 completed runs; two exceeded the former 15-second bound, and
+# the delete that followed finished 9-10 s later (about 25 s in all). 60 s matches the delete allowance.
+SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS = 60
 SIMULATOR_DELETE_TIMEOUT_SECONDS = 60
 
 
@@ -87,9 +88,16 @@ def enumeration_budget(profile, platform, *, result_export_timeout_seconds=60):
     return budget
 
 
-def write_unit_summary(summary, path, budget):
+def write_unit_summary(summary, path, budget, measurements=None):
     write_summary(summary, path)
     with (path / "summary.md").open("a", encoding="utf-8") as handle:
+        if measurements and measurements.get("simulator_shutdown_seconds") is not None:
+            handle.write("\nSimulator cleanup: " + ", ".join(
+                f"{operation} {measurements['simulator_' + operation + '_seconds']:.1f} s "
+                f"(exit {measurements['simulator_' + operation + '_exit_code']})" for operation in ("shutdown", "delete")
+                if measurements.get("simulator_" + operation + "_seconds") is not None) + ".\n")
+            for note in measurements.get("infrastructure_notes", []):
+                handle.write(f"Infrastructure note: {note['code']}: {note['message']}\n")
         handle.write(f"\nEnumeration infrastructure budget ({budget['profile']}): {budget['timeout_seconds']} s; "
                      f"execution: {budget['test_timeout_seconds']} s; "
                      f"separate simulator boot: {budget['simulator_boot_timeout_seconds']} s; "
@@ -281,24 +289,35 @@ def read_results(records, platform):
     return rows, counts
 
 
-def cleanup_simulator(simulator, measurements):
+def cleanup_simulator(simulator, measurements, *, results_verified=False, run=None):
+    """Shut down and delete an owned simulator.
+
+    A bounded cleanup that times out after complete, verified results is an infrastructure note in the
+    measurements, not a failure; any other cleanup problem, or unverified results, still fails.
+    """
     failures = []
+    notes = measurements.setdefault("infrastructure_notes", [])
     for operation in ("shutdown", "delete"):
         timeout_seconds = SIMULATOR_SHUTDOWN_TIMEOUT_SECONDS if operation == "shutdown" else SIMULATOR_DELETE_TIMEOUT_SECONDS
         started = time.monotonic()
         code, message = 1, "consumer simulator " + operation + " failed"
         try:
-            completed = subprocess.run(["xcrun", "simctl", operation, simulator], capture_output=True,
-                                       timeout=timeout_seconds, check=False)
-            code = completed.returncode
+            command = ["xcrun", "simctl", operation, simulator]
+            if run:
+                code = run(command, timeout_seconds)
+            else:
+                code = subprocess.run(command, capture_output=True, timeout=timeout_seconds, check=False).returncode
         except subprocess.TimeoutExpired:
             code = 124
-            message = f"consumer simulator {operation} timed out after {timeout_seconds} s"
         except OSError as error:
             message += ": " + type(error).__name__
+        if code == 124:
+            message = f"consumer simulator {operation} timed out after {timeout_seconds} s"
         measurements["simulator_" + operation + "_seconds"] = time.monotonic() - started
         measurements["simulator_" + operation + "_exit_code"] = code
-        if code:
+        if code == 124 and results_verified:
+            notes.append({"code": "simulator-cleanup-timed-out", "message": message + "; results were complete and verified"})
+        elif code:
             failures.append({"code": "simulator-cleanup-timed-out" if code == 124 else "simulator-cleanup-failed", "message": message})
     return failures
 
@@ -325,7 +344,8 @@ def run_units(args):
                     "test_seconds": None, "test_exit_code": None,
                     "official_export_seconds": None, "result_read_seconds": None,
                     "simulator_shutdown_seconds": None, "simulator_shutdown_exit_code": None,
-                    "simulator_delete_seconds": None, "simulator_delete_exit_code": None}
+                    "simulator_delete_seconds": None, "simulator_delete_exit_code": None,
+                    "infrastructure_notes": []}
     disk = None
     simulator, owns_simulator = args.simulator_id, False
     result_bundle = enumeration_bundle = None
@@ -351,7 +371,7 @@ def run_units(args):
         declarations_hash = archive.file_hash(ROOT / "unit-declarations.json")
         summary["hashes"]["manifests"]["unit-declarations"] = declarations_hash
         provenance["unit_declarations_sha256"] = declarations_hash
-        write_unit_summary(summary, args.output_dir, budget)
+        write_unit_summary(summary, args.output_dir, budget, measurements)
         policy_path = Path(__file__).with_name("ci-test-policy.json")
         policy = parse_policy(policy_path.read_text(encoding="utf-8"))
         summary["hashes"]["policies"]["test-policy"] = archive.file_hash(policy_path)
@@ -453,7 +473,8 @@ def run_units(args):
                 if measurements["official_export_seconds"] is None:
                     measurements["official_export_seconds"] = time.monotonic() - export_started
         if owns_simulator:
-            failures = cleanup_simulator(simulator, measurements)
+            failures = cleanup_simulator(simulator, measurements, results_verified=(
+                export_complete and code == 0 and summary["status"] == "passed" and not summary["infrastructure"]))
             if failures:
                 code = code or 1
                 summary["infrastructure"].extend(failures)
@@ -469,21 +490,21 @@ def run_units(args):
         provenance["test_exit_code"] = measurements["test_exit_code"]
         archive.write_json(args.output_dir / "archive-consumption.json", provenance)
         try:
-            write_unit_summary(summary, args.output_dir, budget)
+            write_unit_summary(summary, args.output_dir, budget, measurements)
             write_sensitive_scan(args.output_dir, [PUBLIC_API_KEY])
         except Exception as error:
             code = code or 1
             export_complete = False
             summary["status"] = "failed"
             summary["infrastructure"].append({"code": "unit-finalization-failed", "message": type(error).__name__})
-            write_unit_summary(summary, args.output_dir, budget)
+            write_unit_summary(summary, args.output_dir, budget, measurements)
         if result_bundle:
             failures = finalize_private_result_bundle(result_bundle, args.output_dir, digest, successful=export_complete and code == 0)
             if failures:
                 code = code or 1
                 summary["status"] = "failed"
                 summary["infrastructure"].extend({"code": "unit-disposal-failed", "message": failure} for failure in failures)
-                write_unit_summary(summary, args.output_dir, budget)
+                write_unit_summary(summary, args.output_dir, budget, measurements)
         # Successful enumeration has no execution activity; failed enumeration stays private.
         if enumeration_bundle and enumeration_bundle != result_bundle:
             shutil.rmtree(enumeration_bundle.parent)
@@ -494,7 +515,7 @@ def run_units(args):
             code = code or 1
             summary["status"] = "failed"
             summary["infrastructure"].append({"code": "unit-publication-refused", "message": "publishable records failed the sensitive scan"})
-            write_unit_summary(summary, args.output_dir, budget)
+            write_unit_summary(summary, args.output_dir, budget, measurements)
     print(f"Unit {platform}: {summary['status']}; artifact {ctx['artifact_id']}, producer attempt {ctx['producer_attempt']}; exit {code}", flush=True)
     return code
 

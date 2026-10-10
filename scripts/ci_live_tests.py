@@ -301,14 +301,19 @@ def execute_live(args, selection):
                                          'message': 'Live phase failed; private diagnostics withheld.'})
     finally:
         if simulator:
-            for action, timeout in (("shutdown", 15), ("delete", 60)):
+            def run_cleanup(command, timeout):
                 try:
-                    if capture(["xcrun", "simctl", action, simulator], private / (action + ".log"), env=clean, timeout=timeout):
-                        record.update(status="failed")
-                        record['infrastructure'].append({'code': 'live-cleanup-failed', 'message': 'Live simulator cleanup failed.'})
+                    return capture(command, private / (command[2] + ".log"), env=clean, timeout=timeout)
                 except Exception:
-                    record.update(status="failed")
-                    record['infrastructure'].append({'code': 'live-cleanup-failed', 'message': 'Live simulator cleanup failed.'})
+                    return 1
+            cleanup = {}
+            failed_cleanup = units.cleanup_simulator(simulator, cleanup, run=run_cleanup, results_verified=(
+                coverage_verified and record['status'] == 'passed' and not record['infrastructure'] and provenance['exit_code'] == 0))
+            if failed_cleanup:
+                record.update(status="failed")
+                record['infrastructure'].append({'code': 'live-cleanup-failed', 'message': 'Live simulator cleanup failed.'})
+            provenance['cleanup_seconds'] = {action: round(cleanup[f'simulator_{action}_seconds'], 1) for action in ('shutdown', 'delete')}
+            provenance['cleanup_notes'] = [note['code'] for note in cleanup['infrastructure_notes']]
         # This runner owns every private input; no raw live material is publishable, even after failure.
         shutil.rmtree(private)
         shutil.rmtree(args.relocated_path, ignore_errors=True)
@@ -316,7 +321,9 @@ def execute_live(args, selection):
         archive.write_json(args.output_dir / "live-summary.json", record)
         archive.write_json(args.output_dir / 'live-provenance.json', provenance)
         (args.output_dir / "live-summary.md").write_text(render_markdown(record) +
-            f"\nProcess exit: {provenance['exit_code']}; release eligibility remains disabled.\n")
+            f"\nProcess exit: {provenance['exit_code']}; release eligibility remains disabled.\n" +
+            "".join(f"Infrastructure note: {code}; cleanup seconds {provenance['cleanup_seconds']}.\n"
+                    for code in provenance.get('cleanup_notes', [])))
         canary_passed = (phase == 'verdict' and coverage_verified and provenance['exit_code'] != 0 and
                     provenance.get('official_counts', {}).get('failed', 0) > 0 and
                     bool(population['compiled']) and record['status'] == 'failed' and

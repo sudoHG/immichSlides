@@ -106,7 +106,9 @@ summary contract and validator: run/job/shard, population, per-test attempts and
 infrastructure entries. Archive ID/producer attempt, process exit and official
 counts live in the separate provenance record. Runtime arguments, failure messages and skip
 reasons are withheld. Missing/extra/duplicate execution, parameter failure, any skip,
-nonzero exit, official result disagreement or failed cleanup fails. Exceptions are
+nonzero exit, official result disagreement or failed cleanup fails. A cleanup that
+only times out after complete, verified results is a note in the provenance and Markdown
+(see the [unit consumer](CI_UNIT_TESTS.md)), not a failure. Exceptions are
 never serialized. Missing records or a refused scan cannot authorize publication.
 Fixed phase markers contain no subprocess output or exception text. A canary
 preparation/finalization failure publishes its scanned shared failure summary but
