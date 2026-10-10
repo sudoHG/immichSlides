@@ -197,10 +197,7 @@ def unknown_starts(api, registration, inventory, *, current_uploader=None, histo
     delay = visibility_delay(registration)
     require(set(inventory) == set(registration["groups"]), "Cloud reconciliation lacks a complete registered inventory")
     missing, visible = [], {row["id"] for rows in inventory.values() for row in rows}
-    for source in sources:
-        if current_uploader == (source["id"], source["run_attempt"]):
-            continue
-        artifacts = api.pages(f"actions/runs/{source['id']}/artifacts", "artifacts")
+    for source, artifacts in scheduling_attempts(api, sources, current_uploader=current_uploader):
         marker = state.receipt(api, artifacts, source, workflow, prefix=state.POST_PREFIX, member="post.json")
         if marker is None:
             continue
@@ -274,14 +271,34 @@ def visibility_delay(registration):
     return delay
 
 
+def scheduling_attempts(api, sources, *, current_uploader=None):
+    """Run lists expose only the latest attempt; retained markers bind older ones."""
+    count = 0
+    for source in sources:
+        latest = positive(source["run_attempt"])
+        require(latest <= 100, "Cloud scheduling run has excessive attempts")
+        artifacts = api.pages(f"actions/runs/{source['id']}/artifacts", "artifacts")
+        attempts = {latest}
+        for artifact in artifacts:
+            match = re.fullmatch(r"ci-xcc-(?:post|start)-" + str(positive(source["id"])) + r"-([1-9][0-9]*)", artifact.get("name", ""))
+            if match:
+                attempt = int(match[1])
+                require(attempt <= latest, "Cloud scheduling artifact refers to a future attempt")
+                attempts.add(attempt)
+        for attempt in sorted(attempts):
+            if current_uploader == (source["id"], attempt):
+                continue
+            count += 1
+            require(count <= MAX_RECENT_ROUTES, "recent Cloud scheduling attempts exceed the scan budget")
+            yield dict(source, run_attempt=attempt), artifacts
+
+
 def group_started(api, run, group, *, current_uploader=None, history_snapshot=None):
     """Do not replay a selection, but allow a full rerun's new attempt."""
     workflow, sources = history_snapshot or route_history(api)
     title = f"xcc-route-{run['id']}-{run['run_attempt']}-{group}"
-    for source in sources:
-        if source.get("display_title") != title or current_uploader == (source["id"], source["run_attempt"]):
-            continue
-        artifacts = api.pages(f"actions/runs/{source['id']}/artifacts", "artifacts")
+    matching = [source for source in sources if source.get("display_title") == title]
+    for source, artifacts in scheduling_attempts(api, matching, current_uploader=current_uploader):
         for prefix, member in ((state.START_PREFIX, "start.json"), (state.POST_PREFIX, "post.json")):
             value = state.receipt(api, artifacts, source, workflow, prefix=prefix, member=member)
             if value is not None:

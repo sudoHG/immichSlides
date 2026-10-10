@@ -599,6 +599,9 @@ class GroupProducerTests(unittest.TestCase):
         self.assertEqual(router.route_sources(api, {"id": 42}), [])
         cutoff = parse_qs(urlsplit(api.repo.call_args.args[0]).query)["created"][0].removeprefix(">=")
         self.assertLess((datetime.now(timezone.utc) - router.timestamp(cutoff)).total_seconds(), 3 * 3600)
+        api.pages.return_value = [{"name": "ci-xcc-post-900-" + str(attempt)} for attempt in range(1, 27)]
+        with self.assertRaises(ContractError):
+            list(router.scheduling_attempts(api, [{"id": 900, "run_attempt": 26}]))
 
     def test_absent_build_resolves_only_after_start_deadline_and_reviewed_visibility_delay(self):
         import ci_xcode_cloud_group_route as router
@@ -607,6 +610,7 @@ class GroupProducerTests(unittest.TestCase):
                       start_deadline="2026-10-10T00:50:00Z")
         self.record["ui_inputs"]["base"]["selection"]["packing"]["estimated_test_seconds"] = {"iphone": 60, "ipad": 120}
         api = Mock()
+        api.pages.return_value = []
         api.repo.side_effect = [{"id": 42}, self.run]
         with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
                 patch.object(router.state, "receipt", side_effect=[marker, None]), \
@@ -635,6 +639,7 @@ class GroupProducerTests(unittest.TestCase):
         row = {"id": self.route["cloud_run_id"], "attributes": {"createdDate": "2026-10-09T23:59:55Z",
                "sourceCommit": {"commitSha": self.run["head_sha"]}}}
         api = Mock()
+        api.pages.return_value = []
         api.repo.return_value = {"id": 42}
         for rows in ([row], [row, dict(row, id="22222222-2222-2222-2222-222222222222")]):
             with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
@@ -821,6 +826,15 @@ class GroupProducerTests(unittest.TestCase):
         with patch.object(router, "route_sources", return_value=[source]), \
                 patch.object(router.state, "receipt", side_effect=[marker, dict(marker, post_attempted=False)]):
             self.assertEqual(router.unknown_starts(api, self.registry, {"ios": []}), [])
+        # A workflow rerun updates the run list but cannot hide its older POST.
+        api.repo.side_effect = [{"id": 42}, self.run]
+        api.pages.return_value = [{"name": "ci-xcc-post-900-1"}]
+        rerun = dict(source, run_attempt=2)
+        with patch.object(router, "route_sources", return_value=[rerun]), \
+                patch.object(router.state, "receipt", side_effect=[marker, None]), \
+                patch.object(router, "trusted_admissions", return_value={123: self.record}):
+            prior = router.unknown_starts(api, self.registry, {"ios": []}, current_uploader=(900, 2))
+        self.assertEqual(prior, [{"uploader_run_id": 900, "uploader_attempt": 1, "minutes": expected}])
 
     def test_cloud_bootstrap_pointer_does_not_trust_login_or_other_workflow(self):
         import importlib.util
@@ -992,6 +1006,11 @@ class GroupProducerTests(unittest.TestCase):
         api.pages.return_value = []
         with patch.object(router.state, "receipt", return_value=dict(self.route, head_sha=self.run["head_sha"])):
             self.assertTrue(router.group_started(api, self.run, "ios"))
+        api.repo.return_value["workflow_runs"] = [dict(current, run_attempt=2)]
+        api.pages.return_value = [{"name": "ci-xcc-post-900-1"}]
+        with patch.object(router.state, "receipt", return_value=dict(self.route, head_sha=self.run["head_sha"])) as read:
+            self.assertTrue(router.group_started(api, self.run, "ios", current_uploader=(900, 2)))
+            self.assertEqual(read.call_args.args[2]["run_attempt"], 1)
 
     def test_post_marker_phase_never_needs_asc_credentials(self):
         import json

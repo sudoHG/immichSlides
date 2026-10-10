@@ -158,7 +158,10 @@ inventory and budget immediately before its single POST. Reconciliation scans
 only route runs created in the last two hours, once per preparation. It requires
 at least 500 remaining core requests before that scan and refuses more than 25
 runs or an incomplete result, including GitHub's silently truncated filtered
-lists. The start refresh reuses authenticated history and duration samples under
+lists. Retained scheduling artifacts identify older attempts after a router
+rerun; their exact attempts remain authenticated, with at most 25 attempts across
+the scan. Excluding the current uploader never excludes its older markers.
+The start refresh reuses authenticated history and duration samples under
 the same lock. These bounds limit scan pressure on the shared 1,000-request/hour
 repository token; concurrent consumers can still exhaust it, which selects
 GitHub. A complete refreshed ASC workflow inventory remains the source of active
