@@ -278,11 +278,17 @@ def wait_archive(args):
             from ci_ui_reuse import find_reuse
             nightly = ctx["identity"]["event"] in {"schedule", "workflow_dispatch"}
             reuse = find_reuse(api, ctx["identity"]) if ctx["identity"]["event"] == "push" else None
-            output("run_ui", str(reuse is None).lower())
+            deferred = (getattr(args, "defer_main_ui", False) and ctx["identity"]["event"] == "push"
+                        and ctx["identity"]["ref"] == "refs/heads/main")
+            output("run_ui", str(reuse is None and not deferred).lower())
             if reuse is not None:
                 write_json(records / "archive-selection.json", {"schema_version": 1, "identity": ctx["identity"],
                            "status": "reused", "verdict": reuse})
                 print(f"Reused trusted UI verdict from run {reuse['source']['run_id']}", flush=True)
+            elif deferred:
+                write_json(records / "archive-selection.json", {"schema_version": 1, "identity": ctx["identity"],
+                           "status": "deferred-to-nightly", "verification_workflow": NIGHTLY_WORKFLOW})
+                print("UI deferred to nightly: no trusted identical-tree PR verdict", flush=True)
             else:
                 wait = ArchiveWait(max(0, started + args.timeout_minutes * 60 - time.monotonic()))
                 for platform_name in ("ios", "tvos"):
@@ -598,6 +604,8 @@ def main(argv=None):
     wait = commands.add_parser("wait-archive")
     wait.add_argument("--output-dir", type=Path, required=True)
     wait.add_argument("--timeout-minutes", type=float, default=120)
+    wait.add_argument("--defer-main-ui", action="store_true",
+                      help="Main pushes reuse trusted PR UI evidence or defer verification to nightly")
     cloud_wait = commands.add_parser("wait-cloud")
     cloud_wait.add_argument("--output-dir", type=Path, required=True)
     run = commands.add_parser("run")

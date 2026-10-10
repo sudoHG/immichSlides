@@ -64,7 +64,8 @@ class BuildArchiveTests(unittest.TestCase):
                 patch.object(ui, "select_nightly_archive", return_value=selection) as select, \
                 patch.object(ui, "select_archive", side_effect=AssertionError("nightly cannot select another workflow's archive")), \
                 patch("ci_ui_reuse.find_reuse", side_effect=AssertionError("nightly must execute the complete UI population")):
-            self.assertEqual(ui.wait_archive(SimpleNamespace(output_dir=self.root / "nightly", timeout_minutes=1)), 0)
+            self.assertEqual(ui.wait_archive(SimpleNamespace(output_dir=self.root / "nightly", timeout_minutes=1,
+                                                           defer_main_ui=True)), 0)
         self.assertEqual(["ios", "tvos"], [call.args[-1] for call in select.call_args_list])
         self.assertIn(unittest.mock.call("run_ui", "true"), outputs.call_args_list)
 
@@ -101,26 +102,54 @@ class BuildArchiveTests(unittest.TestCase):
                 return runs
         self.assertEqual(ui.build_job_attempt(API(), {"id": 123, "run_attempt": 1}, platform_name="tvos")["conclusion"], "failure")
 
-    def test_main_ui_archive_wait_is_skipped_only_with_trusted_reuse(self):
+    def test_ui_archive_wait_follows_trusted_reuse_or_explicit_main_deferral(self):
         from types import SimpleNamespace
         push = {"schema_version": 1, "repository": "owner/repo", "event": "push", "ref": "refs/heads/main",
                 "pushed_sha": "a" * 40, "tree_sha": "d" * 40}
-        for identity, proof, expected_waits in ((push, {"source": {"run_id": 123}}, 0),
-                                               (push, None, 2), (self.identity, None, 2)):
-            with self.subTest(event=identity["event"], proof=proof):
+        for identity, proof, deferred, expected_waits in ((push, {"source": {"run_id": 123}}, False, 0),
+                                                         (push, None, False, 2), (self.identity, None, False, 2),
+                                                         (push, {"source": {"run_id": 123}}, True, 0),
+                                                         (push, None, True, 0), (self.identity, None, True, 2)):
+            with self.subTest(event=identity["event"], proof=proof, deferred=deferred):
                 context = {"identity": identity, "source": {"repository": "owner/repo", "event": identity["event"],
                            "workflow_path": ui.WORKFLOW, "fork_originated": False, "ci_changing": None},
                            "run": {"id": "100", "attempt": 1, "tier": "ui-infrastructure", "job": "ui-archive", "shard": None}}
-                directory = self.root / (identity["event"] + ("-reuse" if proof else "-run"))
+                directory = self.root / (identity["event"] + ("-reuse" if proof else "-run")
+                                         + ("-deferred" if deferred else "-full"))
                 with patch.object(ui, "context", return_value=context), patch.object(ui, "workspace_preflight"), \
                         patch.object(ui, "app_affected", return_value=True), patch.object(ui, "output") as outputs, \
                         patch("ci_ui_reuse.find_reuse", return_value=proof) as reuse, \
                         patch.object(ui, "GitHub"), patch.dict(ui.os.environ, {"GH_TOKEN": "test-placeholder"}), \
                         patch.object(ui, "select_archive", return_value={"artifact_id": 9, "producer_run_id": "123", "producer_attempt": 1}) as select:
-                    self.assertEqual(ui.wait_archive(SimpleNamespace(output_dir=directory, timeout_minutes=1)), 0)
+                    self.assertEqual(ui.wait_archive(SimpleNamespace(output_dir=directory, timeout_minutes=1,
+                                                                   defer_main_ui=deferred)), 0)
                 self.assertEqual(select.call_count, expected_waits)
-                self.assertIn(unittest.mock.call("run_ui", "false" if proof else "true"), outputs.call_args_list)
+                self.assertIn(unittest.mock.call("run_ui", "false" if expected_waits == 0 else "true"), outputs.call_args_list)
                 self.assertEqual(reuse.call_count, 1 if identity["event"] == "push" else 0)
+                if identity["event"] == "push" and deferred and proof is None:
+                    summary = json.loads((directory / "summary.json").read_text())
+                    self.assertEqual("passed", summary["status"])
+                    self.assertEqual("deferred-to-nightly", json.loads((directory / "archive-selection.json").read_text())["status"])
+                    # Consume actual selection records through the separate trusted reader.
+                    from ci_publish_git import workflow_contract
+                    from ci_ui_reuse import evaluate_reused_push
+                    cloud_dir = directory.with_name(directory.name + "-cloud")
+                    with patch.object(ui, "context", return_value=copy.deepcopy(context)), patch.object(ui, "output"), \
+                            patch.dict(ui.os.environ, {"GH_TOKEN": "test-placeholder"}):
+                        self.assertEqual(ui.cloud_selection(SimpleNamespace(output_dir=cloud_dir)), 0)
+                    workflow = (ui.ROOT / ui.WORKFLOW).read_text()
+                    run = {"id": 100, "run_attempt": 1, "head_sha": push["pushed_sha"], "event": "push",
+                           "path": ui.WORKFLOW, "head_branch": "main", "status": "completed", "conclusion": "success",
+                           "repository": {"full_name": push["repository"]}, "head_repository": {"full_name": push["repository"]}}
+                    names, _, _, metadata = workflow_contract(workflow, run, metadata=True)
+                    jobs = [{"name": name, "status": "completed", "conclusion": "skipped" if metadata[name]["tier"] == "ui" else "success",
+                             "steps": [], "runner_id": 0, "evidence_attempt": 1} for name in names]
+                    record = {"identity": push, "workflows": {ui.WORKFLOW: {"base": workflow}},
+                              "ui_inputs": {"base": {"manifest_sha256": summary["hashes"]["manifests"]["ui-shards"]}}}
+                    records = [summary, json.loads((cloud_dir / "summary.json").read_text())]
+                    with patch("ci_ui_reuse.find_reuse", return_value=None):
+                        self.assertEqual("pending", evaluate_reused_push(SimpleNamespace(repository=push["repository"]),
+                                                                       record, run, jobs, records)["state"])
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

@@ -6,6 +6,11 @@ commit status. No required check or repository setting changes here. All three
 devices use the same archive validation, fixture runner, selection and verdict
 path. The trusted reuse reader must land on main before this producer is activated.
 
+Main pushes run the Linux selection jobs and keep the gate's build, unit and host
+checks. They run no UI shards: a trusted identical-tree PR verdict is reused, or UI
+verification is explicitly deferred to the complete nightly aggregate. Pull
+requests keep their fixture UI execution and archive selection.
+
 ## Main UI scheduling contract
 
 The trusted reader recognizes `--defer-main-ui` only on the admitted base workflow's
