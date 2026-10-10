@@ -136,3 +136,5 @@ extension SettingsView {
         )
     }
 }
+
+// Probe for UI area selection acceptance; not for merge.
