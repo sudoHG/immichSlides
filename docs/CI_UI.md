@@ -74,6 +74,68 @@ the original producer source and Products paths to be absent. Products move to
 a different absolute path. Xcode runs `test-without-building`, selecting only
 the UI target; the shards never build the app again.
 
+## Feature areas and the reader-first rollout
+
+[`scripts/ci-ui-areas.json`](../scripts/ci-ui-areas.json) maps source globs to
+exact UI classes or `Class/testMethod` selectors. The map is CI-trusted;
+edits require exact-head approval and become selection authority for subsequent
+PRs only after merging. The admission's base reader and base map always choose
+areas, including when candidate workflow metadata has approval.
+
+| Area | Sources and UI coverage |
+| --- | --- |
+| `settings` | Shared settings host, iOS settings navigation and tvOS settings primitives; settings navigation and all category checks |
+| `playback` | Slideshow views, rendering components, controls and tvOS playback pages; playback, history, EXIF, motion, rotation and playback settings |
+| `filter` | Album/person editors, summary cards and preview state; selection, summaries, focus, filter editing and filtered playback |
+| `access-protection` | PIN entry and tvOS access protection page; PIN gates, protection feedback and lifecycle checks |
+| `about-legal` | tvOS about/privacy pages and bundled privacy policy; about, licenses and privacy navigation |
+| `onboarding` | First boot, mode selection, mode cards and onboarding scaffold; setup, mode selection and entry hints |
+| `server-connection` | Server form components and tvOS server/cache pages; field input, validation, help and connection feedback |
+| `cache` | tvOS server/cache pages; metrics, confirmation and cache clearing |
+| `core` | All shared models, playback engine, networking, app entry, platform/layout helpers, localization/assets, project/config files and test support; always the full default-plan population |
+
+Multiple memberships are intentional: a settings host change affects its category
+flows, a mode selector affects both onboarding and filtering, and the combined
+server/cache page affects both areas. Shared model changes stay full even when
+the model's name mentions one feature. No broad app-directory catch-all hides a
+new, unreviewed feature file. An unknown changed path conservatively selects full.
+
+The always-run smoke set explicitly names
+`FilterSummaryIOSVisualUITests/testIOSFirstBootOnboardingHeaderScreenshot`
+(iPhone/iPad) and
+`ServerConfigFormTVOSUITests/testTVOSFirstBootCoreElementsAndDisabledSave`
+(Apple TV). For ordinary app-affecting PRs the trusted selection is the union of
+affected areas plus applicable smoke methods, filtered by each platform's unchanged
+default plan and expanded to all three devices. Allowlisted docs-only changes
+select no UI. Core, unknown, CI-changing, push and nightly changes stay full.
+An unavailable or empty diff is conservative full input, never docs-only proof.
+
+The host workflow-policy check (`--check-ui-shards`, included in `check_all.sh`)
+uses `ui_identities` over `immichSlidesUITests` and `TestSupport` on both platforms.
+It rejects any unmapped UI identity, including Evidence/strict methods, stale
+selectors or unmapped app file. To add a test, choose the areas whose behavior it
+checks and add its class or exact method to their `tests` lists. Class selectors
+include future methods; mixed classes use exact methods so new flows need a
+reviewed assignment. Add the corresponding source glob for a new app file.
+Do not assign a feature to core merely to satisfy coverage; use core when shared
+behavior needs full coverage. Cross-area selectors are allowed; duplicates within
+one selector list are rejected.
+
+This is the reader rollout only: **producers still schedule the complete UI
+population**. Admission stores full populations and the base-map selection;
+publication accepts either the complete full set or the exact trusted selected
+set across every device and shard. Partial, mixed or extra populations fail.
+Only independently empty selected shards may be unexecuted literal skips.
+Scoped success cannot supply a full post-merge reuse receipt.
+Producer selection and settings/core/docs timing acceptance are a later rollout,
+after the nightly full tier and partitioned shards land; this change edits neither
+the shard manifest nor assignment rules.
+
+The nightly full UI tier is the safety net for cross-area regressions. The release
+rule still requires a green, release-eligible nightly for the exact release SHA
+and its complete required human reviews; a scoped PR result cannot replace it.
+See [the nightly contract](CI_NIGHTLY.md) and [publisher trust](CI_PUBLISHER.md).
+
 ## Manifest and union
 
 [`scripts/ci-ui-shards.json`](../scripts/ci-ui-shards.json) is the version 1

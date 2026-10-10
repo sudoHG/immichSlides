@@ -21,12 +21,12 @@ from pathlib import Path
 
 import yaml
 
-from ci_summary import ContractError, decode, require, sha, test_identity
+from ci_summary import ContractError, decode, identity_key, require, sha, test_identity
 from ci_ui_shards import DEVICES, MANIFEST_PATH, default_plan_population, parse_shard_manifest, shard_populations
 
 BASE_MODULES = ("ci_summary.py", "ci_population.py", "ci_verdict.py", "ui_test_inventory.py",
                 "run_host_checks.py")
-OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py")
+OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py", "ci_ui_selection.py")
 BRIDGE = '''import json,sys
 sys.path.insert(0, sys.argv[1])
 from ci_population import python_identities,swift_identities,ui_identities
@@ -38,7 +38,7 @@ if p['operation']=='derive':
     sources=p['sources']
     py={path[8:-3].replace('/', '.'):text for path,text in sources.items() if path.startswith('scripts/') and path.endswith('.py')}
     swift={path:text for path,text in sources.items() if path.startswith('immichSlidesTests/') and path.endswith('.swift')}
-    ui={path:text for path,text in sources.items() if path.startswith('immichSlidesUITests/') and path.endswith('.swift')}
+    ui={path:text for path,text in sources.items() if path.startswith(('immichSlidesUITests/','TestSupport/')) and path.endswith('.swift')}
     population={'host':[test_identity('host',name) for name,_ in HOST_CHECKS]+python_identities(py)}
     for platform in ('ios','tvos'):
         population['unit-'+platform]=swift_identities(swift,platform)
@@ -62,6 +62,21 @@ elif p['operation']=='ui':
         for device in p['shard_devices']:
             platform=DEVICES[device]
             result['populations'][device]=shard_populations(p['populations']['ui-'+platform],p['plans'][platform]['plan'],p['manifest'],device)
+        if p.get('selection_inputs') is not None:
+            from ci_ui_selection import select_ui_population
+            from ci_summary import identity_key
+            selection_inputs=p['selection_inputs']
+            selection=select_ui_population(selection_inputs['paths'],selection_inputs['classification_policy'],
+                build_target_paths=selection_inputs['build_target_paths'],area_map=selection_inputs['area_map'],
+                populations=p['populations'],plans={platform:entry['plan'] for platform,entry in p['plans'].items()},
+                event=selection_inputs['event'])
+            selection.update(map_revision=selection_inputs['map_revision'],map_sha256=selection_inputs['map_sha256'])
+            selection['shards']={}
+            for device,shards in result['populations'].items():
+                selected={identity_key(entry) for entry in selection['populations'][device]}
+                selection['shards'][device]={name:[entry for entry in entries if identity_key(entry) in selected]
+                    for name,entries in shards.items()}
+            result['selection']=selection
     except Exception as error:
         result['error']=str(error)
 else:
@@ -93,7 +108,7 @@ def tree_inputs(commit):
         path = raw_path.decode("utf-8")
         listing.append({"path": path, "mode": mode, "type": kind, "sha": object_sha})
         if ((path.startswith("scripts/") and path.endswith(".py")) or
-                (path.startswith(("immichSlidesTests/", "immichSlidesUITests/")) and path.endswith(".swift"))):
+                (path.startswith(("immichSlidesTests/", "immichSlidesUITests/", "TestSupport/")) and path.endswith(".swift"))):
             require(mode == "100644" or mode == "100755", "test source is not a regular blob")
             sources[path] = read_blob(commit, path)
     return listing, sources
@@ -153,11 +168,12 @@ def derive_record(identity, run, *, before=None):
         # verified range, a burst is unknown and must run the UI tier.
         paths = git("diff", "--name-only", "--no-renames", before, commit).splitlines() if before else ["__unknown_push_range__"]
     paths = paths or ["__unknown_empty_diff__"]
+    base_listing, base_sources = tree_inputs(base)
     payload = {"operation": "derive", "sources": sources, "paths": paths,
                "classification_policy": json.loads(read_blob(base, "scripts/ci-classification.json")),
-               "build_target_paths": [entry["path"] for entry in listing if entry["path"].startswith("immichSlides/")]}
+               "build_target_paths": sorted({entry["path"] for entry in listing + base_listing
+                                             if entry["path"].startswith("immichSlides/")})}
     derived = base_reader(modules, payload)
-    base_listing, base_sources = tree_inputs(base)
     payload["sources"] = base_sources
     base_derived = base_reader(modules, payload)
     workflows = {}
@@ -181,11 +197,19 @@ def derive_record(identity, run, *, before=None):
             operational[function.name] = {platform: [test_identity(call.args[0].value, call.args[1].value,
                                          platform=platform, configuration=configuration)] for platform in ("ios", "tvos")}
     ui = {}
+    selection_inputs = None
+    if "ci_ui_selection.py" in modules and any(entry["path"] == "scripts/ci-ui-areas.json" for entry in base_listing):
+        raw_map = read_blob(base, "scripts/ci-ui-areas.json")
+        selection_inputs = {"paths": paths, "classification_policy": payload["classification_policy"],
+                            "build_target_paths": payload["build_target_paths"], "event": identity["event"],
+                            "area_map": raw_map, "map_revision": base,
+                            "map_sha256": hashlib.sha256(raw_map.encode()).hexdigest()}
     for side, revision, entries in (("base", base, base_listing), ("candidate", commit, listing)):
         try:
             ui[side] = ui_inputs(revision, entries, populations=derived["populations"],
                                  base_populations=base_derived["populations"],
-                                 workflow=workflows.get(".github/workflows/ci-ui.yml", {}).get(side), run=run, modules=modules)
+                                 workflow=workflows.get(".github/workflows/ci-ui.yml", {}).get(side), run=run, modules=modules,
+                                 selection_inputs=selection_inputs)
         except Exception as error:
             if side == "base":
                 raise
@@ -239,7 +263,8 @@ def ui_failure_hint(error):
     return None
 
 
-def ui_inputs(revision, listing, *, populations=None, base_populations=None, workflow=None, run=None, modules=None):
+def ui_inputs(revision, listing, *, populations=None, base_populations=None, workflow=None, run=None, modules=None,
+              selection_inputs=None):
     paths = {entry["path"] for entry in listing if entry["type"] == "blob" and entry["mode"] in {"100644", "100755"}}
     if MANIFEST_PATH not in paths:
         return None
@@ -260,7 +285,8 @@ def ui_inputs(revision, listing, *, populations=None, base_populations=None, wor
     if modules is not None:
         computed = base_reader(modules, {"operation": "ui", "shard_devices": devices,
                       "devices": sorted(device for device, platform in DEVICES.items() if platform in result["plans"]), "populations": populations,
-                      "base_populations": base_populations, "plans": result["plans"], "manifest": result["manifest"]})
+                      "base_populations": base_populations, "plans": result["plans"], "manifest": result["manifest"],
+                      "selection_inputs": selection_inputs})
         if "error" in computed:
             # Keep the base's own filtered population for an approved replacement
             # manifest; only the tested-tree shard computation failed.
@@ -387,6 +413,21 @@ def gate_not_applicable_jobs(record, run, metadata):
             and meta["job"] == meta["tier"] + "-" + meta["shard"]}
 
 
+def ui_empty_selection_jobs(record, run, metadata):
+    if record is None or run["path"] != ".github/workflows/ci-ui.yml":
+        return set()
+    ui = record.get("ui_inputs", {}).get("base") or {}
+    selection = ui.get("selection") or {}
+    if (selection.get("mode") != "scoped" or record["identity"]["event"] != "pull_request"
+            or record["classification"].get("ci_changing") is not False):
+        return set()
+    require(selection["map_revision"] == record["identity"]["base_sha"], "UI area map differs from admitted base")
+    require({meta["device"] for meta in metadata.values() if meta["tier"] == "ui"} == set(DEVICES),
+            "scoped UI requires all three devices")
+    return {name for name, meta in metadata.items() if meta["tier"] == "ui"
+            and selection["shards"][meta["device"]][meta["shard"]] == []}
+
+
 def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None):
     context = "gate" if run["path"].endswith("ci-gate.yml") else "ui"
     ui = record.get("ui_inputs", {}).get("candidate" if approved else "base") if context == "ui" else None
@@ -411,12 +452,10 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
         require(not any(summary["run"]["job"] == "ui-appletv" for summary in summaries),
                 "mixed GitHub and Xcode Cloud Apple TV evidence")
         allowed_skips |= cloud_jobs
-    require(all(job["status"] == "completed" and (job["conclusion"] == "success"
-                or (job["name"] in allowed_skips and job["conclusion"] == "skipped")) for job in jobs),
-            "a required job failed, skipped or was cancelled")
     tree = record["identity"]["tree_sha"]
     ui_devices = {meta["device"] for meta in metadata.values() if meta["tier"] == "ui"}
     ui_populations, ui_base = {}, []
+    ui_mode, empty_jobs = "full", set()
     if context == "ui":
         require(ui is not None and ui_devices, "UI manifest and device populations are not admitted")
         require(all(meta["tier"] in {"ui", "ui-infrastructure"} for meta in metadata.values())
@@ -431,6 +470,27 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
             base_ui = record["ui_inputs"]["base"] or ui
             if cloud is None or device != "appletv":
                 ui_base.extend(base_ui["base_populations"][device])
+        full_population = [entry for device, shards in ui_populations.items() if cloud is None or device != "appletv"
+                           for entries in shards.values() for entry in entries]
+        declared = [entry for summary in summaries if summary["run"]["tier"] == "ui"
+                    for entry in summary["population"]["declared"]]
+        if {identity_key(entry) for entry in declared} != {identity_key(entry) for entry in full_population}:
+            selection = ui.get("selection") or {}
+            require(selection.get("mode") == "scoped" and cloud is None
+                    and record["identity"]["event"] == "pull_request"
+                    and record["classification"]["ci_changing"] is False,
+                    "UI population differs from full population and trusted selection")
+            require(selection["map_revision"] == record["identity"]["base_sha"], "UI area map differs from admitted base")
+            require(ui_devices == set(DEVICES), "scoped UI requires all three devices")
+            ui_populations = selection["shards"]
+            ui_mode = "scoped"
+            empty_jobs = {name for name, meta in metadata.items() if meta["tier"] == "ui"
+                          and not ui_populations[meta["device"]][meta["shard"]]}
+            require(all(actual[name]["status"] == "completed" and actual[name]["conclusion"] == "skipped"
+                        and (actual[name].get("runner_id") is None or type(actual[name].get("runner_id")) is int
+                             and actual[name]["runner_id"] == 0) and actual[name].get("steps") == []
+                        for name in empty_jobs), "empty scoped UI shards must be unexecuted literal skips")
+            allowed_skips |= empty_jobs
         for summary in summaries:
             require(summary["hashes"]["manifests"].get("ui-shards") == ui["manifest_sha256"], "UI manifest hash differs")
             meta = next((item for item in metadata.values() if all(item[key] == summary["run"][key]
@@ -439,6 +499,9 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
             if meta["tier"] == "ui":
                 require(summary["hashes"]["manifests"].get("test-plan") == ui["plans"][DEVICES[meta["device"]]]["sha256"],
                         "UI default-plan hash differs")
+    require(all(job["status"] == "completed" and (job["conclusion"] == "success"
+                or (job["name"] in allowed_skips and job["conclusion"] == "skipped")) for job in jobs),
+            "a required job failed, skipped or was cancelled")
     def population(meta):
         if meta["population"] == "gate-classification":
             return [test_identity("host", "Gate change classification")]
@@ -454,7 +517,7 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
                       "run_id": str(run["id"]), "attempt": actual[name]["evidence_attempt"],
                       "workflow_paths": [run["path"]], "expected": {"tree_sha": tree, "identities": population(meta)},
                       "status": actual[name]["status"], "conclusion": actual[name]["conclusion"]}
-                     for name, meta in metadata.items() if name not in cloud_jobs]
+                     for name, meta in metadata.items() if name not in cloud_jobs | empty_jobs]
     parts = ["host", "unit-ios", "unit-tvos"] if context == "gate" else []
     expected = [identity for part in parts for identity in record["populations"][part]]
     base_expected = [identity for part in parts for identity in record["base_populations"][part]]
@@ -471,6 +534,9 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
     else:
         expected = [entry for job in required_jobs for entry in job["expected"]["identities"]]
         base_expected = ui_base + [entry for meta in metadata.values() if meta["tier"] == "ui-infrastructure" for entry in population(meta)]
+        if ui_mode == "scoped":
+            selected_tokens = {identity_key(entry) for entry in expected}
+            base_expected = [entry for entry in base_expected if identity_key(entry) in selected_tokens]
     inputs = {"expected": {"tree_sha": tree, "identities": expected}, "admission_identity": record["identity"],
               "required_jobs": required_jobs, "base_policy": record["base_policy"], "candidate_policy": record["candidate_policy"],
               "environment": "fixture" if context == "ui" else "hermetic", "approved_head": record["identity"].get("head_sha") if approved else None,
@@ -503,6 +569,16 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
                        "run_id": run["id"], "attempt": run["run_attempt"], "approval_based": verdict["approval_based"], "fork_originated": fork},
             "population": details, "expected_skips": verdict["expected_skips"], "deselected": verdict["deselected"],
             "removed_by_pr": verdict["removed_by_pr"]}
+    if context == "ui":
+        result["ui_population_mode"] = ui_mode
+        if ui_mode == "scoped":
+            if result["state"] == "success":
+                result["description"] = "Trusted scoped UI population and required jobs passed"
+            from ci_population import removed_tests
+            # An unselected test is still present; selection is never a removal.
+            result["removed_by_pr"] = removed_tests(
+                {"base_sha": record["identity"]["base_sha"], "identities": ui_base},
+                full_population, base_sha=record["identity"]["base_sha"])
     if verdict.get("not_applicable"):
         result["not_applicable"] = verdict["not_applicable"]
     if cloud is not None:

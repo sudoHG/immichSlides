@@ -22,7 +22,11 @@ INPUT_PATHS = ("scripts/ci-ui-shards.json", "immichSlides-iOS.xctestplan", "immi
 
 
 def reuse_inputs(revision):
-    return {path: hashlib.sha256(read_blob(revision, path).encode()).hexdigest() for path in INPUT_PATHS}
+    paths = list(INPUT_PATHS)
+    # Full-only historical admissions predate the area map.
+    if git("ls-tree", "--name-only", revision, "--", "scripts/ci-ui-areas.json"):
+        paths.append("scripts/ci-ui-areas.json")
+    return {path: hashlib.sha256(read_blob(revision, path).encode()).hexdigest() for path in paths}
 
 
 def device_shards(source, run):
@@ -102,7 +106,7 @@ def validate_reuse(receipt, push, inputs, shards, pins, upstream, merged_pr):
 def make_verdict(record, run, summaries, evaluation):
     source = evaluation.get("source")
     if (evaluation["state"] != "success" or not source or run["path"] != UI_WORKFLOW
-            or record["identity"]["event"] != "pull_request"):
+            or record["identity"]["event"] != "pull_request" or evaluation.get("ui_population_mode", "full") != "full"):
         return None
     ui = [summary for summary in summaries if summary["run"]["tier"] == "ui"]
     if not ui:

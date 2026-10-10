@@ -699,7 +699,7 @@ def main(argv=None):
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent,
                         help="Repository root (default: this script's repository)")
     parser.add_argument("--check-ui-shards", action="store_true",
-                        help="Also validate the checked-in UI shard assignments against both platforms")
+                        help="Also validate UI shard assignments and area coverage against both platforms")
     args = parser.parse_args(argv)
     directory = args.root / ".github/workflows"
     paths = sorted(directory.glob("*.yml")) + sorted(directory.glob("*.yaml"))
@@ -723,6 +723,8 @@ def main(argv=None):
                        for path in (args.root / "immichSlidesUITests").rglob("*.swift")}
             populations = {"ui-" + platform: ui_identities(sources, platform) for platform in ("ios", "tvos")}
             validate_shard_assignments((args.root / MANIFEST_PATH).read_text(encoding="utf-8"), populations)
+            from ci_ui_selection import check_area_map
+            check_area_map(args.root)
         except (OSError, UnicodeError, ValueError) as error:
             violations.append(Violation(MANIFEST_PATH, "manifest", "ui-shards", str(error)))
     for violation in violations:

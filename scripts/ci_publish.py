@@ -458,8 +458,8 @@ def producer_evidence(api, run, source, *, diagnostics=None, admission=None, clo
     require(all(name in jobs and jobs[name]["evidence_attempt"] >= attempt
                 for name, attempt in minimum_attempts.items()), "UI shard did not execute after skipped matrix")
     expected, _, by_job, metadata = workflow_contract(source, run, metadata=True)
-    from ci_publish_git import gate_not_applicable_jobs
-    allowed_skips = gate_not_applicable_jobs(admission, run, metadata)
+    from ci_publish_git import gate_not_applicable_jobs, ui_empty_selection_jobs
+    allowed_skips = gate_not_applicable_jobs(admission, run, metadata) | ui_empty_selection_jobs(admission, run, metadata)
     if diagnostics is None:
         require(set(jobs) == set(expected), "required job set mismatch")
     elif set(jobs) != set(expected):
