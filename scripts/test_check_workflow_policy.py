@@ -106,9 +106,11 @@ final class LocaleUITests: XCTestCase {
                        for platform in ("ios", "tvos")}
         plans = {platform: json.dumps({"testTargets": [{"target": {"name": "immichSlidesUITests"}}]})
                  for platform in ("ios", "tvos")}
+        helpers = "immichSlides/Shared/SettingsHelpers.swift"
         exceptions = {"schema_version": 1, "exceptions": [
             {"identifier": "filterSummary.startPlayback.button", "source": "immichSlides/Shared/Filter.swift",
              "reason": "Reviewed."},
+            {"navigation": helpers, "areas": ["locale"], "reason": "Route to the captured screen."},
             {"test": "OtherUITests", "reason": "Never launches the app."}]}
 
         def violations(exception_entries):
@@ -117,19 +119,24 @@ final class LocaleUITests: XCTestCase {
 
         # Own-type helpers, TestSupport constants, delegated and interpolated identifiers and platform
         # conditions are resolved; core and smoke never need a feature membership. A nightly-default
-        # test needs only one identifier from its own leaf screens.
+        # test must reach its own leaf screen, and may traverse other files only when they are
+        # reviewed navigation sources for its area.
         sidebar = ("ProtectionUITests/testSidebar reaches settings.pin.input.* defined in "
                    "immichSlides/tvOS/ProtectionPage.swift; add it to one of ['protection']")
         start = ("SettingsUITests/testStart reaches filterSummary.startPlayback.button defined in "
                  "immichSlides/Shared/Filter.swift; add it to one of ['filter', 'locale']")
-        navigation = "LocaleUITests/testNavigationOnly is nightly-default but reaches no identifier from its areas' screens ['locale']"
-        self.assertEqual(violations([]), [navigation, sidebar, start])
-        self.assertEqual(violations(exceptions["exceptions"][:1]), [navigation, sidebar])
+        routes = [f"LocaleUITests/{name} reaches settings.item.playback defined in {helpers}; add it to one of "
+                  "['settings']" for name in ("testLeaf", "testNavigationOnly")]
+        no_leaf = "LocaleUITests/testNavigationOnly is nightly-default but reaches no identifier from its areas' screens ['locale']"
+        self.assertEqual(violations([]), [routes[0], no_leaf, routes[1], sidebar, start])
+        self.assertEqual(violations(exceptions["exceptions"][:2]), [no_leaf, sidebar])
         self.assertEqual(violations(exceptions["exceptions"]), [
-            navigation, sidebar, "stale UI flow exception: test=OtherUITests"])
+            no_leaf, sidebar, "stale UI flow exception: test=OtherUITests"])
         for entry in ({"identifier": "Not An Identifier", "source": "x", "reason": "r"},
                       {"test": "OtherUITests", "reason": "two\nlines"},
-                      {"test": "OtherUITests", "identifier": "a.b", "reason": "r"}):
+                      {"test": "OtherUITests", "identifier": "a.b", "reason": "r"},
+                      {"navigation": helpers, "areas": ["settings"], "reason": "Not a nightly-default area."},
+                      {"navigation": "immichSlides/Shared/*.swift", "areas": ["locale"], "reason": "Glob."}):
             with self.subTest(entry=entry), self.assertRaises(ValueError):
                 violations([entry])
 

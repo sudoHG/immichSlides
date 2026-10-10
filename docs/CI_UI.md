@@ -178,8 +178,11 @@ family. Shared navigation containers and launch routes are deliberately not fami
 sources; the default-language tests in the feature areas cover those flows. A core
 change without a catalog change therefore selects the full population minus the locale
 methods, which the reader accepts as an exact selected population. CI-changing and
-unknown-path PRs, pushes, the nightly and manual runs keep the complete population, so
-the [nightly full UI](CI_NIGHTLY.md#complete-fixture-ui) runs every locale method. No
+unknown-path PRs, pushes, the nightly and manual runs keep the complete population. An
+unknown path stays fully conservative, locale methods included. It is rare: host checks
+require every app source to be mapped, so it mainly occurs when a PR adds an app file
+the base map does not know yet. The [nightly full UI](CI_NIGHTLY.md#complete-fixture-ui)
+runs every locale method. No
 test policy deselection is involved: the methods stay declared in the default plans.
 Adding a test to a nightly-default area is a CI-trusted map change; list every such
 method in the PR for maintainer approval.
@@ -197,15 +200,20 @@ interpolation matches any text. An app Swift file compiled on that platform defi
 identifier when it contains a matching literal or calls a function whose name ends in
 `AccessibilityID`/`AccessibilityIdentifier` that returns one. The test must belong to
 one of each defining file's areas or to the smoke set; core files already select the
-full population. A test only in nightly-default areas needs at least one identifier
-from its own areas' leaf screens. The analysis over-approximates by design, so a false
-dependency is resolved by adding the membership, not by weakening the check.
+full population. A test only in nightly-default areas is checked the same way and must
+also reach at least one identifier from its own areas' leaf screens; a file it only
+traverses on the way to the captured screen must be a reviewed navigation source for
+one of its areas. The analysis over-approximates by design, so a false dependency is
+resolved by adding the membership, not by weakening the check.
 
 [`scripts/ci-ui-flow-exceptions.json`](../scripts/ci-ui-flow-exceptions.json) holds a
-small reviewed list (at most 16) with a one-line `reason` each: an `identifier` from one
+small reviewed list (at most 24) with a one-line `reason` each: an `identifier` from one
 `source` file that does not imply a flow dependency (for example a defensive "dismiss
-the PIN sheet if shown" branch), or a `test` that never launches the app. An exception
-that no longer suppresses anything fails as stale. When the check reports a test, add
+the PIN sheet if shown" branch), a `test` that never launches the app, or a
+`navigation` app file with the nightly-default `areas` whose locale screenshots only
+pass through it (launch routes, the slideshow control bar, the settings list). A
+captured screen belongs in the family's sources, never in this list. An exception that
+no longer suppresses anything fails as stale. When the check reports a test, add
 the test to one of the named areas; add an exception only with a reason a reviewer can
 verify in the helper code.
 

@@ -14,6 +14,102 @@
     {
       "test": "StrictE2ELateImageFocusAuditTests/testKnownIdentifiersCoverLateImageFocusTargets",
       "reason": "Checks a static identifier list in test support; it never launches the app."
+    },
+    {
+      "navigation": "immichSlides/iOS/Core/ModeSelectionViewIOS.swift",
+      "areas": [
+        "localization-about",
+        "localization-filter",
+        "localization-playback",
+        "localization-settings"
+      ],
+      "reason": "Launch route to the captured screen; default-language tests in every feature area cover it."
+    },
+    {
+      "navigation": "immichSlides/iOS/Core/FilterSummaryViewIOS.swift",
+      "areas": [
+        "localization-about",
+        "localization-filter",
+        "localization-playback",
+        "localization-settings"
+      ],
+      "reason": "Launch route to the captured screen; default-language tests in every feature area cover it."
+    },
+    {
+      "navigation": "immichSlides/iOS/Core/FilterSummaryViewIOS+Actions.swift",
+      "areas": [
+        "localization-about",
+        "localization-filter",
+        "localization-playback",
+        "localization-settings"
+      ],
+      "reason": "Launch route to the captured screen; default-language tests in every feature area cover it."
+    },
+    {
+      "navigation": "immichSlides/iOS/Core/FilterSummaryViewIOS+SelectionCards.swift",
+      "areas": [
+        "localization-about",
+        "localization-filter",
+        "localization-playback",
+        "localization-settings"
+      ],
+      "reason": "Launch route to the captured screen; default-language tests in every feature area cover it."
+    },
+    {
+      "navigation": "immichSlides/tvOS/Core/ModeSelectionViewTV.swift",
+      "areas": [
+        "localization-about",
+        "localization-playback",
+        "localization-settings"
+      ],
+      "reason": "Launch route to the captured screen; default-language tests in every feature area cover it."
+    },
+    {
+      "navigation": "immichSlides/tvOS/Core/FilterSummaryViewTV.swift",
+      "areas": [
+        "localization-about",
+        "localization-playback",
+        "localization-settings"
+      ],
+      "reason": "Launch route to the captured screen; default-language tests in every feature area cover it."
+    },
+    {
+      "navigation": "immichSlides/Shared/Component/SlideshowControlBarView.swift",
+      "areas": [
+        "localization-about",
+        "localization-filter",
+        "localization-settings"
+      ],
+      "reason": "Settings is opened from the slideshow control bar; settings and playback tests cover it."
+    },
+    {
+      "navigation": "immichSlides/tvOS/Component/SlideshowControlBarViewTV.swift",
+      "areas": [
+        "localization-about",
+        "localization-settings"
+      ],
+      "reason": "Settings is opened from the slideshow control bar; settings and playback tests cover it."
+    },
+    {
+      "navigation": "immichSlides/iOS/Core/SettingsViewIOS.swift",
+      "areas": [
+        "localization-filter"
+      ],
+      "reason": "The iOS filter editor is reached through the settings list; settings tests cover it."
+    },
+    {
+      "navigation": "immichSlides/Shared/Core/SettingsView+Sections.swift",
+      "areas": [
+        "localization-filter"
+      ],
+      "reason": "The iOS filter editor is reached through the playback settings section; settings tests cover it."
+    },
+    {
+      "navigation": "immichSlides/Shared/Core/SettingsView+Helpers.swift",
+      "areas": [
+        "localization-filter"
+      ],
+      "reason": "Settings row identifiers on the way to the filter editor; settings tests cover them."
     }
   ]
 }

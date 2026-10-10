@@ -4,9 +4,9 @@ A default-plan UI test that references an identifier literal (directly or throug
 helper, computed property or stored constant it reaches) depends on every app source
 file that defines a matching literal. Such a test must belong to one of that file's
 areas, or to the smoke set, so a change to the file schedules the test. Core files
-always select the full population. A test only in nightly-default areas needs just one
-identifier from its own areas' leaf screens: default-language tests and the nightly full
-tier cover its navigation. Reviewed exceptions live in
+always select the full population. A test only in nightly-default areas must also reach
+one of its own leaf screens; a file it only navigates through is accepted only when the
+reviewed list names it as a navigation source. Reviewed exceptions live in
 scripts/ci-ui-flow-exceptions.json. The analysis over-approximates: helpers resolve
 by name across files, and interpolations match any text.
 """
@@ -208,21 +208,28 @@ def parse_exceptions(raw):
     require(type(document["schema_version"]) is int and document["schema_version"] == 1,
             "unsupported UI flow exceptions version")
     require(isinstance(document["exceptions"], list), "UI flow exceptions must be an array")
-    require(len(document["exceptions"]) <= 16, "UI flow exceptions must remain a small reviewed list")
+    require(len(document["exceptions"]) <= 24, "UI flow exceptions must remain a small reviewed list")
     seen = set()
     for entry in document["exceptions"]:
         require(isinstance(entry, dict), "UI flow exception must be an object")
-        fields(entry, {"identifier", "source", "reason"} if "identifier" in entry else {"test", "reason"},
-               "UI flow exception")
-        for value in entry.values():
-            string(value, "UI flow exception field")
+        fields(entry, {"identifier", "source", "reason"} if "identifier" in entry else
+               {"navigation", "areas", "reason"} if "navigation" in entry else {"test", "reason"}, "UI flow exception")
+        for name, value in entry.items():
+            if name == "areas":
+                require(isinstance(value, list) and value and all(isinstance(item, str) for item in value)
+                        and len(set(value)) == len(value), "UI flow navigation areas must be distinct names")
+            else:
+                string(value, "UI flow exception field")
         require("\n" not in entry["reason"] and len(entry["reason"]) <= 200,
                 "UI flow exception reason must be one line")
         if "test" in entry:
             require(SELECTOR.fullmatch(entry["test"]) is not None, "UI flow exception test must be a selector")
+        elif "navigation" in entry:
+            require(entry["navigation"].startswith("immichSlides/") and entry["navigation"].endswith(".swift")
+                    and "*" not in entry["navigation"], "UI flow navigation source must name one app Swift file")
         else:
             require(IDENTIFIER.fullmatch(entry["identifier"]) is not None, "invalid UI flow exception identifier")
-        key = tuple(value for name, value in sorted(entry.items()) if name != "reason")
+        key = tuple(value for name, value in sorted(entry.items()) if name not in {"reason", "areas"})
         require(key not in seen, "duplicate UI flow exception")
         seen.add(key)
     return document["exceptions"]
@@ -259,6 +266,8 @@ def app_patterns(app_files):
 def flow_violations(raw_map, raw_exceptions, app_files, test_files, populations, plans):
     area_map = parse_area_map(raw_map)
     exceptions = parse_exceptions(raw_exceptions)
+    require(all(set(item.get("areas", [])) <= set(area_map["nightly_default"]) for item in exceptions),
+            "UI flow navigation sources apply only to nightly-default areas")
     graph = FlowGraph(test_files)
     definitions = app_patterns(app_files)
     defining = {}  # (platform, used pattern) -> app paths with an overlapping literal
@@ -283,10 +292,11 @@ def flow_violations(raw_map, raw_exceptions, app_files, test_files, populations,
                     areas = path_areas[path]
                     if set(own) & set(areas):
                         leaf = True
-                    if nightly_only or "core" in areas or set(own) & set(areas):
+                    if "core" in areas or set(own) & set(areas):
                         continue
                     excepted = [index for index, item in enumerate(exceptions)
-                                if item.get("identifier") == pattern and item.get("source") == path]
+                                if item.get("identifier") == pattern and item.get("source") == path
+                                or nightly_only and item.get("navigation") == path and set(own) & set(item["areas"])]
                     if excepted:
                         used.update(excepted)
                         continue
@@ -300,7 +310,7 @@ def flow_violations(raw_map, raw_exceptions, app_files, test_files, populations,
     for index, item in enumerate(exceptions):
         if index not in used:
             violations.add("stale UI flow exception: " + ", ".join(
-                f"{name}={value}" for name, value in sorted(item.items()) if name != "reason"))
+                f"{name}={value}" for name, value in sorted(item.items()) if name not in {"reason", "areas"}))
     return sorted(violations)
 
 

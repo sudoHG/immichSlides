@@ -610,14 +610,16 @@
     },
     "localization-settings": {
       "sources": [
-        "immichSlides/Shared/Core/SettingsView*.swift",
+        "immichSlides/Shared/Core/SettingsView+Sections.swift",
+        "immichSlides/Shared/Core/SettingsView+Helpers.swift",
         "immichSlides/Shared/Component/SettingsSectionCardView.swift",
         "immichSlides/iOS/Core/SettingsViewIOS.swift",
         "immichSlides/tvOS/Core/SettingsViewTV.swift",
         "immichSlides/tvOS/Core/SettingsViewTV+PlaybackPages.swift",
         "immichSlides/tvOS/Core/SettingsViewTV+ServerCachePages.swift",
         "immichSlides/tvOS/Core/SettingsViewTV+AccessProtectionPage.swift",
-        "immichSlides/tvOS/Component/TVSettings*.swift",
+        "immichSlides/tvOS/Component/TVSettingsFocusableControls.swift",
+        "immichSlides/tvOS/Component/TVSettingsPrimitives.swift",
         "immichSlides/Shared/Component/ServerConfigFormView.swift",
         "immichSlides/iOS/Component/ServerConfig*.swift",
         "immichSlides/tvOS/Component/ServerConfigFormViewTV.swift"
@@ -647,7 +649,9 @@
         "immichSlides/iOS/Core/SettingsViewIOS.swift",
         "immichSlides/tvOS/Core/SettingsViewTV+AboutPages.swift",
         "immichSlides/tvOS/Core/SettingsViewTV+PrivacyPage.swift",
-        "PRIVACY_POLICY.md"
+        "PRIVACY_POLICY.md",
+        "immichSlides/Shared/Core/SettingsView+Helpers.swift",
+        "immichSlides/tvOS/Core/SettingsViewTV.swift"
       ],
       "tests": [
         "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots",
@@ -702,7 +706,16 @@
         "immichSlides/iOS/Core/FilterSummaryViewIOS*.swift",
         "immichSlides/tvOS/Core/FilterSummaryViewTV.swift",
         "immichSlides/tvOS/Component/FilterSummary*.swift",
-        "immichSlides/tvOS/Model/FilterSummaryTVStageViewModel.swift"
+        "immichSlides/tvOS/Model/FilterSummaryTVStageViewModel.swift",
+        "immichSlides/Shared/Core/AlbumFilterView.swift",
+        "immichSlides/Shared/Core/PersonFilterView.swift",
+        "immichSlides/Shared/Component/FilterTopBarView.swift",
+        "immichSlides/Shared/Component/CoverCardView.swift",
+        "immichSlides/Shared/Component/PersonFilterCardView.swift",
+        "immichSlides/tvOS/Core/AlbumFilterViewTV.swift",
+        "immichSlides/tvOS/Core/PersonFilterViewTV.swift",
+        "immichSlides/tvOS/Component/TVAlbumFilterCard.swift",
+        "immichSlides/tvOS/Component/TVPersonCommandCard.swift"
       ],
       "tests": [
         "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceOnboardingScreenshots",

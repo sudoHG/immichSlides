@@ -1216,12 +1216,22 @@ class PublisherTests(unittest.TestCase):
             ("iOS/Core/FilterSummaryViewIOS+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceSettingsAboutOpenSourceScreenshots"),
             ("tvOS/Core/FilterSummaryViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSFullFlowModeSelectionToAccessProtectionCanReachTargetPage"),
             ("iOS/Component/OnboardingScaffoldIOS.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFilterSummaryScreenshot"),
+            # Nightly-default locale screenshots follow the leaf screens they capture.
+            ("tvOS/Core/AlbumFilterViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSJapaneseAcceptanceCoreScreenshots"),
+            ("tvOS/Core/PersonFilterViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptanceCoreScreenshots"),
+            ("Localizable.xcstrings", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
         ]
-        for source, key in cases:
+        omitted = [
+            ("Shared/Core/SettingsView+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceSettingsPrimaryScreenshots"),
+            ("Shared/Core/SettingsView+Actions.swift", "FilterSummaryTVOSVisualUITests/testTVOSSpanishAcceptancePlaybackSettingsScreenshots"),
+        ]
+        for source, key in cases + omitted:
             with self.subTest(source=source, key=key):
-                selectors = area_map["smoke"] + [selector for name in affected_areas("immichSlides/" + source, area_map)
+                names = affected_areas("immichSlides/" + source, area_map)
+                nightly = [name for name in area_map["nightly_default"] if matches_test(key, area_map["areas"][name]["tests"])]
+                selectors = area_map["smoke"] + [selector for name in names if not nightly or name in nightly
                                                   for selector in area_map["areas"][name]["tests"]]
-                self.assertTrue(matches_test(key, selectors), f"{source} omits its UI flow {key}")
+                self.assertEqual(matches_test(key, selectors), (source, key) in cases, f"{source} and its UI flow {key}")
 
     def test_ui_reader_requires_device_population_union_and_admitted_manifest_hash(self):
         from ci_publish_git import ui_inputs

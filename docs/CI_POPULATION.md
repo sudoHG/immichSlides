@@ -274,6 +274,8 @@ The feature-area map `scripts/ci-ui-areas.json` is CI-trusted too. Its
 the existing `ui_identities` inventory and classification allowlist; unknown
 paths, CI changes, pushes and nightly retain full UI coverage; shared core does too,
 except that pull requests leave nightly-default locale screenshots to the nightly.
+Unknown paths stay fully conservative, locale screenshots included; they are rare
+because every app source must be mapped, and mainly mean a new file unknown to the base map.
 The reviewed `scripts/ci-ui-flow-exceptions.json` for the identifier-to-flow host check is CI-trusted.
 The trusted base map is used even when candidate metadata has exact-head approval.
 The reader supports scoped equality before producers begin selecting areas.
