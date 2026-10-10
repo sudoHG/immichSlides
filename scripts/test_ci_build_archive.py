@@ -59,7 +59,7 @@ class BuildArchiveTests(unittest.TestCase):
                                "workflow_path": ui.NIGHTLY_WORKFLOW, "fork_originated": False, "ci_changing": None})
         context["run"].update(tier="ui-infrastructure", job="ui-archive", shard=None)
         with patch.object(ui, "context", return_value=context), patch.object(ui, "workspace_preflight"), \
-                patch.object(ui, "output") as outputs, patch.object(ui, "GitHub"), \
+                patch.object(ui, "output") as outputs, patch.object(ui, "RateLimitWaitingGitHub"), \
                 patch.dict(ui.os.environ, {"GH_TOKEN": "test-placeholder"}), \
                 patch.object(ui, "select_nightly_archive", return_value=selection) as select, \
                 patch.object(ui, "select_archive", side_effect=AssertionError("nightly cannot select another workflow's archive")), \
@@ -115,7 +115,7 @@ class BuildArchiveTests(unittest.TestCase):
                 with patch.object(ui, "context", return_value=context), patch.object(ui, "workspace_preflight"), \
                         patch.object(ui, "app_affected", return_value=True), patch.object(ui, "output") as outputs, \
                         patch("ci_ui_reuse.find_reuse", return_value=proof) as reuse, \
-                        patch.object(ui, "GitHub"), patch.dict(ui.os.environ, {"GH_TOKEN": "test-placeholder"}), \
+                        patch.object(ui, "RateLimitWaitingGitHub"), patch.dict(ui.os.environ, {"GH_TOKEN": "test-placeholder"}), \
                         patch.object(ui, "select_archive", return_value={"artifact_id": 9, "producer_run_id": "123", "producer_attempt": 1}) as select:
                     self.assertEqual(ui.wait_archive(SimpleNamespace(output_dir=directory, timeout_minutes=1)), 0)
                 self.assertEqual(select.call_count, expected_waits)
@@ -445,6 +445,37 @@ class BuildArchiveTests(unittest.TestCase):
         self.assertRegex(stuck["ios"], "archive-unavailable")
         self.assertEqual(ui.GATE_PENDING_PAUSE_SECONDS, wait.paused)
         self.assertAlmostEqual(170 * 60, wait.deadline - 1000.0, delta=1)
+
+    def test_a_long_archive_wait_backs_off_and_skips_artifact_listings_until_the_build_finishes(self):
+        head = "d" * 40
+        identity = {"schema_version": 1, "event": "push", "repository": "owner/repo",
+                    "ref": "refs/heads/main", "pushed_sha": head, "tree_sha": "c" * 40}
+        gate = {"id": 300, "workflow_id": 42, "path": ui.GATE_WORKFLOW, "event": "push", "head_sha": head,
+                "head_branch": "main", "run_attempt": 1, "status": "in_progress", "conclusion": None,
+                "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}}
+        def requests_for(**options):
+            clock, requests = [1000.0], []
+            class API:
+                repository = "owner/repo"
+                def repo(self, path):
+                    requests.append(path)
+                    return {"id": 42, "path": ui.GATE_WORKFLOW, "state": "active"}
+                def pages(self, path, collection, **filters):
+                    requests.append(path)
+                    if collection == "workflow_runs":
+                        return [gate]
+                    self.assertNotEqual("artifacts", collection, "artifacts are listed only for a finished build")
+                    return [{"name": "build-ios", "status": "in_progress", "conclusion": None}]
+                assertNotEqual = self.assertNotEqual
+            with patch.object(ui.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(ui.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                    contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(ContractError, "archive-unavailable"):
+                ui.select_archive(API(), identity, timeout_seconds=90 * 60, **options)
+            return len(requests)
+        # One workflow read, then one run list and one job list per poll.
+        self.assertEqual(45, requests_for())
+        # The former fixed 20-second cadence needs 12 times as many requests, before counting artifact listings.
+        self.assertEqual(543, requests_for(poll_seconds=20, max_poll_seconds=20))
 
     def test_ui_reproduction_checks_revision_pins_and_exact_destination_before_build(self):
         pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())

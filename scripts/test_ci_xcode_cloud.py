@@ -556,6 +556,31 @@ class RoutingPolicyTests(unittest.TestCase):
                 client.request("/repos/owner/repo/actions/workflows/route/dispatches", method="POST", payload={})
             self.assertEqual(network.call_count, 4)
 
+    def test_cloud_wait_reads_wait_out_a_rate_limit_only_inside_the_deadline(self):
+        from ci_xcode_cloud_client import RetryingGitHub
+        from ci_publish import GitHub, RateLimited
+        def client(deadline):
+            elapsed = [0]
+            return RetryingGitHub("owner/repo", "test-token", deadline, timer=lambda: elapsed[0],
+                                  sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)), elapsed
+        waiting, elapsed = client(600)
+        with patch.object(GitHub, "request", side_effect=[RateLimited("HTTP 403", 120), {"id": 1}]):
+            self.assertEqual(waiting.request("/repos/owner/repo/actions/runs/1"), {"id": 1})
+        self.assertEqual(elapsed[0], 121)
+        waiting, _ = client(100)
+        with patch.object(GitHub, "request", side_effect=[RateLimited("HTTP 403", 120), {"id": 1}]) as network, \
+                self.assertRaises(RateLimited):
+            waiting.request("/repos/owner/repo/actions/runs/1")
+        self.assertEqual(network.call_count, 1)
+        waiting, _ = client(600)
+        with patch.object(GitHub, "request", side_effect=[ContractError("GitHub API GET refused request (HTTP 403)"), {"id": 1}]) as network, \
+                self.assertRaises(ContractError):
+            waiting.request("/repos/owner/repo/actions/runs/1")
+        self.assertEqual(network.call_count, 1)
+        with patch.object(GitHub, "request", side_effect=[RateLimited("HTTP 403", 5), {}]) as network, self.assertRaises(RateLimited):
+            waiting.request("/repos/owner/repo/dispatches", method="POST", payload={})
+        self.assertEqual(network.call_count, 1)
+
     def test_known_terminal_build_does_not_block_even_when_its_head_cannot_count(self):
         import ci_xcode_cloud_route as router
         fixture = CloudEvidenceTests()

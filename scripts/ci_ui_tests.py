@@ -22,7 +22,7 @@ from urllib.request import Request, build_opener
 
 from ci_build_archive import (artifact_name, check_products, extract_products, file_hash, measure_signing,
                               output, validate_artifact, validate_manifest, workspace_preflight)
-from ci_publish import ArtifactRedirect, GitHub, json_member, verify_workflow
+from ci_publish import ArtifactRedirect, RateLimitWaitingGitHub, json_member, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
 from ci_ui_shards import DEVICES, MANIFEST_PATH, parse_shard_manifest, shard_populations
 from ci_verdict import classify_changes
@@ -145,7 +145,12 @@ class ArchiveWait:
         self.deadline += granted
 
 
-def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", poll_seconds=20, record_refusals=None, wait=None):
+# Polling backs off because every waiting UI run shares the repository's 1,000 requests per hour.
+POLL_SECONDS, MAX_POLL_SECONDS = 30, 300
+
+
+def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", poll_seconds=POLL_SECONDS,
+                   max_poll_seconds=MAX_POLL_SECONDS, record_refusals=None, wait=None):
     wait = wait or ArchiveWait(timeout_seconds)
     require(platform_name in {"ios", "tvos"}, "unsupported UI archive platform")
     workflow = api.repo("actions/workflows/ci-gate.yml")
@@ -153,7 +158,7 @@ def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", pol
     head = identity.get("head_sha", identity.get("pushed_sha"))
     head_repository = (api.repo(f"pulls/{identity['pull_request']}")["head"]["repo"]["full_name"]
                        if identity["event"] == "pull_request" else api.repository)
-    started, refusals = time.monotonic(), []
+    started, refusals, delay = time.monotonic(), [], poll_seconds
     pins = decode((ROOT / "scripts/ci-pins.json").read_text())
     def refuse(run, outcome, **details):
         refusal = {"run_id": run["id"], "head_sha": head, "consumer_identity": identity,
@@ -185,7 +190,9 @@ def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", pol
                 continue
             job = build_job_attempt(api, run, platform_name=platform_name)
             attempt = job["evidence_attempt"] if job else run["run_attempt"]
-            artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+            # Artifacts exist only once the build job finished, so an unfinished build costs no artifact listing.
+            finished = job is not None and job["status"] == "completed"
+            artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts") if finished else []
             name = f"build-{platform_name}-records-{run['id']}-{attempt}"
             records = [artifact for artifact in artifacts if artifact["name"] == name and not artifact["expired"]]
             if not records:
@@ -208,8 +215,6 @@ def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", pol
             if build["identity"] != identity:
                 refuse(run, "archive-identity-mismatch", producer_attempt=attempt, producer_identity=build["identity"])
                 continue
-            if job is None or job["status"] != "completed":
-                break
             require(job["conclusion"] == "success" and build["status"] == "passed", "newest exact-identity gate " + platform_name + " build did not succeed")
             archives = [artifact for artifact in artifacts if artifact["name"] == artifact_name(platform_name, str(run["id"]), attempt)]
             require(len(archives) == 1, "matching archive is missing or duplicated")
@@ -225,12 +230,13 @@ def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", pol
         if superseded:
             break
         if held:
-            wait.pause(poll_seconds)
+            wait.pause(delay)
         remaining = wait.remaining()
         if remaining <= 0:
             break
         print("Waiting for the matching ci-gate " + platform_name + " archive", flush=True)
-        time.sleep(min(poll_seconds, remaining))
+        time.sleep(min(delay, remaining))
+        delay = min(max_poll_seconds, delay * 2)
     error = "archive-identity-mismatch" if refusals else "archive-unavailable"
     raise ContractError(error + ": no exact-identity gate archive before timeout")
 
@@ -274,7 +280,8 @@ def wait_archive(args):
         output("app_affected", str(affected).lower())
         output("selection_artifact", f"ui-archive-{ctx['run']['id']}-{ctx['run']['attempt']}")
         if affected:
-            api = GitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"])
+            wait = ArchiveWait(max(0, started + args.timeout_minutes * 60 - time.monotonic()))
+            api = RateLimitWaitingGitHub(ctx["identity"]["repository"], os.environ["GH_TOKEN"], wait.remaining)
             from ci_ui_reuse import find_reuse
             nightly = ctx["identity"]["event"] in {"schedule", "workflow_dispatch"}
             reuse = find_reuse(api, ctx["identity"]) if ctx["identity"]["event"] == "push" else None
@@ -284,7 +291,6 @@ def wait_archive(args):
                            "status": "reused", "verdict": reuse})
                 print(f"Reused trusted UI verdict from run {reuse['source']['run_id']}", flush=True)
             else:
-                wait = ArchiveWait(max(0, started + args.timeout_minutes * 60 - time.monotonic()))
                 for platform_name in ("ios", "tvos"):
                     selection = select_nightly_archive(api, ctx, platform_name) if nightly else select_archive(api, ctx["identity"], wait=wait,
                                                platform_name=platform_name,

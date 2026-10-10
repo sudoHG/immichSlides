@@ -7,7 +7,7 @@ import time
 from urllib.error import URLError
 
 from ci_summary import ContractError, require
-from ci_publish import GitHub
+from ci_publish import GitHub, RateLimited
 from ci_xcode_cloud_api import AppStoreConnect
 
 
@@ -30,6 +30,12 @@ class RetryingGitHub(GitHub):
             require(self.timer() < self.deadline, "GitHub read deadline exceeded")
             try:
                 return super().request(path, method=method, timeout=max(1, min(45, read_deadline - self.timer())), **options)
+            except RateLimited as error:
+                # A documented rate limit waits for its reset, bounded by the overall deadline.
+                if method != "GET" or self.timer() + error.wait_seconds >= self.deadline:
+                    raise
+                self.sleep(error.wait_seconds + 1)
+                read_deadline = min(self.deadline, self.timer() + 60)
             except (ContractError, URLError, TimeoutError) as error:
                 if method != "GET" or not transient(error) or self.timer() + delay >= read_deadline:
                     raise
