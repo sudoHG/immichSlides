@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "exceptions": [
+    {
+      "identifier": "pinEntry.close.button",
+      "source": "immichSlides/iOS/Component/PinEntrySheetViewIOS.swift",
+      "reason": "Settings return helpers only dismiss a PIN sheet if one is shown; flows that enable protection belong to access-protection."
+    },
+    {
+      "identifier": "pinEntry.close.button",
+      "source": "immichSlides/tvOS/Component/PinEntrySheetViewTV.swift",
+      "reason": "Settings entry helpers only accept or dismiss a PIN sheet if one is shown; flows that enable protection belong to access-protection."
+    },
+    {
+      "test": "StrictE2ELateImageFocusAuditTests/testKnownIdentifiersCoverLateImageFocusTargets",
+      "reason": "Checks a static identifier list in test support; it never launches the app."
+    }
+  ]
+}

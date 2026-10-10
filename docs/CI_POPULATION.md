@@ -272,7 +272,9 @@ The UI shard manifest `scripts/ci-ui-shards.json` and both default plans,
 The feature-area map `scripts/ci-ui-areas.json` is CI-trusted too. Its
 [selection contract](CI_UI.md#feature-areas-and-the-reader-first-rollout) uses
 the existing `ui_identities` inventory and classification allowlist; unknown
-paths, shared core, CI changes, pushes and nightly retain full UI coverage.
+paths, CI changes, pushes and nightly retain full UI coverage; shared core does too,
+except that pull requests leave nightly-default locale screenshots to the nightly.
+The reviewed `scripts/ci-ui-flow-exceptions.json` for the identifier-to-flow host check is CI-trusted.
 The trusted base map is used even when candidate metadata has exact-head approval.
 The reader supports scoped equality before producers begin selecting areas.
 Editing default plans or renaming/removing manifest-named classes requires

@@ -46,6 +46,93 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.assertIn(AREA_MAP_PATH + ":map: [ui-areas] unmapped app source", output.getvalue())
             self.assertNotIn(MANIFEST_PATH, output.getvalue())
 
+    def test_ui_flow_check_requires_area_membership_for_identifiers_reached_through_helpers(self):
+        import json
+        from ci_summary import test_identity
+        from ci_ui_flows import flow_violations
+        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Shared/Model/**"], "tests": ["CoreUITests"]},
+                              "settings": {"sources": ["immichSlides/Shared/Settings*.swift"],
+                                           "tests": ["SettingsUITests", "ProtectionUITests"]},
+                              "protection": {"sources": ["immichSlides/tvOS/ProtectionPage.swift"],
+                                             "tests": ["ProtectionUITests/testPage"]},
+                              "filter": {"sources": ["immichSlides/Shared/Filter.swift"], "tests": ["FilterUITests"]},
+                              "playback": {"sources": ["immichSlides/tvOS/TVOnly.swift"], "tests": ["SmokeUITests"]},
+                              "locale": {"sources": ["immichSlides/Shared/Filter.swift"], "tests": ["LocaleUITests"]}},
+                    "nightly_default": ["locale"]}
+        app = {
+            "immichSlides/Shared/Model/Engine.swift": 'let id = "engine.status.flag"',
+            "immichSlides/Shared/SettingsHelpers.swift":
+                'func pinInputAccessibilityID(_ t: T) -> String { "settings.pin.input.\\(t.name)" }\n'
+                'let item = "settings.item.playback"',
+            "immichSlides/tvOS/ProtectionPage.swift": "func body() { row(id: pinInputAccessibilityID(.enable)) }",
+            "immichSlides/Shared/Filter.swift": 'let start = "filterSummary.startPlayback.button"',
+            "immichSlides/tvOS/TVOnly.swift": 'let tv = "tv.only.button"',
+        }
+        tests = {
+            "immichSlidesUITests/Settings.swift": """
+final class SettingsUITests: XCTestCase {
+    func testOpen() { openSettings(app); app.buttons["engine.status.flag"].tap() }
+    func testStart() { app.buttons[Contract.startID].tap() }
+    func openSettings(_ app: XCUIApplication) { app.buttons["settings.item.playback"].tap() }
+}
+final class ProtectionUITests: XCTestCase {
+    func testPage() { wait(app.buttons["settings.pin.input.enable"]) }
+    func testSidebar() { wait(app.buttons["settings.pin.input.\\(field)"]) }
+}
+final class OtherUITests: XCTestCase {
+    func testOther() {}
+    func openSettings(_ app: XCUIApplication) { app.buttons["filterSummary.startPlayback.button"].tap() }
+}
+final class SmokeUITests: XCTestCase {
+    func testLaunch() { app.buttons["filterSummary.startPlayback.button"].tap() }
+    func testPlatform() {
+#if os(tvOS)
+        app.buttons["tv.only.button"].tap()
+#endif
+    }
+}
+final class LocaleUITests: XCTestCase {
+    func testLeaf() { app.buttons["settings.item.playback"].tap(); app.buttons[Contract.startID].tap() }
+    func testNavigationOnly() { app.buttons["settings.item.playback"].tap() }
+}
+""",
+            "TestSupport/Contract.swift": 'enum Contract { static let startID = "filterSummary.startPlayback.button" }',
+        }
+        keys = ["SettingsUITests/testOpen", "SettingsUITests/testStart", "ProtectionUITests/testPage",
+                "ProtectionUITests/testSidebar", "OtherUITests/testOther", "SmokeUITests/testLaunch",
+                "SmokeUITests/testPlatform", "LocaleUITests/testLeaf", "LocaleUITests/testNavigationOnly"]
+        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
+                       for platform in ("ios", "tvos")}
+        plans = {platform: json.dumps({"testTargets": [{"target": {"name": "immichSlidesUITests"}}]})
+                 for platform in ("ios", "tvos")}
+        exceptions = {"schema_version": 1, "exceptions": [
+            {"identifier": "filterSummary.startPlayback.button", "source": "immichSlides/Shared/Filter.swift",
+             "reason": "Reviewed."},
+            {"test": "OtherUITests", "reason": "Never launches the app."}]}
+
+        def violations(exception_entries):
+            return flow_violations(json.dumps(area_map), json.dumps(dict(exceptions, exceptions=exception_entries)),
+                                   app, tests, populations, plans)
+
+        # Own-type helpers, TestSupport constants, delegated and interpolated identifiers and platform
+        # conditions are resolved; core and smoke never need a feature membership. A nightly-default
+        # test needs only one identifier from its own leaf screens.
+        sidebar = ("ProtectionUITests/testSidebar reaches settings.pin.input.* defined in "
+                   "immichSlides/tvOS/ProtectionPage.swift; add it to one of ['protection']")
+        start = ("SettingsUITests/testStart reaches filterSummary.startPlayback.button defined in "
+                 "immichSlides/Shared/Filter.swift; add it to one of ['filter', 'locale']")
+        navigation = "LocaleUITests/testNavigationOnly is nightly-default but reaches no identifier from its areas' screens ['locale']"
+        self.assertEqual(violations([]), [navigation, sidebar, start])
+        self.assertEqual(violations(exceptions["exceptions"][:1]), [navigation, sidebar])
+        self.assertEqual(violations(exceptions["exceptions"]), [
+            navigation, sidebar, "stale UI flow exception: test=OtherUITests"])
+        for entry in ({"identifier": "Not An Identifier", "source": "x", "reason": "r"},
+                      {"test": "OtherUITests", "reason": "two\nlines"},
+                      {"test": "OtherUITests", "identifier": "a.b", "reason": "r"}):
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                violations([entry])
+
     def test_nightly_aggregates_cannot_wait_for_macos_or_require_xcode(self):
         path = policy.LIVE_WORKFLOW
         document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)

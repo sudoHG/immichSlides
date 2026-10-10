@@ -718,6 +718,7 @@ def main(argv=None):
     if args.check_ui_shards:
         from ci_population import ui_identities
         from ci_ui_shards import MANIFEST_PATH, validate_shard_assignments
+        populations = None
         try:
             sources = {path.relative_to(args.root).as_posix(): path.read_text(encoding="utf-8")
                        for path in (args.root / "immichSlidesUITests").rglob("*.swift")}
@@ -730,6 +731,13 @@ def main(argv=None):
             check_area_map(args.root)
         except (OSError, UnicodeError, ValueError) as error:
             violations.append(Violation(AREA_MAP_PATH, "map", "ui-areas", str(error)))
+        if populations is not None and not any(item.rule == "ui-areas" for item in violations):
+            from ci_ui_flows import EXCEPTIONS_PATH, check_flows
+            try:
+                violations.extend(Violation(AREA_MAP_PATH, "flow", "ui-flows", message)
+                                  for message in check_flows(args.root, populations))
+            except (OSError, UnicodeError, ValueError) as error:
+                violations.append(Violation(EXCEPTIONS_PATH, "flow", "ui-flows", str(error)))
     for violation in violations:
         print(violation, file=sys.stderr)
     print(f"Workflow policy {'FAIL' if violations else 'PASS'}: {len(paths)} workflows, {len(violations)} violations")

@@ -1111,9 +1111,14 @@ class PublisherTests(unittest.TestCase):
                     "areas": {"core": {"sources": ["immichSlides/Engine.swift", "immichSlides/Models/**"], "tests": ["CoreUITests"]},
                               "settings": {"sources": ["immichSlides/Settings*.swift"], "tests": ["SettingsUITests"]},
                               "filter": {"sources": ["immichSlides/Filter.swift"], "tests": ["FilterUITests"]},
-                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]}}}
+                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]},
+                              "locale": {"sources": ["immichSlides/Strings.xcstrings", "immichSlides/Settings.swift"],
+                                         "tests": ["LocaleUITests"]}},
+                    "nightly_default": ["locale"]}
         policy = {"schema_version": 1, "app_unaffected": ["docs/**"], "ci_trusted": ["scripts/ci-*.json"]}
-        keys = ("SmokeUITests/testLaunch", "SettingsUITests/testSave", "FilterUITests/testSelect", "CoreUITests/testPlay")
+        keys = ("SmokeUITests/testLaunch", "SettingsUITests/testSave", "FilterUITests/testSelect", "CoreUITests/testPlay",
+                "LocaleUITests/testJapanese")
+        locale = keys[4:]
         populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
                        for platform in ("ios", "tvos")}
         plans = {platform: {"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}
@@ -1122,10 +1127,14 @@ class PublisherTests(unittest.TestCase):
             return select_ui_population(paths, policy, build_target_paths=set(), area_map=area_map,
                                         populations=populations, plans=plans, event=event)
         for paths, event, mode, expected in (
-                (["immichSlides/Settings.swift", "docs/guide.md"], "pull_request", "scoped", keys[:2]),
-                (["immichSlides/Settings.swift", "immichSlides/Filter.swift"], "pull_request", "scoped", keys[:3]),
-                (["immichSlides/Engine.swift"], "pull_request", "full", keys),
-                (["immichSlides/Models/Nested/Engine.swift"], "pull_request", "full", keys),
+                (["immichSlides/Settings.swift", "docs/guide.md"], "pull_request", "scoped", keys[:2] + locale),
+                (["immichSlides/Settings.swift", "immichSlides/Filter.swift"], "pull_request", "scoped", keys[:3] + locale),
+                (["immichSlides/Filter.swift"], "pull_request", "scoped", keys[:1] + keys[2:3]),
+                (["immichSlides/Strings.xcstrings"], "pull_request", "scoped", keys[:1] + locale),
+                # Core stays full except nightly-default tests, unless their own area is also selected.
+                (["immichSlides/Engine.swift"], "pull_request", "scoped", keys[:4]),
+                (["immichSlides/Models/Nested/Engine.swift"], "pull_request", "scoped", keys[:4]),
+                (["immichSlides/Engine.swift", "immichSlides/Strings.xcstrings"], "pull_request", "full", keys),
                 (["immichSlides/SettingsModels/New.swift"], "pull_request", "full", keys),
                 (["new/Unknown.swift"], "pull_request", "full", keys),
                 (["scripts/ci-ui-areas.json"], "pull_request", "full", keys),
@@ -1197,14 +1206,14 @@ class PublisherTests(unittest.TestCase):
             ("Shared/Core/SettingsView.swift", "FilterSummaryIOSVisualUITests/testIOSExifAlbumDiagnosticScreenshots"),
             ("Shared/Core/SettingsView+Sections.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFilterEditorScreenshot"),
             ("Shared/Core/SettingsView+Helpers.swift", "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow"),
-            ("Shared/Component/SlideshowControlBarView.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
+            ("Shared/Component/SlideshowControlBarView.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceSettingsAboutOpenSourceScreenshots"),
             ("iOS/Core/SlideShowViewIOS.swift", "immichSlidesUITests/testIPhonePortraitAndLandscapeModeSelectionFlow"),
             ("Shared/Component/SlideshowControlBarView.swift", "immichSlidesUITests/testResetStateEnvironmentForcesFirstBootAfterConfigured"),
             ("tvOS/Component/SlideshowControlBarViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerPageShowsFormAndStatusBanner"),
             ("Shared/Component/ServerConfigFormView.swift", "immichSlidesUITestsLaunchTests/testLaunch"),
             ("iOS/Component/ServerConfigFormViewIOS.swift", "FilterSummaryIOSVisualUITests/testIOSSettingsOpenSourceLicensesKeepsPadSidebarResponsive"),
             ("iOS/Core/ModeSelectionViewIOS.swift", "PlaybackHistoryIOSUITests/testPreviousNextRetainedHistoryFromRandomPlayback"),
-            ("iOS/Core/FilterSummaryViewIOS+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
+            ("iOS/Core/FilterSummaryViewIOS+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceSettingsAboutOpenSourceScreenshots"),
             ("tvOS/Core/FilterSummaryViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSFullFlowModeSelectionToAccessProtectionCanReachTargetPage"),
             ("iOS/Component/OnboardingScaffoldIOS.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFilterSummaryScreenshot"),
         ]
