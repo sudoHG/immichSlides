@@ -331,7 +331,10 @@ including one whose selection has no Apple TV test, never starts a Cloud build.
 
 Scoped successes emit no identical-tree full-UI reuse receipt. Full receipts bind
 the area-map hash too, preserving main-push full coverage when area definitions
-change. Producer scheduling stays full until the separate producer rollout.
+change. Pull-request producers schedule the bound trusted selection
+([scheduling](CI_UI.md#scheduling-the-selection)); full bindings apply to pushes,
+nightly, manual and CI-changing runs, and a main push may still skip its matrices
+through reuse or nightly deferral.
 
 The gate reader also supports a Linux `ci_gate.py classify` producer with one
 `host` identity, `Gate change classification`, tier `gate-infrastructure`, job
