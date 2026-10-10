@@ -286,14 +286,16 @@ even after exact-head approval. Both base/candidate shard-rule inputs retain
 that same map revision/hash and their derived selections. Historical bases
 without this reader/map remain full-only.
 
-Shard computation and feature selection have separate failure boundaries. A failed
-selection is stored only in `selection.error`; the complete population remains
-admitted, while scoped evidence fails closed. Host checks require smoke coverage
+Historical unflagged shard computation and feature selection have separate failure
+boundaries. A failed selection is stored only in `selection.error`; the complete
+population remains admitted, while scoped evidence fails closed. The activated
+[packed protocol](#packed-scoped-ui-protocol) instead refuses selection errors.
+Host checks require smoke coverage
 in every device's default plan. Admission retains the same `immichSlidesUITests`
 inventory roots as the producer and shard validation; TestSupport is coverage-only.
 
-Publication first recognizes a complete full population for compatibility with
-the existing producer. Otherwise the entire UI population must equal the stored
+For historical unflagged producers, publication first recognizes a complete full
+population for compatibility. Otherwise the entire UI population must equal the stored
 selection on iPhone, iPad and Apple TV, and every shard must equal its own selected
 identities. Arbitrary subsets, per-device omissions and mixtures fail closed.
 Compiled and observed equality, run/head/tree identity, manifest/plan hashes,
@@ -308,15 +310,16 @@ scoped cloud routing is outside this rollout.
 GitHub cannot skip one entry of a static matrix, so a scoped producer lists only
 the shards it runs: each UI matrix may take exactly
 `shard: ${{ fromJSON(needs.archive.outputs.ios_shards) }}` (or `tvos_shards`) beside
-a literal device list of that one platform. The prepared packed protocol also
-allows `iphone_shards` and `ipad_shards` beside that one literal device.
+a literal device list of that one platform. The activated packed protocol requires
+`iphone_shards` and `ipad_shards` in separate matrices beside each literal device.
 Any other dynamic matrix value, a
 second occurrence of that expression, or a mixed-platform device list is refused.
 Admission binds the expression in both stored `ci-ui.yml` texts to trusted names
-and leaves every other byte unchanged. For a non-CI-changing pull request with a
-`scoped` base selection, the names are the manifest-ordered shards with selected
+and leaves every other byte unchanged. For an unflagged non-CI-changing pull request
+with a `scoped` base selection, the names are the manifest-ordered shards with selected
 identities (iPhone and iPad must agree); for a docs-only `none` selection they are
-empty; otherwise they are every manifest shard. Every later reader (job
+empty; otherwise they are every manifest shard. Packed PRs instead bind their exact
+independent device lists, including core/unknown/CI-changing selections. Every later reader (job
 contract, artifacts, reuse, reporting, Cloud skip recognition) uses the bound text,
 so a producer that schedules a different shard set fails the required-job check.
 Main-push reuse reads the pushed revision's workflow directly; it binds the dynamic
@@ -324,9 +327,10 @@ form to every shard of that revision's manifest before comparing receipt shards,
 while input hashes still use the raw workflow bytes. Publication checks the scoped
 device scope against the bound workflow's device declarations, so a platform without
 selected shards still counts as present.
-The workflow's shard union must equal either the full manifest or exactly the
-non-empty selected shards. A platform bound to no shard is accepted only as its one
-collapsed matrix skip: complete, skipped, no runner and no steps. Static literal
+An unflagged workflow's shard union must equal either the full manifest or exactly
+the non-empty selected shards; a packed PR requires only its exact packed union.
+A matrix bound to no shard is accepted only as its distinct collapsed matrix
+skip: complete, skipped, no runner and no steps. Static literal
 matrices remain readable unchanged. The main Cloud router returns `github` with
 reason `scoped-ui-selection` for every scoped admission, so a scoped pull request,
 including one whose selection has no Apple TV test, never starts a Cloud build.

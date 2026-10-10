@@ -640,7 +640,8 @@ def failed_shard(args, error):
     try:
         ctx = context()
         require(args.manifest_revision is None, "failed CI shards cannot override the admitted manifest")
-        selection = decode(args.selection_path.read_text()) if args.selection_path else None
+        selection_path = getattr(args, "selection_path", None)
+        selection = decode(selection_path.read_text()) if selection_path else None
         selectors, plan_hash = [], None
         if selection and selection.get("packing"):
             platform = DEVICES[args.device]
@@ -710,6 +711,7 @@ def reproduction_wait_arguments(source, factor, environment):
 
 
 def reproduce(args):
+    selection_path = getattr(args, "selection_path", None)
     revision = subprocess.check_output(["git", "rev-parse", "--verify", (args.manifest_revision or "HEAD") + "^{commit}"], cwd=ROOT,
                                        text=True, timeout=60).strip()
     output_root = args.output_dir.resolve()
@@ -723,8 +725,8 @@ def reproduce(args):
             subprocess.run(["git", "checkout", "--quiet", "--detach", revision], cwd=source, check=True, timeout=60)
         workspace_preflight(source)
         manifest = parse_shard_manifest((source / MANIFEST_PATH).read_text())
-        if args.selection_path:
-            selection = decode(args.selection_path.read_text())
+        if selection_path:
+            selection = decode(selection_path.read_text())
             tree = subprocess.check_output(["git", "rev-parse", revision + "^{tree}"], cwd=source,
                                            text=True, timeout=60).strip()
             require(selection.get("identity", {}).get("tree_sha") == tree,
@@ -770,8 +772,8 @@ def reproduce(args):
         shard_command = [sys.executable, "-B", str(source / "scripts/ci_ui_tests.py"), "run", "--device", args.device,
                          "--shard", args.shard, "--manifest-revision", revision, "--destination", args.destination,
                          "--xctestrun", str(runs[0]), "--output-dir", str(output_root / "records")] + wait_arguments
-        if args.selection_path:
-            shard_command += ["--selection-path", str(args.selection_path.resolve())]
+        if selection_path:
+            shard_command += ["--selection-path", str(selection_path.resolve())]
         print("Reproduction shard command: " + shlex.join(shard_command), flush=True)
         code = subprocess.run(shard_command, cwd=source, env=environment, check=False).returncode
         write_json(output_root / "reproduction.json", {"schema_version": 1, "commit_sha": revision,

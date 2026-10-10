@@ -87,6 +87,26 @@ class BuildArchiveTests(unittest.TestCase):
                         self.assertEqual({identity_key(entry) for entry in evidence['population']['declared']},
                                          {identity_key(entry) for entry in expected})
                         self.assertEqual(evidence['hashes']['manifests']['ui-scoped-plan'], produced['packing']['sha256'])
+                        if changed == cases[0] and device == 'iphone' and name == 'scoped-a':
+                            from types import SimpleNamespace
+                            retained = self.root / 'packed-selection.json'
+                            retained.write_text(json.dumps(recorded))
+                            output = self.root / 'packed-preflight-failure'
+                            context = {'identity': self.identity,
+                                'source': {'repository': 'owner/repo', 'event': 'pull_request',
+                                           'workflow_path': ui.WORKFLOW, 'fork_originated': False, 'ci_changing': False},
+                                'run': {'id': '100', 'attempt': 1, 'tier': 'ui', 'job': 'ui-iphone', 'shard': name}}
+                            with patch.object(ui, 'context', return_value=context), \
+                                    patch('run_fixture_ui_tests.registry_revision', return_value='HEAD'), \
+                                    patch('run_fixture_ui_tests.load_registry', return_value=(
+                                        {'schema_version': 1, 'entries': []}, 'f' * 64)):
+                                ui.failed_shard(SimpleNamespace(output_dir=output, device=device, shard=name,
+                                    manifest_revision=None, selection_path=retained), OSError('archive relocation failed'))
+                            diagnostic = json.loads((output / 'summary.json').read_text())
+                            self.assertEqual(diagnostic['population']['declared'], evidence['population']['declared'])
+                            self.assertEqual(diagnostic['hashes']['manifests']['ui-scoped-plan'], produced['packing']['sha256'])
+                            self.assertEqual(diagnostic['status'], 'failed')
+                            self.assertEqual(diagnostic['infrastructure'][0]['code'], 'ui-shard-preflight-failed')
 
     def test_functional_archive_selection_waits_only_for_platforms_with_selected_jobs(self):
         from types import SimpleNamespace
