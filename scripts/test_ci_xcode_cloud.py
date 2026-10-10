@@ -2,7 +2,7 @@
 
 import copy
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -467,7 +467,183 @@ class GroupProducerTests(unittest.TestCase):
 
     def setUp(self):
         GroupEvidenceTests.setUp(self)
-        self.registry.update(cap_minutes=2700, billing_anchor={"day": 1, "time_zone": "UTC"})
+        self.registry.update(cap_minutes=2700, billing_anchor={"day": 1, "time_zone": "UTC"},
+                             asc_visibility_delay_seconds=600)
+
+    def test_skipped_ui_history_uses_trusted_base_weights_for_live_device_families(self):
+        import json
+        import ci_xcode_cloud_group_route as router
+        from ci_xcode_cloud_schedule import choose_cloud, month_policy
+        now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+        running = [{"id": i, "status": "in_progress", "conclusion": None, "labels": ["xcode-27"],
+                    "runner_id": i, "name": "ui-" + ("iphone" if i % 2 else "ipad") + "-scoped-a",
+                    "started_at": "2026-10-09T23:59:00Z", "steps": [{}]} for i in range(1, 6)]
+        queued = [dict(running[i % 5], id=20 + i, status="queued", runner_id=0, steps=[],
+                       created_at="2026-10-09T23:00:00Z") for i in range(10)]
+        skipped = [{"id": 100 + i, "name": "ui-" + device + "-${{ matrix.shard }}", "status": "completed",
+                    "conclusion": "skipped", "runner_id": 0, "labels": [], "steps": []}
+                   for i, device in enumerate(("iphone", "ipad", "appletv"))]
+        gate = {"id": 902, "run_attempt": 1, "head_sha": self.run["head_sha"], "path": ".github/workflows/ci-gate.yml"}
+        completed = [{"id": i, "name": name, "status": "completed", "conclusion": "success"}
+                     for i, name in enumerate(("build-ios", "unit-ios"), 200)]
+        api = Mock()
+        api.repo.side_effect = lambda path: {"workflow_runs": [gate] if "head_sha=" in path else [{"id": 901, "run_attempt": 1}]}
+        api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
+            [{"id": 900, "run_attempt": 1}] if path == "actions/runs" else
+            skipped if "/901/" in path else completed if "/902/" in path else running + queued)
+        base_ui = {"manifest": {"shards": {"default": []}, "default_shard": "default"},
+                   "base_populations": {device: [test_identity("ui", "SettingsTests/testToggle", platform="ios", device=device)]
+                                        for device in ("iphone", "ipad")}}
+        durations = {"schema_version": 1, "revision": "reviewed", "default_seconds": 120,
+                     "seconds": {"iphone": {"SettingsTests/testToggle": 900}, "ipad": {"SettingsTests/testToggle": 900}, "appletv": {}}}
+        selected = {"packing": {"estimated_job_seconds": {"iphone": [600], "ipad": [600]}}}
+        with patch("ci_publish_git.read_blob", return_value=json.dumps(durations)) as read:
+            estimate = router.queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"],
+                                             base_sha=self.identity["base_sha"], ui_inputs=base_ui)
+        read.assert_called_once_with(self.identity["base_sha"], "scripts/ci-ui-durations.json")
+        self.assertEqual(estimate["duration_history"]["ui-iphone-scoped-a"], [1440])
+        self.assertTrue(choose_cloud(estimate, {"seconds": 1700, "reservation_minutes": 80}, 0,
+                                     month_policy(now, self.registry["billing_anchor"]))["route"])
+
+    def test_job_phases_share_the_runner_job_deadline_and_leave_upload_time(self):
+        import json
+        import tempfile
+        import ci_xcode_cloud_route as router
+        api = Mock()
+        api.pages.return_value = [{"name": "xcc-start", "status": "in_progress", "started_at": "2026-10-10T00:00:00Z"}]
+        for phase in ("prepare", "arm", "start"):
+            with self.subTest(phase=phase):
+                self.assertEqual(router.job_deadline(api, {"uploader_run_id": 900, "uploader_attempt": 1}, phase),
+                                 datetime(2026, 10, 10, 0, 20, tzinfo=timezone.utc))
+        api.pages.return_value[0]["started_at"] = None
+        with self.assertRaises(ContractError):
+            router.job_deadline(api, {"uploader_run_id": 900, "uploader_attempt": 1}, "start")
+        api.pages.return_value[0]["started_at"] = (datetime.now(timezone.utc) - timedelta(minutes=19)).isoformat()
+        with tempfile.TemporaryDirectory() as directory:
+            event, output = Path(directory, "event.json"), Path(directory, "output")
+            event.write_text(json.dumps({"inputs": {"producer_run_id": "123", "producer_attempt": "2", "group": "ios"}}))
+            environment = {"GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output), "GITHUB_REPOSITORY": "owner/repo",
+                           "CI_WORKFLOW_TOKEN": "test-token", "GITHUB_RUN_ID": "900", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_TEMP": directory}
+            with patch.dict(router.os.environ, environment), patch.object(router.sys, "argv", ["router", "start"]), \
+                    patch.object(router, "credential_context"), patch.object(router, "RetryingGitHub", return_value=api), \
+                    patch.object(router, "RenewingAppStoreConnect") as asc:
+                self.assertEqual(router.main(), 1)
+                asc.assert_not_called()
+            api.repo.assert_not_called()
+
+    def test_interrupted_after_arm_uploads_unposted_state_and_reconciles_without_reservation(self):
+        import json
+        import tempfile
+        import ci_xcode_cloud_group_route as router
+        prepared = dict(self.route, decision="pending", head_sha=self.run["head_sha"], reason="cloud-estimated-faster",
+                        reference_id="branch")
+        uploader = {"uploader_run_id": 900, "uploader_attempt": 1}
+        api, asc = Mock(), Mock()
+        api.pages.return_value = [self.pointer]
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory, "ci-xcc-route")
+            folder.mkdir()
+            (folder / "prepared.json").write_text(json.dumps(prepared))
+            with patch.dict(router.os.environ, {"RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(Path(directory, "output"))}), \
+                    patch.object(router, "refresh_producer", return_value={"user": self.record["cloud_pr_author"],
+                                                                           "base": {"sha": self.identity["base_sha"]}}), \
+                    patch.object(router, "selection_open", return_value=True), patch.object(router, "remaining_seconds", return_value=100):
+                router.phase(api, asc, self.run, {"inputs": {"group": "ios"}}, "arm", uploader,
+                             deadline=datetime.now(timezone.utc) + timedelta(minutes=20))
+                with patch.object(router, "prepare_group", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+                    router.phase(api, asc, self.run, {"inputs": {"group": "ios"}}, "start", uploader)
+            marker = json.loads((folder / "post.json").read_text())
+            start = json.loads((folder / "start.json").read_text())
+            self.assertFalse(start["post_attempted"])
+            api.repo.return_value = {"id": 42}
+            api.pages.return_value = []
+            with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
+                    patch.object(router.state, "receipt", side_effect=[marker, start]):
+                self.assertEqual(router.unknown_starts(api, self.registry, {"ios": []}), [])
+            with patch.dict(router.os.environ, {"RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(Path(directory, "output"))}), \
+                    patch.object(router, "prepare_group", return_value=prepared), \
+                    patch.object(router.state, "receipt", return_value=marker), \
+                    patch.object(router, "post_group", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    router.phase(api, asc, self.run, {"inputs": {"group": "ios"}}, "start", uploader)
+                attempted = json.loads((folder / "start.json").read_text())
+                self.assertTrue(attempted["post_attempted"])
+                with self.assertRaises(ContractError):
+                    router.phase(api, asc, self.run, {"inputs": {"group": "ios"}}, "start", uploader)
+                self.assertTrue(json.loads((folder / "start.json").read_text())["post_attempted"])
+            asc.request.assert_not_called()
+
+    def test_interrupted_atomic_state_replacement_preserves_the_previous_record(self):
+        import json
+        import tempfile
+        import ci_xcode_cloud_route as router
+        with tempfile.TemporaryDirectory() as directory, patch.dict(router.os.environ, {"RUNNER_TEMP": directory}):
+            router.write_phase("start", {"post_attempted": False})
+            with patch.object(router.os, "replace", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+                router.write_phase("start", {"post_attempted": True})
+            self.assertFalse(json.loads(Path(directory, "ci-xcc-route/start.json").read_text())["post_attempted"])
+
+    def test_recent_reconciliation_refuses_low_rate_budget_and_truncated_run_lists(self):
+        from urllib.parse import parse_qs, urlsplit
+        import ci_xcode_cloud_group_route as router
+        api = Mock()
+        api.request.return_value = {"resources": {"core": {"remaining": 10}}}
+        with self.assertRaises(ContractError):
+            router.route_sources(api, {"id": 42})
+        api.repo.assert_not_called()
+        api.request.return_value["resources"]["core"]["remaining"] = 1000
+        api.repo.return_value = {"total_count": 1001, "workflow_runs": []}
+        with self.assertRaises(ContractError):
+            router.route_sources(api, {"id": 42})
+        api.repo.return_value = {"total_count": 0, "workflow_runs": []}
+        self.assertEqual(router.route_sources(api, {"id": 42}), [])
+        cutoff = parse_qs(urlsplit(api.repo.call_args.args[0]).query)["created"][0].removeprefix(">=")
+        self.assertLess((datetime.now(timezone.utc) - router.timestamp(cutoff)).total_seconds(), 3 * 3600)
+
+    def test_absent_build_resolves_only_after_start_deadline_and_reviewed_visibility_delay(self):
+        import ci_xcode_cloud_group_route as router
+        now = datetime(2026, 10, 10, 1, tzinfo=timezone.utc)
+        marker = dict(self.route, head_sha=self.run["head_sha"], posted_at="2026-10-10T00:30:00Z",
+                      start_deadline="2026-10-10T00:50:00Z")
+        self.record["ui_inputs"]["base"]["selection"]["packing"]["estimated_test_seconds"] = {"iphone": 60, "ipad": 120}
+        api = Mock()
+        api.repo.side_effect = [{"id": 42}, self.run]
+        with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
+                patch.object(router.state, "receipt", side_effect=[marker, None]), \
+                patch.object(router, "trusted_admissions", return_value={123: self.record}):
+            self.assertTrue(router.unknown_starts(api, self.registry, {"ios": []}, now=now))
+        api.repo.side_effect = None
+        api.repo.return_value = {"id": 42}
+        with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
+                patch.object(router.state, "receipt", side_effect=[marker, None]), \
+                patch.object(router, "trusted_admissions", side_effect=AssertionError("complete absence proof suffices")):
+            self.assertEqual(router.unknown_starts(api, self.registry, {"ios": []}, now=now.replace(second=1)), [])
+        with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
+                patch.object(router.state, "receipt", side_effect=[marker, None]), self.assertRaises(ContractError):
+            router.unknown_starts(api, self.registry, {}, now=now.replace(second=1))
+        late = {"id": self.route["cloud_run_id"], "attributes": {"createdDate": "2026-10-10T00:55:00Z",
+                "sourceCommit": {"commitSha": self.run["head_sha"]}}}
+        for commit in (None, self.run["head_sha"]):
+            late["attributes"]["sourceCommit"]["commitSha"] = commit
+            with self.subTest(commit=commit), patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
+                    patch.object(router.state, "receipt", side_effect=[marker, None]), self.assertRaises(ContractError):
+                router.unknown_starts(api, self.registry, {"ios": [late]}, now=now.replace(second=1))
+
+    def test_unknown_post_match_accepts_small_clock_skew_but_refuses_ambiguous_builds(self):
+        import ci_xcode_cloud_group_route as router
+        marker = dict(self.route, head_sha=self.run["head_sha"], posted_at="2026-10-10T00:00:00Z")
+        row = {"id": self.route["cloud_run_id"], "attributes": {"createdDate": "2026-10-09T23:59:55Z",
+               "sourceCommit": {"commitSha": self.run["head_sha"]}}}
+        api = Mock()
+        api.repo.return_value = {"id": 42}
+        for rows in ([row], [row, dict(row, id="22222222-2222-2222-2222-222222222222")]):
+            with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
+                    patch.object(router.state, "receipt", side_effect=[marker, None]):
+                if len(rows) == 1:
+                    self.assertEqual(router.unknown_starts(api, self.registry, {"ios": rows}), [])
+                else:
+                    with self.assertRaises(ContractError):
+                        router.unknown_starts(api, self.registry, {"ios": rows})
 
     def test_pointer_writer_reuses_identical_status_and_refuses_conflicting_history(self):
         from ci_xcode_cloud_selection import write_pointer
@@ -623,25 +799,27 @@ class GroupProducerTests(unittest.TestCase):
         result = router.post_group(asc, prepared)
         self.assertEqual((result["decision"], result["http_status"]), ("fallback", 404))
 
-    def test_unknown_post_reservation_is_recomputed_and_never_refunded_by_age(self):
+    def test_unknown_post_reservation_is_recomputed_while_inventory_visibility_is_pending(self):
         import ci_xcode_cloud_group_route as router
         self.record["ui_inputs"]["base"]["selection"]["packing"].update(
             estimated_test_seconds={"iphone": 60, "ipad": 120, "appletv": 0})
-        marker = dict(self.route, head_sha=self.run["head_sha"], posted_at="2026-01-01T00:00:00Z",
+        marker = dict(self.route, head_sha=self.run["head_sha"], posted_at=datetime.now(timezone.utc).isoformat(),
                       reservation_minutes=1)
         source = {"id": 900, "run_attempt": 1}
         api = Mock()
-        api.pages.side_effect = [[source], []]
+        api.pages.return_value = []
         api.repo.side_effect = [{"id": 42}, self.run]
         with patch.object(router.state, "receipt", side_effect=[marker, None]), \
+                patch.object(router, "route_sources", return_value=[source]), \
                 patch.object(router, "trusted_admissions", return_value={123: self.record}):
             reservations = router.unknown_starts(api, self.registry, {"ios": []})
         expected = router.cloud_estimate(self.descriptor, self.record["ui_inputs"]["base"]["selection"])["reservation_minutes"]
         self.assertEqual(reservations[0]["minutes"], expected)
         self.assertGreater(reservations[0]["minutes"], marker["reservation_minutes"])
-        api.pages.side_effect = [[source], []]
+        api.pages.return_value = []
         api.repo.side_effect = [{"id": 42}]
-        with patch.object(router.state, "receipt", side_effect=[marker, dict(marker, post_attempted=False)]):
+        with patch.object(router, "route_sources", return_value=[source]), \
+                patch.object(router.state, "receipt", side_effect=[marker, dict(marker, post_attempted=False)]):
             self.assertEqual(router.unknown_starts(api, self.registry, {"ios": []}), [])
 
     def test_cloud_bootstrap_pointer_does_not_trust_login_or_other_workflow(self):
@@ -766,6 +944,7 @@ class GroupProducerTests(unittest.TestCase):
                 patch.object(router, "queue_snapshot", return_value={"seconds": 7200, "free_slots": 0, "can_prove_saturation": True,
                                                                     "duration_history": {}}) as queue, \
                 patch.object(router, "inventories", return_value={"ios": []}), patch.object(router, "account_usage", return_value={"minutes": 300}), \
+                patch.object(router, "route_sources", return_value=[]), \
                 patch.object(router, "unknown_starts", return_value=[]) as unknown:
             result = router.prepare_group(api, lambda: asc, self.run, "ios", sleep=sleep, monotonic=lambda: 0)
             api.pages.side_effect = None
@@ -783,7 +962,7 @@ class GroupProducerTests(unittest.TestCase):
         api = Mock()
         api.pages.return_value = [self.pointer]
         reviewed = dict(self.registry)
-        for missing in ("cap_minutes", "billing_anchor"):
+        for missing in ("cap_minutes", "billing_anchor", "asc_visibility_delay_seconds"):
             with self.subTest(missing=missing):
                 self.registry.clear()
                 self.registry.update({key: value for key, value in reviewed.items() if key != missing})
@@ -800,14 +979,17 @@ class GroupProducerTests(unittest.TestCase):
     def test_same_selection_cannot_post_again_but_a_full_rerun_can_choose_another_provider(self):
         import ci_xcode_cloud_group_route as router
         api = Mock()
-        api.repo.return_value = {"id": 42}
+        api.repo.return_value = {"id": 42, "total_count": 1, "workflow_runs": [{"id": 900, "run_attempt": 1,
+                                                                                 "display_title": "xcc-route-123-1-ios"}]}
+        api.request.return_value = {"resources": {"core": {"remaining": 1000}}}
         old = {"id": 900, "run_attempt": 1, "display_title": "xcc-route-123-1-ios"}
         api.pages.return_value = [old]
         with patch.object(router.state, "receipt") as read:
             self.assertFalse(router.group_started(api, self.run, "ios"))
             read.assert_not_called()
         current = dict(old, display_title="xcc-route-123-2-ios")
-        api.pages.side_effect = [[current], []]
+        api.repo.return_value["workflow_runs"] = [current]
+        api.pages.return_value = []
         with patch.object(router.state, "receipt", return_value=dict(self.route, head_sha=self.run["head_sha"])):
             self.assertTrue(router.group_started(api, self.run, "ios"))
 
@@ -831,7 +1013,8 @@ class GroupProducerTests(unittest.TestCase):
                     patch.object(router, "remaining_seconds", return_value=100), \
                     patch.object(router, "prepare_group", side_effect=AssertionError("credential-free arm must not refresh ASC")):
                 self.assertEqual(router.phase(api, asc, self.run, {"inputs": {"group": "ios"}}, "arm",
-                                             {"uploader_run_id": 900, "uploader_attempt": 1}), 0)
+                                             {"uploader_run_id": 900, "uploader_attempt": 1},
+                                             deadline=datetime.now(timezone.utc) + timedelta(minutes=20)), 0)
             self.assertEqual(asc.method_calls, [])
             marker = json.loads((state / "post.json").read_text())
             self.assertEqual(marker["pointer_id"], 56)
@@ -854,7 +1037,8 @@ class GroupProducerTests(unittest.TestCase):
                         patch.object(router, "refresh_producer", return_value=pr), \
                         patch.object(router, "selection_open", return_value=True), \
                         patch.object(router, "remaining_seconds", return_value=100):
-                    router.phase(api, asc, self.run, {"inputs": {"group": "ios"}}, "arm", uploader)
+                    router.phase(api, asc, self.run, {"inputs": {"group": "ios"}}, "arm", uploader,
+                                 deadline=datetime.now(timezone.utc) + timedelta(minutes=20))
                     with patch.object(router, "prepare_group", side_effect=error):
                         self.assertEqual(router.phase(api, asc, self.run, {"inputs": {"group": "ios"}}, "start", uploader), 0)
                 marker = json.loads((folder / "post.json").read_text())
@@ -862,8 +1046,9 @@ class GroupProducerTests(unittest.TestCase):
                 self.assertEqual((start["decision"], start["post_attempted"]), ("github", False))
                 self.assertIn("start_recorded=true\npoll=false", output.read_text())
                 api.repo.return_value = {"id": 42}
-                api.pages.side_effect = [[{"id": 900, "run_attempt": 1}], []]
-                with patch.object(router.state, "receipt", side_effect=[marker, start]):
+                api.pages.return_value = []
+                with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
+                        patch.object(router.state, "receipt", side_effect=[marker, start]):
                     self.assertEqual(router.unknown_starts(api, self.registry, {"ios": []}), [])
                 api.pages.side_effect = None
                 api.pages.return_value = [self.pointer]
@@ -888,6 +1073,7 @@ class GroupProducerTests(unittest.TestCase):
                            "CI_WORKFLOW_TOKEN": "test-token", "GITHUB_RUN_ID": "900", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_TEMP": directory}
             with patch.dict(os.environ, environment), patch.object(router.sys, "argv", ["router", "start"]), \
                     patch.object(router, "credential_context"), patch("ci_publish.git"), \
+                    patch.object(router, "job_deadline", return_value=datetime.now(timezone.utc) + timedelta(minutes=20)), \
                     patch.object(router, "RetryingGitHub", return_value=api), patch.object(router, "jwt") as sign:
                 self.assertEqual(router.main(), 0)
                 self.assertFalse(json.loads((folder / "start.json").read_text())["post_attempted"])
@@ -895,7 +1081,9 @@ class GroupProducerTests(unittest.TestCase):
             # A process exception after entering POST cannot be converted to a refund.
             (folder / "start.json").write_text(json.dumps(dict(armed, post_attempted=True)))
             with patch.dict(os.environ, environment), patch.object(router.sys, "argv", ["router", "start"]), \
-                    patch.object(router, "credential_context"), patch("ci_publish.git", side_effect=RuntimeError("failed before phase")):
+                    patch.object(router, "credential_context"), patch.object(router, "RetryingGitHub", return_value=api), \
+                    patch.object(router, "job_deadline", return_value=datetime.now(timezone.utc) + timedelta(minutes=20)), \
+                    patch("ci_publish.git", side_effect=RuntimeError("failed before phase")):
                 self.assertEqual(router.main(), 1)
             self.assertTrue(json.loads((folder / "start.json").read_text())["post_attempted"])
 
@@ -912,6 +1100,7 @@ class GroupProducerTests(unittest.TestCase):
             folder = Path(directory, "ci-xcc-route")
             folder.mkdir()
             (folder / "prepared.json").write_text(json.dumps(prepared))
+            (folder / "start.json").write_text(json.dumps(dict(prepared, post_attempted=False, **uploader)))
             with patch.dict(router.os.environ, {"RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(Path(directory, "output"))}), \
                     patch.object(router, "prepare_group", return_value=prepared) as refresh, \
                     patch.object(router.state, "receipt", return_value=marker), \
@@ -924,8 +1113,9 @@ class GroupProducerTests(unittest.TestCase):
             self.assertIsNotNone(refresh.call_args.kwargs["prepared"])
             row = {"id": "11111111-1111-1111-1111-111111111111", "attributes": {
                 "createdDate": started["posted_at"], "sourceCommit": {"commitSha": self.run["head_sha"]}}}
-            api.pages.side_effect = [[{"id": 900, "run_attempt": 1}], []]
-            with patch.object(router.state, "receipt", side_effect=[marker, started]):
+            api.pages.return_value = []
+            with patch.object(router, "route_sources", return_value=[{"id": 900, "run_attempt": 1}]), \
+                    patch.object(router.state, "receipt", side_effect=[marker, started]):
                 self.assertEqual(router.unknown_starts(api, self.registry, {"ios": [row]}), [])
 
     def test_gate_forecast_uses_the_actual_archive_and_releases_units_after_their_build(self):
@@ -970,14 +1160,14 @@ class GroupProducerTests(unittest.TestCase):
             with self.subTest(anchor=invalid), self.assertRaises((ContractError, KeyError, ValueError)):
                 month_policy(datetime(2026, 10, 10, tzinfo=timezone.utc), invalid)
 
-    def test_route_history_is_retention_bounded_and_missing_queue_registration_refuses_cloud(self):
+    def test_route_history_is_recent_bounded_and_missing_queue_registration_refuses_cloud(self):
         import ci_xcode_cloud_group_route as router
         api = Mock()
-        api.repo.return_value = {"id": 42}
+        api.repo.return_value = {"id": 42, "total_count": 0, "workflow_runs": []}
+        api.request.return_value = {"resources": {"core": {"remaining": 1000}}}
         api.pages.return_value = []
         self.assertFalse(router.group_started(api, self.run, "ios"))
-        self.assertIn("created", api.pages.call_args.kwargs)
-        self.assertTrue(api.pages.call_args.kwargs["created"].startswith(">="))
+        self.assertIn("created=", api.repo.call_args.args[0])
         self.registry["routing_enabled"] = True
         self.registration.pop("queue_seconds_upper")
         api.pages.return_value = [self.pointer]
@@ -1676,6 +1866,7 @@ class RoutingPolicyTests(unittest.TestCase):
                            "CI_WORKFLOW_TOKEN": "test-token", "GITHUB_RUN_ID": "456", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_TEMP": directory}
             with patch.dict(os.environ, environment), patch.object(router.sys, "argv", ["router", "prepare"]), \
                     patch.object(router, "credential_context"), patch("ci_publish.git"), patch.object(router, "RetryingGitHub", return_value=api), \
+                    patch.object(router, "job_deadline", return_value=datetime.now(timezone.utc) + timedelta(minutes=20)), \
                     patch.object(router, "verify_workflow"), patch.object(router, "recorded_decision", return_value=False), \
                     patch("ci_xcode_cloud_group_route.phase", side_effect=router.SupersededProducer("old head")), patch.object(router, "jwt") as sign, \
                     patch("builtins.print") as log:

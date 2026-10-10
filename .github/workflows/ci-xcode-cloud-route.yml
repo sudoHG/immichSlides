@@ -81,7 +81,7 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py start'
-      - if: always() && steps.start.outputs.start_recorded == 'true'
+      - if: always() && steps.arm.outputs.post == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}

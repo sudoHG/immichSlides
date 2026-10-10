@@ -273,6 +273,16 @@ final class LocaleUITests: XCTestCase {
         marker = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-post-"))
         del steps[marker]
         self.assertIn("xcc-post-marker", self.rules(document, path))
+        for mutation in ("start-output", "removed"):
+            document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+            steps = document["jobs"]["start"]["steps"]
+            receipt = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-start-"))
+            if mutation == "start-output":
+                steps[receipt]["if"] = "always() && steps.start.outputs.start_recorded == 'true'"
+            else:
+                del steps[receipt]
+            with self.subTest(mutation=mutation):
+                self.assertIn("xcc-start-record", self.rules(document, path))
 
     def test_failed_ios_reruns_cannot_repeat_successful_tv_through_dependencies(self):
         path = ".github/workflows/ci-ui.yml"

@@ -654,6 +654,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                 post = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "start"]
                 marker = [index for index, step in enumerate(steps) if isinstance(step, dict)
                           and step.get("with", {}).get("name") == "ci-xcc-post-${{ github.run_id }}-${{ github.run_attempt }}"]
+                receipt = [index for index, step in enumerate(steps) if isinstance(step, dict)
+                           and step.get("with", {}).get("name") == "ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}"]
                 arm = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "arm"]
                 prepare = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "prepare"]
                 if not (len(prepare) == len(post) == len(marker) == len(arm) == 1
@@ -663,6 +665,9 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                         and steps[post[0]].get("if") == "success() && steps.prepare.outputs.recorded == 'true'"
                         and job.get("outputs") == {"poll": "${{ steps.start.outputs.poll }}"}):
                     flag(location, "xcc-post-marker", "Upload the immutable scheduling POST marker successfully before any start")
+                if not (len(receipt) == len(post) == 1 and receipt[0] > post[0]
+                        and steps[receipt[0]].get("if") == "always() && steps.arm.outputs.post == 'true'"):
+                    flag(location, "xcc-start-record", "Upload armed state even when start is interrupted without outputs")
         if (any(label in str(job.get("runs-on", "")) for label in ("macos-", "xcode-"))
                 and any(re.search(r"\balways\s*\(", code, re.IGNORECASE) for code in expression_code("workflow." + location + ".if", str(job.get("if", "")), implicit_locations))):
             flag(location, "macos-cancellation", "macOS jobs must stop on cancellation; never use job-level always()")
@@ -818,7 +823,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                                           "if-no-files-found": "error", "retention-days": 90}
                               and item.get("if") == guard for stage, member, guard in (
                                   ("post", "post", "success() && steps.arm.outputs.post == 'true'"),
-                                  ("start", "start", "always() && steps.start.outputs.start_recorded == 'true'")))
+                                  ("start", "start", "always() && steps.arm.outputs.post == 'true'")))
         report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
                          and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",
                                              "path": "${{ runner.temp }}/ci-report/" + directory,

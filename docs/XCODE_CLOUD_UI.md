@@ -124,11 +124,18 @@ platform is never awaited. Main pushes retain explicit nightly deferral, nightly
 runs all default-plan tests on GitHub, and forks/external authors never route.
 
 `ci_xcode_cloud_schedule.py` simulates five repository-visible macOS slots from
-live assigned jobs, ready queued jobs and successful job duration p90s from at
-most three recent runs of each of `ci-gate`, `ci-ui`, `ci-nightly` and `ci-toolchain`.
-Publisher/privacy runs cannot displace these samples.
+live assigned jobs and ready queued jobs. UI duration estimates use the admitted
+base's `scripts/ci-ui-durations.json`, default-plan population and static shard
+assignments, with the same device startup overhead as trusted packing. Static
+jobs use their shard estimate; scoped jobs use the device's total base estimate,
+capped by packing's 28-minute estimated job limit. Unknown shard suffixes use
+the device family's largest static shard. These are predictions for another
+PR's unknown selection, not observed runtimes. Skipped jobs and unexpanded UI
+template names cannot remove this model. Non-UI jobs use successful job duration
+p90s from at most three recent runs of each of `ci-gate`, `ci-ui`, `ci-nightly`
+and `ci-toolchain`; publisher/privacy runs cannot displace these samples.
 Per-device UI caps are two iPhone, one iPad and one Apple TV. A queue job without
-known labels/history or fewer than five assigned macOS jobs keeps GitHub.
+known labels/duration estimates or fewer than five assigned macOS jobs keeps GitHub.
 Account-wide free slots and exact FIFO order are not exposed; predictions state
 this limit. The newest same-head `ci-gate` run supplies the archive dependency:
 `build-<platform>` is ready at zero if successful, or at its simulated completion
@@ -147,16 +154,18 @@ for that group. Predictions are saved with the route receipt, not reported as
 measured wall times.
 
 The start job holds the shared account lock and refreshes head, pointer, queue,
-inventory and budget immediately before its single POST. Historical markers are
-queried only for route runs created within their 90-day retention period; marker
-age within that period never refunds a reservation. The start refresh reuses
-authenticated history and duration samples from preparation under the same lock,
-avoiding a second historical scan. The four bounded duration queries and retained
-marker filtering limit pressure on the shared 1,000-request/hour repository token;
-missing history, pagination or API limits select GitHub. The policy cap is
+inventory and budget immediately before its single POST. Reconciliation scans
+only route runs created in the last two hours, once per preparation. It requires
+at least 500 remaining core requests before that scan and refuses more than 25
+runs or an incomplete result, including GitHub's silently truncated filtered
+lists. The start refresh reuses authenticated history and duration samples under
+the same lock. These bounds limit scan pressure on the shared 1,000-request/hour
+repository token; concurrent consumers can still exhaust it, which selects
+GitHub. A complete refreshed ASC workflow inventory remains the source of active
+compute evidence. Missing history, pagination or API limits select GitHub. The policy cap is
 2,700 compute minutes, reduced when the confirmed account allowance is smaller.
-Missing confirmed `cap_minutes`, a valid Apple `billing_anchor` or an explicit
-per-group `queue_seconds_upper` returns the
+Missing confirmed `cap_minutes`, a valid Apple `billing_anchor`, an explicit
+per-group `queue_seconds_upper` or a reviewed `asc_visibility_delay_seconds` returns the
 group to GitHub before reading ASC inventory; a UTC-only estimate cannot start it.
 Admission uses destination wall-time accounting across every reviewed product
 and workflow, including failed actions and active work; unknown configuration,
@@ -174,14 +183,30 @@ only a confirmed matching expiry window removes the 120-minute reserve and
 reduces the comparison margin to zero; Cloud still must be faster.
 
 An authenticated before-POST marker reserves work if POST outcome is unknown.
-Its reservation is recomputed from trusted admission; expiry never refunds it.
+Its reservation is recomputed from trusted admission while visibility is pending.
 No POST retry is automatic. The start phase records the actual instant immediately
 before invoking POST. Reconciliation uses that time for an ambiguous POST rather
-than the earlier arm time. A local attempt record is written before the call;
-unexpected exceptions afterward retain the reservation. An authenticated main
-start that refused before POST (including a superseded producer or other error),
-a definitive 4xx or unique visible matching build allows reconciliation;
-unresolved markers block further starts. Active work uses
+than the earlier arm time, allowing ten seconds of clock skew and requiring a
+unique match. Arm writes a local `post_attempted: false` start record before the
+marker; start atomically replaces it with `post_attempted: true` and the actual
+POST time before calling ASC. The always-upload step depends on arm's output,
+so interruption before start produces unposted evidence even without start
+outputs. Every phase derives its deadline from the same actual runner job start,
+leaving two minutes of the 20-minute start job for artifact upload. An authenticated
+main start that refused before POST (including a superseded producer or other error),
+a definitive 4xx or unique visible matching build allows reconciliation. Once
+the marker's bounded start deadline plus the reviewed ASC inventory visibility
+delay has elapsed, a complete inventory with no possible matching build proves
+the start absent under that reviewed visibility bound. A late same-head build or
+a row with unknown commit in that interval blocks this absence proof. This is
+inventory evidence, not marker expiry.
+The delay must be explicitly reviewed as 60–3,600 seconds; verify the bound before
+activation. The two-hour scan covers the 30-minute producer start window,
+20-minute start job and at most 60-minute visibility delay. Outside it, accepted
+builds remain covered by full account inventory. Successful but stale ASC
+inventory beyond the reviewed delay can violate this assumption; the API exposes
+no guaranteed maximum visibility lag. Reconcile this operational risk before
+activation. Unresolved markers block further starts. Active work uses
 a reviewed upper reservation, at least `110 * largest destination count + 5`
 minutes, increasing with elapsed time. The API exposes action elapsed time rather
 than billing totals, and cannot bound a stalled service's final charge or cancel
@@ -231,7 +256,10 @@ before every Cloud test build. The existing tvOS template is replaced likewise.
    initially `routing_enabled: false`, `groups` as described above,
    `scm_repository_id`, `account_product_ids`, `account_action_destinations`
    (conservative counts by action name), `unknown_active_minutes`, `cap_minutes`
-   and a confirmed `billing_anchor: {day, time_zone}`. Each group also needs
+   and a confirmed `billing_anchor: {day, time_zone}`. It also requires
+   `asc_visibility_delay_seconds` (60–3,600): establish a conservative bound for
+   accepted starts appearing in complete workflow inventory, including interruption
+   probes; do not activate without that evidence. Each group also needs
    `workflow_attributes_sha256` (canonical hash of all GET workflow attributes)
    and `queue_seconds_upper`. Set `destinations_parallel` / `actions_parallel`
    true only after observed concurrency proves that prediction; absent/false

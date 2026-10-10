@@ -8,8 +8,9 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import URLError
 
@@ -421,8 +422,26 @@ def poll_route(api, asc, record, run, receipt, *, sleep=time.sleep, monotonic=ti
 def write_phase(phase, value):
     directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-route")
     directory.mkdir(mode=0o700, exist_ok=True)
-    (directory / (phase + ".json")).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=directory, prefix=phase + "-", suffix=".tmp", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, directory / (phase + ".json"))
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return value
+
+
+def job_deadline(api, uploader, phase):
+    jobs = api.pages(f"actions/runs/{uploader['uploader_run_id']}/attempts/{uploader['uploader_attempt']}/jobs", "jobs")
+    name = "route" if phase == "poll" else "xcc-start"
+    active = [job for job in jobs if job["name"] == name and job["status"] == "in_progress"]
+    require(len(active) == 1, "Cloud router has no unique active runner job")
+    return timestamp(active[0]["started_at"]) + timedelta(minutes=110 if phase == "poll" else state.START_TIMEOUT_MINUTES)
 
 
 def recorded_decision(api, run):
@@ -448,18 +467,21 @@ def main():
         attempt = event["inputs"]["producer_attempt"]
         require(isinstance(run_id, str) and run_id.isdecimal() and isinstance(attempt, str) and attempt.isdecimal(), "invalid producer input")
         run_id, attempt = positive(int(run_id)), positive(int(attempt))
-        phase_minutes = 109 if phase == "poll" else 19
-        api = RetryingGitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"], time.monotonic() + phase_minutes * 60)
+        api = RetryingGitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"], time.monotonic() + 60)
+        deadline = job_deadline(api, uploader, phase)
+        remaining = (deadline - datetime.now(timezone.utc)).total_seconds() - 120
+        require(remaining > 0, "Cloud router job has no time remaining before artifact upload")
+        api.deadline = time.monotonic() + remaining
         git("fetch", "--no-tags", "origin", "refs/heads/main")
         run = api.repo("actions/runs/" + str(run_id))
         if run["run_attempt"] != attempt:
             raise SupersededProducer("router producer attempt changed")
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
-        asc = RenewingAppStoreConnect(lambda: jwt(os.environ, ROUTE_PATH), time.monotonic() + phase_minutes * 60)
+        asc = RenewingAppStoreConnect(lambda: jwt(os.environ, ROUTE_PATH), api.deadline)
         directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-route")
         if event["inputs"].get("group"):
             from ci_xcode_cloud_group_route import phase as group_phase
-            return group_phase(api, asc, run, event, phase, uploader)
+            return group_phase(api, asc, run, event, phase, uploader, deadline=deadline)
         if phase in {"prepare", "poll"} and recorded_decision(api, run):
             with open(os.environ["GITHUB_OUTPUT"], "a") as output:
                 output.write("recorded=false\npost=false\n")

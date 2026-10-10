@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import URLError
+from urllib.parse import urlencode
 
 from ci_publish import positive, trusted_admissions
 from ci_summary import ContractError, require
@@ -22,6 +23,35 @@ import ci_xcode_cloud_groups as groups
 import ci_xcode_cloud_state as state
 
 FAILURES = (ContractError, KeyError, TypeError, ValueError, OSError, URLError, subprocess.SubprocessError)
+RECONCILIATION_HOURS = 2
+MAX_RECENT_ROUTES = 25
+MIN_SCAN_RATE_REMAINING = 500
+CLOCK_SKEW_SECONDS = 10
+
+
+def ui_job_estimates(base_sha, ui_inputs):
+    """Other PRs' UI populations are unknown; model each base-owned shard/family."""
+    from ci_publish_git import read_blob
+    from ci_ui_packing import DURATIONS_PATH, MAX_JOB_SECONDS, OVERHEAD_SECONDS, parse_durations
+    require(base_sha and ui_inputs, "UI queue estimation requires trusted base inputs")
+    durations = parse_durations(read_blob(base_sha, DURATIONS_PATH))
+    manifest = ui_inputs["manifest"]
+    assignment = {selector: shard for shard, selectors in manifest["shards"].items() for selector in selectors}
+    estimates = {}
+    for device, entries in ui_inputs["base_populations"].items():
+        loads = {shard: 0 for shard in manifest["shards"]}
+        for entry in entries:
+            key = entry["key"]
+            shard = assignment.get(key, assignment.get(key.split("/")[0], manifest["default_shard"]))
+            loads[shard] += durations["seconds"][device].get(key, durations["default_seconds"])
+        values = {"ui-" + device + "-" + shard: seconds + OVERHEAD_SECONDS[device]
+                  for shard, seconds in loads.items() if seconds > 0}
+        if values:
+            estimates.update(values)
+            estimates["ui-" + device] = max(values.values())
+            # Scoped packing never admits jobs above its own estimated limit.
+            estimates["ui-" + device + "-scoped"] = min(MAX_JOB_SECONDS, sum(loads.values()) + OVERHEAD_SECONDS[device])
+    return estimates
 
 
 def anchor(record, run):
@@ -38,7 +68,7 @@ def selection_open(api, run, group):
     return not any(job["name"] == "ui-cloud-wait-" + group and job["status"] == "completed" for job in jobs)
 
 
-def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, history=None):
+def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, history=None, base_sha=None, ui_inputs=None):
     runs, jobs = {}, []
     for status in ("queued", "in_progress"):
         for run in api.pages("actions/runs", "workflow_runs", status=status):
@@ -59,6 +89,8 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
                 for job in api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"):
                     if job["id"] in seen or job["conclusion"] != "success" or not job.get("runner_id"):
                         continue
+                    if re.match(r"^ui-(iphone|ipad|appletv)-", job["name"]):
+                        continue  # Sparse successful UI history is not the queue duration model.
                     seen.add(job["id"])
                     labels = job.get("labels", [])
                     if not ("xcode-27" in labels or any(label.startswith("macos-") for label in labels)):
@@ -72,11 +104,14 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
     else:
         history = {name: list(seconds) for name, seconds in history.items()}
     history = {name: seconds[-100:] for name, seconds in history.items()}
+    ui_jobs = [job for job in jobs if job["status"] != "completed" and re.match(r"^ui-(iphone|ipad|appletv)-", job["name"])]
+    estimates = ui_job_estimates(base_sha, ui_inputs) if ui_jobs else {}
     for job in jobs:
-        if job["name"] not in history:
+        if job in ui_jobs:
             family = re.sub(r"^(ui-(?:iphone|ipad|appletv))-.*$", r"\1", job["name"])
-            if family in history:
-                history[job["name"]] = history[family]
+            key = family + "-scoped" if job["name"].startswith(family + "-scoped-") else job["name"]
+            require(key in estimates or family in estimates, "UI queue family has no trusted base duration estimate")
+            history[job["name"]] = [estimates.get(key, estimates[family])]
     seconds = {device: selection["packing"]["estimated_job_seconds"][device] for device in groups.GROUPS[group]}
     gates = api.repo("actions/workflows/ci-gate.yml/runs?event=pull_request&head_sha=" + head_sha + "&per_page=5")["workflow_runs"]
     gates = [run for run in gates if run["head_sha"] == head_sha and run["path"] == ".github/workflows/ci-gate.yml"]
@@ -85,7 +120,8 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
     own_jobs = api.pages(f"actions/runs/{gate['id']}/attempts/{gate['run_attempt']}/jobs", "jobs")
     result = github_estimate(jobs, now, seconds, history=history,
         matrix_cap={device: 2 if device == "iphone" else 1 for device in seconds}, gate=dict(gate, jobs=own_jobs), platform=group)
-    return dict(result, duration_history=history)
+    return dict(result, duration_history=history, duration_model="base-ui-weights-and-non-ui-job-p90",
+                ui_duration_base_sha=base_sha if ui_jobs else None)
 
 
 def inventories(asc, registration):
@@ -154,10 +190,12 @@ def account_usage(asc, registration, now, window_start):
             "basis": "destination-wall-upper-bound"}
 
 
-def unknown_starts(api, registration, inventory, *, current_uploader=None):
+def unknown_starts(api, registration, inventory, *, current_uploader=None, history_snapshot=None, now=None):
     """Authenticate markers before bytes and recompute their reservation from admission."""
-    workflow = api.repo("actions/workflows/ci-xcode-cloud-route.yml")
-    sources = route_sources(api, workflow)
+    now = now or datetime.now(timezone.utc)
+    workflow, sources = history_snapshot or route_history(api)
+    delay = visibility_delay(registration)
+    require(set(inventory) == set(registration["groups"]), "Cloud reconciliation lacks a complete registered inventory")
     missing, visible = [], {row["id"] for rows in inventory.values() for row in rows}
     for source in sources:
         if current_uploader == (source["id"], source["run_attempt"]):
@@ -173,14 +211,29 @@ def unknown_starts(api, registration, inventory, *, current_uploader=None):
             continue
         if started and started.get("schema_version") == 2 and started.get("post_attempted") is False:
             continue  # The authenticated main start refused before sending POST.
-        rows = inventory.get(marker.get("group", "tvos"), [])
+        group = marker.get("group", "tvos")
+        require(group in inventory and marker["workflow_id"] == registration["groups"][group]["workflow_id"],
+                "Cloud POST workflow has no complete reviewed inventory")
+        rows = inventory[group]
         posted_at = (started or {}).get("posted_at", marker["posted_at"])
         matches = [row for row in rows
                    if (row["attributes"].get("sourceCommit") or {}).get("commitSha") == marker["head_sha"]
-                   and 0 <= (timestamp(row["attributes"]["createdDate"]) - timestamp(posted_at)).total_seconds() <= 120]
+                   and -CLOCK_SKEW_SECONDS <= (timestamp(row["attributes"]["createdDate"]) - timestamp(posted_at)).total_seconds() <= 120]
         if len(matches) == 1:
             continue
         require(not matches, "Cloud unknown POST matches several builds")
+        armed_at = timestamp(marker["posted_at"])
+        deadline = timestamp(marker["start_deadline"]) if "start_deadline" in marker else armed_at + timedelta(minutes=state.START_TIMEOUT_MINUTES)
+        require(armed_at <= deadline <= armed_at + timedelta(minutes=state.START_TIMEOUT_MINUTES),
+                "Cloud POST start deadline differs from its bounded job")
+        if now > deadline + timedelta(seconds=delay):
+            # A complete refreshed inventory is negative evidence only after the
+            # reviewed visibility bound. A late/unknown same-head row still blocks.
+            possible = [row for row in rows if armed_at - timedelta(seconds=CLOCK_SKEW_SECONDS)
+                        <= timestamp(row["attributes"]["createdDate"]) <= deadline + timedelta(seconds=delay)
+                        and (row["attributes"].get("sourceCommit") or {}).get("commitSha") in {None, marker["head_sha"]}]
+            require(not possible, "Cloud POST has a possible late build; absence is unproven")
+            continue
         record = trusted_admissions(api, [positive(marker["producer_run_id"])]).get(marker["producer_run_id"])
         require(record is not None and record["identity"] == marker["identity"], "unknown POST has no matching trusted admission")
         run = api.repo("actions/runs/" + str(marker["producer_run_id"]))
@@ -198,17 +251,34 @@ def unknown_starts(api, registration, inventory, *, current_uploader=None):
 
 
 def route_sources(api, workflow):
-    # Artifact retention is 90 days. Marker age within that window never
-    # refunds compute; creation filtering avoids years of irrelevant runs.
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
-    return api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", event="workflow_dispatch", created=">=" + cutoff)
+    remaining = api.request("/rate_limit")["resources"]["core"]["remaining"]
+    require(type(remaining) is int and remaining >= MIN_SCAN_RATE_REMAINING,
+            "GitHub rate budget is too low for Cloud reconciliation")
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=RECONCILIATION_HOURS)).isoformat()
+    query = urlencode({"event": "workflow_dispatch", "created": ">=" + cutoff, "per_page": 100})
+    response = api.repo(f"actions/workflows/{workflow['id']}/runs?" + query)
+    count, rows = response["total_count"], response["workflow_runs"]
+    require(type(count) is int and 0 <= count <= MAX_RECENT_ROUTES and isinstance(rows, list) and len(rows) == count,
+            "recent Cloud reconciliation run list is excessive or incomplete")
+    return rows
 
 
-def group_started(api, run, group, *, current_uploader=None):
-    """Do not replay a selection, but allow a full rerun's new attempt."""
+def route_history(api):
     workflow = api.repo("actions/workflows/ci-xcode-cloud-route.yml")
+    return workflow, route_sources(api, workflow)
+
+
+def visibility_delay(registration):
+    delay = registration.get("asc_visibility_delay_seconds")
+    require(type(delay) is int and 60 <= delay <= 3600, "reviewed ASC inventory visibility delay is required")
+    return delay
+
+
+def group_started(api, run, group, *, current_uploader=None, history_snapshot=None):
+    """Do not replay a selection, but allow a full rerun's new attempt."""
+    workflow, sources = history_snapshot or route_history(api)
     title = f"xcc-route-{run['id']}-{run['run_attempt']}-{group}"
-    for source in route_sources(api, workflow):
+    for source in sources:
         if source.get("display_title") != title or current_uploader == (source["id"], source["run_attempt"]):
             continue
         artifacts = api.pages(f"actions/runs/{source['id']}/artifacts", "artifacts")
@@ -278,6 +348,7 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         selected = record["ui_inputs"]["base"]["selection"]
         stage = "github-queue-unavailable"
         receipt["capacity"] = queue_snapshot(api, now, selected, group, producer_run_id=run["id"], head_sha=run["head_sha"],
+            base_sha=record["identity"]["base_sha"], ui_inputs=record["ui_inputs"]["base"],
             history=prepared["capacity"]["duration_history"] if prepared else None)
         if not receipt["capacity"]["can_prove_saturation"] or receipt["capacity"]["free_slots"]:
             receipt["reason"] = "github-capacity-or-queue-uncertain"
@@ -286,12 +357,14 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         require(isinstance(registration.get("billing_anchor"), dict) and "cap_minutes" in registration,
                 "confirmed Cloud allowance and Apple billing anchor are required")
         require("queue_seconds_upper" in registration["groups"][group], "reviewed Cloud queue upper bound is required")
+        visibility_delay(registration)
         policy = month_policy(now, registration["billing_anchor"], cap_minutes=registration["cap_minutes"])
         receipt["budget_policy"] = policy
         asc = asc_factory()
         stage = "cloud-inventory-unavailable"
         inventory = inventories(asc, registration)
-        if prepared is None and group_started(api, run, group, current_uploader=current_uploader):
+        history_snapshot = route_history(api) if prepared is None else None
+        if prepared is None and group_started(api, run, group, current_uploader=current_uploader, history_snapshot=history_snapshot):
             receipt["reason"] = "cloud-selection-already-started"
             return receipt
         if any(row["attributes"]["executionProgress"] != "COMPLETE" for row in inventory[group]):
@@ -301,7 +374,8 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
             queue_seconds=registration["groups"][group]["queue_seconds_upper"])
         stage = "cloud-budget-unavailable"
         usage = [account_usage(asc, registration, now, start) for start, _ in policy["windows"]]
-        unresolved = unknown_starts(api, registration, inventory, current_uploader=current_uploader) if prepared is None else []
+        unresolved = unknown_starts(api, registration, inventory, current_uploader=current_uploader,
+            history_snapshot=history_snapshot, now=now) if prepared is None else []
         receipt.update(usage=usage, unresolved_starts=unresolved)
         if unresolved:
             receipt["reason"] = "unresolved-cloud-post"
@@ -396,7 +470,7 @@ def poll_group(api, asc, record, run, receipt, *, sleep=time.sleep, monotonic=ti
         return value
 
 
-def phase(api, asc, run, event, name, uploader):
+def phase(api, asc, run, event, name, uploader, *, deadline=None):
     group = event["inputs"]["group"]
     require(group in groups.GROUPS, "unknown routing group")
     directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-route")
@@ -408,6 +482,7 @@ def phase(api, asc, run, event, name, uploader):
         require(value["producer_run_id"] == run["id"] and value["producer_attempt"] == run["run_attempt"]
                 and value["group"] == group, "group prepared identity differs")
         if value["decision"] == "pending" and name == "arm":
+            require(deadline is not None, "Cloud marker requires its runner job deadline")
             pr = refresh_producer(api, run)
             require(pr["user"]["login"] == groups.MAINTAINER_LOGIN and pr["user"]["id"] == groups.MAINTAINER_ID
                     and pr["base"]["sha"] == value["identity"]["base_sha"]
@@ -415,8 +490,18 @@ def phase(api, asc, run, event, name, uploader):
                     "group changed before marker")
             groups.validate_pointer({"identity": value["identity"]}, run, group, value["selection_sha256"],
                 api.pages("commits/" + run["head_sha"] + "/statuses"), pointer_id=value["pointer_id"])
+            value["start_deadline"] = deadline.isoformat()
+            # Seed refusal evidence before exposing the marker. Even a killed
+            # start step can upload this record using the arm output alone.
+            write_phase("start", dict(value, decision="github", reason="armed-before-post", post_attempted=False, cloud_run_id=None, **uploader))
             write_phase("post", dict(value, posted_at=datetime.now(timezone.utc).isoformat(), **uploader))
         if name == "start":
+            if value["decision"] == "pending":
+                started = json.loads((directory / "start.json").read_text())
+                require(started.get("post_attempted") is False and all(started[key] == value[key]
+                        for key in ("identity", "producer_run_id", "producer_attempt", "group", "selection_sha256"))
+                        and all(started[key] == expected for key, expected in uploader.items()),
+                        "Cloud POST lacks its armed unposted record or was already attempted")
             value["post_attempted"] = False
         if value["decision"] == "pending" and name == "start":
             try:
