@@ -34,7 +34,7 @@ bound. Unit consumers have separate boot, enumeration and execution bounds:
 | Bundle enumeration, after boot | 660 s | 300 s | 300 s |
 | Unit execution | 900 s | 900 s | 900 s |
 | Official tests / summary exports | 180 / 180 s | 180 / 180 s | 60 / 60 s |
-| Owned simulator shutdown / delete | 15 / 60 s | 15 / 60 s | 15 / 60 s |
+| Owned simulator shutdown / delete | 60 / 60 s | 60 / 60 s | 60 / 60 s |
 
 There is no automatic test retry or silent rebuild. The [trusted publisher](https://github.com/sudoHG/immichSlides/issues/89)
 owns the `ci-pr-gate` status and required-status enforcement. A failing unit test fails
@@ -133,9 +133,15 @@ the hosted workflow passes 180 seconds. Execution exits other than 0 or 65 recor
 An export timeout records the UI runner's distinct `xcresult-export-timeout` infrastructure
 code, with phase, bound and elapsed time; it cannot count as a product failure or verified
 execution. Owned-simulator shutdown and delete
-have 15- and 60-second bounds; deletion still runs after shutdown failure. Their durations
-and exit codes are measured. Cleanup failure makes the summary failed, and scanning
-continues. Failed runs or
+have 60-second bounds; deletion still runs after shutdown failure. Their durations
+and exit codes are measured and shown in `summary.md`. A cleanup that fails, or times out
+while results are incomplete or unverified, makes the summary failed, and scanning
+continues. A cleanup that only times out (exit 124) after a complete, verified passing
+result set (zero exit, exported and compared results, declared = compiled = observed functions
+under the trusted identity normalization, no other infrastructure entry) is
+recorded as an `infrastructure_notes` entry in `measurements.json` and `summary.md`; it
+is not an infrastructure entry in `summary.json`, so it cannot turn that passing population
+red. The live runner shares this cleanup and rule (see [live tests](CI_LIVE_TESTS.md)). Failed runs or
 export/scan errors retain a private quarantine record; successful export and sensitive
 scan precede disposal. A failed enumeration attempts export and retains both process
 exits and archive identity, even when no executable test results exist.
@@ -178,15 +184,22 @@ The [recovery calibration](https://github.com/sudoHG/immichSlides/actions/runs/3
 measured maximum boot at **110.19 s**; 2x and upward minute rounding choose **240 s**.
 Its iOS job lasted 556 s, with 110.19 + 251.28 + 70.47 s in the three phases, leaving
 **124.06 s** measured job overhead. Adding separate 180-second tests and summary export
-bounds, plus 15 seconds for simulator shutdown and 60 seconds for delete, and rounding upward
-gives a conservative **600-second overhead allowance**. The hosted export bound reuses
+bounds, plus 60 seconds each for simulator shutdown and delete, and rounding upward
+gives a conservative **660-second overhead allowance**. The hosted export bound reuses
 the [UI calibration](CI_UI.md): a unit tests export on
 [PR #169](https://github.com/sudoHG/immichSlides/pull/169) took 62.1 seconds against the
 former 60-second limit, despite zero product failures. This is an infrastructure
 allowance, not a product deadline. A hosted delete exceeded its
-former 15-second bound; the 60-second recovery allowance remains bounded. The runner's shared
+former 15-second bound; the 60-second recovery allowance remains bounded.
+The shutdown bound follows
+[run 38077261419](https://github.com/sudoHG/immichSlides/actions/runs/38077261419) (job 114290062415:
+619 passed, 19 approved skips, 0 failed, shutdown stopped at 15.2 s) and the
+[#247](https://github.com/sudoHG/immichSlides/pull/247) head run 38035723913 (15.6 s).
+Across 22 recent hosted gate runs, 20 iOS shutdowns completed in 4.3-11.8 s (median 5.7 s) and
+2 timed out; all 22 tvOS shutdowns completed in 3.4-5.7 s. Both iOS timeouts were followed by a delete that finished in 9-10 s, so
+the shutdown needed about 25 s. 60 s leaves more than twice that margin. The runner's shared
 interrupt grace is **120 s**. The longest combined bound is therefore
-`240 + 660 + 900 + 120 + 600 = 2520 s < 2700 s`.
+`240 + 660 + 900 + 120 + 660 = 2580 s < 2700 s`.
 The guard reads actual workflow `timeout-minutes`; measurements and Markdown record
 phase limits, grace, measured overhead and allowance. These are infrastructure budgets;
 product assertions and success thresholds do not change.
