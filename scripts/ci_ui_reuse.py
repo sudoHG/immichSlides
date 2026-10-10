@@ -11,6 +11,7 @@ import zlib
 import yaml
 
 from ci_publish_git import git, read_blob, workflow_contract
+from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest
 from ci_summary import (ContractError, decode, fields, integer, nullable_string, parse_identity,
                         parse_summary, require, sha, string)
 
@@ -148,7 +149,11 @@ def find_reuse(api, push):
         require(len(merged) == 1, "reuse needs exactly one same-repository PR actually merged by this push")
         inputs = reuse_inputs(revision)
         pins = decode(read_blob(revision, "scripts/ci-pins.json"))
-        shards = device_shards(read_blob(revision, UI_WORKFLOW), {"id": 1, "run_attempt": 1})
+        # Bind a dynamic producer to every manifest shard of this revision; input hashes keep the raw bytes.
+        from ci_publish_git import bind_ui_shards
+        order = list(parse_shard_manifest(read_blob(revision, MANIFEST_PATH))["shards"])
+        shards = device_shards(bind_ui_shards(read_blob(revision, UI_WORKFLOW), {"ios": order, "tvos": order}),
+                               {"id": 1, "run_attempt": 1})
         publisher = api.repo("actions/workflows/ci-publish.yml", missing=True)
         workflow = api.repo("actions/workflows/ci-ui.yml", missing=True)
         if publisher is None or workflow is None:

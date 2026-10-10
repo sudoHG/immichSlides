@@ -724,7 +724,8 @@ class PublisherTests(unittest.TestCase):
                     return merged_prs
                 return [artifact] if path == "actions/artifacts" else [ui_run]
         with patch("ci_ui_reuse.reuse_inputs", return_value=inputs), \
-                patch("ci_ui_reuse.read_blob", return_value=json.dumps(pins)), \
+                patch("ci_ui_reuse.read_blob", side_effect=lambda revision, path: FIXTURE_UI if path.endswith(".yml")
+                      else json.dumps(UI_MANIFEST if path == "scripts/ci-ui-shards.json" else pins)), \
                 patch("ci_ui_reuse.device_shards", return_value=shards), \
                 patch("ci_ui_reuse.git"), patch("ci_ui_reuse.trusted_uploader"), \
                 patch("ci_publish.json_member", return_value=receipt) as member:
@@ -748,6 +749,19 @@ class PublisherTests(unittest.TestCase):
                 self.assertIsNone(find_reuse(RecordedAPI(), push))
                 with patch.object(RecordedAPI, "pages", side_effect=error):
                     self.assertIsNone(find_reuse(RecordedAPI(), push))
+        # A dynamic producer is bound to every manifest shard of the pushed revision before expansion.
+        dynamic_shards = sorted(f"{device}/{shard}" for device in ("iphone", "ipad", "appletv")
+                                for shard in UI_MANIFEST["shards"])
+        dynamic_receipt = dict(copy.deepcopy(receipt), device_shards=dynamic_shards,
+                               toolchains={name: receipt["toolchains"]["ipad/default"] for name in dynamic_shards})
+        blobs = {".github/workflows/ci-ui.yml": dynamic_ui_workflow(), "scripts/ci-ui-shards.json": json.dumps(UI_MANIFEST),
+                 "scripts/ci-pins.json": json.dumps(pins)}
+        with patch("ci_ui_reuse.reuse_inputs", return_value=inputs), \
+                patch("ci_ui_reuse.read_blob", side_effect=lambda revision, path: blobs[path]), \
+                patch("ci_ui_reuse.git"), patch("ci_ui_reuse.trusted_uploader"), \
+                patch("ci_publish.json_member", return_value=dynamic_receipt) as member:
+            self.assertEqual(find_reuse(RecordedAPI(), push)["artifact_id"], 22)
+            self.assertEqual(member.call_count, 1)
 
     def test_ui_rerun_normalizes_each_attempt_before_merging_shard_history(self):
         run = dict(RUN, event="push", head_branch="main", path=".github/workflows/ci-ui.yml", run_attempt=2)
@@ -1557,6 +1571,25 @@ class PublisherTests(unittest.TestCase):
             expand_skipped_ui_matrix(empty_tv, run, others + [dict(collapsed, runner_id=7, steps=[{}])])
         with self.assertRaises(ContractError):
             expand_skipped_ui_matrix(bound, run, others + [collapsed])
+        # The empty platform carries through evidence collection and the verdict.
+        no_tv = copy.deepcopy(admitted)
+        no_tv["selection"]["populations"]["appletv"] = []
+        no_tv["selection"]["shards"]["appletv"] = {shard: [] for shard in manifest["shards"]}
+        self.assertEqual(ui_shard_lists(no_tv, identity, classification)["tvos"], [])
+        empty_record = dict(record, ui_inputs={"base": no_tv, "candidate": no_tv},
+                            workflows={run["path"]: {"base": empty_tv, "candidate": empty_tv}})
+        kept = [index for index, job in enumerate(jobs) if job["name"] not in tv_names]
+        _, _, artifact_names = workflow_contract(empty_tv, run, details=True)
+        by_artifact = {artifact_names[jobs[index]["name"]][0]: summaries[index] for index in kept}
+        class EmptyPlatformAPI:
+            def pages(self, path, *args):
+                return (others + [collapsed] if path.endswith("/jobs") else
+                        [{"name": name, "expired": False} for name in by_artifact])
+        with patch("ci_publish.json_member", side_effect=lambda api, artifact, filename: by_artifact[artifact["name"]]), \
+                patch("ci_publish_git.trusted_reader", return_value=modules):
+            fetched_jobs, fetched_summaries = producer_evidence(EmptyPlatformAPI(), run, empty_tv, admission=empty_record)
+            verdict = evaluate_records(empty_record, run, fetched_jobs, fetched_summaries, approved=False, fork=False)
+        self.assertEqual((verdict["state"], verdict["ui_population_mode"]), ("success", "scoped"))
 
     def test_admission_selects_with_base_map_even_when_candidate_map_and_reader_differ(self):
         from ci_ui_selection import AREA_MAP_PATH

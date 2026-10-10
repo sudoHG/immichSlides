@@ -317,6 +317,11 @@ identities (iPhone and iPad must agree); for a docs-only `none` selection they a
 empty; otherwise they are every manifest shard. Every later reader (job
 contract, artifacts, reuse, reporting, Cloud skip recognition) uses the bound text,
 so a producer that schedules a different shard set fails the required-job check.
+Main-push reuse reads the pushed revision's workflow directly; it binds the dynamic
+form to every shard of that revision's manifest before comparing receipt shards,
+while input hashes still use the raw workflow bytes. Publication checks the scoped
+device scope against the bound workflow's device declarations, so a platform without
+selected shards still counts as present.
 The workflow's shard union must equal either the full manifest or exactly the
 non-empty selected shards. A platform bound to no shard is accepted only as its one
 collapsed matrix skip: complete, skipped, no runner and no steps. Static literal

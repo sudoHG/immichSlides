@@ -481,7 +481,7 @@ def gate_not_applicable_jobs(record, run, metadata):
             and meta["job"] == meta["tier"] + "-" + meta["shard"]}
 
 
-def ui_empty_selection_jobs(record, run, metadata):
+def ui_empty_selection_jobs(record, run, metadata, source=None):
     if record is None or run["path"] != ".github/workflows/ci-ui.yml":
         return set()
     ui = record.get("ui_inputs", {}).get("base") or {}
@@ -490,8 +490,10 @@ def ui_empty_selection_jobs(record, run, metadata):
             or record["classification"].get("ci_changing") is not False):
         return set()
     require(selection["map_revision"] == record["identity"]["base_sha"], "UI area map differs from admitted base")
-    require({meta["device"] for meta in metadata.values() if meta["tier"] == "ui"} == set(DEVICES),
-            "scoped UI requires all three devices")
+    # A bound platform without selected shards declares its devices but expands no job.
+    devices = (ui_workflow_devices(source) if source is not None
+               else {meta["device"] for meta in metadata.values() if meta["tier"] == "ui"})
+    require(devices == set(DEVICES), "scoped UI requires all three devices")
     return {name for name, meta in metadata.items() if meta["tier"] == "ui"
             and selection["shards"][meta["device"]][meta["shard"]] == []}
 
