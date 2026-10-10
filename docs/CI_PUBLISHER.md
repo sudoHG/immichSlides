@@ -385,6 +385,27 @@ Selection/classification/packing errors fail activated PR admission; only unflag
 historical producers retain full-population compatibility on selection errors.
 Plan estimates are diagnostic data, not passing samples or duration acceptance.
 
+### Prepared grouped Xcode Cloud reader
+
+The [v2 Cloud evidence contract](XCODE_CLOUD_UI.md#prepared-grouped-evidence-reader-v2)
+adds independent iOS (iPhone plus iPad) and tvOS groups to packed functional PR
+evaluation. The trusted base registry, exact per-device selection, publisher
+pointer/hash, main uploader provenance, retained selection attempt and newest
+registered Xcode Cloud App checks all remain mandatory. Each group supplies
+complete GitHub evidence or complete API-verified Cloud evidence; partial providers
+within one group cannot be combined. Missing Cloud evidence never authorizes
+skips. Complete GitHub fallback is evaluated without consuming stale Cloud receipts.
+Compiled Cloud identities remain unavailable, and scoped/Cloud PR successes
+cannot supply a full identical-tree reuse receipt or daily main history.
+
+The reader additionally recognizes `ci_ui_tests.py select --pack-scoped-ui`,
+`wait-group --group ios|tvos` and bounded `needs.selection.outputs` shard matrices.
+It accepts one `ui-selection` anchor instead of the legacy `ui-archive`, so later
+Cloud groups need not wait for a GitHub gate archive. Independent matrices require
+distinct literal name prefixes to authenticate collapsed skips. These are prepared
+reader contracts: the registry, commands, pointers and producers are not activated
+here. The existing v1 full Apple TV reader remains unchanged in behavior.
+
 The gate reader also supports a Linux `ci_gate.py classify` producer with one
 `host` identity, `Gate change classification`, tier `gate-infrastructure`, job
 `gate-classification` and null shard. It must succeed and provide an

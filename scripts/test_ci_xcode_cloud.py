@@ -1,4 +1,4 @@
-"""Adversarial cases at the external Apple TV evidence trust boundary."""
+"""Adversarial cases at the legacy and grouped Cloud evidence trust boundaries."""
 
 import copy
 import unittest
@@ -8,6 +8,438 @@ from unittest.mock import Mock, patch
 
 import ci_xcode_cloud as cloud
 from ci_summary import ContractError, observation, test_identity
+
+
+class GroupEvidenceTests(unittest.TestCase):
+    """A shared method on two destinations is two independently required results."""
+
+    def setUp(self):
+        import ci_xcode_cloud_groups as groups
+        self.groups = groups
+        self.identity = {"schema_version": 1, "repository": "owner/repo", "event": "pull_request", "pull_request": 7,
+                         "base_sha": "c" * 40, "head_sha": "a" * 40, "merge_sha": "d" * 40,
+                         "tree_sha": "b" * 40}
+        self.run = {"id": 123, "run_attempt": 2, "event": "pull_request", "path": cloud.UI_PATH,
+                    "head_sha": "a" * 40, "repository": {"full_name": "owner/repo"},
+                    "head_repository": {"full_name": "owner/repo"}}
+        devices = {"iphone": {"device": "iPhone 17 Pro", "os": "27.0"},
+                   "ipad": {"device": "iPad Pro 13-inch (M5)", "os": "27.0"}}
+        self.registration = {"workflow_id": cloud.WORKFLOW_ID,
+                             "actions": [{"name": "Functional - iOS", "check_name": "Registered iOS check",
+                                          "plan_path": "Cloud-iOS.xctestplan",
+                                          "scheme_path": "Project.xcodeproj/xcshareddata/xcschemes/iOS.xcscheme",
+                                          "devices": devices}]}
+        template = {"testTargets": [{"target": {"name": "immichSlidesUITests"}, "selectedTests": []}]}
+        self.registry = {"schema_version": 2, "groups": {"ios": self.registration}}
+        selected = {device: {"scoped-a": [test_identity("ui", "SettingsTests/testToggle",
+                    platform="ios", device=device)]} for device in devices}
+        selected["appletv"] = {}
+        self.record = {"identity": self.identity, "run_id": 123,
+                       "cloud_pr_author": {"login": "sudoHG", "id": 42},
+                       "cloud_v2_inputs": {"registry": self.registry, "head_tree_sha": "b" * 40,
+                                           "files": {"ci_scripts/ci_post_clone.sh": "e" * 64},
+                                           "plans": {"Cloud-iOS.xctestplan": template}},
+                       "ui_inputs": {"base": {"selection": {"mode": "scoped", "coverage": "functional",
+                           "map_revision": "c" * 40, "map_sha256": "f" * 64,
+                           "packing": {"sha256": "e" * 64}, "shards": selected}}}}
+        self.descriptor = groups.selection(self.record, self.run, "ios", approved=False)
+        self.digest = groups.canonical_hash(self.descriptor)
+        self.pointer = {"id": 56, "context": "ci-xcc-selection/123/2/ios", "state": "success",
+                        "creator": {"login": groups.PUBLISHER_LOGIN, "id": groups.PUBLISHER_ID},
+                        "description": "c" * 40 + " " + self.digest,
+                        "target_url": "https://github.com/owner/repo/commit/" + "d" * 40,
+                        "url": "https://api.github.com/repos/owner/repo/statuses/" + "a" * 40}
+        self.route = {"schema_version": 2, "identity": self.identity, "producer_run_id": 123,
+                      "producer_attempt": 2, "group": "ios", "decision": "routed",
+                      "selection_sha256": self.digest, "pointer_id": 56,
+                      "runtime_plan_sha256": self.descriptor["runtime_plan_sha256"],
+                      "workflow_id": cloud.WORKFLOW_ID,
+                      "cloud_run_id": "11111111-1111-1111-1111-111111111111"}
+        self.evidence = {"id": self.route["cloud_run_id"], "workflow_id": cloud.WORKFLOW_ID,
+                         "head_sha": "a" * 40, "is_pull_request_build": False,
+                         "progress": "COMPLETE", "status": "SUCCEEDED",
+                         "started": "2026-10-10T00:00:00Z", "finished": "2026-10-10T00:15:00Z",
+                         "actions": [{"id": "22222222-2222-2222-2222-222222222222", "name": "Functional - iOS",
+                           "type": "TEST", "progress": "COMPLETE", "status": "SUCCEEDED",
+                           "started": "2026-10-10T00:00:00Z", "finished": "2026-10-10T00:15:00Z",
+                           "tests": [{"id": "one", "class": "SettingsTests", "method": "testToggle()",
+                                      "status": "SUCCESS", "destinations": [dict(value, status="SUCCESS")
+                                                                         for value in devices.values()]}]}]}
+        self.check = {"id": 88, "head_sha": "a" * 40, "app": {"id": cloud.APP_ID, "slug": "xcode-cloud"},
+                      "name": "Registered iOS check", "status": "completed", "conclusion": "success",
+                      "details_url": "https://appstoreconnect.apple.com/teams/" + cloud.TEAM_ID + "/apps/" +
+                        cloud.APPLE_APP_ID + "/ci/builds/" + self.evidence["id"] + "/action/" + self.evidence["actions"][0]["id"]}
+
+    def validate(self):
+        return self.groups.validate_evidence(self.record, self.run, self.route, self.evidence,
+                                             [self.check], [self.pointer], approved=False)
+
+    def test_same_method_requires_both_exact_destinations(self):
+        proof = self.validate()
+        self.assertEqual({entry["dimensions"]["device"] for entry in proof["identities"]}, {"iphone", "ipad"})
+        self.assertEqual(proof["selection_sha256"], self.digest)
+        self.assertEqual(proof["compute_minutes"], 15)
+        original = copy.deepcopy(self.evidence)
+        for mutation in ("missing-device", "extra-device", "duplicate-device", "os", "failed", "skipped",
+                         "missing-method", "extra-method", "duplicate-method", "extra-action", "pr-build", "head"):
+            self.evidence = copy.deepcopy(original)
+            action = self.evidence["actions"][0]
+            test = action["tests"][0]
+            if mutation == "missing-device":
+                test["destinations"].pop()
+            elif mutation in {"extra-device", "duplicate-device"}:
+                test["destinations"].append(dict(test["destinations"][0]))
+                if mutation == "extra-device":
+                    test["destinations"][-1]["device"] = "Unknown iPhone"
+            elif mutation == "os":
+                test["destinations"][0]["os"] = "26.0"
+            elif mutation in {"failed", "skipped"}:
+                test["destinations"][0]["status"] = mutation.upper()
+            elif mutation == "missing-method":
+                action["tests"] = []
+            elif mutation in {"extra-method", "duplicate-method"}:
+                action["tests"].append(copy.deepcopy(test))
+                action["tests"][-1]["id"] = "two"
+                if mutation == "extra-method":
+                    action["tests"][-1]["method"] = "testOther()"
+            elif mutation == "extra-action":
+                self.evidence["actions"].append(copy.deepcopy(action))
+            elif mutation == "pr-build":
+                self.evidence["is_pull_request_build"] = True
+            else:
+                self.evidence["head_sha"] = "e" * 40
+            with self.subTest(mutation=mutation), self.assertRaises(ContractError):
+                self.validate()
+
+    def test_pointer_creator_hash_head_attempt_and_replacement_are_bound(self):
+        original = copy.deepcopy(self.pointer)
+        for field, value in (("creator", {"login": self.groups.PUBLISHER_LOGIN, "id": 1}),
+                             ("description", "c" * 40 + " " + "0" * 64), ("state", "pending"),
+                             ("context", "ci-xcc-selection/123/1/ios"),
+                             ("url", "https://api.github.com/repos/owner/repo/statuses/" + "e" * 40),
+                             ("target_url", "https://example.org/selection"), ("id", 57)):
+            self.pointer = dict(original, **{field: value})
+            with self.subTest(field=field), self.assertRaises(ContractError):
+                self.validate()
+        self.pointer = original
+        with self.assertRaises(ContractError):
+            self.groups.validate_pointer(self.record, self.run, "ios", self.digest,
+                                         [original, dict(original, id=57)], pointer_id=56)
+
+    def test_admission_not_receipt_selects_methods_and_registered_workflow(self):
+        for mutation in ("selection", "workflow", "attempt", "tree", "fork", "external", "screenshot"):
+            record, run, route = copy.deepcopy((self.record, self.run, self.route))
+            if mutation == "selection":
+                route["selection_sha256"] = "0" * 64
+            elif mutation == "workflow":
+                route["workflow_id"] = "33333333-3333-3333-3333-333333333333"
+            elif mutation == "attempt":
+                route["producer_attempt"] = 1
+            elif mutation == "tree":
+                record["cloud_v2_inputs"]["head_tree_sha"] = "e" * 40
+            elif mutation == "fork":
+                run["head_repository"]["full_name"] = "fork/repo"
+            elif mutation == "external":
+                record["cloud_pr_author"]["login"] = "contributor"
+            else:
+                record["ui_inputs"]["base"]["selection"]["shards"]["iphone"]["scoped-a"][0]["key"] = "SettingsTests/testScreenshot"
+            with self.subTest(mutation=mutation), self.assertRaises(ContractError):
+                self.groups.validate_evidence(record, run, route, self.evidence, [self.check], [self.pointer], approved=False)
+
+    def test_newest_app_check_and_each_action_plan_are_authoritative(self):
+        newer = dict(self.check, id=89, conclusion="failure")
+        with self.assertRaises(ContractError):
+            self.groups.validate_evidence(self.record, self.run, self.route, self.evidence,
+                                          [self.check, newer], [self.pointer], approved=False)
+        selection = self.record["ui_inputs"]["base"]["selection"]
+        selection["shards"]["ipad"]["scoped-a"].append(test_identity("ui", "SettingsTests/testOther", platform="ios", device="ipad"))
+        with self.assertRaises(ContractError):
+            self.groups.selection(self.record, self.run, "ios", approved=False)
+
+    def gate_fixture(self, routed):
+        from ci_publish_git import workflow_contract
+        from test_ci_publish import FIXTURE_UI
+        from test_ci_summary import valid_summary
+        from test_ci_verdict import approval_record
+        source = FIXTURE_UI.replace("device: [iphone]", "device: [iphone, ipad, appletv]").replace("shard: [default, visual]", "shard: [scoped-a]")
+        tv = test_identity("ui", "TVSettingsTests/testToggle", platform="tvos", device="appletv")
+        populations = copy.deepcopy(self.record["ui_inputs"]["base"]["selection"]["shards"])
+        populations["appletv"] = {"scoped-a": [tv]}
+        ui = {"populations": populations, "base_populations": {device: [entry for entries in shards.values() for entry in entries]
+              for device, shards in populations.items()}, "manifest_sha256": "e" * 64,
+              "plans": {platform: {"sha256": "f" * 64} for platform in ("ios", "tvos")},
+              "selection": dict(self.record["ui_inputs"]["base"]["selection"], shards=populations)}
+        record = copy.deepcopy(self.record)
+        policy = {"schema_version": 1, "approval_records": [approval_record("ui")], "expected_skips": [], "deselections": []}
+        record.update(ui_inputs={"base": ui, "candidate": ui}, base_policy=policy, candidate_policy=policy,
+                      classification={"app_affected": True, "ci_changing": False},
+                      workflows={cloud.UI_PATH: {"base": source, "candidate": source}})
+        tv_registration = {"workflow_id": "33333333-3333-3333-3333-333333333333", "actions": [{
+            "name": "Functional - tvOS", "check_name": "Registered tvOS check", "plan_path": "Cloud-tvOS.xctestplan",
+            "scheme_path": "Project.xcodeproj/xcshareddata/xcschemes/tvOS.xcscheme",
+            "devices": {"appletv": {"device": cloud.DEVICE_NAME, "os": "27.0"}}}]}
+        record["cloud_v2_inputs"]["registry"]["groups"]["tvos"] = tv_registration
+        record["cloud_v2_inputs"]["plans"]["Cloud-tvOS.xctestplan"] = copy.deepcopy(record["cloud_v2_inputs"]["plans"]["Cloud-iOS.xctestplan"])
+        names, _, _, metadata = workflow_contract(source, self.run, metadata=True)
+        jobs, summaries = [], []
+        devices = {device for group in routed for device in self.groups.GROUPS[group]}
+        for name in names:
+            meta = metadata[name]
+            skipped = meta.get("device") in devices
+            jobs.append({"name": name, "status": "completed", "conclusion": "skipped" if skipped else "success",
+                         "evidence_attempt": 2, "runner_id": None if skipped else 1, "steps": []})
+            if skipped:
+                continue
+            entries = [test_identity("host", "UI archive selection")] if name == "ui-archive" else populations[meta["device"]][meta["shard"]]
+            summary = valid_summary()
+            summary.update(identity=self.identity, status="passed")
+            summary["source"].update(repository="owner/repo", event="pull_request", workflow_path=cloud.UI_PATH, fork_originated=False)
+            summary["run"] = {"id": "123", "attempt": 2, **{key: meta[key] for key in ("tier", "job", "shard")}}
+            summary["hashes"]["manifests"] = {"ui-shards": "e" * 64, "ui-scoped-plan": "e" * 64}
+            if meta["tier"] == "ui":
+                summary["hashes"]["manifests"]["test-plan"] = "f" * 64
+            summary["population"].update(declared=entries, compiled=entries,
+                observed=[observation(entry, "passed", 0) for entry in entries], deselected=[], removed_by_pr=[])
+            summaries.append(summary)
+        proofs = {}
+        for group in routed:
+            descriptor = self.groups.selection(record, self.run, group, approved=False)
+            entries = sorted([entry for population in descriptor["populations"].values() for entry in population], key=self.groups.identity_key)
+            proofs[group] = {"group": group, "identities": entries, "selection_sha256": self.groups.canonical_hash(descriptor), "evidence_attempt": 2}
+        proof = {"schema_version": 2, "groups": proofs, "identities": sorted([entry for group in proofs.values() for entry in group["identities"]], key=self.groups.identity_key)}
+        return record, jobs, summaries, proof
+
+    def test_gate_accepts_either_complete_group_and_all_cloud_but_never_missing_or_mixed_evidence(self):
+        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES, evaluate_records
+        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            for routed in ({"ios"}, {"tvos"}, {"ios", "tvos"}):
+                record, jobs, summaries, proof = self.gate_fixture(routed)
+                with self.subTest(routed=routed):
+                    result = evaluate_records(record, self.run, jobs, summaries, approved=False, fork=False, cloud=proof)
+                    self.assertEqual(result["state"], "success")
+                    self.assertEqual(result["ui_population_mode"], "scoped")
+                    self.assertEqual(sum(entry["observed"] for entry in result["population"]), 4)
+                    self.assertTrue(all(entry["compiled"] is None for entry in result["population"] if (entry["shard"] or "").endswith("/xcode-cloud")))
+                    with self.assertRaises(ContractError):
+                        evaluate_records(record, self.run, jobs, summaries, approved=False, fork=False)
+                    incomplete = copy.deepcopy(proof)
+                    incomplete["groups"][next(iter(routed))]["identities"].pop()
+                    with self.assertRaises(ContractError):
+                        evaluate_records(record, self.run, jobs, summaries, approved=False, fork=False, cloud=incomplete)
+                    executed = copy.deepcopy(jobs)
+                    next(job for job in executed if job["conclusion"] == "skipped").update(conclusion="success", runner_id=1)
+                    with self.assertRaises(ContractError):
+                        evaluate_records(record, self.run, executed, summaries, approved=False, fork=False, cloud=proof)
+            record, jobs, summaries, _ = self.gate_fixture(set())
+            # A failed/unavailable Cloud attempt contributes nothing to complete GitHub fallback.
+            self.assertEqual(evaluate_records(record, self.run, jobs, summaries, approved=False, fork=False)["state"], "success")
+
+    def test_collapsed_skips_and_history_cover_only_the_verified_group(self):
+        from ci_publish_git import bind_ui_shards
+        from ci_ui_reuse import expand_skipped_ui_matrix
+        from test_ci_publish import dynamic_ui_workflow
+        source = dynamic_ui_workflow(split_ios=True).replace("name: ui-${{ matrix.device }}-${{ matrix.shard }}",
+                 "name: ui-iphone-${{ matrix.shard }}", 1)
+        source = source.replace("name: ui-${{ matrix.device }}-${{ matrix.shard }}", "name: ui-ipad-${{ matrix.shard }}", 1)
+        source = bind_ui_shards(source,
+                                {device: ["scoped-a"] for device in ("iphone", "ipad", "appletv")})
+        skipped = {"name": "ui-iphone-${{ matrix.shard }}", "id": 1, "status": "completed",
+                   "conclusion": "skipped", "runner_id": 0, "steps": []}
+        proof = {"schema_version": 2, "groups": {"ios": {}}}
+        normalized = expand_skipped_ui_matrix(source, self.run, [skipped], complete=False, cloud=proof)
+        self.assertEqual([job["name"] for job in normalized], ["ui-iphone-scoped-a"])
+        for mutation in (dict(skipped, runner_id=7), dict(skipped, steps=[{}]), dict(skipped, conclusion="success")):
+            with self.assertRaises(ContractError):
+                expand_skipped_ui_matrix(source, self.run, [mutation], complete=False, cloud=proof)
+        with self.assertRaises(ContractError):
+            expand_skipped_ui_matrix(source, self.run, [skipped, dict(normalized[0])], complete=False, cloud=proof)
+        # A later GitHub fallback must execute after the historical collapsed skip.
+        discarded = set()
+        self.assertEqual(expand_skipped_ui_matrix(source, self.run, [skipped], complete=False, historical=True,
+                         group_history=True, discarded_shards=discarded), [])
+        self.assertEqual(discarded, {"ui-iphone-scoped-a"})
+        with self.assertRaises(ContractError):
+            expand_skipped_ui_matrix(source, self.run, [skipped], cloud={"schema_version": 2, "groups": {"tvos": {}}})
+
+    def test_linux_selection_contract_and_anchor_do_not_require_the_github_archive(self):
+        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES, bind_ui_shards, evaluate_records, scoped_packing_intent, workflow_contract
+        from test_ci_publish import dynamic_ui_workflow
+        source = dynamic_ui_workflow(split_ios=True).replace("needs.archive.outputs.", "needs.selection.outputs.")
+        bound = bind_ui_shards(source, {device: ["scoped-a"] for device in ("iphone", "ipad", "appletv")})
+        self.assertNotIn("fromJSON", bound)
+        self.assertTrue(scoped_packing_intent(source.replace("wait-archive", "select --pack-scoped-ui")))
+        with self.assertRaises(ContractError):
+            bind_ui_shards(source.replace("needs.selection.outputs.", "needs.other.outputs."), {"ios": [], "tvos": []})
+        record, jobs, summaries, proof = self.gate_fixture({"ios", "tvos"})
+        source = record["workflows"][cloud.UI_PATH]["base"].replace("name: ui-archive", "name: ui-selection").replace("ci_ui_tests.py wait-archive", "ci_ui_tests.py select")
+        record["workflows"][cloud.UI_PATH] = {"base": source, "candidate": source}
+        jobs[0]["name"] = "ui-selection"
+        summaries[0]["run"]["job"] = "ui-selection"
+        selected = [test_identity("host", "UI selection")]
+        summaries[0]["population"].update(declared=selected, compiled=selected, observed=[observation(selected[0], "passed", 0)])
+        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            self.assertEqual(evaluate_records(record, self.run, jobs, summaries, approved=False, fork=False, cloud=proof)["state"], "success")
+            fallback_record, fallback_jobs, fallback_summaries, _ = self.gate_fixture(set())
+            fallback_record["workflows"][cloud.UI_PATH] = record["workflows"][cloud.UI_PATH]
+            fallback_record["cloud_v2_inputs"] = {"error": "head hook changed"}
+            fallback_jobs[0]["name"] = "ui-selection"
+            fallback_summaries[0] = copy.deepcopy(summaries[0])
+            self.assertEqual(evaluate_records(fallback_record, self.run, fallback_jobs, fallback_summaries,
+                             approved=False, fork=False)["state"], "success")
+        api = Mock()
+        retained = dict(jobs[0], id=11, runner_id=9, started_at="one", completed_at="two")
+        api.pages.side_effect = [[retained], [dict(retained, id=12)]]
+        self.assertEqual(cloud.archive_evidence_run(api, self.run, selection_job="ui-selection")["run_attempt"], 1)
+        api.pages.side_effect = [[retained], [dict(retained, id=12, started_at="new")]]
+        self.assertEqual(cloud.archive_evidence_run(api, self.run, selection_job="ui-selection")["run_attempt"], 2)
+        wait_source = '''jobs:
+  wait:
+    name: ui-cloud-wait-ios
+    steps:
+      - run: python3 scripts/ci_ui_tests.py wait-group --group ios
+      - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: {name: 'group-${{ github.run_id }}-${{ github.run_attempt }}', path: records/summary.json}
+'''
+        self.assertEqual(workflow_contract(wait_source, self.run, metadata=True)[3]["ui-cloud-wait-ios"]["population"], "ui-cloud-wait-ios")
+        with self.assertRaises(ContractError):
+            workflow_contract(wait_source.replace("--group ios", "--group macos"), self.run)
+
+    def test_changed_hooks_symlinks_case_shadows_and_redirected_plans_cannot_be_admitted(self):
+        root = Path(__file__).resolve().parent.parent
+        import json
+        files = {path: (root / path).read_text() for path in (
+            "ci_scripts/ci_post_clone.sh", "ci_scripts/ci_pre_xcodebuild.sh", "ci_scripts/ci_post_xcodebuild.sh",
+            "ci_scripts/fixture_server.py", "scripts/strict_e2e_server.py", "scripts/ci_ui_selection.py",
+            "scripts/ci_ui_packing.py", "scripts/ci_ui_test_kinds.py", "scripts/ci_ui_shards.py",
+            "scripts/ci-ui-areas.json", "scripts/ci-ui-durations.json")}
+        files[self.groups.REGISTRY_PATH] = json.dumps(self.registry)
+        plan_path = self.registration["actions"][0]["plan_path"]
+        scheme_path = self.registration["actions"][0]["scheme_path"]
+        files[plan_path] = json.dumps(self.record["cloud_v2_inputs"]["plans"][plan_path])
+        files[scheme_path] = '<Scheme><TestAction><TestPlans><TestPlanReference reference="container:' + plan_path + '"/></TestPlans></TestAction></Scheme>'
+        listing = [{"path": path, "type": "blob", "mode": "100644"} for path in files]
+        read = lambda revision, path: files[path]
+        self.assertEqual(self.groups.snapshot("c" * 40, "a" * 40, listing, listing, read, "b" * 40)["registry"], self.registry)
+        self.assertIsNone(self.groups.snapshot("c" * 40, "a" * 40, [], listing, read, "b" * 40))
+        for mutation in ("hook", "symlink", "case-shadow", "extra-hook", "redirect", "fixture", "duplicate-json"):
+            head = copy.deepcopy(listing)
+            changed = dict(files)
+            if mutation == "hook":
+                changed["ci_scripts/ci_post_clone.sh"] += "\nfalse\n"
+            elif mutation == "symlink":
+                next(entry for entry in head if entry["path"] == plan_path)["mode"] = "120000"
+            elif mutation == "case-shadow":
+                head.append({"path": plan_path.lower(), "type": "blob", "mode": "100644"})
+            elif mutation == "extra-hook":
+                head.append({"path": "ci_scripts/unreviewed.sh", "type": "blob", "mode": "100644"})
+            elif mutation == "redirect":
+                changed[scheme_path] = files[scheme_path].replace("container:", "container:other/")
+            elif mutation == "fixture":
+                changed["ci_scripts/fixture_server.py"] += "\n# mismatch\n"
+            else:
+                changed[self.groups.REGISTRY_PATH] = '{"schema_version": 2, "schema_version": 2, "groups": {}}'
+            with self.subTest(mutation=mutation), self.assertRaises(ContractError):
+                self.groups.snapshot("c" * 40, "a" * 40, listing, head,
+                                     lambda revision, path: changed[path] if revision == "a" * 40 else files[path], "b" * 40)
+
+    def test_receipt_binds_descriptor_runtime_plan_pointer_route_and_attempt(self):
+        from test_ci_publish import FIXTURE_UI
+        self.record["workflows"] = {cloud.UI_PATH: {"base": FIXTURE_UI}}
+        receipt = {field: copy.deepcopy(self.route[field]) for field in (
+            "schema_version", "identity", "producer_run_id", "producer_attempt", "group", "selection_sha256", "pointer_id")}
+        receipt.update(selection=self.descriptor, runtime_plan_sha256=self.descriptor["runtime_plan_sha256"],
+                       route_artifact_id=90, evidence=self.evidence)
+        api = Mock()
+        api.pages.side_effect = lambda path, *args, **kwargs: [self.check] if path.endswith("check-runs") else [self.pointer]
+        def read(*args, **kwargs):
+            return (self.route, 90) if args[2] == cloud.ROUTE_PATH else (receipt, 91)
+        with patch.object(cloud, "archive_evidence_run", return_value=self.run), patch.object(cloud, "trusted_artifact", side_effect=read):
+            proof = self.groups.trusted_groups(api, self.record, self.run, {"ios"}, approved=False)
+            self.assertEqual(proof["groups"]["ios"]["import_artifact_id"], 91)
+            original = copy.deepcopy(receipt)
+            for field, value in (("route_artifact_id", 92), ("producer_attempt", 1), ("pointer_id", 57),
+                                 ("selection", {}), ("runtime_plan_sha256", {}), ("schema_version", 1), ("group", "tvos")):
+                receipt.clear()
+                receipt.update(copy.deepcopy(original), **{field: value})
+                with self.subTest(field=field), self.assertRaises(ContractError):
+                    self.groups.trusted_groups(api, self.record, self.run, {"ios"}, approved=False)
+            receipt.clear()
+            receipt.update(original)
+            pointer_reads = iter([[self.pointer], [dict(self.pointer, id=57)]])
+            api.pages.side_effect = lambda path, *args, **kwargs: [self.check] if path.endswith("check-runs") else next(pointer_reads)
+            with self.assertRaises(ContractError):
+                self.groups.trusted_groups(api, self.record, self.run, {"ios"}, approved=False)
+
+    def test_separate_ios_actions_can_run_different_per_device_populations(self):
+        action = self.registration["actions"][0]
+        second = copy.deepcopy(action)
+        second.update(name="Functional - iPad", check_name="Registered iPad check", plan_path="Cloud-iPad.xctestplan")
+        action["devices"].pop("ipad")
+        second["devices"].pop("iphone")
+        self.registration["actions"].append(second)
+        self.record["cloud_v2_inputs"]["plans"][second["plan_path"]] = copy.deepcopy(self.record["cloud_v2_inputs"]["plans"][action["plan_path"]])
+        self.record["ui_inputs"]["base"]["selection"]["shards"]["ipad"]["scoped-a"].append(
+            test_identity("ui", "SettingsTests/testOther", platform="ios", device="ipad"))
+        descriptor = self.groups.selection(self.record, self.run, "ios", approved=False)
+        self.route.update(selection_sha256=self.groups.canonical_hash(descriptor), runtime_plan_sha256=descriptor["runtime_plan_sha256"])
+        self.pointer["description"] = "c" * 40 + " " + self.route["selection_sha256"]
+        first = self.evidence["actions"][0]
+        first["tests"][0]["destinations"] = [dict(action["devices"]["iphone"], status="SUCCESS")]
+        other = copy.deepcopy(first)
+        other.update(id="44444444-4444-4444-4444-444444444444", name=second["name"])
+        other["tests"][0].update(id="ipad-one", destinations=[dict(second["devices"]["ipad"], status="SUCCESS")])
+        other["tests"].append(dict(other["tests"][0], id="ipad-two", method="testOther()"))
+        self.evidence["actions"].append(other)
+        check = dict(self.check, id=89, name=second["check_name"], details_url=self.check["details_url"].rsplit("/", 1)[0] + "/" + other["id"])
+        proof = self.groups.validate_evidence(self.record, self.run, self.route, self.evidence,
+                                              [self.check, check], [self.pointer], approved=False)
+        self.assertEqual(len(proof["identities"]), 3)
+        self.assertEqual(proof["compute_minutes"], 30)
+        self.assertEqual(len(proof["runtime_plan_sha256"]), 2)
+
+    def test_group_diagnostics_preserve_counts_without_inventing_compiled_samples(self):
+        from ci_report import cloud_pr_diagnostics
+        _, _, summaries, proof = self.gate_fixture({"ios", "tvos"})
+        diagnostics = cloud_pr_diagnostics(summaries, cloud=proof)
+        self.assertEqual(diagnostics["counts"]["passed"], 4)
+        self.assertEqual(diagnostics["counts"]["compiled"], 1)
+        self.assertEqual(diagnostics["counts"]["compiled_not_exposed_by_api"], 3)
+        self.assertEqual(set(diagnostics["xcode_cloud"]["groups"]), {"ios", "tvos"})
+        self.assertTrue(all("identities" not in group for group in diagnostics["xcode_cloud"]["groups"].values()))
+
+    def test_publication_reads_cloud_only_for_selected_skipped_groups_and_ignores_failed_cloud_on_complete_fallback(self):
+        from ci_publish import compute
+        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES
+        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        run = dict(self.run, workflow_id=42, status="completed", conclusion="success", head_branch="feature")
+        workflow = {"id": 42, "path": cloud.UI_PATH}
+        pr = {"number": 7, "state": "open", "head": {"sha": "a" * 40, "repo": {"full_name": "owner/repo"}},
+              "base": {"ref": "main", "repo": {"full_name": "owner/repo"}}}
+        api = Mock(repository="owner/repo")
+        api.repo.return_value = pr
+        with patch("ci_publish.workflows", return_value={"ci-ui": workflow}), \
+                patch("ci_publish.approved_status", return_value=False), patch("ci_publish.approval_requests", return_value=[]), \
+                patch("ci_publish_git.trusted_reader", return_value=modules), \
+                patch.object(self.groups, "trusted_groups", side_effect=ContractError("Cloud failed")) as read_cloud:
+            record, jobs, summaries, _ = self.gate_fixture(set())
+            record.update(workflow_id=42, workflow_path=cloud.UI_PATH)
+            api.pages.side_effect = lambda path, *args, **kwargs: [run] if path.endswith("/runs") else jobs
+            with patch("ci_publish.trusted_admissions", return_value={123: record}), \
+                    patch("ci_publish.producer_evidence", return_value=(jobs, summaries)):
+                self.assertEqual(compute(api, 7, "", "publisher")[1]["ci-ui"]["state"], "success")
+                read_cloud.assert_not_called()
+            record, jobs, summaries, _ = self.gate_fixture({"ios"})
+            record.update(workflow_id=42, workflow_path=cloud.UI_PATH)
+            with patch("ci_publish.trusted_admissions", return_value={123: record}), \
+                    patch("ci_publish.producer_evidence", return_value=(jobs, summaries)):
+                self.assertEqual(compute(api, 7, "", "publisher")[1]["ci-ui"]["state"], "failure")
+                self.assertEqual(read_cloud.call_args.args[3], {"ios"})
+            record["ui_inputs"]["base"]["selection"]["shards"]["appletv"] = {}
+            tv_skip = {"name": "ui-appletv-scoped-a", "conclusion": "skipped"}
+            source = record["workflows"][cloud.UI_PATH]["base"]
+            self.assertEqual(self.groups.skipped_groups(source, run, jobs + [tv_skip], record, approved=False), {"ios"})
 
 
 class CloudEvidenceTests(unittest.TestCase):

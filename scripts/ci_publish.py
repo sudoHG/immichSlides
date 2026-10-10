@@ -481,7 +481,11 @@ def admit(api, event):
     if pr:
         require(subprocess.run(["git", "merge-base", "--is-ancestor", identity["base_sha"], "refs/remotes/origin/main"],
                                capture_output=True, timeout=30).returncode == 0, "admitted base is not trusted main history")
-    return derive_record(identity, run)
+    record = derive_record(identity, run)
+    if pr:
+        author = pr.get("user") or {}
+        record["cloud_pr_author"] = {key: author.get(key) for key in ("login", "id")}
+    return record
 
 
 def approved_status(api, pr, login):
@@ -509,7 +513,8 @@ def producer_evidence(api, run, source, *, diagnostics=None, admission=None, clo
             discarded = set()
             attempt_jobs = expand_skipped_ui_matrix(source, dict(run, run_attempt=attempt), attempt_jobs,
                                                    complete=False, historical=attempt < run["run_attempt"],
-                                                   discarded_shards=discarded, cloud=cloud is not None)
+                                                   discarded_shards=discarded, cloud=cloud,
+                                                   group_history=bool((admission or {}).get("cloud_v2_inputs")))
             # Keep execution history to recognize retained API jobs, but never
             # admit a shard artifact from before its matrix was invalidated.
             minimum_attempts.update({name: attempt + 1 for name in discarded})
@@ -539,10 +544,11 @@ def producer_evidence(api, run, source, *, diagnostics=None, admission=None, clo
         if (run["event"] == "push" and metadata[name]["tier"] == "ui"
                 and job["status"] == "completed" and job["conclusion"] == "skipped"):
             continue
-        if (cloud is not None and run["event"] == "pull_request" and metadata[name].get("device") == "appletv"
+        from ci_xcode_cloud_groups import cloud_devices
+        if (cloud is not None and run["event"] == "pull_request" and metadata[name].get("device") in cloud_devices(cloud)
                 and job["status"] == "completed" and job["conclusion"] == "skipped"):
             require((job.get("runner_id") is None or type(job.get("runner_id")) is int and job["runner_id"] == 0)
-                    and job.get("steps") == [], "routed Apple TV job may have executed")
+                    and job.get("steps") == [], "routed device job may have executed")
             continue
         attempt_run = dict(run, run_attempt=job["evidence_attempt"])
         _, _, names = workflow_contract(source, attempt_run, details=True)
@@ -700,11 +706,15 @@ def compute(api, pr_number, pushed, login):
                     require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
             cloud = None
             if context == "ci-ui" and pr and not fork:
+                from ci_xcode_cloud_groups import skipped_groups, trusted_groups
                 from ci_xcode_cloud import apple_tv_skip_names
                 cloud_skips = apple_tv_skip_names(source, run)
                 current_jobs = api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
-                if any(job["conclusion"] == "skipped" and job["name"] in cloud_skips
-                       for job in current_jobs):
+                if ((ui or {}).get("selection") or {}).get("coverage") == "functional":
+                    groups = skipped_groups(source, run, current_jobs, record, approved=approved)
+                    if groups:
+                        cloud = trusted_groups(api, record, run, groups, approved=approved)
+                elif any(job["conclusion"] == "skipped" and job["name"] in cloud_skips for job in current_jobs):
                     from ci_xcode_cloud import trusted_cloud
                     cloud = trusted_cloud(api, record, run, approved=approved)
             jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors, admission=record, cloud=cloud)
@@ -854,9 +864,13 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                                  "per-job population.\n")
                 cloud = status.get("xcode_cloud")
                 if cloud:
-                    handle.write(f"  Xcode Cloud: [{cloud['cloud_run_id']}]({cloud['details_url']}); "
-                                 f"import artifact {cloud['import_artifact_id']}; route artifact {cloud['route_artifact_id']}; "
-                                 f"wall {cloud['wall_minutes']:.2f} min; compute {cloud['compute_minutes']:.2f} min.\n")
+                    proofs = cloud["groups"].values() if cloud.get("schema_version") == 2 else [cloud]
+                    for proof in proofs:
+                        links = proof["actions"] if cloud.get("schema_version") == 2 else [proof]
+                        for action in links:
+                            handle.write(f"  Xcode Cloud: [{proof['cloud_run_id']}]({action['details_url']}); "
+                                         f"import artifact {proof['import_artifact_id']}; route artifact {proof['route_artifact_id']}; "
+                                         f"wall {proof['wall_minutes']:.2f} min; compute {proof['compute_minutes']:.2f} min.\n")
                 for skipped in status.get("not_applicable", []):
                     handle.write(f"  {skipped['job']}: not applicable; {len(skipped['identities'])} admitted identities; "
                                  "trusted PR classification cannot affect the app or CI tooling.\n")

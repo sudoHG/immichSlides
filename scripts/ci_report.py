@@ -242,6 +242,10 @@ def cloud_pr_diagnostics(summaries, *, cloud):
         diagnostics["counts"][key] = diagnostics["counts"].get(key, 0) + count
     diagnostics["counts"]["compiled_not_exposed_by_api"] = count
     diagnostics["xcode_cloud"] = {key: value for key, value in cloud.items() if key != "identities"}
+    if cloud.get("schema_version") == 2:
+        diagnostics["xcode_cloud"]["groups"] = {
+            group: {key: value for key, value in proof.items() if key != "identities"}
+            for group, proof in cloud["groups"].items()}
     return diagnostics
 
 

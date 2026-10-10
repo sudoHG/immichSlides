@@ -18,6 +18,7 @@ import sys
 import tempfile
 from datetime import date
 from pathlib import Path
+from xml.etree import ElementTree
 
 import yaml
 
@@ -31,6 +32,8 @@ UI_WORKFLOW_PATH = ".github/workflows/ci-ui.yml"
 # The only dynamic matrix value a UI producer may use; admission binds it to trusted shard names.
 DYNAMIC_UI_SHARDS = {scope: "${{ fromJSON(needs.archive.outputs." + scope + "_shards) }}"
                      for scope in ("ios", "tvos", "iphone", "ipad", "appletv")}
+SELECTION_UI_SHARDS = {scope: value.replace("needs.archive.", "needs.selection.")
+                       for scope, value in DYNAMIC_UI_SHARDS.items()}
 BRIDGE = '''import json,sys
 sys.path.insert(0, sys.argv[1])
 from ci_population import python_identities,swift_identities,ui_identities
@@ -277,12 +280,23 @@ def derive_record(identity, run, *, before=None):
                             "head_tree_sha": git("rev-parse", head + "^{tree}"),
                             "fixture_sha256": hashlib.sha256(read_blob(head, "ci_scripts/fixture_server.py").encode()).hexdigest(),
                             "source_sha256": hashlib.sha256(read_blob(head, "scripts/strict_e2e_server.py").encode()).hexdigest()}
+    cloud_v2_inputs = None
+    from ci_xcode_cloud_groups import REGISTRY_PATH, snapshot
+    if identity["event"] == "pull_request" and any(entry["path"] == REGISTRY_PATH for entry in base_listing):
+        try:
+            head_listing, _ = tree_inputs(identity["head_sha"])
+            cloud_v2_inputs = snapshot(base, identity["head_sha"], base_listing, head_listing, read_blob,
+                                       git("rev-parse", identity["head_sha"] + "^{tree}"))
+        except (ContractError, KeyError, TypeError, ValueError, ElementTree.ParseError):
+            # Invalid Cloud eligibility must not suppress complete GitHub evidence.
+            cloud_v2_inputs = {"error": "Cloud trusted inputs differ or are unsupported; run GitHub"}
     return {"schema_version": 1, "run_id": run["id"], "workflow_id": run["workflow_id"],
             "workflow_path": run["path"], "identity": identity, "tree_listing": listing,
             "populations": derived["populations"], "base_populations": base_derived["populations"],
             "operational_populations": operational,
             "ui_inputs": ui,
             "cloud_inputs": cloud_inputs,
+            "cloud_v2_inputs": cloud_v2_inputs,
             "classification": derived["classification"], "reader_revision": base, "workflows": workflows,
             "base_registry": json.loads(read_blob(base, "scripts/ci-known-flaky.json"))
                              if any(entry["path"] == "scripts/ci-known-flaky.json" for entry in base_listing) else None,
@@ -320,17 +334,21 @@ def bind_ui_shards(source, shards):
         require(isinstance(devices, list) and devices and all(device in DEVICES for device in devices)
                 and len({DEVICES[device] for device in devices}) == 1, "dynamic UI shards need one literal platform")
         platform = DEVICES[devices[0]]
-        scope = devices[0] if len(devices) == 1 and matrix["shard"] == DYNAMIC_UI_SHARDS[devices[0]] else platform
-        require(matrix["shard"] == DYNAMIC_UI_SHARDS[scope], "unsupported dynamic UI shard list")
+        supported = [values for values in (DYNAMIC_UI_SHARDS, SELECTION_UI_SHARDS) if matrix["shard"] in values.values()]
+        require(len(supported) == 1, "unsupported dynamic UI shard list")
+        expressions = supported[0]
+        scope = devices[0] if len(devices) == 1 and matrix["shard"] == expressions[devices[0]] else platform
+        require(matrix["shard"] == expressions[scope], "unsupported dynamic UI shard list")
         chosen = [shards[device] if device in shards else shards[platform] for device in devices]
         require(all(item == chosen[0] for item in chosen), "devices sharing a matrix select different shards")
-        if scope in counts:
-            require(counts[scope][1] == chosen[0], "one UI output binds different shard lists")
-        counts[scope] = (counts.get(scope, (0, []))[0] + 1, chosen[0])
-    for scope, (count, chosen) in counts.items():
-        require(source.count(DYNAMIC_UI_SHARDS[scope]) == count, "dynamic UI shard list outside its matrix")
+        expression = expressions[scope]
+        if expression in counts:
+            require(counts[expression][1] == chosen[0], "one UI output binds different shard lists")
+        counts[expression] = (counts.get(expression, (0, []))[0] + 1, chosen[0])
+    for expression, (count, chosen) in counts.items():
+        require(source.count(expression) == count, "dynamic UI shard list outside its matrix")
         require(all(re.fullmatch(r"[a-z][a-z0-9-]*", shard) for shard in chosen), "invalid UI shard name")
-        source = source.replace(DYNAMIC_UI_SHARDS[scope], "[" + ", ".join(chosen) + "]")
+        source = source.replace(expression, "[" + ", ".join(chosen) + "]")
     return source
 
 
@@ -426,7 +444,7 @@ def producer_commands(source):
 
 
 def scoped_packing_intent(source):
-    """Only one literal archive-selection command can activate the successor protocol."""
+    """Only one literal selection command can activate the successor protocol."""
     from ci_ui_packing import PACKING_INTENT
     from check_workflow_policy import WorkflowLoader
     workflow = yaml.load(source, Loader=WorkflowLoader)
@@ -434,7 +452,7 @@ def scoped_packing_intent(source):
     matches = [(script, arguments) for job in workflow["jobs"].values() for step in job.get("steps", [])
                for script, arguments in producer_commands(step.get("run", "")) if PACKING_INTENT in arguments]
     require(not matches or len(matches) == 1 and matches[0][0] == "ci_ui_tests.py"
-            and matches[0][1][0] == "wait-archive" and matches[0][1].count(PACKING_INTENT) == 1,
+            and matches[0][1][0] in {"wait-archive", "select"} and matches[0][1].count(PACKING_INTENT) == 1,
             "unsupported scoped UI packing intent")
     require(source.count(PACKING_INTENT) == len(matches), "scoped UI packing intent outside archive selection")
     return bool(matches)
@@ -473,12 +491,21 @@ def workflow_contract(source, run, *, details=False, metadata=False):
                 producers.append({"tier": "gate-infrastructure", "job": "gate-classification", "shard": None,
                                   "population": "gate-classification"})
             ui_operations = [(arguments[0], arguments) for script, arguments in commands
-                             if script == "ci_ui_tests.py" and arguments and arguments[0] in {"wait-archive", "wait-cloud", "run"}]
+                             if script == "ci_ui_tests.py" and arguments and arguments[0] in {"wait-archive", "wait-cloud", "select", "wait-group", "run"}]
             for operation, arguments in ui_operations:
                 if operation == "wait-archive":
                     producers.append({"tier": "ui-infrastructure", "job": "ui-archive", "shard": None, "population": "ui-archive"})
                 elif operation == "wait-cloud":
                     producers.append({"tier": "ui-infrastructure", "job": "ui-cloud-wait", "shard": None, "population": "ui-cloud-wait"})
+                elif operation == "select":
+                    producers.append({"tier": "ui-infrastructure", "job": "ui-selection", "shard": None, "population": "ui-selection"})
+                elif operation == "wait-group":
+                    indexes = [index for index, item in enumerate(arguments) if item == "--group"]
+                    require(len(indexes) == 1 and indexes[0] + 1 < len(arguments)
+                            and arguments[indexes[0] + 1] in {"ios", "tvos"}, "literal Cloud group required")
+                    group = arguments[indexes[0] + 1]
+                    producers.append({"tier": "ui-infrastructure", "job": "ui-cloud-wait-" + group,
+                                      "shard": None, "population": "ui-cloud-wait-" + group})
                 else:
                     def option(name):
                         indexes = [index for index, item in enumerate(arguments) if item == name]
@@ -562,18 +589,34 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
     require(set(actual) == set(expected_jobs) and len(jobs) == len(actual), "required workflow jobs differ")
     allowed_skips = gate_not_applicable_jobs(record, run, metadata)
     cloud_jobs = set()
+    from ci_xcode_cloud_groups import cloud_devices, selection as cloud_selection, canonical_hash
+    external_devices = cloud_devices(cloud)
+    group_cloud = cloud is not None and cloud.get("schema_version") == 2
     if cloud is not None:
         from ci_xcode_cloud import admitted_population
         require(context == "ui" and not fork and record["identity"]["event"] == "pull_request",
-                "external Apple TV evidence cannot cover this source")
-        require(cloud["identities"] == admitted_population(record, approved=approved), "external Apple TV population differs")
-        cloud_jobs = {name for name, meta in metadata.items() if meta.get("device") == "appletv"}
+                "external Cloud evidence cannot cover this source")
+        if group_cloud:
+            external_population = []
+            for group, proof in cloud["groups"].items():
+                attempt = proof["evidence_attempt"]
+                require(type(attempt) is int and 0 < attempt <= run["run_attempt"], "Cloud group evidence attempt differs")
+                descriptor = cloud_selection(record, dict(run, run_attempt=attempt), group, approved=approved)
+                entries = sorted([entry for identities in descriptor["populations"].values() for entry in identities], key=identity_key)
+                require(proof["group"] == group and proof["identities"] == entries
+                        and proof["selection_sha256"] == canonical_hash(descriptor), "external Cloud selection differs")
+                external_population.extend(entries)
+            require(cloud["identities"] == sorted(external_population, key=identity_key), "Cloud group union differs")
+        else:
+            require(cloud.get("schema_version", 1) == 1 and cloud["identities"] == admitted_population(record, approved=approved),
+                    "external Apple TV population differs")
+        cloud_jobs = {name for name, meta in metadata.items() if meta.get("device") in external_devices}
         require(cloud_jobs and all(actual[name]["status"] == "completed" and actual[name]["conclusion"] == "skipped"
                 and (actual[name].get("runner_id") is None or type(actual[name].get("runner_id")) is int
                      and actual[name]["runner_id"] == 0) and actual[name].get("steps") == [] for name in cloud_jobs),
-                "routed GitHub Apple TV shards must be unexecuted literal skips")
-        require(not any(summary["run"]["job"] == "ui-appletv" for summary in summaries),
-                "mixed GitHub and Xcode Cloud Apple TV evidence")
+                "routed GitHub device shards must be unexecuted literal skips")
+        require(not any(summary["run"]["job"] in {"ui-" + device for device in external_devices} for summary in summaries),
+                "mixed GitHub and Xcode Cloud evidence within a platform group")
         allowed_skips |= cloud_jobs
     tree = record["identity"]["tree_sha"]
     ui_devices = ui_workflow_devices(source) if context == "ui" else set()
@@ -582,10 +625,14 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
     if context == "ui":
         require(ui is not None and ui_devices, "UI manifest and device populations are not admitted")
         require(all(meta["tier"] in {"ui", "ui-infrastructure"} for meta in metadata.values())
-                and sum(meta["population"] == "ui-archive" for meta in metadata.values()) == 1,
-                "UI workflow needs one archive selection producer and device shards")
+                and sum(meta["population"] in {"ui-archive", "ui-selection"} for meta in metadata.values()) == 1,
+                "UI workflow needs one selection producer and device shards")
         selection = ui.get("selection") or {}
-        scoped_selection = (selection.get("mode") == "scoped" and cloud is None
+        if any(meta["population"] == "ui-selection" for meta in metadata.values()):
+            require(selection.get("coverage") == "functional" and selection.get("packing")
+                    and selection.get("map_revision") == record["identity"]["base_sha"],
+                    "group selection infrastructure needs a trusted packed functional plan")
+        scoped_selection = (selection.get("mode") == "scoped" and (cloud is None or group_cloud)
                             and record["identity"]["event"] == "pull_request"
                             and (record["classification"]["ci_changing"] is False
                                  or selection.get("coverage") == "functional"))
@@ -601,15 +648,15 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
                     set(assigned) in (set(ui_populations[device]), selected)),
                     "workflow shard union differs from the admitted manifest")
             base_ui = record["ui_inputs"]["base"] or ui
-            if cloud is None or device != "appletv":
+            if device not in external_devices:
                 ui_base.extend(base_ui["base_populations"][device])
-        full_population = [entry for device, shards in ui_populations.items() if cloud is None or device != "appletv"
+        full_population = [entry for device, shards in ui_populations.items() if device not in external_devices
                            for entries in shards.values() for entry in entries]
         declared = [entry for summary in summaries if summary["run"]["tier"] == "ui"
                     for entry in summary["population"]["declared"]]
         if packed_selection or {identity_key(entry) for entry in declared} != {identity_key(entry) for entry in full_population}:
             selection = ui.get("selection") or {}
-            require(selection.get("mode") == "scoped" and cloud is None
+            require(selection.get("mode") == "scoped" and (cloud is None or group_cloud)
                     and record["identity"]["event"] == "pull_request"
                     and (record["classification"]["ci_changing"] is False or selection.get("coverage") == "functional"),
                     "UI population differs from full population and trusted selection")
@@ -645,6 +692,10 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
             return [test_identity("host", "UI archive selection")]
         if meta["population"] == "ui-cloud-wait":
             return [test_identity("host", "Apple TV cloud selection")]
+        if meta["population"] == "ui-selection":
+            return [test_identity("host", "UI selection")]
+        if meta["population"] in {"ui-cloud-wait-ios", "ui-cloud-wait-tvos"}:
+            return [test_identity("host", "UI cloud selection (" + meta["population"].removeprefix("ui-cloud-wait-") + ")")]
         if meta["tier"] == "ui":
             return ui_populations[meta["device"]][meta["shard"]]
         return (record["operational_populations"][meta["population"]][meta["shard"]]
@@ -717,7 +768,23 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
                 full_population, base_sha=record["identity"]["base_sha"])
     if verdict.get("not_applicable"):
         result["not_applicable"] = verdict["not_applicable"]
-    if cloud is not None:
+    if group_cloud:
+        from ci_population import removed_tests
+        result["xcode_cloud"] = {"schema_version": 2, "groups": {
+            group: {key: value for key, value in proof.items() if key != "identities"}
+            for group, proof in cloud["groups"].items()}}
+        for device in sorted(external_devices):
+            entries = [entry for entry in cloud["identities"] if entry["dimensions"]["device"] == device]
+            result["population"].append({"tier": "ui", "shard": device + "/xcode-cloud",
+                                         "expected": len(entries), "compiled": None, "observed": len(entries)})
+            base_population = record["ui_inputs"]["base"]["base_populations"][device]
+            present = [entry for shard in ui["populations"][device].values() for entry in shard]
+            result["removed_by_pr"].extend(removed_tests(
+                {"base_sha": record["identity"]["base_sha"], "identities": base_population},
+                present, base_sha=record["identity"]["base_sha"]))
+        if result["state"] == "success":
+            result["description"] = "Trusted functional groups passed on GitHub and/or API-verified Xcode Cloud"
+    elif cloud is not None:
         from ci_population import removed_tests
         from ci_xcode_cloud import applied_deselections
         deselected = applied_deselections(record, approved=approved)

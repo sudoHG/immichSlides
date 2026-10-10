@@ -1,4 +1,4 @@
-# Xcode Cloud Apple TV fixture UI
+# Xcode Cloud fixture UI
 
 The **UI - Apple TV (overflow)** workflow runs the same pull-request Apple TV
 fixture methods as the GitHub UI shards. It is test-only, accepts an API or manual
@@ -6,6 +6,106 @@ start on a branch, and uses the `immichSlides-tvOS` scheme with the
 `XcodeCloud-UI-tvOS` plan on Apple TV 4K (3rd generation), tvOS 27.0. Workflow
 configuration belongs to the maintainer. Only the trusted main router and API
 importer described below can replace GitHub's pull-request Apple TV evidence.
+
+## Prepared grouped evidence reader (v2)
+
+The reader supports a separate, **inactive** v2 protocol for functional PR tests:
+`ios` covers both iPhone and iPad; `tvos` covers Apple TV. The current router,
+importer, hooks, plans and ASC workflows still produce the v1 Apple TV protocol
+described below. This reader does not start Cloud builds, write selection pointers,
+change ASC or activate scoped routing. Part of #283 and Part of #83.
+
+Activation requires a later reviewed `scripts/ci-xcode-cloud-groups.json` on the
+PR's trusted base, with `schema_version: 2` and a `groups` object. Each registered
+group has a real ASC `workflow_id` and an `actions` list. Each action specifies
+`name`, the exact GitHub App `check_name`, repository-relative `plan_path` and
+`scheme_path`, and `devices`: a mapping from `iphone`, `ipad` or `appletv` to
+exact ASC `{device, os}` labels. Actions must partition the whole group's devices;
+workflows, check names and plan templates cannot overlap. No placeholder workflow
+UUIDs or unverified device labels are installed by the reader PR. The coordinator
+registers workflows after maintainer-approved ASC changes and API readback.
+
+Admission reads this registry only from the verified base. It hashes every
+`ci_scripts/` blob, the Cloud scripts, selection/packing/kind/shard rules, area map,
+duration data, fixture source/copy and registered schemes/plans. These must be
+regular Git blobs with the same bytes on the PR head and base; extra hooks,
+symlinks, case shadows and redirected plans refuse Cloud eligibility. Head tree
+must equal the admitted merge tree. The author comes from the authenticated PR
+API; only `sudoHG` same-repository PRs qualify. Forks, external PRs and nightly
+sources cannot supply v2 Cloud evidence. Invalid Cloud eligibility leaves complete
+GitHub evidence usable.
+
+`ci_xcode_cloud_groups.selection` reconstructs the immutable selection descriptor.
+It contains the admission identity (repository, PR, base, head, merge and tree),
+producer run and evidence attempt, group, registry entry, trusted file hashes,
+base area-map hash, packed-plan hash, exact identities per device and canonical
+runtime-plan hashes per action. Selection requires the base-derived packed
+functional protocol. A runtime plan is the trusted template with one enabled UI
+target, sorted exact `Class/testMethod()` `selectedTests`, and empty `skippedTests`.
+The template byte hash and generated plan hash are distinct. The descriptor and
+runtime plans use SHA-256 over UTF-8 JSON with sorted keys, compact separators,
+ASCII escaping and no non-finite values. An action shared by iPhone/iPad requires
+equal method selections; different selections require separate registered actions
+and plans. An empty or partially empty group stays on GitHub.
+
+The future trusted publisher writes the public status context
+`ci-xcc-selection/<producer-run>/<evidence-attempt>/<group>` on the exact head.
+Its description is `<base-sha> <descriptor-sha256>` and target is the fixed
+repository URL for the admitted merge commit. The reader accepts only a success
+from `sudohg-ci[bot]`, numeric user ID `339382712`, returned by that head's status
+endpoint with its exact API URL. It binds the route's `pointer_id` to the newest
+trusted status ID and refuses conflicting or ambiguous pointer history. A public
+pointer grants no artifact or uploader trust by itself.
+
+The v2 wire artifacts are `ci-xcc-route-<run>-<attempt>-<group>/route.json` and
+`ci-xcc-import-<run>-<attempt>-<group>/cloud.json`. Both retain the existing
+main-only router/importer authentication **before opening artifact bytes**:
+fixed workflow path/ID, same repository, `workflow_dispatch` on main, uploader
+SHA in main history, successful exact uploader attempt, bounded ZIP/JSON parsing,
+nonexpired and unambiguous artifact. Identical importer reuploads remain readable.
+Each JSON carries `schema_version: 2`, `identity`, `producer_run_id`,
+`producer_attempt`, `group`, `selection_sha256` and `pointer_id`. A routed decision
+also carries `decision: routed`, `workflow_id`, `cloud_run_id` and
+`runtime_plan_sha256`. An import additionally carries `route_artifact_id`, the
+complete `selection` descriptor, `runtime_plan_sha256`, ASC `evidence` and the
+existing `uploader_run_id`/`uploader_attempt`. Every binding is rechecked against
+admission; no receipt count, candidate registry or arbitrary URL is authoritative.
+
+Each build must resolve the exact head, explicitly be a branch build rather than
+a PR merge build, and complete successfully. Registered TEST actions and their
+newest exact-head Xcode Cloud App checks (app ID `117084`, slug `xcode-cloud`)
+must pass and link to the exact build/action. Every paginated method and
+destination must succeed; duplicate API results, duplicate identities on one
+device, missing/extra methods or destinations, different OS versions, skips and
+unknown outcomes refuse the whole group. The same method on iPhone and iPad is
+two required identities. Action intervals must fit inside the run. Compute
+minutes sum action durations; compiled counts remain `NOT_EXPOSED_BY_API`.
+
+Publication requires each group to have either complete GitHub summaries or one
+complete Cloud proof. Groups may choose different providers; partial evidence
+within a group cannot be combined. Routed GitHub shards must be completed literal
+skips with no runner and no steps, and must supply no UI summaries. A missing or
+invalid Cloud proof cannot turn these skips green. If GitHub instead executes all
+required selected shards, stale/failed Cloud artifacts are not read and complete
+GitHub evidence can pass. Scheduling the fallback belongs to the later producer.
+
+The prepared reader also recognizes a Linux `ci_ui_tests.py select --pack-scoped-ui`
+anchor (`ui-selection`), independent of the GitHub archive, and optional
+`wait-group --group ios|tvos` summaries (`ui-cloud-wait-ios|tvos`). The existing
+archive anchor remains supported; exactly one selection anchor is required.
+Dynamic matrices may bind the existing `needs.archive.outputs.<scope>_shards`
+or `needs.selection.outputs.<scope>_shards`, with the same exact base-derived
+lists and per-device bounds. These commands/outputs still require a later producer
+implementation. Separate device matrices must have distinct literal name prefixes
+so collapsed skips identify their device; ambiguous skips fail closed. Retained
+selection executions bind their original evidence attempt. A later GitHub rerun
+must execute after a historical collapsed Cloud skip.
+
+Delivery order is reader merge, producer/router/importer PR, then approved ASC
+configuration/readback and real-run acceptance. v1 full Apple TV history remains
+readable and is never reinterpreted as scoped or iOS coverage. Real v2 iPhone/iPad,
+mixed-group routing, pointer production and failure/budget acceptance are `NOT_RUN`
+until the later rollout; this preparation is not completion of #283.
 
 ## Population and fixture environment
 
