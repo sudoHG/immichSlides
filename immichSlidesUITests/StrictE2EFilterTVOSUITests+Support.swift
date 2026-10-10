@@ -455,7 +455,7 @@ extension StrictE2EFilterTVOSUITests {
         }
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            playbackItem.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The settings screen must show the playback entry.")
         moveFocusTo(playbackItem, directions: [.up, .down], message: "Focus must be able to move to playback settings.")
         XCUIRemote.shared.press(.select)
@@ -480,9 +480,9 @@ extension StrictE2EFilterTVOSUITests {
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
             try assertStillInApp(app)
             XCTAssertTrue(
-                app.buttons["settings.item.playback"].waitForExistence(timeout: TestWait.seconds(.infrastructure(8)))
+                app.buttons["settings.item.playback"].waitForExistence(timeout: TestWait.seconds(.product(8)))
                     || app.buttons["settings.item.server"].waitForExistence(
-                        timeout: TestWait.seconds(.infrastructure(2))),
+                        timeout: TestWait.seconds(.product(2))),
                 "Going back from server settings must stay on the settings home screen"
             )
         }
@@ -519,7 +519,7 @@ extension StrictE2EFilterTVOSUITests {
     @MainActor
     func openFilterConfigFromPlaybackSettings(app: XCUIApplication) throws {
         let filterConfig = app.buttons["settings.playback.filterConfig.button"]
-        if filterConfig.waitForExistence(timeout: TestWait.seconds(.infrastructure(2))) {
+        if filterConfig.waitForExistence(timeout: TestWait.seconds(.product(2))) {
             try selectFilterConfigOnPlaybackSettings(app: app, filterConfig: filterConfig)
             return
         }

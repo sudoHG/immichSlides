@@ -236,7 +236,7 @@ extension StrictE2EFilterIOSUITests {
         tapElement(serverEntry)
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            serverField.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Server settings page should show the URL")
         replaceText(
             in: serverField, app: app, with: serverURL, evidenceName: "server-url-replace",
@@ -283,7 +283,7 @@ extension StrictE2EFilterIOSUITests {
             }
         }
         let playbackEntry = app.descendants(matching: .any)["settings.item.playback"].firstMatch
-        if !playbackEntry.waitForExistence(timeout: TestWait.seconds(.infrastructure(2))) {
+        if !playbackEntry.waitForExistence(timeout: TestWait.seconds(.product(2))) {
             let back = app.buttons["global.back.button"]
             if back.exists && back.isHittable {
                 tapElement(back)
@@ -299,7 +299,7 @@ extension StrictE2EFilterIOSUITests {
             "After the server switch, settings must still offer the playback entry")
         tapElement(playbackEntry)
         let filterConfig = app.buttons["settings.playback.filterConfig.button"]
-        if !filterConfig.waitForExistence(timeout: TestWait.seconds(.infrastructure(2))) {
+        if !filterConfig.waitForExistence(timeout: TestWait.seconds(.product(2))) {
             let modePicker = app.segmentedControls["settings.playback.mode.picker"]
             XCTAssertTrue(
                 modePicker.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
@@ -361,9 +361,9 @@ extension StrictE2EFilterIOSUITests {
         }
         XCTAssertTrue(
             app.descendants(matching: .any)["settings.item.server"].firstMatch.waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(8)))
+                timeout: TestWait.seconds(.product(8)))
                 || app.descendants(matching: .any)["settings.item.playback"].firstMatch.waitForExistence(
-                    timeout: TestWait.seconds(.infrastructure(2))),
+                    timeout: TestWait.seconds(.product(2))),
             "Playback page must open settings"
         )
     }
@@ -378,7 +378,7 @@ extension StrictE2EFilterIOSUITests {
         tapElement(playbackEntry)
         XCTAssertTrue(
             app.segmentedControls["settings.playback.displayMode.picker"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(8))),
+                timeout: TestWait.seconds(.product(8))),
             "Playback settings must offer the display policy"
         )
     }

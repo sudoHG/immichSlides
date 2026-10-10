@@ -52,7 +52,7 @@ extension StrictE2EFirstBatchIOSUITests {
         let playbackEntry: XCUIElement
         if UIDevice.current.userInterfaceIdiom == .pad {
             if app.switches["settings.playback.autoPlay.toggle"].waitForExistence(
-                timeout: TestWait.seconds(.infrastructure(2)))
+                timeout: TestWait.seconds(.product(2)))
             {
                 return
             }
@@ -221,9 +221,10 @@ extension StrictE2EFirstBatchIOSUITests {
     }
 
     @MainActor
-    func revealPlaybackControlsWithoutWaitHelper(app: XCUIApplication) {
+    func revealPlaybackControlsWithoutWaitHelper(app: XCUIApplication, shouldRefreshAutoHideTimer: Bool = false) {
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        if playPause.exists && playPause.isHittable { return }
+        // A visible bar can be near expiry after an observation hold; refresh it before evidence reads.
+        if !shouldRefreshAutoHideTimer && playPause.exists && playPause.isHittable { return }
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
         _ = waitUntil(timeout: TestWait.seconds(.product(4))) { playPause.exists }
     }

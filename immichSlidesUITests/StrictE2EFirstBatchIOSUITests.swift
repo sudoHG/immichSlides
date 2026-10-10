@@ -75,6 +75,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(8))),
             "After auto-advance, the playback controls must be revealable."
         )
+        revealPlaybackControlsWithoutWaitHelper(app: app, shouldRefreshAutoHideTimer: true)
         attachStrictE2EScreenshot(app: app, name: "journey-b-after-autoplay-5s-\(currentDeviceTag())")
         recordControlTimeline(app: app, event: "journey-b-after-autoplay")
 
@@ -83,7 +84,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         // reveal it again before acting.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
         XCTAssertTrue(
-            playPause.waitForExistence(timeout: TestWait.seconds(.infrastructure(4))),
+            playPause.waitForExistence(timeout: TestWait.seconds(.product(4))),
             "The playback page must show Play/Pause.")
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
@@ -97,6 +98,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(8))),
             "After pausing, the playback controls must still be revealable."
         )
+        revealPlaybackControlsWithoutWaitHelper(app: app, shouldRefreshAutoHideTimer: true)
         attachStrictE2EScreenshot(app: app, name: "journey-b-after-pause-10s-\(currentDeviceTag())")
         XCTAssertEqual(
             playPauseState(playPause),

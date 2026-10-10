@@ -192,7 +192,7 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     func dismissPlaybackEntryHintIfNeeded(app: XCUIApplication) {
         let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
-        if banner.waitForExistence(timeout: TestWait.seconds(.infrastructure(2))) {
+        if banner.waitForExistence(timeout: TestWait.seconds(.product(2))) {
             tapElement(banner)
             _ = waitUntil(timeout: TestWait.seconds(.product(2))) { !banner.exists }
         }

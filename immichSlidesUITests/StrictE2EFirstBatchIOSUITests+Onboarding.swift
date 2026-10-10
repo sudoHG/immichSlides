@@ -188,7 +188,7 @@ extension StrictE2EFirstBatchIOSUITests {
             if continueButton.isHittable {
                 continueButton.tap()
             }
-            let settled = waitUntil(timeout: TestWait.seconds(.infrastructure(4))) {
+            let settled = waitUntil(timeout: TestWait.seconds(.product(4))) {
                 !continueButton.exists || self.isSavePasswordPromptShown(app: app)
             }
             if settled && !continueButton.exists {

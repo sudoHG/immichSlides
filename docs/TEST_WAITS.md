@@ -37,8 +37,9 @@ Access-lifecycle timing starts at the original user action. Pause holds, backgro
 holds, first-wake evidence, PIN-gate responses and the resume interval's tolerance
 remain product timing. A screenshot capture can have its own fixed evidence budget
 without extending the first-transition deadline; preserve both bounds separately.
-Settings-route probes and responses after Back or Playback taps also stay fixed;
-those windows decide the next interaction rather than await fixture availability.
+Settings and Continue responses, settings-route probes, Back/Playback responses
+and optional-hint observations keep their original fixed windows; they determine
+the next UI action rather than await fixture availability.
 Shared constants used for both machinery readiness and user-visible responses
 stay product. Give genuine first-launch, fixture and connection readiness an
 independent infrastructure budget at the call site. The first assertion after a
