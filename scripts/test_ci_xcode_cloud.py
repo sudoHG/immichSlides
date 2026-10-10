@@ -466,6 +466,10 @@ class GroupProducerTests(unittest.TestCase):
 
     def setUp(self):
         GroupEvidenceTests.setUp(self)
+        from datetime import timedelta
+        start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = (start + timedelta(days=32)).replace(day=1)
+        self.registry.update(cap_minutes=2700, billing_window={"start": start.isoformat(), "end": end.isoformat()})
 
     def test_pointer_writer_reuses_identical_status_and_refuses_conflicting_history(self):
         from ci_xcode_cloud_selection import write_pointer
@@ -751,6 +755,26 @@ class GroupProducerTests(unittest.TestCase):
             result = router.prepare_group(api, lambda: asc, self.run, "ios", sleep=sleep, monotonic=lambda: 0)
         self.assertEqual(result["decision"], "pending")
         sleep.assert_called_once_with(15)
+
+    def test_missing_confirmed_allowance_or_billing_period_refuses_cloud_before_asc(self):
+        import ci_xcode_cloud_group_route as router
+        self.registry["routing_enabled"] = True
+        api = Mock()
+        api.pages.return_value = [self.pointer]
+        reviewed = dict(self.registry)
+        for missing in ("cap_minutes", "billing_window"):
+            with self.subTest(missing=missing):
+                self.registry.clear()
+                self.registry.update({key: value for key, value in reviewed.items() if key != missing})
+                factory = Mock(side_effect=AssertionError("ASC must not be accessed without confirmed account policy"))
+                with patch.object(router, "current_producer"), patch.object(router, "trusted_admissions", return_value={123: self.record}), \
+                        patch.object(router, "anchor", return_value="ui-selection"), \
+                        patch.object(router, "archive_evidence_run", return_value=dict(self.run, archive_job={"status": "completed", "conclusion": "success"})), \
+                        patch.object(router, "selection_open", return_value=True), patch.object(router, "remaining_seconds", return_value=100), \
+                        patch.object(router, "queue_snapshot", return_value={"seconds": 7200, "free_slots": 0, "can_prove_saturation": True}):
+                    result = router.prepare_group(api, factory, self.run, "ios")
+                self.assertEqual((result["decision"], result["reason"]), ("fallback", "cloud-budget-unavailable"))
+                factory.assert_not_called()
 
     def test_same_selection_cannot_post_again_but_a_full_rerun_can_choose_another_provider(self):
         import ci_xcode_cloud_group_route as router

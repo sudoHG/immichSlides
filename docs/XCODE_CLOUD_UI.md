@@ -140,6 +140,8 @@ measured wall times.
 The start job holds the shared account lock and refreshes head, pointer, queue,
 inventory and budget immediately before its single POST. The policy cap is
 2,700 compute minutes, reduced when the confirmed account allowance is smaller.
+Missing confirmed `cap_minutes` or a valid Apple `billing_window` returns the
+group to GitHub before reading ASC inventory; a UTC-only estimate cannot start it.
 Admission uses destination wall-time accounting across every reviewed product
 and workflow, including failed actions and active work; unknown configuration,
 missing inventory or missing timestamps refuses a new start. `R` is the selected

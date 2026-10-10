@@ -255,6 +255,11 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         if not receipt["capacity"]["can_prove_saturation"] or receipt["capacity"]["free_slots"]:
             receipt["reason"] = "github-capacity-or-queue-uncertain"
             return receipt
+        stage = "cloud-budget-unavailable"
+        require(isinstance(registration.get("billing_window"), dict) and "cap_minutes" in registration,
+                "confirmed Cloud allowance and Apple billing period are required")
+        policy = month_policy(now, registration["billing_window"], cap_minutes=registration["cap_minutes"])
+        receipt["budget_policy"] = policy
         asc = asc_factory()
         stage = "cloud-inventory-unavailable"
         inventory = inventories(asc, registration)
@@ -267,8 +272,6 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         receipt["cloud_estimate"] = cloud_estimate(descriptor, selected,
             queue_seconds=registration["groups"][group].get("queue_seconds_upper", 120))
         stage = "cloud-budget-unavailable"
-        policy = month_policy(now, registration.get("billing_window"), cap_minutes=registration.get("cap_minutes", 2700))
-        receipt["budget_policy"] = policy
         usage = [account_usage(asc, registration, now, start) for start, _ in policy["windows"]]
         unresolved = unknown_starts(api, registration, inventory, current_uploader=current_uploader)
         receipt.update(usage=usage, unresolved_starts=unresolved)
