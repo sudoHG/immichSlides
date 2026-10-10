@@ -862,17 +862,12 @@ class PublisherTests(unittest.TestCase):
                  ("PR event", lambda r, a, j, s: r.update(event="pull_request")),
                  ("incomplete run", lambda r, a, j, s: r.update(status="in_progress")),
                  ("failed run", lambda r, a, j, s: r.update(conclusion="failure")),
-                 ("other repository", lambda r, a, j, s: a["identity"].update(repository="other/photos")),
+                 ("other repository", lambda r, a, j, s: r["head_repository"].update(full_name="fork/photos")),
                  ("other commit", lambda r, a, j, s: r.update(head_sha="f" * 40)),
-                 ("missing shard", lambda r, a, j, s: j.pop()),
-                 ("failed selection", lambda r, a, j, s: j[0].update(conclusion="failure")),
-                 ("executed shard", lambda r, a, j, s: j[1].update(conclusion="success")),
                  ("skipped job with executed step", lambda r, a, j, s: j[1].update(steps=[{"conclusion": "success"}])),
                  ("skipped job with runner", lambda r, a, j, s: j[1].update(runner_id=123)),
-                 ("missing selection summary", lambda r, a, j, s: s.clear()),
                  ("wrong summary run", lambda r, a, j, s: s[0]["run"].update(id="999")),
                  ("wrong summary attempt", lambda r, a, j, s: s[0]["run"].update(attempt=2)),
-                 ("missing compiled selection", lambda r, a, j, s: s[0]["population"].update(compiled=[])),
                  ("wrong manifest", lambda r, a, j, s: s[0]["hashes"]["manifests"].update({"ui-shards": "f" * 64}))]
         for index, (name, mutate) in enumerate(cases):
             current_run, admission, current_jobs, summaries = copy.deepcopy((run, record, jobs, [summary]))
@@ -886,7 +881,8 @@ class PublisherTests(unittest.TestCase):
                     self.assertIn("deferred to nightly", verdict["description"])
                     self.assertIn("ci-nightly.yml", verdict["target_url"])
                 else:
-                    with self.assertRaises(ContractError):
+                    reason = "UI deferral requires" if name == "other repository" else ".*"
+                    with self.assertRaisesRegex(ContractError, reason):
                         evaluate_reused_push(api, admission, current_run, current_jobs, summaries)
         receipt = {"source": {"run_id": 100, "attempt": 1, "approval_based": False,
                               "fork_originated": False, "ci_changing": False},

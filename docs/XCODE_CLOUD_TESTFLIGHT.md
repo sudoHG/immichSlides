@@ -168,6 +168,8 @@ complete that criterion. Do not retry or enable tag starts automatically.
 Only after the manual acceptance passes and the maintainer approves the separate
 release prerequisite/tag policy in #115:
 
+See the [nightly release eligibility rule](CI_NIGHTLY.md#results-scope-and-eligibility).
+
 1. Open **Xcode Cloud → Manage Workflows → Release to internal TestFlight → Edit**.
 2. Remove Manual Start. Add **Tag Changes**, choose **Custom Tags**, enter `v`,
    and select **Tags beginning with v**. Do not enter a literal tag named `v*`,
