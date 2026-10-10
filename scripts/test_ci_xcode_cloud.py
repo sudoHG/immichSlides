@@ -882,7 +882,7 @@ class RoutingPolicyTests(unittest.TestCase):
                 client.request("/v1/ciBuildRuns", method="POST", payload={})
             self.assertEqual(network.call_count, 4)
 
-    def test_unaffected_retained_or_late_producers_cannot_start_cloud(self):
+    def test_unaffected_scoped_retained_or_late_producers_cannot_start_cloud(self):
         import ci_xcode_cloud_route as router
         from datetime import timedelta
         fixture = CloudEvidenceTests()
@@ -896,6 +896,12 @@ class RoutingPolicyTests(unittest.TestCase):
             self.assertEqual(router.route_run(api, factory, fixture.run)["reason"], "trusted-app-unaffected")
             capacity.assert_not_called()
             fixture.record["classification"]["app_affected"] = True
+            # A scoped selection, including one without Apple TV tests, never starts a Cloud build.
+            base_ui = fixture.record.setdefault("ui_inputs", {}).get("base") or {}
+            fixture.record["ui_inputs"]["base"] = dict(base_ui, selection={"mode": "scoped"})
+            self.assertEqual(router.route_run(api, factory, fixture.run)["reason"], "scoped-ui-selection")
+            capacity.assert_not_called()
+            fixture.record["ui_inputs"]["base"] = base_ui
             with patch.object(cloud, "archive_evidence_run", return_value=dict(fixture.run, run_attempt=1)):
                 self.assertEqual(router.route_run(api, factory, fixture.run)["reason"], "retained-archive-selection")
             for late in (False, True):

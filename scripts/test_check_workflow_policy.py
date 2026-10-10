@@ -215,18 +215,31 @@ final class LocaleUITests: XCTestCase {
         document["jobs"]["appletv-shards"]["strategy"]["max-parallel"] = 1
         self.assertIn("ui-capacity", self.rules(document, path))
 
-    def test_ui_matrix_cannot_omit_a_manifest_partition(self):
+    def test_ui_matrix_cannot_omit_a_manifest_partition_or_unbind_its_selection(self):
+        from ci_publish_git import DYNAMIC_UI_SHARDS
         from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest
         root = Path(__file__).resolve().parent.parent
         path = ".github/workflows/ci-ui.yml"
         document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
         shards = list(parse_shard_manifest((root / MANIFEST_PATH).read_text())["shards"])
-        self.assertNotIn("ui-shards", self.rules(document, path, ui_shards=shards))
-        for job in ("shards", "appletv-shards"):
-            changed = copy.deepcopy(document)
-            changed["jobs"][job]["strategy"]["matrix"]["shard"].pop()
+        for job, platform in (("shards", "ios"), ("appletv-shards", "tvos")):
+            literal = copy.deepcopy(document)
+            literal["jobs"][job]["strategy"]["matrix"]["shard"] = list(shards)
+            dynamic = copy.deepcopy(literal)
+            dynamic["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS[platform]
+            dynamic["jobs"]["archive"]["outputs"].update({name: "${{ steps.select.outputs." + name + " }}"
+                                                          for name in (platform + "_shards", "run_" + platform)})
             with self.subTest(job=job):
-                self.assertIn("ui-shards", self.rules(changed, path, ui_shards=shards))
+                for accepted in (literal, dynamic):
+                    self.assertNotIn("ui-shards", self.rules(accepted, path, ui_shards=shards))
+                omitted = copy.deepcopy(literal)
+                omitted["jobs"][job]["strategy"]["matrix"]["shard"].pop()
+                unbound = copy.deepcopy(dynamic)
+                del unbound["jobs"]["archive"]["outputs"][platform + "_shards"]
+                other = copy.deepcopy(dynamic)
+                other["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS["tvos" if platform == "ios" else "ios"]
+                for refused in (omitted, unbound, other):
+                    self.assertIn("ui-shards", self.rules(refused, path, ui_shards=shards))
 
     def test_cloud_event_bridge_cannot_receive_secrets_or_execute_pr_code(self):
         root = Path(__file__).resolve().parent.parent

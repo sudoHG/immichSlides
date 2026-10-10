@@ -303,6 +303,32 @@ skipped, have no runner or steps, and supply no summary. Selection exclusions
 are not reported as test removals. External cloud evidence retains the full path;
 scoped cloud routing is outside this rollout.
 
+### Bound dynamic UI shards
+
+GitHub cannot skip one entry of a static matrix, so a scoped producer lists only
+the shards it runs: each UI matrix may take exactly
+`shard: ${{ fromJSON(needs.archive.outputs.ios_shards) }}` (or `tvos_shards`) beside
+a literal device list of that one platform. Any other dynamic matrix value, a
+second occurrence of that expression, or a mixed-platform device list is refused.
+Admission binds the expression in both stored `ci-ui.yml` texts to trusted names
+and leaves every other byte unchanged. For a non-CI-changing pull request with a
+`scoped` base selection, the names are the manifest-ordered shards with selected
+identities (iPhone and iPad must agree); for a docs-only `none` selection they are
+empty; otherwise they are every manifest shard. Every later reader (job
+contract, artifacts, reuse, reporting, Cloud skip recognition) uses the bound text,
+so a producer that schedules a different shard set fails the required-job check.
+Main-push reuse reads the pushed revision's workflow directly; it binds the dynamic
+form to every shard of that revision's manifest before comparing receipt shards,
+while input hashes still use the raw workflow bytes. Publication checks the scoped
+device scope against the bound workflow's device declarations, so a platform without
+selected shards still counts as present.
+The workflow's shard union must equal either the full manifest or exactly the
+non-empty selected shards. A platform bound to no shard is accepted only as its one
+collapsed matrix skip: complete, skipped, no runner and no steps. Static literal
+matrices remain readable unchanged. The main Cloud router returns `github` with
+reason `scoped-ui-selection` for every scoped admission, so a scoped pull request,
+including one whose selection has no Apple TV test, never starts a Cloud build.
+
 Scoped successes emit no identical-tree full-UI reuse receipt. Full receipts bind
 the area-map hash too, preserving main-push full coverage when area definitions
 change. Producer scheduling stays full until the separate producer rollout.

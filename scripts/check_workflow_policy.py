@@ -465,16 +465,25 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             expected_needs = "archive" if job_id == "cloud-wait" else ["archive", "cloud-wait"]
             if job.get("needs") != expected_needs:
                 flag(location, "xcc-dependencies", "Cloud selection and Apple TV must not depend on iOS shards")
-            if job_id == "appletv-shards" and job.get("if") != ("${{ !cancelled() && needs.archive.result == 'success' && "
-                    "needs.archive.outputs.run_ui == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}"):
+            if job_id == "appletv-shards" and job.get("if") not in {
+                    "${{ !cancelled() && needs.archive.result == 'success' && needs.archive.outputs." + run_output
+                    + " == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}" for run_output in ("run_ui", "run_tvos")}:
                 flag(location, "xcc-dependencies", "Apple TV shards require a successful archive and an unrouted selection")
         if path == ".github/workflows/ci-ui.yml" and job_id in {"shards", "appletv-shards"}:
             strategy = job.get("strategy")
             if not isinstance(strategy, dict) or strategy.get("fail-fast") is not False:
                 flag(location, "ui-fail-fast", "UI failures must retain every other partition's official results")
             matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
-            if ui_shards is not None and (not isinstance(matrix, dict) or matrix.get("shard") != ui_shards):
-                flag(location, "ui-shards", "UI matrix shards must equal the ordered manifest shard keys")
+            from ci_publish_git import DYNAMIC_UI_SHARDS
+            platform = "tvos" if job_id == "appletv-shards" else "ios"
+            outputs = jobs.get("archive", {}).get("outputs", {}) if isinstance(jobs.get("archive"), dict) else {}
+            dynamic = isinstance(matrix, dict) and matrix.get("shard") == DYNAMIC_UI_SHARDS[platform]
+            # Admission binds the dynamic list to the trusted selection; the archive step must publish it.
+            if dynamic and any(outputs.get(name) != "${{ steps.select.outputs." + name + " }}"
+                               for name in (platform + "_shards", "run_" + platform)):
+                flag(location, "ui-shards", "Dynamic UI shards must come from the archive selection step")
+            if ui_shards is not None and not dynamic and (not isinstance(matrix, dict) or matrix.get("shard") != ui_shards):
+                flag(location, "ui-shards", "UI matrix shards must equal the ordered manifest shard keys or the bound selection")
         if path == XCC_IMPORT_WORKFLOW:
             if (job_id != "import" or job.get("if") != "github.ref == 'refs/heads/main'"
                     or job.get("runs-on") != "ubuntu-24.04" or job.get("environment") != "xcode-cloud"

@@ -158,9 +158,12 @@ set across every device and shard. A selection error refuses scoped evidence whi
 preserving full-population admission. Partial, mixed or extra populations fail.
 Only independently empty selected shards may be unexecuted literal skips.
 Scoped success cannot supply a full post-merge reuse receipt.
-Producer selection and settings/core/docs timing acceptance are a later rollout,
-after the nightly full tier and partitioned shards land; this change edits neither
-the shard manifest nor assignment rules.
+Because GitHub cannot skip one entry of a static matrix, the reader also accepts
+[bound dynamic shard lists](CI_PUBLISHER.md#bound-dynamic-ui-shards): admission
+replaces the producer's `fromJSON(needs.archive.outputs.<platform>_shards)` with the
+trusted non-empty selected shards, or every manifest shard when the run is full,
+and the main Cloud router keeps scoped pull requests on GitHub. Producer selection
+and settings/core/docs timing acceptance follow in a separate producer change.
 
 The nightly full UI tier is the safety net for cross-area regressions. The release
 rule still requires a green, release-eligible nightly for the exact release SHA

@@ -27,6 +27,10 @@ from ci_ui_shards import DEVICES, MANIFEST_PATH, default_plan_population, parse_
 BASE_MODULES = ("ci_summary.py", "ci_population.py", "ci_verdict.py", "ui_test_inventory.py",
                 "run_host_checks.py")
 OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py", "ci_ui_selection.py")
+UI_WORKFLOW_PATH = ".github/workflows/ci-ui.yml"
+# The only dynamic matrix value a UI producer may use; admission binds it to trusted shard names.
+DYNAMIC_UI_SHARDS = {platform: "${{ fromJSON(needs.archive.outputs." + platform + "_shards) }}"
+                     for platform in ("ios", "tvos")}
 BRIDGE = '''import json,sys
 sys.path.insert(0, sys.argv[1])
 from ci_population import python_identities,swift_identities,ui_identities
@@ -218,6 +222,11 @@ def derive_record(identity, run, *, before=None):
                 raise
             # Bad candidate UI data cannot suppress a separate gate admission.
             ui[side] = {"error": ui_failure_hint(error) or "candidate UI inputs are invalid"}
+    if UI_WORKFLOW_PATH in workflows:
+        for side in ("base", "candidate"):
+            if ui.get(side) and "error" not in ui[side]:
+                workflows[UI_WORKFLOW_PATH][side] = bind_ui_shards(
+                    workflows[UI_WORKFLOW_PATH][side], ui_shard_lists(ui[side], identity, derived["classification"]))
     cloud_inputs = None
     from ci_xcode_cloud import PLAN_PATH, SCHEME_PATH
     cloud_paths = {PLAN_PATH, SCHEME_PATH, "scripts/strict_e2e_server.py", "ci_scripts/fixture_server.py"}
@@ -256,6 +265,61 @@ def derive_record(identity, run, *, before=None):
             "candidate_policy": json.loads(read_blob(commit, "scripts/ci-test-policy.json"))}
 
 
+def ui_matrices(source):
+    """(job, matrix) for UI shard matrices, without expanding them."""
+    from check_workflow_policy import WorkflowLoader
+    workflow = yaml.load(source, Loader=WorkflowLoader)
+    require(isinstance(workflow, dict) and isinstance(workflow.get("jobs"), dict), "workflow needs literal jobs")
+    return [(job, job["strategy"]["matrix"]) for job in workflow["jobs"].values()
+            if isinstance(job, dict) and isinstance(job.get("strategy"), dict)
+            and isinstance(job["strategy"].get("matrix"), dict) and "shard" in job["strategy"]["matrix"]]
+
+
+def ui_workflow_devices(source):
+    return {device for _, matrix in ui_matrices(source) for device in matrix.get("device", []) if device in DEVICES}
+
+
+def bind_ui_shards(source, shards):
+    """Replace each producer's dynamic shard list with the admitted trusted list.
+
+    Only `shard: ${{ fromJSON(needs.archive.outputs.<platform>_shards) }}` beside a literal
+    device list of that one platform is accepted; the rest of the text stays byte-identical.
+    """
+    if source is None:
+        return None
+    counts = {}
+    for _, matrix in ui_matrices(source):
+        if not isinstance(matrix["shard"], str):
+            continue
+        devices = matrix.get("device")
+        require(isinstance(devices, list) and devices and all(device in DEVICES for device in devices)
+                and len({DEVICES[device] for device in devices}) == 1, "dynamic UI shards need one literal platform")
+        platform = DEVICES[devices[0]]
+        require(matrix["shard"] == DYNAMIC_UI_SHARDS[platform], "unsupported dynamic UI shard list")
+        counts[platform] = counts.get(platform, 0) + 1
+    for platform, count in counts.items():
+        require(source.count(DYNAMIC_UI_SHARDS[platform]) == count, "dynamic UI shard list outside its matrix")
+        require(all(re.fullmatch(r"[a-z][a-z0-9-]*", shard) for shard in shards[platform]), "invalid UI shard name")
+        source = source.replace(DYNAMIC_UI_SHARDS[platform], "[" + ", ".join(shards[platform]) + "]")
+    return source
+
+
+def ui_shard_lists(ui, identity, classification):
+    """Shards a producer must run per platform: the non-empty trusted selection, or every manifest shard."""
+    order = list(ui["manifest"]["shards"])
+    selection = ui.get("selection") or {}
+    if not (identity["event"] == "pull_request" and classification.get("ci_changing") is False
+            and selection.get("mode") in {"scoped", "none"}):
+        return {platform: order for platform in ("ios", "tvos")}
+    lists = {}
+    for platform in ("ios", "tvos"):
+        chosen = [[shard for shard in order if selection["mode"] == "scoped" and selection["shards"][device][shard]]
+                  for device in sorted(selection.get("shards", {})) if DEVICES[device] == platform]
+        require(all(item == chosen[0] for item in chosen), "devices of one platform select different shards")
+        lists[platform] = chosen[0] if chosen else []
+    return lists
+
+
 def ui_failure_hint(error):
     message = str(error)
     if message == "workflow is absent on the base; exact-head approval required":
@@ -282,7 +346,8 @@ def ui_inputs(revision, listing, *, populations=None, base_populations=None, wor
     result.update(populations={}, base_populations={})
     devices = []
     if workflow is not None:
-        _, _, _, metadata = workflow_contract(workflow, run, metadata=True)
+        bound = bind_ui_shards(workflow, {platform: list(result["manifest"]["shards"]) for platform in ("ios", "tvos")})
+        _, _, _, metadata = workflow_contract(bound, run, metadata=True)
         devices = sorted({meta["device"] for meta in metadata.values() if meta["tier"] == "ui"})
         require(all(DEVICES[device] in result["plans"] for device in devices), "UI workflow device has no default plan")
     if modules is not None:
@@ -416,7 +481,7 @@ def gate_not_applicable_jobs(record, run, metadata):
             and meta["job"] == meta["tier"] + "-" + meta["shard"]}
 
 
-def ui_empty_selection_jobs(record, run, metadata):
+def ui_empty_selection_jobs(record, run, metadata, source=None):
     if record is None or run["path"] != ".github/workflows/ci-ui.yml":
         return set()
     ui = record.get("ui_inputs", {}).get("base") or {}
@@ -425,8 +490,10 @@ def ui_empty_selection_jobs(record, run, metadata):
             or record["classification"].get("ci_changing") is not False):
         return set()
     require(selection["map_revision"] == record["identity"]["base_sha"], "UI area map differs from admitted base")
-    require({meta["device"] for meta in metadata.values() if meta["tier"] == "ui"} == set(DEVICES),
-            "scoped UI requires all three devices")
+    # A bound platform without selected shards declares its devices but expands no job.
+    devices = (ui_workflow_devices(source) if source is not None
+               else {meta["device"] for meta in metadata.values() if meta["tier"] == "ui"})
+    require(devices == set(DEVICES), "scoped UI requires all three devices")
     return {name for name, meta in metadata.items() if meta["tier"] == "ui"
             and selection["shards"][meta["device"]][meta["shard"]] == []}
 
@@ -456,7 +523,7 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
                 "mixed GitHub and Xcode Cloud Apple TV evidence")
         allowed_skips |= cloud_jobs
     tree = record["identity"]["tree_sha"]
-    ui_devices = {meta["device"] for meta in metadata.values() if meta["tier"] == "ui"}
+    ui_devices = ui_workflow_devices(source) if context == "ui" else set()
     ui_populations, ui_base = {}, []
     ui_mode, empty_jobs = "full", set()
     if context == "ui":
@@ -464,11 +531,18 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
         require(all(meta["tier"] in {"ui", "ui-infrastructure"} for meta in metadata.values())
                 and sum(meta["population"] == "ui-archive" for meta in metadata.values()) == 1,
                 "UI workflow needs one archive selection producer and device shards")
+        selection = ui.get("selection") or {}
+        scoped_selection = (selection.get("mode") == "scoped" and cloud is None
+                            and record["identity"]["event"] == "pull_request"
+                            and record["classification"]["ci_changing"] is False)
         for device in ui_devices:
             platform = DEVICES[device]
             ui_populations[device] = ui["populations"][device]
             assigned = [meta["shard"] for meta in metadata.values() if meta.get("device") == device]
-            require(len(assigned) == len(set(assigned)) and set(assigned) == set(ui_populations[device]),
+            # A dynamic producer schedules only the non-empty selected shards.
+            selected = ({shard for shard, entries in selection["shards"][device].items() if entries}
+                        if scoped_selection else None)
+            require(len(assigned) == len(set(assigned)) and set(assigned) in (set(ui_populations[device]), selected),
                     "workflow shard union differs from the admitted manifest")
             base_ui = record["ui_inputs"]["base"] or ui
             if cloud is None or device != "appletv":

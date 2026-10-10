@@ -255,6 +255,10 @@ def route_run(api, asc_factory, run, *, mode="auto", override="", sleep=time.sle
         if record["classification"].get("app_affected") is not True:
             receipt["reason"] = "trusted-app-unaffected"
             return receipt
+        if ((record.get("ui_inputs") or {}).get("base") or {}).get("selection", {}).get("mode") == "scoped":
+            # The scoped reader refuses Cloud evidence; selected Apple TV tests run on GitHub, or none run.
+            receipt["reason"] = "scoped-ui-selection"
+            return receipt
         stage = "invalid-admission"
         from ci_xcode_cloud import archive_evidence_run
         evidence_run = archive_evidence_run(api, run)

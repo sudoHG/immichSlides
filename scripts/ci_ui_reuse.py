@@ -11,6 +11,7 @@ import zlib
 import yaml
 
 from ci_publish_git import git, read_blob, workflow_contract
+from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest
 from ci_summary import (ContractError, decode, fields, integer, nullable_string, parse_identity,
                         parse_summary, require, sha, string)
 
@@ -148,7 +149,11 @@ def find_reuse(api, push):
         require(len(merged) == 1, "reuse needs exactly one same-repository PR actually merged by this push")
         inputs = reuse_inputs(revision)
         pins = decode(read_blob(revision, "scripts/ci-pins.json"))
-        shards = device_shards(read_blob(revision, UI_WORKFLOW), {"id": 1, "run_attempt": 1})
+        # Bind a dynamic producer to every manifest shard of this revision; input hashes keep the raw bytes.
+        from ci_publish_git import bind_ui_shards
+        order = list(parse_shard_manifest(read_blob(revision, MANIFEST_PATH))["shards"])
+        shards = device_shards(bind_ui_shards(read_blob(revision, UI_WORKFLOW), {"ios": order, "tvos": order}),
+                               {"id": 1, "run_attempt": 1})
         publisher = api.repo("actions/workflows/ci-publish.yml", missing=True)
         workflow = api.repo("actions/workflows/ci-ui.yml", missing=True)
         if publisher is None or workflow is None:
@@ -186,6 +191,16 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
     actual = {job["name"]: job for job in jobs}
     require(len(actual) == len(jobs), "duplicate reuse jobs")
     main_push = run["path"] == UI_WORKFLOW and run["event"] == "push" and run["head_branch"] == "main"
+    workflow = yaml.load(source, Loader=WorkflowLoader)
+    for key, job in workflow["jobs"].items():
+        raw_name = job.get("name", key) if isinstance(job, dict) else key
+        matrix = (job.get("strategy") or {}).get("matrix") if isinstance(job, dict) else None
+        if isinstance(matrix, dict) and matrix.get("shard") == [] and raw_name in actual and raw_name not in names:
+            # Admission bound this platform to no selected shard; its matrix can only be one unexecuted skip.
+            skipped = actual.pop(raw_name)
+            require(skipped["status"] == "completed" and skipped["conclusion"] == "skipped"
+                    and (skipped.get("runner_id") is None or type(skipped.get("runner_id")) is int and skipped["runner_id"] == 0)
+                    and skipped.get("steps") == [], "an empty selected UI matrix may have executed")
     archive = actual.get("ui-archive", {})
     failed_pr_history = (historical and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
                          and metadata.get("ui-archive", {}).get("tier") == "ui-infrastructure"
@@ -193,7 +208,6 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
     cloud_pr = cloud is True and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
     historical_tv = historical and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
     if main_push or failed_pr_history or cloud_pr or historical_tv:
-        workflow = yaml.load(source, Loader=WorkflowLoader)
         for key, job in workflow["jobs"].items():
             raw_name = job.get("name", key)
             if not job.get("strategy", {}).get("matrix") or raw_name not in actual or raw_name in names:

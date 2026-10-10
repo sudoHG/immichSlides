@@ -41,6 +41,20 @@ FIXTURE_UI = '''jobs:
         with: {name: 'ui-${{ matrix.device }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}', path: records/summary.json}
 '''
 
+
+def dynamic_ui_workflow():
+    """FIXTURE_UI's archive plus one iOS and one Apple TV matrix with producer-bound shard lists."""
+    upload = ("      - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n        with: {name: "
+              "'ui-${{ matrix.device }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}', "
+              "path: records/summary.json}\n")
+    def matrix_job(key, name, devices, platform):
+        return (f"  {key}:\n    name: {name}\n    strategy:\n      max-parallel: 1\n      matrix:\n"
+                f"        device: [{devices}]\n        shard: ${{{{ fromJSON(needs.archive.outputs.{platform}_shards) }}}}\n"
+                "    steps:\n      - run: python3 scripts/ci_ui_tests.py run --device '${{ matrix.device }}' "
+                "--shard '${{ matrix.shard }}'\n" + upload)
+    return (FIXTURE_UI.split("  shards:")[0] + matrix_job("shards", "ui-${{ matrix.device }}-${{ matrix.shard }}",
+            "iphone, ipad", "ios") + matrix_job("appletv-shards", "ui-appletv-${{ matrix.shard }}", "appletv", "tvos"))
+
 # Reduced real jobs from UI run 37867257573, attempt 1: the archive timed out
 # before GitHub expanded the device matrix. Attempt 2 keeps this API history.
 UI_ARCHIVE_TIMEOUT_JOBS = [
@@ -710,7 +724,8 @@ class PublisherTests(unittest.TestCase):
                     return merged_prs
                 return [artifact] if path == "actions/artifacts" else [ui_run]
         with patch("ci_ui_reuse.reuse_inputs", return_value=inputs), \
-                patch("ci_ui_reuse.read_blob", return_value=json.dumps(pins)), \
+                patch("ci_ui_reuse.read_blob", side_effect=lambda revision, path: FIXTURE_UI if path.endswith(".yml")
+                      else json.dumps(UI_MANIFEST if path == "scripts/ci-ui-shards.json" else pins)), \
                 patch("ci_ui_reuse.device_shards", return_value=shards), \
                 patch("ci_ui_reuse.git"), patch("ci_ui_reuse.trusted_uploader"), \
                 patch("ci_publish.json_member", return_value=receipt) as member:
@@ -734,6 +749,19 @@ class PublisherTests(unittest.TestCase):
                 self.assertIsNone(find_reuse(RecordedAPI(), push))
                 with patch.object(RecordedAPI, "pages", side_effect=error):
                     self.assertIsNone(find_reuse(RecordedAPI(), push))
+        # A dynamic producer is bound to every manifest shard of the pushed revision before expansion.
+        dynamic_shards = sorted(f"{device}/{shard}" for device in ("iphone", "ipad", "appletv")
+                                for shard in UI_MANIFEST["shards"])
+        dynamic_receipt = dict(copy.deepcopy(receipt), device_shards=dynamic_shards,
+                               toolchains={name: receipt["toolchains"]["ipad/default"] for name in dynamic_shards})
+        blobs = {".github/workflows/ci-ui.yml": dynamic_ui_workflow(), "scripts/ci-ui-shards.json": json.dumps(UI_MANIFEST),
+                 "scripts/ci-pins.json": json.dumps(pins)}
+        with patch("ci_ui_reuse.reuse_inputs", return_value=inputs), \
+                patch("ci_ui_reuse.read_blob", side_effect=lambda revision, path: blobs[path]), \
+                patch("ci_ui_reuse.git"), patch("ci_ui_reuse.trusted_uploader"), \
+                patch("ci_publish.json_member", return_value=dynamic_receipt) as member:
+            self.assertEqual(find_reuse(RecordedAPI(), push)["artifact_id"], 22)
+            self.assertEqual(member.call_count, 1)
 
     def test_ui_rerun_normalizes_each_attempt_before_merging_shard_history(self):
         run = dict(RUN, event="push", head_branch="main", path=".github/workflows/ci-ui.yml", run_attempt=2)
@@ -1451,10 +1479,122 @@ class PublisherTests(unittest.TestCase):
                 with self.subTest(record=bad_record), self.assertRaises(ContractError):
                     evaluate_records(bad_record, run, jobs, summaries, approved=approved, fork=False)
 
+    def test_dynamic_ui_shards_bind_to_the_trusted_selection_and_skip_only_empty_platforms(self):
+        from ci_publish_git import bind_ui_shards, ui_inputs, ui_shard_lists
+        from ci_summary import identity_key
+        from ci_ui_reuse import expand_skipped_ui_matrix
+        from ci_ui_shards import DEVICES
+        from test_ci_verdict import approval_record
+        identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
+        run = dict(RUN, path=".github/workflows/ci-ui.yml")
+        workflow = dynamic_ui_workflow()
+        manifest = {"schema_version": 2, "revision": "method-v2", "default_shard": "default",
+                    "shards": {"default": [], "visual": ["VisualUITests/testFlow"], "other": ["OtherUITests"]}}
+        keys = ("SmokeUITests/testLaunch", "NewUITests/testNew", "VisualUITests/testFlow", "OtherUITests/testPlay")
+        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
+                       for platform in ("ios", "tvos")}
+        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["NewUITests", "OtherUITests"]},
+                              "settings": {"sources": ["immichSlides/Settings.swift"], "tests": ["VisualUITests"]},
+                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]}}}
+        files = {"scripts/ci-ui-shards.json": json.dumps(manifest),
+                 **{"immichSlides-" + suffix + ".xctestplan": json.dumps(UI_PLAN) for suffix in ("iOS", "tvOS")}}
+        listing = [{"path": path, "type": "blob", "mode": "100644"} for path in files]
+        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        selection_inputs = {"paths": ["immichSlides/Settings.swift"], "event": "pull_request", "area_map": area_map,
+                            "classification_policy": {"schema_version": 1, "app_unaffected": ["docs/**"], "ci_trusted": []},
+                            "build_target_paths": [], "map_revision": BASE,
+                            "map_sha256": hashlib.sha256(json.dumps(area_map).encode()).hexdigest()}
+        with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
+            admitted = ui_inputs(BASE, listing, populations=populations, base_populations=populations,
+                                 workflow=workflow, run=run, modules=modules, selection_inputs=selection_inputs)
+        classification = {"app_affected": True, "ci_changing": False}
+        lists = ui_shard_lists(admitted, identity, classification)
+        # Smoke is in default and the settings test in visual; the empty `other` shard is never scheduled.
+        self.assertEqual(lists, {"ios": ["default", "visual"], "tvos": ["default", "visual"]})
+        self.assertEqual(ui_shard_lists(admitted, identity, dict(classification, ci_changing=True)),
+                         {platform: ["default", "visual", "other"] for platform in ("ios", "tvos")})
+        bound = bind_ui_shards(workflow, lists)
+        names, _, _, metadata = workflow_contract(bound, run, metadata=True)
+        self.assertEqual(sorted(names), sorted(["ui-archive"] + [f"ui-{device}-{shard}" for device in DEVICES
+                                                                 for shard in ("default", "visual")]))
+        with self.assertRaises(ContractError):
+            workflow_contract(workflow, run, metadata=True)
+        for tampered in (workflow.replace("outputs.ios_shards", "outputs.tvos_shards", 1),
+                         workflow.replace("--shard '${{ matrix.shard }}'",
+                                          "--shard '${{ matrix.shard }}' # ${{ fromJSON(needs.archive.outputs.ios_shards) }}", 1)):
+            with self.subTest(tampered=tampered), self.assertRaises(ContractError):
+                bind_ui_shards(tampered, lists)
+        record = {"identity": identity, "ui_inputs": {"base": admitted, "candidate": admitted},
+                  "workflows": {run["path"]: {"base": bound, "candidate": bound}},
+                  "base_policy": {"schema_version": 1, "approval_records": [approval_record("ui")],
+                                  "expected_skips": [], "deselections": []},
+                  "classification": classification}
+        record["candidate_policy"] = record["base_policy"]
+        jobs, summaries = [], []
+        selected = {identity_key(entry) for device in DEVICES for entry in admitted["selection"]["populations"][device]}
+        for name in names:
+            meta = metadata[name]
+            expected = ([test_identity("host", "UI archive selection")] if meta["tier"] != "ui" else
+                        [entry for entry in admitted["populations"][meta["device"]][meta["shard"]]
+                         if identity_key(entry) in selected])
+            jobs.append({"name": name, "status": "completed", "conclusion": "success", "evidence_attempt": 1,
+                         "runner_id": 1, "steps": [{}]})
+            summary = valid_summary()
+            summary.update(identity=identity, status="passed")
+            summary["source"].update(repository=REPOSITORY, event="pull_request", workflow_path=run["path"], fork_originated=False)
+            summary["run"] = {"id": str(run["id"]), "attempt": 1, **{key: meta[key] for key in ("tier", "job", "shard")}}
+            summary["hashes"]["manifests"] = {"ui-shards": admitted["manifest_sha256"]}
+            if meta["tier"] == "ui":
+                summary["hashes"]["manifests"]["test-plan"] = admitted["plans"][DEVICES[meta["device"]]]["sha256"]
+            summary["population"].update(declared=expected, compiled=expected,
+                observed=[observation(entry, "passed", 0) for entry in expected], deselected=[], removed_by_pr=[])
+            summaries.append(summary)
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            scoped = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
+            self.assertEqual((scoped["state"], scoped["ui_population_mode"]), ("success", "scoped"))
+            # Fewer shards than the selection, or a full binding for the same evidence, fail closed.
+            with self.assertRaises(ContractError):
+                evaluate_records(record, run, jobs[:-1], summaries[:-1], approved=False, fork=False)
+            full = dict(record, workflows={run["path"]: {"base": bind_ui_shards(workflow, {
+                platform: list(manifest["shards"]) for platform in ("ios", "tvos")})}})
+            with self.assertRaises(ContractError):
+                evaluate_records(full, run, jobs, summaries, approved=False, fork=False)
+        # A platform bound to no shard is one unexecuted collapsed skip and nothing else.
+        empty_tv = bind_ui_shards(workflow, {"ios": lists["ios"], "tvos": []})
+        tv_names = [name for name in names if name.startswith("ui-appletv-")]
+        collapsed = {"name": "ui-appletv-${{ matrix.shard }}", "status": "completed", "conclusion": "skipped",
+                     "runner_id": None, "steps": []}
+        others = [job for job in jobs if job["name"] not in tv_names]
+        self.assertEqual(expand_skipped_ui_matrix(empty_tv, run, others + [collapsed]), others)
+        with self.assertRaises(ContractError):
+            expand_skipped_ui_matrix(empty_tv, run, others + [dict(collapsed, runner_id=7, steps=[{}])])
+        with self.assertRaises(ContractError):
+            expand_skipped_ui_matrix(bound, run, others + [collapsed])
+        # The empty platform carries through evidence collection and the verdict.
+        no_tv = copy.deepcopy(admitted)
+        no_tv["selection"]["populations"]["appletv"] = []
+        no_tv["selection"]["shards"]["appletv"] = {shard: [] for shard in manifest["shards"]}
+        self.assertEqual(ui_shard_lists(no_tv, identity, classification)["tvos"], [])
+        empty_record = dict(record, ui_inputs={"base": no_tv, "candidate": no_tv},
+                            workflows={run["path"]: {"base": empty_tv, "candidate": empty_tv}})
+        kept = [index for index, job in enumerate(jobs) if job["name"] not in tv_names]
+        _, _, artifact_names = workflow_contract(empty_tv, run, details=True)
+        by_artifact = {artifact_names[jobs[index]["name"]][0]: summaries[index] for index in kept}
+        class EmptyPlatformAPI:
+            def pages(self, path, *args):
+                return (others + [collapsed] if path.endswith("/jobs") else
+                        [{"name": name, "expired": False} for name in by_artifact])
+        with patch("ci_publish.json_member", side_effect=lambda api, artifact, filename: by_artifact[artifact["name"]]), \
+                patch("ci_publish_git.trusted_reader", return_value=modules):
+            fetched_jobs, fetched_summaries = producer_evidence(EmptyPlatformAPI(), run, empty_tv, admission=empty_record)
+            verdict = evaluate_records(empty_record, run, fetched_jobs, fetched_summaries, approved=False, fork=False)
+        self.assertEqual((verdict["state"], verdict["ui_population_mode"]), ("success", "scoped"))
+
     def test_admission_selects_with_base_map_even_when_candidate_map_and_reader_differ(self):
         from ci_ui_selection import AREA_MAP_PATH
         identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
-        workflow = FIXTURE_UI.replace("[iphone]", "[iphone, ipad, appletv]")
+        workflow = dynamic_ui_workflow()
         area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["NewUITests/testLaunch"],
                     "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["OtherUITests"]},
                               "settings": {"sources": ["immichSlides/Settings.swift"], "tests": ["VisualUITests/testFlow"]},
@@ -1498,6 +1638,10 @@ class OtherUITests: XCTestCase { func testPlay() {} }
             self.assertEqual(selection["map_sha256"], hashlib.sha256(files[AREA_MAP_PATH].encode()).hexdigest())
             for entries in selection["populations"].values():
                 self.assertEqual({entry["key"] for entry in entries}, {"NewUITests/testLaunch", "VisualUITests/testFlow"})
+            # Admission stores the producer workflow bound to the selected, non-empty shards.
+            names, _, _ = workflow_contract(record["workflows"][".github/workflows/ci-ui.yml"][side], RUN, details=True)
+            self.assertEqual(sorted(names), sorted(["ui-archive"] + [f"ui-{device}-{shard}" for device in
+                                                                     ("iphone", "ipad", "appletv") for shard in ("default", "visual")]))
 
     def test_fixture_device_observations_use_only_the_matching_hermetic_base_registry(self):
         from datetime import date

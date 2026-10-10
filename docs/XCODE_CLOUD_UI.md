@@ -116,7 +116,9 @@ is accepted: the global start lock, one in-flight rule and 45-hour cap bound thi
 risk once builds are visible. Test acceptance still verifies the chosen run's
 exact head, population and newest app check independently.
 
-Routing requires trusted `app_affected is True`, a same-repository current PR,
+Routing requires trusted `app_affected is True`, a base selection that is not
+[scoped](CI_PUBLISHER.md#bound-dynamic-ui-shards) (otherwise `scoped-ui-selection`
+keeps Apple TV on GitHub), a same-repository current PR,
 matching head/merge tree and the admitted exact population. It also requires at
 least **five running macOS jobs** and one macOS job queued for **120 seconds**,
 measured across repository attempts using `xcode-27` and `macos-*` runner labels.
