@@ -2,9 +2,9 @@
 
 `ci-nightly` schedules at 21:15 UTC on the default branch
 and supports `workflow_dispatch` on a selected branch. PRs touching its entry points
-run planning and credential-free live probes. Branch dispatches provide execution
-evidence; artifact replays verify aggregate/reader compatibility. It has read-only permissions and no publisher, reporter or release
-authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
+run planning and credential-free live probes. Branch dispatches provide diagnostic
+execution evidence. It has read-only permissions and no publisher, reporter or
+release authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
 `immich-test-server` environment after credential-free admission.
 
 ```bash
@@ -165,17 +165,6 @@ python3 -B scripts/ci_report.py --dry-run --diagnostic-nightly --run-id <RUN_ID>
 
 This diagnostic performs no GitHub writes and publishes no trusted history. Production
 reporting accepts only main; a branch result does not replace a main nightly.
-
-The UI rollout's shard execution was verified by real dispatch
-[`37986852737`](https://github.com/sudoHG/immichSlides/actions/runs/37986852737)
-at `9727365d38f66d24a7c7961bb3f6f02072eb2ca4`: nine shards, 317 declared,
-275 executed, six test failures and 42 unexecuted samples. Its remaining fixed
-aggregate was cancelled after more than an hour waiting for a macOS runner.
-Local replay of those real artifacts through the final producer and installed main
-reporter's aggregate entry point verifies the aggregate/reader round trip, preserving
-the original source, run and attempt. Replay does not make a cancelled run verified
-or publish reporting history. The first completed scheduled nightly on main after
-merge remains the end-to-end proof on the final workflow, currently **NOT_RUN**.
 
 ## Results, scope and eligibility
 

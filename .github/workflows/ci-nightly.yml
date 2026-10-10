@@ -213,7 +213,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -246,7 +245,6 @@ jobs:
         if: always()
         env:
           NIGHTLY_MATRIX_JOB_RESULT: ${{ needs.strict.result }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_nightly.py aggregate \
             --plan "$RUNNER_TEMP/nightly-plan/plan.json" --records-dir "$RUNNER_TEMP/nightly-records" \
@@ -400,6 +398,8 @@ jobs:
             ${{ runner.temp }}/ui-records/fixture-coverage.md
             ${{ runner.temp }}/ui-records/coverage-verdict.json
             ${{ runner.temp }}/ui-records/compiled-tests.json
+            ${{ runner.temp }}/ui-records/compiled-tests-attempt-1.json
+            ${{ runner.temp }}/ui-records/enumeration-retry.json
             ${{ runner.temp }}/ui-records/official-*.json
             ${{ runner.temp }}/ui-records/retry-invocations.json
             ${{ runner.temp }}/ui-records/shard-timing.json
