@@ -510,6 +510,25 @@ class GroupProducerTests(unittest.TestCase):
         self.assertEqual(result["running_mac_jobs"], 4)
         self.assertFalse(result["can_prove_saturation"])
 
+    def test_queue_snapshot_does_not_count_this_producers_blocked_matrices_twice(self):
+        from ci_xcode_cloud_group_route import queue_snapshot
+        now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+        running = [{"id": index, "status": "in_progress", "conclusion": None, "labels": ["xcode-27"], "runner_id": index,
+                    "name": "host-checks", "started_at": "2026-10-09T23:59:00Z", "steps": [{}]} for index in range(1, 6)]
+        blocked = {"id": 7, "status": "queued", "labels": ["xcode-27"], "runner_id": 0, "steps": [],
+                   "name": "ui-iphone-scoped-a", "created_at": "2026-10-09T23:59:00Z"}
+        history = dict(running[0], id=9, status="completed", conclusion="success", started_at="2026-10-09T23:00:00Z",
+                       completed_at="2026-10-09T23:45:00Z")
+        api = Mock()
+        api.repo.return_value = {"workflow_runs": [{"id": 901, "run_attempt": 1}]}
+        api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
+            [{"id": 900, "run_attempt": 1}, {"id": 123, "run_attempt": 2}] if path == "actions/runs" else
+            [blocked] if "/123/" in path else [history] if "/901/" in path else running)
+        selected = {"packing": {"estimated_job_seconds": {"iphone": [600], "ipad": [600]}}}
+        result = queue_snapshot(api, now, selected, "ios", producer_run_id=123)
+        self.assertTrue(result["can_prove_saturation"])
+        self.assertEqual(result["queued_mac_jobs"], 0)
+
     def test_two_minute_margin_free_capacity_budget_and_confirmed_month_end_rules(self):
         from ci_xcode_cloud_schedule import choose_cloud, month_policy
         now = datetime(2026, 10, 30, tzinfo=timezone.utc)

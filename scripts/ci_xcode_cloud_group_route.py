@@ -38,13 +38,16 @@ def selection_open(api, run, group):
     return not any(job["name"] == "ui-cloud-wait-" + group and job["status"] == "completed" for job in jobs)
 
 
-def queue_snapshot(api, now, selection, group):
+def queue_snapshot(api, now, selection, group, *, producer_run_id):
     runs, jobs, history = {}, [], {}
     for status in ("queued", "in_progress"):
         for run in api.pages("actions/runs", "workflow_runs", status=status):
             runs[run["id"]] = run
     for run in runs.values():
         for job in api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"):
+            if run["id"] == producer_run_id and not (job["status"] == "in_progress"
+                    and type(job.get("runner_id")) is int and job["runner_id"] > 0 and job.get("steps")):
+                continue  # These matrices wait for our choice and are modeled below.
             jobs.append(dict(job, run_id=run["id"]))
     recent = api.repo("actions/runs?status=completed&per_page=30")["workflow_runs"]
     require(recent, "GitHub duration history is unavailable")
@@ -243,7 +246,7 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         now = datetime.now(timezone.utc)
         selected = record["ui_inputs"]["base"]["selection"]
         stage = "github-queue-unavailable"
-        receipt["capacity"] = queue_snapshot(api, now, selected, group)
+        receipt["capacity"] = queue_snapshot(api, now, selected, group, producer_run_id=run["id"])
         if not receipt["capacity"]["can_prove_saturation"] or receipt["capacity"]["free_slots"]:
             receipt["reason"] = "github-capacity-or-queue-uncertain"
             return receipt
