@@ -183,14 +183,14 @@ final class ReduceMotionUITests: XCTestCase {
 
 private enum MotionTiming {
     // Off-state positive control hold, in seconds: watch 8 s at a 30 s interval so slow zoom and pan are visible.
-    static let positiveControlHold: TimeInterval = 8
+    static let positiveControlHold: TimeInterval = TestWait.seconds(.product(8))
     // On-state hold per segment, in seconds: the same scene and the new scene after next each need at least
     // 3 s of stability, plus a 0.5 s margin.
-    static let reducedMotionHold: TimeInterval = 3.5
-    static let foregroundTimeout: TimeInterval = 10
+    static let reducedMotionHold: TimeInterval = TestWait.seconds(.product(3.5))
+    static let foregroundTimeout: TimeInterval = TestWait.seconds(.infrastructure(10))
     static let settingsNavigationSteps = 6
-    static let settingsPageTimeout: TimeInterval = 4
-    static let settingsReadbackTimeout: TimeInterval = 3
+    static let settingsPageTimeout: TimeInterval = TestWait.seconds(.product(4))
+    static let settingsReadbackTimeout: TimeInterval = TestWait.seconds(.product(3))
 }
 
 @MainActor

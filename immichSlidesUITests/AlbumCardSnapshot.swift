@@ -1,10 +1,10 @@
 import XCTest
 
 private enum WaitTiming {
-    static let defaultSnapshotTimeoutSeconds: TimeInterval = 30
-    static let selectionChangeTimeoutSeconds: TimeInterval = 3
-    static let selectionPollSeconds: TimeInterval = 0.25
-    static let snapshotPollSeconds: TimeInterval = 0.5
+    static let defaultSnapshotTimeoutSeconds: TimeInterval = TestWait.seconds(.product(30))
+    static let selectionChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.product(3))
+    static let selectionPollSeconds: TimeInterval = TestWait.seconds(.product(0.25))
+    static let snapshotPollSeconds: TimeInterval = TestWait.seconds(.product(0.5))
 }
 
 /// The album filter cards as one snapshot of the app shows them.

@@ -22,7 +22,9 @@ final class VisualAuditMatrixUITests: XCTestCase {
                 let app = launchApp(shouldResetState: true, colorScheme: scheme)
                 XCUIDevice.shared.orientation = orientation.value
 
-                XCTAssertTrue(app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: 8))
+                XCTAssertTrue(
+                    app.textFields["firstboot.serverURL.field"].waitForExistence(
+                        timeout: TestWait.seconds(.infrastructure(8))))
                 attachScreenshot(app: app, name: "audit-matrix-firstboot-\(scheme)-\(orientation.name)-\(deviceTag())")
                 app.terminate()
             }
@@ -46,7 +48,7 @@ final class VisualAuditMatrixUITests: XCTestCase {
             for orientation in orientations {
                 XCUIDevice.shared.orientation = orientation.value
                 let randomButton = app.buttons["mode.random.button"]
-                XCTAssertTrue(randomButton.waitForExistence(timeout: 8))
+                XCTAssertTrue(randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))))
                 tapElement(randomButton)
                 attachScreenshot(
                     app: app, name: "audit-matrix-mode-random-selected-\(scheme)-\(orientation.name)-\(deviceTag())")
@@ -101,7 +103,7 @@ private extension VisualAuditMatrixUITests {
         app.launch()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: 10),
+            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
             "After the visual matrix injects the test server, the app should go straight to the mode selection page"
         )
         return app

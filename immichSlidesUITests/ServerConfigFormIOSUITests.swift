@@ -8,12 +8,12 @@ private enum KeyboardGeometry {
 }
 
 private enum WaitTiming {
-    static let briefElementTimeoutSeconds: TimeInterval = 1
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let keyboardTransitionTimeoutSeconds: TimeInterval = 1.5
-    static let readbackTimeoutSeconds: TimeInterval = 2
-    static let screenTransitionTimeoutSeconds: TimeInterval = 12
-    static let shortFocusSettleSeconds: TimeInterval = 0.15
+    static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.product(1))
+    static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(8))
+    static let keyboardTransitionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(1.5))
+    static let readbackTimeoutSeconds: TimeInterval = TestWait.seconds(.product(2))
+    static let screenTransitionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(12))
+    static let shortFocusSettleSeconds: TimeInterval = TestWait.seconds(.product(0.15))
 }
 
 #if os(iOS)
@@ -162,7 +162,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         tapElement(continueButton)
 
         XCTAssertTrue(
-            waitForSlideshowSettingsButton(app: app, timeout: 25),
+            waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))),
             "After entering playback, the settings button should be visible"
         )
     }

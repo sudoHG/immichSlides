@@ -13,7 +13,7 @@ extension StrictE2EFilterIOSUITests {
         var ids: [String] = []
         var raw: [String] = []
         openAlbumFilterFromEditor(app: app)
-        _ = waitUntil(timeout: 12) {
+        _ = waitUntil(timeout: TestWait.seconds(.infrastructure(12))) {
             app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "albumFilter.album.")).count > 0
         }
         let albumIDs = identifiers(in: app, prefix: "albumFilter.album.", suffix: ".button")
@@ -22,7 +22,7 @@ extension StrictE2EFilterIOSUITests {
         raw.append(contentsOf: albumRaw)
         returnFromAlbumFilter(app: app)
         openPersonFilterFromEditor(app: app)
-        _ = waitUntil(timeout: 12) {
+        _ = waitUntil(timeout: TestWait.seconds(.infrastructure(12))) {
             app.descendants(matching: .any).matching(
                 NSPredicate(format: "identifier BEGINSWITH %@", "personFilter.person.")
             ).count > 0
@@ -60,21 +60,26 @@ extension StrictE2EFilterIOSUITests {
         identifier: String
     ) {
         let modeButton = firstBootControl(in: app, identifier: identifier)
-        XCTAssertTrue(modeButton.waitForExistence(timeout: 8), "Mode page must offer \(identifier).")
+        XCTAssertTrue(
+            modeButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            "Mode page must offer \(identifier).")
         let continueButton = firstBootControl(in: app, identifier: "mode.continue.button")
         // The system Save Password prompt may cover the card late; after handling the named prompt,
         // still prove the target mode is selected.
-        _ = waitUntil(timeout: 2) { continueButton.exists && continueButton.isEnabled }
+        _ = waitUntil(timeout: TestWait.seconds(.product(2))) { continueButton.exists && continueButton.isEnabled }
         for _ in 0..<2 {
             if isSystemSavePasswordPromptVisible(app: app) {
                 _ = captureNamedPNG(app: app, name: "mode-selection-password-prompt")
-                guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 4) else {
+                guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(4)))
+                else {
                     XCTFail("The named Save Password prompt must be gone before choosing a mode")
                     return
                 }
             }
             if isOnboardingModeSelected(modeButton) { break }
-            if waitUntil(timeout: 4, condition: { modeButton.exists && modeButton.isHittable }) {
+            if waitUntil(
+                timeout: TestWait.seconds(.product(4)), condition: { modeButton.exists && modeButton.isHittable }
+            ) {
                 modeButton.tap()
             } else {
                 let matches = app.buttons.matching(identifier: identifier)
@@ -104,13 +109,14 @@ extension StrictE2EFilterIOSUITests {
                 // the selection and page checks below still decide the result.
                 modeButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             }
-            _ = waitUntil(timeout: 4) {
+            _ = waitUntil(timeout: TestWait.seconds(.product(4))) {
                 self.isSystemSavePasswordPromptVisible(app: app) || self.isOnboardingModeSelected(modeButton)
             }
         }
         if isSystemSavePasswordPromptVisible(app: app) {
             _ = captureNamedPNG(app: app, name: "mode-selection-password-prompt")
-            guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 4) else {
+            guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(4)))
+            else {
                 XCTFail("The named Save Password prompt must be dismissed before Continue on the mode page")
                 return
             }
@@ -122,13 +128,13 @@ extension StrictE2EFilterIOSUITests {
         continueButton.tap()
         // The password prompt may appear only after tapping Continue; resend the blocked Continue once,
         // and only if the prompt was actually dismissed.
-        let departureDeadline = Date().addingTimeInterval(8)
+        let departureDeadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
         var didResumeAfterPrompt = false
         while Date() < departureDeadline {
             if isSystemSavePasswordPromptVisible(app: app) {
                 _ = captureNamedPNG(app: app, name: "mode-departure-password-prompt")
                 guard !didResumeAfterPrompt,
-                    dismissSystemSavePasswordPromptIfPresent(app: app, timeout: 4)
+                    dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(4)))
                 else {
                     XCTFail("A Save Password prompt shown while leaving the mode page must be dismissed")
                     return
@@ -143,7 +149,7 @@ extension StrictE2EFilterIOSUITests {
                 }
             }
             if !modeButton.exists { return }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
     }
 
@@ -156,16 +162,16 @@ extension StrictE2EFilterIOSUITests {
     func pausePlaybackIfNeeded(app: XCUIApplication) {
         revealPlaybackControls(app: app)
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        guard playPause.waitForExistence(timeout: 4) else { return }
+        guard playPause.waitForExistence(timeout: TestWait.seconds(.product(4))) else { return }
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
         }
-        _ = waitUntil(timeout: 4) { self.playPauseState(playPause) == "play" }
+        _ = waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "play" }
     }
 
     @MainActor
     func revealPlaybackControls(app: XCUIApplication) {
-        _ = waitUntil(timeout: 4) {
+        _ = waitUntil(timeout: TestWait.seconds(.product(4))) {
             let settings = app.buttons["slideshow.control.settings.button"]
             if settings.exists && settings.isHittable { return true }
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
@@ -186,9 +192,9 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     func dismissPlaybackEntryHintIfNeeded(app: XCUIApplication) {
         let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
-        if banner.waitForExistence(timeout: 2) {
+        if banner.waitForExistence(timeout: TestWait.seconds(.product(2))) {
             tapElement(banner)
-            _ = waitUntil(timeout: 2) { !banner.exists }
+            _ = waitUntil(timeout: TestWait.seconds(.product(2))) { !banner.exists }
         }
     }
 
@@ -198,7 +204,9 @@ extension StrictE2EFilterIOSUITests {
             in: app,
             identifier: "firstboot.testConnection.button"
         )
-        XCTAssertTrue(testConnectionButton.waitForExistence(timeout: 8), "Test Connection must be shown")
+        XCTAssertTrue(
+            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            "Test Connection must be shown")
         tapElement(testConnectionButton)
     }
 
@@ -293,7 +301,7 @@ extension StrictE2EFilterIOSUITests {
                 XCTFail("Connection test showed a failure alert: \(alert.label) | \(details)")
                 return false
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
         }
         return saveButton.exists && saveButton.isEnabled
     }
@@ -329,7 +337,7 @@ extension StrictE2EFilterIOSUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
         return condition()
     }

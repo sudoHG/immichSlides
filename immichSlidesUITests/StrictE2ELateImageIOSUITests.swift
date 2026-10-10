@@ -2,7 +2,7 @@ import XCTest
 
 #if os(iOS)
 final class StrictE2ELateImageIOSUITests: XCTestCase {
-    private let lateRequestSettleSeconds: TimeInterval = 1.5
+    private let lateRequestSettleSeconds: TimeInterval = TestWait.seconds(.product(1.5))
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -65,17 +65,19 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
         // When random is already selected by default, do not tap the mode card or call waitForExistence again:
         // that would trigger the first A1 before entering playback.
         if !(continueButton.exists && continueButton.isEnabled) {
-            XCTAssertTrue(modeButton.waitForExistence(timeout: 8), "The mode page must provide mode.random.button.")
+            XCTAssertTrue(
+                modeButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+                "The mode page must provide mode.random.button.")
             modeButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             XCTAssertTrue(
-                waitUntil(timeout: 2) { continueButton.exists && continueButton.isEnabled },
+                waitUntil(timeout: TestWait.seconds(.product(2))) { continueButton.exists && continueButton.isEnabled },
                 "After selecting random, Continue must be enabled."
             )
         }
         // tap() waits for idle by default; the post-event idle wait lasts until the first 300ms delay ends.
         skipQuiescence(app: app) {
             tapElement(continueButton)
-            let deadline = Date().addingTimeInterval(8)
+            let deadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
             var isReady = false
             while Date() < deadline {
                 self.dismissPlaybackEntryHintIfPresent(app: app)
@@ -83,7 +85,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
                     isReady = true
                     break
                 }
-                RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+                RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.02))))
             }
             XCTAssertTrue(
                 isReady,
@@ -158,15 +160,16 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: 8), "The first-launch page must show the Save Settings button.")
+            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "The first-launch page must show the Save Settings button.")
         XCTAssertTrue(
-            waitForSaveEnabled(app: app, saveButton: saveButton, timeout: 45),
+            waitForSaveEnabled(app: app, saveButton: saveButton, timeout: TestWait.seconds(.infrastructure(45))),
             "After a real connection test succeeds, Save must become enabled."
         )
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-connection-passed-\(currentDeviceTag())")
         tapElement(saveButton)
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: 15),
+            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
             "After a successful save, mode selection must open."
         )
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-mode-selection-\(currentDeviceTag())")
@@ -176,16 +179,19 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
     private func fillFirstBootForm(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: 20), "A fresh install must open the normal first-launch page.")
+            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            "A fresh install must open the normal first-launch page.")
         replaceText(in: serverField, with: input.serverURL)
         XCTAssertEqual(
             serverField.value as? String, input.serverURL,
             "The public test URL must be written into the field unchanged.")
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "The first-launch page must show the API Key field.")
+        XCTAssertTrue(
+            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "The first-launch page must show the API Key field.")
         replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
-            waitUntil(timeout: 3) { self.secureFieldHasEnteredValue(apiKeyField) },
+            waitUntil(timeout: TestWait.seconds(.product(3))) { self.secureFieldHasEnteredValue(apiKeyField) },
             "The API Key must actually be entered into the secure field."
         )
         commitFocusedInputIfNeeded(app: app)
@@ -204,7 +210,9 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
             in: app,
             identifier: "firstboot.testConnection.button"
         )
-        XCTAssertTrue(testConnectionButton.waitForExistence(timeout: 8), "Test Connection must be shown")
+        XCTAssertTrue(
+            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "Test Connection must be shown")
         tapElement(testConnectionButton)
     }
 
@@ -222,7 +230,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
                 XCTFail("Connection test showed a failure alert: \(alert.label) | \(details)")
                 return false
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
         }
         return saveButton.exists && saveButton.isEnabled
     }
@@ -299,7 +307,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
         return condition()
     }

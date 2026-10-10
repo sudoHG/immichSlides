@@ -78,17 +78,17 @@ extension StrictE2EFirstBatchIOSUITests {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: 8),
+            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
             "The first-boot page must show the Save Settings button."
         )
         XCTAssertTrue(
-            waitForSaveEnabled(app: app, saveButton: saveButton, timeout: 45),
+            waitForSaveEnabled(app: app, saveButton: saveButton, timeout: TestWait.seconds(.infrastructure(45))),
             "Save must become enabled after a real connection test succeeds."
         )
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-connection-passed-\(currentDeviceTag())")
         tapElement(saveButton)
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: 15),
+            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
             "After a successful save, the app must reach mode selection."
         )
         XCTAssertTrue(app.buttons["mode.filtered.button"].exists, "The mode page must also offer the filter entry.")
@@ -98,7 +98,7 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func fillFirstBootForm(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
-        if !serverField.waitForExistence(timeout: 20) {
+        if !serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))) {
             attachStrictE2EScreenshot(app: app, name: "firstboot-missing-\(currentDeviceTag())")
             if app.buttons["slideshow.control.settings.button"].exists {
                 XCTFail("Playback page after uninstall means a dirty install container; cannot continue manual entry.")
@@ -115,10 +115,12 @@ extension StrictE2EFirstBatchIOSUITests {
         )
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 8), "The first-boot page must show the API Key field.")
+        XCTAssertTrue(
+            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            "The first-boot page must show the API Key field.")
         replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
-            waitUntil(timeout: 3) { self.hasSecureFieldEnteredValue(apiKeyField) },
+            waitUntil(timeout: TestWait.seconds(.product(3))) { self.hasSecureFieldEnteredValue(apiKeyField) },
             "API Key must reach the secure field; tapping blank space to hide the keyboard clears uncommitted input."
         )
         commitFocusedInputIfNeeded(app: app)
@@ -132,7 +134,7 @@ extension StrictE2EFirstBatchIOSUITests {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: 8),
+            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
             "The first-boot page must show the Test Connection button."
         )
         tapElement(testConnectionButton)
@@ -144,12 +146,12 @@ extension StrictE2EFirstBatchIOSUITests {
         guard UIDevice.current.userInterfaceIdiom == .pad else { return }
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(
-            waitUntil(timeout: 4) { XCUIDevice.shared.orientation.isLandscape },
+            waitUntil(timeout: TestWait.seconds(.infrastructure(4))) { XCUIDevice.shared.orientation.isLandscape },
             "iPad must rotate to landscape to record split-view evidence."
         )
         attachStrictE2EScreenshot(app: app, name: "\(name)-ipad-landscape")
         XCUIDevice.shared.orientation = .portrait
-        _ = waitUntil(timeout: 4) { XCUIDevice.shared.orientation.isPortrait }
+        _ = waitUntil(timeout: TestWait.seconds(.infrastructure(4))) { XCUIDevice.shared.orientation.isPortrait }
     }
 
     @MainActor
@@ -158,20 +160,24 @@ extension StrictE2EFirstBatchIOSUITests {
         identifier: String
     ) {
         let modeButton = firstBootControl(in: app, identifier: identifier)
-        XCTAssertTrue(modeButton.waitForExistence(timeout: 8), "The mode page must offer \(identifier).")
+        XCTAssertTrue(
+            modeButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            "The mode page must offer \(identifier).")
         let continueButton = firstBootControl(
             in: app,
             identifier: "mode.continue.button"
         )
         // First boot preselects random, so Continue is enabled from the start; isEnabled does not mean the
         // filter mode is selected.
-        _ = waitUntil(timeout: 2) { continueButton.exists && continueButton.isEnabled }
+        _ = waitUntil(timeout: TestWait.seconds(.product(2))) { continueButton.exists && continueButton.isEnabled }
         if !isOnboardingModeSelected(modeButton) {
             modeButton.tap()
         }
-        if !waitUntil(timeout: 2, condition: { self.isOnboardingModeSelected(modeButton) }) {
+        if !waitUntil(timeout: TestWait.seconds(.product(2)), condition: { self.isOnboardingModeSelected(modeButton) })
+        {
             modeButton.tap()
-            _ = waitUntil(timeout: 2, condition: { self.isOnboardingModeSelected(modeButton) })
+            _ = waitUntil(
+                timeout: TestWait.seconds(.product(2)), condition: { self.isOnboardingModeSelected(modeButton) })
         }
         // A late system "Save Password?" prompt, shown in the simulator's language, can swallow the
         // Continue tap. Dismiss it with Not Now only, so the test credential is never saved, and tap
@@ -182,7 +188,7 @@ extension StrictE2EFirstBatchIOSUITests {
             if continueButton.isHittable {
                 continueButton.tap()
             }
-            let settled = waitUntil(timeout: 4) {
+            let settled = waitUntil(timeout: TestWait.seconds(.product(4))) {
                 !continueButton.exists || self.isSavePasswordPromptShown(app: app)
             }
             if settled && !continueButton.exists {
@@ -208,7 +214,9 @@ extension StrictE2EFirstBatchIOSUITests {
             for label in ["以后", "Not Now"] where host.buttons[label].exists {
                 // ui-label-lookup: Dismiss the system Save Password sheet without saving credentials.
                 host.buttons[label].tap()
-                _ = waitUntil(timeout: 2) { !self.isSavePasswordPromptShown(app: app) }
+                _ = waitUntil(timeout: TestWait.seconds(.product(2))) {
+                    !self.isSavePasswordPromptShown(app: app)
+                }
                 return
             }
         }
@@ -221,7 +229,7 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func waitForFilterSummary(app: XCUIApplication) {
-        let reached = waitUntil(timeout: 20) {
+        let reached = waitUntil(timeout: TestWait.seconds(.product(20))) {
             app.buttons["filterSummary.album.button"].exists
                 || app.descendants(matching: .any)["filterSummary.album.button"].exists
                 || app.staticTexts["filterSummary.page.title"].exists
@@ -243,15 +251,15 @@ extension StrictE2EFirstBatchIOSUITests {
     func returnToModeSelectionFromFilterSummary(app: XCUIApplication) {
         let backButton = app.buttons["global.back.button"]
         XCTAssertTrue(
-            backButton.waitForExistence(timeout: 8),
+            backButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The first-boot filter summary must offer a way back to mode selection."
         )
         XCTAssertFalse(
             app.buttons["filterSummary.backToMode.button"].exists,
             "The iOS filter summary should no longer use a bottom back button, to avoid duplicating the second entry."
         )
-        _ = app.staticTexts["filterSummary.page.title"].waitForExistence(timeout: 4)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        _ = app.staticTexts["filterSummary.page.title"].waitForExistence(timeout: TestWait.seconds(.product(4)))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.6))))
 
         let offsets = [
             CGVector(dx: 0.20, dy: 0.20),
@@ -264,7 +272,7 @@ extension StrictE2EFirstBatchIOSUITests {
             } else {
                 backButton.coordinate(withNormalizedOffset: offset).tap()
             }
-            if app.buttons["mode.random.button"].waitForExistence(timeout: 5) {
+            if app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(5))) {
                 return
             }
             attachStrictE2EScreenshot(app: app, name: "journey-b-back-retry-\(attempt)-\(currentDeviceTag())")
@@ -276,9 +284,9 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func dismissPlaybackEntryHintIfNeeded(app: XCUIApplication) {
         let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
-        if banner.waitForExistence(timeout: 2) {
+        if banner.waitForExistence(timeout: TestWait.seconds(.product(2))) {
             tapElement(banner)
-            _ = waitUntil(timeout: 2) { !banner.exists }
+            _ = waitUntil(timeout: TestWait.seconds(.product(2))) { !banner.exists }
         }
     }
 
@@ -301,7 +309,7 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func captureHistoryIdentity(app: XCUIApplication, step: String) -> StrictE2EPhotoIdentity.Result {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
         revealPlaybackControlsWithoutWaitHelper(app: app)
         let png = captureNamedPNG(app: app, name: step)
         let identity = StrictE2EPhotoIdentity.classify(png: png)
@@ -483,7 +491,7 @@ extension StrictE2EFirstBatchIOSUITests {
                 XCTFail("Connection test showed a failure alert: \(alert.label) | \(details)")
                 return false
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
         }
         return saveButton.exists && saveButton.isEnabled
     }
@@ -544,7 +552,7 @@ extension StrictE2EFirstBatchIOSUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
         return condition()
     }

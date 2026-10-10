@@ -425,7 +425,9 @@ extension AppStoreScreenshotUITests {
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launch()
 
-        try waitOrThrow(app.buttons["mode.continue.button"], timeout: 18, "Should reach mode selection")
+        try waitOrThrow(
+            app.buttons["mode.continue.button"], timeout: TestWait.seconds(.infrastructure(18)),
+            "Should reach mode selection")
         return app
     }
 
@@ -635,7 +637,7 @@ extension AppStoreScreenshotUITests {
         slotDirectory: URL,
         notes: String = ""
     ) {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.7))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.7))))
 
         let screenshot = app.screenshot()
         let data = screenshot.pngRepresentation

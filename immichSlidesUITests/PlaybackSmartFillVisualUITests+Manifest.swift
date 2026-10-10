@@ -399,7 +399,7 @@ extension PlaybackSmartFillVisualUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
         }
         return condition()
     }

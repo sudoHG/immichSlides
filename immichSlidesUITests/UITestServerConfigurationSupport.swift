@@ -117,7 +117,7 @@ extension XCTestCase {
         }
         task.resume()
 
-        guard semaphore.wait(timeout: .now() + 15) == .success else {
+        guard semaphore.wait(timeout: .now() + TestWait.seconds(.infrastructure(15))) == .success else {
             task.cancel()
             throw ServerRequestError(message: "The configured server did not answer \(path) within 15 seconds")
         }

@@ -11,18 +11,18 @@ import ImageIO
 import XCTest
 
 enum AppStoreScreenshotUITestsWaitTiming {
-    static let connectionTimeoutSeconds: TimeInterval = 15
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
-    static let hintAnimationSettleSeconds: TimeInterval = 1.2
-    static let identityPollSeconds: TimeInterval = 0.3
-    static let navigationTimeoutSeconds: TimeInterval = 10
-    static let playbackEntryTimeoutSeconds: TimeInterval = 25
-    static let pollIntervalSeconds: TimeInterval = 0.1
-    static let screenTransitionTimeoutSeconds: TimeInterval = 12
-    static let settingsChangeTimeoutSeconds: TimeInterval = 6
-    static let shortInteractionTimeoutSeconds: TimeInterval = 3
-    static let transitionPollSeconds: TimeInterval = 0.4
+    static let connectionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(15))
+    static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(8))
+    static let elementAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(5))
+    static let hintAnimationSettleSeconds: TimeInterval = TestWait.seconds(.product(1.2))
+    static let identityPollSeconds: TimeInterval = TestWait.seconds(.product(0.3))
+    static let navigationTimeoutSeconds: TimeInterval = TestWait.seconds(.product(10))
+    static let playbackEntryTimeoutSeconds: TimeInterval = TestWait.seconds(.product(25))
+    static let pollIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.1))
+    static let screenTransitionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(12))
+    static let settingsChangeTimeoutSeconds: TimeInterval = TestWait.seconds(.product(6))
+    static let shortInteractionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(3))
+    static let transitionPollSeconds: TimeInterval = TestWait.seconds(.product(0.4))
 }
 
 enum AppStoreScreenshotUITestsScreenshotSelection {

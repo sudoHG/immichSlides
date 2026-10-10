@@ -159,11 +159,11 @@ extension PlaybackSmartFillVisualUITests {
         app.launch()
         if requestedOrientation.isLandscape {
             XCUIDevice.shared.orientation = requestedOrientation
-            _ = waitUntil(timeout: 8) { app.frame.width > app.frame.height }
+            _ = waitUntil(timeout: TestWait.seconds(.infrastructure(8))) { app.frame.width > app.frame.height }
         }
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: 12),
+            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
             "After injecting the test server, the app should go straight to mode selection"
         )
         return app
@@ -197,7 +197,8 @@ extension PlaybackSmartFillVisualUITests {
         tapElement(app.buttons["mode.random.button"])
         tapElement(app.buttons["mode.continue.button"])
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 30),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.product(30))),
             "After starting random playback, the playback control bar should appear"
         )
     }
@@ -209,14 +210,15 @@ extension PlaybackSmartFillVisualUITests {
 
         for index in 1...3 {
             tapNext(app: app)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.25))))
             saveEvidenceScreenshot(app: app, scenario: scenario, step: "\(index)-mid")
-            RunLoop.current.run(until: Date().addingTimeInterval(0.65))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.65))))
             saveEvidenceScreenshot(app: app, scenario: scenario, step: "\(index)-settled")
         }
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.next.button"].waitForExistence(timeout: 4),
+            app.buttons["slideshow.control.next.button"].waitForExistence(
+                timeout: TestWait.seconds(.product(4))),
             "\(scenario) control bar should still work after quick switching"
         )
     }
@@ -230,14 +232,17 @@ extension PlaybackSmartFillVisualUITests {
         tapElement(app.buttons["mode.continue.button"])
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
-        XCTAssertTrue(startButton.waitForExistence(timeout: 20), "Filter summary should show the Start playback button")
         XCTAssertTrue(
-            waitUntil(timeout: 20) { startButton.isEnabled },
+            startButton.waitForExistence(timeout: TestWait.seconds(.product(20))),
+            "Filter summary should show the Start playback button")
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.product(20))) { startButton.isEnabled },
             "After seeding the people filter, Start playback should be tappable")
         tapElement(startButton)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 45),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.product(45))),
             "After starting people-filter playback, the playback control bar should appear"
         )
     }
@@ -260,20 +265,21 @@ extension PlaybackSmartFillVisualUITests {
         var didStopAtReplayBoundary = false
 
         for index in 0..<targetSceneCount {
-            var manifest = try waitForCurrentManifest(app: app, timeout: index == 0 ? 45 : 25)
+            var manifest = try waitForCurrentManifest(
+                app: app, timeout: TestWait.seconds(index == 0 ? .infrastructure(45) : .product(25)))
             if index == 0,
                 shouldWaitForCompleteStartupRuntimePhases()
             {
                 manifest = try waitForCompleteStartupRuntimeManifest(
                     app: app,
                     initialManifest: manifest,
-                    timeout: 30
+                    timeout: TestWait.seconds(.product(30))
                 )
             }
             manifest = try waitForScreenshotReadyManifest(
                 app: app,
                 initialManifest: manifest,
-                timeout: 30,
+                timeout: TestWait.seconds(.product(30)),
                 scenario: scenario,
                 index: index
             )
@@ -381,7 +387,7 @@ extension PlaybackSmartFillVisualUITests {
             guard index < targetSceneCount - 1 else { continue }
             let previousRefs = manifest.slotRefs
             tapNext(app: app)
-            _ = waitUntil(timeout: 25) {
+            _ = waitUntil(timeout: TestWait.seconds(.product(25))) {
                 guard let nextManifest = self.currentManifest(app: app) else { return false }
                 return nextManifest.slotRefs != previousRefs
             }
@@ -435,14 +441,14 @@ extension PlaybackSmartFillVisualUITests {
     }
 
     func exerciseTwentySceneSwitches(app: XCUIApplication, scenario: String) throws {
-        _ = try waitForCurrentAssetReference(app: app, timeout: 45)
+        _ = try waitForCurrentAssetReference(app: app, timeout: TestWait.seconds(.infrastructure(45)))
         var switchedCount = 1
 
         for _ in 0..<19 {
-            let previousReference = try waitForCurrentAssetReference(app: app, timeout: 20)
+            let previousReference = try waitForCurrentAssetReference(app: app, timeout: TestWait.seconds(.product(20)))
             tapNext(app: app)
             XCTAssertTrue(
-                waitUntil(timeout: 25) {
+                waitUntil(timeout: TestWait.seconds(.product(25))) {
                     guard let nextReference = self.currentAssetReference(app: app) else { return false }
                     return nextReference != previousReference
                 },
@@ -460,13 +466,14 @@ extension PlaybackSmartFillVisualUITests {
 
     func tapNext(app: XCUIApplication) {
         let nextButton = app.buttons["slideshow.control.next.button"]
-        if nextButton.waitForExistence(timeout: 3) {
+        if nextButton.waitForExistence(timeout: TestWait.seconds(.product(3))) {
             tapElement(nextButton)
             return
         }
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: 5), "Next button should be found after waking the control bar")
+            nextButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            "Next button should be found after waking the control bar")
         tapElement(nextButton)
     }
 
@@ -486,10 +493,10 @@ extension PlaybackSmartFillVisualUITests {
         timeout: TimeInterval
     ) throws -> String {
         let statusProbe = app.otherElements["slideshow.smartfill.motionFrame.trace.status"]
-        let quietWait = min(timeout, smartFillMotionSampleDurationSeconds() + 5)
+        let quietWait = TestWait.seconds(.product(min(timeout, smartFillMotionSampleDurationSeconds() + 5)))
         RunLoop.current.run(until: Date().addingTimeInterval(quietWait))
         let isCompleteAfterQuietWait = statusProbe.exists && statusProbe.label.contains("status=complete")
-        let remainingTimeout = max(0, timeout - quietWait)
+        let remainingTimeout = TestWait.seconds(.product(max(0, timeout - quietWait)))
         let completed =
             isCompleteAfterQuietWait
             || waitUntil(timeout: remainingTimeout) {

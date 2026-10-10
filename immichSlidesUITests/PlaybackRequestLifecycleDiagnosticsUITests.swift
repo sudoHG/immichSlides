@@ -2,7 +2,7 @@ import XCTest
 
 #if os(iOS)
 final class PlaybackRequestLifecycleDiagnosticsUITests: XCTestCase {
-    private let previousFlowTransitionSettleDelay: TimeInterval = 0.65
+    private let previousFlowTransitionSettleDelay: TimeInterval = TestWait.seconds(.product(0.65))
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -89,7 +89,8 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
 
         let app = try launchConfiguredApp(mode: mode, evidenceDirectory: flowDirectory)
         defer { app.terminate() }
-        let initialAssetId = waitForCurrentAssetID(app: app, timeout: 30) ?? "missing"
+        let initialAssetId =
+            waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.infrastructure(30))) ?? "missing"
         try writeScreenshot(app: app, to: flowDirectory.appending(path: "playback-initial.png"))
         try writeText(
             historyLedgerSummaryLabel(app: app), to: flowDirectory.appending(path: "playback-history-initial.json"))
@@ -221,12 +222,13 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
         app.launch()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: 15),
+            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
             "After injecting the real server, the app should open the mode selection page"
         )
         startRandomPlaybackFromModeSelection(app: app)
         XCTAssertTrue(
-            app.descendants(matching: .any)["slideshow.requestLifecycle.summary.flag"].waitForExistence(timeout: 15),
+            app.descendants(matching: .any)["slideshow.requestLifecycle.summary.flag"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(15))),
             "With playback request lifecycle diagnostics on, the playback page should expose the summary probe"
         )
         return app
@@ -244,28 +246,34 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
         let app = try launchConfiguredApp(mode: .singlePhoto, evidenceDirectory: flowDirectory)
         defer { app.terminate() }
 
-        let settledAssetId = waitForCurrentAssetID(app: app, timeout: 30) ?? "missing"
+        let settledAssetId =
+            waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.infrastructure(30))) ?? "missing"
         try writeText("\(settledAssetId)\n", to: flowDirectory.appending(path: "settled-asset-id.txt"))
         try writeScreenshot(app: app, to: flowDirectory.appending(path: "single-kenburns-t00.png"))
-        RunLoop.current.run(until: Date().addingTimeInterval(6))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(6))))
         try writeScreenshot(app: app, to: flowDirectory.appending(path: "single-kenburns-t06.png"))
-        RunLoop.current.run(until: Date().addingTimeInterval(6))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(6))))
         try writeScreenshot(app: app, to: flowDirectory.appending(path: "single-kenburns-t12.png"))
         try writeText("0\n", to: flowDirectory.appending(path: "exit_code.txt"))
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         let randomButton = app.buttons["mode.random.button"]
-        XCTAssertTrue(randomButton.waitForExistence(timeout: 10), "Mode selection page should show random playback")
+        XCTAssertTrue(
+            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            "Mode selection page should show random playback")
         tapElement(randomButton)
 
         let continueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(continueButton.waitForExistence(timeout: 10), "Mode selection page should show Continue")
+        XCTAssertTrue(
+            continueButton.waitForExistence(timeout: TestWait.seconds(.product(10))),
+            "Mode selection page should show Continue")
         XCTAssertTrue(continueButton.isEnabled, "After selecting random playback, Continue should be tappable")
         tapElement(continueButton)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: 30),
+            app.buttons["slideshow.control.settings.button"].waitForExistence(
+                timeout: TestWait.seconds(.product(30))),
             "After entering playback, the control bar should be shown"
         )
     }
@@ -290,13 +298,13 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
         }
 
         for _ in 0..<count {
-            guard button.waitForExistence(timeout: 5), button.isEnabled else {
+            guard button.waitForExistence(timeout: TestWait.seconds(.product(5))), button.isEnabled else {
                 break
             }
             tapElement(button)
             actualTapCount += 1
             let nextAssetId =
-                waitForCurrentAssetIDChange(app: app, from: previousAssetId, timeout: 10)
+                waitForCurrentAssetIDChange(app: app, from: previousAssetId, timeout: TestWait.seconds(.product(10)))
                 ?? currentAssetID(app: app)
             if let nextAssetId {
                 if nextAssetId != previousAssetId {
@@ -320,25 +328,25 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
 
     func requestLifecycleSummaryLabel(app: XCUIApplication) -> String {
         let probe = app.descendants(matching: .any)["slideshow.requestLifecycle.summary.flag"]
-        guard probe.waitForExistence(timeout: 5) else { return "{}" }
+        guard probe.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))) else { return "{}" }
         return probe.label.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func flushRequestLifecycleEvidence(app: XCUIApplication, flowDirectory: URL) throws {
         let flushButton = app.buttons["slideshow.requestLifecycle.flush.button"]
         XCTAssertTrue(
-            flushButton.waitForExistence(timeout: 5),
+            flushButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
             "Playback request lifecycle diagnostics should expose an explicit flush control")
         tapElement(flushButton)
         XCTAssertTrue(
-            waitUntil(timeout: 5) {
+            waitUntil(timeout: TestWait.seconds(.infrastructure(5))) {
                 self.requestLifecycleEvidenceFlushCount(app: app) == 1
             },
             "After an explicit flush, the read-only summary probe should observe evidenceFlushCount == 1"
         )
         let summaryURL = flowDirectory.appending(path: "playback-request-lifecycle-summary.json")
         XCTAssertTrue(
-            waitUntil(timeout: 5) {
+            waitUntil(timeout: TestWait.seconds(.infrastructure(5))) {
                 FileManager.default.fileExists(atPath: summaryURL.path)
             },
             "After an explicit flush, the in-app summary artifact should be written once"
@@ -357,7 +365,7 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
 
     func historyLedgerSummaryLabel(app: XCUIApplication) -> String {
         let probe = app.descendants(matching: .any)["slideshow.historyLedger.summary.flag"]
-        guard probe.waitForExistence(timeout: 5) else { return "{}" }
+        guard probe.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))) else { return "{}" }
         return probe.label.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -413,7 +421,7 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
         }
         return condition()
     }

@@ -26,15 +26,15 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
 
         for index in 1...3 {
             pressNext(app: app)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.35))))
             attachScreenshot(app: app, name: "appletv-transition-\(index)-mid")
-            RunLoop.current.run(until: Date().addingTimeInterval(0.65))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.65))))
             attachScreenshot(app: app, name: "appletv-transition-\(index)-settled")
         }
 
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: 6),
+            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(6))),
             "Apple TV control bar settings button should still exist after quick switching"
         )
     }
@@ -51,12 +51,12 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
         startRandomPlaybackFromModeSelection(app: app)
 
         XCTAssertTrue(
-            waitUntil(timeout: 12) {
+            waitUntil(timeout: TestWait.seconds(.product(12))) {
                 !app.buttons["slideshow.control.settings.button"].exists
             },
             "\(scenario) control bar must auto-hide before sampling so clean motion rows are not polluted by the control bar"
         )
-        _ = try waitForCurrentManifest(app: app, timeout: 45)
+        _ = try waitForCurrentManifest(app: app, timeout: TestWait.seconds(.infrastructure(45)))
 
         let sampleDuration = smartFillMotionSampleDurationSeconds()
         let evidence = collectMotionRuntimeEvidence(
@@ -65,8 +65,9 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
             duration: sampleDuration,
             interval: smartFillMotionSampleIntervalSeconds()
         )
-        let traceText = try appSmartFillMotionTraceText(app: app, timeout: sampleDuration + 30)
-        let fallbackManifest = try waitForCurrentManifest(app: app, timeout: 5)
+        let traceText = try appSmartFillMotionTraceText(
+            app: app, timeout: TestWait.seconds(.infrastructure(sampleDuration + 30)))
+        let fallbackManifest = try waitForCurrentManifest(app: app, timeout: TestWait.seconds(.product(5)))
         let traceMotionRows = motionFrameRows(fromTraceText: traceText, fallbackManifest: fallbackManifest)
         let traceProductRows = productSceneSequenceRows(fromTraceText: traceText, fallbackManifest: fallbackManifest)
         let motionRows = traceMotionRows.isEmpty ? evidence.motionRows : traceMotionRows
@@ -132,13 +133,14 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
         startRandomPlaybackFromModeSelection(app: app)
 
         XCTAssertTrue(
-            waitUntil(timeout: 12) {
+            waitUntil(timeout: TestWait.seconds(.product(12))) {
                 !app.buttons["slideshow.control.settings.button"].exists
             },
             "\(scenario) control bar must auto-hide before the interaction"
         )
-        let initialManifest = try waitForCurrentManifest(app: app, timeout: 45)
-        let traceStartedAt = try waitForSmartFillMotionTraceCollecting(app: app, timeout: 45)
+        let initialManifest = try waitForCurrentManifest(app: app, timeout: TestWait.seconds(.infrastructure(45)))
+        let traceStartedAt = try waitForSmartFillMotionTraceCollecting(
+            app: app, timeout: TestWait.seconds(.infrastructure(45)))
 
         var actions: [[String: Any]] = []
         let sampleDuration = smartFillMotionInteractionSampleDurationSeconds()
@@ -207,7 +209,8 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
             actions: &actions
         )
 
-        let traceText = try appSmartFillMotionTraceText(app: app, timeout: sampleDuration + 30)
+        let traceText = try appSmartFillMotionTraceText(
+            app: app, timeout: TestWait.seconds(.infrastructure(sampleDuration + 30)))
         let traceMotionRows = motionFrameRows(fromTraceText: traceText, fallbackManifest: initialManifest)
         let traceProductRows = productSceneSequenceRows(fromTraceText: traceText, fallbackManifest: initialManifest)
         let motionRows = traceMotionRows.isEmpty ? evidence.motionRows : traceMotionRows

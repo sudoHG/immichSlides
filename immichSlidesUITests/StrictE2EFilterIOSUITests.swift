@@ -70,11 +70,12 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
 
         let modePicker = app.segmentedControls["settings.playback.mode.picker"]
         XCTAssertTrue(
-            modePicker.waitForExistence(timeout: 8), "Leaving the editor must return to the real playback settings page"
+            modePicker.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            "Leaving the editor must return to the real playback settings page"
         )
         let filteredMode = modePicker.buttons.element(boundBy: 1)
         XCTAssertTrue(
-            waitUntil(timeout: 6) { filteredMode.isSelected },
+            waitUntil(timeout: TestWait.seconds(.product(6))) { filteredMode.isSelected },
             "Filtered mode must stay selected after switching to the non-target album")
         _ = captureNamedPNG(app: app, name: "album-edit-switch-mode-filtered")
         returnToSlideshowFromSettings(app: app)
@@ -87,12 +88,13 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openAlbumFilterFromEditor(app: app)
         let clear = app.buttons["albumFilter.clear.button"]
         XCTAssertTrue(
-            clear.waitForExistence(timeout: 8) && clear.isHittable, "The real album editor must offer Clear Selection")
+            clear.waitForExistence(timeout: TestWait.seconds(.product(8))) && clear.isHittable,
+            "The real album editor must offer Clear Selection")
         tapElement(clear)
         let clearedTarget = albumCard(app: app, albumID: targetAlbumID)
         let clearedNonTarget = albumCard(app: app, albumID: nonTargetAlbumID)
         XCTAssertTrue(
-            waitUntil(timeout: 6) {
+            waitUntil(timeout: TestWait.seconds(.product(6))) {
                 !self.isAlbumCardSelected(clearedTarget) && !self.isAlbumCardSelected(clearedNonTarget)
             },
             "After tapping Clear, target and non-target albums must both really become unselected; tapping cards one by one must not stand in for the clear result"
@@ -101,11 +103,11 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         finishFilterEditor(app: app)
 
         XCTAssertTrue(
-            modePicker.waitForExistence(timeout: 8),
+            modePicker.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Clearing and leaving the editor must return to the real playback settings page")
         let randomMode = modePicker.buttons.element(boundBy: 0)
         XCTAssertTrue(
-            waitUntil(timeout: 6) { randomMode.isSelected },
+            waitUntil(timeout: TestWait.seconds(.product(6))) { randomMode.isSelected },
             "Leaving the editor with an empty filter must set the default mode back to random")
         _ = captureNamedPNG(app: app, name: "album-edit-switch-mode-random-after-clear")
         try StrictE2EVisualEvidence.writeRequiredJSON(
@@ -129,7 +131,9 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-empty")
         enterFilterSummary(app: app)
         let start = app.buttons["filterSummary.startPlayback.button"]
-        XCTAssertTrue(start.waitForExistence(timeout: 8), "Filter summary must show Start Playback")
+        XCTAssertTrue(
+            start.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            "Filter summary must show Start Playback")
         XCTAssertFalse(start.isEnabled, "An empty selection must not start")
         attachStrictE2EScreenshot(app: app, name: "filter-empty-\(currentDeviceTag())")
         try StrictE2EVisualEvidence.writeRequiredJSON(
@@ -158,7 +162,9 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "album-empty")
         enterFilterSummary(app: app)
         let start = app.buttons["filterSummary.startPlayback.button"]
-        XCTAssertTrue(start.waitForExistence(timeout: 8), "Filter summary must show Start Playback")
+        XCTAssertTrue(
+            start.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            "Filter summary must show Start Playback")
         XCTAssertFalse(start.isEnabled, "Start must be disabled with 0 albums / 0 people")
         attachStrictE2EScreenshot(app: app, name: "album-empty-selection-\(currentDeviceTag())")
         try StrictE2EVisualEvidence.writeRequiredJSON(
@@ -197,7 +203,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         _ = captureNamedPNG(app: app, name: "album-empty-after-return-slideshow")
         let emptyLabel = app.staticTexts["slideshow.emptyState.message"]
         XCTAssertTrue(
-            waitUntil(timeout: 20) { emptyLabel.exists && emptyLabel.label == emptyCopy },
+            waitUntil(timeout: TestWait.seconds(.product(20))) { emptyLabel.exists && emptyLabel.label == emptyCopy },
             "An empty album must show the frozen, existing production empty-result copy and must not keep the old non-empty pool"
         )
         try StrictE2EVisualEvidence.writeRequiredJSON(
@@ -246,10 +252,10 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let card = personNameElement(app: app, personID: personID)
         attachStrictE2EScreenshot(app: app, name: "person-navigation-before-selection-\(currentDeviceTag())")
         assertPersonNavigation(
-            back.waitForExistence(timeout: 8) && back.isHittable,
+            back.waitForExistence(timeout: TestWait.seconds(.product(8))) && back.isHittable,
             "Before selection, the person page Back button must be visible and hittable", app: app, personID: personID)
         assertPersonNavigation(
-            card.waitForExistence(timeout: 20) && card.isHittable,
+            card.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))) && card.isHittable,
             "Before selection, the target person card must be visible and hittable", app: app, personID: personID)
 
         selectPerson(app: app, personID: personID, isSoloOnly: false)
@@ -278,7 +284,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             summaryStart.exists && summaryStart.isHittable,
             "After Back, the filter summary must be visible and usable", app: app, personID: personID)
         assertPersonNavigation(
-            waitUntil(timeout: 5) { !back.exists || !back.isHittable },
+            waitUntil(timeout: TestWait.seconds(.product(5))) { !back.exists || !back.isHittable },
             "After returning to the summary, the person page Back button must be gone or not visible; do not rely only on the summary control's exists",
             app: app, personID: personID
         )
@@ -301,7 +307,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openPersonFilter(app: app)
         let toggle = personSoloOnlySwitch(app: app, personID: personID)
         assertPersonNavigation(
-            toggle.waitForExistence(timeout: 6) && (toggle.value as? String) == "1",
+            toggle.waitForExistence(timeout: TestWait.seconds(.product(6))) && (toggle.value as? String) == "1",
             "After going back and reopening, the target person's solo-only mode must still be on", app: app,
             personID: personID)
         selectPerson(app: app, personID: personID, isSoloOnly: false)
@@ -310,7 +316,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openPersonFilter(app: app)
         let reopenedToggle = personSoloOnlySwitch(app: app, personID: personID)
         assertPersonNavigation(
-            reopenedToggle.waitForExistence(timeout: 6) && (reopenedToggle.value as? String) == "0",
+            reopenedToggle.waitForExistence(timeout: TestWait.seconds(.product(6)))
+                && (reopenedToggle.value as? String) == "0",
             "After going back and reopening, the target person's solo-only mode must still be off", app: app,
             personID: personID)
     }
@@ -398,7 +405,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         var selectedBefore: Data?
         for index in 1...4 {
             try waitForDisplayControlsToHide(app: app)
-            RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.0))))
             let png = app.screenshot().pngRepresentation
             let step = String(format: "display-before-candidate-%02d", index)
             XCTAssertFalse(png.isEmpty, "Before-change candidate screenshot must not be empty: \(step)")
@@ -438,7 +445,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
 
         try waitForDisplayControlsToHide(app: app)
         var afterPNG: Data?
-        let afterIsStableSingle = waitUntil(timeout: 20) {
+        let afterIsStableSingle = waitUntil(timeout: TestWait.seconds(.product(20))) {
             let png = app.screenshot().pngRepresentation
             guard let candidate = try? self.displayCandidatePNG(png) else { return false }
             let identity = StrictE2EPhotoIdentity.classify(png: candidate)
@@ -488,7 +495,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     func waitForDisplayControlsToHide(app: XCUIApplication) throws {
         guard
             waitUntil(
-                timeout: 12,
+                timeout: TestWait.seconds(.product(12)),
                 condition: {
                     !app.buttons["slideshow.control.playPause.button"].exists
                 })
@@ -498,7 +505,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             )
         }
         // A 0.3 s exit animation still runs after the AX node disappears; wait for it before capturing.
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.5))))
     }
 
     // Seam: save filters on server A, then switch to B; old album/person IDs must not reach B's UI
@@ -554,7 +561,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try waitForDisplayControlsToHide(app: app)
 
         var singleAfterSwitchPNG: Data?
-        let isStableBSingle = waitUntil(timeout: 20) {
+        let isStableBSingle = waitUntil(timeout: TestWait.seconds(.product(20))) {
             let png = app.screenshot().pngRepresentation
             guard let candidate = try? self.displayCandidatePNG(png) else { return false }
             let identity = StrictE2EPhotoIdentity.classify(png: candidate)
@@ -618,7 +625,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         _ = captureNamedPNG(app: app, name: "server-switch-album-summary-\(albumA)")
         let startA = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startA.waitForExistence(timeout: 8) && startA.isEnabled,
+            startA.waitForExistence(timeout: TestWait.seconds(.product(8))) && startA.isEnabled,
             "Start Playback must be enabled after selecting the target album")
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
@@ -659,11 +666,11 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         returnToSlideshowFromSettings(app: app)
         pausePlaybackIfNeeded(app: app)
         _ = capturePlaybackPNG(app: app, name: "switch-b-play-1")
-        let beforeMarks = waitForDistinctRegionMarks(app: app, timeout: 8)
+        let beforeMarks = waitForDistinctRegionMarks(app: app, timeout: TestWait.seconds(.product(8)))
         if beforeMarks.count < 2 {
             tapNext(app: app)
         }
-        let multiMarks = waitForDistinctRegionMarks(app: app, timeout: 12)
+        let multiMarks = waitForDistinctRegionMarks(app: app, timeout: TestWait.seconds(.product(12)))
         XCTAssertGreaterThanOrEqual(
             multiMarks.count, 2,
             "Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count")
@@ -680,7 +687,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         )
         returnToSlideshowFromSettings(app: app)
         pausePlaybackIfNeeded(app: app)
-        let after = waitForStablePublicPhoto(app: app, timeout: 20)
+        let after = waitForStablePublicPhoto(app: app, timeout: TestWait.seconds(.product(20)))
         XCTAssertEqual(
             after?.status, .match,
             "After the change, wait for the current transition to end; the stable single photo must not be TRANSITION")

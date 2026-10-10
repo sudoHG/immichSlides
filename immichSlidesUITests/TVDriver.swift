@@ -137,11 +137,13 @@ struct TVDriver: PlaybackDriver {
     // to the Home screen.
     func returnToPlayback() {
         for _ in 0..<8 {
-            if Wait.until(timeout: 1.5, { isOnPlaybackLayer() }) { break }
+            if Wait.until(timeout: TestWait.seconds(.product(1.5)), { isOnPlaybackLayer() }) { break }
             press(.menu)
         }
         XCTAssertTrue(
-            Wait.held(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds, hold: 1.2) {
+            Wait.held(
+                timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds, hold: TestWait.seconds(.product(1.2))
+            ) {
                 isOnPlaybackLayer()
             },
             "Must be able to return from settings to playback."

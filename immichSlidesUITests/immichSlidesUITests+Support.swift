@@ -105,7 +105,7 @@ extension immichSlidesUITests {
             saveButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         let saveEnabledExpectation = NSPredicate(format: "isEnabled == true")
         let saveEnabledWait = expectation(for: saveEnabledExpectation, evaluatedWith: saveButton)
-        wait(for: [saveEnabledWait], timeout: 45)
+        wait(for: [saveEnabledWait], timeout: TestWait.seconds(.infrastructure(45)))
         tapElement(saveButton)
 
         XCTAssertTrue(
@@ -125,7 +125,7 @@ extension immichSlidesUITests {
         XCTAssertTrue(modeContinueButton.isEnabled)
         tapElement(modeContinueButton)
 
-        XCTAssertTrue(waitForSlideshowSettingsButton(app: app, timeout: 25))
+        XCTAssertTrue(waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))))
     }
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {

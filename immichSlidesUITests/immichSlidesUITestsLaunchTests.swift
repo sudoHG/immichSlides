@@ -29,7 +29,8 @@ final class immichSlidesUITestsLaunchTests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: 10),
+            app.textFields["firstboot.serverURL.field"].waitForExistence(
+                timeout: TestWait.seconds(.infrastructure(10))),
             "After launch, the app should reliably open the first-launch setup page"
         )
 

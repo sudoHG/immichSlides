@@ -207,6 +207,6 @@ final class RotationUITests: XCTestCase {
 private enum RotationTiming {
     // With a 30-second interval, the new scene after next switches naturally after 30 seconds at the earliest (the
     // timer also waits for the fade-in to finish).
-    static let naturalSwitchEarliest: TimeInterval = 30
+    static let naturalSwitchEarliest: TimeInterval = TestWait.seconds(.product(30))
 }
 #endif

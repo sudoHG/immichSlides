@@ -4,9 +4,9 @@ import XCTest
 enum EvidenceCalibration {
     static let defaultSceneCount: Int = 20
     static let minimumPersonAssetCount: Int = 20
-    static let defaultMotionSampleSeconds: Double = 36
-    static let defaultMotionIntervalSeconds: Double = 5.0
-    static let defaultMotionTraceTimeoutSeconds: Double = 60
+    static let defaultMotionSampleSeconds: Double = TestWait.seconds(.product(36))
+    static let defaultMotionIntervalSeconds: Double = TestWait.seconds(.product(5.0))
+    static let defaultMotionTraceTimeoutSeconds: Double = TestWait.seconds(.product(60))
     static let cropRetentionThreshold: Double = 0.60
     static let fnvOffsetBasis: UInt64 = 14_695_981_039_346_656_037
     static let fnvPrime: UInt64 = 1_099_511_628_211
@@ -311,7 +311,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         startRandomPlaybackFromModeSelection(app: app)
 
         XCTAssertTrue(
-            waitUntil(timeout: 12) {
+            waitUntil(timeout: TestWait.seconds(.product(12))) {
                 !app.buttons["slideshow.control.settings.button"].exists
             },
             "\(scenario) control bar must auto-hide before sampling so clean stable-visible segments are not polluted by the overlay"
@@ -320,7 +320,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         let traceStartTimeout = smartFillMotionTraceStartTimeoutSeconds()
         let initialManifest = try waitForCurrentManifest(
             app: app,
-            timeout: max(45, traceStartTimeout + 5)
+            timeout: TestWait.seconds(.infrastructure(max(45, traceStartTimeout + 5)))
         )
         var acceptedSlotRefs = Set<String>()
         if initialManifest.sceneType == "double" || initialManifest.sceneType == "triple" {
@@ -329,7 +329,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         let sampleDuration = smartFillMotionSampleDurationSeconds()
         let traceText = try appSmartFillMotionTraceText(
             app: app,
-            timeout: sampleDuration + traceStartTimeout + 30,
+            timeout: TestWait.seconds(.infrastructure(sampleDuration + traceStartTimeout + 30)),
         )
         let rows = motionFrameRows(
             fromTraceText: traceText,
@@ -429,22 +429,23 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         startRandomPlaybackFromModeSelection(app: app)
 
         XCTAssertTrue(
-            waitUntil(timeout: 12) {
+            waitUntil(timeout: TestWait.seconds(.product(12))) {
                 !app.buttons["slideshow.control.settings.button"].exists
             },
             "\(scenario) control bar must auto-hide before interaction sampling so the initial overlay is not taken for interaction noise"
         )
         let initialManifest = try waitForCurrentManifest(
             app: app,
-            timeout: max(45, smartFillMotionTraceStartTimeoutSeconds() + 5)
+            timeout: TestWait.seconds(.infrastructure(max(45, smartFillMotionTraceStartTimeoutSeconds() + 5)))
         )
         let traceReferenceTime = try waitForSmartFillMotionTraceCollecting(
             app: app,
-            timeout: smartFillMotionTraceStartTimeoutSeconds() + 10
+            timeout: TestWait.seconds(.infrastructure(smartFillMotionTraceStartTimeoutSeconds() + 10))
         )
         var actions: [[String: Any]] = []
         func recordAction(_ action: String) {
-            let elapsedSeconds = max(0, ProcessInfo.processInfo.systemUptime - traceReferenceTime)
+            let elapsedSeconds = TestWait.seconds(
+                .product(max(0, ProcessInfo.processInfo.systemUptime - traceReferenceTime)))
             actions.append([
                 "action": action,
                 "elapsedSeconds": elapsedSeconds,
@@ -452,44 +453,46 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
             ])
         }
 
-        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.0))))
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         recordAction("tap-image-show-control-bar")
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: 4),
+            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(4))),
             "\(scenario) tapping the photo must show the control bar"
         )
 
-        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.5))))
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 4),
+            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(4))),
             "\(scenario) pause/resume button must be found while the control bar is visible"
         )
         tapElement(playPauseButton)
         recordAction("pause")
 
-        RunLoop.current.run(until: Date().addingTimeInterval(1.2))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.2))))
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: 4),
+            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(4))),
             "\(scenario) resume button must still be found after pause"
         )
         tapElement(playPauseButton)
         recordAction("resume")
 
         XCTAssertTrue(
-            waitUntil(timeout: 10) {
+            waitUntil(timeout: TestWait.seconds(.product(10))) {
                 !settingsButton.exists
             },
             "\(scenario) control bar must auto-hide after pause/resume"
         )
         recordAction("control-bar-auto-hidden")
-        RunLoop.current.run(until: Date().addingTimeInterval(2.5))
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(2.5))))
 
         let traceText = try appSmartFillMotionTraceText(
             app: app,
-            timeout: smartFillMotionSampleDurationSeconds() + smartFillMotionTraceStartTimeoutSeconds() + 30,
+            timeout: TestWait.seconds(
+                .infrastructure(smartFillMotionSampleDurationSeconds() + smartFillMotionTraceStartTimeoutSeconds() + 30)
+            ),
         )
         let rows = motionFrameRows(
             fromTraceText: traceText,
@@ -563,7 +566,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         startRandomPlaybackFromModeSelection(app: app)
 
         let scenario = "iphone-smartfill-exif-presence"
-        var previousManifest = try waitForCurrentManifest(app: app, timeout: 45)
+        var previousManifest = try waitForCurrentManifest(app: app, timeout: TestWait.seconds(.infrastructure(45)))
         var isPreviousVisible = isExifOverlayVisible(in: previousManifest)
         saveEvidenceScreenshot(
             app: app,
@@ -573,15 +576,15 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
 
         var coverage = ExifPresenceEdgeCoverage()
         let maximumAttempts = 60
-        let midTransitionDelay: TimeInterval = 0.14
-        let settledDelay: TimeInterval = 0.55
+        let midTransitionDelay: TimeInterval = TestWait.seconds(.product(0.14))
+        let settledDelay: TimeInterval = TestWait.seconds(.product(0.55))
 
         for attempt in 1...maximumAttempts where !coverage.isComplete {
             let previousRefs = previousManifest.slotRefs
             tapNext(app: app)
 
             var currentManifest = previousManifest
-            _ = waitUntil(timeout: 10) {
+            _ = waitUntil(timeout: TestWait.seconds(.product(10))) {
                 guard let nextManifest = self.currentManifest(app: app) else { return false }
                 currentManifest = nextManifest
                 return nextManifest.slotRefs != previousRefs
@@ -621,7 +624,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
             return
         }
         XCTAssertTrue(
-            app.buttons["slideshow.control.next.button"].waitForExistence(timeout: 4),
+            app.buttons["slideshow.control.next.button"].waitForExistence(timeout: TestWait.seconds(.product(4))),
             "Control bar should still work after the EXIF overlay appear/disappear check"
         )
     }

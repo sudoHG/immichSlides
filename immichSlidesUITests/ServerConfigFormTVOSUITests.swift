@@ -8,10 +8,10 @@ private enum CapsuleGeometry {
 }
 
 private enum WaitTiming {
-    static let briefElementTimeoutSeconds: TimeInterval = 1
-    static let controlAppearanceTimeoutSeconds: TimeInterval = 8
-    static let elementAppearanceTimeoutSeconds: TimeInterval = 5
-    static let shortInteractionTimeoutSeconds: TimeInterval = 3
+    static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.product(1))
+    static let controlAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.infrastructure(8))
+    static let elementAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(5))
+    static let shortInteractionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(3))
 }
 
 #if os(tvOS)
