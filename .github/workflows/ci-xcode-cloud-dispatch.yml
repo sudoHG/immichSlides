@@ -2,8 +2,8 @@ name: ci-xcode-cloud-dispatch
 
 on:
   workflow_run:
-    workflows: [ci-ui, ci-xcode-cloud-route]
-    types: [requested, completed]
+    workflows: [ci-ui]
+    types: [requested]
 
 permissions: {}
 

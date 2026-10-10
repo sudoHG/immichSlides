@@ -84,6 +84,32 @@ class WorkflowPolicyTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 self.assertTrue(self.rules(changed, path))
 
+    def test_cloud_import_forwarder_is_required_and_has_no_environment_or_arbitrary_dispatch(self):
+        path = policy.XCC_ROUTE_WORKFLOW
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual(self.rules(document, path), set())
+        for mutation in ("missing", "branch", "environment", "needs", "write", "secret", "command", "output"):
+            changed = copy.deepcopy(document)
+            job = changed["jobs"]["dispatch-import"]
+            if mutation == "missing":
+                del changed["jobs"]["dispatch-import"]
+            elif mutation == "branch":
+                job["if"] = "always()"
+            elif mutation == "environment":
+                job["environment"] = "xcode-cloud"
+            elif mutation == "needs":
+                job["needs"] = "start"
+            elif mutation == "write":
+                job["permissions"]["contents"] = "write"
+            elif mutation == "secret":
+                job["steps"][-1]["env"]["ASC_PRIVATE_KEY"] = "${{ secrets.ASC_PRIVATE_KEY }}"
+            elif mutation == "command":
+                job["steps"][-1]["run"] += " --workflow other.yml"
+            else:
+                del changed["jobs"]["route"]["outputs"]
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.rules(changed, path))
+
     def test_cloud_router_cannot_bypass_main_context_budget_serialization_or_credential_scope(self):
         root = Path(__file__).resolve().parent.parent
         path = policy.XCC_ROUTE_WORKFLOW

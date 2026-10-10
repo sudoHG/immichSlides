@@ -17,6 +17,25 @@ from ci_xcode_cloud_client import RenewingAppStoreConnect, RetryingGitHub
 import time
 
 
+ROUTER_FINALIZATION_SECONDS = 120
+ROUTER_POLL_SECONDS = 5
+
+
+def completed_route(api, run, *, sleep=time.sleep, monotonic=time.monotonic):
+    # A direct dispatch may start before the router's final job has ended.
+    # Poll the existing strict reader; a running uploader is never accepted.
+    deadline = monotonic() + ROUTER_FINALIZATION_SECONDS
+    while True:
+        try:
+            return trusted_artifact(api, f"ci-xcc-route-{run['id']}-{run['run_attempt']}", ROUTE_PATH, "route.json",
+                                    refresh_main=False)
+        except ContractError:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise
+            sleep(min(ROUTER_POLL_SECONDS, remaining))
+
+
 def import_run(api, asc, run_id, evidence_attempt=None):
     run = api.repo("actions/runs/" + str(positive(run_id)))
     verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
@@ -31,7 +50,7 @@ def import_run(api, asc, run_id, evidence_attempt=None):
     run = archive_evidence_run(api, run)
     require(evidence_attempt is None or run["run_attempt"] == evidence_attempt, "import input differs from archive evidence attempt")
     require(record["identity"]["head_sha"] == pr["head"]["sha"], "PR changed before cloud import")
-    route, artifact_id = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{run['run_attempt']}", ROUTE_PATH, "route.json")
+    route, artifact_id = completed_route(api, run)
     validate_route(record, run, route)
     evidence = asc.evidence(route["cloud_run_id"])
     checks = api.pages("commits/" + record["identity"]["head_sha"] + "/check-runs", "check_runs", filter="all")

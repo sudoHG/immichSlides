@@ -98,6 +98,8 @@ jobs:
     concurrency:
       group: ci-xcc-poll-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}
       cancel-in-progress: false
+    outputs:
+      recorded: ${{ steps.route.outputs.recorded }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -120,3 +122,24 @@ jobs:
           path: ${{ runner.temp }}/ci-xcc-route/route.json
           if-no-files-found: error
           retention-days: 30
+
+  dispatch-import:
+    needs: route
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.route.outputs.recorded == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
+      - id: dispatch
+        env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_dispatch.py import'
