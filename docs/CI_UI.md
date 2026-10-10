@@ -164,7 +164,10 @@ macOS runner. A platform with no selected test skips its whole matrix. Each shar
 runs only its selected tests (`selected_keys` in the platform's archive selection
 record); `ui-selection.json` in the archive artifact records the mode, lists and
 keys. Pushes, nightly, manual runs, CI-changing PRs, unknown paths and selection
-errors schedule every shard and test. Docs-only PRs schedule none.
+errors are bound to every shard and test, and run them when UI runs at all: a main
+push still skips both matrices when it reuses a trusted PR verdict or defers UI to
+nightly (see the [main contract](#main-ui-scheduling-contract)). Docs-only PRs
+schedule none.
 
 Admission binds the same lists from its own base reader. The producer cannot widen
 or narrow its own population: any difference fails the required-job check.
@@ -311,7 +314,8 @@ commit-to-merged-PR lookup without granting any write authority.
 When reusing a verdict, the archive-selection job still runs and publishes its
 bound summary and `archive-selection.json` with `status: reused` and the original
 verdict provenance.
-Its `run_ui` output suppresses the entire macOS matrix. The publisher independently
+Its `run_ui`, `run_ios` and `run_tvos` outputs are `false`, which skips both macOS
+matrices. The publisher independently
 validates both archive and cloud-selection operational summaries, then
 repeats the reuse decision before accepting those skipped jobs; an arbitrary
 producer skip, partial skip or failed selection job cannot become green.
@@ -359,8 +363,9 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 
 ## Capacity, timeouts and measurement
 
-The twelve iOS jobs use `max-parallel: 3`; the six Apple TV jobs use
-`max-parallel: 1`. Both independent matrices retain `fail-fast: false`. Together
+A full run binds twelve iOS jobs at `max-parallel: 3` and six Apple TV jobs at
+`max-parallel: 1`; a scoped pull request binds only the non-empty selected shards
+under the same caps. Both independent matrices retain `fail-fast: false`. Together
 they allow at most four macOS jobs per producer, leaving one of the account's
 five slots for other runs. Giving the larger iOS population three slots produces
 a minimum of four scheduling waves after splitting the visual class.
@@ -413,8 +418,10 @@ the latest iPad baseline. Four projects at most 19.99 minutes on iPhone, 24.22
 on iPad and 16.84 on Apple TV. These are conservative sizing estimates; the
 [producer PR #247](https://github.com/sudoHG/immichSlides/pull/247) reports real
 partition measurements and complete official results.
-At concurrency three, the twelve iOS jobs require at least four waves; the six
-Apple TV jobs run sequentially. The matrices can overlap; only Apple TV
+On a full run at concurrency three, the twelve iOS jobs require at least four
+waves; the six Apple TV jobs run sequentially. A single feature area usually still
+binds all eighteen jobs: the visual partitions are balanced by duration, not by
+area, so an area's tests appear in most partitions and each job runs fewer tests. The matrices can overlap; only Apple TV
 waits for Cloud selection. Shared-runner queueing and archive selection still
 contribute to full-matrix feedback; [PR #247](https://github.com/sudoHG/immichSlides/pull/247) measures that latency and
 its overlap with the gate rather than claiming a 30-minute result from sizing

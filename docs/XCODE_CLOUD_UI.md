@@ -166,8 +166,10 @@ GitHub Apple TV requires the archive job to succeed and uses `!cancelled()`, so
 archive failure or cancellation cannot start new macOS work. Linux cloud-wait
 immediately selects GitHub when the archive conclusion is not success, preserving
 the publisher's neutral `archive_blocked_ui` path.
-Apple TV runs every manifest shard (`default`, `navigation`, `visual-a` through
-`visual-d`) unless the current selection validates Cloud;
+Apple TV runs the shards admission bound for the run: every manifest shard
+(`default`, `navigation`, `visual-a` through `visual-d`) when full, or only the
+non-empty selected shards on a scoped pull request, which never routes to Cloud.
+A full run skips them when the current selection validates Cloud;
 the publisher repeats the full trust check independently of the producer output.
 
 Route/import run names include the producer ID and evidence attempt. The Linux
