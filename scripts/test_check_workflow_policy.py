@@ -223,6 +223,33 @@ final class LocaleUITests: XCTestCase {
         split['jobs']['ipad-shards']['strategy']['max-parallel'] = 2
         self.assertIn('ui-capacity', self.rules(split, path))
 
+    def test_packed_ui_requires_independent_device_outputs_and_reports_string_matrices(self):
+        from ci_publish_git import DYNAMIC_UI_SHARDS
+        root = Path(__file__).resolve().parent.parent
+        path = '.github/workflows/ci-ui.yml'
+        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
+        archive = document['jobs']['archive']
+        command = next(step for step in archive['steps'] if 'ci_ui_tests.py wait-archive' in step.get('run', ''))
+        command['run'] = command['run'].rstrip() + ' --pack-scoped-ui'
+        self.assertIn('ui-shards', self.rules(document, path))
+        document['jobs']['iphone-shards'] = document['jobs'].pop('shards')
+        document['jobs']['ipad-shards'] = copy.deepcopy(document['jobs']['iphone-shards'])
+        for device, capacity in (('iphone', 2), ('ipad', 1)):
+            job = document['jobs'][device + '-shards']
+            job['strategy'].update({'max-parallel': capacity, 'matrix': {'device': [device],
+                                   'shard': DYNAMIC_UI_SHARDS[device]}})
+            archive['outputs'][device + '_shards'] = '${{ steps.select.outputs.' + device + '_shards }}'
+        self.assertNotIn('ui-shards', self.rules(document, path))
+        for mutation in ('platform-output', 'string-matrix'):
+            bad = copy.deepcopy(document)
+            strategy = bad['jobs']['iphone-shards']['strategy']
+            if mutation == 'platform-output':
+                strategy['matrix']['shard'] = DYNAMIC_UI_SHARDS['ios']
+            else:
+                strategy['matrix'] = '${{ fromJSON(needs.archive.outputs.matrix) }}'
+            with self.subTest(mutation=mutation):
+                self.assertIn('ui-shards', self.rules(bad, path))
+
     def test_ui_matrix_cannot_omit_a_manifest_partition_or_unbind_its_selection(self):
         from ci_publish_git import DYNAMIC_UI_SHARDS
         from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest

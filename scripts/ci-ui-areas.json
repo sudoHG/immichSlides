@@ -6,7 +6,7 @@
     "ServerConfigFormTVOSUITests/testTVOSFirstBootCoreElementsAndDisabledSave"
   ],
   "functional_smoke": [
-    "immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton",
+    "ServerConfigFormIOSUITests/testIOSFirstBootServerFieldsKeyboardAppear",
     "ServerConfigFormTVOSUITests/testTVOSFirstBootCoreElementsAndDisabledSave"
   ],
   "nightly_default": [

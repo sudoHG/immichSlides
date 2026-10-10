@@ -429,7 +429,15 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
         if any(isinstance(key, str) and key.startswith("CI_APP_") for key in document["env"]):
             flag("env", "publisher-credential", "App credentials cannot be inherited from workflow environment")
     if path == ".github/workflows/ci-ui.yml":
+        from ci_publish_git import scoped_packing_intent
+        try:
+            packed = scoped_packing_intent(source)
+        except ValueError as error:
+            flag("jobs", "ui-shards", str(error))
+            packed = False
         split_ios = "iphone-shards" in jobs or "ipad-shards" in jobs
+        if packed and ("shards" in jobs or not all(key in jobs for key in ("iphone-shards", "ipad-shards"))):
+            flag("jobs", "ui-shards", "Packed UI requires separate iPhone and iPad matrices bound to their device outputs")
         ui_keys = ("iphone-shards", "ipad-shards", "appletv-shards") if split_ios else ("shards", "appletv-shards")
         strategies = [jobs[name].get("strategy", {}) for name in ui_keys
                       if isinstance(jobs.get(name), dict)]
@@ -482,8 +490,10 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             scope = {"iphone-shards": "iphone", "ipad-shards": "ipad"}.get(job_id, platform)
             outputs = jobs.get("archive", {}).get("outputs", {}) if isinstance(jobs.get("archive"), dict) else {}
             dynamic = isinstance(matrix, dict) and matrix.get("shard") == DYNAMIC_UI_SHARDS[scope]
-            if scope in {"iphone", "ipad"} and matrix.get("device") != [scope]:
+            if scope in {"iphone", "ipad"} and (not isinstance(matrix, dict) or matrix.get("device") != [scope]):
                 flag(location, "ui-shards", "Device-specific shard outputs require that one literal device")
+            if packed and scope in {"iphone", "ipad"} and not dynamic:
+                flag(location, "ui-shards", "Packed UI matrices must bind their device-specific shard output")
             # Admission binds the dynamic list to the trusted selection; the archive step must publish it.
             if dynamic and any(outputs.get(name) != "${{ steps.select.outputs." + name + " }}"
                                for name in (scope + "_shards", "run_" + platform)):

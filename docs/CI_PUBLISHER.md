@@ -348,8 +348,9 @@ unflagged producers retain the existing full-or-exact-selection compatibility.
 Admission reads the area map, synchronized app platform filters and
 `scripts/ci-ui-durations.json` from the verified base. The isolated reader executes
 only the base `ci_ui_selection.py`, `ci_ui_test_kinds.py` and `ci_ui_packing.py`; candidate scripts and
-duration data are never imported or used as selection authority. Approved candidate
-workflow metadata still cannot narrow the base population. The deterministic plan
+duration data are never imported or used as selection authority. The map, weights
+and project file come only from the base; an approved candidate workflow may
+enable the packing protocol for its own run. The deterministic plan
 contains exact per-device shard identities, frozen duration hash and predicted
 costs, with a canonical SHA-256 over all these fields. The
 [selection and packing rules](CI_UI.md#prepared-platform-selection-and-capacity-packing)

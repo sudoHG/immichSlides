@@ -206,8 +206,12 @@ are screenshot tests; every other method is functional. Class names do not affec
 this rule. The host audit applies both predicates to every unfiltered method on
 both platforms and rejects an unclassified or ambiguous method. New tests are
 classified automatically by their method name and still need reviewed area coverage.
-The base map's separate `functional_smoke` uses functional first-boot checks;
-the legacy screenshot smoke remains unchanged until producer activation.
+The base map's separate `functional_smoke` uses functional first-boot checks:
+`ServerConfigFormIOSUITests/testIOSFirstBootServerFieldsKeyboardAppear` runs on
+both iPhone and iPad, and the TV first-boot core-elements check runs on Apple TV.
+The host audit rejects smoke methods recorded as an expected baseline fixture
+skip on any applicable device. The legacy screenshot smoke remains unchanged
+until producer activation.
 Core, unknown and CI-changing PRs run **all functional methods** on all platforms,
 without screenshot or locale methods, even when a catalog or captured screen changes.
 The nightly and other non-PR full runs retain the complete default-plan population.
@@ -231,10 +235,10 @@ minutes, within the same caps. Predictions do **not** establish a 30-minute pass
 Gate queue time, real test duration and runner overhead still require hosted
 measurement. Full/nightly runs retain every existing duration-balanced v2 shard.
 
-With the initial frozen weights, iOS settings selects 30/30/0 methods in 2/1/0
-jobs: about 23.5 UI minutes and 67.7 runner-minutes. Apple TV filter selects
-0/0/26 in 0/0/1: 17.5 UI and runner-minutes. Shared settings selects 30/30/34
-in 2/1/1: 25.1 UI minutes and 92.9 runner-minutes. Adding a five-to-ten-minute
+With the initial frozen weights, iOS settings selects 29/29/0 methods in 2/1/0
+jobs: about 23.5 UI minutes and 65.0 runner-minutes. Apple TV filter selects
+0/0/26 in 0/0/1: 17.5 UI and runner-minutes. Shared settings selects 29/29/34
+in 2/1/1: 25.1 UI minutes and 90.2 runner-minutes. Adding a five-to-ten-minute
 gate wait predicts 28.5–33.5, 22.5–27.5 and 30.1–35.1 minutes respectively.
 Core selects all 51/51/60 functional methods. These are estimates from recorded
 method durations, not hosted acceptance; iOS's 30-minute target requires archive

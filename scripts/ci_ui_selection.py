@@ -12,7 +12,7 @@ from ci_population import ui_identities
 from ci_summary import decode, fields, identity_key, require, string, test_identity
 from ci_ui_shards import DEVICES, LABEL, SELECTOR, default_plan_population
 from ci_ui_test_kinds import classify_ui_methods, method_kind
-from ci_verdict import classify_changes
+from ci_verdict import classify_changes, parse_policy, skip_matches
 
 AREA_MAP_PATH = "scripts/ci-ui-areas.json"
 
@@ -131,7 +131,7 @@ def affected_areas(path, area_map):
                   if any(matches_source(path, pattern) for pattern in area["sources"]))
 
 
-def validate_area_coverage(raw, source_paths, populations, *, plans=None):
+def validate_area_coverage(raw, source_paths, populations, *, plans=None, expected_skips=()):
     """Check both unfiltered platforms, including Evidence and strict identities."""
     area_map = parse_area_map(raw)
     keys = {entry["key"] for platform in ("ios", "tvos") for entry in populations.get("ui-" + platform, [])}
@@ -150,6 +150,13 @@ def validate_area_coverage(raw, source_paths, populations, *, plans=None):
             if "functional_smoke" in area_map:
                 require(any(matches_test(entry["key"], area_map["functional_smoke"]) for entry in entries),
                         f"functional smoke is absent from default plan on {device}")
+            for label, smoke in (("functional smoke", area_map.get("functional_smoke", [])),
+                                 ("UI smoke", area_map["smoke"])):
+                for entry in entries:
+                    if matches_test(entry["key"], smoke):
+                        identity = test_identity("ui", entry["key"], platform=platform, device=device)
+                        require(not any(skip_matches(rule, identity, "ui", "fixture") for rule in expected_skips),
+                                f"{label} is an expected baseline skip on {device}: {entry['key']}")
     return area_map
 
 
@@ -163,11 +170,11 @@ def check_area_map(root):
     plans = {platform: (root / ("immichSlides-" + suffix + ".xctestplan")).read_text(encoding="utf-8")
              for platform, suffix in (("ios", "iOS"), ("tvos", "tvOS"))}
     validate_area_coverage((root / AREA_MAP_PATH).read_text(encoding="utf-8"), filter(None, source_paths), populations,
-                           plans=plans)
+                           plans=plans, expected_skips=parse_policy((root / "scripts/ci-test-policy.json").read_text())["expected_skips"])
 
 
 def select_ui_population(paths, classification_policy, *, build_target_paths, area_map, populations, plans, event,
-                         platform_scoped=False, platform_sources=None, functional_only=False):
+                         platform_scoped=False, platform_sources=None, functional_only=False, expected_skips=()):
     """Use base data and rules over the trusted diff and tested-tree identities."""
     require(event in {"pull_request", "push", "schedule", "workflow_dispatch"}, "unsupported UI selection event")
     require(type(platform_scoped) is bool and all(platform in DEVICES.values()
@@ -233,7 +240,7 @@ def select_ui_population(paths, classification_policy, *, build_target_paths, ar
     elif mode == "full" and omitted:
         mode = "scoped"  # full minus nightly-default tests is an exact trusted selection
     if mode == "scoped":
-        validate_area_coverage(area_map, [], populations, plans=plans)
+        validate_area_coverage(area_map, [], populations, plans=plans, expected_skips=expected_skips)
     result = {"mode": mode, "areas": sorted(areas), "unknown_paths": sorted(unknown), "populations": selected}
     if functional_pr:
         result["coverage"] = "functional"

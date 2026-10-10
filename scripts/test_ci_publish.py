@@ -1342,6 +1342,13 @@ class PublisherTests(unittest.TestCase):
         plans = {platform: {"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}
                  for platform in ("ios", "tvos")}
         validate_area_coverage(area_map, [], populations, plans=plans)
+        functional = dict(area_map, functional_smoke=['SmokeUITests/testLaunch'])
+        skip = {'kind': 'ui', 'key_pattern': 'SmokeUITests/test*', 'dimensions': {'platform': 'ios', 'device': 'ipad'},
+                'tier': 'ui', 'environment': 'fixture', 'reason': 'device restriction'}
+        with self.assertRaisesRegex(ContractError, 'functional smoke.*expected.*skip.*ipad'):
+            validate_area_coverage(functional, [], populations, plans=plans, expected_skips=[skip])
+        validate_area_coverage(functional, [], populations, plans=plans,
+                               expected_skips=[dict(skip, dimensions={'platform': 'ios', 'device': 'other'})])
         for platform, device in (("ios", "iphone"), ("tvos", "appletv")):
             bad_plans = copy.deepcopy(plans)
             bad_plans[platform]["testTargets"][0]["skippedTests"] = ["SmokeUITests/testLaunch"]
@@ -1775,6 +1782,12 @@ class PublisherTests(unittest.TestCase):
             legacy = ui_inputs(BASE, listing, populations=populations, base_populations=populations,
                                workflow=dynamic_ui_workflow(), run=run, modules=modules, selection_inputs=selection_inputs)
         self.assertNotIn("packing", legacy["selection"])
+        with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
+            refused = ui_inputs(BASE, listing, populations=populations, base_populations=populations,
+                workflow=workflow, run=run, modules=modules,
+                selection_inputs=dict(selection_inputs, durations=dict(durations, default_seconds=7200)))
+        self.assertTrue(refused['error'].startswith('functional UI selection refused: '), refused)
+        self.assertLessEqual(len(refused['error']), 500)
         self.assertEqual(admitted["selection"]["packing"]["durations_sha256"], canonical_hash(durations))
         classification = {"app_affected": True, "ci_changing": False}
         self.assertEqual(ui_shard_lists(admitted, identity, classification),
@@ -1869,6 +1882,8 @@ class OtherUITests: XCTestCase { func testPlay() {} }
                 return (Path(__file__).parent / name).read_text()
             if name == "ci_build_archive.py":
                 return 'def run_build():\n step = test_identity("host", "secret-free build archive", configuration="Debug")\n'
+            if name == "ci-test-policy.json":
+                return json.dumps({'schema_version': 1, 'approval_records': [], 'expected_skips': [], 'deselections': []})
             return '{"schema_version":1}'
         with patch("ci_publish_git.read_blob", side_effect=blob), \
                 patch("ci_publish_git.git", side_effect=lambda *args, **kwargs: "immichSlides/Settings.swift" if args[0] == "diff" else args[-1]), \
@@ -1904,6 +1919,19 @@ class OtherUITests: XCTestCase { func testPlay() {} }
             selected = packed['ui_inputs'][side]['selection']
             self.assertEqual(selected['coverage'], 'functional')
             self.assertEqual(selected['packing']['durations_sha256'], canonical_hash(durations))
+        # A grouped packed producer must refuse only UI, preserving the independent gate record.
+        durations['seconds']['iphone']['VisualUITests/testFlow'] = 1000
+        files[DURATIONS_PATH] = json.dumps(durations)
+        files['.github/workflows/ci-ui.yml'] = dynamic_ui_workflow().replace(
+            'wait-archive', 'wait-archive --pack-scoped-ui')
+        with patch('ci_publish_git.read_blob', side_effect=blob), \
+                patch('ci_publish_git.git', side_effect=lambda *args, **kwargs:
+                      'immichSlides/Settings.swift' if args[0] == 'diff' else args[-1]), \
+                patch('ci_publish_git.tree_inputs', return_value=(listing, sources)):
+            grouped = derive_record(identity, RUN)
+        self.assertEqual(grouped['populations'], packed['populations'])
+        for side in ('base', 'candidate'):
+            self.assertIn('devices sharing a matrix select different shards', grouped['ui_inputs'][side]['error'])
 
     def test_fixture_device_observations_use_only_the_matching_hermetic_base_registry(self):
         from datetime import date

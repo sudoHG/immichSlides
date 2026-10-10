@@ -78,7 +78,8 @@ elif p['operation']=='ui':
                 from ci_ui_selection import platform_sources_from_project
                 from ci_ui_packing import pack_scoped_selection
                 selection_options={'platform_scoped':True,'functional_only':True,
-                    'platform_sources':platform_sources_from_project(selection_inputs['project'])}
+                    'platform_sources':platform_sources_from_project(selection_inputs['project']),
+                    'expected_skips':selection_inputs.get('expected_skips',[])}
             selection=select_ui_population(selection_inputs['paths'],selection_inputs['classification_policy'],
                 build_target_paths=selection_inputs['build_target_paths'],area_map=selection_inputs['area_map'],
                 populations=p['populations'],plans={platform:entry['plan'] for platform,entry in p['plans'].items()},
@@ -230,6 +231,7 @@ def derive_record(identity, run, *, before=None):
                                            if "immichSlides.xcodeproj/project.pbxproj" in base_paths else "")
             if DURATIONS_PATH in base_paths:
                 selection_inputs["durations"] = read_blob(base, DURATIONS_PATH)
+            selection_inputs["expected_skips"] = json.loads(read_blob(base, "scripts/ci-test-policy.json"))["expected_skips"]
     for side, revision, entries in (("base", base, base_listing), ("candidate", commit, listing)):
         try:
             ui[side] = ui_inputs(revision, entries, populations=derived["populations"],
@@ -244,8 +246,12 @@ def derive_record(identity, run, *, before=None):
     if UI_WORKFLOW_PATH in workflows:
         for side in ("base", "candidate"):
             if ui.get(side) and "error" not in ui[side]:
-                workflows[UI_WORKFLOW_PATH][side] = bind_ui_shards(
-                    workflows[UI_WORKFLOW_PATH][side], ui_shard_lists(ui[side], identity, derived["classification"]))
+                try:
+                    workflows[UI_WORKFLOW_PATH][side] = bind_ui_shards(
+                        workflows[UI_WORKFLOW_PATH][side], ui_shard_lists(ui[side], identity, derived["classification"]))
+                except (ContractError, KeyError, TypeError) as error:
+                    # Invalid UI binding cannot suppress the independent gate admission.
+                    ui[side]["error"] = ("UI shard binding refused: " + str(error))[:500]
     cloud_inputs = None
     from ci_xcode_cloud import PLAN_PATH, SCHEME_PATH
     cloud_paths = {PLAN_PATH, SCHEME_PATH, "scripts/strict_e2e_server.py", "ci_scripts/fixture_server.py"}
@@ -341,7 +347,7 @@ def ui_shard_lists(ui, identity, classification):
                 for device, shards in selection["shards"].items()}
     lists = {}
     for platform in ("ios", "tvos"):
-        chosen = [[shard for shard in (list(selection["shards"][device]) if selection.get("packing") else order)
+        chosen = [[shard for shard in order
                    if selection["mode"] == "scoped" and selection["shards"][device][shard]]
                   for device in sorted(selection.get("shards", {})) if DEVICES[device] == platform]
         require(all(item == chosen[0] for item in chosen), "devices of one platform select different shards")
@@ -351,6 +357,8 @@ def ui_shard_lists(ui, identity, classification):
 
 def ui_failure_hint(error):
     message = str(error)
+    if message.startswith("functional UI selection refused: "):
+        return message[:500]
     if message == "workflow is absent on the base; exact-head approval required":
         return message
     if re.fullmatch(r"shard [a-z][a-z0-9-]* has no tests on (?:iphone|ipad|appletv); "
