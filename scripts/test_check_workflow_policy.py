@@ -56,6 +56,10 @@ class WorkflowPolicyTests(unittest.TestCase):
             changed["jobs"][job]["needs"] = ["archive", "shards"]
             with self.subTest(job=job):
                 self.assertIn("xcc-dependencies", self.rules(changed, path))
+        changed = copy.deepcopy(document)
+        changed["jobs"]["appletv-shards"]["if"] = changed["jobs"]["appletv-shards"]["if"].replace(
+            "needs.archive.result == 'success' && ", "")
+        self.assertIn("xcc-dependencies", self.rules(changed, path))
 
     def test_cloud_event_bridge_cannot_receive_secrets_or_execute_pr_code(self):
         root = Path(__file__).resolve().parent.parent

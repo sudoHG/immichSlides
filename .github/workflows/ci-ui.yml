@@ -216,7 +216,7 @@ jobs:
   appletv-shards:
     name: ui-appletv-${{ matrix.shard }}
     needs: [archive, cloud-wait]
-    if: ${{ !cancelled() && needs.archive.outputs.run_ui == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}
+    if: ${{ !cancelled() && needs.archive.result == 'success' && needs.archive.outputs.run_ui == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110
     permissions:

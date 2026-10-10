@@ -485,12 +485,19 @@ class RoutingPolicyTests(unittest.TestCase):
         fixture = CloudEvidenceTests()
         fixture.setUp()
         now = datetime.now(timezone.utc).isoformat()
+        fixture.identity.update(schema_version=1, pull_request=1, merge_sha="e" * 40, base_sha="f" * 40)
+        fixture.record["schema_version"] = 1
         api, asc = Mock(repository="owner/repo"), Mock()
         workflow = {"id": 789, "path": cloud.ROUTE_PATH, "state": "active"}
         source = {"id": 456, "run_attempt": 1, "display_title": "xcc-route-123-2", "workflow_id": 789,
                   "event": "workflow_dispatch", "path": cloud.ROUTE_PATH, "head_branch": "main", "head_sha": "b" * 40,
                   "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}}
-        def response(path):
+        publisher = dict(source, id=345, workflow_id=567, event="workflow_run", path=".github/workflows/ci-publish.yml")
+        def response(path, **_):
+            if path.endswith("ci-publish.yml"):
+                return {"id": 567, "path": publisher["path"]}
+            if path.endswith("/345"):
+                return publisher
             if "/runs?" in path:
                 return {"workflow_runs": [source]}
             if "ci-xcode-cloud-" in path:
@@ -498,7 +505,8 @@ class RoutingPolicyTests(unittest.TestCase):
             return source if "456" in path else fixture.run
         api.repo.side_effect = response
         artifacts = [{"name": "ci-xcc-post-456-1", "expired": False, "workflow_run": {"id": 456}}]
-        api.pages.side_effect = lambda *args, **kwargs: list(artifacts)
+        api.pages.side_effect = lambda *args, **kwargs: ([{"name": "ci-admission-123", "expired": False,
+            "workflow_run": {"id": 345}}] if kwargs.get("name") == "ci-admission-123" else list(artifacts))
         posted = dict(fixture.route, head_sha=fixture.run["head_sha"], uploader_run_id=456, uploader_attempt=1, posted_at=now)
         receipts = {"post.json": posted}
         asc.pages.return_value = []
@@ -509,15 +517,18 @@ class RoutingPolicyTests(unittest.TestCase):
             receipts["start.json"] = dict(posted, **value)
             artifacts.append({"name": "ci-xcc-start-456-1", "expired": False, "workflow_run": {"id": 456}})
         ctx = {"identity": fixture.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 2}}
-        with patch("ci_publish.git"), patch.object(state, "on_main", return_value=True), \
+        with patch("ci_publish.git") as git, patch.object(state, "on_main", return_value=True), \
+                patch("ci_publish.subprocess.run", return_value=Mock(returncode=0)), \
+                patch("ci_publish.json_member", return_value=fixture.record), \
                 patch.object(state, "json_member", side_effect=lambda api, artifact, member: receipts[member]), \
-                patch.object(producer, "verify_workflow"), patch("ci_publish.trusted_admissions", return_value={123: fixture.record}), \
+                patch.object(producer, "verify_workflow"), \
                 patch.object(router, "month_usage", return_value={"minutes": 0}), \
                 patch.object(router, "producer_decision", side_effect=["github", "github", "routed"]), \
                 patch.object(cloud, "trusted_artifact", return_value=(fixture.route, 55)), \
                 patch.object(producer.time, "sleep", side_effect=upload_start) as sleep:
             self.assertEqual(producer.wait_cloud(ctx, api), "routed")
             sleep.assert_called_once()
+            git.assert_called_once_with("fetch", "--no-tags", "origin", "refs/heads/main")
         self.assertEqual(asc.request.call_args_list[0].kwargs["method"], "POST")
         self.assertEqual(asc.request.call_args_list[1].args[0], "/v1/ciBuildRuns/" + fixture.evidence["id"])
         self.assertEqual(receipts["start.json"]["cloud_created_at"], now)
@@ -636,7 +647,8 @@ class RoutingPolicyTests(unittest.TestCase):
         import ci_xcode_cloud_route as router
         for context in (patch.object(router, "selection_open", return_value=True),
                         patch.object(cloud, "archive_evidence_run", side_effect=lambda api, run: dict(run,
-                            archive_job={"id": 999, "status": "in_progress", "conclusion": None}))):
+                            archive_job={"id": 999, "status": "completed", "conclusion": "success"})),
+                        patch("ci_publish.git")):
             context.start()
             self.addCleanup(context.stop)
 
@@ -669,7 +681,7 @@ class RoutingPolicyTests(unittest.TestCase):
         self.assertEqual(result["cloud_run_id"], fixture.evidence["id"])
         asc.request.assert_called_once()
 
-    def test_pending_running_and_stuck_builds_count_projection_plus_completed_actions(self):
+    def test_active_overflow_builds_count_at_least_the_projection(self):
         from ci_xcode_cloud_route import month_usage
         asc = Mock()
         for progress in ("PENDING", "RUNNING"):
@@ -687,8 +699,109 @@ class RoutingPolicyTests(unittest.TestCase):
             asc.pages.side_effect = pages
             with self.subTest(progress=progress):
                 usage = month_usage(asc, datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc), inventory=[run])
-                self.assertEqual(usage["projected_minutes"], 100)
-                self.assertEqual(usage["minutes"], 100 if progress == "PENDING" else 110)
+                self.assertEqual(usage["projected_minutes"], 100 if progress == "PENDING" else 80)
+                self.assertEqual(usage["minutes"], 100)
+
+    def test_a_stuck_running_build_for_four_hours_counts_all_elapsed_minutes(self):
+        import ci_xcode_cloud_route as router
+        asc = Mock()
+        now = datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc)
+        run = {"id": "22222222-2222-2222-2222-222222222222", "attributes": {
+            "executionProgress": "RUNNING", "createdDate": "2026-10-09T11:00:00Z"}}
+        def pages(path):
+            if path == "/v1/ciProducts?limit=200":
+                return [{"id": "11111111-1111-1111-1111-111111111111"}]
+            if "/ciProducts/" in path:
+                return [run]
+            return [{"id": "completed-action", "attributes": {"executionProgress": "COMPLETE",
+                     "startedDate": "2026-10-09T11:50:00Z", "finishedDate": "2026-10-09T12:00:00Z"}},
+                    {"id": "running-action", "attributes": {"executionProgress": "RUNNING",
+                     "startedDate": "2026-10-09T12:00:00Z"}}]
+        asc.pages.side_effect = pages
+        self.assertEqual(router.blocking_builds([run], now), [])
+        usage = router.month_usage(asc, now, inventory=[run])
+        self.assertEqual((usage["minutes"], usage["projected_minutes"]), (250, 0))
+
+    def test_near_the_cap_an_inconsistent_complete_build_refuses_a_start(self):
+        import ci_xcode_cloud_route as router
+        from datetime import timedelta
+        asc = Mock()
+        now = datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc)
+        run = {"id": "22222222-2222-2222-2222-222222222222", "attributes": {
+            "executionProgress": "COMPLETE", "finishedDate": now.isoformat()}}
+        asc.request.return_value = {"data": {"id": "33333333-3333-3333-3333-333333333333",
+                                            "attributes": {"createdDate": now.isoformat()}}}
+        def pages(path):
+            if path == "/v1/ciProducts?limit=200":
+                return [{"id": "11111111-1111-1111-1111-111111111111"}]
+            if "/actions?" in path:
+                return [{"id": "completed-action", "attributes": {"executionProgress": "COMPLETE",
+                         "startedDate": (now - timedelta(minutes=2600)).isoformat(), "finishedDate": now.isoformat()}},
+                        {"id": "unfinished-action", "attributes": {"executionProgress": "RUNNING",
+                         "startedDate": (now - timedelta(minutes=1)).isoformat()}}]
+            return [run]
+        asc.pages.side_effect = pages
+        with patch.object(router, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = now
+            with self.assertRaisesRegex(ContractError, "inconsistent"):
+                router.start_cloud(asc, {"identity": {"head_sha": "a" * 40}, "reference_id": "reference"})
+        asc.request.assert_not_called()
+
+    def test_an_uncertain_post_selects_github_without_inventory_polling(self):
+        import ci_xcode_cloud_route as router
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        asc, api = Mock(), Mock()
+        asc.pages.return_value = []
+        from urllib.error import URLError
+        for error in (TimeoutError(), URLError("connection lost"), ContractError("HTTP 503")):
+            asc.request.side_effect = error
+            with self.subTest(error=type(error).__name__), patch.object(router, "month_usage", return_value={"minutes": 0}):
+                result = router.start_cloud(asc, {"identity": fixture.identity, "reference_id": "reference"})
+                self.assertEqual((result["decision"], result["reason"]), ("github", "start-outcome-unknown"))
+        asc.pages.reset_mock()
+        asc.request.reset_mock()
+        with patch.object(router, "refresh_producer"), patch.object(router, "selection_open", return_value=True):
+            polled = router.poll_route(api, asc, fixture.record, fixture.run, dict(result, decision="pending"),
+                sleep=lambda _: None, monotonic=Mock(side_effect=[0, 0, 0, 100 * 60]))
+        self.assertEqual(polled["decision"], "github")
+        asc.pages.assert_not_called()
+        asc.request.assert_not_called()
+
+    def test_git_errors_select_github_instead_of_failing_the_producer(self):
+        import subprocess
+        import ci_ui_tests as producer
+        import ci_xcode_cloud_route as router
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        api = Mock()
+        api.repo.return_value = fixture.run
+        ctx = {"identity": fixture.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 2}}
+        for error in (subprocess.CalledProcessError(128, ["git", "fetch"]), subprocess.TimeoutExpired(["git"], 30)):
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(router, "trusted_artifact", side_effect=error):
+                self.assertEqual(router.producer_decision(api, fixture.record, fixture.run, approved=False, transient_errors=True), "github")
+            with self.subTest(wait_error=type(error).__name__), patch.object(producer, "verify_workflow"), \
+                    patch("ci_publish.trusted_admissions", side_effect=error), patch.object(producer.time, "sleep") as sleep:
+                self.assertEqual(producer.wait_cloud(ctx, api), "github")
+                sleep.assert_not_called()
+
+    def test_a_failed_archive_selects_github_before_reading_cloud_proof(self):
+        import ci_ui_tests as producer
+        import ci_xcode_cloud_route as router
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        api = Mock()
+        api.repo.return_value = fixture.run
+        ctx = {"identity": fixture.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 2}}
+        for conclusion in ("failure", "cancelled", "timed_out", None):
+            with self.subTest(conclusion=conclusion), patch.object(producer, "verify_workflow"), \
+                    patch("ci_publish.trusted_admissions", return_value={123: fixture.record}), \
+                    patch.object(cloud, "archive_evidence_run", return_value=dict(fixture.run,
+                        archive_job={"status": "completed", "conclusion": conclusion})), \
+                    patch.object(router, "producer_decision", return_value="routed") as proof:
+                self.assertEqual(producer.wait_cloud(ctx, api), "github")
+                proof.assert_not_called()
 
     def test_incomplete_inventory_blocks_starts_and_duplicate_exact_heads_are_reused(self):
         import ci_xcode_cloud_route as router
@@ -868,7 +981,8 @@ class RoutingPolicyTests(unittest.TestCase):
         api = Mock()
         api.repo.return_value = run
         with patch.object(producer, "verify_workflow"), patch("ci_publish.trusted_admissions", return_value={123: fixture.record}), \
-                patch.object(cloud, "archive_evidence_run", return_value=dict(run, run_attempt=2)), \
+                patch.object(cloud, "archive_evidence_run", return_value=dict(run, run_attempt=2,
+                    archive_job={"status": "completed", "conclusion": "success"})), \
                 patch.object(router, "producer_decision", side_effect=["routed", "github"]) as proof, \
                 patch.object(producer.time, "sleep") as sleep:
             self.assertEqual(producer.wait_cloud(ctx, api), "routed")
@@ -956,7 +1070,7 @@ class RoutingPolicyTests(unittest.TestCase):
             result = self.run_stages(router, api, asc, fixture)
             self.assertEqual((result["decision"], result["reason"]), ("fallback", "cloud-population-or-app-check-refused"))
 
-    def test_budget_reads_every_product_and_includes_failed_and_running_actions(self):
+    def test_budget_counts_failed_running_and_pending_elapsed_actions_across_products(self):
         from ci_xcode_cloud_route import month_usage
         now = datetime(2026, 10, 9, 16, 0, tzinfo=timezone.utc)
         asc = Mock()
@@ -973,12 +1087,16 @@ class RoutingPolicyTests(unittest.TestCase):
                       "finishedDate": "2026-10-09T15:50:00Z"}}
             running = {"id": "running-action", "attributes": {"executionProgress": "RUNNING",
                        "startedDate": "2026-10-09T15:55:00Z", "finishedDate": None}}
-            return [failed] if run_ids[0] in path else [running]
+            pending = {"id": "pending-action", "attributes": {"executionProgress": "PENDING",
+                       "startedDate": "2026-10-09T15:58:00Z", "finishedDate": None}}
+            return [failed] if run_ids[0] in path else [running, pending]
         asc.pages.side_effect = pages
+        usage = month_usage(asc, now, inventory=[])
+        self.assertEqual(usage["minutes"], 17)
         inventory = [{"id": run_ids[1], "attributes": {"executionProgress": "RUNNING"}}]
         usage = month_usage(asc, now, inventory=inventory)
         self.assertEqual((usage["month"], usage["products"], usage["actions"], usage["minutes"]),
-                         ("2026-10", 2, 2, 110))
+                         ("2026-10", 2, 3, 110))
         asc.pages.side_effect = lambda path: [] if "/actions?" in path else pages(path)
         with self.assertRaises(ContractError):
             month_usage(asc, now, inventory=inventory)

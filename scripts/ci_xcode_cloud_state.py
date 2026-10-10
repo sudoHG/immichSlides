@@ -42,9 +42,7 @@ def receipt(api, artifacts, source, workflow, *, prefix, member):
 
 def inflight_start(api, run, evidence_attempt, workflow):
     """A POST marker bridges the short gap before the immutable start receipt."""
-    from ci_publish import git
     from ci_xcode_cloud_route import timestamp
-    git("fetch", "--no-tags", "origin", "refs/heads/main")
     runs = api.repo(f"actions/workflows/{workflow['id']}/runs?event=workflow_dispatch&per_page=100")["workflow_runs"]
     matches = [row for row in runs if row.get("display_title") == f"xcc-route-{run['id']}-{evidence_attempt}"]
     for source in sorted(matches, key=lambda row: row["id"], reverse=True):

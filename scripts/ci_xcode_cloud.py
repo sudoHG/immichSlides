@@ -204,11 +204,12 @@ def archive_evidence_run(api, run):
     return dict(run, run_attempt=evidence_attempt, producer_latest_attempt=run["run_attempt"], archive_job=retained)
 
 
-def trusted_artifact(api, name, path, member):
+def trusted_artifact(api, name, path, member, *, refresh_main=True):
     from ci_publish import git, json_member, positive
     workflow = api.repo("actions/workflows/" + path.rsplit("/", 1)[-1], missing=True)
     require(workflow is not None and workflow["path"] == path, "trusted cloud workflow is unavailable")
-    git("fetch", "--no-tags", "origin", "refs/heads/main")
+    if refresh_main:
+        git("fetch", "--no-tags", "origin", "refs/heads/main")
     candidates = []
     for artifact in api.pages("actions/artifacts", "artifacts", name=name):
         if artifact["name"] != name or artifact["expired"]:
@@ -238,15 +239,17 @@ def trusted_artifact(api, name, path, member):
     return min(candidates, key=lambda item: item[1])
 
 
-def trusted_cloud(api, record, run, *, approved, evidence_attempt=None):
+def trusted_cloud(api, record, run, *, approved, evidence_attempt=None, refresh_main=True):
     if evidence_attempt is None:
         run = archive_evidence_run(api, run)
     else:
         require(type(evidence_attempt) is int and 0 < evidence_attempt <= run["run_attempt"], "invalid archive evidence attempt")
         run = dict(run, run_attempt=evidence_attempt)
-    route, route_artifact = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{run['run_attempt']}", ROUTE_PATH, "route.json")
+    route, route_artifact = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{run['run_attempt']}", ROUTE_PATH, "route.json",
+                                             refresh_main=refresh_main)
     validate_route(record, run, route)
-    receipt, import_artifact = trusted_artifact(api, f"ci-xcc-import-{run['id']}-{run['run_attempt']}", IMPORT_PATH, "cloud.json")
+    receipt, import_artifact = trusted_artifact(api, f"ci-xcc-import-{run['id']}-{run['run_attempt']}", IMPORT_PATH, "cloud.json",
+                                               refresh_main=refresh_main)
     require(type(receipt.get("schema_version")) is int and receipt["schema_version"] == 1
             and receipt["identity"] == record["identity"] and receipt["producer_run_id"] == run["id"]
             and receipt["producer_attempt"] == run["run_attempt"] and receipt["route_artifact_id"] == route_artifact,

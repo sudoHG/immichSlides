@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -85,7 +86,7 @@ def action_minutes(attributes, month_start, now):
         return 0
     start = timestamp(started)
     if finished is None:
-        require(progress == "RUNNING", "completed cloud action lacks finished timestamp")
+        require(progress in {"PENDING", "RUNNING"}, "completed cloud action lacks finished timestamp")
         end = now
     else:
         require(progress == "COMPLETE", "cloud action timing disagrees with completion")
@@ -115,8 +116,7 @@ def blocking_builds(inventory, now):
 def month_usage(asc, now, *, inventory=None):
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     inventory = overflow_inventory(asc) if inventory is None else inventory
-    actions, runs = {}, set()
-    projected = sum(CLOUD_MINUTES for run in inventory if run["attributes"]["executionProgress"] != "COMPLETE")
+    actions, runs, elapsed = {}, set(), {}
     products = asc.pages("/v1/ciProducts?limit=200")
     require(products, "cloud usage product inventory is empty")
     for product in products:
@@ -130,35 +130,42 @@ def month_usage(asc, now, *, inventory=None):
             finished = attributes.get("finishedDate")
             if progress == "COMPLETE" and finished is not None and timestamp(finished) <= month_start:
                 continue
-            # Completed actions, including failed work, are billed even when
-            # their parent build is still active. Active overflow builds add a
-            # separate fixed projection, including builds too old to block.
+            # Active work is billed too; overflow builds count at least the
+            # projection even when they are too old to block a new start.
             billable = asc.pages("/v1/ciBuildRuns/" + uuid(run["id"]) + "/actions?limit=200")
             require(billable or run["attributes"]["executionProgress"] == "PENDING",
                     "active or completed cloud run has no action inventory")
+            require(progress != "COMPLETE" or all(action["attributes"]["executionProgress"] == "COMPLETE"
+                                                  for action in billable), "inconsistent completed cloud run actions")
+            elapsed[run["id"]] = 0
             for action in billable:
                 require(action["id"] not in actions, "duplicate cloud billable action")
                 attributes = action["attributes"]
                 minutes = action_minutes(attributes, month_start, now)
-                actions[action["id"]] = minutes if attributes["executionProgress"] == "COMPLETE" else 0
+                actions[action["id"]] = minutes
+                elapsed[run["id"]] += minutes
+    projected = sum(max(0, CLOUD_MINUTES - elapsed.get(run["id"], 0)) for run in inventory
+                    if run["attributes"]["executionProgress"] != "COMPLETE")
     return {"month": month_start.strftime("%Y-%m"), "minutes": sum(actions.values()) + projected,
             "projected_minutes": projected,
             "cap_minutes": CAP_MINUTES, "products": len(products), "actions": len(actions)}
 
 
-def producer_decision(api, record, run, *, approved, evidence_attempt=None, route_seen=False, transient_errors=False):
+def producer_decision(api, record, run, *, approved, evidence_attempt=None, route_seen=False, transient_errors=False,
+                      refresh_main=True):
     try:
         from ci_xcode_cloud import archive_evidence_run
         evidence_run = archive_evidence_run(api, run) if evidence_attempt is None else dict(run, run_attempt=evidence_attempt)
         if not route_seen:
-            route, _ = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{evidence_run['run_attempt']}", ROUTE_PATH, "route.json")
+            route, _ = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{evidence_run['run_attempt']}", ROUTE_PATH, "route.json",
+                                        refresh_main=refresh_main)
             if route["decision"] != "routed":
                 return "github"
-        trusted_cloud(api, record, run, approved=approved, evidence_attempt=evidence_run["run_attempt"])
+        trusted_cloud(api, record, run, approved=approved, evidence_attempt=evidence_run["run_attempt"], refresh_main=refresh_main)
         return "routed"
-    except (ContractError, KeyError, TypeError, ValueError, OSError, URLError) as error:
+    except (ContractError, KeyError, TypeError, ValueError, OSError, URLError, subprocess.SubprocessError) as error:
         from ci_xcode_cloud_client import transient
-        if transient_errors and transient(error):
+        if transient_errors and not isinstance(error, subprocess.SubprocessError) and transient(error):
             raise
         return "github"
 
@@ -341,7 +348,7 @@ def start_cloud(asc, prepared, *, before_post=lambda: None):
     except (ContractError, KeyError, TypeError, ValueError, OSError, URLError) as error:
         status = re.search(r"HTTP ([0-9]{3})", str(error)) if isinstance(error, ContractError) else None
         rejected = bool(status and 400 <= int(status[1]) < 500)
-        return {"decision": "fallback" if rejected else "pending", "reason": "cloud-start-failed" if rejected else "start-outcome-unknown",
+        return {"decision": "fallback" if rejected else "github", "reason": "cloud-start-failed" if rejected else "start-outcome-unknown",
                 "cloud_run_id": None,
                 **({"http_status": int(status[1])} if status else {})}
     # A metadata GET failure after an accepted POST is not a rejected start.
@@ -365,17 +372,16 @@ def poll_route(api, asc, record, run, receipt, *, sleep=time.sleep, monotonic=ti
     if receipt["decision"] in {"github", "fallback"}:
         return receipt
     receipt = dict(receipt)
+    if receipt.get("cloud_run_id") is None:
+        receipt.update(decision="github", reason="start-outcome-unknown")
+        return receipt
     deadline = monotonic() + CLOUD_MINUTES * 60
-    stage = "cloud-start-outcome-unknown"
+    stage = "cloud-run-failed-or-timed-out"
     try:
         while monotonic() < deadline:
             try:
                 refresh_producer(api, run)
                 require(selection_open(api, run), "producer already chose GitHub")
-                if receipt.get("cloud_run_id") is None:
-                    existing = existing_build(overflow_inventory(asc), run["head_sha"])
-                    if existing is not None:
-                        receipt.update(build_receipt(asc, existing, "resumed-existing-build"))
                 if receipt.get("cloud_run_id") is not None:
                     stage = "cloud-run-failed-or-timed-out"
                     attributes = asc.request("/v1/ciBuildRuns/" + uuid(receipt["cloud_run_id"]))["data"]["attributes"]

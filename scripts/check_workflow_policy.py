@@ -428,6 +428,9 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             expected_needs = "archive" if job_id == "cloud-wait" else ["archive", "cloud-wait"]
             if job.get("needs") != expected_needs:
                 flag(location, "xcc-dependencies", "Cloud selection and Apple TV must not depend on iOS shards")
+            if job_id == "appletv-shards" and job.get("if") != ("${{ !cancelled() && needs.archive.result == 'success' && "
+                    "needs.archive.outputs.run_ui == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}"):
+                flag(location, "xcc-dependencies", "Apple TV shards require a successful archive and an unrouted selection")
         if path == XCC_IMPORT_WORKFLOW:
             if (job_id != "import" or job.get("if") != "github.ref == 'refs/heads/main'"
                     or job.get("runs-on") != "ubuntu-24.04" or job.get("environment") != "xcode-cloud"

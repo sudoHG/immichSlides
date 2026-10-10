@@ -270,7 +270,11 @@ def wait_cloud(ctx, api):
         require(record is not None and record["identity"] == ctx["identity"], "UI admission differs from producer")
         evidence_run = archive_evidence_run(api, run)
         evidence_attempt = evidence_run["run_attempt"]
-        if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt) == "routed":
+        if evidence_run["archive_job"]["conclusion"] != "success":
+            return "github"
+        # Admission fetched main once. Every later receipt uses that same
+        # ancestry snapshot, including retries while the build is running.
+        if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt, refresh_main=False) == "routed":
             return "routed"
         if evidence_attempt != run["run_attempt"] or record["classification"].get("app_affected") is not True:
             return "github"
@@ -280,7 +284,7 @@ def wait_cloud(ctx, api):
         start = inflight_start(api, run, evidence_attempt, workflows["route"])
         while start is not None and start.get("awaiting_start"):
             require(start["identity"] == ctx["identity"], "cloud POST marker identity differs from producer")
-            if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt) == "routed":
+            if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt, refresh_main=False) == "routed":
                 return "routed"
             end = timestamp(start["posted_at"]).timestamp() + START_TIMEOUT_MINUTES * 60
             remaining = end - datetime.now(timezone.utc).timestamp()
@@ -310,13 +314,16 @@ def wait_cloud(ctx, api):
                         and fresh["status"] != "completed", "UI producer superseded or completed")
                 route = None
                 try:
-                    route, _ = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{evidence_attempt}", ROUTE_PATH, "route.json")
+                    route, _ = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{evidence_attempt}", ROUTE_PATH, "route.json",
+                                                refresh_main=False)
                     if route["decision"] != "routed":
                         return "github"
                     if producer_decision(api, record, run, approved=False, evidence_attempt=evidence_attempt,
-                                         route_seen=True, transient_errors=True) == "routed":
+                                         route_seen=True, transient_errors=True, refresh_main=False) == "routed":
                         return "routed"
-                except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError) as error:
+                except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError, subprocess.SubprocessError) as error:
+                    if isinstance(error, subprocess.SubprocessError):
+                        return "github"
                     if transient(error):
                         raise
                 role = "import" if route is not None else "route"
@@ -331,7 +338,7 @@ def wait_cloud(ctx, api):
                 return "github"
             time.sleep(min(delay, max(0, deadline - time.monotonic())))
             delay = min(300, delay * 2)
-    except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError):
+    except (ContractError, KeyError, TypeError, ValueError, OSError, urllib.error.URLError, subprocess.SubprocessError):
         return "github"
 
 

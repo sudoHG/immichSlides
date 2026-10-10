@@ -92,16 +92,19 @@ The fixed overflow workflow's ASC build inventory is the sole source of truth
 for in-flight builds and projected usage. Before starting, the router reuses the
 newest existing build for the exact head, even if it is already complete. Otherwise,
 any non-`COMPLETE` overflow build blocks a start until **three hours** after its
-ASC `createdDate`. A stuck older build stops blocking but still adds 100 minutes
-to usage. Missing or invalid inventory fails closed. A terminal build for another
-head no longer blocks starts; it still cannot supply accepted test evidence.
+ASC `createdDate`. A stuck older build stops blocking but still counts at least
+100 minutes, or its actual elapsed action minutes if higher. Missing or invalid
+inventory fails closed. A terminal build for another head no longer blocks
+starts; it still cannot supply accepted test evidence.
 
 An immutable **about-to-POST marker** uploads successfully before the start step
 can POST. The marker and start receipt bind the producer ID, archive evidence
 attempt and admitted identity, with main workflow provenance authenticated before
 opening bytes. They schedule waiting only; they are never quota state. A POST HTTP
 4xx is a definite rejection; 5xx, network errors and timeouts leave an uncertain
-outcome. A router never retries its POST. A later router reads the ASC inventory
+outcome and send the current producer's Apple TV tier to GitHub immediately.
+The poll does not try to recover an uncertain POST from inventory. A router never
+retries its POST. A later router reads the ASC inventory
 and reuses a visible exact-head build. A rare duplicate during ASC visibility lag
 is accepted: the global start lock, one in-flight rule and 45-hour cap bound this
 risk once builds are visible. Test acceptance still verifies the chosen run's
@@ -116,14 +119,16 @@ be open, and no more than **30 minutes** may have passed since
 `ci-ui.run_started_at`. The router poll remains bounded to 100 minutes.
 
 The account cap is **45 compute hours** including the proposed 100-minute build.
-Usage equals completed action minutes in the current UTC calendar month across
-every accessible product, including failed actions, plus **100 minutes for every
-non-`COMPLETE` overflow build**. This includes stuck builds and builds created in
-an earlier month; completed actions in an unfinished build also count. Completed
+Usage equals completed and elapsed running/pending action minutes in the current
+UTC calendar month across every accessible product, including failed actions.
+Each non-`COMPLETE` overflow build counts as **max(100 minutes, its completed plus
+running/pending elapsed action minutes)**, without counting those minutes twice.
+This includes stuck builds and builds created in an earlier month. Completed
 runs ending before the month are not scanned. Never-started actions cost zero. A terminal
 `SKIPPED` or `CANCELED` action with no start timestamp also costs zero. Missing or
-inconsistent inventory/timing fails closed. The accounting window resets at
-00:00 UTC on the first of the month; correspondence with Apple's billing month is
+inconsistent inventory/timing fails closed; a `COMPLETE` build with any unfinished
+action refuses a start until a later router re-reads a consistent snapshot. The
+accounting window resets at 00:00 UTC on the first of the month; correspondence with Apple's billing month is
 `NOT_RUN` until runtime acceptance.
 
 ASC tokens are signed on first use and renewed after eight minutes before each
@@ -141,13 +146,16 @@ exposes no build cancellation operation. A fallback does not cancel or refund
 Cloud work; its ASC inventory state continues to count under the rules above.
 The independent main importer repeats the API validation.
 
-`ui-archive` only waits for the two normal gate archives. iPhone and iPad shards
-start when the archive is ready. A separate Linux `ui-cloud-wait` job gates only
+The 125-minute `ui-archive` job only waits for the two normal gate archives.
+iPhone and iPad shards start when the archive is ready. A separate Linux `ui-cloud-wait` job gates only
 Apple TV and supplies its own operational summary; it depends only on the archive,
 so it never serializes iOS and TV. The two independent UI matrices each retain
 `max-parallel: 2`. It checks complete trusted proof before checking the deadline,
 allowing Cloud to finish while the gate archive is built.
-GitHub Apple TV uses `!cancelled()`, so cancellation cannot start new macOS work.
+GitHub Apple TV requires the archive job to succeed and uses `!cancelled()`, so
+archive failure or cancellation cannot start new macOS work. Linux cloud-wait
+immediately selects GitHub when the archive conclusion is not success, preserving
+the publisher's neutral `archive_blocked_ui` path.
 It runs all three original shards unless the current selection validates Cloud;
 the publisher repeats the full trust check independently of the producer output.
 
@@ -158,7 +166,9 @@ with one admission/attempt lookup and small bounded run pages, keeping concurren
 waits below the repository token's 1,000 requests/hour budget. Missing workflows,
 missing artifacts, importer failure, stale checks and timeout cannot authorize
 skips. GitHub reads retry transient errors, and a failed round keeps waiting.
-Main pushes and forks select GitHub without waiting for Cloud.
+Admission fetches main once per cloud-wait run; all later receipt ancestry checks
+use that snapshot. Git command failures select GitHub. Main pushes and forks
+select GitHub without waiting for Cloud.
 
 With no start receipt but a matching main-authenticated POST marker, selection
 waits at most the **20-minute `xcc-start` timeout** from the marker for `start.json`.
