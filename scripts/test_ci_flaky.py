@@ -215,6 +215,8 @@ class RetryTests(unittest.TestCase):
             self.assertEqual(simulator_device_class("target", "ipad"), "ipad")
             with self.assertRaises(ContractError):
                 simulator_device_class("target", "iphone")
+            with self.assertRaises(ContractError):
+                simulator_device_class("other-udid", "ipad")
 
     def test_second_execution_timeout_keeps_first_failure_and_both_invocations(self):
         from strict_e2e_runner_support import CommandError
