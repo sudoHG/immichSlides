@@ -236,11 +236,16 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
             receipt["reason"] = "group-already-released"
             return receipt
         stage = "pointer-unavailable"
-        statuses = api.pages("commits/" + run["head_sha"] + "/statuses")
-        matching = [status for status in statuses if status.get("context") == f"ci-xcc-selection/{run['id']}/{run['run_attempt']}/{group}"
-                    and status.get("creator", {}).get("login") == groups.PUBLISHER_LOGIN
-                    and status["creator"].get("id") == groups.PUBLISHER_ID]
-        require(matching, "group selection pointer is absent")
+        while True:
+            statuses = api.pages("commits/" + run["head_sha"] + "/statuses")
+            matching = [status for status in statuses if status.get("context") == f"ci-xcc-selection/{run['id']}/{run['run_attempt']}/{group}"
+                        and status.get("creator", {}).get("login") == groups.PUBLISHER_LOGIN
+                        and status["creator"].get("id") == groups.PUBLISHER_ID]
+            if matching:
+                break
+            require(monotonic() < end and selection_open(api, run, group), "group selection pointer did not arrive")
+            refresh_producer(api, run)
+            sleep(min(15, max(0, end - monotonic())))
         receipt["pointer_id"] = max(status["id"] for status in matching)
         groups.validate_pointer(record, run, group, receipt["selection_sha256"], statuses, pointer_id=receipt["pointer_id"])
         now = datetime.now(timezone.utc)

@@ -74,9 +74,24 @@ def select(args):
     return code
 
 
+def registration_hint(group):
+    """Candidate configuration may release GitHub work, never authorize Cloud."""
+    from ci_ui_tests import ROOT
+    path = ROOT / groups.REGISTRY_PATH
+    try:
+        if not path.is_file() or path.is_symlink():
+            return False
+        registration = decode(path.read_text())
+        return registration.get("routing_enabled") is True and group in registration.get("groups", {})
+    except FAILURES:
+        return False
+
+
 def wait_cloud_group(ctx, api, group, *, sleep=time.sleep, monotonic=time.monotonic):
     """Return routed only after the same reader accepts complete imported evidence."""
     if ctx["identity"]["event"] != "pull_request" or ctx["source"]["fork_originated"]:
+        return "github"
+    if not registration_hint(group):
         return "github"
     from ci_publish import trusted_admissions, verify_workflow
     from ci_xcode_cloud_group_route import anchor
@@ -84,8 +99,17 @@ def wait_cloud_group(ctx, api, group, *, sleep=time.sleep, monotonic=time.monoto
         run = api.repo("actions/runs/" + ctx["run"]["id"])
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
         require(run["run_attempt"] == ctx["run"]["attempt"] and run["head_sha"] == ctx["identity"]["head_sha"], "group producer changed")
-        record = trusted_admissions(api, [run["id"]]).get(run["id"])
-        require(record is not None and record["identity"] == ctx["identity"], "group admission differs")
+        admission_deadline = monotonic() + 5 * 60
+        while True:
+            record = trusted_admissions(api, [run["id"]]).get(run["id"])
+            if record is not None:
+                break
+            require(monotonic() < admission_deadline, "group admission did not arrive")
+            fresh = api.repo("actions/runs/" + str(run["id"]))
+            require(fresh["run_attempt"] == run["run_attempt"] and fresh["head_sha"] == run["head_sha"]
+                    and fresh["status"] != "completed", "group producer superseded before admission")
+            sleep(min(15, max(0, admission_deadline - monotonic())))
+        require(record["identity"] == ctx["identity"], "group admission differs")
         registration = (record.get("cloud_v2_inputs") or {}).get("registry") or {}
         if registration.get("routing_enabled") is not True:
             return "github"

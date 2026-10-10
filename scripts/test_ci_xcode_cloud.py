@@ -715,6 +715,43 @@ class GroupProducerTests(unittest.TestCase):
             api.assert_not_called()
             self.assertEqual(api.method_calls, [])
 
+    def test_group_wait_allows_admission_to_arrive_after_the_linux_selection(self):
+        import ci_xcode_cloud_ui as consumer
+        self.registry["routing_enabled"] = True
+        run = dict(self.run, status="in_progress")
+        api = Mock(repository="owner/repo")
+        api.repo.side_effect = lambda path: run if path.startswith("actions/runs/") else {"id": 42, "state": "active"}
+        context = {"identity": self.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 2}}
+        sleep = Mock()
+        with patch.object(consumer, "registration_hint", return_value=True), \
+                patch("ci_publish.verify_workflow"), patch("ci_publish.trusted_admissions", side_effect=[{}, {123: self.record}]), \
+                patch("ci_xcode_cloud_group_route.anchor", return_value="ui-selection"), \
+                patch.object(consumer, "archive_evidence_run", return_value=run), \
+                patch.object(consumer, "trusted_artifact", return_value=(self.route, 99)), \
+                patch.object(self.groups, "trusted_groups", return_value={"schema_version": 2, "groups": {"ios": {}}}):
+            self.assertEqual(consumer.wait_cloud_group(context, api, "ios", sleep=sleep, monotonic=lambda: 0), "routed")
+        sleep.assert_called_once_with(15)
+
+    def test_router_waits_for_the_publishers_pointer_before_releasing_the_group(self):
+        import ci_xcode_cloud_group_route as router
+        self.registry.update(routing_enabled=True, scm_repository_id="33333333-3333-3333-3333-333333333333")
+        self.record["ui_inputs"]["base"]["selection"]["packing"]["estimated_test_seconds"] = {"iphone": 60, "ipad": 120}
+        api, asc, sleep = Mock(), Mock(), Mock()
+        api.pages.side_effect = [[], [self.pointer]]
+        asc.pages.return_value = [{"id": "branch-ref", "attributes": {"canonicalName": "refs/heads/topic"}}]
+        pr = {"user": self.record["cloud_pr_author"], "base": {"sha": self.identity["base_sha"]}, "head": {"ref": "topic"}}
+        with patch.object(router, "current_producer"), patch.object(router, "trusted_admissions", return_value={123: self.record}), \
+                patch.object(router, "anchor", return_value="ui-selection"), \
+                patch.object(router, "archive_evidence_run", return_value=dict(self.run, archive_job={"status": "completed", "conclusion": "success"})), \
+                patch.object(router, "selection_open", return_value=True), patch.object(router, "remaining_seconds", return_value=100), \
+                patch.object(router, "refresh_producer", return_value=pr), patch.object(router, "group_started", return_value=False), \
+                patch.object(router, "queue_snapshot", return_value={"seconds": 7200, "free_slots": 0, "can_prove_saturation": True}), \
+                patch.object(router, "inventories", return_value={"ios": []}), patch.object(router, "account_usage", return_value={"minutes": 300}), \
+                patch.object(router, "unknown_starts", return_value=[]):
+            result = router.prepare_group(api, lambda: asc, self.run, "ios", sleep=sleep, monotonic=lambda: 0)
+        self.assertEqual(result["decision"], "pending")
+        sleep.assert_called_once_with(15)
+
     def test_same_selection_cannot_post_again_but_a_full_rerun_can_choose_another_provider(self):
         import ci_xcode_cloud_group_route as router
         api = Mock()
