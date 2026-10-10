@@ -292,6 +292,16 @@ wall time, [exit 65 with one EXIF assertion](https://github.com/sudoHG/immichSli
 The larger infrastructure budget preserves product assertions and observation
 windows. [Splitting the large visual class](https://github.com/sudoHG/immichSlides/issues/176) is follow-up work.
 
+The archive wait shares the repository's `GITHUB_TOKEN` budget of 1,000 requests per
+hour with every other workflow, so it polls gently: the first poll comes after 30
+seconds and the interval doubles up to 300 seconds, and a run's artifacts are listed
+only after its build job completed. A 90-minute wait takes about 45 requests instead
+of roughly 800. A read refused for a documented rate limit (`Retry-After`, an exhausted
+`x-ratelimit-remaining`, or the secondary-limit response) waits for the reset inside the
+remaining deadline and then continues, as does the archive download; the Cloud wait opts in
+the same way, while the router, importer and dispatcher do not. Any other refusal, and
+every write, still fails immediately.
+
 Hosted shards pass `--result-export-timeout-seconds 180`; local commands retain
 60 seconds. The 60-second `xcresulttool get test-results tests` limit expired
 in [the default control](https://github.com/sudoHG/immichSlides/actions/runs/37798609844/job/113394133909),

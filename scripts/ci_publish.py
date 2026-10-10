@@ -208,6 +208,36 @@ def check_credential_context(environment, path):
     require(environment.get("GITHUB_EVENT_NAME") in allowed, "publisher credential refused to this event")
 
 
+class RateLimited(ContractError):
+    """A GitHub rate-limit refusal; carries only the seconds until a retry may succeed."""
+
+    def __init__(self, message, wait_seconds):
+        super().__init__(message)
+        self.wait_seconds = wait_seconds
+
+
+SECONDARY_RATE_LIMIT_SECONDS = 60  # GitHub documents waiting at least a minute when no reset header is sent
+
+
+def rate_limit_wait(error):
+    """Seconds to wait when an HTTP error is a documented rate limit, else None. Never exposes the response."""
+    if error.code not in (403, 429):
+        return None
+    headers = error.headers or {}
+    retry_after, remaining, reset = (headers.get(name) for name in ("Retry-After", "X-RateLimit-Remaining", "X-RateLimit-Reset"))
+    if retry_after and retry_after.isdecimal():
+        return max(1, int(retry_after))
+    if remaining == "0" and reset and reset.isdecimal():
+        return max(1, int(reset) - int(time.time()))
+    if error.code == 429:
+        return SECONDARY_RATE_LIMIT_SECONDS
+    try:
+        body = error.read(4096).decode("utf-8", "replace").lower()
+    except (OSError, ValueError, AttributeError):
+        return None
+    return SECONDARY_RATE_LIMIT_SECONDS if "secondary rate limit" in body else None
+
+
 class GitHub:
     def __init__(self, repository, token, *, response_headers=None):
         require(re.fullmatch(r"[\w.-]+/[\w.-]+", repository) is not None, "invalid repository")
@@ -232,7 +262,11 @@ class GitHub:
             if missing and error.code == 404:
                 return None
             # Never echo response bodies, headers, request objects or credentials.
-            raise ContractError(f"GitHub API {method} refused request (HTTP {error.code})") from None
+            message = f"GitHub API {method} refused request (HTTP {error.code})"
+            wait = rate_limit_wait(error)
+            if wait is not None:
+                raise RateLimited(message, wait) from None
+            raise ContractError(message) from None
         require(len(raw) <= MAX_JSON_BYTES, "GitHub payload exceeds limit")
         return raw if binary else json.loads(raw) if raw else None
 
@@ -257,6 +291,35 @@ class GitHub:
     def dispatch(self, path, inputs):
         self.repo("actions/workflows/" + path.rsplit("/", 1)[-1] + "/dispatches", method="POST",
                   payload={"ref": "main", "inputs": inputs})
+
+
+class RateLimitWaitingGitHub(GitHub):
+    """Long-running read waiters only: a rate-limited GET waits for its reset inside the caller's remaining time."""
+
+    def __init__(self, repository, token, remaining_seconds, *, sleep=time.sleep):
+        super().__init__(repository, token)
+        self.remaining_seconds, self.sleep = remaining_seconds, sleep
+
+    def pause_for(self, wait_seconds):
+        """Sleep out a rate limit whose full wait (plus one second) fits in the remaining time; True when a retry is still in time."""
+        if wait_seconds + 1 >= self.remaining_seconds():
+            return False
+        print(f"GitHub rate limit: waiting {wait_seconds} seconds", flush=True)
+        self.sleep(wait_seconds + 1)
+        return self.remaining_seconds() > 0
+
+    def retry_timeout(self, timeout):
+        return max(0.1, min(timeout, self.remaining_seconds()))
+
+    def request(self, path, *, method="GET", **options):
+        timeout = options.pop("timeout", 45)
+        while True:
+            try:
+                return super().request(path, method=method, timeout=timeout, **options)
+            except RateLimited as error:
+                if method != "GET" or not self.pause_for(error.wait_seconds):
+                    raise
+                timeout = self.retry_timeout(timeout)
 
 
 def mint_app(environment, path):

@@ -430,6 +430,86 @@ class PublisherTests(unittest.TestCase):
             api.workflow = dict(WORKFLOW, **mutation)
             self.assertFalse(cancelled_unstarted_run(api, run))
 
+    def test_only_documented_rate_limits_are_classified_and_waited_out_inside_the_deadline(self):
+        import io
+        import time
+        from email.message import Message
+        from urllib.error import HTTPError
+        from ci_publish import GitHub, RateLimited, RateLimitWaitingGitHub
+
+        def refusal(code, body=b"", **headers):
+            message = Message()
+            for key, value in headers.items():
+                message[key.replace("_", "-")] = value
+            return HTTPError("https://api.github.com/x", code, "refused", message, io.BytesIO(body))
+        client = GitHub("owner/repo", "secret-token")
+        reset = str(int(time.time()) + 120)
+        for error, expected in ((refusal(403, Retry_After="30"), 30),
+                                (refusal(403, X_RateLimit_Remaining="0", X_RateLimit_Reset=reset), 120),
+                                (refusal(403, b'{"message": "You have exceeded a secondary rate limit."}'), 60),
+                                (refusal(429), 60)):
+            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener:
+                opener.return_value.open.side_effect = error
+                with self.assertRaises(RateLimited) as caught:
+                    client.request("/repos/owner/repo/actions/runs")
+            self.assertAlmostEqual(expected, caught.exception.wait_seconds, delta=2)
+            self.assertEqual(f"GitHub API GET refused request (HTTP {error.code})", str(caught.exception))
+        for error in (refusal(403), refusal(403, b'{"message": "Resource not accessible by integration"}'),
+                      refusal(403, X_RateLimit_Remaining="12"), refusal(404), refusal(500)):
+            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener:
+                opener.return_value.open.side_effect = error
+                with self.assertRaises(ContractError) as caught:
+                    client.request("/repos/owner/repo/actions/runs")
+            self.assertNotIsInstance(caught.exception, RateLimited)
+
+        clock, requests = [0.0], []
+        def waiter():
+            return RateLimitWaitingGitHub("owner/repo", "secret-token", lambda: 600 - clock[0],
+                                          sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+        def outcomes(*results):
+            def respond(self, path, *, method="GET", **options):
+                requests.append(method)
+                result = results[len(requests) - 1]
+                if isinstance(result, Exception):
+                    raise result
+                return result
+            return patch.object(GitHub, "request", respond)
+        with outcomes(RateLimited("limited", 90), {"ok": True}):
+            self.assertEqual({"ok": True}, waiter().request("/x"))
+        self.assertEqual((91, 2), (clock[0], len(requests)))
+        requests.clear()
+        with outcomes(RateLimited("limited", 600)), self.assertRaises(RateLimited):
+            waiter().request("/x")
+        self.assertEqual(1, len(requests))
+        requests.clear()
+        with outcomes(ContractError("GitHub API GET refused request (HTTP 403)")), self.assertRaises(ContractError):
+            waiter().request("/x")
+        self.assertEqual(1, len(requests))
+        requests.clear()
+        with outcomes(RateLimited("limited", 5)), self.assertRaises(RateLimited):
+            waiter().request("/x", method="POST", payload={})
+        self.assertEqual(["POST"], requests)
+        # The extra second of the sleep must fit, the deadline is re-checked after waking, and the retry timeout is bounded.
+        for remaining, jump, expected in ((90.5, 1, 1), (600, 1000, 1)):
+            requests.clear()
+            clock[0] = 0
+            limited = RateLimitWaitingGitHub("owner/repo", "secret-token", lambda: remaining - clock[0],
+                                             sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds * jump))
+            with outcomes(RateLimited("limited", 90 if remaining < 100 else 30), {"ok": True}), self.assertRaises(RateLimited):
+                limited.request("/x")
+            self.assertEqual(expected, len(requests))
+        timeouts = []
+        def respond(self, path, *, method="GET", **options):
+            timeouts.append(options["timeout"])
+            if len(timeouts) == 1:
+                raise RateLimited("limited", 10)
+            return {"ok": True}
+        clock[0] = 0
+        with patch.object(GitHub, "request", respond):
+            RateLimitWaitingGitHub("owner/repo", "secret-token", lambda: 12.5 - clock[0],
+                                   sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)).request("/x")
+        self.assertEqual([45, 1.5], timeouts)
+
     def test_replaced_pending_ui_run_is_recognized_like_a_replaced_pending_gate(self):
         from ci_publish import cancelled_unstarted_run
         ui_path = ".github/workflows/ci-ui.yml"
