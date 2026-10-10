@@ -852,6 +852,69 @@ class PublisherTests(unittest.TestCase):
         with patch("ci_ui_reuse.find_reuse", return_value=None), self.assertRaises(ContractError):
             evaluate_reused_push(api, record, run, collapsed, [summary])
 
+    def test_main_ui_deferral_requires_trusted_intent_and_complete_selection_evidence(self):
+        from ci_ui_reuse import evaluate_reused_push
+        from types import SimpleNamespace
+        api = SimpleNamespace(repository=REPOSITORY)
+        source = FIXTURE_UI.replace("ci_ui_tests.py wait-archive", "ci_ui_tests.py wait-archive --defer-main-ui")
+        push = {"schema_version": 1, "repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
+                "pushed_sha": MERGE, "tree_sha": TREE}
+        run = dict(RUN, event="push", head_branch="main", head_sha=MERGE, path=".github/workflows/ci-ui.yml",
+                   status="completed", conclusion="success")
+        record = {"identity": push, "workflows": {run["path"]: {"base": source, "candidate": source}},
+                  "ui_inputs": {"base": {"manifest_sha256": "e" * 64}}}
+        names, _, _, metadata = workflow_contract(source, run, metadata=True)
+        jobs = [{"name": name, "status": "completed", "conclusion": "success" if name == "ui-archive" else "skipped",
+                 "runner_id": 0, "steps": [], "evidence_attempt": 1} for name in names]
+        summary = valid_summary()
+        expected = [test_identity("host", "UI archive selection")]
+        summary.update(identity=push, status="passed", infrastructure=[])
+        summary["source"].update(repository=REPOSITORY, event="push", workflow_path=run["path"], fork_originated=False)
+        summary["run"].update(id=str(run["id"]), attempt=1, tier="ui-infrastructure", job="ui-archive", shard=None)
+        summary["hashes"]["manifests"] = {"ui-shards": "e" * 64}
+        summary["population"].update(declared=expected, compiled=expected, deselected=[], removed_by_pr=[],
+                                     observed=[observation(expected[0], "passed", 0, exit_code=0)])
+        cases = [("literal skipped shards", None),
+                 ("collapsed skipped matrix", lambda r, a, j, s: j.__setitem__(slice(1, None), [
+                     dict(j[1], name="ui-${{ matrix.device }}-${{ matrix.shard }}")])),
+                 ("candidate intent only", lambda r, a, j, s: a["workflows"][r["path"]].update(base=FIXTURE_UI)),
+                 ("duplicate intent", lambda r, a, j, s: a["workflows"][r["path"]].update(
+                     base=source.replace("--defer-main-ui", "--defer-main-ui --defer-main-ui"))),
+                 ("non-main branch", lambda r, a, j, s: r.update(head_branch="topic")),
+                 ("PR event", lambda r, a, j, s: r.update(event="pull_request")),
+                 ("incomplete run", lambda r, a, j, s: r.update(status="in_progress")),
+                 ("failed run", lambda r, a, j, s: r.update(conclusion="failure")),
+                 ("other repository", lambda r, a, j, s: r["head_repository"].update(full_name="fork/photos")),
+                 ("other commit", lambda r, a, j, s: r.update(head_sha="f" * 40)),
+                 ("skipped job with executed step", lambda r, a, j, s: j[1].update(steps=[{"conclusion": "success"}])),
+                 ("skipped job with runner", lambda r, a, j, s: j[1].update(runner_id=123)),
+                 ("wrong summary run", lambda r, a, j, s: s[0]["run"].update(id="999")),
+                 ("wrong summary attempt", lambda r, a, j, s: s[0]["run"].update(attempt=2)),
+                 ("wrong manifest", lambda r, a, j, s: s[0]["hashes"]["manifests"].update({"ui-shards": "f" * 64}))]
+        for index, (name, mutate) in enumerate(cases):
+            current_run, admission, current_jobs, summaries = copy.deepcopy((run, record, jobs, [summary]))
+            if mutate:
+                mutate(current_run, admission, current_jobs, summaries)
+            with self.subTest(name=name), patch("ci_ui_reuse.find_reuse", return_value=None):
+                if index < 2:
+                    verdict = evaluate_reused_push(api, admission, current_run, current_jobs, summaries)
+                    self.assertEqual("pending", verdict["state"])
+                    self.assertEqual("nightly-ui", verdict["deferred_to"])
+                    self.assertIn("deferred to nightly", verdict["description"])
+                    self.assertIn("ci-nightly.yml", verdict["target_url"])
+                else:
+                    reason = "UI deferral requires" if name == "other repository" else ".*"
+                    with self.assertRaisesRegex(ContractError, reason):
+                        evaluate_reused_push(api, admission, current_run, current_jobs, summaries)
+        receipt = {"source": {"run_id": 100, "attempt": 1, "approval_based": False,
+                              "fork_originated": False, "ci_changing": False},
+                   "artifact_id": 22, "identity": {"tree_sha": TREE}}
+        with patch("ci_ui_reuse.find_reuse", return_value=receipt):
+            verdict = evaluate_reused_push(api, record, run, jobs, [summary])
+        self.assertEqual("success", verdict["state"])
+        self.assertEqual(100, verdict["reuse"]["producer_run_id"])
+        self.assertNotIn("deferred_to", verdict)
+
     def test_ui_verdict_artifact_must_come_from_main_publisher_history(self):
         from ci_ui_reuse import trusted_uploader
         from types import SimpleNamespace
