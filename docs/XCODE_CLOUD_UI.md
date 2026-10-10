@@ -152,17 +152,20 @@ exposes no build cancellation operation. A fallback does not cancel or refund
 Cloud work; its ASC inventory state continues to count under the rules above.
 The independent main importer repeats the API validation.
 
-The 125-minute `ui-archive` job only waits for the two normal gate archives.
+The `ui-archive` job only waits for the two normal gate archives, within the
+[bounded archive-selection deadline](CI_UI.md#capacity-timeouts-and-measurement).
 iPhone and iPad shards start when the archive is ready. A separate Linux `ui-cloud-wait` job gates only
 Apple TV and supplies its own operational summary; it depends only on the archive,
-so it never serializes iOS and TV. The two independent UI matrices each retain
-`max-parallel: 2`. It checks complete trusted proof before checking the deadline,
+so it never serializes iOS and TV. Their concurrency limits are documented in
+[UI capacity](CI_UI.md#capacity-timeouts-and-measurement).
+Cloud selection checks complete trusted proof before checking the deadline,
 allowing Cloud to finish while the gate archive is built.
 GitHub Apple TV requires the archive job to succeed and uses `!cancelled()`, so
 archive failure or cancellation cannot start new macOS work. Linux cloud-wait
 immediately selects GitHub when the archive conclusion is not success, preserving
 the publisher's neutral `archive_blocked_ui` path.
-It runs all three original shards unless the current selection validates Cloud;
+Apple TV runs every manifest shard (`default`, `navigation`, `visual-a` through
+`visual-d`) unless the current selection validates Cloud;
 the publisher repeats the full trust check independently of the producer output.
 
 Route/import run names include the producer ID and evidence attempt. The Linux

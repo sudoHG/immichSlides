@@ -342,8 +342,11 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 The twelve iOS jobs use `max-parallel: 3`; the six Apple TV jobs use
 `max-parallel: 1`. Both independent matrices retain `fail-fast: false`. Together
 they allow at most four macOS jobs per producer, leaving one of the account's
-five slots for other runs. The larger iOS population receives three slots to
-keep its minimum wave count at four after splitting the visual class.
+five slots for other runs. Giving the larger iOS population three slots produces
+a minimum of four scheduling waves after splitting the visual class.
+Host policy checks require both matrices to retain every partition after a
+failure, their combined capacity to stay at most four, and their shard lists
+to match the manifest.
 Nightly retains its independent cap of two. Two independent matrices let iOS
 start without waiting for Cloud selection; only Apple TV waits for that decision.
 Apple TV still executes after an iOS failure when cloud proof is absent.
@@ -388,16 +391,16 @@ about 25 minutes on every measured baseline, retaining the entire original
 non-method overhead for each partition. Three projects up to 28.97 minutes on
 the latest iPad baseline. Four projects at most 19.99 minutes on iPhone, 24.22
 on iPad and 16.84 on Apple TV. These are conservative sizing estimates; the
-producer PR reports real partition measurements and complete official results.
+[producer PR #247](https://github.com/sudoHG/immichSlides/pull/247) reports real
+partition measurements and complete official results.
 At concurrency three, the twelve iOS jobs require at least four waves; the six
 Apple TV jobs run sequentially. The matrices can overlap; only Apple TV
 waits for Cloud selection. Shared-runner queueing and archive selection still
-contribute to full-matrix feedback; the producer PR measures that latency and
+contribute to full-matrix feedback; [PR #247](https://github.com/sudoHG/immichSlides/pull/247) measures that latency and
 its overlap with the gate rather than claiming a 30-minute result from sizing
 alone. Feature-scoped selection and
-overflow capacity are separate changes. The PR includes all 147 methods' measured
-maximum durations and partition loads; the main-run source artifacts for
-37943119387 expire on 2026-10-16.
+overflow capacity are separate changes. [PR #247](https://github.com/sudoHG/immichSlides/pull/247)
+includes all 147 methods' measured maximum durations and partition loads.
 
 The archive wait shares the repository's `GITHUB_TOKEN` budget of 1,000 requests per
 hour with every other workflow, so it polls gently: the first poll comes after 30

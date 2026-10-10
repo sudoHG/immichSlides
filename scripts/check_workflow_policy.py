@@ -285,7 +285,7 @@ def trusted_action_allowed(uses, options):
     return allowed_inputs is not None and set(options) <= allowed_inputs
 
 
-def check_workflow(path: str, source: str) -> list[Violation]:
+def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]:
     violations = []
 
     def flag(location, rule, message):
@@ -428,6 +428,14 @@ def check_workflow(path: str, source: str) -> list[Violation]:
     if path in PUBLISHER_COMMANDS and isinstance(document.get("env"), dict):
         if any(isinstance(key, str) and key.startswith("CI_APP_") for key in document["env"]):
             flag("env", "publisher-credential", "App credentials cannot be inherited from workflow environment")
+    if path == ".github/workflows/ci-ui.yml":
+        strategies = [jobs[name].get("strategy", {}) for name in ("shards", "appletv-shards")
+                      if isinstance(jobs.get(name), dict)]
+        capacities = [strategy.get("max-parallel") if isinstance(strategy, dict) else None
+                      for strategy in strategies]
+        if (len(capacities) != 2 or any(type(capacity) is not int or capacity <= 0 for capacity in capacities)
+                or sum(capacities) > 4):
+            flag("jobs", "ui-capacity", "Independent UI matrices need positive literal capacities totaling at most four")
     for job_id, job in jobs.items():
         location = f"jobs.{job_id}"
         if not isinstance(job, dict):
@@ -460,6 +468,13 @@ def check_workflow(path: str, source: str) -> list[Violation]:
             if job_id == "appletv-shards" and job.get("if") != ("${{ !cancelled() && needs.archive.result == 'success' && "
                     "needs.archive.outputs.run_ui == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}"):
                 flag(location, "xcc-dependencies", "Apple TV shards require a successful archive and an unrouted selection")
+        if path == ".github/workflows/ci-ui.yml" and job_id in {"shards", "appletv-shards"}:
+            strategy = job.get("strategy")
+            if not isinstance(strategy, dict) or strategy.get("fail-fast") is not False:
+                flag(location, "ui-fail-fast", "UI failures must retain every other partition's official results")
+            matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
+            if ui_shards is not None and (not isinstance(matrix, dict) or matrix.get("shard") != ui_shards):
+                flag(location, "ui-shards", "UI matrix shards must equal the ordered manifest shard keys")
         if path == XCC_IMPORT_WORKFLOW:
             if (job_id != "import" or job.get("if") != "github.ref == 'refs/heads/main'"
                     or job.get("runs-on") != "ubuntu-24.04" or job.get("environment") != "xcode-cloud"
@@ -699,7 +714,7 @@ def main(argv=None):
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent,
                         help="Repository root (default: this script's repository)")
     parser.add_argument("--check-ui-shards", action="store_true",
-                        help="Also validate UI shard assignments and area coverage against both platforms")
+                        help="Also validate UI assignments, matrix coverage and feature-area coverage against both platforms")
     args = parser.parse_args(argv)
     directory = args.root / ".github/workflows"
     paths = sorted(directory.glob("*.yml")) + sorted(directory.glob("*.yaml"))
@@ -707,25 +722,29 @@ def main(argv=None):
     if not paths:
         print("Workflow policy FAIL: no workflows found", file=sys.stderr)
         return 1
+    ui_shards = None
+    populations = None
+    if args.check_ui_shards:
+        from ci_population import ui_identities
+        from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest, validate_shard_assignments
+        try:
+            sources = {path.relative_to(args.root).as_posix(): path.read_text(encoding="utf-8")
+                       for path in (args.root / "immichSlidesUITests").rglob("*.swift")}
+            populations = {"ui-" + platform: ui_identities(sources, platform) for platform in ("ios", "tvos")}
+            raw_manifest = (args.root / MANIFEST_PATH).read_text(encoding="utf-8")
+            validate_shard_assignments(raw_manifest, populations)
+            ui_shards = list(parse_shard_manifest(raw_manifest)["shards"])
+        except (OSError, UnicodeError, ValueError) as error:
+            violations.append(Violation(MANIFEST_PATH, "manifest", "ui-shards", str(error)))
     for path in paths:
         relative = path.relative_to(args.root).as_posix()
         try:
             if path.is_symlink():
                 raise ValueError("Workflow symlinks are unsupported")
-            violations.extend(check_workflow(relative, path.read_text(encoding="utf-8")))
+            violations.extend(check_workflow(relative, path.read_text(encoding="utf-8"), ui_shards=ui_shards))
         except (OSError, UnicodeError, ValueError):
             violations.append(Violation(relative, "workflow", "workflow-format", "Cannot read a regular UTF-8 workflow"))
     if args.check_ui_shards:
-        from ci_population import ui_identities
-        from ci_ui_shards import MANIFEST_PATH, validate_shard_assignments
-        populations = None
-        try:
-            sources = {path.relative_to(args.root).as_posix(): path.read_text(encoding="utf-8")
-                       for path in (args.root / "immichSlidesUITests").rglob("*.swift")}
-            populations = {"ui-" + platform: ui_identities(sources, platform) for platform in ("ios", "tvos")}
-            validate_shard_assignments((args.root / MANIFEST_PATH).read_text(encoding="utf-8"), populations)
-        except (OSError, UnicodeError, ValueError) as error:
-            violations.append(Violation(MANIFEST_PATH, "manifest", "ui-shards", str(error)))
         from ci_ui_selection import AREA_MAP_PATH, check_area_map
         try:
             check_area_map(args.root)
