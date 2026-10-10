@@ -37,6 +37,29 @@ HOST_CHECKS = [
     ("Xcode Cloud UI contract", [sys.executable, "scripts/check_xcode_cloud_ui.py"]),
     ("python tests", [sys.executable, "-B", "scripts/run_python_tests.py"]),
 ]
+MACOS_PYTHON_TESTS = frozenset({
+    "test_strict_e2e_photo_identity.IOSVisualIdentityJSONEncodingTests.test_nil_mark_is_valid_json_object",
+})
+
+
+def host_partition(population, scope):
+    """Split admitted identities using base-owned macOS requirements, never producer exclusions."""
+    if scope not in {"linux", "macos"}:
+        raise ContractError("unknown host platform partition")
+    keys = set()
+    for entry in population:
+        validate_test_identity(entry)
+        if entry["kind"] not in {"host", "python"} or identity_key(entry) in keys:
+            raise ContractError("invalid or duplicate host partition identity")
+        keys.add(identity_key(entry))
+    if not MACOS_PYTHON_TESTS <= {entry["key"] for entry in population if entry["kind"] == "python"}:
+        raise ContractError("required macOS Python identities are missing")
+    if {entry["key"] for entry in population if entry["kind"] == "host"} != {name for name, _ in HOST_CHECKS}:
+        raise ContractError("host partition checks differ from the complete host inventory")
+    def needs_macos(entry):
+        return (entry["kind"] == "host" and entry["key"] == "swift-format lint"
+                or entry["kind"] == "python" and entry["key"] in MACOS_PYTHON_TESTS)
+    return sorted([entry for entry in population if needs_macos(entry) == (scope == "macos")], key=identity_key)
 
 
 def git(*args):

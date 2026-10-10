@@ -27,13 +27,16 @@ from ci_ui_shards import DEVICES, MANIFEST_PATH, default_plan_population, parse_
 
 BASE_MODULES = ("ci_summary.py", "ci_population.py", "ci_verdict.py", "ui_test_inventory.py",
                 "run_host_checks.py")
-OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py", "ci_ui_selection.py", "ci_ui_packing.py", "ci_ui_test_kinds.py")
+OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py", "ci_ui_selection.py", "ci_ui_packing.py", "ci_ui_test_kinds.py",
+                         "ci_ui_discovery.py")
 UI_WORKFLOW_PATH = ".github/workflows/ci-ui.yml"
 # The only dynamic matrix value a UI producer may use; admission binds it to trusted shard names.
 DYNAMIC_UI_SHARDS = {scope: "${{ fromJSON(needs.archive.outputs." + scope + "_shards) }}"
                      for scope in ("ios", "tvos", "iphone", "ipad", "appletv")}
 SELECTION_UI_SHARDS = {scope: value.replace("needs.archive.", "needs.selection.")
                        for scope, value in DYNAMIC_UI_SHARDS.items()}
+UI_CAPACITIES = {phase: {device: "${{ fromJSON(needs." + phase + ".outputs." + device + "_capacity) }}"
+                        for device in DEVICES} for phase in ("archive", "selection")}
 BRIDGE = '''import json,sys
 sys.path.insert(0, sys.argv[1])
 from ci_population import python_identities,swift_identities,ui_identities
@@ -54,6 +57,9 @@ if p['operation']=='derive':
     result={'populations':population,'classification':classification}
 elif p['operation']=='classify':
     result=classify_changes(p['paths'],p['classification_policy'],build_target_paths=p['build_target_paths'])
+elif p['operation']=='host':
+    from run_host_checks import host_partition
+    result={'host-'+scope:host_partition(p['population'],scope) for scope in ('linux','macos')}
 elif p['operation']=='ui':
     import ci_ui_shards
     from ci_ui_shards import DEVICES,default_plan_population,shard_populations
@@ -94,7 +100,8 @@ elif p['operation']=='ui':
                 selection['shards'][device]={name:[entry for entry in entries if identity_key(entry) in selected]
                     for name,entries in shards.items()}
             if p.get('pack_scoped_ui') and selection['mode']=='scoped':
-                packing=pack_scoped_selection(selection['populations'],selection_inputs['durations'])
+                packing=pack_scoped_selection(selection['populations'],selection_inputs['durations'],
+                    **({'algorithm':'capacity-v2'} if p.get('scoped_ui_v2') else {}))
                 selection.update(shards=packing['shards'],packing=packing)
             result['selection']=selection
         except Exception as error:
@@ -252,6 +259,7 @@ def derive_record(identity, run, *, before=None):
                 try:
                     workflows[UI_WORKFLOW_PATH][side] = bind_ui_shards(
                         workflows[UI_WORKFLOW_PATH][side], ui_shard_lists(ui[side], identity, derived["classification"]))
+                    workflows[UI_WORKFLOW_PATH][side] = bind_ui_capacities(workflows[UI_WORKFLOW_PATH][side], ui[side])
                 except (ContractError, KeyError, TypeError) as error:
                     # Invalid UI binding cannot suppress the independent gate admission.
                     ui[side]["error"] = ("UI shard binding refused: " + str(error))[:500]
@@ -373,6 +381,57 @@ def ui_shard_lists(ui, identity, classification):
     return lists
 
 
+def ui_capacities(ui):
+    """A reviewed scoped plan owns capacities; full runs retain the original limits."""
+    from ci_ui_packing import DEVICE_SLOTS, V2_MACOS_SLOTS, V2_DEVICE_MAX_SLOTS
+    packing = (ui.get("selection") or {}).get("packing") or {}
+    capacities = (packing["capacity"]["device_slots"] if packing.get("algorithm") == "capacity-v2"
+                  else DEVICE_SLOTS)
+    require(set(capacities) == set(DEVICES) and all(type(value) is int and 1 <= value <= V2_DEVICE_MAX_SLOTS[device]
+            for device, value in capacities.items()) and sum(capacities.values()) <= V2_MACOS_SLOTS,
+            "trusted UI capacity exceeds five hosted slots")
+    return dict(capacities)
+
+
+def bind_ui_capacities(source, ui):
+    """Bind only device-specific capacity outputs, never evaluate workflow expressions."""
+    if source is None:
+        return None
+    from check_workflow_policy import WorkflowLoader
+    from ci_ui_packing import ACCELERATION_INTENT
+    workflow = yaml.load(source, Loader=WorkflowLoader)
+    accelerated = scoped_acceleration_intent(source)
+    expected, counts, devices_seen = ui_capacities(ui), {}, set()
+    for job, matrix in ui_matrices(source):
+        capacity = job["strategy"].get("max-parallel")
+        if not accelerated and (capacity is None or type(capacity) is int):
+            continue
+        devices = matrix.get("device")
+        require(accelerated and isinstance(devices, list) and len(devices) == 1 and devices[0] in DEVICES,
+                "dynamic UI capacity needs one literal device and scoped acceleration")
+        device = devices[0]
+        require(device not in devices_seen, "duplicate UI capacity device")
+        devices_seen.add(device)
+        phases = [phase for phase, values in UI_CAPACITIES.items() if capacity == values[device]]
+        require(len(phases) == 1, "unsupported dynamic UI capacity")
+        owner = workflow["jobs"].get(phases[0])
+        require(isinstance(owner, dict) and isinstance(owner.get("outputs"), dict)
+                and owner["outputs"].get(device + "_capacity")
+                == "${{ steps.select.outputs." + device + "_capacity }}", "UI capacity output is not selection-owned")
+        selectors = [step for step in owner.get("steps", []) if step.get("id") == "select"]
+        require(len(selectors) == 1 and any(script == "ci_ui_tests.py" and arguments
+                and arguments[0] in {"wait-archive", "select"} and ACCELERATION_INTENT in arguments
+                for script, arguments in producer_commands(selectors[0].get("run", ""))),
+                "UI capacity output does not come from its accelerated selection command")
+        counts[capacity] = expected[device]
+    if accelerated:
+        require(devices_seen == set(DEVICES), "scoped acceleration requires three independently bound capacities")
+    for expression, capacity in counts.items():
+        require(source.count(expression) == 1, "dynamic UI capacity outside its strategy")
+        source = source.replace(expression, str(capacity))
+    return source
+
+
 def ui_failure_hint(error):
     message = str(error)
     if message.startswith("functional UI selection refused: "):
@@ -410,7 +469,8 @@ def ui_inputs(revision, listing, *, populations=None, base_populations=None, wor
                       "devices": sorted(device for device, platform in DEVICES.items() if platform in result["plans"]), "populations": populations,
                       "base_populations": base_populations, "plans": result["plans"], "manifest": result["manifest"],
                       "selection_inputs": selection_inputs,
-                      "pack_scoped_ui": scoped_packing_intent(workflow) if workflow is not None else False})
+                      "pack_scoped_ui": scoped_packing_intent(workflow) if workflow is not None else False,
+                      "scoped_ui_v2": scoped_acceleration_intent(workflow) if workflow is not None else False})
         if "error" in computed:
             # Keep the base's own filtered population for an approved replacement
             # manifest; only the tested-tree shard computation failed.
@@ -458,6 +518,22 @@ def scoped_packing_intent(source):
     return bool(matches)
 
 
+def scoped_acceleration_intent(source):
+    """Only a literal packed selection opts into the base-owned five-slot model."""
+    from ci_ui_packing import ACCELERATION_INTENT, PACKING_INTENT
+    from check_workflow_policy import WorkflowLoader
+    workflow = yaml.load(source, Loader=WorkflowLoader)
+    require(isinstance(workflow, dict) and isinstance(workflow.get("jobs"), dict), "workflow needs literal jobs")
+    matches = [(script, arguments) for job in workflow["jobs"].values() for step in job.get("steps", [])
+               for script, arguments in producer_commands(step.get("run", "")) if ACCELERATION_INTENT in arguments]
+    require(not matches or len(matches) == 1 and matches[0][0] == "ci_ui_tests.py"
+            and matches[0][1][0] in {"wait-archive", "select"} and matches[0][1].count(ACCELERATION_INTENT) == 1
+            and PACKING_INTENT in matches[0][1] and scoped_packing_intent(source),
+            "unsupported scoped UI acceleration intent")
+    require(source.count(ACCELERATION_INTENT) == len(matches), "scoped UI acceleration intent outside selection")
+    return bool(matches)
+
+
 def workflow_contract(source, run, *, details=False, metadata=False):
     # The workflow is data from the admitted trusted base (or exact-head approved
     # metadata), never an executable candidate workflow in this process.
@@ -484,8 +560,19 @@ def workflow_contract(source, run, *, details=False, metadata=False):
                 scripts = re.sub(r"\$\{\{\s*" + re.escape(binding) + r"\s*\}\}", str(replacement), scripts)
             commands = producer_commands(scripts)
             producers = []
-            if any(script == "run_host_checks.py" for script, _ in commands):
-                producers.append({"tier": "host", "job": "host-checks", "shard": None, "population": "host"})
+            host_commands = [arguments for script, arguments in commands if script == "run_host_checks.py"]
+            if host_commands:
+                require(len(host_commands) == 1, "one literal host producer required")
+                arguments = host_commands[0]
+                indexes = [index for index, item in enumerate(arguments) if item == "--host-platform"]
+                require(not any(item.startswith("--host-platform=") for item in arguments), "literal host platform required")
+                if indexes:
+                    require(len(indexes) == 1 and indexes[0] + 1 < len(arguments)
+                            and arguments[indexes[0] + 1] in {"linux", "macos"}, "literal host platform required")
+                    host = "host-" + arguments[indexes[0] + 1]
+                    producers.append({"tier": "host", "job": host, "shard": None, "population": host})
+                else:
+                    producers.append({"tier": "host", "job": "host-checks", "shard": None, "population": "host"})
             if any(script == "ci_gate.py" and arguments and arguments[0] == "classify"
                    for script, arguments in commands):
                 producers.append({"tier": "gate-infrastructure", "job": "gate-classification", "shard": None,
@@ -513,8 +600,15 @@ def workflow_contract(source, run, *, details=False, metadata=False):
                         return arguments[indexes[0] + 1]
                     device, shard = option("--device"), option("--shard")
                     require(device in DEVICES and re.fullmatch(r"[a-z][a-z0-9-]*", shard), "unknown UI device/shard")
-                    producers.append({"tier": "ui", "job": "ui-" + device, "shard": shard,
-                                      "population": "ui-" + DEVICES[device], "device": device})
+                    from ci_ui_discovery import DISCOVERY_INTENT
+                    require(arguments.count(DISCOVERY_INTENT) <= 1
+                            and not any(item.startswith(DISCOVERY_INTENT + "=") for item in arguments),
+                            "unsupported official UI discovery intent")
+                    meta = {"tier": "ui", "job": "ui-" + device, "shard": shard,
+                            "population": "ui-" + DEVICES[device], "device": device}
+                    if DISCOVERY_INTENT in arguments:
+                        meta["official_discovery"] = True
+                    producers.append(meta)
             operations = {arguments[0] for script, arguments in commands
                           if script == "ci_build_archive.py" and arguments and arguments[0] in {"build", "proof"}}
             unit = any(script == "ci_unit_tests.py" and arguments and arguments[0] == "run"
@@ -628,6 +722,14 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
                 and sum(meta["population"] in {"ui-archive", "ui-selection"} for meta in metadata.values()) == 1,
                 "UI workflow needs one selection producer and device shards")
         selection = ui.get("selection") or {}
+        if scoped_acceleration_intent(source):
+            capacities = ui_capacities(ui)
+            matrices = ui_matrices(source)
+            require(len(matrices) == 3 and {tuple(matrix.get("device", [])) for _, matrix in matrices}
+                    == {(device,) for device in DEVICES}, "accelerated UI needs three literal device matrices")
+            require(all(type(job["strategy"].get("max-parallel")) is int
+                        and job["strategy"]["max-parallel"] == capacities[matrix["device"][0]]
+                        for job, matrix in matrices), "UI capacity differs from its trusted plan")
         if any(meta["population"] == "ui-selection" for meta in metadata.values()):
             require(selection.get("coverage") == "functional" and selection.get("packing")
                     and selection.get("map_revision") == record["identity"]["base_sha"],
@@ -682,10 +784,23 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
             if meta["tier"] == "ui":
                 require(summary["hashes"]["manifests"].get("test-plan") == ui["plans"][DEVICES[meta["device"]]]["sha256"],
                         "UI default-plan hash differs")
+                discovery = bool(meta.get("official_discovery") and packed_selection
+                                 and selection.get("coverage") == "functional")
+                require(summary["schema_version"] == (2 if discovery else 1),
+                        "UI compilation evidence differs from its admitted workflow protocol")
     require(all(job["status"] == "completed" and (job["conclusion"] == "success"
                 or (job["name"] in allowed_skips and job["conclusion"] == "skipped")) for job in jobs),
             "a required job failed, skipped or was cancelled")
+    modules, host_parts = None, {}
+    split_hosts = [meta["population"] for meta in metadata.values() if meta["tier"] == "host"]
+    if any(part in {"host-linux", "host-macos"} for part in split_hosts):
+        require(context == "gate" and sorted(split_hosts) == ["host-linux", "host-macos"],
+                "split host checks need exactly one Linux and one macOS producer")
+        modules = trusted_reader(record)
+        host_parts = base_reader(modules, {"operation": "host", "population": record["populations"]["host"]})
     def population(meta):
+        if meta["population"] in host_parts:
+            return host_parts[meta["population"]]
         if meta["population"] == "gate-classification":
             return [test_identity("host", "Gate change classification")]
         if meta["population"] == "ui-archive":
@@ -734,7 +849,7 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
         evaluated_on = run.get("run_started_at", run.get("created_at", ""))[:10]
         require(date.fromisoformat(evaluated_on).isoformat() == evaluated_on, "trusted UI evaluation date is missing")
         inputs.update(base_registry=record["base_registry"], evaluated_on=evaluated_on)
-    modules = trusted_reader(record)
+    modules = modules if modules is not None else trusted_reader(record)
     verdict = base_reader(modules, {"operation": "gate", "summaries": summaries, "inputs": inputs})
     missing_units = context == "gate" and {meta["population"] for meta in metadata.values() if meta["tier"] == "unit"} != {"unit-ios", "unit-tvos"}
     if missing_units and verdict["errors"] == ["invalid evidence: required-job population differs from tested tree"]:

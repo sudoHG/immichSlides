@@ -227,7 +227,19 @@ def validate_summary_v1(payload):
 
 # A successor needs an installed validator before it is admitted by a reader.
 IDENTITY_READERS = {1: validate_identity_v1}
-SUMMARY_READERS = {1: validate_summary_v1}
+
+
+def validate_summary_v2(payload):
+    require(type(payload.get("schema_version")) is int and payload["schema_version"] == 2, "invalid summary version")
+    require("compiled_evidence" in payload, "missing compiled discovery evidence")
+    legacy = {key: value for key, value in payload.items() if key != "compiled_evidence"}
+    legacy["schema_version"] = 1
+    validate_summary_v1(legacy)
+    from ci_ui_discovery import validate_discovery_summary
+    validate_discovery_summary(payload)
+
+
+SUMMARY_READERS = {1: validate_summary_v1, 2: validate_summary_v2}
 
 
 def parse_record(raw, readers):

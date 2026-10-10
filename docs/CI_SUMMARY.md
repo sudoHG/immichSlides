@@ -195,10 +195,51 @@ failed/cancelled jobs, absent artifacts and other incomplete evidence.
 ### Reader-first evolution
 
 Summary and identity versions are independent. Readers dispatch only to explicitly
-installed validators in `SUMMARY_READERS`/`IDENTITY_READERS`; version 1 is currently
-the only supported version. A successor parser and validator must land in the
+installed validators in `SUMMARY_READERS`/`IDENTITY_READERS`. Identity version 1 and
+summary versions 1 and 2 are supported. Existing producers still emit version 1;
+version 2 is prepared for the separately activated scoped UI producer below.
+A successor parser and validator must land in the
 trusted reader first, alongside the old parser and supported workflow paths. Only
 then can producers emit the successor. A version number alone never enables parsing.
+
+## Prepared version 2: scoped official discovery
+
+Version 2 keeps every version 1 field and adds `compiled_evidence`, validated by
+[`ci_ui_discovery.py`](../scripts/ci_ui_discovery.py). It is supported only for
+pull-request `ci-ui` jobs named `ui-<device>` with `scoped-a` through `scoped-f`.
+The admitted shard command must explicitly opt in with
+`--compiled-from-official-results`; an opted-in packed functional shard must supply
+version 2, and every other shard retains version 1. This reader does not activate
+the producer or remove its existing enumeration.
+
+The evidence contains `schema_version: 1`, mode `official-result-discovery-v1`,
+the exact summary `identity` and `run` including attempt, `plan_sha256`,
+`device_id`, the raw first invocation `first_exit_code`, and `official_tests` from
+Xcode's `test-results tests` export. `hashes.manifests.ui-discovery` hashes the
+canonical complete evidence; `plan_sha256` equals `ui-scoped-plan`. The export is
+bounded to 1 MiB, 8,192 JSON values and depth 32. Its one recorded simulator must
+match the destination ID and device platform/model.
+
+The reader independently walks official `immichSlidesUITests` case nodes to derive
+the discovered population. Declared, discovered, compiled and observed identities
+must be exactly equal, with no duplicate, missing or extra method and no tier
+deselection. Official results and durations must match each observation's first
+attempt; raw nonzero exits remain failures. Existing approved retry accounting
+still retains that first failure. Absent, malformed or incomplete exports fail
+closed. This proof cannot cover a deselected method or a nightly/full partition.
+
+## Prepared Linux/macOS host partition
+
+The reader recognizes one literal `run_host_checks.py --host-platform linux` and
+one literal `--host-platform macos` producer, with summary jobs `host-linux` and
+`host-macos`. The verified base's `host_partition` owns the split: macOS owns
+`swift-format lint` and the Swift JSON encoding Python test listed in
+`MACOS_PYTHON_TESTS`; Linux owns every remaining host and Python identity.
+The two sets are disjoint and their union must equal the complete admitted host
+inventory. Both jobs and exact per-job evidence are required; candidate exclusions,
+duplicate ownership, unknown platforms and missing jobs cannot pass.
+Current workflows and the default local host command remain unsplit. Producer
+activation and Linux prerequisite changes follow this reader separately.
 
 ## Current workflow boundary
 

@@ -1331,6 +1331,83 @@ class PublisherTests(unittest.TestCase):
             with self.subTest(mutate=mutate), self.assertRaises(ContractError):
                 parse_durations(bad)
 
+    def test_scoped_capacity_accounts_for_gate_slots_before_adding_ipad_and_tv_jobs(self):
+        from ci_ui_packing import pack_scoped_selection
+        from ci_ui_shards import DEVICES
+        keys = [f"SettingsUITests/testFlow{index}" for index in range(8)]
+        durations = {"schema_version": 1, "revision": "durations-v2", "default_seconds": 120,
+                     "seconds": {device: dict.fromkeys(keys, seconds) for device, seconds in
+                                 (("iphone", 210), ("ipad", 165), ("appletv", 175))}}
+        population = {device: [test_identity("ui", key, platform=platform, device=device) for key in keys]
+                      for device, platform in DEVICES.items()}
+        ios = pack_scoped_selection(dict(population, appletv=[]), durations, algorithm="capacity-v2")
+        shared = pack_scoped_selection(population, durations, algorithm="capacity-v2")
+        self.assertEqual([len(ios["shards"][device]) for device in DEVICES], [2, 2, 0])
+        self.assertEqual([len(shared["shards"][device]) for device in DEVICES], [2, 1, 2])
+        self.assertTrue(ios["fits_target"])
+        self.assertFalse(shared["fits_target"])  # The slow iPad remains an honest margin risk.
+        self.assertEqual(shared, pack_scoped_selection(
+            {device: list(reversed(entries)) for device, entries in population.items()}, durations, algorithm="capacity-v2"))
+        for device in DEVICES:
+            actual = [entry for shard in shared["shards"][device].values() for entry in shard]
+            self.assertEqual(sorted(actual, key=lambda entry: entry["key"]), population[device])
+        tv_durations = copy.deepcopy(durations)
+        tv_durations["seconds"]["appletv"] = dict.fromkeys(keys, 105)
+        tv = pack_scoped_selection(dict(population, iphone=[], ipad=[]), tv_durations, algorithm="capacity-v2")
+        self.assertEqual(len(tv["shards"]["appletv"]), 1)
+        with self.assertRaises(ContractError):
+            pack_scoped_selection(population, durations, algorithm="untrusted")
+
+    def test_split_host_reader_binds_disjoint_base_owned_populations_and_refuses_partial_jobs(self):
+        from run_host_checks import HOST_CHECKS, MACOS_PYTHON_TESTS
+        from test_ci_verdict import approval_record
+        population = [test_identity("host", name) for name, _ in HOST_CHECKS]
+        population += [test_identity("python", key) for key in sorted(MACOS_PYTHON_TESTS)]
+        population.append(test_identity("python", "test_example.ExampleTests.testPortable"))
+        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        parts = base_reader(modules, {"operation": "host", "population": population})
+        source = "jobs:\n"
+        for scope in ("linux", "macos"):
+            source += f'''  host-{scope}:
+    name: host-{scope}
+    steps:
+      - run: python3 scripts/run_host_checks.py --host-platform {scope}
+      - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: {{name: host-{scope}-summary, path: records/summary.json}}
+'''
+        identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
+        names, _, _, metadata = workflow_contract(source, RUN, metadata=True)
+        self.assertEqual({meta["population"] for meta in metadata.values()}, {"host-linux", "host-macos"})
+        policy = {"schema_version": 1, "approval_records": [approval_record("host")],
+                  "expected_skips": [], "deselections": []}
+        record = {"identity": identity, "populations": {"host": population, "unit-ios": [], "unit-tvos": []},
+                  "base_populations": {"host": population, "unit-ios": [], "unit-tvos": []},
+                  "operational_populations": {}, "classification": {"app_affected": True, "ci_changing": False},
+                  "base_policy": policy, "candidate_policy": policy,
+                  "workflows": {RUN["path"]: {"base": source, "candidate": source}}}
+        jobs, summaries = [], []
+        for name in names:
+            expected = parts[name]
+            summary = valid_summary()
+            summary.update(identity=identity, status="passed")
+            summary["source"].update(repository=REPOSITORY, event="pull_request", workflow_path=RUN["path"], fork_originated=False)
+            summary["run"] = {"id": str(RUN["id"]), "attempt": 1, "tier": "host", "job": name, "shard": None}
+            summary["population"].update(declared=expected, compiled=expected,
+                observed=[observation(entry, "passed", 0) for entry in expected])
+            summaries.append(summary)
+            jobs.append({"name": name, "status": "completed", "conclusion": "success", "evidence_attempt": 1})
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "success")
+            bad = copy.deepcopy(summaries)
+            bad[0]["population"].update(declared=population, compiled=population,
+                observed=[observation(entry, "passed", 0) for entry in population])
+            self.assertEqual(evaluate_records(record, RUN, jobs, bad, approved=False, fork=False)["state"], "failure")
+            with self.assertRaises(ContractError):
+                evaluate_records(record, RUN, jobs[:-1], summaries[:-1], approved=False, fork=False)
+        for value in ("unknown", "linux --host-platform macos", "${HOST_PLATFORM}"):
+            with self.subTest(value=value), self.assertRaises(ContractError):
+                workflow_contract(source.replace("--host-platform linux", "--host-platform " + value), RUN, metadata=True)
+
     def test_area_coverage_refuses_unmapped_source_test_and_stale_selectors_even_outside_default_plans(self):
         from ci_ui_selection import validate_area_coverage
         area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
@@ -1741,7 +1818,8 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual((verdict["state"], verdict["ui_population_mode"]), ("success", "scoped"))
 
     def test_packed_reader_uses_base_weights_and_requires_the_exact_plan_and_job_union(self):
-        from ci_publish_git import bind_ui_shards, scoped_packing_intent, ui_inputs, ui_shard_lists
+        from ci_publish_git import (UI_CAPACITIES, bind_ui_capacities, bind_ui_shards, scoped_acceleration_intent,
+                                    scoped_packing_intent, ui_capacities, ui_inputs, ui_shard_lists)
         from ci_ui_packing import canonical_hash
         from ci_ui_shards import DEVICES
         from test_ci_verdict import approval_record
@@ -1798,6 +1876,39 @@ class PublisherTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             bind_ui_shards(dynamic_ui_workflow(), ui_shard_lists(admitted, identity, classification))
         bound = bind_ui_shards(workflow, ui_shard_lists(admitted, identity, classification))
+        accelerated = workflow.replace('--pack-scoped-ui', '--pack-scoped-ui --scoped-ui-v2')
+        import yaml
+        from check_workflow_policy import WorkflowLoader
+        document = yaml.load(accelerated, Loader=WorkflowLoader)
+        document['jobs']['archive']['outputs'] = {device + '_capacity':
+            '${{ steps.select.outputs.' + device + '_capacity }}' for device in DEVICES}
+        for step in document['jobs']['archive']['steps']:
+            if 'ci_ui_tests.py wait-archive' in step.get('run', ''):
+                step['id'] = 'select'
+        for job in document['jobs'].values():
+            if 'strategy' in job:
+                device = job['strategy']['matrix']['device'][0]
+                job['strategy']['max-parallel'] = UI_CAPACITIES['archive'][device]
+        accelerated = yaml.safe_dump(document)
+        self.assertTrue(scoped_acceleration_intent(accelerated))
+        with patch('ci_publish_git.read_blob', side_effect=lambda revision, path: files[path]):
+            modern_ui = ui_inputs(BASE, listing, populations=populations, base_populations=populations,
+                workflow=accelerated, run=run, modules=modules, selection_inputs=selection_inputs)
+        self.assertEqual(modern_ui['selection']['packing']['algorithm'], 'capacity-v2')
+        modern_bound = bind_ui_capacities(bind_ui_shards(accelerated,
+            ui_shard_lists(modern_ui, identity, classification)), modern_ui)
+        capacities = ui_capacities(modern_ui)
+        self.assertLessEqual(sum(capacities.values()), 5)
+        self.assertEqual(ui_capacities(dict(modern_ui, selection={})), {'iphone': 2, 'ipad': 1, 'appletv': 1})
+        self.assertNotIn('fromJSON', modern_bound)
+        for bad in (accelerated.replace('outputs.iphone_capacity', 'outputs.ipad_capacity'),
+                    accelerated + '\n# ' + UI_CAPACITIES['archive']['iphone'],
+                    accelerated.replace('steps.select.outputs.iphone_capacity', 'steps.other.outputs.iphone_capacity'),
+                    accelerated.replace('id: select', 'id: other'),
+                    accelerated.replace('--scoped-ui-v2', '--scoped-ui-v2 --scoped-ui-v2'),
+                    accelerated.replace('--pack-scoped-ui ', '')):
+            with self.subTest(workflow=bad), self.assertRaises(ContractError):
+                bind_ui_capacities(bad, modern_ui)
         names, _, _, metadata = workflow_contract(bound, run, metadata=True)
         from ci_ui_reuse import expand_skipped_ui_matrix
         tv_only = bind_ui_shards(workflow, {"iphone": [], "ipad": [], "appletv": ["scoped-a"]})
@@ -1834,6 +1945,29 @@ class PublisherTests(unittest.TestCase):
         with patch("ci_publish_git.trusted_reader", return_value=modules):
             verdict = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
             self.assertEqual((verdict["state"], verdict["ui_population_mode"]), ("success", "scoped"))
+            from test_ci_summary import discovery_summary, refresh_discovery_hash
+            discovery = copy.deepcopy(summaries)
+            for summary in discovery:
+                if summary["run"]["tier"] != "ui":
+                    continue
+                proof = discovery_summary()["compiled_evidence"]
+                proof.update(identity=summary["identity"], run=summary["run"],
+                             plan_sha256=summary["hashes"]["manifests"]["ui-scoped-plan"])
+                device = summary["run"]["job"].removeprefix("ui-")
+                proof["official_tests"]["devices"][0]["modelName"] = {"iphone": "iPhone 17", "ipad": "iPad Pro", "appletv": "Apple TV"}[device]
+                proof["official_tests"]["devices"][0]["platform"] = "tvOS Simulator" if device == "appletv" else "iOS Simulator"
+                proof["official_tests"]["testNodes"][0]["children"] = [{"nodeType": "Test Case",
+                    "nodeIdentifier": entry["key"] + "()", "result": "Passed", "durationInSeconds": 0}
+                    for entry in summary["population"]["declared"]]
+                summary.update(schema_version=2, compiled_evidence=proof)
+                refresh_discovery_hash(summary)
+            with self.assertRaises(ContractError):
+                evaluate_records(record, run, jobs, discovery, approved=False, fork=False)
+            enabled = bound.replace("ci_ui_tests.py run ", "ci_ui_tests.py run --compiled-from-official-results ")
+            modern = dict(record, workflows={run["path"]: {"base": enabled, "candidate": enabled}})
+            self.assertEqual(evaluate_records(modern, run, jobs, discovery, approved=False, fork=False)["state"], "success")
+            with self.assertRaises(ContractError):
+                evaluate_records(modern, run, jobs, summaries, approved=False, fork=False)
             for mutate in (lambda rows: rows[0]["hashes"]["manifests"].pop("ui-scoped-plan"),
                            lambda rows: rows[1]["hashes"]["manifests"].update({"ui-scoped-plan": "f" * 64}),
                            lambda rows: rows[1]["population"].update(compiled=[]),

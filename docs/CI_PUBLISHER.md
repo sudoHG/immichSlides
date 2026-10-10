@@ -385,6 +385,37 @@ Selection/classification/packing errors fail activated PR admission; only unflag
 historical producers retain full-population compatibility on selection errors.
 Plan estimates are diagnostic data, not passing samples or duration acceptance.
 
+### Prepared scoped UI acceleration reader
+
+The additional literal `--scoped-ui-v2` on the same packed selection command opts
+into the base-owned `capacity-v2` planner. Historical producers keep `capacity-v1`.
+The successor models the PR's gate builds becoming ready, two unit consumers,
+per-job overhead without preliminary enumeration, and publication time on five
+shared hosted macOS slots. Every device retains the existing shard-count and
+28-minute predicted job bounds; device concurrency is at most two and the three
+matrix limits sum to at most five. Non-scoped `ci-ui` runs keep their original
+two/one/one limits; nightly partitions and concurrency remain unchanged.
+Predictions never establish the 30-minute acceptance criterion.
+
+Admission accepts only `strategy.max-parallel` expressions of the form
+`${{ fromJSON(needs.archive.outputs.<device>_capacity) }}` or the corresponding
+`needs.selection.outputs` form, beside that one literal device. It binds them to
+the exact base-computed plan's capacities and freezes those integers in admission.
+The outputs must belong to the selection step; a swapped device, arbitrary
+expression, duplicate reference outside the strategy, or changed resolved limit
+fails closed. The plan hash includes its complete capacity model and limits.
+
+Separately, a shard's literal `--compiled-from-official-results` enables only the
+[version 2 discovery evidence](CI_SUMMARY.md#prepared-version-2-scoped-official-discovery)
+for exact packed functional PR shards with no tier deselection. The isolated base
+reader parses the official case tree independently and checks the complete
+declared/discovered/compiled/observed equality, raw first exit, run/attempt, plan
+and evidence hashes. Missing version 2 evidence cannot fall back to version 1.
+The [host partition](CI_SUMMARY.md#prepared-linuxmacos-host-partition) likewise
+requires the base-owned disjoint union of Linux and macOS producers.
+These compatibility paths precede producer activation; current workflows, product
+assertions, skips, deadlines, Cloud routing and nightly execution are unchanged.
+
 ### Prepared grouped Xcode Cloud reader
 
 The [v2 Cloud evidence contract](XCODE_CLOUD_UI.md#prepared-grouped-evidence-reader-v2)
