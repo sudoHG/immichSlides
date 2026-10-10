@@ -557,7 +557,11 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("fork-originated: True", rendered)
         self.assertIn("pull_request", rendered)
     def test_ui_reuse_requires_complete_plain_pr_verdict_and_identical_inputs(self):
-        from ci_ui_reuse import validate_reuse
+        from ci_ui_reuse import validate_reuse, reuse_inputs
+        with patch("ci_ui_reuse.read_blob", return_value="trusted input"), patch("ci_ui_reuse.git", return_value=""):
+            self.assertNotIn("scripts/ci-ui-areas.json", reuse_inputs(BASE))
+        with patch("ci_ui_reuse.read_blob", return_value="trusted input"), patch("ci_ui_reuse.git", return_value="scripts/ci-ui-areas.json"):
+            self.assertIn("scripts/ci-ui-areas.json", reuse_inputs(BASE))
         push = {"schema_version": 1, "repository": REPOSITORY, "event": "push", "ref": "refs/heads/main",
                 "pushed_sha": MERGE, "tree_sha": TREE}
         inputs = {"manifest": "a" * 64, "policy": "b" * 64, "pins": "c" * 64}
@@ -1020,6 +1024,116 @@ class PublisherTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(ContractError):
                 workflow_contract(source, RUN, metadata=True)
 
+    def test_area_selection_unions_smoke_and_areas_but_unknown_core_and_non_pr_changes_stay_full(self):
+        from ci_ui_selection import matches_source, select_ui_population
+        from ci_ui_shards import DEVICES
+        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Engine.swift", "immichSlides/Models/**"], "tests": ["CoreUITests"]},
+                              "settings": {"sources": ["immichSlides/Settings*.swift"], "tests": ["SettingsUITests"]},
+                              "filter": {"sources": ["immichSlides/Filter.swift"], "tests": ["FilterUITests"]},
+                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]}}}
+        policy = {"schema_version": 1, "app_unaffected": ["docs/**"], "ci_trusted": ["scripts/ci-*.json"]}
+        keys = ("SmokeUITests/testLaunch", "SettingsUITests/testSave", "FilterUITests/testSelect", "CoreUITests/testPlay")
+        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
+                       for platform in ("ios", "tvos")}
+        plans = {platform: {"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}
+                 for platform in ("ios", "tvos")}
+        def selection(paths, event="pull_request"):
+            return select_ui_population(paths, policy, build_target_paths=set(), area_map=area_map,
+                                        populations=populations, plans=plans, event=event)
+        for paths, event, mode, expected in (
+                (["immichSlides/Settings.swift", "docs/guide.md"], "pull_request", "scoped", keys[:2]),
+                (["immichSlides/Settings.swift", "immichSlides/Filter.swift"], "pull_request", "scoped", keys[:3]),
+                (["immichSlides/Engine.swift"], "pull_request", "full", keys),
+                (["immichSlides/Models/Nested/Engine.swift"], "pull_request", "full", keys),
+                (["immichSlides/SettingsModels/New.swift"], "pull_request", "full", keys),
+                (["new/Unknown.swift"], "pull_request", "full", keys),
+                (["scripts/ci-ui-areas.json"], "pull_request", "full", keys),
+                (["docs/guide.md"], "pull_request", "none", ()),
+                (["docs/guide.md"], "push", "full", keys),
+                (["immichSlides/Settings.swift"], "schedule", "full", keys),
+                (["immichSlides/Settings.swift"], "workflow_dispatch", "full", keys)):
+            with self.subTest(paths=paths, event=event):
+                actual = selection(paths, event)
+                self.assertEqual(actual["mode"], mode)
+                self.assertEqual(set(actual["populations"]), set(DEVICES))
+                for device, platform in DEVICES.items():
+                    self.assertEqual(actual["populations"][device], sorted(
+                        [test_identity("ui", key, platform=platform, device=device) for key in expected],
+                        key=lambda entry: json.dumps(entry, sort_keys=True, separators=(",", ":"))))
+        for pattern, path, expected in (
+                ("immichSlides/Settings*.swift", "immichSlides/Settings.swift", True),
+                ("immichSlides/Settings*.swift", "immichSlides/SettingsModels/New.swift", False),
+                ("immichSlides/*/Settings?.swift", "immichSlides/Core/Settings1.swift", True),
+                ("immichSlides/*/Settings?.swift", "immichSlides/Core/Nested/Settings1.swift", False),
+                ("immichSlides/**/Engine.swift", "immichSlides/Engine.swift", True),
+                ("immichSlides/**/Engine.swift", "immichSlides/Models/Nested/Engine.swift", True),
+                ("immichSlides/Models/**", "immichSlides/Models/Nested/Engine.swift", True)):
+            with self.subTest(pattern=pattern, path=path):
+                self.assertEqual(matches_source(path, pattern), expected)
+
+    def test_area_coverage_refuses_unmapped_source_test_and_stale_selectors_even_outside_default_plans(self):
+        from ci_ui_selection import validate_area_coverage
+        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["CoreUITests"]},
+                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]}}}
+        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in
+                       ("SmokeUITests/testLaunch", "CoreUITests/testPlay")] for platform in ("ios", "tvos")}
+        validate_area_coverage(area_map, ["immichSlides/Engine.swift", "immichSlides/FirstBoot.swift"], populations)
+        plans = {platform: {"testTargets": [{"target": {"name": "immichSlidesUITests"}}]}
+                 for platform in ("ios", "tvos")}
+        validate_area_coverage(area_map, [], populations, plans=plans)
+        for platform, device in (("ios", "iphone"), ("tvos", "appletv")):
+            bad_plans = copy.deepcopy(plans)
+            bad_plans[platform]["testTargets"][0]["skippedTests"] = ["SmokeUITests/testLaunch"]
+            with self.subTest(platform=platform), self.assertRaisesRegex(ContractError, "smoke.*" + device):
+                validate_area_coverage(area_map, [], populations, plans=bad_plans)
+        with self.assertRaisesRegex(ContractError, "unmapped app source.*New.swift"):
+            validate_area_coverage(area_map, ["immichSlides/New.swift"], populations)
+        with self.assertRaisesRegex(ContractError, "unmapped UI test.*EvidenceUITests/testCapture"):
+            validate_area_coverage(area_map, [], dict(populations, **{"ui-ios": populations["ui-ios"] +
+                                   [test_identity("ui", "EvidenceUITests/testCapture", platform="ios")]}))
+        for mutate in (lambda value: value["smoke"].append("DeletedUITests/testLaunch"),
+                       lambda value: value["areas"]["core"]["tests"].append("CoreUITests/testDeleted"),
+                       lambda value: value.update(schema_version=True),
+                       lambda value: value["areas"]["core"]["sources"].append("../Engine.swift")):
+            bad = copy.deepcopy(area_map)
+            mutate(bad)
+            with self.subTest(mutate=mutate), self.assertRaises(ContractError):
+                validate_area_coverage(bad, [], populations)
+
+    def test_area_map_includes_flows_that_drive_shared_setup_and_settings_screens(self):
+        from ci_ui_selection import AREA_MAP_PATH, affected_areas, matches_test, parse_area_map
+        area_map = parse_area_map((Path(__file__).parent.parent / AREA_MAP_PATH).read_text())
+        cases = [
+            ("iOS/Component/ServerConfigFormViewIOS.swift", "immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton"),
+            ("Shared/Component/ServerConfigFormView.swift", "immichSlidesUITests/testIPhonePortraitAndLandscapeFirstBootElements"),
+            ("iOS/Component/ServerConfigTextInputViewIOS.swift", "FilterSummaryIOSVisualUITests/testIOSFirstBootDebugFillConfigButtonFillsFieldsWhenEnabled"),
+            ("iOS/Component/ServerConfigFormViewIOS.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFirstBootScreenshot"),
+            ("tvOS/Core/SettingsViewTV+PlaybackPages.swift", "FilterSummaryTVOSVisualUITests/testTVOSSettingsAutoPlayUsesDedicatedSubpage"),
+            ("tvOS/Core/SettingsViewTV+PlaybackPages.swift", "FilterSummaryTVOSVisualUITests/testTVOSSettingsFilterConfigButtonCanOpenEditor"),
+            ("tvOS/Core/SettingsViewTV+AccessProtectionPage.swift", "FilterSummaryTVOSVisualUITests/testTVOSEnglishAcceptanceSettingsPagesScreenshots"),
+            ("tvOS/Core/SettingsViewTV+AccessProtectionPage.swift", "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDirectionalRoutingMatchesPressedDirection"),
+            ("Shared/Core/SettingsView.swift", "FilterSummaryIOSVisualUITests/testIOSExifAlbumDiagnosticScreenshots"),
+            ("Shared/Core/SettingsView+Sections.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFilterEditorScreenshot"),
+            ("Shared/Core/SettingsView+Helpers.swift", "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow"),
+            ("Shared/Component/SlideshowControlBarView.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
+            ("iOS/Core/SlideShowViewIOS.swift", "immichSlidesUITests/testIPhonePortraitAndLandscapeModeSelectionFlow"),
+            ("Shared/Component/SlideshowControlBarView.swift", "immichSlidesUITests/testResetStateEnvironmentForcesFirstBootAfterConfigured"),
+            ("tvOS/Component/SlideshowControlBarViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerPageShowsFormAndStatusBanner"),
+            ("Shared/Component/ServerConfigFormView.swift", "immichSlidesUITestsLaunchTests/testLaunch"),
+            ("iOS/Component/ServerConfigFormViewIOS.swift", "FilterSummaryIOSVisualUITests/testIOSSettingsOpenSourceLicensesKeepsPadSidebarResponsive"),
+            ("iOS/Core/ModeSelectionViewIOS.swift", "PlaybackHistoryIOSUITests/testPreviousNextRetainedHistoryFromRandomPlayback"),
+            ("iOS/Core/FilterSummaryViewIOS+Actions.swift", "FilterSummaryIOSVisualUITests/testIOSJapaneseAcceptanceAboutScreenshots"),
+            ("tvOS/Core/FilterSummaryViewTV.swift", "FilterSummaryTVOSVisualUITests/testTVOSFullFlowModeSelectionToAccessProtectionCanReachTargetPage"),
+            ("iOS/Component/OnboardingScaffoldIOS.swift", "FilterSummaryIOSVisualUITests/testIOSEnglishAcceptanceFilterSummaryScreenshot"),
+        ]
+        for source, key in cases:
+            with self.subTest(source=source, key=key):
+                selectors = area_map["smoke"] + [selector for name in affected_areas("immichSlides/" + source, area_map)
+                                                  for selector in area_map["areas"][name]["tests"]]
+                self.assertTrue(matches_test(key, selectors), f"{source} omits its UI flow {key}")
+
     def test_ui_reader_requires_device_population_union_and_admitted_manifest_hash(self):
         from ci_publish_git import ui_inputs
         from test_ci_verdict import approval_record
@@ -1114,6 +1228,173 @@ class PublisherTests(unittest.TestCase):
             record["workflows"][run["path"]]["base"] = incomplete
             with self.assertRaises(ContractError):
                 evaluate_records(record, run, [jobs[0], jobs[2]], [summaries[0], summaries[2]], approved=False, fork=False)
+
+    def test_scoped_reader_requires_exact_three_device_selection_and_retains_full_compatibility(self):
+        from ci_publish_git import ui_inputs
+        from ci_ui_reuse import make_verdict
+        from ci_ui_shards import DEVICES
+        from test_ci_verdict import approval_record
+        identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
+        run = dict(RUN, path=".github/workflows/ci-ui.yml")
+        workflow = FIXTURE_UI.replace("[iphone]", "[iphone, ipad, appletv]").replace(
+            "[default, visual]", "[default, visual, other]")
+        manifest = {"schema_version": 2, "revision": "method-v2", "default_shard": "default",
+                    "shards": {"default": [], "visual": ["VisualUITests/testFlow"], "other": ["OtherUITests"]}}
+        keys = ("SmokeUITests/testLaunch", "NewUITests/testNew", "VisualUITests/testFlow", "OtherUITests/testPlay")
+        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
+                       for platform in ("ios", "tvos")}
+        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["NewUITests", "OtherUITests"]},
+                              "settings": {"sources": ["immichSlides/Settings.swift"], "tests": ["VisualUITests"]},
+                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["SmokeUITests"]}}}
+        files = {"scripts/ci-ui-shards.json": json.dumps(manifest),
+                 **{"immichSlides-" + suffix + ".xctestplan": json.dumps(UI_PLAN) for suffix in ("iOS", "tvOS")}}
+        listing = [{"path": path, "type": "blob", "mode": "100644"} for path in files]
+        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        selection_inputs = {"paths": ["immichSlides/Settings.swift"], "event": "pull_request", "area_map": area_map,
+                            "classification_policy": {"schema_version": 1, "app_unaffected": ["docs/**"], "ci_trusted": []},
+                            "build_target_paths": [], "map_revision": BASE,
+                            "map_sha256": hashlib.sha256(json.dumps(area_map).encode()).hexdigest()}
+        with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
+            admitted = ui_inputs(BASE, listing, populations=populations, base_populations=populations,
+                                 workflow=workflow, run=run, modules=modules, selection_inputs=selection_inputs)
+        record = {"identity": identity, "ui_inputs": {"base": admitted, "candidate": admitted},
+                  "workflows": {run["path"]: {"base": workflow, "candidate": workflow}},
+                  "base_policy": {"schema_version": 1, "approval_records": [approval_record("ui")],
+                                  "expected_skips": [], "deselections": []},
+                  "classification": {"app_affected": True, "ci_changing": False}}
+        record["candidate_policy"] = record["base_policy"]
+        names, _, _, metadata = workflow_contract(workflow, run, metadata=True)
+        def evidence(scoped):
+            jobs, summaries = [], []
+            for name in names:
+                meta = metadata[name]
+                expected = ([test_identity("host", "UI archive selection")] if meta["tier"] != "ui" else
+                            admitted["populations"][meta["device"]][meta["shard"]])
+                if scoped and meta["tier"] == "ui":
+                    expected = [entry for entry in expected if entry["key"] in (keys[0], keys[2])]
+                jobs.append({"name": name, "status": "completed", "conclusion": "success" if expected else "skipped",
+                             "evidence_attempt": 1, "runner_id": 1 if expected else None, "steps": [{}] if expected else []})
+                if not expected:
+                    continue
+                summary = valid_summary()
+                summary.update(identity=identity, status="passed")
+                summary["source"].update(repository=REPOSITORY, event="pull_request", workflow_path=run["path"], fork_originated=False)
+                summary["run"] = {"id": str(run["id"]), "attempt": 1, **{key: meta[key] for key in ("tier", "job", "shard")}}
+                summary["hashes"]["manifests"] = {"ui-shards": admitted["manifest_sha256"]}
+                if meta["tier"] == "ui":
+                    summary["hashes"]["manifests"]["test-plan"] = admitted["plans"][DEVICES[meta["device"]]]["sha256"]
+                summary["population"].update(declared=expected, compiled=expected,
+                    observed=[observation(entry, "passed", 0) for entry in expected], deselected=[], removed_by_pr=[])
+                summaries.append(summary)
+            return jobs, summaries
+        with patch("ci_publish_git.trusted_reader", return_value=modules):
+            jobs, summaries = evidence(False)
+            full = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
+            self.assertEqual(full["state"], "success")
+            original = admitted
+            bad_plan = copy.deepcopy(UI_PLAN)
+            bad_plan["testTargets"][0]["skippedTests"].append("SmokeUITests/testLaunch")
+            files["immichSlides-iOS.xctestplan"] = json.dumps(bad_plan)
+            with patch("ci_publish_git.read_blob", side_effect=lambda revision, path: files[path]):
+                admitted = ui_inputs(BASE, listing, populations=populations, base_populations=populations,
+                                     workflow=workflow, run=run, modules=modules, selection_inputs=selection_inputs)
+            self.assertNotIn("error", admitted)
+            self.assertIn("smoke", admitted["selection"]["error"])
+            self.assertNotIn("mode", admitted["selection"])
+            record["ui_inputs"] = {"base": admitted, "candidate": admitted}
+            full_jobs, full_summaries = evidence(False)
+            self.assertEqual(evaluate_records(record, run, full_jobs, full_summaries,
+                                             approved=False, fork=False)["state"], "success")
+            scoped_jobs, scoped_summaries = evidence(True)
+            with self.assertRaises(ContractError):
+                evaluate_records(record, run, scoped_jobs, scoped_summaries, approved=False, fork=False)
+            admitted = original
+            record["ui_inputs"] = {"base": admitted, "candidate": admitted}
+            files["immichSlides-iOS.xctestplan"] = json.dumps(UI_PLAN)
+            jobs, summaries = evidence(True)
+            scoped = evaluate_records(record, run, jobs, summaries, approved=False, fork=False)
+            self.assertEqual(scoped["state"], "success")
+            self.assertEqual(scoped["removed_by_pr"], [])
+            self.assertIsNone(make_verdict(record, run, summaries, scoped))
+            _, _, bound_artifacts = workflow_contract(workflow, run, details=True)
+            by_name = {bound_artifacts[name][0]: summary for name, summary in zip(
+                [job["name"] for job in jobs if job["conclusion"] == "success"], summaries)}
+            artifacts = [{"name": bound_artifacts[name][0], "expired": False} for name in names]
+            class ScopedAPI:
+                def pages(self, path, *args):
+                    return jobs if path.endswith("/jobs") else artifacts
+            with patch("ci_publish.json_member", side_effect=lambda api, artifact, filename: by_name[artifact["name"]]) as member:
+                fetched_jobs, fetched_summaries = producer_evidence(ScopedAPI(), run, workflow, admission=record)
+            self.assertEqual(len(member.call_args_list), len(summaries))
+            self.assertEqual(fetched_summaries, summaries)
+            self.assertEqual(evaluate_records(record, run, fetched_jobs, fetched_summaries, approved=False, fork=False)["state"], "success")
+            for mutate in (lambda rows: rows[1]["population"].update(declared=[], compiled=[], observed=[]),
+                           lambda rows: rows[1]["population"].update(declared=admitted["populations"]["iphone"]["default"]),
+                           lambda rows: rows[-1]["population"]["declared"][0]["dimensions"].update(device="ipad")):
+                bad = copy.deepcopy(summaries)
+                mutate(bad)
+                with self.subTest(mutate=mutate):
+                    try:
+                        verdict = evaluate_records(record, run, jobs, bad, approved=False, fork=False)
+                    except ContractError:
+                        continue
+                    self.assertEqual(verdict["state"], "failure")
+            with self.assertRaises(ContractError):
+                evaluate_records(record, run, [dict(job, runner_id=1) if job["conclusion"] == "skipped" else job
+                                              for job in jobs], summaries, approved=False, fork=False)
+            for bad_record, approved in ((dict(record, classification={"app_affected": True, "ci_changing": True}), True),
+                                         (dict(record, ui_inputs={"base": dict(admitted, selection=dict(admitted["selection"], map_revision="f" * 40))}), False)):
+                with self.subTest(record=bad_record), self.assertRaises(ContractError):
+                    evaluate_records(bad_record, run, jobs, summaries, approved=approved, fork=False)
+
+    def test_admission_selects_with_base_map_even_when_candidate_map_and_reader_differ(self):
+        from ci_ui_selection import AREA_MAP_PATH
+        identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
+        workflow = FIXTURE_UI.replace("[iphone]", "[iphone, ipad, appletv]")
+        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["NewUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["OtherUITests"]},
+                              "settings": {"sources": ["immichSlides/Settings.swift"], "tests": ["VisualUITests/testFlow"]},
+                              "onboarding": {"sources": ["immichSlides/FirstBoot.swift"], "tests": ["NewUITests"]}}}
+        files = {AREA_MAP_PATH: json.dumps(area_map), "scripts/ci-ui-shards.json": json.dumps(UI_MANIFEST),
+                 "scripts/ci-classification.json": json.dumps({"schema_version": 1, "app_unaffected": ["docs/**"], "ci_trusted": [AREA_MAP_PATH]}),
+                 ".github/workflows/ci-ui.yml": workflow,
+                 **{"immichSlides-" + suffix + ".xctestplan": json.dumps(UI_PLAN) for suffix in ("iOS", "tvOS")}}
+        listing = [{"path": path, "type": "blob", "mode": "100644"} for path in files]
+        listing.append({"path": "immichSlides/Settings.swift", "type": "blob", "mode": "100644"})
+        sources = {"immichSlidesUITests/Flows.swift": """import XCTest
+class NewUITests: XCTestCase { func testLaunch() {} }
+class VisualUITests: XCTestCase { func testFlow() {} }
+class OtherUITests: XCTestCase { func testPlay() {} }
+""", "TestSupport/Helpers.swift": "import XCTest\nclass SupportUITests: XCTestCase { func testSupport() {} }"}
+        read_maps = []
+        def blob(revision, path):
+            if path == AREA_MAP_PATH:
+                read_maps.append(revision)
+                return files[path] if revision == BASE else '{"untrusted":"candidate map"}'
+            if path in files:
+                return files[path]
+            name = path.removeprefix("scripts/")
+            if name in BASE_MODULES + OPTIONAL_BASE_MODULES:
+                self.assertEqual(revision, BASE)
+                return (Path(__file__).parent / name).read_text()
+            if name == "ci_build_archive.py":
+                return 'def run_build():\n step = test_identity("host", "secret-free build archive", configuration="Debug")\n'
+            return '{"schema_version":1}'
+        with patch("ci_publish_git.read_blob", side_effect=blob), \
+                patch("ci_publish_git.git", side_effect=lambda *args, **kwargs: "immichSlides/Settings.swift" if args[0] == "diff" else args[-1]), \
+                patch("ci_publish_git.tree_inputs", return_value=(listing, sources)):
+            record = derive_record(identity, RUN)
+        self.assertEqual(read_maps, [BASE])
+        for platform in ("ios", "tvos"):
+            self.assertNotIn("SupportUITests/testSupport", {entry["key"] for entry in record["populations"]["ui-" + platform]})
+        for side in ("base", "candidate"):
+            selection = record["ui_inputs"][side]["selection"]
+            self.assertEqual(selection["mode"], "scoped")
+            self.assertEqual(selection["map_revision"], BASE)
+            self.assertEqual(selection["map_sha256"], hashlib.sha256(files[AREA_MAP_PATH].encode()).hexdigest())
+            for entries in selection["populations"].values():
+                self.assertEqual({entry["key"] for entry in entries}, {"NewUITests/testLaunch", "VisualUITests/testFlow"})
 
     def test_fixture_device_observations_use_only_the_matching_hermetic_base_registry(self):
         from datetime import date

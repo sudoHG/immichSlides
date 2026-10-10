@@ -43,6 +43,7 @@
     "scripts/ci-test-policy.json",
     "scripts/ci-known-flaky.json",
     "scripts/ci-ui-shards.json",
+    "scripts/ci-ui-areas.json",
     "immichSlides-iOS.xctestplan",
     "immichSlides-tvOS.xctestplan",
     "scripts/ci-classification.json",

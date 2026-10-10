@@ -272,6 +272,35 @@ execution, overlapping literal jobs or stale artifacts remains inadmissible.
 
 Every ordinary run retains the existing successful-job and complete-population checks.
 
+The [feature-area reader](CI_UI.md#feature-areas-and-the-reader-first-rollout)
+also admits an exact scoped population. Admission calls `ci_ui_selection.py`
+from the verified base with the trusted diff, base classification policy and
+base `scripts/ci-ui-areas.json`; candidate area maps never authorize selection,
+even after exact-head approval. Both base/candidate shard-rule inputs retain
+that same map revision/hash and their derived selections. Historical bases
+without this reader/map remain full-only.
+
+Shard computation and feature selection have separate failure boundaries. A failed
+selection is stored only in `selection.error`; the complete population remains
+admitted, while scoped evidence fails closed. Host checks require smoke coverage
+in every device's default plan. Admission retains the same `immichSlidesUITests`
+inventory roots as the producer and shard validation; TestSupport is coverage-only.
+
+Publication first recognizes a complete full population for compatibility with
+the existing producer. Otherwise the entire UI population must equal the stored
+selection on iPhone, iPad and Apple TV, and every shard must equal its own selected
+identities. Arbitrary subsets, per-device omissions and mixtures fail closed.
+Compiled and observed equality, run/head/tree identity, manifest/plan hashes,
+outcomes, registry and approval checks still apply. Only shards whose independently
+selected population is empty may skip: their literal GitHub jobs must be complete,
+skipped, have no runner or steps, and supply no summary. Selection exclusions
+are not reported as test removals. External cloud evidence retains the full path;
+scoped cloud routing is outside this rollout.
+
+Scoped successes emit no identical-tree full-UI reuse receipt. Full receipts bind
+the area-map hash too, preserving main-push full coverage when area definitions
+change. Producer scheduling stays full until the separate producer rollout.
+
 The gate reader also supports a Linux `ci_gate.py classify` producer with one
 `host` identity, `Gate change classification`, tier `gate-infrastructure`, job
 `gate-classification` and null shard. It must succeed and provide an

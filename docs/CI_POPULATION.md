@@ -269,6 +269,12 @@ Every timeout-allowlist edit is CI-changing, including migration removals; this
 keeps newly admitted raw waits behind exact-head maintainer approval.
 The UI shard manifest `scripts/ci-ui-shards.json` and both default plans,
 `immichSlides-iOS.xctestplan` and `immichSlides-tvOS.xctestplan`, are CI-trusted.
+The feature-area map `scripts/ci-ui-areas.json` is CI-trusted too. Its
+[selection contract](CI_UI.md#feature-areas-and-the-reader-first-rollout) uses
+the existing `ui_identities` inventory and classification allowlist; unknown
+paths, shared core, CI changes, pushes and nightly retain full UI coverage.
+The trusted base map is used even when candidate metadata has exact-head approval.
+The reader supports scoped equality before producers begin selecting areas.
 Editing default plans or renaming/removing manifest-named classes requires
 maintainer approval of that exact head; update the manifest when a shard becomes empty.
 The strict tracer's `run_strict_ci_tracer.py` and `strict-tracer.json` are CI inputs;

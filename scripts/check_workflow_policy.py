@@ -699,7 +699,7 @@ def main(argv=None):
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent,
                         help="Repository root (default: this script's repository)")
     parser.add_argument("--check-ui-shards", action="store_true",
-                        help="Also validate the checked-in UI shard assignments against both platforms")
+                        help="Also validate UI shard assignments and area coverage against both platforms")
     args = parser.parse_args(argv)
     directory = args.root / ".github/workflows"
     paths = sorted(directory.glob("*.yml")) + sorted(directory.glob("*.yaml"))
@@ -725,6 +725,11 @@ def main(argv=None):
             validate_shard_assignments((args.root / MANIFEST_PATH).read_text(encoding="utf-8"), populations)
         except (OSError, UnicodeError, ValueError) as error:
             violations.append(Violation(MANIFEST_PATH, "manifest", "ui-shards", str(error)))
+        from ci_ui_selection import AREA_MAP_PATH, check_area_map
+        try:
+            check_area_map(args.root)
+        except (OSError, UnicodeError, ValueError) as error:
+            violations.append(Violation(AREA_MAP_PATH, "map", "ui-areas", str(error)))
     for violation in violations:
         print(violation, file=sys.stderr)
     print(f"Workflow policy {'FAIL' if violations else 'PASS'}: {len(paths)} workflows, {len(violations)} violations")

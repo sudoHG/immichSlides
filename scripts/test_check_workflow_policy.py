@@ -1,9 +1,13 @@
 """Guard workflow trust boundaries against accidental privilege and code execution."""
 
 import copy
+import contextlib
+import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -24,6 +28,24 @@ def workflow():
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_area_map_errors_identify_the_area_map_and_its_own_rule(self):
+        from ci_summary import ContractError
+        from ci_ui_selection import AREA_MAP_PATH
+        from ci_ui_shards import MANIFEST_PATH
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".github/workflows").mkdir(parents=True)
+            (root / ".github/workflows/check.yml").write_text(yaml.safe_dump(workflow()))
+            (root / "scripts").mkdir()
+            (root / MANIFEST_PATH).write_text("{}")
+            output = io.StringIO()
+            with patch("ci_ui_shards.validate_shard_assignments"), \
+                    patch("ci_ui_selection.check_area_map", side_effect=ContractError("unmapped app source")), \
+                    contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(policy.main(["--root", str(root), "--check-ui-shards"]), 1)
+            self.assertIn(AREA_MAP_PATH + ":map: [ui-areas] unmapped app source", output.getvalue())
+            self.assertNotIn(MANIFEST_PATH, output.getvalue())
+
     def test_nightly_aggregates_cannot_wait_for_macos_or_require_xcode(self):
         path = policy.LIVE_WORKFLOW
         document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
