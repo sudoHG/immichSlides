@@ -1876,7 +1876,8 @@ class PublisherTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             bind_ui_shards(dynamic_ui_workflow(), ui_shard_lists(admitted, identity, classification))
         bound = bind_ui_shards(workflow, ui_shard_lists(admitted, identity, classification))
-        accelerated = workflow.replace('--pack-scoped-ui', '--pack-scoped-ui --scoped-ui-v2')
+        accelerated = workflow.replace('--pack-scoped-ui', '--pack-scoped-ui --scoped-ui-v2').replace(
+            'ci_ui_tests.py run ', 'ci_ui_tests.py run --compiled-from-official-results ')
         import yaml
         from check_workflow_policy import WorkflowLoader
         document = yaml.load(accelerated, Loader=WorkflowLoader)
@@ -1905,6 +1906,7 @@ class PublisherTests(unittest.TestCase):
                     accelerated + '\n# ' + UI_CAPACITIES['archive']['iphone'],
                     accelerated.replace('steps.select.outputs.iphone_capacity', 'steps.other.outputs.iphone_capacity'),
                     accelerated.replace('id: select', 'id: other'),
+                    accelerated.replace('run --compiled-from-official-results', 'run'),
                     accelerated.replace('--scoped-ui-v2', '--scoped-ui-v2 --scoped-ui-v2'),
                     accelerated.replace('--pack-scoped-ui ', '')):
             with self.subTest(workflow=bad), self.assertRaises(ContractError):
@@ -1966,6 +1968,23 @@ class PublisherTests(unittest.TestCase):
             enabled = bound.replace("ci_ui_tests.py run ", "ci_ui_tests.py run --compiled-from-official-results ")
             modern = dict(record, workflows={run["path"]: {"base": enabled, "candidate": enabled}})
             self.assertEqual(evaluate_records(modern, run, jobs, discovery, approved=False, fork=False)["state"], "success")
+            from ci_ui_discovery import discovery_eligible
+            deselected = summaries[1]["population"]["declared"][0]
+            rule = {"identity": deselected, "tier": "ui", "environment": "fixture",
+                    "reason": "Covered in nightly", "owning_tier": "nightly"}
+            policy = dict(record["base_policy"], deselections=[rule])
+            self.assertFalse(discovery_eligible(summaries[1]["population"]["declared"], policy))
+            self.assertTrue(discovery_eligible(summaries[1]["population"]["declared"], dict(policy, approval_records=[])))
+            fallback = copy.deepcopy(discovery)
+            fallback[1] = copy.deepcopy(summaries[1])
+            fallback[1]["population"]["observed"] = [entry for entry in fallback[1]["population"]["observed"]
+                                                    if entry["identity"] != deselected]
+            fallback[1]["population"]["deselected"] = [{key: value for key, value in rule.items()
+                                                      if key not in {"tier", "environment"}}]
+            governed = dict(modern, base_policy=policy, candidate_policy=policy)
+            self.assertEqual(evaluate_records(governed, run, jobs, fallback, approved=False, fork=False)["state"], "success")
+            with self.assertRaises(ContractError):
+                evaluate_records(governed, run, jobs, discovery, approved=False, fork=False)
             with self.assertRaises(ContractError):
                 evaluate_records(modern, run, jobs, summaries, approved=False, fork=False)
             for mutate in (lambda rows: rows[0]["hashes"]["manifests"].pop("ui-scoped-plan"),

@@ -350,8 +350,13 @@ final class LocaleUITests: XCTestCase {
             document['jobs'][device + '-shards']['strategy']['max-parallel'] = expression
             name = device + '_capacity'
             document['jobs'][owner]['outputs'][name] = '${{ steps.select.outputs.' + name + ' }}'
+            for step in document['jobs'][device + '-shards']['steps']:
+                if 'run' in step:
+                    step['run'] = step['run'].replace('ci_ui_tests.py run ',
+                        'ci_ui_tests.py run --compiled-from-official-results ')
         self.assertNotIn('ui-capacity', self.rules(document, path))
-        for mutation in ('wrong-device', 'arbitrary', 'literal-six', 'unbound-output', 'outside-strategy', 'missing-intent'):
+        for mutation in ('wrong-device', 'arbitrary', 'literal-six', 'unbound-output', 'outside-strategy',
+                         'missing-intent', 'missing-discovery'):
             bad = copy.deepcopy(document)
             strategy = bad['jobs']['iphone-shards']['strategy']
             if mutation == 'wrong-device':
@@ -365,6 +370,10 @@ final class LocaleUITests: XCTestCase {
                 del bad['jobs'][owner]['outputs']['iphone_capacity']
             elif mutation == 'outside-strategy':
                 bad['jobs']['iphone-shards']['env'] = {'UNTRUSTED': expressions['iphone']}
+            elif mutation == 'missing-discovery':
+                for step in bad['jobs']['iphone-shards']['steps']:
+                    if 'run' in step:
+                        step['run'] = step['run'].replace(' --compiled-from-official-results', '')
             else:
                 for step in bad['jobs'][owner]['steps']:
                     if 'run' in step:

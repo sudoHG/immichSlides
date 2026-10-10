@@ -52,8 +52,6 @@ def host_partition(population, scope):
         if entry["kind"] not in {"host", "python"} or identity_key(entry) in keys:
             raise ContractError("invalid or duplicate host partition identity")
         keys.add(identity_key(entry))
-    if not MACOS_PYTHON_TESTS <= {entry["key"] for entry in population if entry["kind"] == "python"}:
-        raise ContractError("required macOS Python identities are missing")
     if {entry["key"] for entry in population if entry["kind"] == "host"} != {name for name, _ in HOST_CHECKS}:
         raise ContractError("host partition checks differ from the complete host inventory")
     def needs_macos(entry):

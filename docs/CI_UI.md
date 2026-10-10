@@ -280,6 +280,17 @@ and avoid waiting for or downloading an unselected platform's gate archive.
 Archive identity and signature checks remain mandatory for every selected platform.
 An earlier build with a different head/base/tree cannot supply a cache shortcut.
 
+The [prepared acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
+requires official-result discovery intent on every shard command before admitting
+`capacity-v2`. A shard with an approved base fixture deselection keeps version 1
+and preliminary enumeration. An eligible shard with an incomplete first invocation
+can write a fail-only version 2 record: compiled equals the discovered subset,
+all undiscovered methods remain `not-run` or `timed-out`, and their attempts retain
+the nonzero raw first exit. A missing export is recorded as `null`. The final writer
+keeps the diagnostics, while the verdict reports missing compiled identities and
+fails. These reader capabilities do not activate the producer or establish a
+30-minute acceptance result.
+
 ### Nightly-default locale screenshots
 
 The multi-language acceptance screenshots (Japanese, Spanish, Traditional Chinese

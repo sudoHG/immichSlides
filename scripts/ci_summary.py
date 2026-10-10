@@ -311,7 +311,7 @@ def main():
     args = parser.parse_args()
     try:
         (parse_identity if args.identity else parse_summary)(args.path.read_text(encoding="utf-8"))
-    except (ContractError, OSError) as error:
+    except (ValueError, OSError) as error:
         print(f"FAIL: {error}")
         return 1
     print("PASS: supported, structurally valid record (not a trusted verdict)")

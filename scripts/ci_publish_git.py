@@ -531,6 +531,14 @@ def scoped_acceleration_intent(source):
             and PACKING_INTENT in matches[0][1] and scoped_packing_intent(source),
             "unsupported scoped UI acceleration intent")
     require(source.count(ACCELERATION_INTENT) == len(matches), "scoped UI acceleration intent outside selection")
+    if matches:
+        from ci_ui_discovery import DISCOVERY_INTENT
+        shards = [arguments for job in workflow["jobs"].values() for step in job.get("steps", [])
+                  for script, arguments in producer_commands(step.get("run", ""))
+                  if script == "ci_ui_tests.py" and arguments and arguments[0] == "run"]
+        require(shards and all(arguments.count(DISCOVERY_INTENT) == 1
+                and not any(item.startswith(DISCOVERY_INTENT + "=") for item in arguments) for arguments in shards),
+                "scoped UI acceleration requires official discovery on every shard command")
     return bool(matches)
 
 
@@ -786,6 +794,9 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
                         "UI default-plan hash differs")
                 discovery = bool(meta.get("official_discovery") and packed_selection
                                  and selection.get("coverage") == "functional")
+                if discovery:
+                    from ci_ui_discovery import discovery_eligible
+                    discovery = discovery_eligible(ui_populations[meta["device"]][meta["shard"]], record["base_policy"])
                 require(summary["schema_version"] == (2 if discovery else 1),
                         "UI compilation evidence differs from its admitted workflow protocol")
     require(all(job["status"] == "completed" and (job["conclusion"] == "success"

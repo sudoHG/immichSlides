@@ -208,8 +208,10 @@ Version 2 keeps every version 1 field and adds `compiled_evidence`, validated by
 [`ci_ui_discovery.py`](../scripts/ci_ui_discovery.py). It is supported only for
 pull-request `ci-ui` jobs named `ui-<device>` with `scoped-a` through `scoped-f`.
 The admitted shard command must explicitly opt in with
-`--compiled-from-official-results`; an opted-in packed functional shard must supply
-version 2, and every other shard retains version 1. This reader does not activate
+`--compiled-from-official-results`; an opted-in packed functional shard without an
+approved base fixture deselection must supply version 2. A deselection matching the
+admitted population retains version 1 enumeration; every other shard retains version 1.
+The same eligibility helper is available to the producer. This reader does not activate
 the producer or remove its existing enumeration.
 
 The evidence contains `schema_version: 1`, mode `official-result-discovery-v1`,
@@ -221,12 +223,21 @@ bounded to 1 MiB, 8,192 JSON values and depth 32. Its one recorded simulator mus
 match the destination ID and device platform/model.
 
 The reader independently walks official `immichSlidesUITests` case nodes to derive
-the discovered population. Declared, discovered, compiled and observed identities
+the discovered population. For complete evidence, declared, discovered, compiled and observed identities
 must be exactly equal, with no duplicate, missing or extra method and no tier
 deselection. Official results and durations must match each observation's first
 attempt; raw nonzero exits remain failures. Existing approved retry accounting
 still retains that first failure. Absent, malformed or incomplete exports fail
 closed. This proof cannot cover a deselected method or a nightly/full partition.
+
+An incomplete first invocation has a fail-only shape when `first_exit_code` is
+nonzero and `status` is `failed`: discovered is a strict subset of declared,
+compiled equals discovered, and observed still records every declared identity.
+Undiscovered identities have one `not-run` or `timed-out` attempt retaining that
+raw exit; discovered cases retain their official results and durations. An absent
+export is represented by `official_tests: null`. The fixture's final writer retains
+these records instead of losing them during summary validation. The verdict always
+reports missing compiled identities and fails; this shape cannot establish a pass.
 
 ## Prepared Linux/macOS host partition
 
@@ -234,7 +245,9 @@ The reader recognizes one literal `run_host_checks.py --host-platform linux` and
 one literal `--host-platform macos` producer, with summary jobs `host-linux` and
 `host-macos`. The verified base's `host_partition` owns the split: macOS owns
 `swift-format lint` and the Swift JSON encoding Python test listed in
-`MACOS_PYTHON_TESTS`; Linux owns every remaining host and Python identity.
+`MACOS_PYTHON_TESTS` that is present in the admitted population; Linux owns every
+remaining host and Python identity. Removing or renaming a listed case does not
+block the split: removal is still reported, and a new name is executed on Linux.
 The two sets are disjoint and their union must equal the complete admitted host
 inventory. Both jobs and exact per-job evidence are required; candidate exclusions,
 duplicate ownership, unknown platforms and missing jobs cannot pass.

@@ -1,4 +1,4 @@
-"""Bounded official XCTest discovery evidence for fully executed scoped UI shards."""
+"""Bounded official XCTest discovery evidence and fail-only scoped UI diagnostics."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import math
 import re
 
-from ci_summary import fields, identity_key, require, test_identity
+from ci_summary import fields, identity_key, observation, require, test_identity
 
 DISCOVERY_MODE = "official-result-discovery-v1"
 DISCOVERY_INTENT = "--compiled-from-official-results"
@@ -40,7 +40,14 @@ def bounded_hash(value):
     return hashlib.sha256(raw).hexdigest()
 
 
-def official_discovery(payload, device, device_id):
+def discovery_eligible(population, policy):
+    """An approved fixture deselection needs the separate enumeration protocol."""
+    from ci_verdict import tier_approved
+    return not (tier_approved(policy, "ui") and any(rule["tier"] == "ui" and rule["environment"] == "fixture"
+                and rule["identity"] in population for rule in policy["deselections"]))
+
+
+def official_discovery(payload, device, device_id, *, allow_empty=False):
     """Read compiled case nodes without deriving them from declared or observed records."""
     bounded_hash(payload)
     require(device in DEVICES and isinstance(device_id, str) and bool(device_id), "unknown discovery device")
@@ -76,8 +83,35 @@ def official_discovery(payload, device, device_id):
             visit(node.get("children", []), owner)
 
     visit(payload.get("testNodes"))
-    require(cases, "official discovery contains no compiled methods")
+    require(cases or allow_empty, "official discovery contains no compiled methods")
     return cases
+
+
+def retain_incomplete_discovery(summary):
+    """Preserve raw first-invocation diagnostics before the fixture's final write."""
+    evidence = summary["compiled_evidence"]
+    code = evidence["first_exit_code"]
+    if type(code) is int and code != 0:
+        device = summary["run"]["job"].removeprefix("ui-")
+        cases = (official_discovery(evidence["official_tests"], device, evidence["device_id"], allow_empty=True)
+                 if evidence["official_tests"] is not None else {})
+        population = summary["population"]
+        population["compiled"] = [case["identity"] for case in cases.values()]
+        compiled = {identity_key(entry) for entry in population["compiled"]}
+        observed = {identity_key(entry["identity"]) for entry in population["observed"]}
+        for case in cases.values():
+            if identity_key(case["identity"]) not in observed:
+                outcome = {"Passed": "passed", "Failed": "failed", "Skipped": "skipped"}[case["result"]]
+                population["observed"].append(observation(case["identity"], outcome, case["duration_seconds"],
+                    exit_code=0 if outcome == "passed" else code,
+                    reason="Official XCTest skipped; detailed reason unavailable" if outcome == "skipped" else None))
+        missing = [entry for entry in population["declared"] if identity_key(entry) not in compiled]
+        if missing:
+            summary["status"] = "failed"
+            population["observed"].extend(observation(entry, "timed-out" if code == 124 else "not-run", 0,
+                exit_code=code, message="No official compiled case from the first invocation")
+                for entry in missing if identity_key(entry) not in observed)
+    summary["hashes"]["manifests"]["ui-discovery"] = bounded_hash(evidence)
 
 
 def validate_discovery_summary(summary):
@@ -100,20 +134,31 @@ def validate_discovery_summary(summary):
     code = evidence["first_exit_code"]
     require(type(code) is int and 0 <= code <= 255, "invalid discovery invocation exit")
     device = summary["run"]["job"].removeprefix("ui-")
-    cases = official_discovery(evidence["official_tests"], device, evidence["device_id"])
+    require(device in DEVICES and isinstance(evidence["device_id"], str) and bool(evidence["device_id"]),
+            "unknown discovery device")
+    fail_only = code != 0 and summary["status"] == "failed"
+    cases = ({} if fail_only and evidence["official_tests"] is None else
+             official_discovery(evidence["official_tests"], device, evidence["device_id"], allow_empty=fail_only))
     population = summary["population"]
     require(not population["deselected"], "official discovery cannot prove deselected compilation")
     compiled = [entry["identity"] for entry in cases.values()]
     expected = {identity_key(entry) for entry in compiled}
-    require(expected == {identity_key(entry) for entry in population["declared"]}
-            == {identity_key(entry) for entry in population["compiled"]}
-            == {identity_key(entry["identity"]) for entry in population["observed"]},
+    declared = {identity_key(entry) for entry in population["declared"]}
+    missing = declared - expected
+    require(expected <= declared and expected == {identity_key(entry) for entry in population["compiled"]}
+            and declared == {identity_key(entry["identity"]) for entry in population["observed"]}
+            and (not missing or fail_only),
             "declared, discovered, compiled and observed populations differ")
     failed = any(case["result"] == "Failed" for case in cases.values())
-    require((code == 0 and not failed) or (code != 0 and failed), "raw exit and official discovery outcomes differ")
+    require(missing or (code == 0 and not failed) or (code != 0 and failed),
+            "raw exit and official discovery outcomes differ")
     for entry in population["observed"]:
-        case = cases[entry["identity"]["key"]]
         first = entry["attempts"][0]
+        if identity_key(entry["identity"]) in missing:
+            require(entry["outcome"] in {"not-run", "timed-out"} and len(entry["attempts"]) == 1
+                    and first["exit_code"] == code, "undiscovered case needs its original nonpassing raw exit")
+            continue
+        case = cases[entry["identity"]["key"]]
         allowed = {"passed"} if case["result"] == "Passed" else {"skipped"} if case["result"] == "Skipped" else {
             "failed", "crashed", "timed-out"}
         require(first["outcome"] in allowed and abs(first["duration_seconds"] - case["duration_seconds"]) <= 0.000001,

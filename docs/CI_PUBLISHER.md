@@ -389,6 +389,9 @@ Plan estimates are diagnostic data, not passing samples or duration acceptance.
 
 The additional literal `--scoped-ui-v2` on the same packed selection command opts
 into the base-owned `capacity-v2` planner. Historical producers keep `capacity-v1`.
+Every `ci_ui_tests.py run` command must also carry the literal
+`--compiled-from-official-results`; planner-only activation fails admission and
+the host workflow policy check.
 The successor models the PR's gate builds becoming ready, two unit consumers,
 per-job overhead without preliminary enumeration, and publication time on five
 shared hosted macOS slots. Every device retains the existing shard-count and
@@ -407,10 +410,18 @@ fails closed. The plan hash includes its complete capacity model and limits.
 
 Separately, a shard's literal `--compiled-from-official-results` enables only the
 [version 2 discovery evidence](CI_SUMMARY.md#prepared-version-2-scoped-official-discovery)
-for exact packed functional PR shards with no tier deselection. The isolated base
+for exact packed functional PR shards with no approved base fixture deselection
+matching their admitted population. The producer uses the same eligibility rule;
+a matching deselection retains version 1 and preliminary enumeration. The isolated base
 reader parses the official case tree independently and checks the complete
 declared/discovered/compiled/observed equality, raw first exit, run/attempt, plan
-and evidence hashes. Missing version 2 evidence cannot fall back to version 1.
+and evidence hashes. Other eligible shards cannot fall back to version 1.
+For an incomplete first invocation, version 2 has a fail-only shape: the raw first
+exit is nonzero, producer status is `failed`, compiled equals the strict discovered
+subset, and each undiscovered declared identity is `not-run` or `timed-out` with
+that raw exit. A missing export is `official_tests: null`. The fixture's final writer
+preserves these diagnostics; the verdict reports missing compiled identities and
+cannot pass. Malformed exports remain rejected.
 The [host partition](CI_SUMMARY.md#prepared-linuxmacos-host-partition) likewise
 requires the base-owned disjoint union of Linux and macOS producers.
 These compatibility paths precede producer activation; current workflows, product
