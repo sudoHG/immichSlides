@@ -635,7 +635,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                 flag(location, "xcc-contract", "Import forwarding is main-only, credential-free and follows the route job")
         elif path == XCC_ROUTE_WORKFLOW:
             start = job_id == "start"
-            expected_if = "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'" + ("" if start else " && needs.start.outputs.recorded == 'true'")
+            expected_if = "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'" + ("" if start else " && needs.start.outputs.poll == 'true'")
             group = "ci-xcc-account-budget" if start else "ci-xcc-poll-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}"
             if (job_id not in {"start", "route"} or job.get("if") != expected_if
                     or job.get("runs-on") != "ubuntu-24.04" or job.get("environment") != "xcode-cloud"
@@ -661,7 +661,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                         and steps[arm[0]].get("if") == "success() && steps.prepare.outputs.post == 'true'"
                         and steps[marker[0]].get("if") == "success() && steps.arm.outputs.post == 'true'"
                         and steps[post[0]].get("if") == "success() && steps.prepare.outputs.recorded == 'true'"
-                        and job.get("outputs") == {"recorded": "${{ steps.start.outputs.recorded }}"}):
+                        and job.get("outputs") == {"poll": "${{ steps.start.outputs.poll }}"}):
                     flag(location, "xcc-post-marker", "Upload the immutable scheduling POST marker successfully before any start")
         if (any(label in str(job.get("runs-on", "")) for label in ("macos-", "xcode-"))
                 and any(re.search(r"\balways\s*\(", code, re.IGNORECASE) for code in expression_code("workflow." + location + ".if", str(job.get("if", "")), implicit_locations))):
@@ -818,7 +818,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                                           "if-no-files-found": "error", "retention-days": 90}
                               and item.get("if") == guard for stage, member, guard in (
                                   ("post", "post", "success() && steps.arm.outputs.post == 'true'"),
-                                  ("start", "start", "success() && steps.start.outputs.recorded == 'true'")))
+                                  ("start", "start", "always() && steps.start.outputs.start_recorded == 'true'")))
         report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
                          and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",
                                              "path": "${{ runner.temp }}/ci-report/" + directory,

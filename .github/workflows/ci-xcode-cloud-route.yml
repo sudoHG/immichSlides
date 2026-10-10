@@ -42,7 +42,7 @@ jobs:
       group: ci-xcc-account-budget
       cancel-in-progress: false
     outputs:
-      recorded: ${{ steps.start.outputs.recorded }}
+      poll: ${{ steps.start.outputs.poll }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -81,7 +81,7 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py start'
-      - if: success() && steps.start.outputs.recorded == 'true'
+      - if: always() && steps.start.outputs.start_recorded == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}
@@ -91,7 +91,7 @@ jobs:
 
   route:
     needs: start
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.start.outputs.recorded == 'true'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.start.outputs.poll == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     environment: xcode-cloud

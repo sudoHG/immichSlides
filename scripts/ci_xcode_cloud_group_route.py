@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import URLError
 
@@ -38,8 +38,8 @@ def selection_open(api, run, group):
     return not any(job["name"] == "ui-cloud-wait-" + group and job["status"] == "completed" for job in jobs)
 
 
-def queue_snapshot(api, now, selection, group, *, producer_run_id):
-    runs, jobs, history = {}, [], {}
+def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, history=None):
+    runs, jobs = {}, []
     for status in ("queued", "in_progress"):
         for run in api.pages("actions/runs", "workflow_runs", status=status):
             runs[run["id"]] = run
@@ -49,23 +49,28 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id):
                     and type(job.get("runner_id")) is int and job["runner_id"] > 0 and job.get("steps")):
                 continue  # These matrices wait for our choice and are modeled below.
             jobs.append(dict(job, run_id=run["id"]))
-    recent = api.repo("actions/runs?status=completed&per_page=30")["workflow_runs"]
-    require(recent, "GitHub duration history is unavailable")
-    seen = set()
-    for run in recent:
-        for job in api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"):
-            if job["id"] in seen or job["conclusion"] != "success" or not job.get("runner_id"):
-                continue
-            seen.add(job["id"])
-            labels = job.get("labels", [])
-            if not ("xcode-27" in labels or any(label.startswith("macos-") for label in labels)):
-                continue
-            duration = (timestamp(job["completed_at"]) - timestamp(job["started_at"])).total_seconds()
-            require(duration > 0, "GitHub history has reversed execution timing")
-            history.setdefault(job["name"], []).append(duration)
-            family = re.sub(r"^(ui-(?:iphone|ipad|appletv))-.*$", r"\1", job["name"])
-            if family != job["name"]:
-                history.setdefault(family, []).append(duration)
+    if history is None:
+        history, seen = {}, set()
+        # Publishers and privacy runs dominate repository-wide history. Query
+        # only macOS producers, once under the account lock, with bounded samples.
+        for workflow in ("ci-gate.yml", "ci-ui.yml", "ci-nightly.yml", "ci-toolchain.yml"):
+            recent = api.repo("actions/workflows/" + workflow + "/runs?status=success&per_page=3")["workflow_runs"]
+            for run in recent:
+                for job in api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"):
+                    if job["id"] in seen or job["conclusion"] != "success" or not job.get("runner_id"):
+                        continue
+                    seen.add(job["id"])
+                    labels = job.get("labels", [])
+                    if not ("xcode-27" in labels or any(label.startswith("macos-") for label in labels)):
+                        continue
+                    duration = (timestamp(job["completed_at"]) - timestamp(job["started_at"])).total_seconds()
+                    require(duration > 0, "GitHub history has reversed execution timing")
+                    history.setdefault(job["name"], []).append(duration)
+                    family = re.sub(r"^(ui-(?:iphone|ipad|appletv))-.*$", r"\1", job["name"])
+                    if family != job["name"]:
+                        history.setdefault(family, []).append(duration)
+    else:
+        history = {name: list(seconds) for name, seconds in history.items()}
     history = {name: seconds[-100:] for name, seconds in history.items()}
     for job in jobs:
         if job["name"] not in history:
@@ -73,8 +78,14 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id):
             if family in history:
                 history[job["name"]] = history[family]
     seconds = {device: selection["packing"]["estimated_job_seconds"][device] for device in groups.GROUPS[group]}
-    return github_estimate(jobs, now, seconds, history=history,
-                           matrix_cap={device: 2 if device == "iphone" else 1 for device in seconds})
+    gates = api.repo("actions/workflows/ci-gate.yml/runs?event=pull_request&head_sha=" + head_sha + "&per_page=5")["workflow_runs"]
+    gates = [run for run in gates if run["head_sha"] == head_sha and run["path"] == ".github/workflows/ci-gate.yml"]
+    require(gates, "this head has no GitHub gate for an archive forecast")
+    gate = max(gates, key=lambda run: run["id"])
+    own_jobs = api.pages(f"actions/runs/{gate['id']}/attempts/{gate['run_attempt']}/jobs", "jobs")
+    result = github_estimate(jobs, now, seconds, history=history,
+        matrix_cap={device: 2 if device == "iphone" else 1 for device in seconds}, gate=dict(gate, jobs=own_jobs), platform=group)
+    return dict(result, duration_history=history)
 
 
 def inventories(asc, registration):
@@ -146,7 +157,7 @@ def account_usage(asc, registration, now, window_start):
 def unknown_starts(api, registration, inventory, *, current_uploader=None):
     """Authenticate markers before bytes and recompute their reservation from admission."""
     workflow = api.repo("actions/workflows/ci-xcode-cloud-route.yml")
-    sources = api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", event="workflow_dispatch")
+    sources = route_sources(api, workflow)
     missing, visible = [], {row["id"] for rows in inventory.values() for row in rows}
     for source in sources:
         if current_uploader == (source["id"], source["run_attempt"]):
@@ -163,9 +174,10 @@ def unknown_starts(api, registration, inventory, *, current_uploader=None):
         if started and started.get("schema_version") == 2 and started.get("post_attempted") is False:
             continue  # The authenticated main start refused before sending POST.
         rows = inventory.get(marker.get("group", "tvos"), [])
+        posted_at = (started or {}).get("posted_at", marker["posted_at"])
         matches = [row for row in rows
                    if (row["attributes"].get("sourceCommit") or {}).get("commitSha") == marker["head_sha"]
-                   and abs((timestamp(row["attributes"]["createdDate"]) - timestamp(marker["posted_at"])).total_seconds()) <= 120]
+                   and 0 <= (timestamp(row["attributes"]["createdDate"]) - timestamp(posted_at)).total_seconds() <= 120]
         if len(matches) == 1:
             continue
         require(not matches, "Cloud unknown POST matches several builds")
@@ -185,11 +197,18 @@ def unknown_starts(api, registration, inventory, *, current_uploader=None):
     return missing
 
 
+def route_sources(api, workflow):
+    # Artifact retention is 90 days. Marker age within that window never
+    # refunds compute; creation filtering avoids years of irrelevant runs.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    return api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", event="workflow_dispatch", created=">=" + cutoff)
+
+
 def group_started(api, run, group, *, current_uploader=None):
     """Do not replay a selection, but allow a full rerun's new attempt."""
     workflow = api.repo("actions/workflows/ci-xcode-cloud-route.yml")
     title = f"xcc-route-{run['id']}-{run['run_attempt']}-{group}"
-    for source in api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs", event="workflow_dispatch"):
+    for source in route_sources(api, workflow):
         if source.get("display_title") != title or current_uploader == (source["id"], source["run_attempt"]):
             continue
         artifacts = api.pages(f"actions/runs/{source['id']}/artifacts", "artifacts")
@@ -202,7 +221,8 @@ def group_started(api, run, group, *, current_uploader=None):
     return False
 
 
-def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep, monotonic=time.monotonic, current_uploader=None):
+def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep, monotonic=time.monotonic,
+                  current_uploader=None, prepared=None):
     require(group in groups.GROUPS and mode in {"auto", "github", "force-start-failure"}, "invalid group routing input")
     current_producer(api, run)
     receipt = {"schema_version": 2, "identity": None, "head_sha": run["head_sha"], "producer_run_id": run["id"],
@@ -222,6 +242,7 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         if registration.get("routing_enabled") is not True or mode == "github":
             receipt["reason"] = "routing-inactive"
             return receipt
+        stage = "cloud-registry-unavailable"
         descriptor = groups.selection(record, run, group, approved=False)
         receipt.update(workflow_id=descriptor["registration"]["workflow_id"], selection=descriptor,
                        selection_sha256=groups.canonical_hash(descriptor), runtime_plan_sha256=descriptor["runtime_plan_sha256"])
@@ -248,32 +269,39 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
             sleep(min(15, max(0, end - monotonic())))
         receipt["pointer_id"] = max(status["id"] for status in matching)
         groups.validate_pointer(record, run, group, receipt["selection_sha256"], statuses, pointer_id=receipt["pointer_id"])
+        if prepared is not None:
+            require(prepared["decision"] == "pending" and prepared["identity"] == receipt["identity"]
+                    and prepared["selection_sha256"] == receipt["selection_sha256"]
+                    and prepared["pointer_id"] == receipt["pointer_id"] and prepared["unresolved_starts"] == [],
+                    "group preparation changed before POST")
         now = datetime.now(timezone.utc)
         selected = record["ui_inputs"]["base"]["selection"]
         stage = "github-queue-unavailable"
-        receipt["capacity"] = queue_snapshot(api, now, selected, group, producer_run_id=run["id"])
+        receipt["capacity"] = queue_snapshot(api, now, selected, group, producer_run_id=run["id"], head_sha=run["head_sha"],
+            history=prepared["capacity"]["duration_history"] if prepared else None)
         if not receipt["capacity"]["can_prove_saturation"] or receipt["capacity"]["free_slots"]:
             receipt["reason"] = "github-capacity-or-queue-uncertain"
             return receipt
         stage = "cloud-budget-unavailable"
-        require(isinstance(registration.get("billing_window"), dict) and "cap_minutes" in registration,
-                "confirmed Cloud allowance and Apple billing period are required")
-        policy = month_policy(now, registration["billing_window"], cap_minutes=registration["cap_minutes"])
+        require(isinstance(registration.get("billing_anchor"), dict) and "cap_minutes" in registration,
+                "confirmed Cloud allowance and Apple billing anchor are required")
+        require("queue_seconds_upper" in registration["groups"][group], "reviewed Cloud queue upper bound is required")
+        policy = month_policy(now, registration["billing_anchor"], cap_minutes=registration["cap_minutes"])
         receipt["budget_policy"] = policy
         asc = asc_factory()
         stage = "cloud-inventory-unavailable"
         inventory = inventories(asc, registration)
-        if group_started(api, run, group, current_uploader=current_uploader):
+        if prepared is None and group_started(api, run, group, current_uploader=current_uploader):
             receipt["reason"] = "cloud-selection-already-started"
             return receipt
         if any(row["attributes"]["executionProgress"] != "COMPLETE" for row in inventory[group]):
             receipt["reason"] = "group-cloud-capacity-in-use"
             return receipt
         receipt["cloud_estimate"] = cloud_estimate(descriptor, selected,
-            queue_seconds=registration["groups"][group].get("queue_seconds_upper", 120))
+            queue_seconds=registration["groups"][group]["queue_seconds_upper"])
         stage = "cloud-budget-unavailable"
         usage = [account_usage(asc, registration, now, start) for start, _ in policy["windows"]]
-        unresolved = unknown_starts(api, registration, inventory, current_uploader=current_uploader)
+        unresolved = unknown_starts(api, registration, inventory, current_uploader=current_uploader) if prepared is None else []
         receipt.update(usage=usage, unresolved_starts=unresolved)
         if unresolved:
             receipt["reason"] = "unresolved-cloud-post"
@@ -391,24 +419,31 @@ def phase(api, asc, run, event, name, uploader):
         if name == "start":
             value["post_attempted"] = False
         if value["decision"] == "pending" and name == "start":
-            # The entire main start job holds the account lock. Refresh the head,
-            # pointer, queue, usage and all reservations immediately before POST.
-            fresh = prepare_group(api, lambda: asc, run, group, mode=event["inputs"].get("mode", "auto"),
-                current_uploader=(uploader["uploader_run_id"], uploader["uploader_attempt"]))
-            if fresh["decision"] != "pending":
+            try:
+                # The whole job holds the account lock: other starts cannot add
+                # historical markers between prepare and POST. Refresh only
+                # mutable evidence, preserving the validated history snapshot.
+                fresh = prepare_group(api, lambda: asc, run, group, mode=event["inputs"].get("mode", "auto"), prepared=value,
+                    current_uploader=(uploader["uploader_run_id"], uploader["uploader_attempt"]))
+                if fresh["decision"] == "pending":
+                    require(all(fresh[key] == value[key] for key in ("identity", "selection_sha256", "pointer_id", "reference_id")),
+                            "group changed before POST")
                 value.update(fresh)
-            else:
-                require(all(fresh[key] == value[key] for key in ("identity", "selection_sha256", "pointer_id", "reference_id")),
-                        "group changed before POST")
-                value.update(fresh)
-            if value["decision"] == "pending":
-                artifacts = api.pages(f"actions/runs/{uploader['uploader_run_id']}/artifacts", "artifacts")
-                marker = state.receipt(api, artifacts, {"id": uploader["uploader_run_id"], "run_attempt": uploader["uploader_attempt"]},
-                    api.repo("actions/workflows/ci-xcode-cloud-route.yml"), prefix=state.POST_PREFIX, member="post.json")
-                require(marker is not None and all(marker[key] == value[key] for key in ("identity", "group", "selection_sha256", "pointer_id")),
-                        "Cloud group POST marker differs")
-                value["post_attempted"] = True
-                value.update(post_group(asc, value))
+                if value["decision"] == "pending":
+                    artifacts = api.pages(f"actions/runs/{uploader['uploader_run_id']}/artifacts", "artifacts")
+                    marker = state.receipt(api, artifacts, {"id": uploader["uploader_run_id"], "run_attempt": uploader["uploader_attempt"]},
+                        api.repo("actions/workflows/ci-xcode-cloud-route.yml"), prefix=state.POST_PREFIX, member="post.json")
+                    require(marker is not None and all(marker[key] == value[key] for key in ("identity", "group", "selection_sha256", "pointer_id")),
+                            "Cloud group POST marker differs")
+                    value.update(post_attempted=True, posted_at=datetime.now(timezone.utc).isoformat())
+                    # Persist before invoking the single POST. An unexpected
+                    # exception after this point must never write a refund.
+                    write_phase("start", dict(value, **uploader))
+                    value.update(post_group(asc, value))
+            except Exception:
+                if value["post_attempted"]:
+                    raise
+                value.update(decision="github", reason="refused-before-post", cloud_run_id=None)
         if name == "arm":
             write_phase("prepared", dict(value, **uploader))
         else:
@@ -427,5 +462,31 @@ def phase(api, asc, run, event, name, uploader):
         output.write(f"recorded=true\nproducer_run_id={run['id']}\nproducer_attempt={run['run_attempt']}\ngroup={group}\n")
         if name in {"prepare", "arm"}:
             output.write("post=" + str(value["decision"] == "pending").lower() + "\n")
+        if name == "start":
+            output.write("start_recorded=true\npoll=" + str(value["decision"] == "pending" and bool(value["cloud_run_id"])).lower() + "\n")
     print(f"Cloud {group} {name}: {value['decision']} ({value['reason']})")
     return 0
+
+
+def refuse_unposted_start(event, uploader):
+    """Main-job local state also covers failures before the group phase begins."""
+    directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-route")
+    marker_path = directory / "post.json"
+    if not marker_path.exists():
+        return False
+    marker = json.loads(marker_path.read_text())
+    require(marker["schema_version"] == 2 and marker["producer_run_id"] == int(event["inputs"]["producer_run_id"])
+            and marker["producer_attempt"] == int(event["inputs"]["producer_attempt"])
+            and marker["group"] == event["inputs"]["group"]
+            and all(marker[key] == value for key, value in uploader.items()), "local POST marker binding differs")
+    start_path = directory / "start.json"
+    started = json.loads(start_path.read_text()) if start_path.exists() else None
+    if started is not None:
+        require(all(started[key] == marker[key] for key in ("identity", "producer_run_id", "producer_attempt", "group", *uploader)),
+                "local start binding differs")
+    attempted = started is not None and started.get("post_attempted") is True
+    if not attempted:
+        write_phase("start", dict(marker, decision="github", reason="refused-before-post", post_attempted=False, cloud_run_id=None))
+    with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+        output.write("start_recorded=true\npoll=false\n")
+    return not attempted

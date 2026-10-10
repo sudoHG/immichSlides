@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 from pathlib import PurePosixPath
 from xml.etree import ElementTree
@@ -36,6 +37,10 @@ def registry(value):
             and value["groups"] and set(value["groups"]) <= set(GROUPS), "unsupported Cloud group registry")
     workflows, check_names, plan_paths = set(), set(), set()
     for group, registration in value["groups"].items():
+        if value.get("routing_enabled") is True or "queue_seconds_upper" in registration:
+            queue = registration.get("queue_seconds_upper")
+            require(type(queue) in {int, float} and math.isfinite(queue) and queue >= 0,
+                    "Cloud group lacks a reviewed queue upper bound")
         workflow = legacy.uuid(registration["workflow_id"])
         require(workflow not in workflows, "Cloud groups cannot share a workflow")
         workflows.add(workflow)

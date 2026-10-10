@@ -124,11 +124,20 @@ platform is never awaited. Main pushes retain explicit nightly deferral, nightly
 runs all default-plan tests on GitHub, and forks/external authors never route.
 
 `ci_xcode_cloud_schedule.py` simulates five repository-visible macOS slots from
-live assigned jobs, ready queued jobs and recent successful job duration p90s.
+live assigned jobs, ready queued jobs and successful job duration p90s from at
+most three recent runs of each of `ci-gate`, `ci-ui`, `ci-nightly` and `ci-toolchain`.
+Publisher/privacy runs cannot displace these samples.
 Per-device UI caps are two iPhone, one iPad and one Apple TV. A queue job without
 known labels/history or fewer than five assigned macOS jobs keeps GitHub.
 Account-wide free slots and exact FIFO order are not exposed; predictions state
-this limit. GitHub includes a five-minute archive allowance plus packed job time.
+this limit. The newest same-head `ci-gate` run supplies the archive dependency:
+`build-<platform>` is ready at zero if successful, or at its simulated completion
+using remaining p90 when running. Unit jobs wait for their own platform build;
+not-yet-created units are included from that dependency. The receipt records each
+gate finish and `archive_ready_seconds`. Future UI work for the other platform
+group is not modeled, as recorded in `other_group_ui`; visible running jobs from
+either group still consume slots. Selected UI jobs share those slots and retain
+their per-device caps.
 Cloud includes 13 minutes of build time, per-destination selected test estimates,
 startup overhead, a registered queue allowance and three minutes for import.
 Destinations and actions are estimated serially unless their separate
@@ -138,22 +147,39 @@ for that group. Predictions are saved with the route receipt, not reported as
 measured wall times.
 
 The start job holds the shared account lock and refreshes head, pointer, queue,
-inventory and budget immediately before its single POST. The policy cap is
+inventory and budget immediately before its single POST. Historical markers are
+queried only for route runs created within their 90-day retention period; marker
+age within that period never refunds a reservation. The start refresh reuses
+authenticated history and duration samples from preparation under the same lock,
+avoiding a second historical scan. The four bounded duration queries and retained
+marker filtering limit pressure on the shared 1,000-request/hour repository token;
+missing history, pagination or API limits select GitHub. The policy cap is
 2,700 compute minutes, reduced when the confirmed account allowance is smaller.
-Missing confirmed `cap_minutes` or a valid Apple `billing_window` returns the
+Missing confirmed `cap_minutes`, a valid Apple `billing_anchor` or an explicit
+per-group `queue_seconds_upper` returns the
 group to GitHub before reading ASC inventory; a UTC-only estimate cannot start it.
 Admission uses destination wall-time accounting across every reviewed product
 and workflow, including failed actions and active work; unknown configuration,
 missing inventory or missing timestamps refuses a new start. `R` is the selected
 destination wall estimate multiplied by 1.3, plus five minutes, rounded up to
 five minutes. Normal starts require `usage + R + 120 <= cap`. Both the UTC month
-and confirmed Apple billing period are checked. In the final three UTC days,
+and confirmed Apple billing period are checked. `billing_anchor` stores the
+confirmed recurring day of month (1–31) and IANA `time_zone`; boundaries are local
+midnight, clamping the day to the last day of shorter months. Current windows
+are derived on each decision, so UTC and Apple usage reset automatically at their
+respective boundaries without a monthly registry change. Confirm this model
+matches the actual account renewal; a different renewal rule needs a reviewed
+implementation before activation. In the final three UTC days,
 only a confirmed matching expiry window removes the 120-minute reserve and
 reduces the comparison margin to zero; Cloud still must be faster.
 
 An authenticated before-POST marker reserves work if POST outcome is unknown.
 Its reservation is recomputed from trusted admission; expiry never refunds it.
-No POST retry is automatic. An authenticated main start that refused before POST,
+No POST retry is automatic. The start phase records the actual instant immediately
+before invoking POST. Reconciliation uses that time for an ambiguous POST rather
+than the earlier arm time. A local attempt record is written before the call;
+unexpected exceptions afterward retain the reservation. An authenticated main
+start that refused before POST (including a superseded producer or other error),
 a definitive 4xx or unique visible matching build allows reconciliation;
 unresolved markers block further starts. Active work uses
 a reviewed upper reservation, at least `110 * largest destination count + 5`
@@ -162,6 +188,12 @@ than billing totals, and cannot bound a stalled service's final charge or cancel
 that build. This guard controls new starts; it cannot guarantee the final bill
 stays below 45 hours. Other app/release usage and API scope must be reconciled
 by the coordinator before activation.
+
+To disable grouped routing, delete the registry or set `routing_enabled: false`
+in a reviewed main change. That stops new dispatches; cancel already dispatched
+route runs separately. Already started Cloud builds continue to run and bill,
+and their inventory still counts toward usage. GitHub executes the complete
+trusted selection whenever complete Cloud evidence is unavailable.
 
 ## Maintainer morning checklist (routing remains inactive)
 
@@ -175,19 +207,31 @@ before every Cloud test build. The existing tvOS template is replaced likewise.
    and read back both platform workflows. Use `immichSlides-iOS` /
    `XcodeCloud-UI-iOS` and `immichSlides-tvOS` / `XcodeCloud-UI-tvOS`; no archive,
    release, automatic PR/nightly trigger, repetitions or global retries. Select
-   pinned iPhone, iPad and Apple TV destinations. Confirm destination parallelism
+   pinned iPhone, iPad and Apple TV destinations. Read back **no custom or secret
+   environment variables** on either test workflow: app and test code executes
+   from the PR, so hook validation cannot protect workflow-level secrets. Pin
+   Xcode and simulator runtimes to `scripts/ci-pins.json`, and select a fixed
+   macOS **27.0**, matching the established [fixed Cloud environment](XCODE_CLOUD_TESTFLIGHT.md#exact-workflow-settings)
+   and pinned toolchain (never Latest). If either fixed version is unavailable,
+   stop and report it rather than substituting Latest.
+   The pins do not currently encode a macOS version, so record and review that
+   explicit ASC selection too. Allow manual branch starts for any PR branch.
+   Confirm destination parallelism
    and exact GitHub App check names with a real controlled run. Workflow creation
    and editing stay with the coordinator; router/importer only read and start.
 2. Read back real workflow and SCM repository UUIDs, all accessible account product
    IDs and every account workflow. Confirm the key covers all billable activity,
-   the allowance and billing window; never copy credentials into the registry.
+   the allowance and recurring billing anchor; never copy credentials into the
+   registry. The tvOS group must reuse the existing Apple TV workflow UUID
+   (`WORKFLOW_ID` in `scripts/ci_xcode_cloud.py`), allowing retained v1 POST
+   markers and started builds to reconcile; do not substitute a new workflow.
    The existing Developer runtime key must separately prove read/start/results
    access to the new iOS workflow. Editing permission does not prove runtime scope.
 3. Prepare a reviewable `scripts/ci-xcode-cloud-groups.json` with `schema_version: 2`,
    initially `routing_enabled: false`, `groups` as described above,
    `scm_repository_id`, `account_product_ids`, `account_action_destinations`
    (conservative counts by action name), `unknown_active_minutes`, `cap_minutes`
-   and a confirmed `billing_window: {start, end}`. Each group also needs
+   and a confirmed `billing_anchor: {day, time_zone}`. Each group also needs
    `workflow_attributes_sha256` (canonical hash of all GET workflow attributes)
    and `queue_seconds_upper`. Set `destinations_parallel` / `actions_parallel`
    true only after observed concurrency proves that prediction; absent/false
@@ -240,8 +284,11 @@ There are no global retries or test repetitions. Failures remain failures.
 ## Cloud hooks
 
 `ci_post_clone.sh` keeps the existing secret-free pinned archive preflight for
-archive actions only. Build-for-testing does not start a fixture process.
-For the tvOS scheme's `test` or `test-without-building` action,
+archive actions. For manual build-for-testing actions it verifies the trusted
+selection pointer and materializes the exact per-action functional plan from
+base-owned Git objects, using isolated system Python; no valid pointer fails the
+action. Build-for-testing does not start a fixture process.
+For either iOS or tvOS scheme's `test` or `test-without-building` action,
 `ci_pre_xcodebuild.sh` starts fixture set C on loopback port 8765 using isolated
 system Python, and requires readiness within 60 seconds. A failed start fails
 the action and stops its process. `ci_post_xcodebuild.sh` verifies and stops that
@@ -426,9 +473,11 @@ attempt instead. Receipts are validated against
 must have succeeded independently of an in-progress, failed or cancelled latest
 attempt; the latest run supplies only trusted provenance before opening bytes.
 
-To disable routing, prefer a reviewed main change setting
-`ROUTING_ENABLED = False` in `scripts/ci_xcode_cloud_route.py`: this publishes a
-prompt GitHub decision. Disabling the GitHub route or import workflow also causes
+The following switch belongs to the historical v1 Apple TV router only; it does
+not control grouped v2 routing. Use the grouped disable procedure above for new
+dispatches. Historical v1 routing used a reviewed main change setting
+`ROUTING_ENABLED = False` in `scripts/ci_xcode_cloud_route.py` to publish a
+prompt GitHub decision. The current CLI refuses all new v1 starts. Disabling the GitHub route or import workflow also causes
 an immediate GitHub choice once the Linux selection runs. Disabling the bridge
 leaves no matching started build, so the Linux selection chooses GitHub
 immediately. None changes the Xcode Cloud

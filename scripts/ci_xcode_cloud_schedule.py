@@ -5,6 +5,7 @@ from __future__ import annotations
 import calendar
 import math
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from ci_summary import require
 
@@ -13,7 +14,6 @@ CAP_MINUTES = 45 * 60
 RESERVE_MINUTES = 120
 BUILD_SECONDS = 13 * 60
 IMPORT_SECONDS = 3 * 60
-ARCHIVE_SECONDS = 5 * 60
 OVERHEAD_SECONDS = {"iphone": 9 * 60, "ipad": 9 * 60, "appletv": 4 * 60}
 
 
@@ -30,10 +30,11 @@ def positive(value):
     return value
 
 
-def github_estimate(jobs, now, test_seconds, *, history, matrix_cap=3):
+def github_estimate(jobs, now, test_seconds, *, history, matrix_cap=3, gate=None, platform=None):
     """Simulate visible slots; fewer than five occupied slots cannot prove congestion.
 
-    Queued dependency/concurrency jobs without runner labels are excluded. The
+    Unknown dependency/concurrency jobs without labels prevent proving saturation;
+    the own gate's declared archive/unit dependencies can still be modeled. The
     estimate is repository-visible and assumes ready jobs are scheduled by age;
     neither account-wide free capacity nor GitHub FIFO is exposed by this API.
     """
@@ -45,11 +46,32 @@ def github_estimate(jobs, now, test_seconds, *, history, matrix_cap=3):
         if job["id"] in rows:
             require(rows[job["id"]] == job, "conflicting retained job execution")
         rows[job["id"]] = job
-    running, queued, unknown = [], [], 0
+    gate_jobs = {} if gate is None else {job["name"]: job for job in gate["jobs"]
+                                        if job["name"] in {"build-ios", "build-tvos", "unit-ios", "unit-tvos"}}
+    if gate is not None:
+        require(platform in {"ios", "tvos"} and "build-" + platform in gate_jobs, "this head has no gate archive job")
+        next_id = max(rows.keys() | {job["id"] for job in gate_jobs.values()}) + 1
+        for name, build in list(gate_jobs.items()):
+            unit = name.replace("build-", "unit-")
+            if name.startswith("build-") and unit not in gate_jobs:
+                require(gate.get("status") != "completed", "completed gate has no unit execution")
+                gate_jobs[unit] = {"id": next_id, "name": unit, "status": "queued", "labels": [],
+                                   "created_at": build.get("created_at", now.isoformat()), "synthetic": True}
+                next_id += 1
+        for job in gate_jobs.values():
+            rows[job["id"]] = job
+    gate_ids = {job["id"]: name for name, job in gate_jobs.items()}
+    running, queued, unknown, completed = [], [], 0, {}
     for job in rows.values():
+        own = gate_ids.get(job["id"])
+        if job["status"] == "completed":
+            if own:
+                require(job["conclusion"] == "success", "this head's gate job failed or was skipped")
+                completed[own] = 0
+            continue
         labels = job.get("labels")
         require(isinstance(labels, list) and all(isinstance(label, str) for label in labels), "missing queue labels")
-        if not ("xcode-27" in labels or any(label.startswith("macos-") for label in labels)):
+        if not (own or "xcode-27" in labels or any(label.startswith("macos-") for label in labels)):
             unknown += int(not labels and job["status"] in {"queued", "in_progress"})
             continue
         samples = history.get(job["name"], [])
@@ -59,36 +81,54 @@ def github_estimate(jobs, now, test_seconds, *, history, matrix_cap=3):
         if job["status"] == "in_progress" and type(job.get("runner_id")) is int and job["runner_id"] > 0 and job.get("steps"):
             elapsed = (now - timestamp(job["started_at"])).total_seconds()
             require(elapsed >= 0, "queue execution starts in the future")
-            running.append(max(120, duration - elapsed))
+            remaining = max(120, duration - elapsed)
+            running.append(remaining)
+            if own:
+                completed[own] = remaining
         elif job["status"] in {"queued", "in_progress"}:
             created = timestamp(job["created_at"])
             require(created <= now, "queued job has future creation time")
-            queued.append((created, job["id"], duration))
+            dependency = "build-" + own.removeprefix("unit-") if own and own.startswith("unit-") else None
+            require(dependency is None or dependency in gate_jobs, "gate unit job has no archive dependency")
+            queued.append((created, job["id"], duration, own, dependency, None))
     require(len(running) <= SLOTS, "visible running jobs exceed configured hosted capacity")
     lanes = sorted(running + [0] * (SLOTS - len(running)))
-    for _, _, duration in sorted(queued):
-        index = min(range(SLOTS), key=lambda i: lanes[i])
-        lanes[index] += duration
-    # A gate archive must precede every GitHub UI job. This deliberately counts
-    # a full archive rather than declaring a merely queued gate already ready.
-    index = min(range(SLOTS), key=lambda i: lanes[i])
-    archive_ready = lanes[index] + ARCHIVE_SECONDS
-    lanes[index] = archive_ready
-    group_lanes = {group: [archive_ready] * cap for group, cap in caps.items()}
+    group_lanes = {group: [0] * cap for group, cap in caps.items()}
     planned = ([(duration, group) for group, seconds in test_seconds.items() for duration in seconds]
                if isinstance(test_seconds, dict) else [(duration, "group") for duration in test_seconds])
-    finish = archive_ready
+    pending, finish = list(queued), 0
+    next_id = max(rows, default=0) + 1
     for duration, group in sorted(((positive(duration), group) for duration, group in planned), reverse=True):
         require(group in group_lanes, "missing UI matrix capacity")
+        pending.append((now, next_id, duration, None, "build-" + platform if gate is not None else None, group))
+        next_id += 1
+    while pending:
+        ready = [item for item in pending if item[4] is None or item[4] in completed]
+        require(ready, "gate dependency forecast is unresolved")
+        # Respect dependencies even when the API reports an unassigned unit job
+        # as queued. Choose the oldest job that can use the next available slot.
         slot = min(range(SLOTS), key=lambda i: lanes[i])
-        group_slot = min(range(len(group_lanes[group])), key=lambda i: group_lanes[group][i])
-        end = max(archive_ready, lanes[slot], group_lanes[group][group_slot]) + duration
-        lanes[slot] = group_lanes[group][group_slot] = end
-        finish = max(finish, end)
+        release = lambda item: max(completed[item[4]] if item[4] else 0,
+                                   min(group_lanes[item[5]]) if item[5] else 0)
+        eligible = [item for item in ready if release(item) <= lanes[slot]]
+        item = min(eligible or ready, key=(lambda item: (item[0], item[1])) if eligible
+                   else (lambda item: (release(item), item[0], item[1])))
+        lanes[slot] = max(lanes[slot], release(item)) + item[2]
+        if item[3]:
+            completed[item[3]] = lanes[slot]
+        if item[5]:
+            group_slot = min(range(len(group_lanes[item[5]])), key=lambda i: group_lanes[item[5]][i])
+            group_lanes[item[5]][group_slot] = lanes[slot]
+            finish = max(finish, lanes[slot])
+        pending.remove(item)
+    archive_ready = completed["build-" + platform] if gate is not None else 0
     return {"seconds": max(finish, archive_ready) + 60, "running_mac_jobs": len(running),
             "queued_mac_jobs": len(queued), "unclassified_jobs": unknown, "free_slots": SLOTS - len(running),
             "can_prove_saturation": len(running) == SLOTS and unknown == 0,
-            "scope": "repository-visible", "duration_model": "recent-job-p90", "ordering": "ready-job-age-estimate"}
+            "scope": "repository-visible", "duration_model": "recent-job-p90", "ordering": "ready-job-age-estimate",
+            "archive_ready_seconds": archive_ready, "gate_job_finish_seconds": completed,
+            "gate_run_id": gate["id"] if gate else None, "gate_attempt": gate["run_attempt"] if gate else None,
+            "other_group_ui": "not-modeled"}
 
 
 def cloud_estimate(descriptor, selection, *, queue_seconds=0):
@@ -111,16 +151,27 @@ def cloud_estimate(descriptor, selection, *, queue_seconds=0):
             "queue_seconds": queue_seconds, "build_seconds": BUILD_SECONDS}
 
 
-def month_policy(now, billing_window, *, cap_minutes=CAP_MINUTES):
+def month_policy(now, billing_anchor, *, cap_minutes=CAP_MINUTES):
     require(type(cap_minutes) in {int, float} and 0 < cap_minutes <= CAP_MINUTES, "invalid Cloud allowance")
     utc_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     utc_end = (utc_start + timedelta(days=calendar.monthrange(now.year, now.month)[1]))
     windows = [(utc_start, utc_end)]
     expires = False
-    if billing_window is not None:
-        start, end = timestamp(billing_window["start"]), timestamp(billing_window["end"])
-        require(start <= now < end and timedelta(days=27) <= end - start <= timedelta(days=32),
-                "confirmed Apple billing window is stale or invalid")
+    if billing_anchor is not None:
+        require(isinstance(billing_anchor, dict) and type(billing_anchor.get("day")) is int
+                and 1 <= billing_anchor["day"] <= 31 and isinstance(billing_anchor.get("time_zone"), str)
+                and 0 < len(billing_anchor["time_zone"]) <= 64, "invalid confirmed Apple billing anchor")
+        zone, day = ZoneInfo(billing_anchor["time_zone"]), billing_anchor["day"]
+        local = now.astimezone(zone)
+        def boundary(year, month):
+            return datetime(year, month, min(day, calendar.monthrange(year, month)[1]), tzinfo=zone).astimezone(timezone.utc)
+        month = local.year * 12 + local.month - 1
+        if now < boundary(local.year, local.month):
+            month -= 1
+        year, offset = divmod(month, 12)
+        start = boundary(year, offset + 1)
+        year, offset = divmod(month + 1, 12)
+        end = boundary(year, offset + 1)
         windows.append((start, end))
         expires = now >= utc_end - timedelta(days=3) and now >= end - timedelta(days=3)
     return {"windows": [(start.isoformat(), end.isoformat()) for start, end in windows],

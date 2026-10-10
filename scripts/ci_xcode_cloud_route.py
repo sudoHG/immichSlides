@@ -435,11 +435,14 @@ def recorded_decision(api, run):
 
 
 def main():
+    phase, event, uploader, trusted_context = None, None, None, False
     try:
         phase = sys.argv[1]
         require(len(sys.argv) == 2 and phase in {"prepare", "arm", "start", "poll"}, "invalid router phase")
         credential_context(os.environ, ROUTE_PATH)
+        trusted_context = True
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+        uploader = {"uploader_run_id": int(os.environ["GITHUB_RUN_ID"]), "uploader_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
         from ci_publish import git, positive
         run_id = event["inputs"]["producer_run_id"]
         attempt = event["inputs"]["producer_attempt"]
@@ -452,7 +455,6 @@ def main():
         if run["run_attempt"] != attempt:
             raise SupersededProducer("router producer attempt changed")
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
-        uploader = {"uploader_run_id": int(os.environ["GITHUB_RUN_ID"]), "uploader_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
         asc = RenewingAppStoreConnect(lambda: jwt(os.environ, ROUTE_PATH), time.monotonic() + phase_minutes * 60)
         directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-route")
         if event["inputs"].get("group"):
@@ -465,12 +467,25 @@ def main():
             return 0
         require(False, "new router starts require an explicit reviewed platform group")
     except SupersededProducer:
+        if phase == "start" and trusted_context and event and uploader:
+            from ci_xcode_cloud_group_route import refuse_unposted_start
+            try:
+                refuse_unposted_start(event, uploader)
+            except (ContractError, KeyError, TypeError, ValueError, OSError):
+                pass
         print("Cloud producer superseded; no new start or verdict")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write("recorded=false\npost=false\n")
         return 0
-    except (ContractError, KeyError, TypeError, ValueError, OSError, URLError):
-        print("Cloud router refused this source; GitHub Apple TV remains required", file=sys.stderr)
+    except Exception:
+        if phase == "start" and trusted_context and event and uploader:
+            from ci_xcode_cloud_group_route import refuse_unposted_start
+            try:
+                if refuse_unposted_start(event, uploader):
+                    return 0
+            except (ContractError, KeyError, TypeError, ValueError, OSError):
+                pass
+        print("Cloud router refused this source; GitHub selected groups remain required", file=sys.stderr)
         return 1
 
 
