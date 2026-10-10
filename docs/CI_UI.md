@@ -508,3 +508,5 @@ admitted current manifest and the verified archive path. Commands exit nonzero
 for failed/incomplete coverage, infrastructure, unapproved skips or privacy
 failure; a policy approval and required-status promotion remain maintainer gates.
 For a historical version 1 manifest, use its original `visual` shard name.
+
+<!-- probe: area selection acceptance, not for merge -->
