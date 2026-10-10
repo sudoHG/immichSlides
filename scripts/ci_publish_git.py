@@ -326,10 +326,12 @@ def workflow_contract(source, run, *, details=False, metadata=False):
                 producers.append({"tier": "gate-infrastructure", "job": "gate-classification", "shard": None,
                                   "population": "gate-classification"})
             ui_operations = [(arguments[0], arguments) for script, arguments in commands
-                             if script == "ci_ui_tests.py" and arguments and arguments[0] in {"wait-archive", "run"}]
+                             if script == "ci_ui_tests.py" and arguments and arguments[0] in {"wait-archive", "wait-cloud", "run"}]
             for operation, arguments in ui_operations:
                 if operation == "wait-archive":
                     producers.append({"tier": "ui-infrastructure", "job": "ui-archive", "shard": None, "population": "ui-archive"})
+                elif operation == "wait-cloud":
+                    producers.append({"tier": "ui-infrastructure", "job": "ui-cloud-wait", "shard": None, "population": "ui-cloud-wait"})
                 else:
                     def option(name):
                         indexes = [index for index, item in enumerate(arguments) if item == name]
@@ -442,6 +444,8 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
             return [test_identity("host", "Gate change classification")]
         if meta["population"] == "ui-archive":
             return [test_identity("host", "UI archive selection")]
+        if meta["population"] == "ui-cloud-wait":
+            return [test_identity("host", "Apple TV cloud selection")]
         if meta["tier"] == "ui":
             return ui_populations[meta["device"]][meta["shard"]]
         return (record["operational_populations"][meta["population"]][meta["shard"]]
@@ -466,7 +470,7 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
         base_expected += infrastructure
     else:
         expected = [entry for job in required_jobs for entry in job["expected"]["identities"]]
-        base_expected = ui_base + [test_identity("host", "UI archive selection")]
+        base_expected = ui_base + [entry for meta in metadata.values() if meta["tier"] == "ui-infrastructure" for entry in population(meta)]
     inputs = {"expected": {"tree_sha": tree, "identities": expected}, "admission_identity": record["identity"],
               "required_jobs": required_jobs, "base_policy": record["base_policy"], "candidate_policy": record["candidate_policy"],
               "environment": "fixture" if context == "ui" else "hermetic", "approved_head": record["identity"].get("head_sha") if approved else None,

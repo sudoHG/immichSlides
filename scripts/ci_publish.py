@@ -213,7 +213,7 @@ class GitHub:
         self.repository, self.token = repository, token
         self.response_headers = response_headers
 
-    def request(self, path, *, method="GET", payload=None, binary=False, missing=False):
+    def request(self, path, *, method="GET", payload=None, binary=False, missing=False, timeout=45):
         url = "https://api.github.com" + path
         data = json.dumps(payload).encode() if payload is not None else None
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
@@ -221,7 +221,7 @@ class GitHub:
             headers["Authorization"] = "Bearer " + self.token
         request = Request(url, data=data, method=method, headers=headers)
         try:
-            with build_opener(ArtifactRedirect()).open(request, timeout=45) as response:
+            with build_opener(ArtifactRedirect()).open(request, timeout=timeout) as response:
                 if self.response_headers:
                     self.response_headers(response.headers)
                 raw = response.read(MAX_JSON_BYTES + 1)
@@ -510,7 +510,8 @@ def archive_blocked_ui(api, record, run, jobs, summaries):
                 or run["head_repository"]["full_name"] != api.repository or run["status"] != "completed"
                 or run["conclusion"] != "failure" or type(run["run_attempt"]) is not int or run["run_attempt"] != 1):
             return False
-        if len(summaries) != 1 or summaries[0]["infrastructure"] != [{"code": "archive-selection-failed",
+        archive_summaries = [summary for summary in summaries if summary["run"]["job"] == "ui-archive"]
+        if len(archive_summaries) != 1 or archive_summaries[0]["infrastructure"] != [{"code": "archive-selection-failed",
                 "message": "archive-unavailable: no exact-identity gate archive before timeout"}]:
             return False
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
@@ -523,16 +524,26 @@ def archive_blocked_ui(api, record, run, jobs, summaries):
         normalized = expand_skipped_ui_matrix(source, run, complete_attempt_jobs(api, run))
         _, _, artifacts_by_job, metadata = workflow_contract(source, run, metadata=True)
         require({job["name"] for job in jobs} == {job["name"] for job in normalized}, "UI job set mismatch")
-        archives = [job for job in normalized if metadata[job["name"]]["tier"] == "ui-infrastructure"]
+        archives = [job for job in normalized if job["name"] == "ui-archive" and metadata[job["name"]]["tier"] == "ui-infrastructure"]
+        selections = [job for job in normalized if job["name"] == "ui-cloud-wait" and metadata[job["name"]]["tier"] == "ui-infrastructure"]
         shards = [job for job in normalized if metadata[job["name"]]["tier"] == "ui"]
         require(len(archives) == 1 and archives[0]["name"] == "ui-archive"
                 and archives[0]["status"] == "completed" and archives[0]["conclusion"] == "failure",
                 "UI archive did not fail")
-        require(shards and len(archives) + len(shards) == len(normalized)
+        require(shards and len(archives) + len(shards) + len(selections) == len(normalized)
                 and all(job["status"] == "completed" and job["conclusion"] == "skipped"
                         and (job["runner_id"] is None or type(job["runner_id"]) is int and job["runner_id"] == 0)
                         and job["steps"] == [] for job in shards), "UI shard may have executed")
-        summary = parse_summary(summaries[0])
+        require(len(summaries) == 1 + len(selections) and len(selections) <= 1, "unexpected UI selection records")
+        if selections:
+            selection_summaries = [entry for entry in summaries if entry["run"]["job"] == "ui-cloud-wait"]
+            require(len(selection_summaries) == 1 and selections[0]["status"] == "completed"
+                    and selections[0]["conclusion"] == "success", "cloud selection incomplete")
+            selection = parse_summary(selection_summaries[0])
+            from ci_ui_reuse import validate_infrastructure_summary
+            validate_infrastructure_summary(record, selection, "ui-cloud-wait")
+            require(selection["run"]["id"] == str(run["id"]) and selection["run"]["attempt"] == run["run_attempt"], "cloud selection attempt differs")
+        summary = parse_summary(archive_summaries[0])
         require(summary["identity"] == identity and summary["source"]["workflow_path"] == run["path"]
                 and summary["source"]["fork_originated"] is False and summary["status"] == "failed"
                 and summary["run"]["id"] == str(run["id"]) and summary["run"]["attempt"] == run["run_attempt"]

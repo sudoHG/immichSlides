@@ -9,13 +9,15 @@ import sys
 from pathlib import Path
 from urllib.error import URLError
 
-from ci_publish import GitHub, map_pr, positive, trusted_admissions, verify_workflow
+from ci_publish import map_pr, positive, trusted_admissions, verify_workflow
 from ci_summary import ContractError, require
-from ci_xcode_cloud import (IMPORT_PATH, ROUTE_PATH, UI_PATH, trusted_artifact, validate_evidence, validate_route)
-from ci_xcode_cloud_api import AppStoreConnect, credential_context, jwt
+from ci_xcode_cloud import (IMPORT_PATH, ROUTE_PATH, UI_PATH, archive_evidence_run, trusted_artifact, validate_evidence, validate_route)
+from ci_xcode_cloud_api import credential_context, jwt
+from ci_xcode_cloud_client import RenewingAppStoreConnect, RetryingGitHub
+import time
 
 
-def import_run(api, asc, run_id):
+def import_run(api, asc, run_id, evidence_attempt=None):
     run = api.repo("actions/runs/" + str(positive(run_id)))
     verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
     require(run["path"] == UI_PATH and run["event"] == "pull_request"
@@ -25,6 +27,9 @@ def import_run(api, asc, run_id):
     records = trusted_admissions(api, [run["id"]])
     require(run["id"] in records, "cloud producer has no trusted admission")
     record = records[run["id"]]
+    latest_attempt = run["run_attempt"]
+    run = archive_evidence_run(api, run)
+    require(evidence_attempt is None or run["run_attempt"] == evidence_attempt, "import input differs from archive evidence attempt")
     require(record["identity"]["head_sha"] == pr["head"]["sha"], "PR changed before cloud import")
     route, artifact_id = trusted_artifact(api, f"ci-xcc-route-{run['id']}-{run['run_attempt']}", ROUTE_PATH, "route.json")
     validate_route(record, run, route)
@@ -42,7 +47,7 @@ def import_run(api, asc, run_id):
             refused.append(approved)
     require(len(refused) < 2, "API results do not prove an admitted Apple TV population and app check")
     fresh = api.repo("actions/runs/" + str(run["id"]))
-    require(fresh["run_attempt"] == run["run_attempt"] and fresh["head_sha"] == run["head_sha"]
+    require(fresh["run_attempt"] == latest_attempt and fresh["head_sha"] == run["head_sha"]
             and api.repo(f"pulls/{pr['number']}")["head"]["sha"] == run["head_sha"], "producer or PR changed during cloud import")
     return {"schema_version": 1, "identity": record["identity"], "producer_run_id": run["id"],
             "producer_attempt": run["run_attempt"], "route_artifact_id": artifact_id, "evidence": evidence}
@@ -54,18 +59,18 @@ def main():
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
         run_id = event["inputs"]["producer_run_id"]
         require(isinstance(run_id, str) and run_id.isdecimal() and 0 < int(run_id) < 10**15, "invalid UI producer run ID")
-        api = GitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"])
-        # Sign once at startup; each importer is bounded to ten minutes. No
-        # private key file, candidate process or credential-bearing log exists.
-        asc = AppStoreConnect(jwt(os.environ, IMPORT_PATH))
-        receipt = import_run(api, asc, int(run_id))
+        api = RetryingGitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"], time.monotonic() + 9 * 60)
+        attempt = event["inputs"]["producer_attempt"]
+        require(isinstance(attempt, str) and attempt.isdecimal(), "invalid evidence attempt input")
+        asc = RenewingAppStoreConnect(lambda: jwt(os.environ, IMPORT_PATH), time.monotonic() + 9 * 60)
+        receipt = import_run(api, asc, int(run_id), positive(int(attempt)))
         receipt.update(uploader_run_id=int(os.environ["GITHUB_RUN_ID"]),
                        uploader_attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]))
         directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-import")
         directory.mkdir(mode=0o700, exist_ok=False)
         (directory / "cloud.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-            output.write(f"producer_run_id={receipt['producer_run_id']}\nproducer_attempt={receipt['producer_attempt']}\n")
+            output.write(f"imported=true\nproducer_run_id={receipt['producer_run_id']}\nproducer_attempt={receipt['producer_attempt']}\n")
         print("Xcode Cloud import verified the complete admitted method population and app check")
         return 0
     except (ContractError, KeyError, TypeError, ValueError, OSError, URLError):

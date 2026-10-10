@@ -183,7 +183,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/p2-review-packages"
 
   aggregate:
-    if: always() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.probe_environment_refusal
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && !inputs.live_only && !inputs.probe_environment_refusal }}
     needs: [plan, strict]
     name: nightly-aggregate
     runs-on: xcode-27

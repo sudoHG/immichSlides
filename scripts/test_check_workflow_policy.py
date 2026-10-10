@@ -24,6 +24,93 @@ def workflow():
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_macos_jobs_cannot_survive_cancellation_through_always(self):
+        document = workflow()
+        for condition in ("always()", "${{ always() && needs.archive.outputs.run_ui == 'true' }}"):
+            with self.subTest(condition=condition):
+                document["jobs"]["check"]["if"] = condition
+                self.assertIn("macos-cancellation", self.rules(document))
+        document["jobs"]["check"]["if"] = "${{ !cancelled() && needs.archive.outputs.run_ui == 'true' }}"
+        self.assertNotIn("macos-cancellation", self.rules(document))
+
+    def test_cloud_start_requires_a_scheduling_marker_before_post(self):
+        path = policy.XCC_ROUTE_WORKFLOW
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        steps = document["jobs"]["start"]["steps"]
+        marker = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-post-"))
+        post = next(index for index, step in enumerate(steps) if step.get("id") == "start")
+        steps[marker], steps[post] = steps[post], steps[marker]
+        self.assertIn("xcc-post-marker", self.rules(document, path))
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        steps = document["jobs"]["start"]["steps"]
+        marker = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-post-"))
+        del steps[marker]
+        self.assertIn("xcc-post-marker", self.rules(document, path))
+
+    def test_failed_ios_reruns_cannot_repeat_successful_tv_through_dependencies(self):
+        path = ".github/workflows/ci-ui.yml"
+        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertNotIn("xcc-dependencies", self.rules(document, path))
+        for job in ("cloud-wait", "appletv-shards"):
+            changed = copy.deepcopy(document)
+            changed["jobs"][job]["needs"] = ["archive", "shards"]
+            with self.subTest(job=job):
+                self.assertIn("xcc-dependencies", self.rules(changed, path))
+        changed = copy.deepcopy(document)
+        changed["jobs"]["appletv-shards"]["if"] = changed["jobs"]["appletv-shards"]["if"].replace(
+            "needs.archive.result == 'success' && ", "")
+        self.assertIn("xcc-dependencies", self.rules(changed, path))
+
+    def test_cloud_event_bridge_cannot_receive_secrets_or_execute_pr_code(self):
+        root = Path(__file__).resolve().parent.parent
+        path = policy.XCC_DISPATCH_WORKFLOW
+        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual(self.rules(document, path), set())
+        for mutation in ("branch", "environment", "secret", "checkout", "command", "write"):
+            changed = copy.deepcopy(document)
+            job = changed["jobs"]["dispatch"]
+            if mutation == "branch":
+                job["if"] = "always()"
+            elif mutation == "environment":
+                job["environment"] = "xcode-cloud"
+            elif mutation == "secret":
+                job["steps"][-1]["env"]["ASC_PRIVATE_KEY"] = "${{ secrets.ASC_PRIVATE_KEY }}"
+            elif mutation == "checkout":
+                job["steps"][0]["with"]["ref"] = "${{ github.event.workflow_run.head_sha }}"
+            elif mutation == "command":
+                job["steps"][-1]["run"] += " --workflow other.yml"
+            else:
+                job["permissions"]["contents"] = "write"
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.rules(changed, path))
+
+    def test_cloud_router_cannot_bypass_main_context_budget_serialization_or_credential_scope(self):
+        root = Path(__file__).resolve().parent.parent
+        path = policy.XCC_ROUTE_WORKFLOW
+        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual(self.rules(document, path), set())
+        for mutation in ("branch", "fork", "parallel", "write", "early-key", "checkout", "upload", "trigger"):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(document)
+                job = changed["jobs"]["route"]
+                if mutation == "branch":
+                    job["if"] = "always()"
+                elif mutation == "fork":
+                    job["if"] = "github.ref == 'refs/heads/main'"
+                elif mutation == "parallel":
+                    changed["jobs"]["start"]["concurrency"]["group"] += "-${{ github.run_id }}"
+                elif mutation == "write":
+                    job["permissions"]["contents"] = "write"
+                elif mutation == "early-key":
+                    job["env"] = {"KEY": "${{ secrets.ASC_PRIVATE_KEY }}"}
+                elif mutation == "checkout":
+                    job["steps"][0]["with"]["ref"] = "${{ github.event.workflow_run.head_sha }}"
+                elif mutation == "upload":
+                    job["steps"][-1]["if"] = "always()"
+                else:
+                    changed["on"]["pull_request"] = None
+                self.assertTrue(self.rules(changed, path))
+
     def test_cloud_importer_main_context_and_secret_step_cannot_be_weakened(self):
         path = policy.XCC_IMPORT_WORKFLOW
         source = (Path(__file__).resolve().parent.parent / path).read_text()

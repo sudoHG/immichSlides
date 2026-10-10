@@ -4,8 +4,8 @@ The **UI - Apple TV (overflow)** workflow runs the same pull-request Apple TV
 fixture methods as the GitHub UI shards. It is test-only, accepts an API or manual
 start on a branch, and uses the `immichSlides-tvOS` scheme with the
 `XcodeCloud-UI-tvOS` plan on Apple TV 4K (3rd generation), tvOS 27.0. Workflow
-configuration belongs to the maintainer. This preparation does not enable
-automatic routing or change the GitHub UI producer or trusted verdict.
+configuration belongs to the maintainer. Only the trusted main router and API
+importer described below can replace GitHub's pull-request Apple TV evidence.
 
 ## Population and fixture environment
 
@@ -71,27 +71,177 @@ contain test inputs; keep them private and do not attach them to a public PR.
 
 ## Routing and trust rollout
 
-Automatic routing remains disabled until the trusted reader and router land.
-The agreed routing policy permits only same-repository PR heads under documented
-GitHub macOS congestion and month-to-date cloud use below **45 compute hours**.
-Usage is summed from build actions since the start of the UTC calendar month;
-the budget resets each month. The router must bind its decision to the exact head
-and fall back to GitHub whenever a start or run fails. iPhone and iPad stay on
-GitHub. A disabled or absent routing decision runs all GitHub Apple TV shards.
+`ci-xcode-cloud-dispatch` handles `ci-ui` **requested** events on main and
+dispatches the fixed main router with the producer ID and attempt. In-progress
+events do not dispatch again; non-PR sources are successful no-ops. This
+five-minute bridge has no environment or ASC secrets and alone receives
+`actions: write` for the two fixed dispatches. A successful routed router
+completion dispatches the importer after uploader validation. GitHub documents
+[`workflow_dispatch` as an exception for events sent using `GITHUB_TOKEN`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+The resulting dispatch-to-`workflow_run` chain still needs runtime proof on main.
+
+The main-only router has two Linux jobs. The short `xcc-start` job holds the
+account budget concurrency group while checking the ASC inventory, starting
+or reusing one build, and uploading the start result. The separate poll job
+uses a producer/attempt concurrency group and never holds the account start lock.
+Both use `cancel-in-progress: false`: a running job is retained, but GitHub can
+replace an older **pending** job in the same group. A replaced router cannot
+authorize a skip; its producer falls back when no complete decision appears.
+
+The fixed overflow workflow's ASC build inventory is the sole source of truth
+for in-flight builds and projected usage. Before starting, the router reuses the
+newest existing build for the exact head, even if it is already complete. Otherwise,
+any non-`COMPLETE` overflow build blocks a start until **three hours** after its
+ASC `createdDate`. A stuck older build stops blocking but still counts at least
+100 minutes, or its actual elapsed action minutes if higher. Missing or invalid
+inventory fails closed. A terminal build for another head no longer blocks
+starts; it still cannot supply accepted test evidence.
+
+An immutable **about-to-POST marker** uploads successfully before the start step
+can POST. The marker and start receipt bind the producer ID, archive evidence
+attempt and admitted identity, with main workflow provenance authenticated before
+opening bytes. They schedule waiting only; they are never quota state. A POST HTTP
+4xx is a definite rejection; 5xx, network errors and timeouts leave an uncertain
+outcome and send the current producer's Apple TV tier to GitHub immediately.
+The poll does not try to recover an uncertain POST from inventory. A router never
+retries its POST. A later router reads the ASC inventory
+and reuses a visible exact-head build. A rare duplicate during ASC visibility lag
+is accepted: the global start lock, one in-flight rule and 45-hour cap bound this
+risk once builds are visible. Test acceptance still verifies the chosen run's
+exact head, population and newest app check independently.
+
+Routing requires trusted `app_affected is True`, a same-repository current PR,
+matching head/merge tree and the admitted exact population. It also requires at
+least **five running macOS jobs** and one macOS job queued for **120 seconds**,
+measured across repository attempts using `xcode-27` and `macos-*` runner labels.
+Before POST, the producer must still be authoritative, its cloud selection must
+be open, and no more than **30 minutes** may have passed since
+`ci-ui.run_started_at`. The router poll remains bounded to 100 minutes.
+
+The account cap is **45 compute hours** including the proposed 100-minute build.
+Usage equals completed and elapsed running/pending action minutes in the current
+UTC calendar month across every accessible product, including failed actions.
+Each non-`COMPLETE` overflow build counts as **max(100 minutes, its completed plus
+running/pending elapsed action minutes)**, without counting those minutes twice.
+This includes stuck builds and builds created in an earlier month. Completed
+runs ending before the month are not scanned. Never-started actions cost zero. A terminal
+`SKIPPED` or `CANCELED` action with no start timestamp also costs zero. Missing or
+inconsistent inventory/timing fails closed; a `COMPLETE` build with any unfinished
+action refuses a start until a later router re-reads a consistent snapshot. The
+accounting window resets at 00:00 UTC on the first of the month; correspondence with Apple's billing month is
+`NOT_RUN` until runtime acceptance.
+
+ASC tokens are signed on first use and renewed after eight minutes before each
+API request. ASC and GitHub reads retry 429, 5xx and timeouts with exponential
+backoff within the deadline. A failed Linux poll round has no conclusion and
+keeps waiting. POST is never automatically retried. Each poll rechecks the producer
+and selection, and stops on completion or supersession. A superseded producer
+logs one line and exits successfully without a new start or verdict; a
+failed/cancelled route's completion is a successful no-op in the bridge. Cloud completion also
+waits for the newest matching app check to complete with this Cloud run's link
+before method validation. Failed starts/runs, refused evidence and deadlines
+produce a GitHub fallback decision. The published
+[ASC API specification](https://developer.apple.com/app-store-connect/api/)
+exposes no build cancellation operation. A fallback does not cancel or refund
+Cloud work; its ASC inventory state continues to count under the rules above.
+The independent main importer repeats the API validation.
+
+The 125-minute `ui-archive` job only waits for the two normal gate archives.
+iPhone and iPad shards start when the archive is ready. A separate Linux `ui-cloud-wait` job gates only
+Apple TV and supplies its own operational summary; it depends only on the archive,
+so it never serializes iOS and TV. The two independent UI matrices each retain
+`max-parallel: 2`. It checks complete trusted proof before checking the deadline,
+allowing Cloud to finish while the gate archive is built.
+GitHub Apple TV requires the archive job to succeed and uses `!cancelled()`, so
+archive failure or cancellation cannot start new macOS work. Linux cloud-wait
+immediately selects GitHub when the archive conclusion is not success, preserving
+the publisher's neutral `archive_blocked_ui` path.
+It runs all three original shards unless the current selection validates Cloud;
+the publisher repeats the full trust check independently of the producer output.
+
+Route/import run names include the producer ID and evidence attempt. The Linux
+wait immediately returns GitHub for inactive workflows or a matching finished
+route/import with no valid artifact. Polling backs off from 60 to 300 seconds,
+with one admission/attempt lookup and small bounded run pages, keeping concurrent
+waits below the repository token's 1,000 requests/hour budget. Missing workflows,
+missing artifacts, importer failure, stale checks and timeout cannot authorize
+skips. GitHub reads retry transient errors, and a failed round keeps waiting.
+Admission fetches main once per cloud-wait run; all later receipt ancestry checks
+use that snapshot. Git command failures select GitHub. Main pushes and forks
+select GitHub without waiting for Cloud.
+
+With no start receipt but a matching main-authenticated POST marker, selection
+waits at most the **20-minute `xcc-start` timeout** from the marker for `start.json`.
+If the POST response omits `createdDate`, a retried ASC GET obtains it before the
+start receipt is written. Without a build or marker, including a full rerun with
+no manual route task, selection immediately chooses GitHub. There is a small
+residual race if selection runs before the marker has uploaded: GitHub starts
+and later Cloud work cannot authorize skipping it.
+
+Once a start receipt is available, the deadline is strictly **Cloud creation +
+1.3 × 69 minutes + 10 minutes** (99.7 minutes from ASC `createdDate`). Queueing
+uses the same budget, with no `startedDate` extension. Complete trusted proof is
+checked before that deadline.
+
+Failed-job reruns bind proof to the attempt that executed `ui-archive`, identified
+by its GitHub execution timestamps and runner (or unchanged job ID when those
+fields are absent). GitHub may regenerate retained job IDs on a rerun.
+A failed-iOS-job rerun retains successful Cloud selection and Apple TV jobs,
+reusing complete valid proof without starting additional TV work. If that
+retained Cloud proof becomes invalid, a **full rerun** is required; the fresh
+selection chooses GitHub unless a matching manual main route has already started
+a valid build. Routers never start Cloud for an attempt that retained the archive.
+A historical collapsed TV skip supplies no test evidence; without Cloud proof,
+subsequent literal TV execution is required.
+Do not manually rerun route/import workflows: dispatch for the producer/evidence
+attempt instead. Receipts are validated against
+`actions/runs/<uploader>/attempts/<uploader_attempt>`. The named historical attempt
+must have succeeded independently of an in-progress, failed or cancelled latest
+attempt; the latest run supplies only trusted provenance before opening bytes.
+
+To disable routing, prefer a reviewed main change setting
+`ROUTING_ENABLED = False` in `scripts/ci_xcode_cloud_route.py`: this publishes a
+prompt GitHub decision. Disabling the GitHub route or import workflow also causes
+an immediate GitHub choice once the Linux selection runs. Disabling the bridge
+leaves no matching started build, so the Linux selection chooses GitHub
+immediately. None changes the Xcode Cloud
+workflow; already started Cloud work remains in the ASC inventory and usage.
+
+For deterministic acceptance on an ordinary app PR, the maintainer may set the
+repository variable `CI_XCC_ROUTING_OVERRIDE` to one reviewed head and mode:
+
+| Value | Effect |
+| --- | --- |
+| `<40-lowercase-hex-head>:force-congestion` | Bypass only measured congestion |
+| `<40-lowercase-hex-head>:github` | Record the GitHub decision |
+| `<40-lowercase-hex-head>:force-start-failure` | Bypass congestion and submit an invalid branch reference |
+
+Set the variable **before pushing** that exact ordinary app head, let its
+requested event dispatch the main router, and remove the variable after the
+decision. Other heads use automatic congestion; malformed values fail closed.
+All admission, population, remaining-budget and quota guards still apply.
+For forced fallback, use a fresh app head with the last mode, verify the real
+ASC 400/404/422 rejection in its trusted receipt, then verify all three GitHub
+TV shard populations and the final publisher verdict. The diagnostic cannot
+create a valid Cloud build or authorize a skip. A main-only manual dispatch also
+accepts producer ID, archive evidence attempt and `mode: github` or
+`mode: force-start-failure` before any decision exists.
 
 The `xcode-cloud` environment is main-only and holds `ASC_ISSUER_ID`, `ASC_KEY_ID`
-and `ASC_PRIVATE_KEY`; creating or changing it is maintainer work. PR code must
-never receive those credentials. The reader below is inactive without a trusted
-router decision. Scheduling and fallback integration land separately.
+and `ASC_PRIVATE_KEY`; creating/changing it and repository variables is maintainer
+work. PR code never receives those credentials. The trusted workflows must land
+on main before ordinary app-head routed/non-routed/fallback acceptance runs.
 
 ## Trusted importer and acceptance
 
 `ci-xcode-cloud-import` accepts a same-repository PR's authoritative `ci-ui` run
-ID through a main-only manual/API dispatch. It checks the full admitted identity,
-latest producer attempt, exact current PR head and the successful main router's
+ID through a main-only manual/API dispatch, including the credential-free bridge's
+dispatch after successful main router completion.
+It checks the full admitted identity,
+archive evidence attempt, exact current PR head and the successful main router's
 artifact before reading App Store Connect. Its protected job checks out main,
 executes only the allowlisted importer, has read-only GitHub permissions, and
-finishes within ten minutes. It signs a ten-minute ES256 token once; the private
+finishes within ten minutes. It signs a ten-minute ES256 token on use and renews by age; the private
 key crosses a pipe to OpenSSL and is never stored or logged. No PR checkout,
 artifact execution or PR-controlled environment input can reach the key.
 
@@ -135,7 +285,7 @@ comparison using the independently selected admitted policy and re-read current
 app checks. Uploader event, repositories, successful completion and main-history
 revision are authenticated before any artifact bytes are opened; an untrusted
 uploader, including a fork branch named main, is ignored. Receipts must name that
-uploader's current run and attempt. Import success grants no head approval: existing CI-change/fork
+uploader's authenticated historical attempt. Import success grants no head approval: existing CI-change/fork
 approval rules remain authoritative. A failed or missing importer cannot excuse
 a GitHub Apple TV skip. Stale attempts and conflicting or expired artifacts fail
 closed. Multiple trusted import receipts are accepted only when their complete

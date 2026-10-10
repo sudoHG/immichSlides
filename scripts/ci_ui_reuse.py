@@ -187,23 +187,24 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
                          and metadata.get("ui-archive", {}).get("tier") == "ui-infrastructure"
                          and archive.get("status") == "completed" and archive.get("conclusion") == "failure")
     cloud_pr = cloud is True and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
-    if main_push or failed_pr_history or cloud_pr:
+    historical_tv = historical and run["path"] == UI_WORKFLOW and run["event"] == "pull_request"
+    if main_push or failed_pr_history or cloud_pr or historical_tv:
         workflow = yaml.load(source, Loader=WorkflowLoader)
         for key, job in workflow["jobs"].items():
             raw_name = job.get("name", key)
             if not job.get("strategy", {}).get("matrix") or raw_name not in actual or raw_name in names:
                 continue
             expanded, _, _, evidence = workflow_contract(yaml.safe_dump({"jobs": {key: job}}), run, metadata=True)
-            if cloud_pr and not main_push and not failed_pr_history and any(meta.get("device") != "appletv" for meta in evidence.values()):
+            if (cloud_pr or historical_tv) and not main_push and not failed_pr_history and any(meta.get("device") != "appletv" for meta in evidence.values()):
                 continue
             skipped = actual.pop(raw_name)
             require(skipped["status"] == "completed" and skipped["conclusion"] == "skipped"
                     and expanded and all(meta["tier"] == "ui" for meta in evidence.values())
                     and not set(expanded).intersection(actual), "whole-matrix skip overlaps execution or is invalid")
-            if cloud_pr:
+            if cloud_pr or historical_tv and not failed_pr_history:
                 require((skipped.get("runner_id") is None or type(skipped.get("runner_id")) is int and skipped["runner_id"] == 0)
                         and skipped.get("steps") == [], "cloud matrix skip may have executed")
-            if failed_pr_history:
+            if failed_pr_history or historical_tv and not cloud_pr:
                 # The archive failure prevented shard execution. This historical
                 # placeholder supplies no evidence; later literal jobs must fill
                 # the complete population and bind their own execution artifacts.
@@ -217,6 +218,22 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
     return list(actual.values())
 
 
+def validate_infrastructure_summary(record, summary, name):
+    from ci_summary import test_identity
+    expected = [test_identity("host", "UI archive selection" if name == "ui-archive" else "Apple TV cloud selection")]
+    require(name in {"ui-archive", "ui-cloud-wait"} and summary["identity"] == record["identity"]
+            and summary["status"] == "passed" and not summary["infrastructure"]
+            and summary["source"]["workflow_path"] == UI_WORKFLOW and summary["source"]["fork_originated"] is False
+            and summary["run"]["tier"] == "ui-infrastructure" and summary["run"]["job"] == name
+            and summary["run"]["shard"] is None and summary["population"]["declared"] == expected
+            and summary["population"]["compiled"] == expected and not summary["population"]["deselected"]
+            and not summary["population"]["removed_by_pr"] and len(summary["population"]["observed"]) == 1
+            and summary["population"]["observed"][0]["identity"] == expected[0]
+            and summary["population"]["observed"][0]["outcome"] == "passed"
+            and summary["hashes"]["manifests"].get("ui-shards") == record["ui_inputs"]["base"]["manifest_sha256"],
+            "reuse selection evidence is incomplete or invalid")
+
+
 def evaluate_reused_push(api, record, run, jobs, summaries):
     source = record["workflows"][UI_WORKFLOW]["base"]
     jobs = expand_skipped_ui_matrix(source, run, jobs)
@@ -225,20 +242,15 @@ def evaluate_reused_push(api, record, run, jobs, summaries):
     for job in jobs:
         require(job["status"] == "completed" and job["conclusion"] ==
                 ("skipped" if metadata[job["name"]]["tier"] == "ui" else "success"), "reuse skipped an infrastructure job or ran an incomplete shard")
-    require(len(summaries) == 1, "reuse needs one bound archive-selection summary")
-    summary = parse_summary(summaries[0])
-    from ci_summary import test_identity
-    expected = [test_identity("host", "UI archive selection")]
-    require(summary["identity"] == record["identity"] and summary["status"] == "passed" and not summary["infrastructure"]
-            and summary["source"]["workflow_path"] == UI_WORKFLOW and summary["source"]["fork_originated"] is False
-            and summary["run"]["tier"] == "ui-infrastructure" and summary["run"]["job"] == "ui-archive"
-            and summary["run"]["shard"] is None and summary["population"]["declared"] == expected
-            and summary["population"]["compiled"] == expected and not summary["population"]["deselected"]
-            and len(summary["population"]["observed"]) == 1
-            and summary["population"]["observed"][0]["identity"] == expected[0]
-            and summary["population"]["observed"][0]["outcome"] == "passed"
-            and summary["hashes"]["manifests"].get("ui-shards") == record["ui_inputs"]["base"]["manifest_sha256"],
-            "reuse selection evidence is incomplete or invalid")
+    infrastructure = {name: meta for name, meta in metadata.items() if meta["tier"] == "ui-infrastructure"}
+    require(len(summaries) == len(infrastructure), "reuse needs every bound infrastructure summary")
+    seen = set()
+    for raw in summaries:
+        summary = parse_summary(raw)
+        name = summary["run"]["job"]
+        require(name in infrastructure and name not in seen and name in {"ui-archive", "ui-cloud-wait"}, "reuse infrastructure population differs")
+        seen.add(name)
+        validate_infrastructure_summary(record, summary, name)
     receipt = find_reuse(api, record["identity"])
     require(receipt is not None, "skipped UI shards have no complete trusted identical-tree verdict")
     return {"state": "success", "description": "UI reused: complete trusted identical-tree PR verdict",

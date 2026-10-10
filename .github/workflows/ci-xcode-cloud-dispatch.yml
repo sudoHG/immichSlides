@@ -1,0 +1,31 @@
+name: ci-xcode-cloud-dispatch
+
+on:
+  workflow_run:
+    workflows: [ci-ui, ci-xcode-cloud-route]
+    types: [requested, completed]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - run: /usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"
+      - id: dispatch
+        env:
+          CI_WORKFLOW_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_dispatch.py'
