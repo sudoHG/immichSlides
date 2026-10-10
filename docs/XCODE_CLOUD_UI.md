@@ -77,6 +77,8 @@ sources are successful no-ops. This five-minute bridge has no environment or
 ASC secrets and receives `actions: write` only for the fixed router dispatch.
 The router's separate, credential-free `dispatch-import` job follows a successful
 recorded poll and dispatches the fixed importer for a current routed producer.
+Authenticated GitHub and fallback decisions finish this job without dispatching;
+only a routed decision requires a terminal Cloud build.
 It authenticates the main router, its attempt, successful poll job and unique
 artifact before opening the decision. Its only write permission is `actions: write`.
 The documented

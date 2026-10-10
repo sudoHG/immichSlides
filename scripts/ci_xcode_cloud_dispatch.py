@@ -55,12 +55,14 @@ def forward_import(api, env, event):
     require(len(artifacts) == 1 and artifacts[0]["workflow_run"]["id"] == router_id,
             "import forwarder has no unique current routing artifact")
     receipt = json_member(api, artifacts[0], "route.json")
-    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1 and receipt["terminal"] is True
+    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1
+            and receipt["decision"] in {"github", "fallback", "routed"}
             and receipt["uploader_run_id"] == router_id and receipt["uploader_attempt"] == attempt
             and receipt["producer_run_id"] == producer_id and receipt["producer_attempt"] == evidence_attempt,
             "import forwarder receipt or input differs")
     if receipt["decision"] != "routed":
         return
+    require(receipt.get("terminal") is True, "import forwarder requires a terminal cloud build")
     producer = api.repo("actions/runs/" + str(producer_id))
     require(producer["head_sha"] == receipt["head_sha"], "import forwarder head differs")
     current_producer(api, producer)

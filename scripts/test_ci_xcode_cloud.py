@@ -1015,6 +1015,19 @@ class RoutingPolicyTests(unittest.TestCase):
 
     def test_router_forwards_only_its_successful_job_and_routed_receipt(self):
         import ci_xcode_cloud_dispatch as bridge
+        import ci_xcode_cloud_route as router
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        routing_api, asc_factory = Mock(), Mock()
+        with patch.object(router, "current_producer"), \
+                patch.object(router, "trusted_admissions", return_value={123: fixture.record}) as admission:
+            github = router.route_run(routing_api, asc_factory, fixture.run, override="a" * 40 + ":github")
+            admission.side_effect = ContractError("admission unavailable")
+            fallback = router.route_run(routing_api, asc_factory, fixture.run)
+        decisions = [router.poll_route(routing_api, asc_factory, fixture.record, fixture.run, receipt)
+                     for receipt in (github, fallback)]
+        self.assertEqual([receipt["decision"] for receipt in decisions], ["github", "fallback"])
+        asc_factory.assert_not_called()
         api = Mock(repository="owner/repo")
         source = {"id": 456, "path": cloud.ROUTE_PATH, "repository": {"full_name": "owner/repo"},
                   "head_repository": {"full_name": "owner/repo"}, "run_attempt": 1, "conclusion": None,
@@ -1043,10 +1056,14 @@ class RoutingPolicyTests(unittest.TestCase):
             api.dispatch.assert_called_once_with(cloud.IMPORT_PATH, {"producer_run_id": "123", "producer_attempt": "2"})
             api.dispatch.reset_mock()
             source["status"] = "in_progress"
-            receipt["decision"] = "fallback"
-            bridge.forward_import(api, env, event)
-            api.dispatch.assert_not_called()
-            receipt["decision"] = "routed"
+            for decision in decisions:
+                read.return_value = dict(decision, uploader_run_id=456, uploader_attempt=1)
+                current.reset_mock()
+                with self.subTest(decision=decision["decision"]):
+                    bridge.forward_import(api, env, event)
+                current.assert_not_called()
+                api.dispatch.assert_not_called()
+            read.return_value = receipt
             read.reset_mock()
             for field, value in (("head_branch", "candidate"), ("event", "pull_request"), ("run_attempt", 2), ("status", "completed")):
                 original = source[field]
@@ -1064,7 +1081,7 @@ class RoutingPolicyTests(unittest.TestCase):
                 api.dispatch.assert_not_called()
             job["conclusion"] = "success"
             for field, value in (("producer_run_id", 999), ("producer_attempt", 3), ("uploader_attempt", 2),
-                                 ("terminal", False), ("head_sha", "c" * 40)):
+                                 ("decision", "unknown"), ("terminal", False), ("head_sha", "c" * 40)):
                 original = receipt[field]
                 receipt[field] = value
                 with self.subTest(field=field), self.assertRaises(ContractError):
