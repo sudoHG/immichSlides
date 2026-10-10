@@ -26,11 +26,11 @@ from ci_ui_shards import DEVICES, MANIFEST_PATH, default_plan_population, parse_
 
 BASE_MODULES = ("ci_summary.py", "ci_population.py", "ci_verdict.py", "ui_test_inventory.py",
                 "run_host_checks.py")
-OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py", "ci_ui_selection.py")
+OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py", "ci_ui_selection.py", "ci_ui_packing.py", "ci_ui_test_kinds.py")
 UI_WORKFLOW_PATH = ".github/workflows/ci-ui.yml"
 # The only dynamic matrix value a UI producer may use; admission binds it to trusted shard names.
-DYNAMIC_UI_SHARDS = {platform: "${{ fromJSON(needs.archive.outputs." + platform + "_shards) }}"
-                     for platform in ("ios", "tvos")}
+DYNAMIC_UI_SHARDS = {scope: "${{ fromJSON(needs.archive.outputs." + scope + "_shards) }}"
+                     for scope in ("ios", "tvos", "iphone", "ipad", "appletv")}
 BRIDGE = '''import json,sys
 sys.path.insert(0, sys.argv[1])
 from ci_population import python_identities,swift_identities,ui_identities
@@ -73,19 +73,31 @@ elif p['operation']=='ui':
             from ci_ui_selection import select_ui_population
             from ci_summary import identity_key
             selection_inputs=p['selection_inputs']
+            selection_options={}
+            if p.get('pack_scoped_ui'):
+                from ci_ui_selection import platform_sources_from_project
+                from ci_ui_packing import pack_scoped_selection
+                selection_options={'platform_scoped':True,'functional_only':True,
+                    'platform_sources':platform_sources_from_project(selection_inputs['project']),
+                    'expected_skips':selection_inputs.get('expected_skips',[])}
             selection=select_ui_population(selection_inputs['paths'],selection_inputs['classification_policy'],
                 build_target_paths=selection_inputs['build_target_paths'],area_map=selection_inputs['area_map'],
                 populations=p['populations'],plans={platform:entry['plan'] for platform,entry in p['plans'].items()},
-                event=selection_inputs['event'])
+                event=selection_inputs['event'],**selection_options)
             selection.update(map_revision=selection_inputs['map_revision'],map_sha256=selection_inputs['map_sha256'])
             selection['shards']={}
             for device,shards in result['populations'].items():
                 selected={identity_key(entry) for entry in selection['populations'][device]}
                 selection['shards'][device]={name:[entry for entry in entries if identity_key(entry) in selected]
                     for name,entries in shards.items()}
+            if p.get('pack_scoped_ui') and selection['mode']=='scoped':
+                packing=pack_scoped_selection(selection['populations'],selection_inputs['durations'])
+                selection.update(shards=packing['shards'],packing=packing)
             result['selection']=selection
         except Exception as error:
             result['selection']={'error':str(error)}
+            if p.get('pack_scoped_ui'):
+                result['error']='functional UI selection refused: '+str(error)
 else:
     if 'evaluated_on' in p['inputs']:
         from datetime import date
@@ -211,6 +223,15 @@ def derive_record(identity, run, *, before=None):
                             "build_target_paths": payload["build_target_paths"], "event": identity["event"],
                             "area_map": raw_map, "map_revision": base,
                             "map_sha256": hashlib.sha256(raw_map.encode()).hexdigest()}
+        if "ci_ui_packing.py" in modules:
+            from ci_ui_packing import DURATIONS_PATH
+            base_paths = {entry["path"] for entry in base_listing if entry["type"] == "blob"
+                          and entry["mode"] in {"100644", "100755"}}
+            selection_inputs["project"] = (read_blob(base, "immichSlides.xcodeproj/project.pbxproj")
+                                           if "immichSlides.xcodeproj/project.pbxproj" in base_paths else "")
+            if DURATIONS_PATH in base_paths:
+                selection_inputs["durations"] = read_blob(base, DURATIONS_PATH)
+            selection_inputs["expected_skips"] = json.loads(read_blob(base, "scripts/ci-test-policy.json"))["expected_skips"]
     for side, revision, entries in (("base", base, base_listing), ("candidate", commit, listing)):
         try:
             ui[side] = ui_inputs(revision, entries, populations=derived["populations"],
@@ -225,8 +246,12 @@ def derive_record(identity, run, *, before=None):
     if UI_WORKFLOW_PATH in workflows:
         for side in ("base", "candidate"):
             if ui.get(side) and "error" not in ui[side]:
-                workflows[UI_WORKFLOW_PATH][side] = bind_ui_shards(
-                    workflows[UI_WORKFLOW_PATH][side], ui_shard_lists(ui[side], identity, derived["classification"]))
+                try:
+                    workflows[UI_WORKFLOW_PATH][side] = bind_ui_shards(
+                        workflows[UI_WORKFLOW_PATH][side], ui_shard_lists(ui[side], identity, derived["classification"]))
+                except (ContractError, KeyError, TypeError) as error:
+                    # Invalid UI binding cannot suppress the independent gate admission.
+                    ui[side]["error"] = ("UI shard binding refused: " + str(error))[:500]
     cloud_inputs = None
     from ci_xcode_cloud import PLAN_PATH, SCHEME_PATH
     cloud_paths = {PLAN_PATH, SCHEME_PATH, "scripts/strict_e2e_server.py", "ci_scripts/fixture_server.py"}
@@ -295,12 +320,17 @@ def bind_ui_shards(source, shards):
         require(isinstance(devices, list) and devices and all(device in DEVICES for device in devices)
                 and len({DEVICES[device] for device in devices}) == 1, "dynamic UI shards need one literal platform")
         platform = DEVICES[devices[0]]
-        require(matrix["shard"] == DYNAMIC_UI_SHARDS[platform], "unsupported dynamic UI shard list")
-        counts[platform] = counts.get(platform, 0) + 1
-    for platform, count in counts.items():
-        require(source.count(DYNAMIC_UI_SHARDS[platform]) == count, "dynamic UI shard list outside its matrix")
-        require(all(re.fullmatch(r"[a-z][a-z0-9-]*", shard) for shard in shards[platform]), "invalid UI shard name")
-        source = source.replace(DYNAMIC_UI_SHARDS[platform], "[" + ", ".join(shards[platform]) + "]")
+        scope = devices[0] if len(devices) == 1 and matrix["shard"] == DYNAMIC_UI_SHARDS[devices[0]] else platform
+        require(matrix["shard"] == DYNAMIC_UI_SHARDS[scope], "unsupported dynamic UI shard list")
+        chosen = [shards[device] if device in shards else shards[platform] for device in devices]
+        require(all(item == chosen[0] for item in chosen), "devices sharing a matrix select different shards")
+        if scope in counts:
+            require(counts[scope][1] == chosen[0], "one UI output binds different shard lists")
+        counts[scope] = (counts.get(scope, (0, []))[0] + 1, chosen[0])
+    for scope, (count, chosen) in counts.items():
+        require(source.count(DYNAMIC_UI_SHARDS[scope]) == count, "dynamic UI shard list outside its matrix")
+        require(all(re.fullmatch(r"[a-z][a-z0-9-]*", shard) for shard in chosen), "invalid UI shard name")
+        source = source.replace(DYNAMIC_UI_SHARDS[scope], "[" + ", ".join(chosen) + "]")
     return source
 
 
@@ -308,12 +338,17 @@ def ui_shard_lists(ui, identity, classification):
     """Shards a producer must run per platform: the non-empty trusted selection, or every manifest shard."""
     order = list(ui["manifest"]["shards"])
     selection = ui.get("selection") or {}
-    if not (identity["event"] == "pull_request" and classification.get("ci_changing") is False
+    if not (identity["event"] == "pull_request" and (classification.get("ci_changing") is False
+            or selection.get("coverage") == "functional")
             and selection.get("mode") in {"scoped", "none"}):
         return {platform: order for platform in ("ios", "tvos")}
+    if selection.get("packing"):
+        return {device: [shard for shard, entries in shards.items() if entries]
+                for device, shards in selection["shards"].items()}
     lists = {}
     for platform in ("ios", "tvos"):
-        chosen = [[shard for shard in order if selection["mode"] == "scoped" and selection["shards"][device][shard]]
+        chosen = [[shard for shard in order
+                   if selection["mode"] == "scoped" and selection["shards"][device][shard]]
                   for device in sorted(selection.get("shards", {})) if DEVICES[device] == platform]
         require(all(item == chosen[0] for item in chosen), "devices of one platform select different shards")
         lists[platform] = chosen[0] if chosen else []
@@ -322,6 +357,8 @@ def ui_shard_lists(ui, identity, classification):
 
 def ui_failure_hint(error):
     message = str(error)
+    if message.startswith("functional UI selection refused: "):
+        return message[:500]
     if message == "workflow is absent on the base; exact-head approval required":
         return message
     if re.fullmatch(r"shard [a-z][a-z0-9-]* has no tests on (?:iphone|ipad|appletv); "
@@ -354,7 +391,8 @@ def ui_inputs(revision, listing, *, populations=None, base_populations=None, wor
         computed = base_reader(modules, {"operation": "ui", "shard_devices": devices,
                       "devices": sorted(device for device, platform in DEVICES.items() if platform in result["plans"]), "populations": populations,
                       "base_populations": base_populations, "plans": result["plans"], "manifest": result["manifest"],
-                      "selection_inputs": selection_inputs})
+                      "selection_inputs": selection_inputs,
+                      "pack_scoped_ui": scoped_packing_intent(workflow) if workflow is not None else False})
         if "error" in computed:
             # Keep the base's own filtered population for an approved replacement
             # manifest; only the tested-tree shard computation failed.
@@ -385,6 +423,21 @@ def producer_commands(source):
         if arguments:
             commands.append((Path(arguments[0]).name, arguments[1:]))
     return commands
+
+
+def scoped_packing_intent(source):
+    """Only one literal archive-selection command can activate the successor protocol."""
+    from ci_ui_packing import PACKING_INTENT
+    from check_workflow_policy import WorkflowLoader
+    workflow = yaml.load(source, Loader=WorkflowLoader)
+    require(isinstance(workflow, dict) and isinstance(workflow.get("jobs"), dict), "workflow needs literal jobs")
+    matches = [(script, arguments) for job in workflow["jobs"].values() for step in job.get("steps", [])
+               for script, arguments in producer_commands(step.get("run", "")) if PACKING_INTENT in arguments]
+    require(not matches or len(matches) == 1 and matches[0][0] == "ci_ui_tests.py"
+            and matches[0][1][0] == "wait-archive" and matches[0][1].count(PACKING_INTENT) == 1,
+            "unsupported scoped UI packing intent")
+    require(source.count(PACKING_INTENT) == len(matches), "scoped UI packing intent outside archive selection")
+    return bool(matches)
 
 
 def workflow_contract(source, run, *, details=False, metadata=False):
@@ -487,7 +540,7 @@ def ui_empty_selection_jobs(record, run, metadata, source=None):
     ui = record.get("ui_inputs", {}).get("base") or {}
     selection = ui.get("selection") or {}
     if (selection.get("mode") != "scoped" or record["identity"]["event"] != "pull_request"
-            or record["classification"].get("ci_changing") is not False):
+            or record["classification"].get("ci_changing") is not False and selection.get("coverage") != "functional"):
         return set()
     require(selection["map_revision"] == record["identity"]["base_sha"], "UI area map differs from admitted base")
     # A bound platform without selected shards declares its devices but expands no job.
@@ -534,7 +587,9 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
         selection = ui.get("selection") or {}
         scoped_selection = (selection.get("mode") == "scoped" and cloud is None
                             and record["identity"]["event"] == "pull_request"
-                            and record["classification"]["ci_changing"] is False)
+                            and (record["classification"]["ci_changing"] is False
+                                 or selection.get("coverage") == "functional"))
+        packed_selection = scoped_selection and selection.get("packing") is not None
         for device in ui_devices:
             platform = DEVICES[device]
             ui_populations[device] = ui["populations"][device]
@@ -542,7 +597,8 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
             # A dynamic producer schedules only the non-empty selected shards.
             selected = ({shard for shard, entries in selection["shards"][device].items() if entries}
                         if scoped_selection else None)
-            require(len(assigned) == len(set(assigned)) and set(assigned) in (set(ui_populations[device]), selected),
+            require(len(assigned) == len(set(assigned)) and (set(assigned) == selected if packed_selection else
+                    set(assigned) in (set(ui_populations[device]), selected)),
                     "workflow shard union differs from the admitted manifest")
             base_ui = record["ui_inputs"]["base"] or ui
             if cloud is None or device != "appletv":
@@ -551,11 +607,11 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
                            for entries in shards.values() for entry in entries]
         declared = [entry for summary in summaries if summary["run"]["tier"] == "ui"
                     for entry in summary["population"]["declared"]]
-        if {identity_key(entry) for entry in declared} != {identity_key(entry) for entry in full_population}:
+        if packed_selection or {identity_key(entry) for entry in declared} != {identity_key(entry) for entry in full_population}:
             selection = ui.get("selection") or {}
             require(selection.get("mode") == "scoped" and cloud is None
                     and record["identity"]["event"] == "pull_request"
-                    and record["classification"]["ci_changing"] is False,
+                    and (record["classification"]["ci_changing"] is False or selection.get("coverage") == "functional"),
                     "UI population differs from full population and trusted selection")
             require(selection["map_revision"] == record["identity"]["base_sha"], "UI area map differs from admitted base")
             require(ui_devices == set(DEVICES), "scoped UI requires all three devices")
@@ -570,6 +626,9 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
             allowed_skips |= empty_jobs
         for summary in summaries:
             require(summary["hashes"]["manifests"].get("ui-shards") == ui["manifest_sha256"], "UI manifest hash differs")
+            if packed_selection:
+                require(summary["hashes"]["manifests"].get("ui-scoped-plan") == selection["packing"]["sha256"],
+                        "scoped UI plan hash differs")
             meta = next((item for item in metadata.values() if all(item[key] == summary["run"][key]
                         for key in ("tier", "job", "shard"))), None)
             require(meta is not None, "unsupported UI summary job")
