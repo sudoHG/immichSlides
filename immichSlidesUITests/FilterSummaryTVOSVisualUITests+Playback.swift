@@ -514,7 +514,11 @@ extension FilterSummaryTVOSVisualUITests {
 
     @MainActor
     func testTVOSSlideShowControlBarButtonsCanActivateOnSelect() throws {
-        let app = try launchIntoSlideShow()
+        // Freeze the first history boundary while XCTest discovers the controls.
+        let app = try launchIntoSlideShow(
+            shouldForceAutoPlayOff: true,
+            extraLaunchEnvironment: ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"]
+        )
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         let previousButton = app.buttons["slideshow.control.previous.button"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
@@ -552,6 +556,15 @@ extension FilterSummaryTVOSVisualUITests {
                 "Before the control bar activation test starts, focus should return to the settings button reliably"
         )
 
+        let presentationProbe = app.descendants(matching: .any)["slideshow.scenePresentation.contract.summary"]
+        XCTAssertTrue(
+            TestWait.until(.infrastructure(12)) {
+                presentationProbe.exists
+                    && self.manifestField("phase", in: presentationProbe.label) == "stablePhoto"
+                    && self.manifestField("loadingVisible", in: presentationProbe.label) == "false"
+            },
+            "The first scene must be fully visible before capturing its retained history identity"
+        )
         let initialSignature = try currentTVOSSceneSignature(app: app)
 
         XCTAssertFalse(
@@ -568,12 +581,21 @@ extension FilterSummaryTVOSVisualUITests {
 
         let initialPlayPauseValue = (playPauseButton.value as? String) ?? ""
         XCTAssertFalse(initialPlayPauseValue.isEmpty, "The Play/Pause button should expose its current state value")
+        XCTAssertEqual(initialPlayPauseValue, "play", "The initial history boundary must stay paused during discovery")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
                 ((playPauseButton.value as? String) ?? "") != initialPlayPauseValue
             },
             "Pressing Select on the Play/Pause button should toggle the current playback state"
+        )
+        // Exercise both Select actions and restore pause before comparing retained scenes.
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(
+            waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
+                ((playPauseButton.value as? String) ?? "") == initialPlayPauseValue
+            },
+            "Pressing Select again must restore the paused playback state before manual navigation"
         )
 
         XCUIRemote.shared.press(.right)
