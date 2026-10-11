@@ -1116,6 +1116,34 @@ class GroupProducerTests(unittest.TestCase):
         self.assertEqual(result["decision"], "pending")
         sleep.assert_called_once_with(15)
 
+    def test_github_capacity_or_winning_forecast_skips_cloud_inventory_and_reconciliation(self):
+        import ci_xcode_cloud_group_route as router
+        self.registry["routing_enabled"] = True
+        api = Mock()
+        api.pages.return_value = [self.pointer]
+        cases = ((7200, 1, False, "github-capacity-or-queue-uncertain"),
+                 (7200, 0, False, "github-capacity-or-queue-uncertain"),
+                 (600, 0, True, "github-estimated-faster"), (1120, 0, True, "github-estimated-faster"))
+        for seconds, free_slots, saturation, reason in cases:
+            with self.subTest(seconds=seconds, free_slots=free_slots, saturation=saturation):
+                factory = Mock()
+                with patch.object(router, "current_producer"), patch.object(router, "trusted_admissions", return_value={123: self.record}), \
+                        patch.object(router, "anchor", return_value="ui-selection"), \
+                        patch.object(router, "archive_evidence_run", return_value=dict(self.run,
+                            archive_job={"status": "completed", "conclusion": "success"})), \
+                        patch.object(router, "selection_open", return_value=True), patch.object(router, "remaining_seconds", return_value=100), \
+                        patch.object(router, "queue_snapshot", return_value={"seconds": seconds, "free_slots": free_slots,
+                                                                             "can_prove_saturation": saturation}), \
+                        patch.object(router, "cloud_estimate", return_value={"seconds": 1000, "reservation_minutes": 80}), \
+                        patch.object(router, "route_history") as history, patch.object(router, "group_started") as started, \
+                        patch.object(router, "unknown_starts") as unresolved:
+                    receipt = router.prepare_group(api, factory, self.run, "ios")
+                self.assertEqual((receipt["decision"], receipt["reason"]), ("github", reason))
+                factory.assert_not_called()
+                history.assert_not_called()
+                started.assert_not_called()
+                unresolved.assert_not_called()
+
     def test_missing_confirmed_allowance_or_billing_period_refuses_cloud_before_asc(self):
         import ci_xcode_cloud_group_route as router
         self.registry["routing_enabled"] = True

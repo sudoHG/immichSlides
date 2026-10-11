@@ -163,7 +163,17 @@ Destinations and actions are estimated serially unless their separate
 `destinations_parallel` / `actions_parallel` registry flags are verified true.
 Normal routing requires `Cloud + 2 minutes < GitHub` and an idle Cloud workflow
 for that group. Predictions are saved with the route receipt, not reported as
-measured wall times.
+measured wall times. A free slot or uncertain saturation already selects GitHub
+before reconciliation. Even with every slot occupied, a forecast that cannot beat
+GitHub now returns before reading ASC inventory or historical markers. This uses
+an optimistic zero-usage Cloud comparison solely to refuse starts; every possible
+Cloud start still requires the complete refreshed accounting and reconciliation.
+The two groups retain independent queue reads: the computed forecast binds each
+group's selected destinations, UI caps and platform archive dependency. Sharing
+raw job/history inputs across jobs would require a separately authenticated,
+attempt-bound snapshot with a checked age; reusing one group's computed finish
+for the other is unsafe. The same start job still reuses its authenticated duration
+history when refreshing the live queue before POST.
 
 The start job holds the shared account lock and refreshes head, pointer, queue,
 inventory and budget immediately before its single POST. Reconciliation scans
@@ -201,9 +211,15 @@ This is a request-count replay, not an activated Actions-token measurement or a
 routing forecast: historical job names predate the scheduler, older waiting runs
 are outside the capture, and no Cloud route attempts existed at that peak. The
 recent ten completed UI runs had no eligible scoped samples in this capture.
+Replaying the new early-refusal branch with the same captured inputs and a supplied
+GitHub-winning forecast made 43 GET calls (queue only), down from 95 before that
+branch: 989 instead of 2,185 GET calls/hour at the peak's 23 preparations/hour.
+The possible-Cloud branch still makes 95 GET calls, or 2,116 primary requests/hour;
+the free-slot branch already avoided reconciliation before this change. These
+conditional counts do not assert which side would win that historical peak.
 Marked attempts, artifact pagination and retries add requests. Removing overpricing
-does not make sustained peak routing fit the shared budget; measure live use and
-revisit the authenticated ledger before activation.
+does not make sustained peak routing fit the shared budget; repeat measurement
+during the separately reviewed activation and revisit the authenticated ledger.
 The Linux group waiter reads just one page each of route/import runs, filtered
 to creation after the producer attempt start minus five minutes. Its polling
 delay doubles from 60 seconds to a maximum of 300 seconds. A full 100-run route

@@ -400,6 +400,14 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         visibility_delay(registration)
         policy = month_policy(now, registration["billing_anchor"], cap_minutes=registration["cap_minutes"])
         receipt["budget_policy"] = policy
+        receipt["cloud_estimate"] = cloud_estimate(descriptor, selected,
+            queue_seconds=registration["groups"][group]["queue_seconds_upper"])
+        # A losing Cloud forecast needs no inventory or historical start reads.
+        # Zero usage is optimistic for Cloud and can only refuse a possible start.
+        early = choose_cloud(receipt["capacity"], receipt["cloud_estimate"], 0, policy)
+        if not early["route"]:
+            receipt.update(reason=early["reason"], estimate_decision=early)
+            return receipt
         asc = asc_factory()
         stage = "cloud-inventory-unavailable"
         inventory = inventories(asc, registration)
@@ -410,8 +418,6 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         if any(row["attributes"]["executionProgress"] != "COMPLETE" for row in inventory[group]):
             receipt["reason"] = "group-cloud-capacity-in-use"
             return receipt
-        receipt["cloud_estimate"] = cloud_estimate(descriptor, selected,
-            queue_seconds=registration["groups"][group]["queue_seconds_upper"])
         stage = "cloud-budget-unavailable"
         usage = [account_usage(asc, registration, now, start) for start, _ in policy["windows"]]
         unresolved = unknown_starts(api, registration, inventory, current_uploader=current_uploader,
