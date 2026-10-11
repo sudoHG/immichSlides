@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -349,17 +350,54 @@ def write_json(path, payload):
 
 def write_fixture_summary(summary, output):
     diagnostic_exit = None
-    if summary["schema_version"] == 2:
-        from ci_ui_discovery import retain_incomplete_discovery
-        retain_incomplete_discovery(summary)
-        if len(summary["population"]["compiled"]) < len(summary["population"]["declared"]):
-            diagnostic_exit = summary["compiled_evidence"]["first_exit_code"]
-    write_summary(summary, output)
+    try:
+        if summary["schema_version"] == 2:
+            from ci_ui_discovery import retain_incomplete_discovery
+            retain_incomplete_discovery(summary)
+            if len(summary["population"]["compiled"]) < len(summary["population"]["declared"]):
+                diagnostic_exit = summary["compiled_evidence"]["first_exit_code"]
+        write_summary(summary, output)
+    except ValueError as error:
+        if summary["schema_version"] != 2:
+            raise
+        # Preserve a rejected proof for diagnosis; publication still rejects it.
+        summary["status"] = "failed"
+        summary["infrastructure"].append({"code": "discovery-record-invalid", "message": str(error)[:200]})
+        write_json(output / "summary.json", summary)
+        (output / "summary.md").write_text("Fixture UI failed: invalid discovery proof\n")
+        return summary["compiled_evidence"]["first_exit_code"] or 1
     return diagnostic_exit
 
 
+def start_official_discovery(summary, device_id, base_policy, *, enabled):
+    from ci_ui_discovery import DISCOVERY_MODE, discovery_eligible
+    if not (enabled and summary["identity"]["event"] == "pull_request"
+            and summary["source"]["workflow_path"] == ".github/workflows/ci-ui.yml"
+            and re.fullmatch(r"scoped-[a-f]", summary["run"]["shard"] or "")
+            and summary["hashes"]["manifests"].get("ui-scoped-plan")
+            and discovery_eligible(summary["population"]["declared"], base_policy)
+            and not summary["population"]["deselected"]):
+        return False
+    summary["schema_version"] = 2
+    summary["population"]["compiled"] = []
+    summary["compiled_evidence"] = {"schema_version": 1, "mode": DISCOVERY_MODE,
+        "identity": copy.deepcopy(summary["identity"]), "run": dict(summary["run"]),
+        "plan_sha256": summary["hashes"]["manifests"]["ui-scoped-plan"], "device_id": device_id,
+        "first_exit_code": 1, "official_tests": None}
+    return True
+
+
+def record_official_discovery(summary, official):
+    from ci_ui_discovery import official_discovery
+    proof = summary["compiled_evidence"]
+    proof["official_tests"] = official
+    cases = official_discovery(official, summary["run"]["job"].removeprefix("ui-"), proof["device_id"],
+                               allow_empty=proof["first_exit_code"] != 0)
+    summary["population"]["compiled"] = [entry["identity"] for entry in cases.values()]
+
+
 def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, mode="measure", listed_only_retry=False,
-                   scoped_plan_sha256=None):
+                   scoped_plan_sha256=None, policy_revision=None):
     """Bind static evidence before simulator, service, archive or Xcode preflight."""
     platform = DEVICES[device]
     plan_path = root / ("immichSlides-" + ("tvOS" if platform == "tvos" else "iOS") + ".xctestplan")
@@ -372,13 +410,17 @@ def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, 
     for entry in declared:
         entry["dimensions"]["device"] = device
     policy_path = root / "scripts/ci-test-policy.json"
-    policy = parse_policy(policy_path.read_text())
+    policy_text = policy_path.read_text()
+    if policy_revision:
+        from ci_publish_git import read_blob
+        policy_text = read_blob(policy_revision, "scripts/ci-test-policy.json")
+    policy = parse_policy(policy_text)
     deselections = [entry for entry in policy["deselections"] if tier_approved(policy, "ui")
                    and entry["tier"] == "ui" and entry["environment"] == "fixture"
                    and entry["identity"] in declared] if mode == "pr" else []
     hashes = {"manifests": {"fixture-c": fixture_manifest("c")["fixture_sha256"],
                             "test-plan": hashlib.sha256(plan_path.read_bytes()).hexdigest()},
-              "policies": {"test-policy": hashlib.sha256(policy_path.read_bytes()).hexdigest()}}
+              "policies": {"test-policy": hashlib.sha256(policy_text.encode()).hexdigest()}}
     if shard_manifest:
         hashes["manifests"]["ui-shards"] = hashlib.sha256(shard_manifest.read_bytes()).hexdigest()
     if scoped_plan_sha256:
@@ -416,6 +458,8 @@ def main(argv=None):
     parser.add_argument("--shard")
     parser.add_argument("--shard-manifest", type=Path)
     parser.add_argument("--scoped-plan-sha256")
+    parser.add_argument("--compiled-from-official-results", action="store_true",
+                        help="Use admitted scoped PR discovery; other runs retain pre-run enumeration")
     parser.add_argument("--min-free-gib", type=int, default=80,
                         help="Disk guard; thresholds below 80 require a GitHub-hosted runner")
     args = parser.parse_args(argv)
@@ -440,7 +484,9 @@ def main(argv=None):
         workflow, fork = source_metadata(identity, os.environ, None)
         inputs_record = fixture_inputs(ROOT, args.device, args.only_testing, shard=args.shard,
                                        shard_manifest=args.shard_manifest, mode=args.mode, listed_only_retry=args.listed_only_retry,
-                                       scoped_plan_sha256=args.scoped_plan_sha256)
+                                       scoped_plan_sha256=args.scoped_plan_sha256,
+                                       policy_revision=identity["base_sha"] if args.compiled_from_official_results
+                                       and identity["event"] == "pull_request" else None)
         declared = inputs_record["population"]["declared"]
         policy, deselections = inputs_record["policy"], inputs_record["deselections"]
         registry, revision = inputs_record["registry"], inputs_record["registry_revision"]
@@ -454,11 +500,12 @@ def main(argv=None):
                    "hashes": inputs_record["hashes"], "toolchain": {"versions": {}, "signing_mode": "not-applicable"},
                    "population": inputs_record["population"],
                    "infrastructure": [], "status": "failed"}
+        udid = destination_udid(args.destination)
+        official_mode = start_official_discovery(summary, udid, policy, enabled=args.compiled_from_official_results)
         summary["toolchain"] = toolchain()
         summary["toolchain"]["versions"]["test_wait_factor"] = str(waits["infrastructure_factor"])
         write_json(output / "wait-configuration.json", waits)
         require(not os.path.lexists(ROOT / "Config/env.xcconfig"), "fixture mode forbids private configuration files or links")
-        udid = destination_udid(args.destination)
         platform = DEVICES[args.device]
         expected_destination = "tvOS Simulator" if platform == "tvos" else "iOS Simulator"
         require(args.destination.startswith("platform=" + expected_destination + ","), "wrong simulator platform")
@@ -530,14 +577,15 @@ def main(argv=None):
             return execute(base + selections + ["-enumerate-tests", "-test-enumeration-style", "flat",
                            "-test-enumeration-format", "json", "-test-enumeration-output-path", str(enumeration),
                            "-resultBundlePath", str(work / (name + ".xcresult"))], name)
-        code, enumeration_retry = enumerate_tests_with_bootstrap_retry(enumerate_tests, enumeration)
-        if enumeration_retry:
-            # Kept out of summary["infrastructure"]: any entry there fails the verdict, which would make the retry pointless.
-            write_json(output / "enumeration-retry.json", dict(enumeration_retry, schema_version=1))
-            print("Infrastructure: " + enumeration_retry["message"], flush=True)
-        require(code == 0, "compiled enumeration failed")
-        summary["population"]["compiled"] = compiled_tests(json.loads(enumeration.read_text()), declared)
-        rows = coverage_rows(declared, summary["population"]["compiled"], {"testNodes": []}, args.device)
+        if not official_mode:
+            code, enumeration_retry = enumerate_tests_with_bootstrap_retry(enumerate_tests, enumeration)
+            if enumeration_retry:
+                # Kept out of infrastructure: any entry there fails the verdict.
+                write_json(output / "enumeration-retry.json", dict(enumeration_retry, schema_version=1))
+                print("Infrastructure: " + enumeration_retry["message"], flush=True)
+            require(code == 0, "compiled enumeration failed")
+            summary["population"]["compiled"] = compiled_tests(json.loads(enumeration.read_text()), declared)
+            rows = coverage_rows(declared, summary["population"]["compiled"], {"testNodes": []}, args.device)
         reset_simulator_app(udid)
         crash_directories = crash_report_directories()
         crash_reports_before = crash_report_snapshot(crash_directories)
@@ -579,10 +627,15 @@ def main(argv=None):
                 return path
             def attempt(call):
                 started = time.monotonic()
-                return execute(call, "test-" + str(len(bundles))), time.monotonic() - started
+                raw_code = execute(call, "test-" + str(len(bundles)))
+                if official_mode and len(bundles) == 1:
+                    summary["compiled_evidence"]["first_exit_code"] = raw_code
+                return raw_code, time.monotonic() - started
             retry_result = run_xcode_attempts(command, registry, tier="ui", environment="fixture", today=evaluated_on,
                 identity_for_key=lambda key: expected_by_key[key], reset=lambda: reset_simulator_app(udid),
                 execute=attempt, allocate_bundle=allocate, read=read_attempt)
+            if official_mode:
+                summary["compiled_evidence"]["first_exit_code"] = retry_result["invocations"][0]["exit_code"]
             summary["population"]["observed"] = retry_result["observed"]
             summary["infrastructure"].extend(retry_result["infrastructure"])
             write_json(output / "retry-invocations.json", dict(retry_result, registry_revision=revision, registry_sha256=registry_hash))
@@ -601,6 +654,8 @@ def main(argv=None):
                     for entry in selected]
         else:
             code = execute(command, "test")
+            if official_mode:
+                summary["compiled_evidence"]["first_exit_code"] = code
             invocation_codes = [code]
         if args.failure_screenshots and any(item != 0 for item in invocation_codes):
             # Lets a failure that left the app gone (home screen, failed termination) be told from a plain test failure.
@@ -618,6 +673,9 @@ def main(argv=None):
                 "official_export_seconds": time.monotonic() - export_started, "timeout_seconds": args.result_export_timeout_seconds})
             official = json.loads((output / ("official-tests" + suffix + ".json")).read_text())
             verify_official_device(official, udid, args.device)
+            if official_mode and number == 1:
+                record_official_discovery(summary, official)
+                compiled = summary["population"]["compiled"]
             if args.failure_screenshots:
                 attachment_root = output / "failure-screenshots" / ("attempt-" + str(number))
                 attachment_root.mkdir(parents=True, exist_ok=True)
@@ -632,10 +690,13 @@ def main(argv=None):
                 if row["outcome"] in {"skipped", "failed"}:
                     row["reason"] = read_problem_reason(bundle, row["identity"]["key"], export_timeout_seconds=args.result_export_timeout_seconds)
             summary["population"]["observed"] = [observation(row["identity"], row["outcome"], row["duration_seconds"],
-                                                  reason=row["reason"], exit_code=0 if row["outcome"] == "passed" else None)
+                                                  reason=row["reason"], exit_code=0 if row["outcome"] == "passed" else code if official_mode else None)
                                                  for row in rows]
         if code == 0:
             summary["status"] = "unverified" if any(row["outcome"] == "skipped" for row in rows) else "passed"
+        if official_mode:
+            from ci_ui_discovery import retain_incomplete_discovery
+            retain_incomplete_discovery(summary)
         measured_policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
         verdict = evaluate_population(summary, declared, policy if args.mode == "pr" else measured_policy, environment="fixture",
                                       base_registry=registry, evaluated_on=evaluated_on)
@@ -664,6 +725,20 @@ def main(argv=None):
         if summary:
             if code:
                 summary["status"] = "failed"
+            if summary["schema_version"] == 2:
+                first_export = output / "official-tests.json"
+                try:
+                    if first_export.exists():
+                        record_official_discovery(summary, json.loads(first_export.read_text()))
+                    from ci_ui_discovery import retain_incomplete_discovery
+                    retain_incomplete_discovery(summary)
+                    verdict = evaluate_population(summary, summary["population"]["declared"], policy,
+                                                  environment="fixture", base_registry=registry, evaluated_on=evaluated_on)
+                    write_json(output / "coverage-verdict.json", verdict)
+                except (OSError, ValueError, TypeError, KeyError) as error:
+                    code = code or 1
+                    summary["status"] = "failed"
+                    summary["infrastructure"].append({"code": "discovery-invalid", "message": str(error)[:200]})
             write_json(output / "fixture-coverage.json", {"schema_version": 1, "device": args.device, "tests": rows,
                        "covered_selectors": ["immichSlidesUITests/" + row["identity"]["key"] for row in rows
                                              if row["outcome"] == "passed"]})

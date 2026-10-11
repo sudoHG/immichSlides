@@ -1,6 +1,8 @@
 """Guard per-test fixture coverage against missing, duplicate and skipped results."""
 
 import copy
+import contextlib
+import io
 import json
 import os
 import plistlib
@@ -15,6 +17,138 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
+    def test_candidate_deselection_changes_cannot_override_base_discovery_eligibility(self):
+        from ci_summary import test_identity
+        policy = json.loads((runner.ROOT / "scripts/ci-test-policy.json").read_text())
+        entry = test_identity("ui", "Flow/testFirst", platform="ios", device="iphone")
+        rule = {"tier": "ui", "environment": "fixture", "identity": entry,
+                "reason": "Reviewed fixture exception", "owning_tier": "nightly"}
+        for base_has_rule in (False, True):
+            with self.subTest(base_has_rule=base_has_rule), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "scripts").mkdir()
+                (root / "immichSlidesUITests").mkdir()
+                (root / "immichSlidesUITests" / "Tests.swift").write_text(
+                    "class Flow: XCTestCase { func testFirst() {} }")
+                (root / "immichSlides-iOS.xctestplan").write_text(json.dumps({"testTargets": [
+                    {"target": {"name": "immichSlidesUITests"}}]}))
+                base, candidate = copy.deepcopy(policy), copy.deepcopy(policy)
+                base["deselections"] = [rule] if base_has_rule else []
+                candidate["deselections"] = [] if base_has_rule else [rule]
+                (root / "scripts/ci-test-policy.json").write_text(json.dumps(candidate))
+                with patch("ci_publish_git.read_blob", return_value=json.dumps(base)) as blob:
+                    result = runner.fixture_inputs(root, "iphone", [], mode="pr", policy_revision="b" * 40)
+                blob.assert_called_once_with("b" * 40, "scripts/ci-test-policy.json")
+                self.assertEqual(result["official_discovery_eligible"], not base_has_rule)
+                self.assertEqual(result["deselections"], [rule] if base_has_rule else [])
+
+    def test_scoped_execution_skips_enumeration_and_rejected_proofs_still_scan_and_dispose(self):
+        from types import SimpleNamespace
+        from test_ci_summary import discovery_summary
+        from ci_summary import observation, parse_summary
+        from ci_verdict import parse_policy
+        for raw, shape in ((0, "complete"), (65, "missing-export"), (124, "empty"),
+                           (0, "empty"), (65, "complete"), (65, "unknown"), (65, "malformed"), (2, "launch")):
+            with self.subTest(raw=raw, shape=shape), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                output, work = root / "output", root / "private"
+                work.mkdir()
+                bundle = work / "result" / "fixture.xcresult"
+                bundle.mkdir(parents=True)
+                source = root / "Products" / "app.xctestrun"
+                source.parent.mkdir()
+                source.touch()
+                (source.parent / "Debug-iphonesimulator" / "immichSlides.app").mkdir(parents=True)
+                seed = discovery_summary()
+                entry = seed["population"]["declared"][0]
+                official = seed["compiled_evidence"]["official_tests"]
+                if shape == "empty":
+                    official["testNodes"][0]["children"] = []
+                elif shape == "unknown":
+                    official["testNodes"][0]["children"][0]["result"] = "Unknown"
+                elif shape == "malformed":
+                    official["testNodes"] = None
+                policy = parse_policy((runner.ROOT / "scripts/ci-test-policy.json").read_text())
+                inputs = {"hashes": seed["hashes"], "population": dict(seed["population"], compiled=[], observed=[]),
+                          "policy": policy, "deselections": [], "registry": {"schema_version": 1, "entries": []},
+                          "registry_revision": "b" * 40}
+                inputs["hashes"]["policies"]["known-flaky"] = "f" * 64
+                def export(*args, **kwargs):
+                    if shape in {"missing-export", "launch"}:
+                        raise runner.CommandError("Synthetic export unavailable")
+                    (output / "official-tests.json").write_text(json.dumps(official))
+                    return "f" * 64
+                commands = []
+                def process(command, **kwargs):
+                    commands.append(command)
+                    if shape == "launch" and command[0] == "xcodebuild":
+                        raise OSError("Synthetic launch failure")
+                    return SimpleNamespace(wait=lambda **kwargs: raw, pid=42)
+                observed = [observation(entry, "passed", 1)] if shape == "complete" else []
+                argv = ["--device", "iphone", "--destination", "platform=iOS Simulator,id=target",
+                        "--output-dir", str(output), "--xctestrun", str(source), "--shard", "scoped-a",
+                        "--shard-manifest", str(root / "manifest.json"), "--scoped-plan-sha256", "e" * 64,
+                        "--compiled-from-official-results", "--listed-only-retry"]
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}))
+                    for name, value in (("ROOT", root), ("run_identity", seed["identity"]),
+                                        ("source_metadata", (".github/workflows/ci-ui.yml", False)),
+                                        ("fixture_inputs", inputs), ("toolchain", seed["toolchain"]),
+                                        ("prepare_fixture_result_bundle", bundle), ("verify_simulator_device", None),
+                                        ("wait_for_service", ("127.0.0.1", 1234)), ("disk_check", None),
+                                        ("check_products", None), ("measure_signing", "adhoc"),
+                                        ("prepare_test_run", source), ("reset_simulator_app", None),
+                                        ("crash_report_directories", []), ("crash_report_snapshot", {}),
+                                        ("read_xcode_observations", observed), ("stop_exact_process", None)):
+                        stack.enter_context(patch.object(runner, name, value if name == "ROOT" else unittest.mock.Mock(return_value=value)))
+                    stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
+                    stack.enter_context(patch.object(runner.subprocess, "run", return_value=SimpleNamespace(stdout=b"{}")))
+                    stack.enter_context(patch.object(runner, "export_private_result_bundle", side_effect=export))
+                    scan = stack.enter_context(patch.object(runner, "write_sensitive_scan"))
+                    dispose = stack.enter_context(patch.object(runner, "finalize_fixture_run", return_value=[]))
+                    stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                    stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                    code = runner.main(argv)
+                tests = [command for command in commands if command[0] == "xcodebuild"]
+                self.assertEqual(len(tests), 1)
+                self.assertNotIn("-enumerate-tests", tests[0])
+                scan.assert_called_once()
+                dispose.assert_called_once()
+                self.assertEqual(code, 0 if raw == 0 and shape == "complete" else raw or 1)
+                result = json.loads((output / "summary.json").read_text())
+                self.assertEqual(result["compiled_evidence"]["first_exit_code"], raw)
+                self.assertEqual(result["status"], "passed" if code == 0 else "failed")
+                if shape in {"missing-export", "launch"} or raw == 124 or code == 0:
+                    parse_summary(result)
+                else:
+                    with self.assertRaises(ContractError):
+                        parse_summary(result)
+
+    def test_official_discovery_starts_only_for_bound_scoped_pr_without_base_deselection(self):
+        from test_ci_summary import discovery_summary
+        from ci_verdict import parse_policy
+        summary = discovery_summary()
+        summary.pop("compiled_evidence")
+        summary["schema_version"] = 1
+        policy = parse_policy((runner.ROOT / "scripts/ci-test-policy.json").read_text())
+        self.assertTrue(runner.start_official_discovery(summary, "target", policy, enabled=True))
+        self.assertEqual(summary["schema_version"], 2)
+        self.assertEqual(summary["compiled_evidence"]["official_tests"], None)
+        self.assertEqual(summary["population"]["compiled"], [])
+        for mutate in (lambda value: value["run"].update(shard="visual-a"),
+                       lambda value: value["identity"].update(event="push"),
+                       lambda value: value["source"].update(workflow_path=".github/workflows/ci-nightly.yml"),
+                       lambda value: value["hashes"]["manifests"].pop("ui-scoped-plan")):
+            other = discovery_summary()
+            other["schema_version"] = 1
+            other.pop("compiled_evidence")
+            mutate(other)
+            self.assertFalse(runner.start_official_discovery(other, "target", policy, enabled=True))
+            self.assertEqual(other["schema_version"], 1)
+        base = copy.deepcopy(policy)
+        base["deselections"] = [{"tier": "ui", "environment": "fixture", "identity": summary["population"]["declared"][0]}]
+        self.assertFalse(runner.start_official_discovery(discovery_summary(), "target", base, enabled=True))
+
     def test_fixture_launch_inputs_never_mutate_the_archived_run_or_unit_target(self):
         payload = {"TestConfigurations": [{"TestTargets": [
             {"BlueprintName": "immichSlidesUITests", "EnvironmentVariables": {},

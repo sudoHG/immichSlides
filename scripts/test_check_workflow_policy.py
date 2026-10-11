@@ -316,6 +316,11 @@ final class LocaleUITests: XCTestCase {
         document["jobs"]["appletv-shards"]["strategy"]["max-parallel"] = 1
         self.assertIn("ui-capacity", self.rules(document, path))
         split = copy.deepcopy(document)
+        for step in split['jobs']['selection']['steps']:
+            if 'run' in step:
+                step['run'] = step['run'].replace(' --scoped-ui-v2', '')
+        for device in ('iphone', 'ipad', 'appletv'):
+            split['jobs']['selection']['outputs'].pop(device + '_capacity', None)
         split['jobs']['iphone-shards']['strategy']['max-parallel'] = 2
         split['jobs']['ipad-shards']['strategy']['max-parallel'] = 1
         self.assertNotIn('ui-capacity', self.rules(split, path))
@@ -355,15 +360,17 @@ final class LocaleUITests: XCTestCase {
         expressions = UI_CAPACITIES[owner]
         for step in document['jobs'][owner]['steps']:
             if 'run' in step:
-                step['run'] = step['run'].replace('--pack-scoped-ui', '--pack-scoped-ui --scoped-ui-v2')
+                if '--scoped-ui-v2' not in step['run']:
+                    step['run'] = step['run'].replace('--pack-scoped-ui', '--pack-scoped-ui --scoped-ui-v2')
         for device, expression in expressions.items():
             document['jobs'][device + '-shards']['strategy']['max-parallel'] = expression
             name = device + '_capacity'
             document['jobs'][owner]['outputs'][name] = '${{ steps.select.outputs.' + name + ' }}'
             for step in document['jobs'][device + '-shards']['steps']:
                 if 'run' in step:
-                    step['run'] = step['run'].replace('ci_ui_tests.py run ',
-                        'ci_ui_tests.py run --compiled-from-official-results ')
+                    if '--compiled-from-official-results' not in step['run']:
+                        step['run'] = step['run'].replace('ci_ui_tests.py run ',
+                            'ci_ui_tests.py run --compiled-from-official-results ')
         self.assertNotIn('ui-capacity', self.rules(document, path))
         for mutation in ('wrong-device', 'arbitrary', 'literal-six', 'unbound-output', 'outside-strategy',
                          'missing-intent', 'missing-discovery'):
@@ -405,7 +412,10 @@ final class LocaleUITests: XCTestCase {
             # Historical full matrices remain valid without the packed intent.
             for step in literal['jobs']['selection']['steps']:
                 if 'run' in step:
-                    step['run'] = step['run'].replace(' --pack-scoped-ui', '')
+                    step['run'] = step['run'].replace(' --pack-scoped-ui', '').replace(' --scoped-ui-v2', '')
+            for device, capacity in (('iphone', 2), ('ipad', 1), ('appletv', 1)):
+                literal['jobs'][device + '-shards']['strategy']['max-parallel'] = capacity
+                literal['jobs']['selection']['outputs'].pop(device + '_capacity', None)
             dynamic = copy.deepcopy(document)
             dynamic["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS[output]
             dynamic["jobs"]["selection"]["outputs"].update({name: "${{ steps.select.outputs." + name + " }}"

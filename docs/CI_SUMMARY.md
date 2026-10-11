@@ -4,7 +4,7 @@
 main/nightly reports and notifications built from these records and trusted admissions.
 PR producers retain their own per-run summaries.
 
-Run the same macOS host checks as `ci-gate` from the repository root:
+Run the complete local host checks from the repository root:
 
 ```bash
 "${PYTHON:-python3}" -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run
@@ -197,7 +197,7 @@ failed/cancelled jobs, absent artifacts and other incomplete evidence.
 Summary and identity versions are independent. Readers dispatch only to explicitly
 installed validators in `SUMMARY_READERS`/`IDENTITY_READERS`. Identity version 1 and
 summary versions 1 and 2 are supported. Existing producers still emit version 1;
-version 2 is prepared for the separately activated scoped UI producer below.
+version 2 is activated only for eligible scoped PR UI producers below.
 A successor parser and validator must land in the
 trusted reader first, alongside the old parser and supported workflow paths. Only
 then can producers emit the successor. A version number alone never enables parsing.
@@ -211,8 +211,8 @@ The admitted shard command must explicitly opt in with
 `--compiled-from-official-results`; an opted-in packed functional shard without an
 approved base fixture deselection must supply version 2. A deselection matching the
 admitted population retains version 1 enumeration; every other shard retains version 1.
-The same eligibility helper is available to the producer. This reader does not activate
-the producer or remove its existing enumeration.
+The producer now uses the same eligibility helper and skips preliminary enumeration
+only on eligible scoped PR shards; other paths retain version 1 enumeration.
 
 The evidence contains `schema_version: 1`, mode `official-result-discovery-v1`,
 the exact summary `identity` and `run` including attempt, `plan_sha256`,
@@ -251,12 +251,15 @@ block the split: removal is still reported, and a new name is executed on Linux.
 The two sets are disjoint and their union must equal the complete admitted host
 inventory. Both jobs and exact per-job evidence are required; candidate exclusions,
 duplicate ownership, unknown platforms and missing jobs cannot pass.
-Current workflows and the default local host command remain unsplit. Producer
-activation and Linux prerequisite changes follow this reader separately.
+The gate producer now activates both partitions. Each Python executor first
+checks full dynamic discovery against the complete static inventory, then runs
+its base-owned subset. Linux uses the existing pinned Python packages and zstd;
+macOS executes the Swift-calling method and swift-format. The default local host
+command remains unsplit and still runs every host check and Python method.
 
 ## Current workflow boundary
 
-`ci-gate` runs this host job on PR merge commits and pushes to main. It has read-only
+`ci-gate` runs both host partitions on PR merge commits and pushes to main. Each has read-only
 contents permission, bounded job/script budgets, PR-specific cancellation (main pushes replace only a pending run, see [coalescing](CI_PUBLISHER.md#main-push-coalescing)), and no
 secrets or status-writing identity. It uploads only `summary.json`, `summary.md` and
 `run-identity.json`, with run/attempt-specific names, retained 30 days for PRs and
@@ -282,8 +285,8 @@ unit or UI exceptions. Trusted publication and approval
 enforcement are separate from producer claims. The workflow consumes the merged
 [pins and isolated environment setup](CI_TOOLCHAIN.md) and runs its standalone
 workflow-policy check as a distinct host identity. CI sets `PYTHON` to the pinned
-venv made from `/usr/bin/python3` and uses it
-for the host entry point and validators. Contributor interpreter setup is described in
+venv made from `/usr/bin/python3` on macOS; Linux uses Ubuntu's system Python with
+the same pinned packages. Each uses its venv for the host entry point and validators. Contributor interpreter setup is described in
 [CONTRIBUTING](../CONTRIBUTING.md#setup).
 
 The generic identity schema also supports `workflow_dispatch` and `schedule`.

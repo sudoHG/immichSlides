@@ -9,6 +9,15 @@ import check_required_test_tools
 
 
 class RequiredTestToolsTests(unittest.TestCase):
+    def test_portable_partition_requires_all_portable_tools_and_leaves_swift_to_macos(self):
+        for missing in (None, "swift", "zstd", "PIL", "yaml"):
+            with self.subTest(missing=missing), mock.patch.object(
+                    check_required_test_tools.shutil, "which", side_effect=lambda key: None if key == missing else "/tool"), \
+                    mock.patch.object(check_required_test_tools.importlib.util, "find_spec",
+                                      side_effect=lambda key: None if key == missing else object()):
+                self.assertEqual(len(check_required_test_tools.missing_tools(portable=True)),
+                                 0 if missing in (None, "swift") else 1)
+
     def test_all_required_tools_are_checked(self):
         with mock.patch.object(check_required_test_tools.shutil, "which", return_value="/tool") as which, mock.patch.object(
             check_required_test_tools.importlib.util, "find_spec", return_value=object()

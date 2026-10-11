@@ -68,6 +68,33 @@ def refresh_discovery_hash(summary):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_partitioned_python_execution_preserves_exact_discovery_and_runs_only_its_members(self):
+        calls = []
+        class Sample(unittest.TestCase):
+            def test_linux(self):
+                calls.append("linux")
+                self.assertTrue(True)
+
+            def test_macos(self):
+                calls.append("macos")
+                self.assertTrue(True)
+
+        def suite():
+            return unittest.defaultTestLoader.loadTestsFromTestCase(Sample)
+        inventory = [ci_summary.test_identity("python", case.id()) for case in run_python_tests.test_cases(suite())]
+        for index in (0, 1):
+            selected = [inventory[index]]
+            part = run_python_tests.partition_suite(suite(), {"inventory": inventory, "selected": selected})
+            payload, code = run_python_tests.run_suite(part, io.StringIO())
+            self.assertEqual((code, payload["compiled"]), (0, selected))
+            self.assertEqual([entry["identity"] for entry in payload["observed"]], selected)
+        self.assertEqual(calls, ["linux", "macos"])
+        for manifest in ({"inventory": inventory[:-1], "selected": inventory[:-1]},
+                         {"inventory": inventory + inventory[:1], "selected": inventory[:1]},
+                         {"inventory": inventory, "selected": inventory + inventory[:1]}):
+            with self.subTest(manifest=manifest), self.assertRaises(ci_summary.ContractError):
+                run_python_tests.partition_suite(suite(), manifest)
+
     def test_scoped_official_discovery_requires_bound_complete_compiled_and_executed_population(self):
         summary = discovery_summary()
         self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
@@ -391,6 +418,40 @@ class SummaryContractTests(unittest.TestCase):
 
 
 class HostResultTests(unittest.TestCase):
+    def test_host_partitions_execute_the_complete_discovered_suite_once_and_keep_separate_records(self):
+        python = [ci_summary.test_identity("python", "portable.Sample.test_rule"),
+                  ci_summary.test_identity("python", next(iter(run_host_checks.MACOS_PYTHON_TESTS)))]
+        records = []
+        for scope in ("linux", "macos"):
+            with self.subTest(scope=scope), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                def steps(commands, *args, **kwargs):
+                    manifest = json.loads((output / "python-selection.json").read_text())
+                    self.assertEqual(manifest["inventory"], python)
+                    self.assertEqual(len(manifest["selected"]), 1)
+                    (output / "python-results.json").write_text(json.dumps({"compiled": manifest["selected"],
+                        "observed": [ci_summary.observation(entry, "passed", 1) for entry in manifest["selected"]]}))
+                    invocation = next(command for name, command in commands if name == "python tests")
+                    self.assertIn("--selection-path", invocation)
+                    return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                            for name, command in commands], []
+                with patch("sys.argv", ["run_host_checks.py", "--host-platform", scope, "--output-dir", str(output)]), \
+                        patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                        patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                        patch("ci_population.python_identities", return_value=python), \
+                        patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(run_host_checks.main(), 0)
+                summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                self.assertEqual(summary["run"]["job"], "host-" + scope)
+                self.assertEqual({ci_summary.identity_key(entry) for entry in summary["population"]["declared"]},
+                                 {ci_summary.identity_key(entry) for entry in summary["population"]["compiled"]})
+                self.assertEqual({ci_summary.identity_key(entry) for entry in summary["population"]["declared"]},
+                                 {ci_summary.identity_key(entry["identity"]) for entry in summary["population"]["observed"]})
+                records.extend(summary["population"]["declared"])
+        self.assertEqual(len(records), len(run_host_checks.HOST_CHECKS) + len(python))
+        self.assertEqual(len({ci_summary.identity_key(entry) for entry in records}), len(records))
+
     def test_local_repository_metadata_accepts_remote_forms_and_missing_origin(self):
         remotes = [
             ("https://github.com/sudoHG/immichSlides.git/", "sudoHG/immichSlides"),

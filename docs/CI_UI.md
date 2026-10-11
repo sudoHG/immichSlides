@@ -29,20 +29,15 @@ record for deferred UI. Main build, unit and host checks retain their own verdic
 Pull-request and nightly population selection is independent of this main-only
 contract. Reader changes precede producer activation in a separate PR.
 
-Until #283 adds scoped Cloud routing, all pull-request UI runs stay on GitHub,
-including core, unknown and CI-changing PRs. Activating functional packing makes
-every app-affecting PR scoped, so the existing
-[Xcode Cloud Apple TV overflow path](XCODE_CLOUD_UI.md) cannot route those PRs.
-Nightly and main-push scheduling are unaffected. Historical full selections retain
-the overflow protocol: only a main router decision plus independently validated
-API results and the exact-head app check can suppress Apple TV shards. Failed or
-absent cloud proof runs Apple TV here.
-Cloud waiting runs in a separate Linux job, so iPhone/iPad start when archive
-selection finishes. That job publishes its own operational summary and gates only
-Apple TV using `!cancelled()`. Cloud selection depends only on the archive, so
-failed iOS-job reruns retain successful TV results; invalid retained Cloud proof
-requires a full rerun. Independent matrices allow two iPhone jobs, one iPad job
-and one Apple TV job concurrently, for a combined cap of four.
+The [grouped Cloud hooks](XCODE_CLOUD_UI.md) remain inactive without reviewed
+registration. All pull-request UI runs currently stay on GitHub, including core,
+unknown and CI-changing PRs. Each platform has an independent Linux group wait,
+so iPhone/iPad start when the iOS provider and archive evidence are ready without
+waiting for tvOS. Each wait publishes its own operational summary and gates only
+its platform using `!cancelled()`. Invalid retained Cloud proof requires a full
+rerun. Independent matrices take concurrency from the trusted
+scoped plan, with at most two jobs per device and five UI slots in total. The
+planner also models the PR's own gate unit jobs competing for those five slots.
 
 The [nightly fixture UI tier](CI_NIGHTLY.md#complete-fixture-ui) reuses these shard
 consumers and complete default-plan populations on all three devices. It consumes
@@ -203,10 +198,12 @@ The `ci-ui.yml` producer activates the reader's protocol with the literal
 The reader landed separately before this producer. Historical unflagged runs
 retain their original contract. No assertions, skips, deadlines or default plans change.
 
-The [prepared acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
-adds a separately activated five-slot planner, exact official-result discovery and
-Linux/macOS host partition. Current producers retain the existing planner,
-preliminary compiled enumeration and host scheduling until that activation lands.
+The [acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
+landed before the producer's `--scoped-ui-v2` and
+`--compiled-from-official-results` activation. Eligible scoped PR shards discover
+compiled methods from the first official test result instead of starting a
+separate enumeration invocation. Gate host checks run as the base-owned Linux
+and short macOS partitions; their union still covers the complete host suite.
 
 With this intent, selection pairs each changed path's areas with its proven
 platform. An iOS-only settings file selects iPhone/iPad settings and smoke tests;
@@ -234,38 +231,45 @@ For a scoped run the base reader packs the exact selected methods independently
 on each device into `scoped-a` through `scoped-f`. It uses deterministic longest
 method first assignment and identity ordering for ties. Separate literal iPhone
 and iPad matrices let their different method durations choose different counts.
-Their only dynamic values are `shard` lists from `iphone_shards` and `ipad_shards`;
-Apple TV retains `tvos_shards`. Each device's
+Their dynamic values are `shard` lists from `iphone_shards` and `ipad_shards`
+and the matching device capacity outputs; Apple TV uses `appletv_shards`.
+Each device's
 count is bounded by `ceil(selected estimated test seconds / 900)`, six shards and
 its method count. Candidate counts must fit the existing 28-minute estimated job
 budget; impossible packing or classification fails the activated PR admission.
 No method is dropped, duplicated, replaced or borrowed from another device.
 
-The planner accounts for two iPhone slots, one iPad slot and one Apple TV slot;
-host policy requires each packed device job's literal `max-parallel` to equal
-that device's `DEVICE_SLOTS` capacity. It allows nine minutes of fixed overhead
-per iOS job and four per Apple TV job. It
-chooses the fewest jobs when predicted UI time fits 25 minutes, leaving five for
-the gate build. Otherwise it minimizes predicted UI wall time, then runner
-minutes, within the same caps. Predictions do **not** establish a 30-minute pass.
+The `capacity-v2` planner models archive readiness at 270 seconds for iOS and
+300 seconds for tvOS, two gate unit consumers finishing at 450 and 750 seconds,
+and 60 seconds for trusted publication. Without preliminary enumeration, its
+fixed per-job budgets are 345/190/200 seconds for iPhone/iPad/Apple TV.
+Each device's `max-parallel` is bound to its base-computed capacity, at most two;
+the three limits sum to at most five. The planner chooses the fewest jobs when
+predicted push-to-status time fits 30 minutes. Otherwise it minimizes that time,
+then runner minutes, within the same caps and records `fits_target: false`.
+Predictions do **not** establish a 30-minute pass.
 Gate queue time, real test duration and runner overhead still require hosted
 measurement. Full/nightly runs retain every existing duration-balanced v2 shard.
 
-With the initial frozen weights, iOS settings selects 29/29/0 methods in 2/1/0
-jobs: about 23.5 UI minutes and 65.0 runner-minutes. Apple TV filter selects
-0/0/26 in 0/0/1: 17.5 UI and runner-minutes. Shared settings selects 29/29/34
-in 2/1/1: 25.1 UI minutes and 90.2 runner-minutes. Adding a five-to-ten-minute
-gate wait predicts 28.5–33.5, 22.5–27.5 and 30.1–35.1 minutes respectively.
-Core selects all 51/51/60 functional methods. These are estimates from recorded
-method durations, not hosted acceptance; iOS's 30-minute target requires archive
-readiness within about 6.5 minutes on an idle queue.
+With the updated frozen weights, iOS settings selects 29/29/0 methods in 2/2/0
+jobs, with a 25:17 push-to-status estimate and 67.5 UI runner-minutes. Apple TV
+filter selects 0/0/26 in 0/0/1: 23:33 and 17.5 UI runner-minutes. Shared settings
+selects 29/29/34 in 2/1/2: 30:24 and 94.3 UI runner-minutes, so its plan explicitly
+misses the target. These include modeled build readiness, this PR's gate unit
+occupancy and publication, and assume no external queue. They are estimates,
+not hosted acceptance. Core still selects all 51/51/60 functional methods.
 
 [`scripts/ci-ui-durations.json`](../scripts/ci-ui-durations.json) supplies frozen,
 per-device method seconds. The initial weights are the maximum observed duration
 per method in the latest execution attempts of UI runs
 [38051247254](https://github.com/sudoHG/immichSlides/actions/runs/38051247254) and
 [38035723923](https://github.com/sudoHG/immichSlides/actions/runs/38035723923), rounded
-to milliseconds with a one-second floor. Failed observations remain included.
+to milliseconds with a one-second floor. The successor takes the maximum of
+those weights and every observed method, including failures, from the settings,
+filter and Shared probes [38079041000](https://github.com/sudoHG/immichSlides/actions/runs/38079041000),
+[38082318919](https://github.com/sudoHG/immichSlides/actions/runs/38082318919) and
+[38083825853](https://github.com/sudoHG/immichSlides/actions/runs/38083825853), including
+the unchanged iPad rerun. No existing weight was reduced.
 An unseen method receives 120 seconds; weights never determine coverage. This
 file is CI-trusted and host-validated. Only base weights can choose a PR's plan,
 including an exact-head-approved candidate that edits them. Updating estimates
@@ -277,12 +281,12 @@ compiled and observed identities must equal the base plan for that job. An activ
 packed run cannot substitute legacy full-shard evidence; empty platforms still
 declare their devices and admit only an unexecuted collapsed matrix skip. See
 [publisher validation](CI_PUBLISHER.md#packed-scoped-ui-protocol).
-The producer follow-up must publish this plan, carry its exact per-job selectors,
-and avoid waiting for or downloading an unselected platform's gate archive.
+The producer publishes this plan, carries its exact per-job selectors,
+and avoids waiting for or downloading an unselected platform's gate archive.
 Archive identity and signature checks remain mandatory for every selected platform.
 An earlier build with a different head/base/tree cannot supply a cache shortcut.
 
-The [prepared acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
+The [acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
 requires official-result discovery intent on every shard command before admitting
 `capacity-v2`. A shard with an approved base fixture deselection keeps version 1
 and preliminary enumeration. An eligible shard with an incomplete first invocation
@@ -290,8 +294,7 @@ can write a fail-only version 2 record: compiled equals the discovered subset,
 all undiscovered methods remain `not-run` or `timed-out`, and their attempts retain
 the nonzero raw first exit. A missing export is recorded as `null`. The final writer
 keeps the diagnostics, while the verdict reports missing compiled identities and
-fails. These reader capabilities do not activate the producer or establish a
-30-minute acceptance result.
+fails. Official discovery does not establish a 30-minute acceptance result.
 
 ### Nightly-default locale screenshots
 
@@ -465,17 +468,16 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 
 ## Capacity, timeouts and measurement
 
-A full run binds twelve iOS jobs at `max-parallel: 3` and six Apple TV jobs at
-`max-parallel: 1`; a scoped pull request binds only the non-empty selected shards
-under the same caps. Both independent matrices retain `fail-fast: false`. Together
-they allow at most four macOS jobs per producer, leaving one of the account's
-five slots for other runs. Giving the larger iOS population three slots produces
-a minimum of four scheduling waves after splitting the visual class.
-Host policy checks require both matrices to retain every partition after a
-failure and their combined capacity to stay at most four. Each shard list is either
+Scoped pull requests bind only their non-empty selected shards with base-computed
+per-device limits: at most two each and at most five in total. The five-slot model
+includes gate unit occupancy; it does not reserve runners or remove queue time.
+Non-scoped `ci-ui` retains two/one/one limits; nightly retains its independent
+cap of two and complete duration-balanced partitions. Every matrix retains
+`fail-fast: false`, so a failed shard does not suppress another selected shard.
+Host policy checks require every admitted partition and exact capacity. Each shard list is either
 the ordered manifest keys or the bound archive output that admission resolves.
-Nightly retains its independent cap of two. Two independent matrices let iOS
-start without waiting for Cloud selection; only Apple TV waits for that decision.
+Independent device matrices let iOS start without waiting for Cloud selection;
+only Apple TV waits for that decision.
 Apple TV still executes after an iOS failure when cloud proof is absent.
 Superseded runs
 cancel only within the same PR. First-attempt main pushes share one group per

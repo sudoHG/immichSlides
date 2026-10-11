@@ -130,7 +130,7 @@ def shard_selection(identity):
     return lists, keys, selection["mode"]
 
 
-def planned_ui_selection(identity, *, pack_scoped_ui=False):
+def planned_ui_selection(identity, *, pack_scoped_ui=False, scoped_ui_v2=False):
     """Repeat the admitted base protocol; publication independently checks this exact plan."""
     if not pack_scoped_ui or identity["event"] != "pull_request":
         lists, keys, mode = shard_selection(identity)
@@ -158,7 +158,8 @@ def planned_ui_selection(identity, *, pack_scoped_ui=False):
         area_map=git_blob(base, AREA_MAP_PATH).decode(), populations=populations, plans=plans, event="pull_request",
         platform_scoped=True, platform_sources=platform_sources_from_project(project), functional_only=True,
         expected_skips=decode(git_blob(base, "scripts/ci-test-policy.json").decode())["expected_skips"])
-    packing = (pack_scoped_selection(selection["populations"], git_blob(base, DURATIONS_PATH).decode())
+    packing = (pack_scoped_selection(selection["populations"], git_blob(base, DURATIONS_PATH).decode(),
+                                    **({"algorithm": "capacity-v2"} if scoped_ui_v2 else {}))
                if selection["mode"] == "scoped" else None)
     device_shards = {device: list(packing["shards"][device]) if packing else [] for device in DEVICES}
     lists = {platform: sorted({name for device in DEVICES if DEVICES[device] == platform
@@ -398,13 +399,16 @@ def wait_archive(args):
         affected = app_affected(ctx["identity"])
         output("app_affected", str(affected).lower())
         output("selection_artifact", f"ui-archive-{ctx['run']['id']}-{ctx['run']['attempt']}")
-        planned = planned_ui_selection(ctx["identity"], pack_scoped_ui=getattr(args, "pack_scoped_ui", False))
+        planned = planned_ui_selection(ctx["identity"], pack_scoped_ui=getattr(args, "pack_scoped_ui", False),
+                                       scoped_ui_v2=getattr(args, "scoped_ui_v2", False))
         lists, keys, mode = planned["platform_shards"], planned["keys"], planned["mode"]
         if planned["packing"]:
             summary["hashes"]["manifests"]["ui-scoped-plan"] = planned["packing"]["sha256"]
         output("scoped_plan_sha256", planned["packing"]["sha256"] if planned["packing"] else "")
         for device in DEVICES:
             output(device + "_shards", json.dumps(planned["device_shards"][device], separators=(",", ":")))
+            from ci_publish_git import ui_capacities
+            output(device + "_capacity", str(ui_capacities({"selection": {"packing": planned["packing"]}})[device]))
         for platform_name in ("ios", "tvos"):
             output(platform_name + "_shards", json.dumps(lists[platform_name], separators=(",", ":")))
         write_json(records / "ui-selection.json", {"schema_version": 1, "identity": ctx["identity"], "mode": mode,
@@ -622,6 +626,8 @@ def run_shard(args):
             command += ["--only-testing", "immichSlidesUITests/" + entry["key"]]
         if selection and selection.get("packing"):
             command += ["--scoped-plan-sha256", selection["packing"]["sha256"]]
+            if getattr(args, "compiled_from_official_results", False):
+                command += ["--compiled-from-official-results"]
         started, started_epoch = time.monotonic(), time.time()
         code = fixture_main(command)
         write_json(args.output_dir / "shard-timing.json", {"schema_version": 1, "device": args.device, "shard": args.shard,
@@ -633,7 +639,7 @@ def run_shard(args):
 
 
 def failed_shard(args, error):
-    from run_fixture_ui_tests import fixture_inputs
+    from run_fixture_ui_tests import fixture_inputs, start_official_discovery, write_fixture_summary
     directory = args.output_dir.resolve()
     if ROOT == directory or ROOT in directory.parents or os.path.lexists(directory):
         return
@@ -656,7 +662,9 @@ def failed_shard(args, error):
             selectors = ["immichSlidesUITests/" + entry["key"] for entry in shard]
             plan_hash = selection["packing"]["sha256"]
         inputs = fixture_inputs(ROOT, args.device, selectors, shard=args.shard, shard_manifest=ROOT / MANIFEST_PATH,
-                                listed_only_retry=True, scoped_plan_sha256=plan_hash)
+                                listed_only_retry=True, scoped_plan_sha256=plan_hash,
+                                policy_revision=ctx["identity"]["base_sha"]
+                                if getattr(args, "compiled_from_official_results", False) else None)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         # Unbound evidence must stay absent so it cannot discard other shards.
         return
@@ -664,8 +672,15 @@ def failed_shard(args, error):
     ctx["run"].update(tier="ui", job="ui-" + args.device, shard=args.shard)
     summary = summary_for(ctx, inputs["hashes"]["manifests"]["ui-shards"])
     summary.update(hashes=inputs["hashes"], population=inputs["population"])
+    if getattr(args, "compiled_from_official_results", False):
+        from ci_publish_git import read_blob
+        from ci_verdict import parse_policy
+        from strict_e2e_runner_support import destination_udid
+        start_official_discovery(summary, destination_udid(args.destination),
+            parse_policy(read_blob(ctx["identity"]["base_sha"], "scripts/ci-test-policy.json")), enabled=True)
+    summary["status"] = "failed"
     summary["infrastructure"] = [{"code": "ui-shard-preflight-failed", "message": str(error)[:200]}]
-    write_summary(summary, directory)
+    write_fixture_summary(summary, directory)
 
 
 def verify_reproduction_pins(source, destination, environment, device="iphone"):
@@ -788,6 +803,7 @@ def main(argv=None):
     selection = commands.add_parser("select")
     selection.add_argument("--output-dir", type=Path, required=True)
     selection.add_argument("--pack-scoped-ui", action="store_true")
+    selection.add_argument("--scoped-ui-v2", action="store_true", help="Use base-owned five-slot scoped capacity planning")
     selection.add_argument("--defer-main-ui", action="store_true")
     group_wait = commands.add_parser("wait-group")
     group_wait.add_argument("--group", choices=("ios", "tvos"), required=True)
@@ -801,6 +817,7 @@ def main(argv=None):
     wait.add_argument("--defer-main-ui", action="store_true",
                       help="Main pushes reuse trusted PR UI evidence or defer verification to nightly")
     wait.add_argument("--pack-scoped-ui", action="store_true", help="Use the trusted functional-only packed PR protocol")
+    wait.add_argument("--scoped-ui-v2", action="store_true", help="Use base-owned five-slot scoped capacity planning")
     cloud_wait = commands.add_parser("wait-cloud")
     cloud_wait.add_argument("--output-dir", type=Path, required=True)
     cloud_wait.add_argument("--scoped-plan-sha256")
@@ -821,6 +838,7 @@ def main(argv=None):
     run.add_argument("--wait-factor", type=float, default=1)
     run.add_argument("--min-free-gib", type=int, default=80)
     run.add_argument("--max-parallel", type=int, default=2, help="Workflow matrix cap recorded in shard timing")
+    run.add_argument("--compiled-from-official-results", action="store_true", help="Use admitted official scoped discovery")
     local = commands.add_parser("reproduce")
     local.add_argument("--device", choices=DEVICES, default="iphone")
     local.add_argument("--manifest-revision", help="Explicit historical commit; default tests the current working-tree snapshot")
@@ -836,6 +854,8 @@ def main(argv=None):
     upload.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        require(not getattr(args, "scoped_ui_v2", False) or args.pack_scoped_ui,
+                "scoped UI acceleration requires functional packing")
         if args.command in {"run", "reproduce"}:
             wait_configuration(args.wait_factor)
         if hasattr(args, "timeout_minutes"):
