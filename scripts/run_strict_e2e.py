@@ -1119,7 +1119,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             if case_manifest is not None:
                 case_manifest.update(visual_payload["execution"])
         else:
-            visual_payload = require_visual_identity(arguments.evidence_dir, arguments.suite)
+            visual_payload = require_visual_identity(arguments.evidence_dir, arguments.suite, fixture_set=arguments.fixture_set)
         if case_manifest is not None:
             case_manifest["result"] = ("flaky-passed" if any(record["outcome"] == "flaky-passed"
                                                           for record in case_manifest.get("retry_observations", [])) else summary.result)

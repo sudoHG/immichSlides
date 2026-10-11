@@ -36,8 +36,10 @@ from album_server_narrow_contract import (  # noqa: E402
 )
 from strict_e2e_filter_contract import (  # noqa: E402
     FROZEN_FIXTURE_SHA256,
+    FilterContractError,
     write_member_manifest,
 )
+from strict_e2e_runner_support import CommandError, require_visual_identity  # noqa: E402
 from strict_e2e_photo_identity import classify_public_pattern, classify_screenshot  # noqa: E402
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest  # noqa: E402
 from test_strict_e2e_server import RunningServer  # noqa: E402
@@ -306,10 +308,10 @@ def _write_server_switch_pass(directory: Path) -> None:
     )
 
 
-def _write_album_empty_pass(directory: Path) -> None:
-    write_member_manifest(directory / "member-manifest.json", "a")
-    (directory / "album-play-1.png").write_bytes(_fixture_png("A1"))
-    (directory / "album-play-2.png").write_bytes(_fixture_png("A2"))
+def _write_album_empty_pass(directory: Path, fixture_set: str = "a") -> None:
+    write_member_manifest(directory / "member-manifest.json", fixture_set)
+    (directory / "album-play-1.png").write_bytes(_fixture_png("A1", fixture_set))
+    (directory / "album-play-2.png").write_bytes(_fixture_png("A2", fixture_set))
     (directory / "empty-selection.json").write_text(
         json.dumps(
             {
@@ -325,7 +327,7 @@ def _write_album_empty_pass(directory: Path) -> None:
     (directory / "empty-album.json").write_text(
         json.dumps(
             {
-                "album_id": empty_album_id("a"),
+                "album_id": empty_album_id(fixture_set),
                 "start_enabled": True,
                 "empty_copy": EMPTY_FILTERED_COPY,
                 "identity_source": "public_fixture_photo_mark",
@@ -548,6 +550,32 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
             report = evaluate_album_empty_evidence(directory)
         self.assertEqual(report["verdict"], "PASS")
         self.assertEqual(report["empty_copy"], EMPTY_FILTERED_COPY)
+
+
+class AlbumEmptyFixtureBTests(unittest.TestCase):
+    def test_fixture_b_pack_passes_when_the_active_fixture_is_carried_through(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _write_album_empty_pass(directory, "b")
+            self.assertEqual(evaluate_album_empty_evidence(directory, "b")["verdict"], "PASS")
+            self.assertEqual(require_visual_identity(directory, "album-empty", fixture_set="b")["verdict"], "PASS")
+
+    def test_fixture_b_pack_is_rejected_as_a_and_a_wrong_album_frame_is_rejected_for_both_fixtures(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _write_album_empty_pass(directory, "b")
+            with self.assertRaises(AlbumServerContractError) as raised:
+                evaluate_album_empty_evidence(directory, "a")
+            self.assertIn("does not match the requested fixture", str(raised.exception))
+            with self.assertRaises(CommandError):
+                require_visual_identity(directory, "album-empty")
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_album_empty_pass(directory, fixture_set)
+                (directory / "album-play-2.png").write_bytes(_fixture_png("A4", fixture_set))
+                with self.assertRaises(FilterContractError):
+                    evaluate_album_empty_evidence(directory, fixture_set)
 
 
 class EmptyResultIdentityTests(unittest.TestCase):
