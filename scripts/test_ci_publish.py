@@ -465,7 +465,7 @@ class PublisherTests(unittest.TestCase):
                                 (refusal(403, X_RateLimit_Remaining="0", X_RateLimit_Reset=reset), 120),
                                 (refusal(403, b'{"message": "You have exceeded a secondary rate limit."}'), 60),
                                 (refusal(429), 60)):
-            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener:
+            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener, patch("ci_publish.time.sleep"):
                 opener.return_value.open.side_effect = error
                 with self.assertRaises(RateLimited) as caught:
                     client.request("/repos/owner/repo/actions/runs")
@@ -473,7 +473,7 @@ class PublisherTests(unittest.TestCase):
             self.assertEqual(f"GitHub API GET refused request (HTTP {error.code})", str(caught.exception))
         for error in (refusal(403), refusal(403, b'{"message": "Resource not accessible by integration"}'),
                       refusal(403, X_RateLimit_Remaining="12"), refusal(404), refusal(500)):
-            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener:
+            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener, patch("ci_publish.time.sleep"):
                 opener.return_value.open.side_effect = error
                 with self.assertRaises(ContractError) as caught:
                     client.request("/repos/owner/repo/actions/runs")
@@ -526,6 +526,144 @@ class PublisherTests(unittest.TestCase):
             RateLimitWaitingGitHub("owner/repo", "secret-token", lambda: 12.5 - clock[0],
                                    sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)).request("/x")
         self.assertEqual([45, 1.5], timeouts)
+
+    def test_transient_get_retries_share_the_original_deadline_and_never_retry_writes_or_contracts(self):
+        import io
+        import ssl
+        from http.client import IncompleteRead
+        from urllib.error import HTTPError, URLError
+        from unittest.mock import MagicMock
+        from ci_publish import GitHub
+        def http_error(code, retry_after=None):
+            return HTTPError("https://private.invalid/token", code, "private response",
+                             {"Retry-After": str(retry_after)} if retry_after else {}, io.BytesIO())
+        for error, method, timeout, attempts in (
+                (http_error(503), "GET", 45, 2), (http_error(500), "GET", 45, 2),
+                (URLError(ConnectionResetError("private reset")), "GET", 45, 2),
+                (URLError(ssl.SSLError("private TLS")), "GET", 45, 2),
+                (URLError("private DNS refusal"), "GET", 45, 1),
+                (IncompleteRead(b"private bytes"), "GET", 45, 2),
+                (EOFError("private EOF"), "GET", 45, 2),
+                (http_error(403, 2), "GET", 45, 2),
+                (http_error(429, 2), "GET", 45, 2),
+                (http_error(403, 60), "GET", 45, 1),
+                (http_error(403), "GET", 45, 1), (http_error(404), "GET", 45, 1),
+                (http_error(503), "POST", 45, 1), (http_error(503), "DELETE", 45, 1),
+                (http_error(503), "GET", 1, 1)):
+            clock = [0.0]
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = b'{"ok":true}'
+            with self.subTest(error=type(error).__name__, method=method, timeout=timeout), \
+                    patch("ci_publish.build_opener") as opener, patch("ci_publish.time.monotonic", side_effect=lambda: clock[0]), \
+                    patch("ci_publish.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                    patch("sys.stdout", new_callable=io.StringIO) as output:
+                opener.return_value.open.side_effect = [error, response]
+                client = GitHub(REPOSITORY, "private-token")
+                if attempts == 2:
+                    self.assertEqual({"ok": True}, client.request("/private-path", method=method, timeout=timeout))
+                    self.assertLess(opener.return_value.open.call_args.kwargs["timeout"], timeout)
+                else:
+                    with self.assertRaises(ContractError):
+                        client.request("/private-path", method=method, timeout=timeout)
+                self.assertEqual(attempts, opener.return_value.open.call_count)
+                self.assertNotIn("private", output.getvalue())
+        clock = [0.0]
+        with patch("ci_publish.build_opener") as opener, patch("ci_publish.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("ci_publish.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            def slow_failure(*args, **kwargs):
+                clock[0] += min(20, kwargs["timeout"])
+                raise http_error(503)
+            opener.return_value.open.side_effect = slow_failure
+            with self.assertRaises(ContractError):
+                GitHub(REPOSITORY, "").request("/x", timeout=45)
+            self.assertEqual(3, opener.return_value.open.call_count)
+            self.assertEqual([45, 24, 2], [call.kwargs["timeout"] for call in opener.return_value.open.call_args_list])
+            self.assertEqual(clock[0], 45)
+        clock[0] = 0
+        with patch("ci_publish.build_opener") as opener, patch("ci_publish.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("ci_publish.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, 1000)):
+            opener.return_value.open.side_effect = http_error(503)
+            with self.assertRaises(ContractError):
+                GitHub(REPOSITORY, "").request("/x", timeout=45)
+            self.assertEqual(1, opener.return_value.open.call_count)
+        primary = http_error(403, 2)
+        primary.headers["X-RateLimit-Remaining"] = "0"
+        with patch("ci_publish.build_opener") as opener, patch("ci_publish.time.sleep") as sleep:
+            opener.return_value.open.side_effect = primary
+            with self.assertRaises(ContractError):
+                GitHub(REPOSITORY, "").request("/x")
+            self.assertEqual(1, opener.return_value.open.call_count)
+            sleep.assert_not_called()
+
+    def test_artifact_get_recovery_preserves_the_gate_verdict_and_persistent_refusals_are_safe_in_both_outputs(self):
+        import io
+        import zipfile
+        from urllib.error import HTTPError
+        from unittest.mock import MagicMock
+        from ci_publish import GitHub
+        record, jobs, summaries = gate_fixture(units=True)
+        record.update(workflow_id=RUN["workflow_id"], workflow_path=RUN["path"])
+        source = record["workflows"][RUN["path"]]["base"]
+        _, _, names, metadata = workflow_contract(source, RUN, metadata=True)
+        blobs, artifacts = {}, []
+        for number, (name, meta) in enumerate(metadata.items(), 1):
+            summary = next(item for item in summaries if all(item["run"][key] == meta[key] for key in ("tier", "job", "shard")))
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr("summary.json", json.dumps(summary))
+            blobs[number] = buffer.getvalue()
+            artifacts.append({"id": number, "name": names[name][0], "expired": False, "size_in_bytes": len(blobs[number])})
+        class RecordedAPI(GitHub):
+            def repo(self, path, **options):
+                return PR if path == "pulls/7" else super().repo(path, **options)
+            def pages(self, path, collection=None, **filters):
+                if path.startswith("commits/"):
+                    return []
+                if path.startswith("actions/workflows/"):
+                    return [RUN]
+                return jobs if collection == "jobs" else artifacts
+        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
+        for fault, expected, downloads in (("once", "success", 2), ("persistent", "failure", 3),
+                                            ("missing", "failure", 1), ("contract", "failure", 1)):
+            clock, calls = [0.0], []
+            def respond(request, **options):
+                number = int(request.full_url.split("/")[-2])
+                calls.append(number)
+                if number == 1 and (fault == "persistent" or fault == "missing" or fault == "once" and calls.count(1) == 1):
+                    raise HTTPError("https://private.invalid", 404 if fault == "missing" else 503, "private body", {}, io.BytesIO())
+                response = MagicMock()
+                response.__enter__.return_value.read.return_value = b"bad JSON" if number == 1 and fault == "contract" else blobs[number]
+                if fault == "contract" and number == 1:
+                    buffer = io.BytesIO()
+                    with zipfile.ZipFile(buffer, "w") as archive:
+                        archive.writestr("summary.json", '{"private candidate text":')
+                    response.__enter__.return_value.read.return_value = buffer.getvalue()
+                return response
+            with self.subTest(fault=fault), patch("ci_publish.workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                    patch("ci_publish.approval_requests", return_value=[]), patch("ci_publish.approved_status", return_value=False), \
+                    patch("ci_publish.trusted_admissions", return_value={RUN["id"]: record}), \
+                    patch("ci_publish_git.trusted_reader", return_value=modules), patch("ci_publish.build_opener") as opener, \
+                    patch("ci_publish.time.monotonic", side_effect=lambda: clock[0]), \
+                    patch("ci_publish.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                    patch("sys.stdout", new_callable=io.StringIO) as output:
+                opener.return_value.open.side_effect = respond
+                api = RecordedAPI(REPOSITORY, "private-token")
+                head, statuses, approval = compute(api, 7, "", "generic-app[bot]")
+                self.assertEqual(expected, statuses["ci-pr-gate"]["state"])
+                self.assertEqual(downloads, calls.count(1))
+                if expected == "failure":
+                    detail = statuses["ci-pr-gate"]["failure_diagnostics"][0]
+                    self.assertEqual("artifact-decode" if fault == "contract" else "artifact-download", detail["stage"])
+                    self.assertEqual("JSONDecodeError" if fault == "contract" else "HTTPError", detail["exception_type"])
+                    self.assertEqual(None if fault == "contract" else 404 if fault == "missing" else 503, detail["http_status"])
+                    self.assertIn(json.dumps(detail, sort_keys=True), output.getvalue())
+                    with tempfile.TemporaryDirectory() as directory, patch("ci_publish.compute", return_value=(head, statuses, approval)), \
+                            patch("ci_xcode_cloud_selection.publish_pointers"), patch("ci_publish.os.environ", {"GITHUB_STEP_SUMMARY": directory + "/summary.md"}):
+                        write_publication(api, MagicMock(), 7, "", "generic-app[bot]")
+                        rendered = Path(directory, "summary.md").read_text()
+                    self.assertIn(json.dumps(detail, sort_keys=True), rendered)
+                    self.assertNotIn("private", rendered)
+                self.assertNotIn("private", output.getvalue())
 
     def test_replaced_pending_ui_run_is_recognized_like_a_replaced_pending_gate(self):
         from ci_publish import cancelled_unstarted_run
@@ -2210,13 +2348,15 @@ class OtherUITests: XCTestCase { func testPlay() {} }
             with patch("ci_publish.approved_status", return_value=True):
                 _, statuses, approval = compute(RecordedAPI(), 7, "", "generic-app[bot]")
             self.assertEqual(statuses["ci-ui"]["state"], "success")
-            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[], admission=record, cloud=None)
+            evidence.assert_called_once_with(unittest.mock.ANY, ui_run, FIXTURE_UI, diagnostics=[], admission=record, cloud=None, failures=[])
             self.assertIsNone(approval["request"])
             with patch("ci_publish.approved_status", return_value=True), patch(
                     "ci_report.summary_diagnostics", side_effect=ContractError("malformed diagnostics")):
                 _, statuses, _ = compute(RecordedAPI(), 7, "", "generic-app[bot]")
             self.assertEqual("failure", statuses["ci-ui"]["state"])
             self.assertIn("diagnostics", statuses["ci-ui"])
+            self.assertIn({"stage": "producer-diagnostics", "exception_type": "ContractError", "http_status": None},
+                          statuses["ci-ui"]["failure_diagnostics"])
             with patch("ci_publish.approved_status", return_value=True), patch(
                     "ci_publish.evaluate_records", side_effect=ContractError(
                         "workflow is absent on the base; exact-head approval required")):
@@ -2315,6 +2455,7 @@ class OtherUITests: XCTestCase { func testPlay() {} }
                          "target_url": "https://github.com/" + REPOSITORY + "/actions/runs/101",
                          "diagnostics": {"counts": {}, "failures": [], "missing": [], "infrastructure": [],
                                          "skipped": [], "deselected": []},
+                         "failure_diagnostics": [{"stage": "admission-validation", "exception_type": "ContractError", "http_status": None}],
                          "report_source": {"repository": REPOSITORY, "workflow_path": ui_run["path"], "event": "pull_request",
                                            "run_id": RUN["id"], "attempt": RUN["run_attempt"],
                                            "fork_originated": False, "ci_changing": False, "approval_based": False}})

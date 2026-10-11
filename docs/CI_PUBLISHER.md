@@ -549,6 +549,22 @@ infrastructure failure instead of aborting before statuses are written. Admissio
 approval and test outcomes remain unchanged. [CI reporting](CI_REPORT.md) keeps daily history and
 PR summaries, tracks nightly failures and notifies main-push failures with issue-write.
 
+GitHub GET reads make at most three attempts within the original request timeout
+(45 seconds by default). Connection resets, EOF/TLS failures and HTTP 5xx use
+one- then two-second waits. A secondary rate limit is retried only with a numeric
+`Retry-After` that fits the remaining budget, including a one-second margin.
+Each attempt receives only the remaining time; the workflow's existing deadline
+is unchanged. POST/DELETE requests, authorization refusals, HTTP 404, malformed
+records, missing evidence and identity/contract mismatches are never retried.
+Exhausted reads still fail closed and every publication evaluates current evidence
+again; no previous green status is reused.
+
+Evaluation and artifact-read failures retain structured `failure_diagnostics`
+in the publisher log and publication summary: a fixed stage, exception type and
+HTTP status (null for non-HTTP errors). Artifact metadata, download, decoding and
+summary binding are distinguished. Exception text, response bodies, request URLs
+and credentials are excluded; producer counts and test failures remain separate.
+
 ## Approval and credentials
 
 Fork and CI-changing heads require the maintainer's approval of that exact SHA.
