@@ -542,6 +542,35 @@ class AlbumEditSwitchVisualContractTestsCases:
                     evaluate_filter_visual_identity(evidence, "filter-edit-switch")
 
 
+    def test_fixture_b_frames_from_the_non_target_album_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_directory:
+            evidence = Path(raw_directory)
+            self._write_valid_evidence(evidence, "b")
+
+            report = evaluate_filter_visual_identity(evidence, "filter-edit-switch")
+
+            self.assertEqual(report["verdict"], "PASS")
+            self.assertEqual(report["marks"], ["A4", "A5"])
+
+
+    def test_wrong_album_or_wrong_fixture_frames_are_rejected_for_both_fixtures(self) -> None:
+        for fixture_set, other_set in (("a", "b"), ("b", "a")):
+            with self.subTest(fixture_set=fixture_set, case="target album frame"), tempfile.TemporaryDirectory() as raw_directory:
+                evidence = Path(raw_directory)
+                self._write_valid_evidence(evidence, fixture_set)
+                (evidence / "album-switch-b-play-1.png").write_bytes(_fixture_png("A1", fixture_set))
+                with self.assertRaises(FilterContractError):
+                    evaluate_filter_visual_identity(evidence, "filter-edit-switch")
+
+            with self.subTest(fixture_set=fixture_set, case="other fixture's non-target frame"), tempfile.TemporaryDirectory() as raw_directory:
+                evidence = Path(raw_directory)
+                self._write_valid_evidence(evidence, fixture_set)
+                (evidence / "album-switch-b-play-2.png").write_bytes(_fixture_png("A5", other_set))
+                with self.assertRaises(FilterContractError) as raised:
+                    evaluate_filter_visual_identity(evidence, "filter-edit-switch")
+                self.assertIn("public glyph", str(raised.exception))
+
+
     def test_only_declared_non_target_album_identity_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)

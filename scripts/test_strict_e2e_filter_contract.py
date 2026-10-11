@@ -140,15 +140,15 @@ class DisplayPolicyVisualContractTests(DisplayPolicyVisualContractTestsCases, un
 from strict_e2e_filter_contract_test_display_cases import AlbumEditSwitchVisualContractTestsCases
 
 class AlbumEditSwitchVisualContractTests(AlbumEditSwitchVisualContractTestsCases, unittest.TestCase):
-    def _write_valid_evidence(self, evidence: Path) -> None:
-        write_member_manifest(evidence / "member-manifest.json", "a")
-        (evidence / "album-switch-b-play-1.png").write_bytes(_fixture_png("A4"))
-        (evidence / "album-switch-b-play-2.png").write_bytes(_fixture_png("A5"))
+    def _write_valid_evidence(self, evidence: Path, fixture_set: str = "a") -> None:
+        write_member_manifest(evidence / "member-manifest.json", fixture_set)
+        (evidence / "album-switch-b-play-1.png").write_bytes(_fixture_png("A4", fixture_set))
+        (evidence / "album-switch-b-play-2.png").write_bytes(_fixture_png("A5", fixture_set))
         (evidence / "album-edit-modes.json").write_text(
             json.dumps(
                 {
                     "identity_source": "accessibility_ui",
-                    "selected_album_id_after_replace": "album-a-non-target",
+                    "selected_album_id_after_replace": f"album-{fixture_set}-non-target",
                     "mode_after_replace": "filtered",
                     "mode_after_clear_and_exit": "random",
                 }

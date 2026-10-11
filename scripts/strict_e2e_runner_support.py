@@ -679,7 +679,7 @@ def audit_out_of_order_runner_inputs(
         raise CommandError(str(error), code=2) from error
 
 
-def require_visual_identity(evidence_dir: Path, suite: str) -> dict[str, object]:
+def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a") -> dict[str, object]:
     if suite in OUT_OF_ORDER_VISUAL_SUITES:
         try:
             payload = evaluate_out_of_order_identity(evidence_dir)
@@ -694,7 +694,7 @@ def require_visual_identity(evidence_dir: Path, suite: str) -> dict[str, object]
         return payload
     if suite in ALBUM_EMPTY_SUITES:
         try:
-            payload = evaluate_album_empty_evidence(evidence_dir)
+            payload = evaluate_album_empty_evidence(evidence_dir, fixture_set)
         except (AlbumServerContractError, FilterContractError) as error:
             failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
             _write_visual_runner_report(evidence_dir, failed)
