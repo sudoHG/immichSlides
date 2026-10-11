@@ -257,7 +257,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "run_strict_e2e.subprocess.run", side_effect=fake_subprocess
         ), mock.patch("run_strict_e2e.reset_simulator_app", return_value="reset\n",
                       side_effect=strict_runner.InfrastructureTimeout(timeout_phase, 60)
-                      if timeout_phase == "simulator-bootstatus" else None), mock.patch(
+                      if timeout_phase in {"simulator-bootstatus", "simulator-readiness"} else None), mock.patch(
             "run_strict_e2e.run_command", side_effect=fake_run_command
         ), mock.patch(
             "run_strict_e2e.read_official_test_results_summary",
@@ -329,7 +329,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             self.assertEqual(list((root / "private").iterdir()), [])
 
     def test_inner_timeout_records_its_phase_and_finishes_private_cleanup(self):
-        for phase in ("simulator-bootstatus", "official-tests-export", "official-summary-export"):
+        for phase in ("simulator-bootstatus", "simulator-readiness", "official-tests-export", "official-summary-export"):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 evidence = root / "evidence"
@@ -363,19 +363,23 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         commands = {
             "boot": "simulator-boot", "bootstatus": "simulator-bootstatus",
             "terminate": "simulator-terminate", "uninstall": "simulator-uninstall",
-            "get_app_container": "simulator-container", "keychain": "simulator-keychain-reset",
+            "get_app_container": "simulator-readiness", "keychain": "simulator-keychain-reset",
             "privacy": "simulator-privacy-reset",
         }
         for step, phase in [*commands.items(), ("get_app_container_after_uninstall", "simulator-container")]:
             with self.subTest(step=step):
                 container_calls = []
+                clock = [0.0]
+                calls = []
 
                 def run(command, **kwargs):
+                    calls.append(command)
                     if command[2] == "get_app_container":
                         container_calls.append(command)
                     timed_step = "get_app_container" if step == "get_app_container_after_uninstall" else step
                     if command[2] == timed_step and (step == timed_step or len(container_calls) == 2):
                         self.assertGreater(kwargs.get("timeout", 0), 0)
+                        clock[0] += kwargs["timeout"]
                         raise subprocess.TimeoutExpired(["private-test-input"], kwargs["timeout"],
                                                         output=b"private-test-input")
                     if command[2] == "get_app_container":
@@ -384,10 +388,13 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     return subprocess.CompletedProcess(command, 2 if command[2] == "get_app_container" else 0, "", "")
                 with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=run), mock.patch(
                     "strict_e2e_runner_support.time.sleep"
-                ), self.assertRaises(CommandError) as raised:
+                ), mock.patch("strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]), self.assertRaises(CommandError) as raised:
                     reset_simulator_app("SIM-UDID")
                 self.assertEqual(raised.exception.entry["code"], phase + "-timeout")
                 self.assertNotIn("private-test-input", str(raised.exception))
+                if step == "get_app_container":
+                    self.assertEqual(clock[0], 300)
+                    self.assertFalse(any(command[2] in ("terminate", "uninstall", "keychain", "privacy") for command in calls))
         with tempfile.TemporaryDirectory() as raw:
             bundle = Path(raw) / "result.xcresult"
             bundle.mkdir()
@@ -464,6 +471,10 @@ class StrictCITracerTests(unittest.TestCase):
                         derived.mkdir(parents=True)
                         (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
                         return 0
+                    from strict_e2e_runner_support import SIMULATOR_READINESS_TIMEOUT_SECONDS, SIMULATOR_RESET_TIMEOUT_SECONDS
+                    execution_budget = int(command[command.index("--warm-timeout-seconds") + 1])
+                    self.assertGreaterEqual(_kwargs["timeout_seconds"], execution_budget + SIMULATOR_READINESS_TIMEOUT_SECONDS
+                                            + SIMULATOR_RESET_TIMEOUT_SECONDS)
                     evidence.mkdir(parents=True)
                     (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": infrastructure}))
                     if contract:

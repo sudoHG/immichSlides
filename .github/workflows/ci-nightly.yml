@@ -37,6 +37,7 @@ on:
       - scripts/ci_nightly_change.py
       - scripts/ci_nightly_ui.py
       - scripts/ci_ui_tests.py
+      - scripts/ci_simulator.py
       - scripts/ci-ui-shards.json
       - scripts/nightly-*.json
       - scripts/run_strict_ci_tracer.py
@@ -393,6 +394,10 @@ jobs:
         run: |
           /usr/bin/python3 -B -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
           /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
+      - name: Create and start only this shard's pinned simulator
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B scripts/ci_simulator.py --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Verify pins and prepare Python
         working-directory: ui-source
         run: |
@@ -413,15 +418,6 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_producer_run_id || needs.ui-archive.outputs.ios_producer_run_id }}
-      - name: Create only this shard's pinned simulator
-        working-directory: ui-source
-        run: |
-          "$PYTHON" -B scripts/ci_ui_tests.py simulator --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
-          if test '${{ matrix.device }}' = appletv; then
-            echo 'UI_PLATFORM=tvos' >> "$GITHUB_ENV"
-          else
-            echo 'UI_PLATFORM=ios' >> "$GITHUB_ENV"
-          fi
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |

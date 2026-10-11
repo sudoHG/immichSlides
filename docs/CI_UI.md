@@ -450,6 +450,11 @@ The shards use [fixture set C and the existing UI runner](CI_FIXTURE_UI.md),
 without a real server, private configuration or changed test assertions. They
 retain default simulator signing, pinned toolchains and runtime fixture inputs.
 Only each job's pinned device simulator is created and deleted.
+The PR and nightly UI jobs use the standard-library `ci_simulator.py` bootstrap to
+create and submit boot for that fresh device immediately after selecting Xcode,
+before Python environment preparation and archive downloads. Device startup can
+overlap that existing work. Its UDID, destination and platform are exported before
+boot, so cleanup still owns the same device if boot or later preparation fails.
 
 Fixture UI runners use the [shared simulator reset](CI_STRICT_RUNNER.md#shared-simulator-reset),
 including its clean-install requirements, preparation bounds and timing logs.

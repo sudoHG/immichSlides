@@ -85,9 +85,10 @@ from run_strict_e2e_test_fixtures import (
 
 class StrictE2ERunnerTestsCasesEvidence:
     def test_reset_simulator_app_retries_uninstall_and_records_log(self) -> None:
-        for installed in (False, True):
-            with self.subTest(installed=installed):
+        for installed, readiness_timeouts in ((False, 0), (True, 0), (False, 7), (True, 7)):
+            with self.subTest(installed=installed, readiness_timeouts=readiness_timeouts):
                 calls: list[list[str]] = []
+                clock = [0.0]
 
                 def fake_run(command: list[str], **kwargs: object) -> mock.Mock:
                     calls.append(command)
@@ -100,6 +101,12 @@ class StrictE2ERunnerTestsCasesEvidence:
                         result.returncode = 149
                         result.stderr = "Failed to uninstall: Application not found"
                     elif command[2] == "get_app_container":
+                        if uninstall_count == 0:
+                            self.assertLessEqual(kwargs["timeout"], 10)
+                            presence_count = sum(item[2] == "get_app_container" for item in calls)
+                            if presence_count <= readiness_timeouts:
+                                clock[0] += kwargs["timeout"]
+                                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
                         if installed and uninstall_count == 0:
                             result.stdout = "/sim/containers/immichSlides\n"
                         else:
@@ -109,7 +116,7 @@ class StrictE2ERunnerTestsCasesEvidence:
 
                 with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch(
                     "run_strict_e2e.time.sleep"
-                ):
+                ) as sleep, mock.patch("run_strict_e2e.time.monotonic", side_effect=lambda: clock[0]):
                     log = reset_simulator_app("SIM-UDID")
 
                 self.assertIn("simulator_id=SIM-UDID", log)
@@ -119,10 +126,11 @@ class StrictE2ERunnerTestsCasesEvidence:
                 self.assertTrue(any(command[2] == "boot" for command in calls))
                 self.assertEqual(sum(command[2] == "terminate" for command in calls), int(installed))
                 self.assertEqual(sum(command[2] == "uninstall" for command in calls), 2)
-                self.assertEqual(sum(command[2] == "get_app_container" for command in calls), 2)
+                self.assertEqual(sum(command[2] == "get_app_container" for command in calls), 2 + readiness_timeouts)
                 self.assertTrue(any(command[2] == "keychain" for command in calls))
                 self.assertTrue(any(command[2] == "privacy" for command in calls))
-                self.assertIn("simulator-app-presence: elapsed=", log)
+                self.assertIn(f"simulator-readiness: passed; attempts={1 + readiness_timeouts}; elapsed={10 * readiness_timeouts:.1f}s", log)
+                self.assertEqual(sleep.call_args_list, [mock.call(1), mock.call(1)])
 
 
     def test_reset_simulator_app_fails_when_container_still_exists(self) -> None:

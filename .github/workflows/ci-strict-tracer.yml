@@ -21,7 +21,7 @@ jobs:
   tracer:
     name: strict-tracer-${{ matrix.platform }}
     runs-on: xcode-27
-    timeout-minutes: 110
+    timeout-minutes: 125
     permissions:
       contents: read
     strategy:

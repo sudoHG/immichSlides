@@ -1135,6 +1135,53 @@ class PublisherTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(ContractError):
                 workflow_contract(source, RUN, metadata=True)
 
+        import yaml
+        root = Path(__file__).resolve().parent.parent
+        for workflow_name in ("ci-ui.yml", "ci-nightly.yml"):
+            jobs = yaml.safe_load((root / ".github/workflows" / workflow_name).read_text())["jobs"]
+            ui_jobs = [job for job in jobs.values() if any("scripts/ci_ui_tests.py run --device" in step.get("run", "")
+                                                        for step in job.get("steps", []))]
+            self.assertTrue(ui_jobs)
+            for job in ui_jobs:
+                steps = job["steps"]
+                boot = [i for i, step in enumerate(steps) if "scripts/ci_simulator.py" in step.get("run", "")]
+                self.assertEqual(len(boot), 1)
+                self.assertIn("--device '${{ matrix.device }}' --shard '${{ matrix.shard }}'", steps[boot[0]]["run"])
+                for i, step in enumerate(steps):
+                    if "setup_ci_python.py" in step.get("run", "") or step.get("uses", "").startswith("actions/download-artifact@"):
+                        self.assertLess(boot[0], i)
+
+        import subprocess
+        import sys
+        import ci_simulator
+        pins = json.loads((root / "scripts/ci-pins.json").read_text())
+        for device, platform_name in (("iphone", "ios"), ("ipad", "ios"), ("appletv", "tvos")):
+            for boot_result in (0, 1, "timeout"):
+                with self.subTest(device=device, boot_result=boot_result), tempfile.TemporaryDirectory() as raw:
+                    environment_file = Path(raw) / "github-env"
+                    environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "GITHUB_ENV": str(environment_file)}
+                    def boot(command, **kwargs):
+                        self.assertEqual(command, ["xcrun", "simctl", "boot", "fresh-udid"])
+                        self.assertIn("UI_SIMULATOR=fresh-udid\n", environment_file.read_text())
+                        if boot_result == "timeout":
+                            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+                        return subprocess.CompletedProcess(command, boot_result, "", "")
+                    with patch.dict(os.environ, environment, clear=True), \
+                            patch.object(ci_simulator.subprocess, "check_output", return_value="fresh-udid\n") as create, \
+                            patch.object(ci_simulator.subprocess, "run", side_effect=boot):
+                        self.assertEqual(ci_simulator.main(["--device", device, "--shard", "scoped-a"]), int(boot_result != 0))
+                    self.assertEqual(create.call_count, 1)
+                    self.assertEqual(create.call_args.args[0], ["xcrun", "simctl", "create", "ui-" + device + "-scoped-a",
+                                                              pins["device_types"][device], pins["simulators"][platform_name]["runtime"]])
+                    self.assertIn("UI_PLATFORM=" + platform_name + "\n", environment_file.read_text())
+                    self.assertIn("id=fresh-udid\n", environment_file.read_text())
+        with patch.dict(os.environ, {}, clear=True), patch.object(ci_simulator.subprocess, "check_output") as create:
+            self.assertEqual(ci_simulator.main(["--device", "iphone", "--shard", "scoped-a"]), 1)
+            create.assert_not_called()
+        help_result = subprocess.run([sys.executable, "-S", str(root / "scripts/ci_simulator.py"), "--help"],
+                                     capture_output=True, text=True, timeout=30)
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+
     def test_area_selection_unions_smoke_and_areas_but_unknown_core_and_non_pr_changes_stay_full(self):
         from ci_ui_selection import matches_source, select_ui_population
         from ci_ui_shards import DEVICES

@@ -14,7 +14,8 @@ Signed visual-review promotion remains separate work.
 Simulator preparation and official exports have explicit phase deadlines; timeout
 records and private quarantine follow the [nightly infrastructure policy](CI_NIGHTLY.md#population-and-capacity).
 The shared boot helper caps `simctl boot` at 60 seconds and gives boot plus bootstatus
-600 seconds total. It finishes before the separate 120-second app/keychain/privacy
+600 seconds total. The [shared reset](#shared-simulator-reset) then allows 300 seconds
+for responsive app queries before the separate 120-second app/keychain/privacy
 reset clock starts; individual reset commands have at most 60 seconds. Local strict,
 fixture UI, listed retry and access-lifecycle runs use these preparation bounds too.
 Official tests and summary exports each have 60 seconds. Unit callers retain
@@ -72,18 +73,21 @@ signing stays **Sign to Run Locally**, verified as `adhoc` by `codesign` after w
 ## Shared simulator reset
 
 Strict, fixture UI, listed-retry and standalone access runners share
-`reset_simulator_app`: boot and wait for `bootstatus -b`, query the app container,
-terminate only when the app is installed, uninstall with one retry, require the
-app container to be absent afterward, then reset keychain and all privacy
+`reset_simulator_app`: boot and wait for `bootstatus -b`, wait for a valid app-container
+response, terminate only when the app is installed, uninstall with one retry on
+failure, require the app container to be absent afterward, then reset keychain and all privacy
 permissions. Only a container lookup confirming absence skips termination; an
-unknown or timed-out lookup fails. Uninstall and the remaining reset steps are
-still mandatory before Xcode may install the app. A reset error fails the case.
+unknown response fails immediately. Readiness repeats only timed-out container
+queries, each capped at 10 seconds, within a separate 300-second post-boot budget.
+Exhausting that budget fails as `simulator-readiness-timeout`, before any reset
+mutation; a warm device returns on its first valid response. Uninstall and the
+remaining reset steps are still mandatory before Xcode may install the app. A reset error fails the case.
 
-Boot finishes before the existing 120-second reset deadline starts; the presence
-query and all remaining reset commands share that deadline. Individual reset
-commands retain their 60-second cap. Boot phases, the extra presence-query seconds,
-skipped termination and total reset seconds are logged. This adds no fixed
-post-boot sleep and extends no reset or product deadline.
+Boot and readiness finish before the existing 120-second reset deadline starts;
+termination, uninstall, the post-uninstall container check and state resets share
+that deadline. Individual reset commands retain their 60-second cap. Boot phases,
+readiness attempts and elapsed seconds, skipped termination and total reset seconds
+are logged. This adds no fixed post-boot sleep and extends no reset or product deadline.
 
 Use dedicated simulators: keychain/privacy reset applies to the whole device.
 Server/UI test variables in direct,
@@ -108,9 +112,10 @@ Repeat with `--platform tvos` and its destination. The tracer groups its cases,
 builds each shard once, then runs each case without building. It does not retry.
 The hosted workflow uses an initial 1,200-second cold budget, 600-second warm budget,
 and a 30 GiB disk preflight. Each runner segment has an additional 240-second outer
-allowance for reset/export/cleanup. iOS allows two cold and three warm segments
-(90 minutes total); tvOS allows one of each (38 minutes total). The literal
-110-minute job timeout covers the larger shard, a separate 10-minute initial simulator
+allowance for reset/export/cleanup; warm segments also allow 300 seconds of readiness
+per invocation. iOS allows two cold and three warm segments
+(105 minutes total); tvOS allows one of each (43 minutes total). The literal
+125-minute job timeout covers the larger shard, a separate 10-minute initial simulator
 boot budget, and setup, uploads and final cleanup. Both workflows call the same boot
 helper as local resets. Initial boot phases and elapsed times are logged before the
 first case, so cold boot does not consume the 120-second case-reset

@@ -875,15 +875,8 @@ def main(argv=None):
         if args.command == "wait-cloud":
             return cloud_selection(args)
         if args.command == "simulator":
-            require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
-                    "automatic simulator creation is hosted-only")
-            pins = decode((ROOT / "scripts/ci-pins.json").read_text())
-            platform_name = DEVICES[args.device]
-            udid = subprocess.check_output(["xcrun", "simctl", "create", "ui-" + args.device + "-" + args.shard,
-                    pins["device_types"][args.device], pins["simulators"][platform_name]["runtime"]], text=True, timeout=60).strip()
-            destination_platform = "tvOS Simulator" if platform_name == "tvos" else "iOS Simulator"
-            with open(os.environ["GITHUB_ENV"], "a") as handle:
-                handle.write(f"UI_SIMULATOR={udid}\nUI_DESTINATION=platform={destination_platform},id={udid}\n")
+            from ci_simulator import create_and_boot_simulator
+            create_and_boot_simulator(args.device, args.shard)
             return 0
         if args.command == "check-upload":
             from run_strict_e2e import write_sensitive_scan
