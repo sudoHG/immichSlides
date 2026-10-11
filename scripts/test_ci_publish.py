@@ -1165,11 +1165,19 @@ class PublisherTests(unittest.TestCase):
                         self.assertIn("UI_SIMULATOR=fresh-udid\n", environment_file.read_text())
                         if boot_result == "timeout":
                             raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-                        return subprocess.CompletedProcess(command, boot_result, "", "")
+                        return subprocess.CompletedProcess(command, boot_result, "", "service unavailable " + "x" * 600 + "END")
                     with patch.dict(os.environ, environment, clear=True), \
                             patch.object(ci_simulator.subprocess, "check_output", return_value="fresh-udid\n") as create, \
-                            patch.object(ci_simulator.subprocess, "run", side_effect=boot):
+                            patch.object(ci_simulator.subprocess, "run", side_effect=boot), \
+                            patch("builtins.print") as messages:
                         self.assertEqual(ci_simulator.main(["--device", device, "--shard", "scoped-a"]), int(boot_result != 0))
+                    if boot_result == 1:
+                        message = messages.call_args.args[0]
+                        self.assertIn("exit 1", message)
+                        self.assertIn("service unavailable", message)
+                        self.assertTrue(message.endswith("..."))
+                        self.assertLess(len(message), 400)
+                        self.assertNotIn("END", message)
                     self.assertEqual(create.call_count, 1)
                     self.assertEqual(create.call_args.args[0], ["xcrun", "simctl", "create", "ui-" + device + "-scoped-a",
                                                               pins["device_types"][device], pins["simulators"][platform_name]["runtime"]])

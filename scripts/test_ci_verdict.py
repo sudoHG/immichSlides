@@ -152,9 +152,34 @@ class NightlyVerdictTests(unittest.TestCase):
                 self.assertEqual(summary, original)
 
     def test_manifest_rejects_unknown_missing_and_duplicate_cases(self):
-        from ci_nightly import parse_manifest
+        import yaml
+        from ci_nightly import parse_manifest, shards
+        from strict_e2e_build import build_settings
+        from strict_e2e_runner_support import FILTER_PERSON_SESSIONS, SIMULATOR_READINESS_TIMEOUT_SECONDS
         raw = json.loads((Path(__file__).parent / "nightly-matrix.json").read_text())
         parse_manifest(raw)
+        root = Path(__file__).parent.parent
+        tracer = json.loads((root / "scripts/strict-tracer.json").read_text())
+        for filename, job_name, groups, margin_minutes in (
+                ("ci-nightly.yml", "strict", shards(raw), 17),
+                ("ci-strict-tracer.yml", "tracer", [
+                    {"cases": [case for case in tracer["cases"] if case["platform"] == platform]}
+                    for platform in ("ios", "tvos")], 20)):
+            job = yaml.safe_load((root / ".github/workflows" / filename).read_text())["jobs"][job_name]
+            command = next(step["run"] for step in job["steps"]
+                           if "scripts/run_strict_ci_tracer.py" in step.get("run", ""))
+            cold = int(re.search(r"--cold-timeout-seconds\s+(\d+)", command)[1])
+            warm = int(re.search(r"--warm-timeout-seconds\s+(\d+)", command)[1])
+            for group in groups:
+                cases = group["cases"]
+                builds = {build_settings(case["platform"], case["suite"], case["configuration"])[::2]
+                          for case in cases}
+                budget = (cold + 240) * len(builds) + sum(
+                    (warm + SIMULATOR_READINESS_TIMEOUT_SECONDS)
+                    * (len(FILTER_PERSON_SESSIONS) if case["suite"] == "filter-person" else 1) + 240
+                    for case in cases)
+                with self.subTest(workflow=filename, cases=cases):
+                    self.assertGreaterEqual(job["timeout-minutes"] * 60, budget + margin_minutes * 60)
         for mutation in (lambda x: x["cases"].pop(), lambda x: x["cases"].append(x["cases"][0]),
                          lambda x: x["cases"][0].update(suite="unknown"),
                          lambda x: x.update(schema_version=99)):

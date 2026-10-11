@@ -161,7 +161,7 @@ jobs:
     needs: [change, plan]
     name: nightly-strict-${{ matrix.id }}
     runs-on: xcode-27
-    timeout-minutes: 165
+    timeout-minutes: 215
     permissions:
       contents: read
     strategy:

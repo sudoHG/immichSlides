@@ -78,7 +78,8 @@ response, terminate only when the app is installed, uninstall with one retry on
 failure, require the app container to be absent afterward, then reset keychain and all privacy
 permissions. Only a container lookup confirming absence skips termination; an
 unknown response fails immediately. Readiness repeats only timed-out container
-queries, each capped at 10 seconds, within a separate 300-second post-boot budget.
+queries with caps of 10, 20, 40, then 60 seconds, retaining the 60-second cap for
+later attempts. Each cap is clamped to the remaining separate 300-second post-boot budget.
 Exhausting that budget fails as `simulator-readiness-timeout`, before any reset
 mutation; a warm device returns on its first valid response. Uninstall and the
 remaining reset steps are still mandatory before Xcode may install the app. A reset error fails the case.
@@ -88,6 +89,14 @@ termination, uninstall, the post-uninstall container check and state resets shar
 that deadline. Individual reset commands retain their 60-second cap. Boot phases,
 readiness attempts and elapsed seconds, skipped termination and total reset seconds
 are logged. This adds no fixed post-boot sleep and extends no reset or product deadline.
+
+The readiness budget stops new queries and rejects responses after its deadline;
+it is not a hard wall-clock bound on subprocess timeout cleanup. Wall time can reach
+300 seconds plus the overrun of the last query. A hosted query with a nominal
+60-second cap took 130 seconds before timeout returned
+([job](https://github.com/sudoHG/immichSlides/actions/runs/38113304252/job/114393826951)).
+Logs record each timed-out query's cap and actual elapsed time, plus the final
+readiness `deadline_overrun`. Outer runner and job timeouts remain the final bounds.
 
 Use dedicated simulators: keychain/privacy reset applies to the whole device.
 Server/UI test variables in direct,

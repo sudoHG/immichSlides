@@ -175,10 +175,13 @@ without an infrastructure entry.
 The person shard contains both fixtures: two three-session cases and four single-session
 cases require ten invocations. Cold/warm/reset/export allowances total 148 minutes
 (24 cold plus 124 warm), with up to 50 more minutes if every invocation consumes
-its readiness budget. The overall 165-minute job cap remains a tighter limit:
-readiness normally finishes on the first response, but sustained delays can exhaust
-the job cap before every case runs. Reaching that cap is a failure; unrun cases
-remain unverified. Planning/aggregate have 15-minute caps.
+its readiness budget: 198 minutes total. The 215-minute job cap leaves the original
+17-minute margin for initial boot, setup, uploads and final cleanup, so a slow shard
+can publish its failed records before runner teardown. Readiness can exceed its
+scheduling deadline while the last timed-out query finishes cleanup; see the
+[shared bounds and overrun logs](CI_STRICT_RUNNER.md#shared-simulator-reset).
+Reaching the job cap is a failure; unrun cases remain unverified.
+Planning/aggregate have 15-minute caps.
 Hosted disk floor stays 30 GiB; local default stays 80 GiB.
 
 ## Complete fixture UI

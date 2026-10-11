@@ -85,10 +85,15 @@ from run_strict_e2e_test_fixtures import (
 
 class StrictE2ERunnerTestsCasesEvidence:
     def test_reset_simulator_app_retries_uninstall_and_records_log(self) -> None:
-        for installed, readiness_timeouts in ((False, 0), (True, 0), (False, 7), (True, 7)):
-            with self.subTest(installed=installed, readiness_timeouts=readiness_timeouts):
+        scenarios = ((0, 0, [10]), (3, 0, [10, 20, 40, 60]),
+                     (0, 15, [10, 20]), (0, 54.2, [10, 20, 40, 60]))
+        for installed, readiness_timeouts, query_latency, expected_caps in (
+                (installed, *scenario) for installed in (False, True) for scenario in scenarios):
+            with self.subTest(installed=installed, readiness_timeouts=readiness_timeouts, query_latency=query_latency):
                 calls: list[list[str]] = []
                 clock = [0.0]
+                query_caps = []
+                readiness_seconds = []
 
                 def fake_run(command: list[str], **kwargs: object) -> mock.Mock:
                     calls.append(command)
@@ -102,11 +107,16 @@ class StrictE2ERunnerTestsCasesEvidence:
                         result.stderr = "Failed to uninstall: Application not found"
                     elif command[2] == "get_app_container":
                         if uninstall_count == 0:
-                            self.assertLessEqual(kwargs["timeout"], 10)
+                            self.assertLessEqual(kwargs["timeout"], 60)
+                            query_caps.append(kwargs["timeout"])
                             presence_count = sum(item[2] == "get_app_container" for item in calls)
-                            if presence_count <= readiness_timeouts:
-                                clock[0] += kwargs["timeout"]
+                            duration = kwargs["timeout"] if presence_count <= readiness_timeouts else min(query_latency, kwargs["timeout"])
+                            readiness_seconds.append(duration)
+                            clock[0] += duration
+                            if presence_count <= readiness_timeouts or query_latency > kwargs["timeout"]:
                                 raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+                        else:
+                            clock[0] += query_latency
                         if installed and uninstall_count == 0:
                             result.stdout = "/sim/containers/immichSlides\n"
                         else:
@@ -126,10 +136,13 @@ class StrictE2ERunnerTestsCasesEvidence:
                 self.assertTrue(any(command[2] == "boot" for command in calls))
                 self.assertEqual(sum(command[2] == "terminate" for command in calls), int(installed))
                 self.assertEqual(sum(command[2] == "uninstall" for command in calls), 2)
-                self.assertEqual(sum(command[2] == "get_app_container" for command in calls), 2 + readiness_timeouts)
+                self.assertEqual(query_caps, expected_caps)
+                self.assertEqual(sum(command[2] == "get_app_container" for command in calls), 1 + len(expected_caps))
+                self.assertLessEqual(sum(readiness_seconds), 300)
                 self.assertTrue(any(command[2] == "keychain" for command in calls))
                 self.assertTrue(any(command[2] == "privacy" for command in calls))
-                self.assertIn(f"simulator-readiness: passed; attempts={1 + readiness_timeouts}; elapsed={10 * readiness_timeouts:.1f}s", log)
+                self.assertIn(f"simulator-readiness: passed; attempts={len(expected_caps)}; elapsed={sum(readiness_seconds):.1f}s", log)
+                self.assertIn("deadline_overrun=0.0s", log)
                 self.assertEqual(sleep.call_args_list, [mock.call(1), mock.call(1)])
 
 

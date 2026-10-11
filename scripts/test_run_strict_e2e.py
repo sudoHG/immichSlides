@@ -366,8 +366,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "get_app_container": "simulator-readiness", "keychain": "simulator-keychain-reset",
             "privacy": "simulator-privacy-reset",
         }
-        for step, phase in [*commands.items(), ("get_app_container_after_uninstall", "simulator-container")]:
-            with self.subTest(step=step):
+        scenarios = [(step, phase, 0) for step, phase in (
+            *commands.items(), ("get_app_container_after_uninstall", "simulator-container"))]
+        scenarios.append(("get_app_container", "simulator-readiness", 70))
+        for step, phase, query_overrun in scenarios:
+            with self.subTest(step=step, query_overrun=query_overrun):
                 container_calls = []
                 clock = [0.0]
                 calls = []
@@ -380,6 +383,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     if command[2] == timed_step and (step == timed_step or len(container_calls) == 2):
                         self.assertGreater(kwargs.get("timeout", 0), 0)
                         clock[0] += kwargs["timeout"]
+                        if step == "get_app_container" and clock[0] >= 300:
+                            clock[0] += query_overrun
                         raise subprocess.TimeoutExpired(["private-test-input"], kwargs["timeout"],
                                                         output=b"private-test-input")
                     if command[2] == "get_app_container":
@@ -388,12 +393,15 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     return subprocess.CompletedProcess(command, 2 if command[2] == "get_app_container" else 0, "", "")
                 with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=run), mock.patch(
                     "strict_e2e_runner_support.time.sleep"
-                ), mock.patch("strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]), self.assertRaises(CommandError) as raised:
+                ), mock.patch("strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]), mock.patch(
+                    "builtins.print"
+                ) as report, self.assertRaises(CommandError) as raised:
                     reset_simulator_app("SIM-UDID")
                 self.assertEqual(raised.exception.entry["code"], phase + "-timeout")
                 self.assertNotIn("private-test-input", str(raised.exception))
                 if step == "get_app_container":
-                    self.assertEqual(clock[0], 300)
+                    self.assertEqual(clock[0], 300 + query_overrun)
+                    self.assertIn(f"deadline_overrun={query_overrun:.1f}s", "\n".join(call.args[0] for call in report.call_args_list))
                     self.assertFalse(any(command[2] in ("terminate", "uninstall", "keychain", "privacy") for command in calls))
         with tempfile.TemporaryDirectory() as raw:
             bundle = Path(raw) / "result.xcresult"

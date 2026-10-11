@@ -11,6 +11,7 @@ from ci_summary import ContractError, decode, require
 
 PINS_PATH = Path(__file__).resolve().parent / "ci-pins.json"
 SIMULATOR_SETUP_COMMAND_TIMEOUT_SECONDS = 60
+SIMULATOR_BOOT_ERROR_MAX_CHARACTERS = 300
 
 
 def create_and_boot_simulator(device, shard):
@@ -35,7 +36,11 @@ def create_and_boot_simulator(device, shard):
             check=False, timeout=SIMULATOR_SETUP_COMMAND_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         raise ContractError("Early simulator boot timed out after 60 seconds") from None
-    require(completed.returncode == 0, "Early simulator boot failed")
+    if completed.returncode != 0:
+        detail = completed.stderr.strip()
+        if len(detail) > SIMULATOR_BOOT_ERROR_MAX_CHARACTERS:
+            detail = detail[:SIMULATOR_BOOT_ERROR_MAX_CHARACTERS - 3] + "..."
+        raise ContractError(f"Early simulator boot failed (exit {completed.returncode}): {detail}")
     print(f"simulator-early-boot: submitted; elapsed={time.monotonic() - started:.1f}s", flush=True)
     return udid
 

@@ -71,7 +71,7 @@ SIMULATOR_RESET_TIMEOUT_SECONDS = 120
 SIMULATOR_COMMAND_TIMEOUT_SECONDS = 60
 SIMULATOR_BOOT_TIMEOUT_SECONDS = 600
 SIMULATOR_READINESS_TIMEOUT_SECONDS = 300
-SIMULATOR_READINESS_QUERY_TIMEOUT_SECONDS = 10
+SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS = 10
 # simctl writes Recording started only after processing the first frame; after SIGINT, wait for in-flight frames to write the moov atom.
 RECORDING_START_TIMEOUT_SECONDS = 15
 RECORDING_STOP_TIMEOUT_SECONDS = 30
@@ -467,28 +467,36 @@ def wait_for_simulator_app_response(simulator_udid: str, bundle_id: str, *, repo
     started = time.monotonic()
     deadline = started + SIMULATOR_READINESS_TIMEOUT_SECONDS
     attempts = 0
+    query_timeout = SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS
     outcome = "failed"
     lines = []
     try:
         while True:
-            if time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise InfrastructureTimeout("simulator-readiness", SIMULATOR_READINESS_TIMEOUT_SECONDS)
             attempts += 1
+            query_budget = min(query_timeout, remaining)
+            query_started = time.monotonic()
             try:
                 container = simulator_app_container(simulator_udid, bundle_id, deadline=deadline,
-                    timeout_seconds=SIMULATOR_READINESS_QUERY_TIMEOUT_SECONDS)
+                    timeout_seconds=query_budget)
             except InfrastructureTimeout:
-                line = f"simulator-readiness: query timed out; attempt={attempts}; elapsed={time.monotonic() - started:.1f}s"
+                line = (f"simulator-readiness: query timed out; attempt={attempts}; timeout={query_budget:.1f}s; "
+                        f"query_elapsed={time.monotonic() - query_started:.1f}s; elapsed={time.monotonic() - started:.1f}s")
                 lines.append(line)
                 report(line)
+                query_timeout = min(query_timeout * 2, SIMULATOR_COMMAND_TIMEOUT_SECONDS)
                 continue
             if time.monotonic() >= deadline:
                 raise InfrastructureTimeout("simulator-readiness", SIMULATOR_READINESS_TIMEOUT_SECONDS)
             outcome = "passed"
             break
     finally:
-        line = (f"simulator-readiness: {outcome}; attempts={attempts}; elapsed={time.monotonic() - started:.1f}s; "
-                f"total budget={SIMULATOR_READINESS_TIMEOUT_SECONDS}s")
+        elapsed = time.monotonic() - started
+        line = (f"simulator-readiness: {outcome}; attempts={attempts}; elapsed={elapsed:.1f}s; "
+                f"total budget={SIMULATOR_READINESS_TIMEOUT_SECONDS}s; "
+                f"deadline_overrun={max(0, elapsed - SIMULATOR_READINESS_TIMEOUT_SECONDS):.1f}s")
         lines.append(line)
         report(line)
     return container, "\n".join(lines) + "\n"
@@ -551,7 +559,7 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
 
 
 def simulator_app_container(simulator_udid: str, bundle_id: str, *, deadline: float | None = None,
-                            timeout_seconds: int = SIMULATOR_COMMAND_TIMEOUT_SECONDS) -> str | None:
+                            timeout_seconds: float = SIMULATOR_COMMAND_TIMEOUT_SECONDS) -> str | None:
     completed = simulator_command(
         ["xcrun", "simctl", "get_app_container", simulator_udid, bundle_id], "simulator-container", deadline=deadline,
         timeout_seconds=timeout_seconds,
