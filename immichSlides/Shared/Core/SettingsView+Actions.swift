@@ -1,5 +1,6 @@
 import SwiftUI
 
+// Keep settings actions together for the platform-specific settings hosts.
 extension SettingsView {
     func openFilterEditor() {
         shouldShowFullScreenFilterEditor = true
