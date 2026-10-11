@@ -8,8 +8,9 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import URLError
 
@@ -421,8 +422,26 @@ def poll_route(api, asc, record, run, receipt, *, sleep=time.sleep, monotonic=ti
 def write_phase(phase, value):
     directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-route")
     directory.mkdir(mode=0o700, exist_ok=True)
-    (directory / (phase + ".json")).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=directory, prefix=phase + "-", suffix=".tmp", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, directory / (phase + ".json"))
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return value
+
+
+def job_deadline(api, uploader, phase):
+    jobs = api.pages(f"actions/runs/{uploader['uploader_run_id']}/attempts/{uploader['uploader_attempt']}/jobs", "jobs")
+    name = "route" if phase == "poll" else "xcc-start"
+    active = [job for job in jobs if job["name"] == name and job["status"] == "in_progress"]
+    require(len(active) == 1, "Cloud router has no unique active runner job")
+    return timestamp(active[0]["started_at"]) + timedelta(minutes=110 if phase == "poll" else state.START_TIMEOUT_MINUTES)
 
 
 def recorded_decision(api, run):
@@ -435,94 +454,60 @@ def recorded_decision(api, run):
 
 
 def main():
+    phase, event, uploader, trusted_context = None, None, None, False
     try:
         phase = sys.argv[1]
         require(len(sys.argv) == 2 and phase in {"prepare", "arm", "start", "poll"}, "invalid router phase")
         credential_context(os.environ, ROUTE_PATH)
+        trusted_context = True
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+        uploader = {"uploader_run_id": int(os.environ["GITHUB_RUN_ID"]), "uploader_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
         from ci_publish import git, positive
         run_id = event["inputs"]["producer_run_id"]
         attempt = event["inputs"]["producer_attempt"]
         require(isinstance(run_id, str) and run_id.isdecimal() and isinstance(attempt, str) and attempt.isdecimal(), "invalid producer input")
         run_id, attempt = positive(int(run_id)), positive(int(attempt))
-        phase_minutes = 109 if phase == "poll" else 19
-        api = RetryingGitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"], time.monotonic() + phase_minutes * 60)
+        api = RetryingGitHub(os.environ["GITHUB_REPOSITORY"], os.environ["CI_WORKFLOW_TOKEN"], time.monotonic() + 60)
+        deadline = job_deadline(api, uploader, phase)
+        remaining = (deadline - datetime.now(timezone.utc)).total_seconds() - 120
+        require(remaining > 0, "Cloud router job has no time remaining before artifact upload")
+        api.deadline = time.monotonic() + remaining
         git("fetch", "--no-tags", "origin", "refs/heads/main")
         run = api.repo("actions/runs/" + str(run_id))
         if run["run_attempt"] != attempt:
             raise SupersededProducer("router producer attempt changed")
         verify_workflow(run, api.repo("actions/workflows/ci-ui.yml"), api.repository)
-        uploader = {"uploader_run_id": int(os.environ["GITHUB_RUN_ID"]), "uploader_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
-        asc = RenewingAppStoreConnect(lambda: jwt(os.environ, ROUTE_PATH), time.monotonic() + phase_minutes * 60)
+        asc = RenewingAppStoreConnect(lambda: jwt(os.environ, ROUTE_PATH), api.deadline)
         directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-route")
+        if event["inputs"].get("group"):
+            from ci_xcode_cloud_group_route import phase as group_phase
+            return group_phase(api, asc, run, event, phase, uploader, deadline=deadline)
         if phase in {"prepare", "poll"} and recorded_decision(api, run):
             with open(os.environ["GITHUB_OUTPUT"], "a") as output:
                 output.write("recorded=false\npost=false\n")
             print("Existing trusted decision retained; no duplicate start or receipt")
             return 0
-        if phase == "prepare":
-            value = route_run(api, lambda: asc, run, mode=event["inputs"].get("mode", "auto"),
-                              override=os.environ.get("CI_XCC_ROUTING_OVERRIDE", ""))
-            write_phase("prepared", dict(value, **uploader))
-            value.update(uploader)
-        elif phase in {"arm", "start"}:
-            prepared = json.loads((directory / "prepared.json").read_text())
-            require(prepared["producer_run_id"] == run_id and prepared["producer_attempt"] == attempt, "prepared producer differs")
-            value = dict(prepared)
-            if prepared["decision"] == "pending":
-                needs_post = prepared.get("cloud_run_id") is None
-                def before_post():
-                    refresh_producer(api, run)
-                    require(selection_open(api, run) and remaining_seconds(run, datetime.now(timezone.utc)) > 0,
-                            "producer selection expired before POST")
-                if phase == "arm":
-                    if needs_post:
-                        before_post()
-                        write_phase("post", dict(prepared, posted_at=datetime.now(timezone.utc).isoformat()))
-                    with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-                        output.write("post=" + str(needs_post).lower() + "\n")
-                    return 0
-                try:
-                    before_post()
-                    if needs_post:
-                        artifacts = api.pages(f"actions/runs/{uploader['uploader_run_id']}/artifacts", "artifacts")
-                        marker = state.receipt(api, artifacts, {"id": uploader["uploader_run_id"], "run_attempt": uploader["uploader_attempt"]},
-                            api.repo("actions/workflows/ci-xcode-cloud-route.yml"), prefix=state.POST_PREFIX, member="post.json")
-                        require(marker is not None and all(marker[key] == prepared[key]
-                                for key in ("identity", "producer_run_id", "producer_attempt", "head_sha", "reference_id")),
-                                "POST marker differs from prepared producer")
-                        value.update(start_cloud(asc, prepared, before_post=before_post))
-                except SupersededProducer:
-                    raise
-                except (ContractError, KeyError, TypeError, ValueError, OSError, URLError):
-                    value.update(decision="fallback", reason="cloud-start-unavailable")
-            value.update(uploader)
-            write_phase("start", value)
-        else:
-            own = {"name": f"ci-xcc-start-{uploader['uploader_run_id']}-{uploader['uploader_attempt']}"}
-            artifacts = api.pages(f"actions/runs/{uploader['uploader_run_id']}/artifacts", "artifacts")
-            matches = [item for item in artifacts if item["name"] == own["name"]]
-            require(len(matches) == 1, "poll has no unique persisted start result")
-            prepared = state.read_state(api, matches[0], api.repo("actions/workflows/ci-xcode-cloud-route.yml"),
-                                        prefix=state.START_PREFIX, member="start.json")
-            require(prepared["producer_run_id"] == run_id and prepared["producer_attempt"] == attempt, "start result differs from producer")
-            record = trusted_admissions(api, [run_id]).get(run_id)
-            value = poll_route(api, asc, record, run, prepared)
-            value.update(uploader)
-            write_phase("route", value)
-        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-            output.write(f"recorded=true\nproducer_run_id={run_id}\nproducer_attempt={attempt}\n")
-            if phase == "prepare":
-                output.write("post=" + str(value["decision"] == "pending" and value.get("cloud_run_id") is None).lower() + "\n")
-        print("Apple TV " + phase + ": " + value["decision"] + " (" + value["reason"] + ")")
-        return 0
+        require(False, "new router starts require an explicit reviewed platform group")
     except SupersededProducer:
+        if phase == "start" and trusted_context and event and uploader:
+            from ci_xcode_cloud_group_route import refuse_unposted_start
+            try:
+                refuse_unposted_start(event, uploader)
+            except (ContractError, KeyError, TypeError, ValueError, OSError):
+                pass
         print("Cloud producer superseded; no new start or verdict")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write("recorded=false\npost=false\n")
         return 0
-    except (ContractError, KeyError, TypeError, ValueError, OSError, URLError):
-        print("Cloud router refused this source; GitHub Apple TV remains required", file=sys.stderr)
+    except Exception:
+        if phase == "start" and trusted_context and event and uploader:
+            from ci_xcode_cloud_group_route import refuse_unposted_start
+            try:
+                if refuse_unposted_start(event, uploader):
+                    return 0
+            except (ContractError, KeyError, TypeError, ValueError, OSError):
+                pass
+        print("Cloud router refused this source; GitHub selected groups remain required", file=sys.stderr)
         return 1
 
 

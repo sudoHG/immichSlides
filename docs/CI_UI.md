@@ -15,7 +15,7 @@ requests keep their fixture UI execution and archive selection.
 ## Main UI scheduling contract
 
 The trusted reader recognizes `--defer-main-ui` only on the admitted base workflow's
-`ci_ui_tests.py wait-archive` command. A completed, successful same-repository main
+`ci_ui_tests.py select` command (historically `wait-archive`). A completed, successful same-repository main
 push with that intent may skip its UI matrix after every required Linux selection
 job has published valid, attempt-bound evidence. The publisher first checks the
 existing [identical-tree reuse proof](CI_PUBLISHER.md). A valid proof is success
@@ -51,15 +51,17 @@ post-merge verdict reuse. Its UI aggregate is independently judged by `ci-report
 
 ## Classification and archive selection
 
-The Linux `ui-archive` job reads the PR's base classification policy. A docs-only
+The Linux `ui-selection` job reads the PR's base classification policy. A docs-only
 change outside build membership selects no archive and starts no macOS shard.
 The publisher independently derives this classification from admission before
 displaying `not applicable`. Unknown paths and CI changes run UI on pull requests.
 Main pushes use trusted identical-tree reuse or explicit nightly deferral.
 
-For an app-affecting PR, Linux shares one 120-minute deadline while selecting
-only the affected platforms' `ci-gate` builds. iPhone and iPad share the iOS
-archive; Apple TV uses the tvOS archive. An excluded platform is never awaited.
+For an app-affecting PR, two independent Linux group waits select Cloud proof or
+their own affected platform's `ci-gate` archive within 180 minutes. No archive is
+awaited for a verified Cloud group. iPhone and iPad share the iOS archive; Apple TV
+uses the tvOS archive. An excluded platform is never awaited. Routing remains
+inactive without the reviewed [group registry](XCODE_CLOUD_UI.md#maintainer-morning-checklist-routing-remains-inactive).
 
 Each platform is checked at least once, even if downloading and verifying the
 first platform consumed the remaining deadline; an already-ready archive is
@@ -158,11 +160,11 @@ assignment against the identifiers the test actually uses.
 
 ### Scheduling the selection
 
-Pull-request UI runs schedule only the trusted selection. The Linux `ui-archive`
+Pull-request UI runs schedule only the trusted selection. The Linux `ui-selection`
 job repeats admission's selection from base data (`planned_ui_selection` in
 `ci_ui_tests.py`): the base map, classification policy, project platform proof,
 frozen durations and default plans, the `base...head` diff and the tested tree's
-UI inventory. It publishes `iphone_shards`, `ipad_shards`, `tvos_shards`, the
+UI inventory. It publishes `iphone_shards`, `ipad_shards`, `appletv_shards`, the
 canonical packed plan hash, and `run_ios`/`run_tvos`. Each matrix takes its device's list through
 `fromJSON(...)` and keeps its `max-parallel` cap, so an empty shard never takes a
 macOS runner. A platform with no selected test skips its whole matrix. Each shard
@@ -184,10 +186,10 @@ Only independently empty selected shards may be unexecuted literal skips.
 Scoped success cannot supply a full post-merge reuse receipt.
 GitHub cannot skip one entry of a static matrix, so the reader accepts
 [bound dynamic shard lists](CI_PUBLISHER.md#bound-dynamic-ui-shards). The main Cloud
-router keeps scoped pull requests on GitHub. Every app-affecting PR now has a
-scoped functional selection, so all PR UI stays on GitHub until #283 extends
-[Cloud routing](XCODE_CLOUD_UI.md) to scoped selections. Nightly and main pushes
-are unaffected; historical full selections retain the overflow protocol.
+router keeps every group on GitHub while its reviewed registry is absent.
+[Grouped Cloud routing](XCODE_CLOUD_UI.md) uses the same functional selection
+after separate activation. Nightly and main push deferral retain their contracts;
+historical full selections retain the legacy evidence reader.
 
 The nightly full UI tier is the safety net for cross-area regressions. The release
 rule still requires a green, release-eligible nightly for the exact release SHA
@@ -197,7 +199,7 @@ See [the nightly contract](CI_NIGHTLY.md) and [publisher trust](CI_PUBLISHER.md)
 ### Platform selection and capacity packing
 
 The `ci-ui.yml` producer activates the reader's protocol with the literal
-`--pack-scoped-ui` flag on its admitted `ci_ui_tests.py wait-archive` command.
+`--pack-scoped-ui` flag on its admitted `ci_ui_tests.py select` command (historically `wait-archive`).
 The reader landed separately before this producer. Historical unflagged runs
 retain their original contract. No assertions, skips, deadlines or default plans change.
 

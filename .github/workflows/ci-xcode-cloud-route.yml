@@ -1,5 +1,5 @@
 name: ci-xcode-cloud-route
-run-name: xcc-route-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}
+run-name: xcc-route-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}
 
 on:
   workflow_dispatch:
@@ -9,9 +9,14 @@ on:
         required: true
         type: string
       producer_attempt:
-        description: UI archive evidence attempt
+        description: UI selection evidence attempt
         required: true
         type: string
+      group:
+        description: Trusted functional platform group
+        required: true
+        type: choice
+        options: [ios, tvos]
       mode:
         description: Routing policy or bounded fallback diagnostic
         required: true
@@ -37,7 +42,7 @@ jobs:
       group: ci-xcc-account-budget
       cancel-in-progress: false
     outputs:
-      recorded: ${{ steps.start.outputs.recorded }}
+      poll: ${{ steps.start.outputs.poll }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -76,7 +81,7 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py start'
-      - if: success() && steps.start.outputs.recorded == 'true'
+      - if: always() && steps.arm.outputs.post == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}
@@ -86,7 +91,7 @@ jobs:
 
   route:
     needs: start
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.start.outputs.recorded == 'true'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.start.outputs.poll == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     environment: xcode-cloud
@@ -96,7 +101,7 @@ jobs:
       checks: read
       pull-requests: read
     concurrency:
-      group: ci-xcc-poll-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}
+      group: ci-xcc-poll-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}
       cancel-in-progress: false
     outputs:
       recorded: ${{ steps.route.outputs.recorded }}
@@ -118,7 +123,7 @@ jobs:
       - if: success() && steps.route.outputs.recorded == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ci-xcc-route-${{ steps.route.outputs.producer_run_id }}-${{ steps.route.outputs.producer_attempt }}
+          name: ci-xcc-route-${{ steps.route.outputs.producer_run_id }}-${{ steps.route.outputs.producer_attempt }}-${{ inputs.group }}
           path: ${{ runner.temp }}/ci-xcc-route/route.json
           if-no-files-found: error
           retention-days: 30

@@ -218,7 +218,7 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
                 continue
             expanded, _, _, evidence = workflow_contract(yaml.safe_dump({"jobs": {key: job}}), run, metadata=True)
             if (cloud_pr or historical_tv) and not main_push and not failed_pr_history and any(
-                    meta.get("device") not in (external_devices if cloud_pr else historical_devices) for meta in evidence.values()):
+                    meta.get("device") not in (external_devices | (historical_devices if historical_tv else set())) for meta in evidence.values()):
                 continue
             skipped = actual.pop(raw_name)
             require(skipped["status"] == "completed" and skipped["conclusion"] == "skipped"
@@ -227,7 +227,7 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
             if cloud_pr or historical_tv and not failed_pr_history:
                 require((skipped.get("runner_id") is None or type(skipped.get("runner_id")) is int and skipped["runner_id"] == 0)
                         and skipped.get("steps") == [], "cloud matrix skip may have executed")
-            if failed_pr_history or historical_tv and not cloud_pr:
+            if failed_pr_history or historical_tv and any(meta.get("device") not in external_devices for meta in evidence.values()):
                 # The archive failure prevented shard execution. This historical
                 # placeholder supplies no evidence; later literal jobs must fill
                 # the complete population and bind their own execution artifacts.
@@ -243,8 +243,11 @@ def expand_skipped_ui_matrix(source, run, jobs, *, complete=True, historical=Fal
 
 def validate_infrastructure_summary(record, summary, name):
     from ci_summary import test_identity
-    expected = [test_identity("host", "UI archive selection" if name == "ui-archive" else "Apple TV cloud selection")]
-    require(name in {"ui-archive", "ui-cloud-wait"} and summary["identity"] == record["identity"]
+    labels = {"ui-archive": "UI archive selection", "ui-cloud-wait": "Apple TV cloud selection",
+              "ui-selection": "UI selection", "ui-cloud-wait-ios": "UI cloud selection (ios)",
+              "ui-cloud-wait-tvos": "UI cloud selection (tvos)"}
+    expected = [test_identity("host", labels.get(name, "Invalid UI infrastructure"))]
+    require(name in labels and summary["identity"] == record["identity"]
             and summary["status"] == "passed" and not summary["infrastructure"]
             and summary["source"]["workflow_path"] == UI_WORKFLOW and summary["source"]["fork_originated"] is False
             and summary["run"]["tier"] == "ui-infrastructure" and summary["run"]["job"] == name
@@ -264,7 +267,7 @@ def main_ui_deferral(source):
     workflow = yaml.load(source, Loader=WorkflowLoader)
     commands = [arguments for job in workflow["jobs"].values() for step in job.get("steps", [])
                 for script, arguments in producer_commands(step.get("run", ""))
-                if script == "ci_ui_tests.py" and arguments and arguments[0] == "wait-archive"]
+                if script == "ci_ui_tests.py" and arguments and arguments[0] in {"wait-archive", "select"}]
     return len(commands) == 1 and commands[0].count("--defer-main-ui") == 1
 
 
@@ -282,7 +285,7 @@ def evaluate_reused_push(api, record, run, jobs, summaries):
     for raw in summaries:
         summary = parse_summary(raw)
         name = summary["run"]["job"]
-        require(name in infrastructure and name not in seen and name in {"ui-archive", "ui-cloud-wait"}, "reuse infrastructure population differs")
+        require(name in infrastructure and name not in seen, "reuse infrastructure population differs")
         seen.add(name)
         validate_infrastructure_summary(record, summary, name)
     receipt = find_reuse(api, record["identity"])

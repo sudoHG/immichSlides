@@ -434,6 +434,8 @@ def bind_ui_capacities(source, ui):
 
 def ui_failure_hint(error):
     message = str(error)
+    if re.fullmatch(r"Cloud (?:ios|tvos|ios/tvos) proof missing or invalid; selected methods NOT_RUN", message):
+        return message
     if message.startswith("functional UI selection refused: "):
         return message[:500]
     if message == "workflow is absent on the base; exact-head approval required":
@@ -738,7 +740,7 @@ def evaluate_records(record, run, jobs, summaries, *, approved, fork, cloud=None
             require(all(type(job["strategy"].get("max-parallel")) is int
                         and job["strategy"]["max-parallel"] == capacities[matrix["device"][0]]
                         for job, matrix in matrices), "UI capacity differs from its trusted plan")
-        if any(meta["population"] == "ui-selection" for meta in metadata.values()):
+        if any(meta["population"] == "ui-selection" for meta in metadata.values()) and selection.get("mode") == "scoped":
             require(selection.get("coverage") == "functional" and selection.get("packing")
                     and selection.get("map_revision") == record["identity"]["base_sha"],
                     "group selection infrastructure needs a trusted packed functional plan")

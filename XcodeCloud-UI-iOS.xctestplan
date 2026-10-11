@@ -1,0 +1,57 @@
+{
+  "configurations": [
+    {
+      "id": "D9B25259-DC98-44A3-9C5D-5F015ECA5791",
+      "name": "Test Scheme Action",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "environmentVariableEntries": [
+      {
+        "key": "CG_NUMERICS_SHOW_BACKTRACE",
+        "value": "1"
+      },
+      {
+        "key": "UI_TEST_EXPECT_PLATFORM",
+        "value": "iOS"
+      },
+      {
+        "key": "IMMICH_TEST_SERVER_URL",
+        "value": "http://127.0.0.1:8765/api"
+      },
+      {
+        "key": "IMMICH_TEST_API_KEY",
+        "value": "immichslides-public-e2e-key"
+      },
+      {
+        "key": "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID",
+        "value": "album-c-exif"
+      },
+      {
+        "key": "IMMICHSLIDES_TEST_WAIT_FACTOR",
+        "value": "2"
+      }
+    ],
+    "language": "zh-Hans",
+    "performanceAntipatternCheckerEnabled": true,
+    "targetForVariableExpansion": {
+      "containerPath": "container:immichSlides.xcodeproj",
+      "identifier": "120E64472F0CA2A5003B1480",
+      "name": "immichSlides"
+    }
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:immichSlides.xcodeproj",
+        "identifier": "12F4D6672F6A9FF70049C717",
+        "name": "immichSlidesUITests"
+      },
+      "selectedTests": [
+        "immichSlidesUITests/testPlaybackSettingsBlocksFilteredModeWhenSelectionEmpty()"
+      ]
+    }
+  ],
+  "version": 1
+}

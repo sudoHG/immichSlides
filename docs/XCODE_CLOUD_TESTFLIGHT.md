@@ -32,7 +32,7 @@ cannot undo an upload. Leave the auto-created **Default** workflow disabled.
   See [Apple's dependency guidance](https://developer.apple.com/documentation/xcode/making-dependencies-available-to-xcode-cloud).
 
 The pre- and post-xcodebuild scripts serve the separate
-[Apple TV fixture UI workflow](XCODE_CLOUD_UI.md) and return immediately for
+[functional UI workflows for iPhone, iPad and Apple TV](XCODE_CLOUD_UI.md) and return immediately for
 archive actions. Signing and TestFlight delivery belong to the release cloud
 workflow. `ci_scripts/` and `scripts/` are outside all app targets;
 these files do not ship in either app. Unit tests from the simulator archive

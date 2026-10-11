@@ -419,19 +419,21 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
     if approval_workflow and "concurrency" in document:
         flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
     if path == XCC_IMPORT_WORKFLOW and (document.get("name") != "ci-xcode-cloud-import"
-            or document.get("run-name") != "xcc-import-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}"
+            or document.get("run-name") != "xcc-import-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}"
             or set(events) != {"workflow_dispatch"} or document.get("permissions") != {}
             or events["workflow_dispatch"] != {"inputs": {"producer_run_id": {
                 "description": "Authoritative same-repository pull-request ci-ui run", "required": True, "type": "string"},
-                "producer_attempt": {"description": "UI archive evidence attempt", "required": True, "type": "string"}}}):
+                "producer_attempt": {"description": "UI selection evidence attempt", "required": True, "type": "string"},
+                "group": {"description": "Trusted functional platform group", "required": True, "type": "choice", "options": ["ios", "tvos"]}}}):
         flag("workflow", "xcc-contract", "Cloud import accepts only a literal main-only dispatch interface")
     if path == XCC_ROUTE_WORKFLOW and (document.get("name") != "ci-xcode-cloud-route"
-            or document.get("run-name") != "xcc-route-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}"
+            or document.get("run-name") != "xcc-route-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}"
             or set(events) != {"workflow_dispatch"} or document.get("permissions") != {}
             or "concurrency" in document or set(jobs) != {"start", "route", "dispatch-import"}
             or events["workflow_dispatch"] != {"inputs": {"producer_run_id": {
                 "description": "Authoritative same-repository pull-request ci-ui run", "required": True, "type": "string"},
-                "producer_attempt": {"description": "UI archive evidence attempt", "required": True, "type": "string"},
+                "producer_attempt": {"description": "UI selection evidence attempt", "required": True, "type": "string"},
+                "group": {"description": "Trusted functional platform group", "required": True, "type": "choice", "options": ["ios", "tvos"]},
                 "mode": {"description": "Routing policy or bounded fallback diagnostic", "required": True, "default": "auto",
                          "type": "choice", "options": ["auto", "github", "force-start-failure"]}}}):
         flag("workflow", "xcc-contract", "Router needs its exact main-only interface and account budget serialization")
@@ -576,7 +578,16 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
         permissions = job.get("permissions", document.get("permissions"))
         if not explicit_permissions(permissions):
             flag(location, "permissions", "Job needs explicit permissions, directly or inherited")
-        if path == ".github/workflows/ci-ui.yml" and job_id in {"cloud-wait", "appletv-shards"}:
+        if path == ".github/workflows/ci-ui.yml" and "selection" in jobs and job_id in {"ios-wait", "tvos-wait", "iphone-shards", "ipad-shards", "appletv-shards"}:
+            group = "tvos" if job_id in {"tvos-wait", "appletv-shards"} else "ios"
+            is_wait = job_id.endswith("-wait")
+            needs = "selection" if is_wait else ["selection", group + "-wait"]
+            condition = ("${{ !cancelled() && needs.selection.result == 'success' }}" if is_wait else
+                         "${{ !cancelled() && needs.selection.result == 'success' && needs." + group
+                         + "-wait.result == 'success' && needs." + group + "-wait.outputs.run_github == 'true' }}")
+            if job.get("needs") != needs or job.get("if") != condition:
+                flag(location, "xcc-dependencies", "Each group must wait independently and run GitHub only after its own fallback")
+        elif path == ".github/workflows/ci-ui.yml" and job_id in {"cloud-wait", "appletv-shards"}:
             expected_needs = "archive" if job_id == "cloud-wait" else ["archive", "cloud-wait"]
             if job.get("needs") != expected_needs:
                 flag(location, "xcc-dependencies", "Cloud selection and Apple TV must not depend on iOS shards")
@@ -589,11 +600,14 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
             if not isinstance(strategy, dict) or strategy.get("fail-fast") is not False:
                 flag(location, "ui-fail-fast", "UI failures must retain every other partition's official results")
             matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
-            from ci_publish_git import DYNAMIC_UI_SHARDS
+            from ci_publish_git import DYNAMIC_UI_SHARDS, SELECTION_UI_SHARDS
             platform = "tvos" if job_id == "appletv-shards" else "ios"
             scope = {"iphone-shards": "iphone", "ipad-shards": "ipad"}.get(job_id, platform)
-            outputs = jobs.get("archive", {}).get("outputs", {}) if isinstance(jobs.get("archive"), dict) else {}
-            dynamic = isinstance(matrix, dict) and matrix.get("shard") == DYNAMIC_UI_SHARDS[scope]
+            owner = "selection" if "selection" in jobs else "archive"
+            outputs = jobs.get(owner, {}).get("outputs", {}) if isinstance(jobs.get(owner), dict) else {}
+            expressions = SELECTION_UI_SHARDS if owner == "selection" else DYNAMIC_UI_SHARDS
+            scope = "appletv" if owner == "selection" and job_id == "appletv-shards" else scope
+            dynamic = isinstance(matrix, dict) and matrix.get("shard") == expressions[scope]
             if scope in {"iphone", "ipad"} and (not isinstance(matrix, dict) or matrix.get("device") != [scope]):
                 flag(location, "ui-shards", "Device-specific shard outputs require that one literal device")
             if packed and scope in {"iphone", "ipad"} and not dynamic:
@@ -610,7 +624,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                     or job.get("timeout-minutes") != 10
                     or permissions != {"contents": "read", "actions": "read", "checks": "read", "pull-requests": "read"}
                     or job.get("env") or document.get("env")
-                    or job.get("concurrency") != {"group": "ci-xcc-import-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}", "cancel-in-progress": False}):
+                    or job.get("concurrency") != {"group": "ci-xcc-import-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}", "cancel-in-progress": False}):
                 flag(location, "xcc-contract", "Importer is bounded, main-only and credential-scoped with read-only grants")
         if path == XCC_ROUTE_WORKFLOW and job_id == "dispatch-import":
             if (job.get("if") != "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.route.outputs.recorded == 'true'"
@@ -621,8 +635,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                 flag(location, "xcc-contract", "Import forwarding is main-only, credential-free and follows the route job")
         elif path == XCC_ROUTE_WORKFLOW:
             start = job_id == "start"
-            expected_if = "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'" + ("" if start else " && needs.start.outputs.recorded == 'true'")
-            group = "ci-xcc-account-budget" if start else "ci-xcc-poll-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}"
+            expected_if = "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'" + ("" if start else " && needs.start.outputs.poll == 'true'")
+            group = "ci-xcc-account-budget" if start else "ci-xcc-poll-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}"
             if (job_id not in {"start", "route"} or job.get("if") != expected_if
                     or job.get("runs-on") != "ubuntu-24.04" or job.get("environment") != "xcode-cloud"
                     or job.get("timeout-minutes") != (20 if start else 110) or job.get("env") or document.get("env")
@@ -640,6 +654,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                 post = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "start"]
                 marker = [index for index, step in enumerate(steps) if isinstance(step, dict)
                           and step.get("with", {}).get("name") == "ci-xcc-post-${{ github.run_id }}-${{ github.run_attempt }}"]
+                receipt = [index for index, step in enumerate(steps) if isinstance(step, dict)
+                           and step.get("with", {}).get("name") == "ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}"]
                 arm = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "arm"]
                 prepare = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "prepare"]
                 if not (len(prepare) == len(post) == len(marker) == len(arm) == 1
@@ -647,8 +663,11 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                         and steps[arm[0]].get("if") == "success() && steps.prepare.outputs.post == 'true'"
                         and steps[marker[0]].get("if") == "success() && steps.arm.outputs.post == 'true'"
                         and steps[post[0]].get("if") == "success() && steps.prepare.outputs.recorded == 'true'"
-                        and job.get("outputs") == {"recorded": "${{ steps.start.outputs.recorded }}"}):
+                        and job.get("outputs") == {"poll": "${{ steps.start.outputs.poll }}"}):
                     flag(location, "xcc-post-marker", "Upload the immutable scheduling POST marker successfully before any start")
+                if not (len(receipt) == len(post) == 1 and receipt[0] > post[0]
+                        and steps[receipt[0]].get("if") == "always() && steps.arm.outputs.post == 'true'"):
+                    flag(location, "xcc-start-record", "Upload armed state even when start is interrupted without outputs")
         if (any(label in str(job.get("runs-on", "")) for label in ("macos-", "xcode-"))
                 and any(re.search(r"\balways\s*\(", code, re.IGNORECASE) for code in expression_code("workflow." + location + ".if", str(job.get("if", "")), implicit_locations))):
             flag(location, "macos-cancellation", "macOS jobs must stop on cancellation; never use job-level always()")
@@ -793,7 +812,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                                              "if-no-files-found": "error", "retention-days": 30}))
         role = "import" if path == XCC_IMPORT_WORKFLOW else "route"
         xcc_upload = (path in XCC_WORKFLOWS and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-                      and options == {"name": "ci-xcc-" + role + "-${{ steps." + role + ".outputs.producer_run_id }}-${{ steps." + role + ".outputs.producer_attempt }}",
+                      and options == {"name": "ci-xcc-" + role + "-${{ steps." + role + ".outputs.producer_run_id }}-${{ steps." + role + ".outputs.producer_attempt }}-${{ inputs.group }}",
                                       "path": "${{ runner.temp }}/ci-xcc-" + role + ("/cloud.json" if role == "import" else "/route.json"),
                                       "if-no-files-found": "error", "retention-days": 30}
                       and item.get("if") == ("success() && steps.import.outputs.imported == 'true'" if role == "import"
@@ -804,7 +823,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                                           "if-no-files-found": "error", "retention-days": 90}
                               and item.get("if") == guard for stage, member, guard in (
                                   ("post", "post", "success() && steps.arm.outputs.post == 'true'"),
-                                  ("start", "start", "success() && steps.start.outputs.recorded == 'true'")))
+                                  ("start", "start", "always() && steps.arm.outputs.post == 'true'")))
         report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
                          and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",
                                              "path": "${{ runner.temp }}/ci-report/" + directory,

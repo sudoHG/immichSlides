@@ -785,6 +785,16 @@ def reproduce(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    selection = commands.add_parser("select")
+    selection.add_argument("--output-dir", type=Path, required=True)
+    selection.add_argument("--pack-scoped-ui", action="store_true")
+    selection.add_argument("--defer-main-ui", action="store_true")
+    group_wait = commands.add_parser("wait-group")
+    group_wait.add_argument("--group", choices=("ios", "tvos"), required=True)
+    group_wait.add_argument("--selection-path", type=Path, required=True)
+    group_wait.add_argument("--output-dir", type=Path, required=True)
+    group_wait.add_argument("--timeout-minutes", type=float, default=180)
+    group_wait.add_argument("--defer-main-ui", action="store_true")
     wait = commands.add_parser("wait-archive")
     wait.add_argument("--output-dir", type=Path, required=True)
     wait.add_argument("--timeout-minutes", type=float, default=120)
@@ -834,6 +844,9 @@ def main(argv=None):
             require(not args.manifest_revision.startswith("-") and ":" not in args.manifest_revision, "invalid manifest revision")
         if args.command == "wait-archive":
             return wait_archive(args)
+        if args.command in {"select", "wait-group"}:
+            import ci_xcode_cloud_ui
+            return (ci_xcode_cloud_ui.select if args.command == "select" else ci_xcode_cloud_ui.wait_group)(args)
         if args.command == "wait-cloud":
             return cloud_selection(args)
         if args.command == "simulator":

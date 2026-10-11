@@ -14,8 +14,17 @@ from ci_summary import ContractError, require
 from ci_xcode_cloud import IMPORT_PATH, ROUTE_PATH, UI_PATH, validate_uploader_provenance
 from ci_xcode_cloud_route import SupersededProducer, current_producer
 from ci_xcode_cloud_client import RetryingGitHub
+import ci_xcode_cloud_groups as groups
 
 PATH = ".github/workflows/ci-xcode-cloud-dispatch.yml"
+
+
+def active_groups():
+    path = Path(__file__).resolve().parent.parent / groups.REGISTRY_PATH
+    if not path.is_file() or path.is_symlink():
+        return []
+    registration = groups.registry(json.loads(path.read_text()))
+    return sorted(registration["groups"]) if registration.get("routing_enabled") is True else []
 
 
 def dispatch(api, event):
@@ -26,7 +35,9 @@ def dispatch(api, event):
         return
     if source["path"] == UI_PATH and event["action"] == "requested":
         current_producer(api, source)
-        api.dispatch(ROUTE_PATH, {"producer_run_id": str(source["id"]), "producer_attempt": str(source["run_attempt"]), "mode": "auto"})
+        for group in active_groups():
+            api.dispatch(ROUTE_PATH, {"producer_run_id": str(source["id"]), "producer_attempt": str(source["run_attempt"]),
+                                      "mode": "auto", "group": group})
 
 
 def forward_import(api, env, event):
@@ -49,13 +60,16 @@ def forward_import(api, env, event):
     jobs = [job for job in api.pages(f"actions/runs/{router_id}/attempts/{attempt}/jobs", "jobs") if job["name"] == "route"]
     require(len(jobs) == 1 and jobs[0]["status"] == "completed" and jobs[0]["conclusion"] == "success",
             "import forwarder requires a successful route job")
-    name = f"ci-xcc-route-{producer_id}-{evidence_attempt}"
+    group = inputs.get("group", "")
+    require(not group or group in groups.GROUPS, "unknown import dispatch group")
+    name = f"ci-xcc-route-{producer_id}-{evidence_attempt}" + ("-" + group if group else "")
     artifacts = [item for item in api.pages(f"actions/runs/{router_id}/artifacts", "artifacts")
                  if item["name"] == name and not item["expired"]]
     require(len(artifacts) == 1 and artifacts[0]["workflow_run"]["id"] == router_id,
             "import forwarder has no unique current routing artifact")
     receipt = json_member(api, artifacts[0], "route.json")
-    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1
+    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == (2 if group else 1)
+            and (not group or receipt["group"] == group)
             and receipt["decision"] in {"github", "fallback", "routed"}
             and receipt["uploader_run_id"] == router_id and receipt["uploader_attempt"] == attempt
             and receipt["producer_run_id"] == producer_id and receipt["producer_attempt"] == evidence_attempt,
@@ -66,7 +80,8 @@ def forward_import(api, env, event):
     producer = api.repo("actions/runs/" + str(producer_id))
     require(producer["head_sha"] == receipt["head_sha"], "import forwarder head differs")
     current_producer(api, producer)
-    api.dispatch(IMPORT_PATH, {"producer_run_id": str(producer_id), "producer_attempt": str(evidence_attempt)})
+    api.dispatch(IMPORT_PATH, {"producer_run_id": str(producer_id), "producer_attempt": str(evidence_attempt),
+                               **({"group": group} if group else {})})
 
 
 def main():

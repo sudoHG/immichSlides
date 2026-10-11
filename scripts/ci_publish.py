@@ -692,6 +692,7 @@ def compute(api, pr_number, pushed, login):
         record = admissions[run["id"]]
         summaries = []
         diagnostic_errors = []
+        missing_cloud = []
         try:
             require(record["workflow_id"] == run["workflow_id"] and record["workflow_path"] == run["path"], "admission producer mismatch")
             identity = record["identity"]
@@ -713,7 +714,20 @@ def compute(api, pr_number, pushed, login):
                 if ((ui or {}).get("selection") or {}).get("coverage") == "functional":
                     groups = skipped_groups(source, run, current_jobs, record, approved=approved)
                     if groups:
-                        cloud = trusted_groups(api, record, run, groups, approved=approved)
+                        proofs = {}
+                        from ci_xcode_cloud_groups import GROUPS
+                        for group in sorted(groups):
+                            try:
+                                proof = trusted_groups(api, record, run, {group}, approved=approved)
+                                proofs.update(proof["groups"])
+                            except (ContractError, KeyError, ValueError, TypeError):
+                                for device in GROUPS[group]:
+                                    missing_cloud.extend({"identity": item, "reason": "NOT_RUN: no accepted Cloud " + group + " proof"}
+                                        for entries in ui["selection"]["shards"][device].values() for item in entries)
+                        require(not missing_cloud, "Cloud " + "/".join(sorted({item["identity"]["dimensions"]["platform"]
+                                for item in missing_cloud})) + " proof missing or invalid; selected methods NOT_RUN")
+                        cloud = {"schema_version": 2, "groups": proofs,
+                                 "identities": [item for proof in proofs.values() for item in proof["identities"]]}
                 elif any(job["conclusion"] == "skipped" and job["name"] in cloud_skips for job in current_jobs):
                     from ci_xcode_cloud import trusted_cloud
                     cloud = trusted_cloud(api, record, run, approved=approved)
@@ -757,6 +771,10 @@ def compute(api, pr_number, pushed, login):
             except (ContractError, KeyError, ValueError, TypeError):
                 evaluations[context]["diagnostics"] = {"counts": {}, "failures": [], "missing": [],
                     "infrastructure": ["failure diagnostics unavailable"], "skipped": [], "deselected": []}
+        if missing_cloud:
+            diagnostics = evaluations[context]["diagnostics"]
+            diagnostics["missing"].extend(missing_cloud)
+            diagnostics["counts"]["not_run"] = len(missing_cloud)
         evaluations[context]["report_source"] = {
             "repository": api.repository, "workflow_path": run["path"], "event": run["event"],
             "run_id": run["id"], "attempt": run["run_attempt"],
@@ -789,6 +807,12 @@ def compute(api, pr_number, pushed, login):
 def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
     # Serialize display publication per PR and re-read current state. Approval
     # records write independently, then dispatch a fresh publication.
+    if not dry_run:
+        from ci_xcode_cloud_selection import publish_pointers
+        try:
+            publish_pointers(api, app, pr_number)
+        except (ContractError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+            print("Cloud selection pointer unavailable; GitHub remains required")
     head, plan, approval = compute(api, pr_number, pushed, login)
     target = f"https://github.com/{api.repository}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     if dry_run:
@@ -866,11 +890,13 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                 if cloud:
                     proofs = cloud["groups"].values() if cloud.get("schema_version") == 2 else [cloud]
                     for proof in proofs:
+                        compute_label = (f"compute upper bound {proof['compute_upper_minutes']:.2f} min"
+                                   if cloud.get("schema_version") == 2 else f"compute {proof['compute_minutes']:.2f} min")
                         links = proof["actions"] if cloud.get("schema_version") == 2 else [proof]
                         for action in links:
                             handle.write(f"  Xcode Cloud: [{proof['cloud_run_id']}]({action['details_url']}); "
                                          f"import artifact {proof['import_artifact_id']}; route artifact {proof['route_artifact_id']}; "
-                                         f"wall {proof['wall_minutes']:.2f} min; compute {proof['compute_minutes']:.2f} min.\n")
+                                         f"wall {proof['wall_minutes']:.2f} min; {compute_label}.\n")
                 for skipped in status.get("not_applicable", []):
                     handle.write(f"  {skipped['job']}: not applicable; {len(skipped['identities'])} admitted identities; "
                                  "trusted PR classification cannot affect the app or CI tooling.\n")

@@ -7,8 +7,10 @@ case "${CI_XCODEBUILD_ACTION:-}" in
   *) exit 0 ;;
 esac
 [ "${CI_XCODE_CLOUD:-}" = "TRUE" ] || exit 1
-[ "${CI_PRODUCT_PLATFORM:-}" = "tvOS" ] || exit 1
-[ "${CI_XCODE_SCHEME:-}" = "immichSlides-tvOS" ] || exit 1
+case "${CI_PRODUCT_PLATFORM:-}:${CI_XCODE_SCHEME:-}" in
+  iOS:immichSlides-iOS|tvOS:immichSlides-tvOS) ;;
+  *) exit 1 ;;
+esac
 umask 077
 here=$(cd "$(dirname "$0")" && pwd)
 state=/tmp/immichslides-xcc-fixture
@@ -29,7 +31,7 @@ i=0
 while [ "$i" -lt 60 ]; do
   kill -0 "$fixture_pid" 2>/dev/null || break
   if [ -s "$state/ready.json" ]; then
-    echo "Xcode Cloud Apple TV fixture set C ready on loopback port 8765"
+    echo "Xcode Cloud fixture set C ready on loopback port 8765"
     trap - EXIT HUP INT TERM
     exit 0
   fi

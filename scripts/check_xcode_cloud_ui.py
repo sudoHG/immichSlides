@@ -39,7 +39,7 @@ def fixture_population(root):
     return {shard: [entry for entry in entries if entry not in deselected] for shard, entries in shards.items()}
 
 
-def validate_plan(plan, population):
+def validate_plan(plan, population, *, platform="tvOS"):
     fields(plan, {"version", "configurations", "defaultOptions", "testTargets"}, "cloud UI plan")
     require(type(plan["version"]) is int and plan["version"] == 1, "unsupported cloud UI plan version")
     configurations = plan["configurations"]
@@ -61,7 +61,7 @@ def validate_plan(plan, population):
         fields(entry, {"key", "value"}, "cloud fixture environment entry")
         require(isinstance(entry["key"], str) and entry["key"] not in observed, "duplicate cloud fixture input")
         observed[entry["key"]] = entry["value"]
-    require(observed == FIXTURE_ENVIRONMENT, "cloud fixture inputs differ from the PR fixture environment")
+    require(observed == dict(FIXTURE_ENVIRONMENT, UI_TEST_EXPECT_PLATFORM=platform), "cloud fixture inputs differ from the PR fixture environment")
     targets = plan["testTargets"]
     require(isinstance(targets, list) and len(targets) == 1, "cloud UI needs only the UI test target")
     fields(targets[0], {"target", "selectedTests"}, "cloud UI target")
@@ -92,6 +92,17 @@ def main():
         population = fixture_population(ROOT)
         selected = validate_plan(json.loads((ROOT / PLAN_PATH).read_text()), population)
         validate_fixture_copy(ROOT)
+        ios = json.loads((ROOT / "XcodeCloud-UI-iOS.xctestplan").read_text())
+        # This seed makes the template explicit; the trusted pointer replaces it
+        # before every Cloud test build. It is never selected by default.
+        from ci_summary import test_identity
+        validate_plan(ios, {"seed": [test_identity("ui", "immichSlidesUITests/testPlaybackSettingsBlocksFilteredModeWhenSelectionEmpty",
+                      platform="ios", device="iphone")]}, platform="iOS")
+        ios_scheme = ET.parse(ROOT / "immichSlides.xcodeproj/xcshareddata/xcschemes/immichSlides-iOS.xcscheme")
+        ios_references = ios_scheme.findall("./TestAction/TestPlans/TestPlanReference")
+        require(sum(entry.get("reference") == "container:XcodeCloud-UI-iOS.xctestplan" for entry in ios_references) == 1
+                and [entry.get("reference") for entry in ios_references if entry.get("default") == "YES"] ==
+                ["container:immichSlides-iOS.xctestplan"], "Cloud iOS template must preserve the default plan")
         scheme = ET.parse(ROOT / "immichSlides.xcodeproj/xcshareddata/xcschemes/immichSlides-tvOS.xcscheme")
         references = scheme.findall("./TestAction/TestPlans/TestPlanReference")
         require(sum(entry.get("reference") == "container:" + PLAN_PATH for entry in references) == 1,

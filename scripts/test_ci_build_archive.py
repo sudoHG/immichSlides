@@ -281,7 +281,15 @@ class BuildArchiveTests(unittest.TestCase):
                     from ci_ui_shards import parse_shard_manifest
                     shards = list(parse_shard_manifest((ui.ROOT / ui.MANIFEST_PATH).read_text())["shards"])
                     # Admission binds a push to every manifest shard.
-                    workflow = bind_ui_shards((ui.ROOT / ui.WORKFLOW).read_text(), {"ios": shards, "tvos": shards})
+                    from test_ci_publish import FIXTURE_UI
+                    workflow = FIXTURE_UI.replace("wait-archive", "wait-archive --defer-main-ui") + '''
+  cloud-wait:
+    name: ui-cloud-wait
+    steps:
+      - run: python3 scripts/ci_ui_tests.py wait-cloud
+      - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with: {name: 'cloud-${{ github.run_id }}-${{ github.run_attempt }}', path: records/summary.json}
+'''
                     run = {"id": 100, "run_attempt": 1, "head_sha": push["pushed_sha"], "event": "push",
                            "path": ui.WORKFLOW, "head_branch": "main", "status": "completed", "conclusion": "success",
                            "repository": {"full_name": push["repository"]}, "head_repository": {"full_name": push["repository"]}}
