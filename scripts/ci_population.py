@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import operator
 import re
 from importlib.util import resolve_name
 from pathlib import Path
@@ -88,7 +89,7 @@ class PythonSourceMap(dict):
         self.filenames = {}
 
 
-def python_identities(files, *, discovery_pattern="test_*", packages=()):
+def python_identities(files, *, discovery_pattern="test_*", packages=(), macos_python_tests=None):
     """Enumerate the documented declaration grammar without candidate execution.
 
     Test modules and their local test-class/MRO providers must satisfy the grammar.
@@ -575,6 +576,49 @@ def python_identities(files, *, discovery_pattern="test_*", packages=()):
             if isinstance(node.value, ast.Call) and builds_dynamic_class(module, node.value):
                 fail(module, node, "dynamically created classes are outside the allowed declaration grammar")
 
+    def platform_condition(module, node, platform, visiting=()):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return [platform_condition(module, item, platform, visiting) for item in node.elts]
+        if isinstance(node, ast.Name):
+            prior = [item for item in events[module].get(node.id, []) if item.lineno < node.lineno]
+            if prior and node.id not in visiting and isinstance(prior[-1], (ast.Assign, ast.AnnAssign)):
+                return platform_condition(module, prior[-1].value, platform, (*visiting, node.id))
+        if isinstance(node, (ast.Name, ast.Attribute)) and resolve(module + "." + dotted(node)) == "sys.platform":
+            return platform
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not platform_condition(module, node.operand, platform, visiting)
+        comparisons = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Is: operator.eq,
+                       ast.IsNot: operator.ne, ast.In: lambda left, right: left in right,
+                       ast.NotIn: lambda left, right: left not in right}
+        if isinstance(node, ast.Compare) and all(type(op) in comparisons for op in node.ops):
+            values = [platform_condition(module, part, platform, visiting)
+                      for part in [node.left, *node.comparators]]
+            return all(comparisons[type(op)](left, right)
+                       for op, left, right in zip(node.ops, values, values[1:]))
+        raise ValueError("not a platform-only skip condition")
+
+    def needs_macos(module, member):
+        for decorator in member.decorator_list:
+            if not isinstance(decorator, ast.Call) or not decorator.args:
+                continue
+            target = resolve(module + "." + dotted(decorator.func))
+            if target not in {"unittest.skipUnless", "unittest.skipIf"}:
+                continue
+            # Check all named string values plus an unmentioned platform, without executing source.
+            platforms = {node.value for node in ast.walk(trees[module])
+                         if isinstance(node, ast.Constant) and isinstance(node.value, str)} | {"darwin", "linux", "win32", "freebsd"}
+            platforms.add(next("_" * length for length in range(1, len(platforms) + 2) if "_" * length not in platforms))
+            try:
+                runs = {platform: bool(platform_condition(module, decorator.args[0], platform))
+                        == (target == "unittest.skipUnless") for platform in platforms}
+            except (ValueError, TypeError):
+                continue
+            if runs["darwin"] and not any(runs[platform] for platform in platforms - {"darwin"}):
+                return True
+        return False
+
     identities, seen_classes = [], set()
     for module, bindings in modules.items():
         if not discovered(module):
@@ -587,15 +631,20 @@ def python_identities(files, *, discovery_pattern="test_*", packages=()):
             methods = {}
             for ancestor in mro(name):
                 if ancestor == "doctest.DocTestCase":
-                    methods.setdefault("runTest", True)
+                    methods.setdefault("runTest", None)
                 if ancestor in classes:
                     for member in classes[ancestor].body:
                         if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            methods.setdefault(member.name, True)
+                            methods.setdefault(member.name, (ancestor.rsplit(".", 1)[0], member))
             selected = [method for method in methods if method.startswith("test")]
             if not selected and "runTest" in methods:
                 selected = ["runTest"]
-            identities.extend(test_identity("python", name + "." + method) for method in selected)
+            for method in selected:
+                key = name + "." + method
+                provider = methods[method]
+                if macos_python_tests is not None and provider is not None and needs_macos(*provider):
+                    require(key in macos_python_tests, key + ": Darwin-only Python test must be listed in MACOS_PYTHON_TESTS")
+                identities.append(test_identity("python", key))
     return ordered(identities)
 
 

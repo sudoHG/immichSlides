@@ -45,6 +45,14 @@ Do not write a test that:
 
 Prefer extending an existing test file. A new test file needs a reason in the pull request. The pull request states, for every new test, the failure it guards against.
 
+A Python test that needs macOS (Swift, CoreGraphics, `xcrun` or Darwin-only tools)
+must first have its full test identity added to `MACOS_PYTHON_TESTS` in
+`scripts/run_host_checks.py`, in a separate PR that merges **before** the test relies
+on that entry. The host partition is read from the base commit, so adding the entry
+in the same PR as the test cannot move that PR's test to the macOS share. The
+workflow-policy host check rejects Darwin-only skip conditions whose test identities
+are missing from `MACOS_PYTHON_TESTS`.
+
 ## 1. Where tests live
 
 | Location | What goes there | Runs by default |
