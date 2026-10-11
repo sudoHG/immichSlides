@@ -673,11 +673,11 @@ def failed_shard(args, error):
     summary = summary_for(ctx, inputs["hashes"]["manifests"]["ui-shards"])
     summary.update(hashes=inputs["hashes"], population=inputs["population"])
     if getattr(args, "compiled_from_official_results", False):
-        from ci_publish_git import read_blob
-        from ci_verdict import parse_policy
         from strict_e2e_runner_support import destination_udid
-        start_official_discovery(summary, destination_udid(args.destination),
-            parse_policy(read_blob(ctx["identity"]["base_sha"], "scripts/ci-test-policy.json")), enabled=True)
+        try:
+            start_official_discovery(summary, destination_udid(args.destination), inputs["discovery_policy"], enabled=True)
+        except ContractError as policy_error:
+            error = policy_error
     summary["status"] = "failed"
     summary["infrastructure"] = [{"code": "ui-shard-preflight-failed", "message": str(error)[:200]}]
     write_fixture_summary(summary, directory)
@@ -883,7 +883,19 @@ def main(argv=None):
         if args.command == "check-upload":
             from run_strict_e2e import write_sensitive_scan
             from strict_e2e_server import PUBLIC_API_KEY
-            parse_summary((args.output_dir / "summary.json").read_text())
+            summary = decode((args.output_dir / "summary.json").read_text())
+            try:
+                parse_summary(summary)
+            except ContractError:
+                require(isinstance(summary, dict) and type(summary.get("schema_version")) is int
+                        and summary["schema_version"] == 2 and summary.get("status") == "failed"
+                        and isinstance(summary.get("infrastructure"), list)
+                        and any(isinstance(entry, dict) and entry.get("code") == "discovery-record-invalid"
+                                for entry in summary["infrastructure"]), "unmarked invalid discovery diagnostics")
+                # Only the proof may be invalid; ordinary metadata must still parse before scanning.
+                diagnostic = {key: value for key, value in summary.items() if key != "compiled_evidence"}
+                diagnostic["schema_version"] = 1
+                parse_summary(diagnostic)
             write_sensitive_scan(args.output_dir, [PUBLIC_API_KEY])
             output("has_screenshots", str(any(path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".ips", ".crash"}
                     for path in (args.output_dir / "failure-screenshots").rglob("*"))).lower())

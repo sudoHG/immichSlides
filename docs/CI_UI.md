@@ -289,12 +289,23 @@ An earlier build with a different head/base/tree cannot supply a cache shortcut.
 The [acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
 requires official-result discovery intent on every shard command before admitting
 `capacity-v2`. A shard with an approved base fixture deselection keeps version 1
-and preliminary enumeration. An eligible shard with an incomplete first invocation
+and preliminary enumeration. Base policy controls only this protocol eligibility;
+deselections, expected skips, the local verdict and the policy hash use the tested
+tree's policy, which the reader accepts only after exact-head approval. If an
+eligible base has no fixture deselection but the candidate adds one for the shard,
+the producer fails before simulator or Xcode preflight with an explicit conflict.
+Merge that policy change before running the successor protocol for the shard.
+An eligible shard with an incomplete first invocation
 can write a fail-only version 2 record: compiled equals the discovered subset,
 all undiscovered methods remain `not-run` or `timed-out`, and their attempts retain
 the nonzero raw first exit. A missing export is recorded as `null`. The final writer
 keeps the diagnostics, while the verdict reports missing compiled identities and
 fails. Official discovery does not establish a 30-minute acceptance result.
+Rejected proofs include their reason in `summary.md` and stderr. Failure attachments
+are exported before discovery is parsed. After the sensitive scan passes,
+`check-upload` may publish failed diagnostics carrying `discovery-record-invalid`;
+ordinary summary metadata must still validate, and the publisher still rejects
+the invalid proof. A scan failure blocks diagnostic upload as well.
 
 ### Nightly-default locale screenshots
 

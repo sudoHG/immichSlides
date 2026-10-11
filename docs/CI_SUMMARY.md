@@ -254,7 +254,7 @@ duplicate ownership, unknown platforms and missing jobs cannot pass.
 The gate producer now activates both partitions. Each Python executor first
 checks full dynamic discovery against the complete static inventory, then runs
 its base-owned subset. Linux uses the existing pinned Python packages and zstd;
-macOS executes the Swift-calling method and swift-format. The default local host
+macOS executes the base-listed Swift-calling methods and swift-format. The default local host
 command remains unsplit and still runs every host check and Python method.
 
 ## Current workflow boundary

@@ -362,9 +362,12 @@ def write_fixture_summary(summary, output):
             raise
         # Preserve a rejected proof for diagnosis; publication still rejects it.
         summary["status"] = "failed"
-        summary["infrastructure"].append({"code": "discovery-record-invalid", "message": str(error)[:200]})
+        reason = str(error)[:200]
+        summary["infrastructure"].append({"code": "discovery-record-invalid", "message": reason})
         write_json(output / "summary.json", summary)
-        (output / "summary.md").write_text("Fixture UI failed: invalid discovery proof\n")
+        message = "Fixture UI failed: invalid discovery proof: " + reason
+        (output / "summary.md").write_text(message + "\n")
+        print(message, file=sys.stderr)
         return summary["compiled_evidence"]["first_exit_code"] or 1
     return diagnostic_exit
 
@@ -375,9 +378,10 @@ def start_official_discovery(summary, device_id, base_policy, *, enabled):
             and summary["source"]["workflow_path"] == ".github/workflows/ci-ui.yml"
             and re.fullmatch(r"scoped-[a-f]", summary["run"]["shard"] or "")
             and summary["hashes"]["manifests"].get("ui-scoped-plan")
-            and discovery_eligible(summary["population"]["declared"], base_policy)
-            and not summary["population"]["deselected"]):
+            and discovery_eligible(summary["population"]["declared"], base_policy)):
         return False
+    require(not summary["population"]["deselected"],
+            "candidate fixture deselection conflicts with base-eligible official discovery; merge the policy change first")
     summary["schema_version"] = 2
     summary["population"]["compiled"] = []
     summary["compiled_evidence"] = {"schema_version": 1, "mode": DISCOVERY_MODE,
@@ -411,10 +415,11 @@ def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, 
         entry["dimensions"]["device"] = device
     policy_path = root / "scripts/ci-test-policy.json"
     policy_text = policy_path.read_text()
+    policy = parse_policy(policy_text)
+    discovery_policy = policy
     if policy_revision:
         from ci_publish_git import read_blob
-        policy_text = read_blob(policy_revision, "scripts/ci-test-policy.json")
-    policy = parse_policy(policy_text)
+        discovery_policy = parse_policy(read_blob(policy_revision, "scripts/ci-test-policy.json"))
     deselections = [entry for entry in policy["deselections"] if tier_approved(policy, "ui")
                    and entry["tier"] == "ui" and entry["environment"] == "fixture"
                    and entry["identity"] in declared] if mode == "pr" else []
@@ -436,7 +441,8 @@ def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, 
             "deselected": [{key: value for key, value in entry.items() if key not in {"tier", "environment"}}
                            for entry in deselections], "removed_by_pr": []},
             "policy": policy, "deselections": deselections, "registry": registry, "registry_revision": revision,
-            "official_discovery_eligible": discovery_eligible(declared, policy)}
+            "discovery_policy": discovery_policy,
+            "official_discovery_eligible": discovery_eligible(declared, discovery_policy)}
 
 
 def main(argv=None):
@@ -497,11 +503,13 @@ def main(argv=None):
                               "event": identity["event"], "fork_originated": fork, "ci_changing": None},
                    "run": {"id": os.environ.get("GITHUB_RUN_ID"), "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
                            "tier": "ui", "job": "ui-" + args.device if args.shard else "fixture-ui", "shard": args.shard or args.device},
-                   "hashes": inputs_record["hashes"], "toolchain": {"versions": {}, "signing_mode": "not-applicable"},
+                   "hashes": inputs_record["hashes"],
+                   "toolchain": {"versions": {"python": sys.version.split()[0]}, "signing_mode": "not-applicable"},
                    "population": inputs_record["population"],
                    "infrastructure": [], "status": "failed"}
         udid = destination_udid(args.destination)
-        official_mode = start_official_discovery(summary, udid, policy, enabled=args.compiled_from_official_results)
+        official_mode = start_official_discovery(summary, udid, inputs_record["discovery_policy"],
+                                                enabled=args.compiled_from_official_results)
         summary["toolchain"] = toolchain()
         summary["toolchain"]["versions"]["test_wait_factor"] = str(waits["infrastructure_factor"])
         write_json(output / "wait-configuration.json", waits)
@@ -666,6 +674,12 @@ def main(argv=None):
             if not path.exists():
                 continue
             suffix = "" if number == 1 else "-attempt-" + str(number)
+            if args.failure_screenshots:
+                attachment_root = output / "failure-screenshots" / ("attempt-" + str(number))
+                attachment_root.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(path),
+                                "--output-path", str(attachment_root), "--only-failures"],
+                               capture_output=True, check=True, timeout=args.result_export_timeout_seconds)
             export_started = time.monotonic()
             digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix,
                 summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds)
@@ -676,12 +690,6 @@ def main(argv=None):
             if official_mode and number == 1:
                 record_official_discovery(summary, official)
                 compiled = summary["population"]["compiled"]
-            if args.failure_screenshots:
-                attachment_root = output / "failure-screenshots" / ("attempt-" + str(number))
-                attachment_root.mkdir(parents=True, exist_ok=True)
-                subprocess.run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(path),
-                                "--output-path", str(attachment_root), "--only-failures"],
-                               capture_output=True, check=True, timeout=args.result_export_timeout_seconds)
         digest = digests.get(bundle)
         if not args.listed_only_retry:
             require(bundle in digests, "official fixture result is missing")

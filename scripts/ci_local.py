@@ -194,7 +194,7 @@ def option_value(arguments, names):
 def probe_processes(columns, *flags):
     for attempt in range(PROBE_ATTEMPTS):
         try:
-            return subprocess.check_output(["ps", *flags, "-axo", columns], text=True,
+            return subprocess.check_output(["ps", *flags, "-A", "-o", columns], text=True,
                                            timeout=PROBE_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             if attempt + 1 == PROBE_ATTEMPTS:

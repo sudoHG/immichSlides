@@ -48,7 +48,7 @@ def runtime_plans(record, descriptor):
 def recompute(identity, run, author, *, listing, read_blob, changed_paths, head_tree):
     """Repeat admission's functional selector using base rules and static merge data."""
     from ci_population import ui_identities
-    from ci_ui_packing import pack_scoped_selection
+    from ci_ui_packing import ACCELERATION_INTENT, pack_scoped_selection
     from ci_ui_selection import platform_sources_from_project, select_ui_population
     base, head, merge = identity["base_sha"], identity["head_sha"], identity["merge_sha"]
     base_listing, head_listing, merged_listing = listing(base), listing(head), listing(merge)
@@ -69,7 +69,10 @@ def recompute(identity, run, author, *, listing, read_blob, changed_paths, head_
         platform_sources=platform_sources_from_project(read_blob(base, "immichSlides.xcodeproj/project.pbxproj")),
         expected_skips=groups.decode(read_blob(base, "scripts/ci-test-policy.json"))["expected_skips"])
     require(selected["mode"] == "scoped", "Cloud functional selection could not be reconstructed")
-    packing = pack_scoped_selection(selected["populations"], read_blob(base, "scripts/ci-ui-durations.json"))
+    # Admission already validates the trusted base workflow's literal protocol intent.
+    accelerated = ACCELERATION_INTENT in read_blob(base, ".github/workflows/ci-ui.yml")
+    packing = pack_scoped_selection(selected["populations"], read_blob(base, "scripts/ci-ui-durations.json"),
+                                    **({"algorithm": "capacity-v2"} if accelerated else {}))
     selected.update(map_revision=base, map_sha256=hashlib.sha256(raw_map.encode()).hexdigest(),
                     shards=packing["shards"], packing=packing)
     return {"identity": identity, "run_id": run["id"], "cloud_pr_author": author,
