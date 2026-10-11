@@ -157,9 +157,11 @@ The 25 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS s
 Cold warm-up has 1,200 seconds; each warm invocation has 600. Each case adds a 240-second
 reset/export/cleanup allowance plus 300 seconds of readiness per warm invocation;
 filter-person receives three invocation budgets.
-Both workflows and local reset callers use the shared boot helper. The workflow
-boots each new simulator in a separate step with a shared 600-second
-deadline (boot command capped at 60 seconds). It records both phase and total elapsed
+Both workflows and local reset callers use the shared preparation gate. The workflow
+boots and waits for responsive app queries in a separate step before cold builds,
+simulator lookups or fixture health checks, with a combined 600-second
+deadline (boot command capped at 60 seconds, post-boot queries at 300 seconds).
+Toolchain/pins verification precedes boot. It records both phase and total elapsed
 times in logs and the job summary. Before the reset bound, the hosted first iOS smoke
 completed in 457.7 seconds including preparation and test execution
 ([run](https://github.com/sudoHG/immichSlides/actions/runs/37726829510)); 600 seconds
@@ -176,7 +178,7 @@ The person shard contains both fixtures: two three-session cases and four single
 cases require ten invocations. Cold/warm/reset/export allowances total 148 minutes
 (24 cold plus 124 warm), with up to 50 more minutes if every invocation consumes
 its readiness budget: 198 minutes total. The 215-minute job cap leaves the original
-17-minute margin for initial boot, setup, uploads and final cleanup, so a slow shard
+17-minute margin for initial preparation, setup, uploads and final cleanup, so a slow shard
 can publish its failed records before runner teardown. Readiness can exceed its
 scheduling deadline while the last timed-out query finishes cleanup; see the
 [shared bounds and overrun logs](CI_STRICT_RUNNER.md#shared-simulator-reset).

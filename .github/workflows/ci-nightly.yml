@@ -192,19 +192,19 @@ jobs:
           echo "NIGHTLY_SIMULATOR=$udid" >> "$GITHUB_ENV"
           os_name=$([ "$NIGHTLY_PLATFORM" = ios ] && echo iOS || echo tvOS)
           echo "NIGHTLY_DESTINATION=platform=$os_name Simulator,id=$udid" >> "$GITHUB_ENV"
-      - name: Boot the dedicated simulator before bounded case resets
+      - name: Prepare the dedicated simulator before fixture health checks and case resets
         timeout-minutes: 11
         run: |
           "$RUNNER_TEMP/nightly-python/bin/python3" -B - <<'PY'
           import os, sys
           from pathlib import Path
           sys.path.insert(0, "scripts")
-          from strict_e2e_runner_support import boot_simulator
+          from strict_e2e_runner_support import prepare_simulator
           def report(line):
               print(line, flush=True)
               with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
                   summary.write(line + "\n")
-          boot_simulator(os.environ["NIGHTLY_SIMULATOR"], report=report)
+          prepare_simulator(os.environ["NIGHTLY_SIMULATOR"], report=report)
           PY
       - name: Warm the shard once and execute every scheduled case
         env:
@@ -394,16 +394,16 @@ jobs:
         run: |
           /usr/bin/python3 -B -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
           /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
-      - name: Create and start only this shard's pinned simulator
-        working-directory: ui-source
-        run: |
-          /usr/bin/python3 -B scripts/ci_simulator.py --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Verify pins and prepare Python
         working-directory: ui-source
         run: |
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Create and start only this shard's pinned simulator
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B scripts/ci_simulator.py --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Read the retained archive job's selection record
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

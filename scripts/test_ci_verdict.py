@@ -166,6 +166,12 @@ class NightlyVerdictTests(unittest.TestCase):
                     {"cases": [case for case in tracer["cases"] if case["platform"] == platform]}
                     for platform in ("ios", "tvos")], 20)):
             job = yaml.safe_load((root / ".github/workflows" / filename).read_text())["jobs"][job_name]
+            steps = job["steps"]
+            setup = next(i for i, step in enumerate(steps) if "setup_ci_python.py" in step.get("run", ""))
+            preparation = next(i for i, step in enumerate(steps) if "prepare_simulator(" in step.get("run", ""))
+            consumer = next(i for i, step in enumerate(steps) if "scripts/run_strict_ci_tracer.py" in step.get("run", ""))
+            self.assertLess(setup, preparation)
+            self.assertLess(preparation, consumer)
             command = next(step["run"] for step in job["steps"]
                            if "scripts/run_strict_ci_tracer.py" in step.get("run", ""))
             cold = int(re.search(r"--cold-timeout-seconds\s+(\d+)", command)[1])

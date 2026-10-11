@@ -1148,8 +1148,13 @@ class PublisherTests(unittest.TestCase):
                 self.assertEqual(len(boot), 1)
                 self.assertIn("--device '${{ matrix.device }}' --shard '${{ matrix.shard }}'", steps[boot[0]]["run"])
                 for i, step in enumerate(steps):
-                    if "setup_ci_python.py" in step.get("run", "") or step.get("uses", "").startswith("actions/download-artifact@"):
+                    if "setup_ci_python.py" in step.get("run", ""):
+                        self.assertLess(i, boot[0])
+                    if step.get("uses", "").startswith("actions/download-artifact@"):
                         self.assertLess(boot[0], i)
+                consumer = next(i for i, step in enumerate(steps) if "scripts/ci_ui_tests.py run --device" in step.get("run", ""))
+                self.assertTrue(all(step.get("uses", "").startswith("actions/download-artifact@")
+                                    for step in steps[boot[0] + 1:consumer]))
 
         import subprocess
         import sys

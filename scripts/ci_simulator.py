@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create and start a shard's fresh pinned simulator before Python setup and downloads."""
+"""Create and start a shard's fresh pinned simulator before archive downloads."""
 
 import argparse
 import os

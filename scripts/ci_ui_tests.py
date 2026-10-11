@@ -582,8 +582,16 @@ def cloud_selection(args):
 
 def run_shard(args):
     from run_fixture_ui_tests import declared_tests, main as fixture_main
-    ctx = context()
+    from strict_e2e_runner_support import CommandError, destination_udid, prepare_simulator
     workspace_preflight(ROOT)
+    try:
+        udid = destination_udid(args.destination)
+        prepare_simulator(udid, boot_submitted=os.environ.get("UI_SIMULATOR") == udid)
+    except CommandError as error:
+        failed_shard(args, error)
+        print(f"UI simulator preparation failed: {error}", file=sys.stderr)
+        return error.code
+    ctx = context()
     platform_name = DEVICES[args.device]
     manifest_raw = git_blob(args.manifest_revision, MANIFEST_PATH) if args.manifest_revision else (ROOT / MANIFEST_PATH).read_bytes()
     manifest = parse_shard_manifest(manifest_raw.decode())
@@ -684,7 +692,7 @@ def failed_shard(args, error):
         except ContractError as policy_error:
             error = policy_error
     summary["status"] = "failed"
-    summary["infrastructure"] = [{"code": "ui-shard-preflight-failed", "message": str(error)[:200]}]
+    summary["infrastructure"] = [getattr(error, "entry", {"code": "ui-shard-preflight-failed", "message": str(error)[:200]})]
     write_fixture_summary(summary, directory)
 
 

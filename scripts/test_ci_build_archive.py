@@ -127,6 +127,30 @@ class BuildArchiveTests(unittest.TestCase):
                             self.assertEqual(diagnostic['hashes']['manifests']['ui-scoped-plan'], produced['packing']['sha256'])
                             self.assertEqual(diagnostic['status'], 'failed')
                             self.assertEqual(diagnostic['infrastructure'][0]['code'], 'ui-shard-preflight-failed')
+                            from strict_e2e_runner_support import InfrastructureTimeout
+                            gate_finished = []
+                            def gate(udid, **kwargs):
+                                self.assertEqual(udid, 'cold-device')
+                                self.assertTrue(kwargs['boot_submitted'])
+                                gate_finished.append(True)
+                                raise InfrastructureTimeout('simulator-readiness', 300)
+                            def after_gate():
+                                self.assertTrue(gate_finished, 'context must wait for simulator readiness')
+                                return context
+                            failed_output = self.root / 'packed-readiness-failure'
+                            with patch.dict(os.environ, {'UI_SIMULATOR': 'cold-device'}), \
+                                    patch.object(ui, 'context', side_effect=after_gate), patch.object(ui, 'workspace_preflight'), \
+                                    patch('strict_e2e_runner_support.prepare_simulator', side_effect=gate, create=True), \
+                                    patch('run_fixture_ui_tests.registry_revision', return_value='HEAD'), \
+                                    patch('run_fixture_ui_tests.load_registry', return_value=(
+                                        {'schema_version': 1, 'entries': []}, 'f' * 64)), patch('builtins.print'):
+                                self.assertEqual(ui.run_shard(SimpleNamespace(output_dir=failed_output, device=device, shard=name,
+                                    destination='platform=iOS Simulator,id=cold-device',
+                                    manifest_revision=None, selection_path=retained)), 124)
+                            failed = json.loads((failed_output / 'summary.json').read_text())
+                            self.assertEqual(failed['infrastructure'][0]['code'], 'simulator-readiness-timeout')
+                            self.assertEqual(failed['population']['declared'], diagnostic['population']['declared'])
+                            self.assertEqual(failed['population']['observed'], [])
 
     def test_functional_archive_selection_waits_only_for_platforms_with_selected_jobs(self):
         from types import SimpleNamespace

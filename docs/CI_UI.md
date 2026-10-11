@@ -451,9 +451,13 @@ without a real server, private configuration or changed test assertions. They
 retain default simulator signing, pinned toolchains and runtime fixture inputs.
 Only each job's pinned device simulator is created and deleted.
 The PR and nightly UI jobs use the standard-library `ci_simulator.py` bootstrap to
-create and submit boot for that fresh device immediately after selecting Xcode,
-before Python environment preparation and archive downloads. Device startup can
-overlap that existing work. Its UDID, destination and platform are exported before
+create and submit boot for that fresh device after toolchain/pins verification and
+Python environment preparation. Only artifact downloads run between early boot
+and the consumer's shared readiness gate; startup can overlap those downloads.
+The gate precedes identity/archive validation, every simulator lookup and fixture
+server startup/health check. For the job's early-booted UDID it goes straight to
+`bootstatus -b`, avoiding another short `boot` command during cold settling.
+Its UDID, destination and platform are exported before
 boot, so cleanup still owns the same device if boot or later preparation fails.
 
 Fixture UI runners use the [shared simulator reset](CI_STRICT_RUNNER.md#shared-simulator-reset),

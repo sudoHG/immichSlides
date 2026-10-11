@@ -255,9 +255,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "run_strict_e2e.prepare_task_xcconfig", return_value={}
         ), mock.patch("run_strict_e2e.cleanup_task_xcconfig"), mock.patch(
             "run_strict_e2e.subprocess.run", side_effect=fake_subprocess
-        ), mock.patch("run_strict_e2e.reset_simulator_app", return_value="reset\n",
+        ), mock.patch("run_strict_e2e.prepare_simulator", return_value=(None, "ready\n"),
                       side_effect=strict_runner.InfrastructureTimeout(timeout_phase, 60)
-                      if timeout_phase in {"simulator-bootstatus", "simulator-readiness"} else None), mock.patch(
+                      if timeout_phase in {"simulator-bootstatus", "simulator-readiness"} else None) as prepare, mock.patch(
+            "run_strict_e2e.reset_simulator_app", return_value="reset\n"
+        ), mock.patch(
             "run_strict_e2e.run_command", side_effect=fake_run_command
         ), mock.patch(
             "run_strict_e2e.read_official_test_results_summary",
@@ -274,7 +276,10 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         ), mock.patch("strict_e2e_build.validate_warm_products"), mock.patch(
             "strict_e2e_build.prepare_test_run", side_effect=fake_test_run
         ), ExitStack() as stack:
-            stack.enter_context(mock.patch("ci_flaky.simulator_device_class", return_value="iphone"))
+            def device_class(*args):
+                prepare.assert_called_once()
+                return "iphone"
+            stack.enter_context(mock.patch("ci_flaky.simulator_device_class", side_effect=device_class))
             stack.enter_context(mock.patch("ci_flaky.read_xcode_observations", side_effect=retry_results))
             stack.enter_context(mock.patch("ci_flaky.registry_revision", return_value="b" * 40))
             stack.enter_context(mock.patch("ci_flaky.load_registry", return_value=(retry_registry, "a" * 64)))
@@ -403,6 +408,38 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     self.assertEqual(clock[0], 300 + query_overrun)
                     self.assertIn(f"deadline_overrun={query_overrun:.1f}s", "\n".join(call.args[0] for call in report.call_args_list))
                     self.assertFalse(any(command[2] in ("terminate", "uninstall", "keychain", "privacy") for command in calls))
+        # A long boot must consume the same gate budget as post-boot queries.
+        clock, calls = [0.0], []
+        def cold(command, **kwargs):
+            calls.append(command[2])
+            if command[2] == "bootstatus":
+                clock[0] += 550
+            if command[2] == "get_app_container":
+                clock[0] += kwargs["timeout"]
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return subprocess.CompletedProcess(command, 0, "", "")
+        with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=cold), mock.patch(
+            "strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]
+        ), mock.patch("builtins.print"), self.assertRaises(CommandError):
+            reset_simulator_app("SIM-UDID")
+        self.assertEqual(clock[0], 600)
+        self.assertFalse(set(calls) & {"terminate", "uninstall", "keychain", "privacy"})
+        from strict_e2e_runner_support import prepare_simulator
+        clock, calls = [0.0], []
+        def submitted(command, **kwargs):
+            calls.append(command[2])
+            self.assertNotEqual(command[2], "boot", "an early-submitted boot must go straight to bootstatus")
+            if command[2] == "bootstatus":
+                self.assertEqual(kwargs["timeout"], 600)
+                clock[0] += 197.2
+            return subprocess.CompletedProcess(command, 2 if command[2] == "get_app_container" else 0, "", "")
+        with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=submitted), mock.patch(
+            "strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]
+        ), mock.patch("builtins.print"):
+            container, log = prepare_simulator("SIM-UDID", boot_submitted=True)
+        self.assertIsNone(container)
+        self.assertEqual(calls, ["bootstatus", "get_app_container"])
+        self.assertIn("simulator-preparation: passed; elapsed=197.2s", log)
         with tempfile.TemporaryDirectory() as raw:
             bundle = Path(raw) / "result.xcresult"
             bundle.mkdir()
