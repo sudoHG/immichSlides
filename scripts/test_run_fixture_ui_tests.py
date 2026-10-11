@@ -50,8 +50,9 @@ class FixtureCoverageTests(unittest.TestCase):
         for raw, shape in ((0, "complete"), (65, "missing-export"), (124, "empty"),
                            (0, "empty"), (65, "complete"), (65, "unknown"), (65, "malformed"), (2, "launch")):
             with self.subTest(raw=raw, shape=shape), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                output, work = root / "output", root / "private"
+                root = Path(directory, "checkout").resolve()
+                root.mkdir()
+                output, work = Path(directory, "output"), Path(directory, "private")
                 work.mkdir()
                 bundle = work / "result" / "fixture.xcresult"
                 bundle.mkdir(parents=True)
