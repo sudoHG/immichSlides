@@ -257,6 +257,32 @@ class PauseEvidenceTests(unittest.TestCase):
                 if process:
                     Run.stop_child(process, timeout=5)
 
+        with tempfile.TemporaryDirectory() as temp:
+            import strict_e2e_runner_support as support
+            run = Run.__new__(Run)
+            run.out = Path(temp)
+            run.save = Mock()
+            process = Mock(pid=7)
+            process.poll.return_value = None
+            clock = [0.0]
+            ready = run.out / "fixture-service-ready.json"
+
+            def sleep(seconds):
+                clock[0] += seconds
+                if clock[0] >= 20:
+                    ready.write_text(json.dumps({"pid": 7, "host": "127.0.0.1", "port": 1234}))
+
+            response = Mock()
+            response.__enter__ = Mock(return_value=Mock(status=200))
+            response.__exit__ = Mock(return_value=False)
+            with patch("ipad_pause_host.subprocess.Popen", return_value=process), \
+                    patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(support.time, "sleep", side_effect=sleep), \
+                    patch.object(support.urllib.request, "urlopen", return_value=response):
+                run.start_public_fixture()
+            self.assertEqual(run.fixture_url, "http://127.0.0.1:1234/api")
+            self.assertAlmostEqual(clock[0], 20, delta=.05)
+
     def test_playback_settings_are_set_through_visible_controls_and_read_back(self):
         def settings_tree(*, autoplay, interval, display):
             return [

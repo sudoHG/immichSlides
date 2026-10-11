@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
@@ -73,6 +74,7 @@ SIMULATOR_BOOT_TIMEOUT_SECONDS = 600
 SIMULATOR_PREPARATION_TIMEOUT_SECONDS = 600
 SIMULATOR_READINESS_TIMEOUT_SECONDS = 300
 SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS = 10
+SERVICE_STARTUP_TIMEOUT_SECONDS = 60
 # simctl writes Recording started only after processing the first frame; after SIGINT, wait for in-flight frames to write the moov atom.
 RECORDING_START_TIMEOUT_SECONDS = 15
 RECORDING_STOP_TIMEOUT_SECONDS = 30
@@ -615,24 +617,39 @@ def destination_udid(destination: str) -> str:
 
 
 def wait_for_service(ready_path: Path, process: subprocess.Popen[bytes]) -> tuple[str, int]:
-    deadline = time.monotonic() + 10
+    started = time.monotonic()
+    deadline = started + SERVICE_STARTUP_TIMEOUT_SECONDS
+    last_state = "ready-file-missing"
     while time.monotonic() < deadline:
-        if process.poll() is not None:
-            raise CommandError(f"Test service exited early with exit {process.returncode}.")
+        exit_code = process.poll()
+        if exit_code is not None:
+            raise CommandError(f"Test service exited early with exit {exit_code}.")
+        last_state = "ready-file-missing"
         if ready_path.is_file():
+            last_state = "ready-file-invalid"
             try:
                 payload = json.loads(ready_path.read_text(encoding="utf-8"))
                 if payload.get("pid") != process.pid:
                     raise CommandError("The PID in the test service ready file does not match the started child process.")
                 host = payload["host"]
-                port = payload["port"]
-                with urllib.request.urlopen(f"http://{host}:{port}/healthz", timeout=1) as response:
-                    if response.status == 200:
-                        return str(host), int(port)
-            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-                pass
-        time.sleep(0.05)
-    raise CommandError("Test service health check timed out.")
+                port = int(payload["port"])
+                last_state = "health-check-pending"
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                with urllib.request.urlopen(f"http://{host}:{port}/healthz", timeout=min(1, remaining)) as response:
+                    last_state = f"health-http-{response.status}"
+                    if response.status == 200 and time.monotonic() < deadline:
+                        print(f"fixture-service: healthy; elapsed={time.monotonic() - started:.1f}s; "
+                              f"total budget={SERVICE_STARTUP_TIMEOUT_SECONDS}s", flush=True)
+                        return str(host), port
+            except urllib.error.HTTPError as error:
+                last_state = f"health-http-{error.code}"
+            except (OSError, KeyError, TypeError, ValueError) as error:
+                last_state += f":{type(error).__name__}"
+        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+    raise CommandError(f"Test service health check timed out after {time.monotonic() - started:.1f}s "
+                       f"(budget={SERVICE_STARTUP_TIMEOUT_SECONDS}s; last_state={last_state}).")
 
 
 def stop_exact_process(process: subprocess.Popen[bytes]) -> int:
