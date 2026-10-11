@@ -486,8 +486,9 @@ class GroupProducerTests(unittest.TestCase):
         gate = {"id": 902, "run_attempt": 1, "head_sha": self.run["head_sha"], "path": ".github/workflows/ci-gate.yml"}
         completed = [{"id": i, "name": name, "status": "completed", "conclusion": "success"}
                      for i, name in enumerate(("build-ios", "unit-ios"), 200)]
-        api = Mock()
-        api.repo.side_effect = lambda path: {"workflow_runs": [gate] if "head_sha=" in path else [{"id": 901, "run_attempt": 1}]}
+        api = Mock(repository=self.identity["repository"])
+        api.repo.side_effect = lambda path: {"workflow_runs": [gate] if "head_sha=" in path else
+            [dict(self.run, id=901, run_attempt=1, path=".github/workflows/" + path.split("/")[2], conclusion="success")]}
         api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
             [{"id": 900, "run_attempt": 1}] if path == "actions/runs" else
             skipped if "/901/" in path else completed if "/902/" in path else running + queued)
@@ -516,8 +517,8 @@ class GroupProducerTests(unittest.TestCase):
                                                 (skipped, 120, 120)):
             with self.subTest(samples=len(recent)):
                 api.repo.side_effect = lambda path: {"workflow_runs": [gate] if "head_sha=" in path else
-                    [{"id": 904, "run_attempt": 1, "conclusion": "failure"}] if "ci-ui.yml/runs?status=completed" in path else
-                    [{"id": 901, "run_attempt": 1}]}
+                    [dict(self.run, id=904, run_attempt=1, conclusion="failure")] if "ci-ui.yml/runs?status=completed" in path else
+                    [dict(self.run, id=901, run_attempt=1, path=".github/workflows/" + path.split("/")[2], conclusion="success")]}
                 api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
                     [{"id": 900, "run_attempt": 1}] if path == "actions/runs" else
                     recent if "/904/" in path else skipped if "/901/" in path else completed if "/902/" in path else running + queued)
@@ -529,6 +530,64 @@ class GroupProducerTests(unittest.TestCase):
                 if recent == skipped:
                     self.assertFalse(choose_cloud(estimate, {"seconds": 1700, "reservation_minutes": 80}, 0,
                                                  month_policy(now, self.registry["billing_anchor"]))["route"])
+
+    def test_queue_history_rejects_forged_workflow_jobs_before_reading_untrusted_runs(self):
+        from ci_xcode_cloud_group_route import queue_snapshot
+        now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+        gate = dict(self.run, id=902, run_attempt=1, path=".github/workflows/ci-gate.yml")
+        own_jobs = [{"id": i, "name": name, "status": "completed", "conclusion": "success"}
+                    for i, name in enumerate(("build-ios", "unit-ios"), 200)]
+        forged = [{"id": i, "name": name, "status": "completed", "conclusion": "success", "runner_id": i,
+                   "labels": ["macos-15"], "started_at": now.isoformat(),
+                   "completed_at": (now + timedelta(hours=10)).isoformat()}
+                  for i, name in enumerate(("ui-iphone-scoped-forged", "build-ios"), 300)]
+        selected = {"packing": {"estimated_job_seconds": {"iphone": [600], "ipad": [600]}}}
+        mutations = ({"head_repository": {"full_name": "fork/repo"}}, {"repository": {"full_name": "fork/repo"}},
+                     {"head_repository": None}, {"path": ".github/workflows/forged.yml"}, {"event": "workflow_dispatch"})
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                api = Mock(repository=self.identity["repository"])
+                api.repo.side_effect = lambda path: {"workflow_runs": [gate] if "head_sha=" in path else
+                    [dict(dict(self.run, id=901, run_attempt=1, conclusion="success",
+                               path=".github/workflows/" + path.split("/")[2]), **mutation)]}
+                api.pages.side_effect = lambda path, collection, **query: ([] if path == "actions/runs" else
+                    own_jobs if "/902/" in path else forged)
+                result = queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"])
+                self.assertEqual(result["duration_history"], {})
+                self.assertFalse(any("/901/" in call.args[0] for call in api.pages.call_args_list))
+
+    def test_scoped_history_fills_from_bounded_non_cancelled_pr_pages(self):
+        from ci_xcode_cloud_group_route import queue_snapshot
+        now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+        gate = dict(self.run, id=902, run_attempt=1, path=".github/workflows/ci-gate.yml")
+        own_jobs = [{"id": i, "name": name, "status": "completed", "conclusion": "success"}
+                    for i, name in enumerate(("build-ios", "unit-ios"), 200)]
+        selected = {"packing": {"estimated_job_seconds": {"iphone": [600], "ipad": [600]}}}
+        for cancelled in (False, True):
+            with self.subTest(all_cancelled=cancelled):
+                api = Mock(repository=self.identity["repository"])
+                def response(path):
+                    if "head_sha=" in path:
+                        return {"workflow_runs": [gate]}
+                    if "ci-ui.yml/runs?" not in path:
+                        return {"workflow_runs": []}
+                    from urllib.parse import parse_qs, urlsplit
+                    query = parse_qs(urlsplit(path).query)
+                    self.assertEqual(query.get("event"), ["pull_request"])
+                    page = int(query.get("page", [1])[0])
+                    return {"workflow_runs": [dict(self.run, id=1000 + page * 10 + i, run_attempt=1,
+                        conclusion="cancelled" if cancelled or page == 1 and i < 8 else "failure") for i in range(10)]}
+                api.repo.side_effect = response
+                api.pages.side_effect = lambda path, collection, **query: ([] if path == "actions/runs" else
+                    own_jobs if "/902/" in path else [{"id": int(path.split("/")[2]), "name": "ui-iphone-scoped-a",
+                        "status": "completed", "conclusion": "success", "runner_id": 1, "labels": ["macos-15"],
+                        "started_at": now.isoformat(), "completed_at": (now + timedelta(seconds=600)).isoformat()}])
+                result = queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"])
+                lists = [call for call in api.repo.call_args_list if "ci-ui.yml/runs?" in call.args[0]]
+                self.assertEqual(len(lists), 3 if cancelled else 2)
+                sampled = [call for call in api.pages.call_args_list if "actions/runs/10" in call.args[0]]
+                self.assertEqual(len(sampled), 0 if cancelled else 10)
+                self.assertEqual(result["duration_history"], {} if cancelled else {"ui-iphone-scoped": [600] * 10})
 
     def test_job_phases_share_the_runner_job_deadline_and_leave_upload_time(self):
         import json
@@ -756,14 +815,16 @@ class GroupProducerTests(unittest.TestCase):
                    "name": "ui-iphone-scoped-a", "created_at": "2026-10-09T23:59:00Z"}
         history = dict(running[0], id=9, status="completed", conclusion="success", started_at="2026-10-09T23:00:00Z",
                        completed_at="2026-10-09T23:45:00Z")
-        api = Mock()
+        api = Mock(repository=self.identity["repository"])
         gate = {"id": 902, "run_attempt": 1, "head_sha": self.run["head_sha"], "path": ".github/workflows/ci-gate.yml"}
         archive = {"id": 8, "name": "build-ios", "status": "completed", "conclusion": "success", "labels": ["xcode-27"]}
         unit = dict(archive, id=10, name="unit-ios")
         def response(path):
             if path.startswith("actions/runs?"):
                 return {"workflow_runs": [{"id": 903, "run_attempt": 1, "name": "ci-publish"}]}
-            return {"workflow_runs": [gate] if "head_sha=" in path else [{"id": 901, "run_attempt": 1, "name": "ci-gate"}]}
+            return {"workflow_runs": [gate] if "head_sha=" in path else
+                [dict(self.run, id=901, run_attempt=1, path=".github/workflows/" + path.split("/")[2],
+                      event="pull_request" if "ci-ui.yml" in path else "push", conclusion="success")]}
         api.repo.side_effect = response
         api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
             [{"id": 900, "run_attempt": 1}, {"id": 123, "run_attempt": 2}] if path == "actions/runs" else
@@ -783,6 +844,19 @@ class GroupProducerTests(unittest.TestCase):
         queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"], history=cached)
         self.assertFalse(any("status=success" in call.args[0] or "status=completed" in call.args[0]
                              for call in api.repo.call_args_list))
+        for group, device in (("ios", "ipad"), ("tvos", "appletv")):
+            with self.subTest(capacity_v2_device=device):
+                archive["name"], unit["name"] = "build-" + group, "unit-" + group
+                packing = {"algorithm": "capacity-v2", "capacity": {"device_slots": {"iphone": 1, "ipad": 2, "appletv": 2}},
+                           "estimated_job_seconds": {family: [600] * 3 if family == device else []
+                                                     for family in ("iphone", "ipad", "appletv")}}
+                accelerated = queue_snapshot(api, now, {"packing": packing}, group, producer_run_id=123,
+                                             head_sha=self.run["head_sha"], history=cached)
+                legacy = queue_snapshot(api, now, {"packing": dict(packing, algorithm="legacy")}, group,
+                                        producer_run_id=123, head_sha=self.run["head_sha"], history=cached)
+                self.assertEqual(accelerated["seconds"], 3900)
+                self.assertEqual(legacy["seconds"], 4500)
+        archive["name"], unit["name"] = "build-ios", "unit-ios"
         names = ("nightly-strict-ipad-immichSlides-iOS-debug-4", "nightly-strict-ipad-immichSlides-iOS-debug-6",
                  "nightly-strict-iphone-immichSlides-iOS-debug-0", "nightly-strict-tv-immichSlides-tvOS-debug-0",
                  "live-unit (ios)", "live-unit (tvos)", "live-build (tvos)", "ci-p2-review", "ci-probe", "ci-strict-tracer")

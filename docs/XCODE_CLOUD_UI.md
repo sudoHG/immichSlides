@@ -129,15 +129,23 @@ base's `scripts/ci-ui-durations.json`, default-plan population and static shard
 assignments, with the same device startup overhead as trusted packing. Static
 jobs use their shard estimate; scoped jobs use the median of at most 100 successful
 assigned scoped jobs for their device family (iPhone, iPad or Apple TV), sampled
-from the ten most recent completed `ci-ui` runs. A run's aggregate failure or
-cancellation does not discard its successful jobs; failed, skipped, unassigned
-and non-macOS jobs are excluded.
+from the ten most recent trusted, non-cancelled PR `ci-ui` runs found within
+three pages of ten completed PR runs. Aggregate failure does not discard a
+run's successful jobs; cancelled runs and failed, skipped, unassigned or
+non-macOS jobs are excluded. Main-push runs are not queried for scoped samples.
+All four sampled workflows (`ci-gate`, `ci-ui`, `ci-nightly`, `ci-toolchain`)
+require the run and head repositories to equal this repository, the exact
+expected workflow path, and a `pull_request` or `push` event before reading
+jobs. Fork runs cannot supply scoped or non-UI duration samples. The other
+three workflows retain their three-successful-run window.
+At peak load the bounded PR window often contains no eligible iPhone/iPad
+samples, even after excluding cancelled runs; the estimate then uses the floor.
 Without scoped samples, the estimate uses the 120-second floor instead of
 packing's 28-minute cap, generally shortening the GitHub forecast. Unknown static shard suffixes use
 the device family's largest static shard. These are predictions for another
 PR's unknown selection; scoped medians reflect earlier jobs, not this PR's runtime. Skipped jobs and unexpanded UI
 template names cannot remove this model. Non-UI jobs use successful job duration
-p90s from the same ten completed `ci-ui` runs and at most three recent successful
+p90s from the same bounded non-cancelled PR `ci-ui` runs and at most three recent successful
 runs of each of `ci-gate`, `ci-nightly` and `ci-toolchain`;
 publisher/privacy runs cannot displace these samples.
 Any macOS job without duration samples, including nightly, live, review, probe
@@ -146,7 +154,9 @@ shortens the GitHub forecast, but 120 seconds is not a strict lower bound for ev
 job (for example, admission and planning can finish sooner). The forecast and
 two-minute comparison margin cannot guarantee that missing samples never increase
 Cloud spending; record measured routing outcomes before activation.
-Per-device UI caps are two iPhone, one iPad and one Apple TV. A queue job without
+Per-device UI caps come from the trusted selection through `ui_capacities`:
+capacity-v2 permits up to two slots per device and at most five in total;
+legacy selections retain two iPhone, one iPad and one Apple TV. A queue job without
 known labels or fewer than five assigned macOS jobs keeps GitHub.
 Account-wide free slots and exact FIFO order are not exposed; predictions state
 this limit. The newest same-head `ci-gate` run supplies the archive dependency:
@@ -211,6 +221,10 @@ This is a request-count replay, not an activated Actions-token measurement or a
 routing forecast: historical job names predate the scheduler, older waiting runs
 are outside the capture, and no Cloud route attempts existed at that peak. The
 recent ten completed UI runs had no eligible scoped samples in this capture.
+This measurement predates the non-cancelled PR sampling change: that change can
+add up to two UI run-list requests, while reading jobs only from at most ten
+trusted non-cancelled UI runs. Its job-page cost depends on the selected runs,
+so the historical 43/95 counts are not a fresh measurement of the revised sampler.
 Replaying the new early-refusal branch with the same captured inputs and a supplied
 GitHub-winning forecast made 43 GET calls (queue only), down from 95 before that
 branch: 989 instead of 2,185 GET calls/hour at the peak's 23 preparations/hour.

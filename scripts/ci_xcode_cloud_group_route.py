@@ -30,6 +30,8 @@ SCAN_RATE_RESERVE = 200
 # receipts in both checks and look up their admission/producer.
 SCAN_REQUESTS_UNMARKED = 1
 SCAN_REQUESTS_PER_ATTEMPT = 16
+UI_HISTORY_RUNS = 10
+UI_HISTORY_PAGES = 3
 CLOCK_SKEW_SECONDS = 10
 
 
@@ -86,8 +88,24 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
         # Publishers and privacy runs dominate repository-wide history. Query
         # only macOS producers, once under the account lock, with bounded samples.
         for workflow in ("ci-gate.yml", "ci-ui.yml", "ci-nightly.yml", "ci-toolchain.yml"):
-            query = "status=completed&per_page=10" if workflow == "ci-ui.yml" else "status=success&per_page=3"
-            recent = api.repo("actions/workflows/" + workflow + "/runs?" + query)["workflow_runs"]
+            ui_history = workflow == "ci-ui.yml"
+            limit, recent = UI_HISTORY_RUNS if ui_history else 3, []
+            for page in range(1, (UI_HISTORY_PAGES if ui_history else 1) + 1):
+                query = (f"status=completed&event=pull_request&per_page={limit}&page={page}" if ui_history
+                         else "status=success&per_page=3")
+                rows = api.repo("actions/workflows/" + workflow + "/runs?" + query)["workflow_runs"]
+                for run in rows:
+                    if ((run.get("repository") or {}).get("full_name") != api.repository
+                            or (run.get("head_repository") or {}).get("full_name") != api.repository
+                            or run.get("path") != ".github/workflows/" + workflow
+                            or run.get("event") not in {"pull_request", "push"}
+                            or ui_history and (run["event"] != "pull_request" or run.get("conclusion") == "cancelled")):
+                        continue  # Untrusted workflows cannot influence a Cloud spending decision.
+                    recent.append(run)
+                    if len(recent) == limit:
+                        break
+                if len(recent) == limit or len(rows) < limit:
+                    break
             for run in recent:
                 for job in api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"):
                     if job["id"] in seen or job["conclusion"] != "success" or not job.get("runner_id"):
@@ -123,8 +141,10 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
     require(gates, "this head has no GitHub gate for an archive forecast")
     gate = max(gates, key=lambda run: run["id"])
     own_jobs = api.pages(f"actions/runs/{gate['id']}/attempts/{gate['run_attempt']}/jobs", "jobs")
+    from ci_publish_git import ui_capacities
+    capacities = ui_capacities({"selection": selection})
     result = github_estimate(jobs, now, seconds, history=history,
-        matrix_cap={device: 2 if device == "iphone" else 1 for device in seconds}, gate=dict(gate, jobs=own_jobs), platform=group)
+        matrix_cap={device: capacities[device] for device in seconds}, gate=dict(gate, jobs=own_jobs), platform=group)
     return dict(result, duration_history=history, duration_model="base-static-ui-scoped-median-non-ui-p90-or-floor",
                 ui_duration_base_sha=base_sha if static_jobs else None)
 
