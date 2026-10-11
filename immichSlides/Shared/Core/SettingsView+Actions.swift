@@ -1,5 +1,7 @@
 import SwiftUI
 
+// Shared settings actions keep the platform-specific settings hosts synchronized.
+
 extension SettingsView {
     func openFilterEditor() {
         shouldShowFullScreenFilterEditor = true
