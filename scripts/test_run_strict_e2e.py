@@ -94,6 +94,59 @@ from run_strict_e2e_test_configuration_cases import StrictE2ERunnerTestsCasesCon
 from run_strict_e2e_test_evidence_cases import StrictE2ERunnerTestsCasesEvidence
 
 class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunnerTestsCasesEvidence, unittest.TestCase):
+    def test_service_startup_accepts_slow_health_but_preserves_failure_checks(self):
+        import strict_e2e_runner_support as support
+        from urllib.error import HTTPError
+
+        for state in ("slow", "health-delay", "missing", "invalid", "unhealthy", "connection", "pid", "exited", "late"):
+            with self.subTest(state=state):
+                clock = [0.0]
+                ready = mock.Mock()
+                ready.is_file.side_effect = lambda: state != "missing" and (state != "slow" or clock[0] >= 20)
+                ready.read_text.return_value = "invalid" if state == "invalid" else json.dumps({
+                    "pid": 8 if state == "pid" else 7, "host": "127.0.0.1", "port": 1234,
+                })
+                process = mock.Mock(pid=7)
+                process.poll.return_value = 3 if state == "exited" else None
+                process.returncode = 3 if state == "exited" else None
+                response = mock.MagicMock()
+                response.__enter__.return_value.status = 200
+
+                def request(*args, **kwargs):
+                    self.assertGreater(kwargs["timeout"], 0)
+                    self.assertLessEqual(kwargs["timeout"], 1)
+                    if state == "unhealthy":
+                        raise HTTPError("http://127.0.0.1/healthz", 503, "busy", {}, None)
+                    if state == "connection":
+                        raise OSError("unavailable")
+                    if state == "late":
+                        clock[0] = 61
+                    response.__enter__.return_value.status = 503 if state == "health-delay" and clock[0] < 20 else 200
+                    return response
+
+                with mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                        mock.patch.object(support.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                        mock.patch.object(support.urllib.request, "urlopen", side_effect=request) as query, \
+                        mock.patch("builtins.print") as report:
+                    if state in ("slow", "health-delay"):
+                        self.assertEqual(support.wait_for_service(ready, process), ("127.0.0.1", 1234))
+                        self.assertAlmostEqual(clock[0], 20, delta=.05)
+                        self.assertIn("elapsed=20.0s", report.call_args.args[0])
+                    else:
+                        with self.assertRaises(CommandError) as error:
+                            support.wait_for_service(ready, process)
+                        if state in ("pid", "exited"):
+                            self.assertIn("PID" if state == "pid" else "exit 3", str(error.exception))
+                            query.assert_not_called()
+                            self.assertEqual(clock[0], 0)
+                        else:
+                            self.assertGreaterEqual(clock[0], 60)
+                            self.assertLessEqual(clock[0], 61)
+                            self.assertIn("last_state=", str(error.exception))
+                            self.assertIn({"missing": "ready-file-missing", "invalid": "JSONDecodeError",
+                                           "unhealthy": "health-http-503", "connection": "OSError",
+                                           "late": "health-http-200"}[state], str(error.exception))
+
     def test_clean_retry_cannot_hide_first_attempt_request_contract_violation(self):
         from run_strict_e2e import StrictRetryEvidence
         for violation in (

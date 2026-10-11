@@ -17,11 +17,10 @@ import fcntl
 import tempfile
 import threading
 from pathlib import Path
-from urllib.error import URLError
-from urllib.request import urlopen
 
 from strict_e2e_photo_identity import classify_screenshot
 from strict_e2e_server import GLYPHS, PUBLIC_API_KEY, fixture_manifest
+from strict_e2e_runner_support import CommandError, wait_for_service
 from PIL import Image, ImageChops
 
 APP_BUNDLE_ID = "com.331works.immichSlides"
@@ -586,28 +585,16 @@ class Run:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        deadline = time.monotonic() + 10
-        payload = None
-        while time.monotonic() < deadline:
-            require(self.fixture_process.poll() is None, f"Public fixture service exited early: {self.fixture_process.returncode}")
-            if ready_path.is_file():
-                try:
-                    candidate = json.loads(ready_path.read_text(encoding="utf-8"))
-                    require(candidate.get("pid") == self.fixture_process.pid, "fixture ready PID does not match the child process")
-                    with urlopen(f"http://{candidate['host']}:{candidate['port']}/healthz", timeout=1) as response:
-                        if response.status == 200:
-                            payload = candidate
-                            break
-                except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, URLError):
-                    pass
-            time.sleep(.05)
-        require(payload is not None, "Public fixture service health check timed out")
-        self.fixture_url = f"http://{payload['host']}:{payload['port']}/api"
+        try:
+            host, port = wait_for_service(ready_path, self.fixture_process)
+        except CommandError as error:
+            raise ValueError(f"Public fixture service startup failed: {error}") from error
+        self.fixture_url = f"http://{host}:{port}/api"
         self.save("fixture-service.json", {
             "fixture_set": FIXTURE_SET,
             "scenario": FIXTURE_SCENARIO,
             "server_url": self.fixture_url,
-            "pid": payload["pid"],
+            "pid": self.fixture_process.pid,
             "fixture_sha256": manifest["fixture_sha256"],
         })
 

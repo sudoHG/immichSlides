@@ -71,6 +71,20 @@ rejected in that default mode. Explicit shard DerivedData is retained
 until its owner finishes all cases. Package resolution stays locked and simulator
 signing stays **Sign to Run Locally**, verified as `adhoc` by `codesign` after warm-up.
 
+## Fixture service startup
+
+Fixture service startup uses a separate 60-second infrastructure budget, shared
+by the strict, fixture UI, access-lifecycle and iPad pause host runners. It
+requires the ready file to identify the spawned child and `/healthz` to return
+HTTP 200; child exit or a mismatched PID fails immediately. Health requests are
+capped at one second and the remaining startup budget. Success logs seconds to
+healthy; timeout reports elapsed time and the last ready-file/HTTP/error state,
+without logging response bodies or addresses. This replaces the ten-second wait
+that failed on [the hosted iPhone probe](https://github.com/sudoHG/immichSlides/actions/runs/38122386215/job/114420489109)
+after simulator preparation succeeded. Sixty seconds provides bounded startup
+headroom; the actual delayed recovery time was not recorded. Test and product
+deadlines are unchanged, and an unhealthy service still fails the run.
+
 ## Shared simulator reset
 
 Strict, fixture UI, listed-retry and standalone access runners share
