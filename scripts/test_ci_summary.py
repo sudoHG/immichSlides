@@ -2,6 +2,7 @@
 
 import copy
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -39,7 +40,191 @@ def valid_summary():
     }
 
 
+def discovery_summary():
+    summary = valid_summary()
+    summary.update(schema_version=2, identity={"schema_version": 1, "event": "pull_request",
+        "repository": "sudoHG/immichSlides", "pull_request": 1, "base_sha": "a" * 40,
+        "head_sha": "b" * 40, "merge_sha": "c" * 40, "tree_sha": "d" * 40})
+    summary["source"].update(event="pull_request", workflow_path=".github/workflows/ci-ui.yml")
+    summary["run"] = {"id": "123", "attempt": 1, "tier": "ui", "job": "ui-iphone", "shard": "scoped-a"}
+    entry = ci_summary.test_identity("ui", "SettingsUITests/testOpen", platform="ios", device="iphone")
+    summary["population"].update(declared=[entry], compiled=[entry],
+        observed=[ci_summary.observation(entry, "passed", 1)])
+    summary["hashes"]["manifests"]["ui-scoped-plan"] = "e" * 64
+    summary["compiled_evidence"] = {"schema_version": 1, "mode": "official-result-discovery-v1",
+        "identity": copy.deepcopy(summary["identity"]), "run": dict(summary["run"]), "plan_sha256": "e" * 64,
+        "device_id": "target", "first_exit_code": 0,
+        "official_tests": {"devices": [{"deviceId": "target", "modelName": "iPhone 17", "platform": "iOS Simulator"}],
+            "testNodes": [{"nodeType": "UI test bundle", "name": "immichSlidesUITests", "children": [
+                {"nodeType": "Test Case", "nodeIdentifier": entry["key"] + "()",
+                 "result": "Passed", "durationInSeconds": 1}]}]}}
+    refresh_discovery_hash(summary)
+    return summary
+
+
+def refresh_discovery_hash(summary):
+    raw = json.dumps(summary["compiled_evidence"], sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    summary["hashes"]["manifests"]["ui-discovery"] = hashlib.sha256(raw).hexdigest()
+
+
 class SummaryContractTests(unittest.TestCase):
+    def test_scoped_official_discovery_requires_bound_complete_compiled_and_executed_population(self):
+        summary = discovery_summary()
+        self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
+        changes = (
+            lambda value: value["compiled_evidence"].update(mode="unknown"),
+            lambda value: value["compiled_evidence"].update(schema_version=True),
+            lambda value: value["compiled_evidence"].update(first_exit_code=True),
+            lambda value: value["compiled_evidence"]["run"].update(attempt=2),
+            lambda value: value["compiled_evidence"]["identity"].update(head_sha="f" * 40),
+            lambda value: value["compiled_evidence"].update(plan_sha256="f" * 64),
+            lambda value: value["compiled_evidence"].update(first_exit_code=65),
+            lambda value: value["compiled_evidence"]["official_tests"]["devices"][0].update(modelName="iPad Pro"),
+            lambda value: value["compiled_evidence"]["official_tests"]["devices"][0].update(deviceId="other"),
+            lambda value: value["compiled_evidence"]["official_tests"]["testNodes"][0].update(children=[]),
+            lambda value: value["compiled_evidence"]["official_tests"]["testNodes"][0].update(name="immichSlidesTests"),
+            lambda value: value["population"].update(compiled=[]),
+            lambda value: value["population"].update(observed=[]),
+        )
+        for mutate in changes:
+            bad = copy.deepcopy(summary)
+            mutate(bad)
+            refresh_discovery_hash(bad)
+            with self.subTest(mutate=mutate), self.assertRaises(ci_summary.ContractError):
+                ci_summary.parse_summary(bad)
+        bad = copy.deepcopy(summary)
+        bad["compiled_evidence"]["official_tests"]["testNodes"][0]["children"].append(
+            copy.deepcopy(bad["compiled_evidence"]["official_tests"]["testNodes"][0]["children"][0]))
+        refresh_discovery_hash(bad)
+        with self.assertRaises(ci_summary.ContractError):
+            ci_summary.parse_summary(bad)
+        from ci_ui_discovery import MAX_EXPORT_BYTES, MAX_EXPORT_DEPTH, MAX_EXPORT_NODES
+        nested = None
+        for _ in range(MAX_EXPORT_DEPTH + 1):
+            nested = {"child": nested}
+        for padding in ("x" * (MAX_EXPORT_BYTES + 1), [None] * (MAX_EXPORT_NODES + 1), nested):
+            bad = copy.deepcopy(summary)
+            bad["compiled_evidence"]["official_tests"]["padding"] = padding
+            refresh_discovery_hash(bad)
+            with self.subTest(padding_type=type(padding).__name__), self.assertRaises(ci_summary.ContractError):
+                ci_summary.parse_summary(bad)
+        bad = copy.deepcopy(summary)
+        bad["hashes"]["manifests"]["ui-discovery"] = "f" * 64
+        with self.assertRaises(ci_summary.ContractError):
+            ci_summary.parse_summary(bad)
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "summary.json"
+            record.write_text(json.dumps(bad))
+            result = subprocess.run([sys.executable, str(Path(ci_summary.__file__)), str(record)],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 1)
+            self.assertTrue(result.stdout.startswith("FAIL:"), result)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_incomplete_official_discovery_writes_fail_only_diagnostics_with_raw_first_exit(self):
+        from run_fixture_ui_tests import write_fixture_summary
+        missing = ci_summary.test_identity("ui", "SettingsUITests/testMissing", platform="ios", device="iphone")
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        for code, export in ((1, "partial"), (65, "partial-unread"), (65, "empty"), (124, "missing")):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                summary = discovery_summary()
+                summary["status"] = "failed"
+                summary["compiled_evidence"]["first_exit_code"] = code
+                summary["population"]["declared"].append(missing)
+                if export == "empty":
+                    summary["compiled_evidence"]["official_tests"]["testNodes"][0]["children"] = []
+                    summary["population"]["compiled"] = []
+                    summary["population"]["observed"] = []
+                elif export == "missing":
+                    summary["compiled_evidence"]["official_tests"] = None
+                    summary["population"]["compiled"] = []
+                    summary["population"]["observed"] = []
+                elif export == "partial-unread":
+                    summary["population"]["compiled"] = []
+                    summary["population"]["observed"] = []
+                self.assertEqual(write_fixture_summary(summary, Path(directory)), code)
+                saved = ci_summary.parse_summary((Path(directory) / "summary.json").read_text())
+                undiscovered = [entry for entry in saved["population"]["observed"]
+                                if entry["identity"] not in saved["population"]["compiled"]]
+                self.assertTrue(undiscovered)
+                self.assertEqual({entry["outcome"] for entry in undiscovered}, {"timed-out" if code == 124 else "not-run"})
+                self.assertEqual({entry["attempts"][0]["exit_code"] for entry in undiscovered}, {code})
+                verdict = ci_verdict.evaluate_population(saved, saved["population"]["declared"], policy, environment="fixture")
+                self.assertEqual(verdict["status"], "failed")
+                self.assertEqual(sorted(map(ci_summary.identity_key, verdict["missing_compiled"])),
+                                 sorted(ci_summary.identity_key(entry["identity"]) for entry in undiscovered))
+                def claim_missing_passed(value):
+                    entry = value["population"]["observed"][-1]
+                    entry["outcome"] = entry["attempts"][0]["outcome"] = "passed"
+                    entry["attempts"][0]["exit_code"] = 0
+                for mutate in (lambda value: value.update(status="passed"),
+                               lambda value: value["compiled_evidence"].update(first_exit_code=0),
+                               lambda value: value["population"]["compiled"].append(missing),
+                               claim_missing_passed,
+                               lambda value: value["population"]["observed"][-1]["attempts"][0].update(exit_code=0)):
+                    bad = copy.deepcopy(saved)
+                    mutate(bad)
+                    refresh_discovery_hash(bad)
+                    with self.subTest(mutate=mutate), self.assertRaises(ci_summary.ContractError):
+                        ci_summary.parse_summary(bad)
+
+    def test_official_discovery_cannot_cover_nightly_full_or_deselected_tests(self):
+        for mutate in (lambda value: value["run"].update(shard="visual-a"),
+                       lambda value: value["source"].update(workflow_path=".github/workflows/ci-nightly.yml"),
+                       lambda value: value["population"]["deselected"].append({
+                           "identity": value["population"]["declared"][0], "reason": "not runnable", "owning_tier": "nightly"})):
+            bad = discovery_summary()
+            mutate(bad)
+            bad["compiled_evidence"]["run"] = dict(bad["run"])
+            refresh_discovery_hash(bad)
+            with self.subTest(mutate=mutate), self.assertRaises(ci_summary.ContractError):
+                ci_summary.parse_summary(bad)
+
+    def test_official_discovery_retains_first_failure_raw_exit_and_expected_skip(self):
+        for result, outcome, code in (("Failed", "failed", 65), ("Skipped", "skipped", 0)):
+            summary = discovery_summary()
+            summary['compiled_evidence']['first_exit_code'] = code
+            case = summary['compiled_evidence']['official_tests']['testNodes'][0]['children'][0]
+            case['result'] = result
+            summary['population']['observed'] = [ci_summary.observation(summary['population']['declared'][0],
+                outcome, 1, exit_code=code, reason='Official XCTest ' + result)]
+            summary['status'] = 'failed' if code else 'passed'
+            refresh_discovery_hash(summary)
+            with self.subTest(result=result):
+                self.assertEqual(ci_summary.parse_summary(summary), summary)
+            def change_consistent_duration(value):
+                observed = value['population']['observed'][0]
+                observed['duration_seconds'] = observed['attempts'][0]['duration_seconds'] = 2
+            for mutate in (lambda value: value['population']['observed'][0]['attempts'][0].update(exit_code=1),
+                           change_consistent_duration,
+                           lambda value: value['compiled_evidence'].update(first_exit_code=0 if code else 65)):
+                bad = copy.deepcopy(summary)
+                mutate(bad)
+                refresh_discovery_hash(bad)
+                with self.subTest(result=result, mutate=mutate), self.assertRaises(ci_summary.ContractError):
+                    ci_summary.parse_summary(bad)
+
+    def test_host_platform_parts_preserve_every_identity_once(self):
+        from run_host_checks import MACOS_PYTHON_TESTS, host_partition
+        population = [ci_summary.test_identity("host", name) for name, _ in run_host_checks.HOST_CHECKS]
+        population += [ci_summary.test_identity("python", key) for key in MACOS_PYTHON_TESTS]
+        population.append(ci_summary.test_identity("python", "test_example.ExampleTests.testPortable"))
+        linux, macos = (host_partition(population, scope) for scope in ("linux", "macos"))
+        key = ci_summary.identity_key
+        self.assertFalse(set(map(key, linux)) & set(map(key, macos)))
+        self.assertEqual(sorted(map(key, population)), sorted(map(key, linux + macos)))
+        self.assertEqual({entry["key"] for entry in macos}, {"swift-format lint", *MACOS_PYTHON_TESTS})
+        removed = [entry for entry in population if entry["key"] not in MACOS_PYTHON_TESTS]
+        renamed = removed + [ci_summary.test_identity("python", "test_example.ExampleTests.testRenamedSwiftCase")]
+        for entries in (removed, renamed):
+            parts = [host_partition(entries, scope) for scope in ("linux", "macos")]
+            self.assertEqual(sorted(map(key, entries)), sorted(map(key, parts[0] + parts[1])))
+            self.assertEqual({entry["key"] for entry in parts[1]}, {"swift-format lint"})
+        for entries, scope in ((population, "unknown"), (population + population[:1], "linux"),
+                               ([entry for entry in population if entry["key"] != "workflow policy"], "linux")):
+            with self.subTest(scope=scope), self.assertRaises(ci_summary.ContractError):
+                host_partition(entries, scope)
+
     def test_current_summary_round_trips_and_names_failures_in_markdown(self):
         summary = valid_summary()
         self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)

@@ -201,6 +201,11 @@ The `ci-ui.yml` producer activates the reader's protocol with the literal
 The reader landed separately before this producer. Historical unflagged runs
 retain their original contract. No assertions, skips, deadlines or default plans change.
 
+The [prepared acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
+adds a separately activated five-slot planner, exact official-result discovery and
+Linux/macOS host partition. Current producers retain the existing planner,
+preliminary compiled enumeration and host scheduling until that activation lands.
+
 With this intent, selection pairs each changed path's areas with its proven
 platform. An iOS-only settings file selects iPhone/iPad settings and smoke tests;
 a tvOS-only filter file selects Apple TV filter and smoke tests. A mixed diff
@@ -274,6 +279,17 @@ The producer follow-up must publish this plan, carry its exact per-job selectors
 and avoid waiting for or downloading an unselected platform's gate archive.
 Archive identity and signature checks remain mandatory for every selected platform.
 An earlier build with a different head/base/tree cannot supply a cache shortcut.
+
+The [prepared acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
+requires official-result discovery intent on every shard command before admitting
+`capacity-v2`. A shard with an approved base fixture deselection keeps version 1
+and preliminary enumeration. An eligible shard with an incomplete first invocation
+can write a fail-only version 2 record: compiled equals the discovered subset,
+all undiscovered methods remain `not-run` or `timed-out`, and their attempts retain
+the nonzero raw first exit. A missing export is recorded as `null`. The final writer
+keeps the diagnostics, while the verdict reports missing compiled identities and
+fails. These reader capabilities do not activate the producer or establish a
+30-minute acceptance result.
 
 ### Nightly-default locale screenshots
 

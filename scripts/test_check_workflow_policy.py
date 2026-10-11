@@ -337,6 +337,50 @@ final class LocaleUITests: XCTestCase {
             with self.subTest(mutation=mutation):
                 self.assertIn('ui-shards', self.rules(bad, path))
 
+    def test_accelerated_ui_capacity_only_accepts_independent_trusted_outputs(self):
+        from ci_publish_git import UI_CAPACITIES
+        path = '.github/workflows/ci-ui.yml'
+        document = yaml.load((Path(__file__).parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+        owner = 'selection' if 'selection' in document['jobs'] else 'archive'
+        expressions = UI_CAPACITIES[owner]
+        for step in document['jobs'][owner]['steps']:
+            if 'run' in step:
+                step['run'] = step['run'].replace('--pack-scoped-ui', '--pack-scoped-ui --scoped-ui-v2')
+        for device, expression in expressions.items():
+            document['jobs'][device + '-shards']['strategy']['max-parallel'] = expression
+            name = device + '_capacity'
+            document['jobs'][owner]['outputs'][name] = '${{ steps.select.outputs.' + name + ' }}'
+            for step in document['jobs'][device + '-shards']['steps']:
+                if 'run' in step:
+                    step['run'] = step['run'].replace('ci_ui_tests.py run ',
+                        'ci_ui_tests.py run --compiled-from-official-results ')
+        self.assertNotIn('ui-capacity', self.rules(document, path))
+        for mutation in ('wrong-device', 'arbitrary', 'literal-six', 'unbound-output', 'outside-strategy',
+                         'missing-intent', 'missing-discovery'):
+            bad = copy.deepcopy(document)
+            strategy = bad['jobs']['iphone-shards']['strategy']
+            if mutation == 'wrong-device':
+                strategy['max-parallel'] = expressions['ipad']
+            elif mutation == 'arbitrary':
+                strategy['max-parallel'] = '${{ fromJSON(needs.archive.outputs.capacity) }}'
+            elif mutation == 'literal-six':
+                for device in expressions:
+                    bad['jobs'][device + '-shards']['strategy']['max-parallel'] = 2
+            elif mutation == 'unbound-output':
+                del bad['jobs'][owner]['outputs']['iphone_capacity']
+            elif mutation == 'outside-strategy':
+                bad['jobs']['iphone-shards']['env'] = {'UNTRUSTED': expressions['iphone']}
+            elif mutation == 'missing-discovery':
+                for step in bad['jobs']['iphone-shards']['steps']:
+                    if 'run' in step:
+                        step['run'] = step['run'].replace(' --compiled-from-official-results', '')
+            else:
+                for step in bad['jobs'][owner]['steps']:
+                    if 'run' in step:
+                        step['run'] = step['run'].replace(' --scoped-ui-v2', '')
+            with self.subTest(mutation=mutation):
+                self.assertIn('ui-capacity', self.rules(bad, path))
+
     def test_ui_matrix_cannot_omit_a_manifest_partition_or_unbind_its_selection(self):
         from ci_publish_git import DYNAMIC_UI_SHARDS
         from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest

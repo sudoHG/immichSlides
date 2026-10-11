@@ -347,6 +347,17 @@ def write_json(path, payload):
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def write_fixture_summary(summary, output):
+    diagnostic_exit = None
+    if summary["schema_version"] == 2:
+        from ci_ui_discovery import retain_incomplete_discovery
+        retain_incomplete_discovery(summary)
+        if len(summary["population"]["compiled"]) < len(summary["population"]["declared"]):
+            diagnostic_exit = summary["compiled_evidence"]["first_exit_code"]
+    write_summary(summary, output)
+    return diagnostic_exit
+
+
 def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, mode="measure", listed_only_retry=False,
                    scoped_plan_sha256=None):
     """Bind static evidence before simulator, service, archive or Xcode preflight."""
@@ -378,10 +389,12 @@ def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, 
     if listed_only_retry:
         revision = registry_revision(root, os.environ)
         registry, hashes["policies"]["known-flaky"] = load_registry(root, revision)
+    from ci_ui_discovery import discovery_eligible
     return {"hashes": hashes, "population": {"declared": declared, "compiled": [], "observed": [],
             "deselected": [{key: value for key, value in entry.items() if key not in {"tier", "environment"}}
                            for entry in deselections], "removed_by_pr": []},
-            "policy": policy, "deselections": deselections, "registry": registry, "registry_revision": revision}
+            "policy": policy, "deselections": deselections, "registry": registry, "registry_revision": revision,
+            "official_discovery_eligible": discovery_eligible(declared, policy)}
 
 
 def main(argv=None):
@@ -659,14 +672,14 @@ def main(argv=None):
                              f"{row['duration_seconds']:.2f} | {(row['reason'] or '').replace('|', '/').replace(chr(10), ' ')} |\n"
                              for row in rows)
             (output / "fixture-coverage.md").write_text(table)
-            write_summary(summary, output)
+            code = write_fixture_summary(summary, output) or code
             try:
                 write_sensitive_scan(output, [PUBLIC_API_KEY])
             except (OSError, ValueError, CommandError) as error:
                 code = code or 1
                 summary["status"] = "failed"
                 summary["infrastructure"].append({"code": "sensitive-scan-failed", "message": str(error)[:200]})
-                write_summary(summary, output)
+                write_fixture_summary(summary, output)
             failures = []
             for number, path in reversed(list(enumerate(bundles, 1))):
                 disposal_output = output if number == 1 else output / ("disposal-attempt-" + str(number))
@@ -676,7 +689,7 @@ def main(argv=None):
                 code = code or 1
                 summary["status"] = "failed"
                 summary["infrastructure"].append({"code": "cleanup-failed", "message": "Private bundle disposal failed"})
-                write_summary(summary, output)
+                write_fixture_summary(summary, output)
             print(f"Fixture UI: {summary['status']} ({len(rows)} per-test rows), exit {code}", flush=True)
     return code
 

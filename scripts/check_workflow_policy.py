@@ -498,12 +498,13 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
         if any(isinstance(key, str) and key.startswith("CI_APP_") for key in document["env"]):
             flag("env", "publisher-credential", "App credentials cannot be inherited from workflow environment")
     if path == ".github/workflows/ci-ui.yml":
-        from ci_publish_git import scoped_packing_intent
+        from ci_publish_git import UI_CAPACITIES, scoped_acceleration_intent, scoped_packing_intent
         try:
             packed = scoped_packing_intent(source)
+            accelerated = scoped_acceleration_intent(source)
         except ValueError as error:
             flag("jobs", "ui-shards", str(error))
-            packed = False
+            packed, accelerated = False, False
         split_ios = "iphone-shards" in jobs or "ipad-shards" in jobs
         if packed and ("shards" in jobs or not all(key in jobs for key in ("iphone-shards", "ipad-shards"))):
             flag("jobs", "ui-shards", "Packed UI requires separate iPhone and iPad matrices bound to their device outputs")
@@ -512,11 +513,27 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                       if isinstance(jobs.get(name), dict)]
         capacities = [strategy.get("max-parallel") if isinstance(strategy, dict) else None
                       for strategy in strategies]
-        if (len(capacities) != len(ui_keys) or split_ios and "shards" in jobs
+        if accelerated:
+            # These are names, not evaluated expressions. Admission replaces
+            # them with base-owned limits whose sum is bounded by five.
+            if len(capacities) != 3 or not split_ios or "shards" in jobs:
+                flag("jobs", "ui-capacity", "Accelerated UI needs three independent device capacities")
+            for device in ("iphone", "ipad", "appletv"):
+                job = jobs.get(device + "-shards", {})
+                strategy = job.get("strategy", {}) if isinstance(job, dict) else {}
+                capacity = strategy.get("max-parallel") if isinstance(strategy, dict) else None
+                phases = [phase for phase, values in UI_CAPACITIES.items() if capacity == values[device]]
+                outputs = jobs.get(phases[0], {}).get("outputs", {}) if len(phases) == 1 else {}
+                name = device + "_capacity"
+                if (len(phases) != 1 or source.count(capacity) != 1
+                        or outputs.get(name) != "${{ steps.select.outputs." + name + " }}"):
+                    flag(f"jobs.{device}-shards.strategy.max-parallel", "ui-capacity",
+                         "Accelerated capacity must bind its own device's trusted selection output")
+        elif (len(capacities) != len(ui_keys) or split_ios and "shards" in jobs
                 or any(type(capacity) is not int or capacity <= 0 for capacity in capacities)
                 or sum(capacities) > 4):
             flag("jobs", "ui-capacity", "Independent UI matrices need positive literal capacities totaling at most four")
-        if packed:
+        if packed and not accelerated:
             from ci_ui_packing import DEVICE_SLOTS
             for device, expected in DEVICE_SLOTS.items():
                 job_id = device + "-shards"
