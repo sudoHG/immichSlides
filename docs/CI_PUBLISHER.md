@@ -549,8 +549,14 @@ infrastructure failure instead of aborting before statuses are written. Admissio
 approval and test outcomes remain unchanged. [CI reporting](CI_REPORT.md) keeps daily history and
 PR summaries, tracks nightly failures and notifies main-push failures with issue-write.
 
-GitHub GET reads make at most three attempts within the original request timeout
-(45 seconds by default). Connection resets, EOF/TLS failures and HTTP 5xx use
+Only the publisher's read client opts into bounded retries and safe request/artifact
+exception conversion. Other shared-client callers retain their original exception
+types and retry policies: Cloud and UI archive waits own their existing deadlines,
+router/importer/dispatcher clients fail immediately on a rate-limited 403, and
+the CI reporter's HTTP request budget is unchanged.
+
+The publisher's GitHub GET reads make at most three attempts within the original
+request timeout (45 seconds by default). Connection resets, EOF/TLS failures and HTTP 5xx use
 one- then two-second waits. A secondary rate limit is retried only with a numeric
 `Retry-After` that fits the remaining budget, including a one-second margin.
 Each attempt receives only the remaining time; the workflow's existing deadline

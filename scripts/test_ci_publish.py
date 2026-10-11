@@ -465,19 +465,23 @@ class PublisherTests(unittest.TestCase):
                                 (refusal(403, X_RateLimit_Remaining="0", X_RateLimit_Reset=reset), 120),
                                 (refusal(403, b'{"message": "You have exceeded a secondary rate limit."}'), 60),
                                 (refusal(429), 60)):
-            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener, patch("ci_publish.time.sleep"):
+            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener, patch("ci_publish.time.sleep") as sleep:
                 opener.return_value.open.side_effect = error
                 with self.assertRaises(RateLimited) as caught:
                     client.request("/repos/owner/repo/actions/runs")
+                self.assertEqual(opener.return_value.open.call_count, 1)
+                sleep.assert_not_called()
             self.assertAlmostEqual(expected, caught.exception.wait_seconds, delta=2)
             self.assertEqual(f"GitHub API GET refused request (HTTP {error.code})", str(caught.exception))
         for error in (refusal(403), refusal(403, b'{"message": "Resource not accessible by integration"}'),
                       refusal(403, X_RateLimit_Remaining="12"), refusal(404), refusal(500)):
-            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener, patch("ci_publish.time.sleep"):
+            with self.subTest(code=error.code), patch("ci_publish.build_opener") as opener, patch("ci_publish.time.sleep") as sleep:
                 opener.return_value.open.side_effect = error
                 with self.assertRaises(ContractError) as caught:
                     client.request("/repos/owner/repo/actions/runs")
-            self.assertNotIsInstance(caught.exception, RateLimited)
+                self.assertEqual(opener.return_value.open.call_count, 1)
+                sleep.assert_not_called()
+            self.assertIs(type(caught.exception), ContractError)
 
         clock, requests = [0.0], []
         def waiter():
@@ -558,7 +562,7 @@ class PublisherTests(unittest.TestCase):
                     patch("ci_publish.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
                     patch("sys.stdout", new_callable=io.StringIO) as output:
                 opener.return_value.open.side_effect = [error, response]
-                client = GitHub(REPOSITORY, "private-token")
+                client = GitHub(REPOSITORY, "private-token", retry_reads=True)
                 if attempts == 2:
                     self.assertEqual({"ok": True}, client.request("/private-path", method=method, timeout=timeout))
                     self.assertLess(opener.return_value.open.call_args.kwargs["timeout"], timeout)
@@ -575,7 +579,7 @@ class PublisherTests(unittest.TestCase):
                 raise http_error(503)
             opener.return_value.open.side_effect = slow_failure
             with self.assertRaises(ContractError):
-                GitHub(REPOSITORY, "").request("/x", timeout=45)
+                GitHub(REPOSITORY, "", retry_reads=True).request("/x", timeout=45)
             self.assertEqual(3, opener.return_value.open.call_count)
             self.assertEqual([45, 24, 2], [call.kwargs["timeout"] for call in opener.return_value.open.call_args_list])
             self.assertEqual(clock[0], 45)
@@ -584,14 +588,14 @@ class PublisherTests(unittest.TestCase):
                 patch("ci_publish.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, 1000)):
             opener.return_value.open.side_effect = http_error(503)
             with self.assertRaises(ContractError):
-                GitHub(REPOSITORY, "").request("/x", timeout=45)
+                GitHub(REPOSITORY, "", retry_reads=True).request("/x", timeout=45)
             self.assertEqual(1, opener.return_value.open.call_count)
         primary = http_error(403, 2)
         primary.headers["X-RateLimit-Remaining"] = "0"
         with patch("ci_publish.build_opener") as opener, patch("ci_publish.time.sleep") as sleep:
             opener.return_value.open.side_effect = primary
             with self.assertRaises(ContractError):
-                GitHub(REPOSITORY, "").request("/x")
+                GitHub(REPOSITORY, "", retry_reads=True).request("/x")
             self.assertEqual(1, opener.return_value.open.call_count)
             sleep.assert_not_called()
 
@@ -623,7 +627,8 @@ class PublisherTests(unittest.TestCase):
                     return [RUN]
                 return jobs if collection == "jobs" else artifacts
         modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
-        for fault, expected, downloads in (("once", "success", 2), ("persistent", "failure", 3),
+        baseline = None
+        for fault, expected, downloads in (("none", "success", 1), ("once", "success", 2), ("persistent", "failure", 3),
                                             ("missing", "failure", 1), ("contract", "failure", 1)):
             clock, calls = [0.0], []
             def respond(request, **options):
@@ -647,10 +652,15 @@ class PublisherTests(unittest.TestCase):
                     patch("ci_publish.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
                     patch("sys.stdout", new_callable=io.StringIO) as output:
                 opener.return_value.open.side_effect = respond
-                api = RecordedAPI(REPOSITORY, "private-token")
+                api = RecordedAPI(REPOSITORY, "private-token", retry_reads=True)
                 head, statuses, approval = compute(api, 7, "", "generic-app[bot]")
                 self.assertEqual(expected, statuses["ci-pr-gate"]["state"])
                 self.assertEqual(downloads, calls.count(1))
+                if fault == "none":
+                    baseline = statuses
+                elif fault == "once":
+                    self.assertEqual(statuses, baseline)
+                    self.assertTrue(all("failure_diagnostics" not in state for state in statuses.values()))
                 if expected == "failure":
                     detail = statuses["ci-pr-gate"]["failure_diagnostics"][0]
                     self.assertEqual("artifact-decode" if fault == "contract" else "artifact-download", detail["stage"])

@@ -272,12 +272,16 @@ def rate_limit_wait(error):
 
 
 class GitHub:
-    def __init__(self, repository, token, *, response_headers=None):
+    def __init__(self, repository, token, *, response_headers=None, retry_reads=False):
         require(re.fullmatch(r"[\w.-]+/[\w.-]+", repository) is not None, "invalid repository")
         self.repository, self.token = repository, token
         self.response_headers = response_headers
+        self.retry_reads = retry_reads
 
     def request(self, path, *, method="GET", payload=None, binary=False, missing=False, timeout=45):
+        # Other clients own their retry deadlines and depend on the original exception types.
+        if not self.retry_reads:
+            return self._request(path, method=method, payload=payload, binary=binary, missing=missing, timeout=timeout)
         deadline = time.monotonic() + timeout
         last_error = None
         for attempt in range(MAX_GET_ATTEMPTS):
@@ -323,13 +327,19 @@ class GitHub:
             message = f"GitHub API {method} refused request (HTTP {error.code})"
             wait = rate_limit_wait(error)
             if wait is not None:
+                if not self.retry_reads:
+                    raise RateLimited(message, wait) from None
                 retry_after = (error.headers or {}).get("Retry-After", "")
                 secondary = (error.headers or {}).get("X-RateLimit-Remaining") != "0"
                 delay = wait + 1 if secondary and retry_after.isdecimal() else None
                 raise RateLimited(message, wait, http_status=error.code, retry_delay=delay) from None
+            if not self.retry_reads:
+                raise ContractError(message) from None
             raise GitHubRequestError(message, http_status=error.code,
                                      retry_delay=1 if 500 <= error.code <= 599 else None) from None
         except (OSError, EOFError, IncompleteRead, RemoteDisconnected) as error:
+            if not self.retry_reads:
+                raise
             reason = error.reason if isinstance(error, URLError) else error
             transient = (isinstance(reason, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError,
                                              ssl.SSLError, EOFError, IncompleteRead, RemoteDisconnected))
@@ -446,6 +456,8 @@ def json_member(api, artifact, filename, *, optional=False):
             require(not optional or value is not None, "optional artifact member cannot be null")
             return value
     except (ContractError, KeyError, ValueError, TypeError, OSError, EOFError, zipfile.BadZipFile) as error:
+        if getattr(api, "retry_reads", False) is not True:
+            raise
         record_failure(error, stage, [])
         raise ArtifactReadError(error, stage) from None
 
@@ -1044,7 +1056,7 @@ def main():
     parser.add_argument("--app-login", default="")
     args = parser.parse_args()
     environment = os.environ
-    api = GitHub(args.repository, environment.get("GH_TOKEN", environment.get("CI_WORKFLOW_TOKEN", "")))
+    api = GitHub(args.repository, environment.get("GH_TOKEN", environment.get("CI_WORKFLOW_TOKEN", "")), retry_reads=True)
     event = json.loads(Path(environment["GITHUB_EVENT_PATH"]).read_text()) if args.command != "dry-run" else {}
     try:
         if args.command == "dry-run":
