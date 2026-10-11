@@ -555,11 +555,12 @@ per selection and reused in its receipt; run and job metadata remain fresh on ev
 
 With one matching run, one attempt and one page per listing, an unfinished PR
 build costs two setup requests (workflow and PR), then two per poll (runs and
-jobs): 44 requests through 10 minutes, or 80 over a 90-minute timeout, compared
-with 46 under immediate exponential backoff. A ready archive adds three requests
+jobs): 44 requests through 10 minutes, or 116 over the critical-path waits'
+180-minute timeout, compared with 82 under immediate exponential backoff
+(34 additional requests per platform). A ready archive adds three requests
 (artifact listing, build-record ZIP and archive ZIP); pagination, additional runs
 or attempts, and rate-limit retries add requests. Two platform waits therefore
-cost 160 requests for that 90-minute unfinished-build scenario, versus 92 before.
+cost 232 requests for that 180-minute unfinished-build scenario, versus 164 before.
 Polling alone adds at most 30 seconds of discovery delay during the fast window;
 API reads, archive downloads and job scheduling add their own time. Queueing that
 outlasts the fast window can still incur the 300-second interval.

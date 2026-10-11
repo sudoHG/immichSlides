@@ -816,6 +816,12 @@ class BuildArchiveTests(unittest.TestCase):
             with self.subTest(platform=platform_name):
                 self.assertEqual(80, requests_for(platform_name=platform_name, pull_request=True)[0])
                 self.assertEqual(44, requests_for(platform_name=platform_name, pull_request=True, timeout_seconds=600)[0])
+                critical_path_requests = requests_for(platform_name=platform_name, pull_request=True, timeout_seconds=180 * 60)[0]
+                previous_requests = requests_for(platform_name=platform_name, pull_request=True, timeout_seconds=180 * 60,
+                                                 fast_poll_window_seconds=0)[0]
+                self.assertEqual(116, critical_path_requests)
+                self.assertEqual(82, previous_requests)
+                self.assertEqual(34, critical_path_requests - previous_requests)
         self.assertEqual([0, 5], requests_for(timeout_seconds=5)[1])
         self.assertEqual([0, 30, 31], requests_for(timeout_seconds=31)[1])
         # Bounded fast polling remains far below a fixed short cadence for a long wait.
