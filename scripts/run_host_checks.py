@@ -38,6 +38,7 @@ HOST_CHECKS = [
     ("python tests", [sys.executable, "-B", "scripts/run_python_tests.py"]),
 ]
 MACOS_PYTHON_TESTS = frozenset({
+    "test_strict_e2e_filter_contract.DisplayPolicyVisualContractTests.test_swift_capture_candidate_recognizes_public_fit_without_rewriting_evidence",
     "test_strict_e2e_photo_identity.IOSVisualIdentityJSONEncodingTests.test_nil_mark_is_valid_json_object",
 })
 

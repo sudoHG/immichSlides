@@ -224,6 +224,33 @@ class SummaryContractTests(unittest.TestCase):
                                ([entry for entry in population if entry["key"] != "workflow policy"], "linux")):
             with self.subTest(scope=scope), self.assertRaises(ci_summary.ContractError):
                 host_partition(entries, scope)
+        from ci_population import python_identities, python_sources
+        python_identities(python_sources(Path(__file__).parent), macos_python_tests=MACOS_PYTHON_TESTS)
+        macos_key = "test_example.ExampleTests.testMacOS"
+        for decorator in ('skipUnless(sys.platform == "darwin", "macOS")',
+                          'skipIf(sys.platform != "darwin", "macOS")',
+                          'skipUnless("darwin" == sys.platform, "macOS")',
+                          'skipIf(not (sys.platform == "darwin"), "macOS")',
+                          'skipUnless(sys.platform in {"darwin"}, "macOS")',
+                          'skipUnless(IS_MACOS, "macOS")'):
+            sources = {"provider": 'import sys\nimport unittest as checks\n'
+                       'IS_MACOS = sys.platform == "darwin"\n'
+                       'class Cases:\n    @checks.' + decorator + '\n'
+                       '    def testMacOS(self): pass\n',
+                       "test_example": 'import unittest\nfrom provider import Cases\n'
+                       'class ExampleTests(Cases, unittest.TestCase): pass\n'}
+            with self.subTest(decorator=decorator):
+                self.assertEqual(python_identities(sources, macos_python_tests={macos_key}),
+                                 [ci_summary.test_identity("python", macos_key)])
+                with self.assertRaisesRegex(ci_summary.ContractError, macos_key + ".*MACOS_PYTHON_TESTS"):
+                    python_identities(sources, macos_python_tests=set())
+        for decorator in ('skipUnless(sys.platform in {"darwin", "linux"}, "POSIX")',
+                          'skipIf(sys.platform == "darwin", "non-macOS")'):
+            portable = dict(sources, provider=sources["provider"].replace(
+                'skipUnless(IS_MACOS, "macOS")', decorator))
+            with self.subTest(portable=decorator):
+                self.assertEqual(python_identities(portable, macos_python_tests=set()),
+                                 [ci_summary.test_identity("python", macos_key)])
 
     def test_current_summary_round_trips_and_names_failures_in_markdown(self):
         summary = valid_summary()

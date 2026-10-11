@@ -870,6 +870,12 @@ def main(argv=None):
     if not paths:
         print("Workflow policy FAIL: no workflows found", file=sys.stderr)
         return 1
+    from ci_population import python_identities, python_sources
+    from run_host_checks import MACOS_PYTHON_TESTS
+    try:
+        python_identities(python_sources(args.root / "scripts"), macos_python_tests=MACOS_PYTHON_TESTS)
+    except (OSError, UnicodeError, ValueError) as error:
+        violations.append(Violation("scripts/run_host_checks.py", "inventory", "macos-python-tests", str(error)))
     ui_shards = None
     populations = None
     if args.check_ui_shards:
