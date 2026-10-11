@@ -593,6 +593,30 @@ class BuildArchiveTests(unittest.TestCase):
                 selected = ui.select_archive(API(), self.identity, timeout_seconds=1)
             self.assertEqual(selected["artifact_id"], 9)
             self.assertEqual(selected["refusals"][0]["outcome"], "archive-head-repository-mismatch")
+            for platform_name, ready_after in (("ios", 229), ("tvos", 305), ("ios", 599), ("tvos", 599)):
+                with self.subTest(platform=platform_name, ready_after=ready_after):
+                    clock = [0.0]
+                    platform_manifest = dict(manifest, platform=platform_name, producer=dict(manifest["producer"],
+                        artifact_name=ui.artifact_name(platform_name, "123", 1)))
+                    platform_summary = dict(summary, run=dict(summary["run"], job="build-" + platform_name, shard=platform_name))
+                    platform_records = dict(records, name=f"build-{platform_name}-records-123-1")
+                    platform_artifact = dict(artifact, name=ui.artifact_name(platform_name, "123", 1))
+                    def jobs(api, candidate, **options):
+                        self.assertEqual(options["platform_name"], platform_name)
+                        return {"status": "completed" if clock[0] >= ready_after else "in_progress",
+                                "conclusion": "success", "evidence_attempt": 1}
+                    with patch.object(ui.time, "monotonic", side_effect=lambda: clock[0]), \
+                            patch.object(ui.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                            patch.object(ui, "build_job_attempt", side_effect=jobs), \
+                            patch.object(API, "pages", side_effect=lambda path, collection, **filters:
+                                [run] if collection == "workflow_runs" else [platform_records, platform_artifact]), \
+                            patch.object(ui, "json_member", return_value=platform_summary), \
+                            patch.object(ui, "downloaded_archive", return_value=(platform_manifest, "a" * 64)), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        selected = ui.select_archive(API(), self.identity, platform_name=platform_name, timeout_seconds=900)
+                    self.assertGreaterEqual(selected["wait_seconds"], ready_after)
+                    self.assertLessEqual(selected["wait_seconds"] - ready_after, 30)
+                    self.assertEqual(selected["platform"], platform_name)
             for conclusion in ("failure", "cancelled"):
                 with self.subTest(conclusion=conclusion):
                     newer = dict(run, id=124)
@@ -757,29 +781,51 @@ class BuildArchiveTests(unittest.TestCase):
         gate = {"id": 300, "workflow_id": 42, "path": ui.GATE_WORKFLOW, "event": "push", "head_sha": head,
                 "head_branch": "main", "run_attempt": 1, "status": "in_progress", "conclusion": None,
                 "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}}
-        def requests_for(**options):
-            clock, requests = [1000.0], []
+        def requests_for(*, platform_name="ios", pull_request=False, timeout_seconds=90 * 60, **options):
+            clock, requests, polls = [1000.0], [], []
+            wait_identity = self.identity if pull_request else identity
+            run = dict(gate, event=wait_identity["event"], head_sha=wait_identity.get("head_sha", head))
             class API:
                 repository = "owner/repo"
                 def repo(self, path):
                     requests.append(path)
+                    if path.startswith("pulls/"):
+                        return {"head": {"repo": {"full_name": "owner/repo"}}}
                     return {"id": 42, "path": ui.GATE_WORKFLOW, "state": "active"}
                 def pages(self, path, collection, **filters):
                     requests.append(path)
                     if collection == "workflow_runs":
-                        return [gate]
+                        polls.append(clock[0] - 1000.0)
+                        return [run]
                     self.assertNotEqual("artifacts", collection, "artifacts are listed only for a finished build")
-                    return [{"name": "build-ios", "status": "in_progress", "conclusion": None}]
+                    return [{"name": "build-" + platform_name, "status": "in_progress", "conclusion": None}]
                 assertNotEqual = self.assertNotEqual
             with patch.object(ui.time, "monotonic", side_effect=lambda: clock[0]), \
                     patch.object(ui.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
                     contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(ContractError, "archive-unavailable"):
-                ui.select_archive(API(), identity, timeout_seconds=90 * 60, **options)
-            return len(requests)
+                ui.select_archive(API(), wait_identity, platform_name=platform_name, timeout_seconds=timeout_seconds, **options)
+            self.assertEqual(polls[-1], timeout_seconds, "the final sleep must stop at the shared deadline")
+            return len(requests), polls
         # One workflow read, then one run list and one job list per poll.
-        self.assertEqual(45, requests_for())
-        # The former fixed 20-second cadence needs 12 times as many requests, before counting artifact listings.
-        self.assertEqual(543, requests_for(poll_seconds=20, max_poll_seconds=20))
+        requests, polls = requests_for()
+        self.assertEqual(79, requests)
+        self.assertEqual(polls[:21], list(range(0, 601, 30)))
+        self.assertEqual(polls[21:26], [660, 780, 1020, 1320, 1620])
+        self.assertEqual(45, requests_for(fast_poll_window_seconds=0)[0])
+        for platform_name in ("ios", "tvos"):
+            with self.subTest(platform=platform_name):
+                self.assertEqual(80, requests_for(platform_name=platform_name, pull_request=True)[0])
+                self.assertEqual(44, requests_for(platform_name=platform_name, pull_request=True, timeout_seconds=600)[0])
+                critical_path_requests = requests_for(platform_name=platform_name, pull_request=True, timeout_seconds=180 * 60)[0]
+                previous_requests = requests_for(platform_name=platform_name, pull_request=True, timeout_seconds=180 * 60,
+                                                 fast_poll_window_seconds=0)[0]
+                self.assertEqual(116, critical_path_requests)
+                self.assertEqual(82, previous_requests)
+                self.assertEqual(34, critical_path_requests - previous_requests)
+        self.assertEqual([0, 5], requests_for(timeout_seconds=5)[1])
+        self.assertEqual([0, 30, 31], requests_for(timeout_seconds=31)[1])
+        # Bounded fast polling remains far below a fixed short cadence for a long wait.
+        self.assertEqual(543, requests_for(poll_seconds=20, max_poll_seconds=20)[0])
 
     def test_ui_reproduction_checks_revision_pins_and_exact_destination_before_build(self):
         pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())

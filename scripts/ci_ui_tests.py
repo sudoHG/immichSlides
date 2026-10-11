@@ -265,12 +265,14 @@ class ArchiveWait:
         self.deadline += granted
 
 
-# Polling backs off because every waiting UI run shares the repository's 1,000 requests per hour.
+# Cover the measured archive window, then back off within the shared 1,000-request hourly budget.
 POLL_SECONDS, MAX_POLL_SECONDS = 30, 300
+FAST_POLL_WINDOW_SECONDS = 10 * 60
 
 
 def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", poll_seconds=POLL_SECONDS,
-                   max_poll_seconds=MAX_POLL_SECONDS, record_refusals=None, wait=None):
+                   max_poll_seconds=MAX_POLL_SECONDS, fast_poll_window_seconds=FAST_POLL_WINDOW_SECONDS,
+                   record_refusals=None, wait=None):
     wait = wait or ArchiveWait(timeout_seconds)
     require(platform_name in {"ios", "tvos"}, "unsupported UI archive platform")
     workflow = api.repo("actions/workflows/ci-gate.yml")
@@ -280,6 +282,7 @@ def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", pol
                        if identity["event"] == "pull_request" else api.repository)
     started, refusals, delay = time.monotonic(), [], poll_seconds
     pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+    pins_hash = file_hash(ROOT / "scripts/ci-pins.json")
     def refuse(run, outcome, **details):
         refusal = {"run_id": run["id"], "head_sha": head, "consumer_identity": identity,
                    "outcome": outcome, **details}
@@ -341,22 +344,24 @@ def select_archive(api, identity, *, timeout_seconds=0, platform_name="ios", pol
             archive = archives[0]
             validate_artifact(archive, identity, str(run["id"]), attempt, platform_name, archive["id"])
             manifest, manifest_hash = downloaded_archive(api, archive)
-            check_cross_run_identity(manifest, identity, run, attempt, pins, file_hash(ROOT / "scripts/ci-pins.json"), platform_name=platform_name)
+            check_cross_run_identity(manifest, identity, run, attempt, pins, pins_hash, platform_name=platform_name)
             require(build["hashes"]["manifests"]["build"] == manifest_hash, "gate record and downloaded manifest differ")
             return {"schema_version": 1, "identity": identity, "platform": platform_name, "producer_run_id": str(run["id"]),
                     "producer_attempt": attempt, "artifact_id": archive["id"], "artifact_name": archive["name"],
-                    "build_manifest_sha256": manifest_hash, "pins_sha256": file_hash(ROOT / "scripts/ci-pins.json"),
+                    "build_manifest_sha256": manifest_hash, "pins_sha256": pins_hash,
                     "wait_seconds": time.monotonic() - started, "refusals": refusals}
         if superseded:
             break
+        fast_remaining = fast_poll_window_seconds - (time.monotonic() - started)
+        interval = min(poll_seconds, fast_remaining) if fast_remaining > 0 else delay
         if held:
-            wait.pause(delay)
+            wait.pause(interval)
         remaining = wait.remaining()
         if remaining <= 0:
             break
         print("Waiting for the matching ci-gate " + platform_name + " archive", flush=True)
-        time.sleep(min(delay, remaining))
-        delay = min(max_poll_seconds, delay * 2)
+        time.sleep(min(interval, remaining))
+        delay = min(max_poll_seconds, (poll_seconds if fast_remaining > 0 else delay) * 2)
     error = "archive-identity-mismatch" if refusals else "archive-unavailable"
     raise ContractError(error + ": no exact-identity gate archive before timeout")
 

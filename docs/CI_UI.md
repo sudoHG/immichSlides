@@ -548,10 +548,27 @@ alone. Scoped pull requests schedule fewer, non-empty shards; their
 includes all 147 methods' measured maximum durations and partition loads.
 
 The archive wait shares the repository's `GITHUB_TOKEN` budget of 1,000 requests per
-hour with every other workflow, so it polls gently: the first poll comes after 30
-seconds and the interval doubles up to 300 seconds, and a run's artifacts are listed
-only after its build job completed. A 90-minute wait takes about 45 requests instead
-of roughly 800. A read refused for a documented rate limit (`Retry-After`, an exhausted
+hour with every other workflow. Both `ui-cloud-wait-ios` and `ui-cloud-wait-tvos`
+use the same archive selector: it checks immediately, then every 30 seconds for
+the first 10 minutes of archive selection, covering the measured 4–6 minute build
+window. It then backs off at 60, 120, 240 and 300 seconds. Artifacts are listed only
+after the platform build job completes; workflow, run, attempt, identity, manifest
+and hash checks still apply to every selected archive. The pins hash is read once
+per selection and reused in its receipt; run and job metadata remain fresh on every poll.
+
+With one matching run, one attempt and one page per listing, an unfinished PR
+build costs two setup requests (workflow and PR), then two per poll (runs and
+jobs): 44 requests through 10 minutes, or 116 over the critical-path waits'
+180-minute timeout, compared with 82 under immediate exponential backoff
+(34 additional requests per platform). A ready archive adds three requests
+(artifact listing, build-record ZIP and archive ZIP); pagination, additional runs
+or attempts, and rate-limit retries add requests. Two platform waits therefore
+cost 232 requests for that 180-minute unfinished-build scenario, versus 164 before.
+Polling alone adds at most 30 seconds of discovery delay during the fast window;
+API reads, archive downloads and job scheduling add their own time. Queueing that
+outlasts the fast window can still incur the 300-second interval.
+
+A read refused for a documented rate limit (`Retry-After`, an exhausted
 `x-ratelimit-remaining`, or the secondary-limit response) waits for the reset inside the
 remaining deadline and then continues, as does the archive download; the Cloud wait opts in
 the same way, while the router, importer and dispatcher do not. Any other refusal, and
