@@ -155,30 +155,35 @@ builds once per shard, resets app/keychain/privacy and uses `test-without-buildi
 with immutable Products checks. Case directories are unique across repeated suites.
 The 25 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS slots.
 Cold warm-up has 1,200 seconds; each warm invocation has 600. Each case adds a 240-second
-reset/export/cleanup allowance; filter-person receives three invocation budgets.
-Both workflows and local reset callers use the shared boot helper. The workflow
-boots each new simulator in a separate step with a shared 600-second
-deadline (boot command capped at 60 seconds). It records both phase and total elapsed
+reset/export/cleanup allowance plus 300 seconds of readiness per warm invocation;
+filter-person receives three invocation budgets.
+Both workflows and local reset callers use the shared preparation gate. The workflow
+boots and waits for responsive app queries in a separate step before cold builds,
+simulator lookups or fixture health checks, with a combined 600-second
+deadline (boot command capped at 60 seconds, post-boot queries at 300 seconds).
+Toolchain/pins verification precedes boot. It records both phase and total elapsed
 times in logs and the job summary. Before the reset bound, the hosted first iOS smoke
 completed in 457.7 seconds including preparation and test execution
 ([run](https://github.com/sudoHG/immichSlides/actions/runs/37726829510)); 600 seconds
 gives cold boot its own budget above that measured complete-case duration.
-Local reset callers also finish boot before starting the reset clock. App/keychain/privacy
-resets share a separate 120-second deadline, with individual reset commands
-capped at 60 seconds. Bootstatus uses the remaining 600-second boot budget. Official
-tests and summary exports each have a 60-second deadline. Preparation/export timeouts name the phase in
-compact infrastructure entries without command arguments/output, preserve a failed
-case record, finish cleanup and quarantine raw bundles privately. Existing cold/warm
-and outer deadlines are unchanged. The tracer retains these entries even when official
-exports are unavailable, so application/test execution and infrastructure hangs remain
+Local and hosted cases follow the [shared preparation and reset bounds](CI_STRICT_RUNNER.md#shared-simulator-reset).
+Official tests and summary exports each have a 60-second deadline. Preparation/export
+timeouts name the phase in compact infrastructure entries without command arguments/output, preserve a failed
+case record, finish cleanup and quarantine raw bundles privately. Xcode cold/warm
+execution budgets are unchanged; the outer warm allowance includes readiness. The tracer
+retains these entries even when official exports are unavailable, so application/test execution and infrastructure hangs remain
 distinguishable. An xcodebuild test-execution timeout remains a failure of that case,
 without an infrastructure entry.
 The person shard contains both fixtures: two three-session cases and four single-session
-cases require ten invocations. Its conservative outer allowances total 148 minutes
-(24 cold plus 124 warm). The 165-minute job cap leaves 17 minutes for initial boot, setup/upload/cleanup
-so a slow shard can publish its failed records before runner teardown. Individual
-runner, test and infrastructure deadlines are unchanged; reaching the job cap is a
-failure. Planning/aggregate have 15-minute caps.
+cases require ten invocations. Cold/warm/reset/export allowances total 148 minutes
+(24 cold plus 124 warm), with up to 50 more minutes if every invocation consumes
+its readiness budget: 198 minutes total. The 215-minute job cap leaves the original
+17-minute margin for initial preparation, setup, uploads and final cleanup, so a slow shard
+can publish its failed records before runner teardown. Readiness can exceed its
+scheduling deadline while the last timed-out query finishes cleanup; see the
+[shared bounds and overrun logs](CI_STRICT_RUNNER.md#shared-simulator-reset).
+Reaching the job cap is a failure; unrun cases remain unverified.
+Planning/aggregate have 15-minute caps.
 Hosted disk floor stays 30 GiB; local default stays 80 GiB.
 
 ## Complete fixture UI

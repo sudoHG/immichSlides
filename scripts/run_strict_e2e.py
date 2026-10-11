@@ -111,6 +111,7 @@ from strict_e2e_runner_support import (
     write_case_manifest,
     write_fixture_artifacts,
     _is_already_booted,
+    prepare_simulator,
     reset_simulator_app,
     simulator_app_container,
     destination_udid,
@@ -704,9 +705,6 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             raise CommandError("strict E2E only accepts Simulator destinations.")
         simulator_udid = destination_udid(arguments.destination)
         retry_device_class = None
-        if arguments.listed_retry_device:
-            from ci_flaky import simulator_device_class
-            retry_device_class = simulator_device_class(simulator_udid, arguments.listed_retry_device)
         if arguments.derived_data_path:
             from strict_e2e_build import load_warm_build, validate_paths, prepare_test_run, warm_test_command, validate_warm_products
             packages = (arguments.cloned_source_packages_path or derived_data_path.parent / "SourcePackages").resolve()
@@ -750,6 +748,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             json.dumps({"forbidden_keys_present": [], "launch_environment_keys": []}, indent=2) + "\n",
             encoding="utf-8",
         )
+
+        _, preparation_log = prepare_simulator(simulator_udid)
+        (arguments.evidence_dir / "simulator-preparation.log").write_text(preparation_log, encoding="utf-8")
+        if arguments.listed_retry_device:
+            from ci_flaky import simulator_device_class
+            retry_device_class = simulator_device_class(simulator_udid, arguments.listed_retry_device)
 
         for command in (["xcodebuild", "-checkFirstLaunchStatus"], ["xcodebuild", "-version"]):
             completed = subprocess.run(command, capture_output=True, text=True, check=False)

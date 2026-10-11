@@ -23,6 +23,7 @@ from run_strict_e2e import (CommandError, FILTER_PERSON_SESSIONS, resolve_suite_
 from strict_e2e_build import build_settings, write_json
 from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT, official_tests_facts
 from strict_e2e_server import PUBLIC_API_KEY
+from strict_e2e_runner_support import SIMULATOR_READINESS_TIMEOUT_SECONDS
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "scripts/strict-tracer.json"
@@ -232,7 +233,8 @@ def main(argv=None):
         try:
             invocations = len(FILTER_PERSON_SESSIONS) if warm and case["suite"] == "filter-person" else 1
             phase["exit_code"] = run_runner(command, ROOT, output / "runner.log",
-                timeout_seconds=(args.warm_timeout_seconds * invocations if warm else args.cold_timeout_seconds) + 240)
+                timeout_seconds=((args.warm_timeout_seconds + SIMULATOR_READINESS_TIMEOUT_SECONDS) * invocations
+                                 if warm else args.cold_timeout_seconds) + 240)
             return phase
         except BaseException as error:
             phase["exit_code"] = 124 if isinstance(error, subprocess.TimeoutExpired) else 130 if isinstance(error, KeyboardInterrupt) else 1

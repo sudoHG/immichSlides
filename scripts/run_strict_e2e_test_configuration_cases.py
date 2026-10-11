@@ -647,6 +647,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
 
 
     def test_simulator_app_container_distinguishes_absent_from_device_error(self) -> None:
+        from strict_e2e_runner_support import InfrastructureTimeout
         calls = []
 
         def fake_run(command: list[str], **kwargs: object) -> mock.Mock:
@@ -670,8 +671,10 @@ class StrictE2ERunnerTestsCasesConfiguration:
 
         calls.clear()
         with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch("run_strict_e2e.time.sleep"):
-            with self.assertRaises(CommandError):
+            with self.assertRaises(CommandError) as raised:
                 reset_simulator_app("SIM-UDID")
+        self.assertNotIsInstance(raised.exception, InfrastructureTimeout)
+        self.assertEqual(sum(command[2] == "get_app_container" for command in calls), 1)
         self.assertFalse(any(command[2] in ("terminate", "uninstall", "keychain", "privacy") for command in calls))
 
         def absent_run(command: list[str], **kwargs: object) -> mock.Mock:
@@ -819,6 +822,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
         clock = [0.0]
         budgets = {}
         container_calls = []
+        uninstalled = [False]
 
         def slow_boot(command, **kwargs):
             step = command[2]
@@ -830,9 +834,14 @@ class StrictE2ERunnerTestsCasesConfiguration:
                     raise subprocess.TimeoutExpired(command, kwargs["timeout"])
             if step == "get_app_container":
                 container_calls.append(command)
-                if len(container_calls) == 1:
-                    clock[0] += 45
+                if not uninstalled[0]:
+                    duration = kwargs["timeout"] if len(container_calls) <= 3 else 5
+                    clock[0] += duration
+                    if len(container_calls) <= 3:
+                        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
                     return subprocess.CompletedProcess(command, 0, "/sim/containers/immichSlides\n", "")
+            if step == "uninstall":
+                uninstalled[0] = True
             return subprocess.CompletedProcess(command, 2 if step == "get_app_container" else 0, "", "")
 
         with mock.patch("run_strict_e2e.subprocess.run", side_effect=slow_boot), mock.patch(
@@ -842,9 +851,9 @@ class StrictE2ERunnerTestsCasesConfiguration:
         self.assertIn("app_container=absent", log)
         self.assertGreater(budgets["bootstatus"], 120)
         self.assertEqual(budgets["terminate"], 60)
-        self.assertEqual(budgets["uninstall"], 15)
-        self.assertEqual(budgets["privacy"], 14)
-        self.assertIn("simulator-app-presence: elapsed=45.0s", log)
+        self.assertEqual(budgets["uninstall"], 60)
+        self.assertEqual(budgets["privacy"], 59)
+        self.assertIn("simulator-readiness: passed; attempts=4; elapsed=75.0s", log)
 
 
     def test_case_manifest_records_source_sha(self) -> None:

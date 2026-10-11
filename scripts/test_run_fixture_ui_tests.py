@@ -117,7 +117,12 @@ class FixtureCoverageTests(unittest.TestCase):
                     (output / "official-tests.json").write_text(json.dumps(official))
                     return "f" * 64
                 commands = []
+                gate_finished = []
+                def gate(udid):
+                    self.assertEqual(udid, "target")
+                    gate_finished.append(True)
                 def process(command, **kwargs):
+                    self.assertTrue(gate_finished, "fixture launch must wait for simulator readiness")
                     commands.append(command)
                     if shape == "launch" and command[0] == "xcodebuild":
                         raise OSError("Synthetic launch failure")
@@ -131,6 +136,7 @@ class FixtureCoverageTests(unittest.TestCase):
                         "--compiled-from-official-results", "--listed-only-retry", "--failure-screenshots"]
                 attachments = []
                 def run(command, **kwargs):
+                    self.assertTrue(gate_finished, "simulator inventory must wait for readiness")
                     if "attachments" in command:
                         attachments.append(command)
                         if shape in {"unknown", "malformed"}:
@@ -152,6 +158,7 @@ class FixtureCoverageTests(unittest.TestCase):
                         stack.enter_context(patch.object(runner, name, value if name == "ROOT" else unittest.mock.Mock(return_value=value)))
                     stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
                     stack.enter_context(patch.object(runner.subprocess, "run", side_effect=run))
+                    stack.enter_context(patch.object(runner, "prepare_simulator", side_effect=gate))
                     stack.enter_context(patch.object(runner, "export_private_result_bundle", side_effect=export))
                     scan = stack.enter_context(patch.object(runner, "write_sensitive_scan"))
                     dispose = stack.enter_context(patch.object(runner, "finalize_fixture_run", return_value=[]))

@@ -582,8 +582,16 @@ def cloud_selection(args):
 
 def run_shard(args):
     from run_fixture_ui_tests import declared_tests, main as fixture_main
-    ctx = context()
+    from strict_e2e_runner_support import CommandError, destination_udid, prepare_simulator
     workspace_preflight(ROOT)
+    try:
+        udid = destination_udid(args.destination)
+        prepare_simulator(udid, boot_submitted=os.environ.get("UI_SIMULATOR") == udid)
+    except CommandError as error:
+        failed_shard(args, error)
+        print(f"UI simulator preparation failed: {error}", file=sys.stderr)
+        return error.code
+    ctx = context()
     platform_name = DEVICES[args.device]
     manifest_raw = git_blob(args.manifest_revision, MANIFEST_PATH) if args.manifest_revision else (ROOT / MANIFEST_PATH).read_bytes()
     manifest = parse_shard_manifest(manifest_raw.decode())
@@ -684,7 +692,7 @@ def failed_shard(args, error):
         except ContractError as policy_error:
             error = policy_error
     summary["status"] = "failed"
-    summary["infrastructure"] = [{"code": "ui-shard-preflight-failed", "message": str(error)[:200]}]
+    summary["infrastructure"] = [getattr(error, "entry", {"code": "ui-shard-preflight-failed", "message": str(error)[:200]})]
     write_fixture_summary(summary, directory)
 
 
@@ -875,15 +883,8 @@ def main(argv=None):
         if args.command == "wait-cloud":
             return cloud_selection(args)
         if args.command == "simulator":
-            require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
-                    "automatic simulator creation is hosted-only")
-            pins = decode((ROOT / "scripts/ci-pins.json").read_text())
-            platform_name = DEVICES[args.device]
-            udid = subprocess.check_output(["xcrun", "simctl", "create", "ui-" + args.device + "-" + args.shard,
-                    pins["device_types"][args.device], pins["simulators"][platform_name]["runtime"]], text=True, timeout=60).strip()
-            destination_platform = "tvOS Simulator" if platform_name == "tvos" else "iOS Simulator"
-            with open(os.environ["GITHUB_ENV"], "a") as handle:
-                handle.write(f"UI_SIMULATOR={udid}\nUI_DESTINATION=platform={destination_platform},id={udid}\n")
+            from ci_simulator import create_and_boot_simulator
+            create_and_boot_simulator(args.device, args.shard)
             return 0
         if args.command == "check-upload":
             from run_strict_e2e import write_sensitive_scan

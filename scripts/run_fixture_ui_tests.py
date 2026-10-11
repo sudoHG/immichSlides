@@ -30,7 +30,7 @@ from run_host_checks import run_identity, source_metadata, toolchain
 from run_offline_unit_tests import CommandError as OfflineCommandError, _stop_process_group
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
                             prepare_private_result_bundle_path, write_sensitive_scan)
-from strict_e2e_runner_support import CommandError, destination_udid, reset_simulator_app, stop_exact_process, wait_for_service
+from strict_e2e_runner_support import CommandError, destination_udid, prepare_simulator, reset_simulator_app, stop_exact_process, wait_for_service
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 from access_lifecycle_contract import logical_bytes_contain
 from ci_wait_policy import FACTOR_ENVIRONMENT_KEY, wait_configuration
@@ -510,6 +510,7 @@ def main(argv=None):
         udid = destination_udid(args.destination)
         official_mode = start_official_discovery(summary, udid, inputs_record["discovery_policy"],
                                                 enabled=args.compiled_from_official_results)
+        prepare_simulator(udid)
         summary["toolchain"] = toolchain()
         summary["toolchain"]["versions"]["test_wait_factor"] = str(waits["infrastructure_factor"])
         write_json(output / "wait-configuration.json", waits)
@@ -720,8 +721,8 @@ def main(argv=None):
         code = code or 1
         print(f"Fixture UI failed: {error}", file=sys.stderr)
         if summary:
-            summary["infrastructure"].append({"code": "xcresult-export-timeout" if isinstance(error, subprocess.TimeoutExpired)
-                                               and "xcresulttool" in str(error.cmd) else "fixture-run-failed", "message": str(error)[:200]})
+            summary["infrastructure"].append(getattr(error, "entry", {"code": "xcresult-export-timeout" if isinstance(error, subprocess.TimeoutExpired)
+                                               and "xcresulttool" in str(error.cmd) else "fixture-run-failed", "message": str(error)[:200]}))
     finally:
         if service:
             try:

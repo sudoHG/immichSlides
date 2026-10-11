@@ -227,6 +227,8 @@ class RoutingTests(unittest.TestCase):
                                 "reset_simulator_app": "reset\n",
                                 "stop_exact_process": 0,
                             }
+                            if runner is run_strict_e2e:
+                                patches["prepare_simulator"] = (None, "ready\n")
                             for name, value in patches.items():
                                 patch = (
                                     mock.patch.object(runner, name, value) if name == "REPO_ROOT"
@@ -236,9 +238,11 @@ class RoutingTests(unittest.TestCase):
                             stack.enter_context(mock.patch.object(
                                 run_strict_e2e, "PRIVATE_RESULT_BUNDLE_ROOT", root / "private"
                             ))
-                            stack.enter_context(mock.patch.object(
-                                runner.subprocess, "Popen", return_value=mock.Mock(pid=9876)
-                            ))
+                            def launch(*args, **kwargs):
+                                if runner is run_strict_e2e:
+                                    runner.prepare_simulator.assert_called_once()
+                                return mock.Mock(pid=9876)
+                            stack.enter_context(mock.patch.object(runner.subprocess, "Popen", side_effect=launch))
                             stack.enter_context(mock.patch.object(runner.subprocess, "run", side_effect=fake_subprocess))
                             for module in {runner, run_strict_e2e}:
                                 stack.enter_context(mock.patch.object(

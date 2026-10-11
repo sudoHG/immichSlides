@@ -103,6 +103,10 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Create and start only this shard's pinned simulator
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B scripts/ci_simulator.py --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Read this group's retained archive selection
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -117,15 +121,6 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ needs.ios-wait.outputs.producer_run_id }}
-      - name: Create only this shard's pinned simulator
-        working-directory: ui-source
-        run: |
-          "$PYTHON" -B scripts/ci_ui_tests.py simulator --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
-          if test '${{ matrix.device }}' = appletv; then
-            echo 'UI_PLATFORM=tvos' >> "$GITHUB_ENV"
-          else
-            echo 'UI_PLATFORM=ios' >> "$GITHUB_ENV"
-          fi
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |
@@ -216,6 +211,10 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Create and start only this shard's pinned simulator
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B scripts/ci_simulator.py --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Read this group's retained archive selection
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -230,15 +229,6 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ needs.ios-wait.outputs.producer_run_id }}
-      - name: Create only this shard's pinned simulator
-        working-directory: ui-source
-        run: |
-          "$PYTHON" -B scripts/ci_ui_tests.py simulator --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
-          if test '${{ matrix.device }}' = appletv; then
-            echo 'UI_PLATFORM=tvos' >> "$GITHUB_ENV"
-          else
-            echo 'UI_PLATFORM=ios' >> "$GITHUB_ENV"
-          fi
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |
@@ -431,6 +421,10 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Create and start only this shard's pinned simulator
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B scripts/ci_simulator.py --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Read this group's retained archive selection
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -445,15 +439,6 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ needs.tvos-wait.outputs.producer_run_id }}
-      - name: Create only this shard's pinned simulator
-        working-directory: ui-source
-        run: |
-          "$PYTHON" -B scripts/ci_ui_tests.py simulator --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
-          if test '${{ matrix.device }}' = appletv; then
-            echo 'UI_PLATFORM=tvos' >> "$GITHUB_ENV"
-          else
-            echo 'UI_PLATFORM=ios' >> "$GITHUB_ENV"
-          fi
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |

@@ -255,9 +255,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "run_strict_e2e.prepare_task_xcconfig", return_value={}
         ), mock.patch("run_strict_e2e.cleanup_task_xcconfig"), mock.patch(
             "run_strict_e2e.subprocess.run", side_effect=fake_subprocess
-        ), mock.patch("run_strict_e2e.reset_simulator_app", return_value="reset\n",
+        ), mock.patch("run_strict_e2e.prepare_simulator", return_value=(None, "ready\n"),
                       side_effect=strict_runner.InfrastructureTimeout(timeout_phase, 60)
-                      if timeout_phase == "simulator-bootstatus" else None), mock.patch(
+                      if timeout_phase in {"simulator-bootstatus", "simulator-readiness"} else None) as prepare, mock.patch(
+            "run_strict_e2e.reset_simulator_app", return_value="reset\n"
+        ), mock.patch(
             "run_strict_e2e.run_command", side_effect=fake_run_command
         ), mock.patch(
             "run_strict_e2e.read_official_test_results_summary",
@@ -274,7 +276,10 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         ), mock.patch("strict_e2e_build.validate_warm_products"), mock.patch(
             "strict_e2e_build.prepare_test_run", side_effect=fake_test_run
         ), ExitStack() as stack:
-            stack.enter_context(mock.patch("ci_flaky.simulator_device_class", return_value="iphone"))
+            def device_class(*args):
+                prepare.assert_called_once()
+                return "iphone"
+            stack.enter_context(mock.patch("ci_flaky.simulator_device_class", side_effect=device_class))
             stack.enter_context(mock.patch("ci_flaky.read_xcode_observations", side_effect=retry_results))
             stack.enter_context(mock.patch("ci_flaky.registry_revision", return_value="b" * 40))
             stack.enter_context(mock.patch("ci_flaky.load_registry", return_value=(retry_registry, "a" * 64)))
@@ -329,7 +334,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             self.assertEqual(list((root / "private").iterdir()), [])
 
     def test_inner_timeout_records_its_phase_and_finishes_private_cleanup(self):
-        for phase in ("simulator-bootstatus", "official-tests-export", "official-summary-export"):
+        for phase in ("simulator-bootstatus", "simulator-readiness", "official-tests-export", "official-summary-export"):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 evidence = root / "evidence"
@@ -363,19 +368,28 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         commands = {
             "boot": "simulator-boot", "bootstatus": "simulator-bootstatus",
             "terminate": "simulator-terminate", "uninstall": "simulator-uninstall",
-            "get_app_container": "simulator-container", "keychain": "simulator-keychain-reset",
+            "get_app_container": "simulator-readiness", "keychain": "simulator-keychain-reset",
             "privacy": "simulator-privacy-reset",
         }
-        for step, phase in [*commands.items(), ("get_app_container_after_uninstall", "simulator-container")]:
-            with self.subTest(step=step):
+        scenarios = [(step, phase, 0) for step, phase in (
+            *commands.items(), ("get_app_container_after_uninstall", "simulator-container"))]
+        scenarios.append(("get_app_container", "simulator-readiness", 70))
+        for step, phase, query_overrun in scenarios:
+            with self.subTest(step=step, query_overrun=query_overrun):
                 container_calls = []
+                clock = [0.0]
+                calls = []
 
                 def run(command, **kwargs):
+                    calls.append(command)
                     if command[2] == "get_app_container":
                         container_calls.append(command)
                     timed_step = "get_app_container" if step == "get_app_container_after_uninstall" else step
                     if command[2] == timed_step and (step == timed_step or len(container_calls) == 2):
                         self.assertGreater(kwargs.get("timeout", 0), 0)
+                        clock[0] += kwargs["timeout"]
+                        if step == "get_app_container" and clock[0] >= 300:
+                            clock[0] += query_overrun
                         raise subprocess.TimeoutExpired(["private-test-input"], kwargs["timeout"],
                                                         output=b"private-test-input")
                     if command[2] == "get_app_container":
@@ -384,10 +398,48 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     return subprocess.CompletedProcess(command, 2 if command[2] == "get_app_container" else 0, "", "")
                 with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=run), mock.patch(
                     "strict_e2e_runner_support.time.sleep"
-                ), self.assertRaises(CommandError) as raised:
+                ), mock.patch("strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]), mock.patch(
+                    "builtins.print"
+                ) as report, self.assertRaises(CommandError) as raised:
                     reset_simulator_app("SIM-UDID")
                 self.assertEqual(raised.exception.entry["code"], phase + "-timeout")
                 self.assertNotIn("private-test-input", str(raised.exception))
+                if step == "get_app_container":
+                    self.assertEqual(clock[0], 300 + query_overrun)
+                    self.assertIn(f"deadline_overrun={query_overrun:.1f}s", "\n".join(call.args[0] for call in report.call_args_list))
+                    self.assertFalse(any(command[2] in ("terminate", "uninstall", "keychain", "privacy") for command in calls))
+        # A long boot must consume the same gate budget as post-boot queries.
+        clock, calls = [0.0], []
+        def cold(command, **kwargs):
+            calls.append(command[2])
+            if command[2] == "bootstatus":
+                clock[0] += 550
+            if command[2] == "get_app_container":
+                clock[0] += kwargs["timeout"]
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return subprocess.CompletedProcess(command, 0, "", "")
+        with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=cold), mock.patch(
+            "strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]
+        ), mock.patch("builtins.print"), self.assertRaises(CommandError):
+            reset_simulator_app("SIM-UDID")
+        self.assertEqual(clock[0], 600)
+        self.assertFalse(set(calls) & {"terminate", "uninstall", "keychain", "privacy"})
+        from strict_e2e_runner_support import prepare_simulator
+        clock, calls = [0.0], []
+        def submitted(command, **kwargs):
+            calls.append(command[2])
+            self.assertNotEqual(command[2], "boot", "an early-submitted boot must go straight to bootstatus")
+            if command[2] == "bootstatus":
+                self.assertEqual(kwargs["timeout"], 600)
+                clock[0] += 197.2
+            return subprocess.CompletedProcess(command, 2 if command[2] == "get_app_container" else 0, "", "")
+        with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=submitted), mock.patch(
+            "strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]
+        ), mock.patch("builtins.print"):
+            container, log = prepare_simulator("SIM-UDID", boot_submitted=True)
+        self.assertIsNone(container)
+        self.assertEqual(calls, ["bootstatus", "get_app_container"])
+        self.assertIn("simulator-preparation: passed; elapsed=197.2s", log)
         with tempfile.TemporaryDirectory() as raw:
             bundle = Path(raw) / "result.xcresult"
             bundle.mkdir()
@@ -464,6 +516,10 @@ class StrictCITracerTests(unittest.TestCase):
                         derived.mkdir(parents=True)
                         (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
                         return 0
+                    from strict_e2e_runner_support import SIMULATOR_READINESS_TIMEOUT_SECONDS, SIMULATOR_RESET_TIMEOUT_SECONDS
+                    execution_budget = int(command[command.index("--warm-timeout-seconds") + 1])
+                    self.assertGreaterEqual(_kwargs["timeout_seconds"], execution_budget + SIMULATOR_READINESS_TIMEOUT_SECONDS
+                                            + SIMULATOR_RESET_TIMEOUT_SECONDS)
                     evidence.mkdir(parents=True)
                     (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": infrastructure}))
                     if contract:

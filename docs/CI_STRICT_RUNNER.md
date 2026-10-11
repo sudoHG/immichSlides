@@ -13,8 +13,10 @@ with `--listed-retry-device`; the tracer and skeleton nightly continue to run on
 Signed visual-review promotion remains separate work.
 Simulator preparation and official exports have explicit phase deadlines; timeout
 records and private quarantine follow the [nightly infrastructure policy](CI_NIGHTLY.md#population-and-capacity).
-The shared boot helper caps `simctl boot` at 60 seconds and gives boot plus bootstatus
-600 seconds total. It finishes before the separate 120-second app/keychain/privacy
+The shared preparation gate caps `simctl boot` at 60 seconds and gives boot,
+bootstatus and responsive app queries 600 seconds total. Post-boot queries use at
+most 300 seconds within that gate. The [shared reset](#shared-simulator-reset)
+then starts the separate 120-second app/keychain/privacy
 reset clock starts; individual reset commands have at most 60 seconds. Local strict,
 fixture UI, listed retry and access-lifecycle runs use these preparation bounds too.
 Official tests and summary exports each have 60 seconds. Unit callers retain
@@ -72,18 +74,58 @@ signing stays **Sign to Run Locally**, verified as `adhoc` by `codesign` after w
 ## Shared simulator reset
 
 Strict, fixture UI, listed-retry and standalone access runners share
-`reset_simulator_app`: boot and wait for `bootstatus -b`, query the app container,
-terminate only when the app is installed, uninstall with one retry, require the
-app container to be absent afterward, then reset keychain and all privacy
+`reset_simulator_app`: its shared `prepare_simulator` gate boots and waits for
+`bootstatus -b`, then waits for a valid app-container
+response, terminate only when the app is installed, uninstall with one retry on
+failure, require the app container to be absent afterward, then reset keychain and all privacy
 permissions. Only a container lookup confirming absence skips termination; an
-unknown or timed-out lookup fails. Uninstall and the remaining reset steps are
-still mandatory before Xcode may install the app. A reset error fails the case.
+unknown response fails immediately. Readiness repeats only timed-out container
+queries with caps of 10, 20, 40, then 60 seconds, retaining the 60-second cap for
+later attempts. Each cap is clamped to the remaining 300-second post-boot budget
+and the remaining 600-second combined preparation budget.
+Exhausting that budget fails as `simulator-readiness-timeout`, before any reset
+mutation; a warm device returns on its first valid response. Uninstall and the
+remaining reset steps are still mandatory before Xcode may install the app. A reset error fails the case.
 
-Boot finishes before the existing 120-second reset deadline starts; the presence
-query and all remaining reset commands share that deadline. Individual reset
-commands retain their 60-second cap. Boot phases, the extra presence-query seconds,
-skipped termination and total reset seconds are logged. This adds no fixed
-post-boot sleep and extends no reset or product deadline.
+UI consumers run this gate before identity/archive checks, simulator inventory
+and fixture server startup/health checks. Standalone fixture and strict runners
+also gate before simulator lookups and fixture health checks; resets use the same
+gate again, normally returning on the first warm query. Strict hosted jobs prepare
+the device before cold builds or case runners. Toolchain/pins checks run before
+early boot; only archive downloads overlap boot in the UI workflows.
+
+Boot and readiness finish before the existing 120-second reset deadline starts;
+termination, uninstall, the post-uninstall container check and state resets share
+that deadline. Individual reset commands retain their 60-second cap. Boot phases,
+readiness attempts and elapsed seconds, skipped termination and total reset seconds
+are logged. This adds no fixed post-boot sleep and extends no reset or product deadline.
+
+The readiness budget stops new queries and rejects responses after its deadline;
+it is not a hard wall-clock bound on subprocess timeout cleanup. Wall time can reach
+300 seconds plus the overrun of the last query. A hosted query with a nominal
+60-second cap took 130 seconds before timeout returned
+([job](https://github.com/sudoHG/immichSlides/actions/runs/38113304252/job/114393826951)).
+Logs record each timed-out query's cap and actual elapsed time, plus the final
+readiness `deadline_overrun`. Outer runner and job timeouts remain the final bounds.
+
+The combined 600-second gate allows headroom above the observed 202-second boot
+plus a 130-second unresponsive query (332 seconds); the post-boot allowance remains
+300 seconds. It logs total preparation elapsed time and overrun as well. In the
+[early-boot probe](https://github.com/sudoHG/immichSlides/actions/runs/38116564553),
+three iOS jobs failed before readiness: device inventory, fixture health and
+toolchain verification. The fourth reached tests after a warm 0.4-second boot check,
+0.3-second readiness query and 3.1-second reset, then failed an XCTest assertion.
+This is preparation evidence, not a passing UI run.
+
+For capacity planning, adding the measured 56.5–202-second cold boot range to the
+tested 54.2-second-per-query scenario (10 + 20 + 40 + 54.2 = 124.2 seconds) gives
+180.7–326.2 seconds, about 3–5.4 minutes per cold iOS job before download overlap.
+These are modeled costs, not hosted recovery measurements. Download overlap may
+save little time; Python setup now precedes boot, so its cost is not hidden. The
+nominal preparation bound is ten minutes plus final subprocess cleanup overrun,
+separate from reset and unchanged XCTest deadlines. Reliability may therefore
+cost as much as the earlier 3–9-minute enumeration bootstrap; hosted re-probing
+must establish the actual critical-path cost.
 
 Use dedicated simulators: keychain/privacy reset applies to the whole device.
 Server/UI test variables in direct,
@@ -108,9 +150,10 @@ Repeat with `--platform tvos` and its destination. The tracer groups its cases,
 builds each shard once, then runs each case without building. It does not retry.
 The hosted workflow uses an initial 1,200-second cold budget, 600-second warm budget,
 and a 30 GiB disk preflight. Each runner segment has an additional 240-second outer
-allowance for reset/export/cleanup. iOS allows two cold and three warm segments
-(90 minutes total); tvOS allows one of each (38 minutes total). The literal
-110-minute job timeout covers the larger shard, a separate 10-minute initial simulator
+allowance for reset/export/cleanup; warm segments also allow 300 seconds of readiness
+per invocation. iOS allows two cold and three warm segments
+(105 minutes total); tvOS allows one of each (43 minutes total). The literal
+125-minute job timeout covers the larger shard, a separate 10-minute initial simulator
 boot budget, and setup, uploads and final cleanup. Both workflows call the same boot
 helper as local resets. Initial boot phases and elapsed times are logged before the
 first case, so cold boot does not consume the 120-second case-reset

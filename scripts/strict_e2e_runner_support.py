@@ -70,6 +70,9 @@ XCODEBUILD_TIMEOUT_SECONDS = 300
 SIMULATOR_RESET_TIMEOUT_SECONDS = 120
 SIMULATOR_COMMAND_TIMEOUT_SECONDS = 60
 SIMULATOR_BOOT_TIMEOUT_SECONDS = 600
+SIMULATOR_PREPARATION_TIMEOUT_SECONDS = 600
+SIMULATOR_READINESS_TIMEOUT_SECONDS = 300
+SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS = 10
 # simctl writes Recording started only after processing the first frame; after SIGINT, wait for in-flight frames to write the moov atom.
 RECORDING_START_TIMEOUT_SECONDS = 15
 RECORDING_STOP_TIMEOUT_SECONDS = 30
@@ -274,7 +277,7 @@ class InfrastructureTimeout(CommandError):
 
 
 def simulator_command(command: list[str], phase: str, *, deadline: float | None = None,
-                      timeout_seconds: int = SIMULATOR_COMMAND_TIMEOUT_SECONDS):
+                      timeout_seconds: float = SIMULATOR_COMMAND_TIMEOUT_SECONDS):
     budget = min(timeout_seconds, deadline - time.monotonic()) if deadline is not None else timeout_seconds
     if budget <= 0:
         raise InfrastructureTimeout(phase, 0)
@@ -434,12 +437,17 @@ def _is_already_booted(stderr: str) -> bool:
     return "current state: booted" in text or "already booted" in text
 
 
-def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None = None) -> str:
+def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None = None,
+                   deadline: float | None = None, boot_submitted: bool = False) -> str:
     """Give cold boot its own deadline before any app-reset clock starts."""
     started = time.monotonic()
-    deadline = started + SIMULATOR_BOOT_TIMEOUT_SECONDS
+    deadline = min(deadline, started + SIMULATOR_BOOT_TIMEOUT_SECONDS) if deadline is not None else started + SIMULATOR_BOOT_TIMEOUT_SECONDS
     lines = []
-    for step, cap in (("boot", SIMULATOR_COMMAND_TIMEOUT_SECONDS), ("bootstatus", SIMULATOR_BOOT_TIMEOUT_SECONDS)):
+    # A submitted early boot needs no second short command during the cold-device stall.
+    steps = [("bootstatus", SIMULATOR_BOOT_TIMEOUT_SECONDS)]
+    if not boot_submitted:
+        steps.insert(0, ("boot", SIMULATOR_COMMAND_TIMEOUT_SECONDS))
+    for step, cap in steps:
         phase = "simulator-" + step
         phase_started = time.monotonic()
         outcome = "failed"
@@ -460,18 +468,79 @@ def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None 
     return "\n".join(lines) + "\n"
 
 
+def wait_for_simulator_app_response(simulator_udid: str, bundle_id: str, *, report: Callable[[str], None],
+                                    deadline: float | None = None) -> tuple[str | None, str]:
+    """Let timed-out post-boot queries recover before the clean-reset clock starts."""
+    started = time.monotonic()
+    deadline = min(deadline, started + SIMULATOR_READINESS_TIMEOUT_SECONDS) if deadline is not None else started + SIMULATOR_READINESS_TIMEOUT_SECONDS
+    budget = max(0, deadline - started)
+    attempts = 0
+    query_timeout = SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS
+    outcome = "failed"
+    lines = []
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise InfrastructureTimeout("simulator-readiness", budget)
+            attempts += 1
+            query_budget = min(query_timeout, remaining)
+            query_started = time.monotonic()
+            try:
+                container = simulator_app_container(simulator_udid, bundle_id, deadline=deadline,
+                    timeout_seconds=query_budget)
+            except InfrastructureTimeout:
+                line = (f"simulator-readiness: query timed out; attempt={attempts}; timeout={query_budget:.1f}s; "
+                        f"query_elapsed={time.monotonic() - query_started:.1f}s; elapsed={time.monotonic() - started:.1f}s")
+                lines.append(line)
+                report(line)
+                query_timeout = min(query_timeout * 2, SIMULATOR_COMMAND_TIMEOUT_SECONDS)
+                continue
+            if time.monotonic() >= deadline:
+                raise InfrastructureTimeout("simulator-readiness", budget)
+            outcome = "passed"
+            break
+    finally:
+        elapsed = time.monotonic() - started
+        line = (f"simulator-readiness: {outcome}; attempts={attempts}; elapsed={elapsed:.1f}s; "
+                f"total budget={budget:g}s; "
+                f"deadline_overrun={max(0, elapsed - budget):.1f}s")
+        lines.append(line)
+        report(line)
+    return container, "\n".join(lines) + "\n"
+
+
+def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
+                      report: Callable[[str], None] | None = None, boot_submitted: bool = False) -> tuple[str | None, str]:
+    """Absorb cold-device stalls before inventory, fixture health checks or reset mutations."""
+    report = report or (lambda line: print(line, flush=True))
+    started = time.monotonic()
+    deadline = started + SIMULATOR_PREPARATION_TIMEOUT_SECONDS
+    lines = [f"simulator_id={simulator_udid}"]
+    outcome = "failed"
+    try:
+        lines.extend(boot_simulator(simulator_udid, report=report, deadline=deadline, boot_submitted=boot_submitted).splitlines())
+        container, readiness_log = wait_for_simulator_app_response(simulator_udid, bundle_id, report=report, deadline=deadline)
+        lines.extend(readiness_log.splitlines())
+        outcome = "passed"
+    finally:
+        elapsed = time.monotonic() - started
+        line = (f"simulator-preparation: {outcome}; elapsed={elapsed:.1f}s; "
+                f"total budget={SIMULATOR_PREPARATION_TIMEOUT_SECONDS}s; "
+                f"deadline_overrun={max(0, elapsed - SIMULATOR_PREPARATION_TIMEOUT_SECONDS):.1f}s")
+        lines.append(line)
+        report(line)
+    return container, "\n".join(lines) + "\n"
+
+
 def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides") -> str:
     # The fixed sleep waits for simctl to release the container lock; a second uninstall failure must stop the run.
     report = lambda line: print(line, flush=True)
-    lines = [f"simulator_id={simulator_udid}", *boot_simulator(simulator_udid, report=report).splitlines()]
+    container, preparation_log = prepare_simulator(simulator_udid, bundle_id, report=report)
+    lines = preparation_log.splitlines()
+    installed = container is not None
     started = time.monotonic()
     deadline = started + SIMULATOR_RESET_TIMEOUT_SECONDS
-    try:
-        installed = simulator_app_container(simulator_udid, bundle_id, deadline=deadline) is not None
-    finally:
-        line = f"simulator-app-presence: elapsed={time.monotonic() - started:.1f}s; total budget={SIMULATOR_RESET_TIMEOUT_SECONDS}s"
-        lines.append(line)
-        report(line)
     # Terminate stalled after cold boot on hosted runners; skip it only when the app is absent.
     if installed:
         terminate = simulator_command(
@@ -519,9 +588,11 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
     return "\n".join(lines) + "\n"
 
 
-def simulator_app_container(simulator_udid: str, bundle_id: str, *, deadline: float | None = None) -> str | None:
+def simulator_app_container(simulator_udid: str, bundle_id: str, *, deadline: float | None = None,
+                            timeout_seconds: float = SIMULATOR_COMMAND_TIMEOUT_SECONDS) -> str | None:
     completed = simulator_command(
         ["xcrun", "simctl", "get_app_container", simulator_udid, bundle_id], "simulator-container", deadline=deadline,
+        timeout_seconds=timeout_seconds,
     )
     path = completed.stdout.strip()
     if completed.returncode == 0 and path:
