@@ -30,6 +30,9 @@ jobs:
       iphone_shards: ${{ steps.select.outputs.iphone_shards }}
       ipad_shards: ${{ steps.select.outputs.ipad_shards }}
       appletv_shards: ${{ steps.select.outputs.appletv_shards }}
+      iphone_capacity: ${{ steps.select.outputs.iphone_capacity }}
+      ipad_capacity: ${{ steps.select.outputs.ipad_capacity }}
+      appletv_capacity: ${{ steps.select.outputs.appletv_capacity }}
       scoped_plan_sha256: ${{ steps.select.outputs.scoped_plan_sha256 }}
       selection_artifact: ${{ steps.select.outputs.selection_artifact }}
     steps:
@@ -47,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           "$PYTHON" -B scripts/ci_ui_tests.py select \
-            --output-dir "$RUNNER_TEMP/ui-selection" --defer-main-ui --pack-scoped-ui
+            --output-dir "$RUNNER_TEMP/ui-selection" --defer-main-ui --pack-scoped-ui --scoped-ui-v2
       - name: Publish the bound selection records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -79,7 +82,7 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: ${{ fromJSON(needs.selection.outputs.iphone_capacity) }}
       matrix:
         device: [iphone]
         shard: ${{ fromJSON(needs.selection.outputs.iphone_shards) }}
@@ -131,7 +134,7 @@ jobs:
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
             --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30 \
-            --max-parallel '${{ strategy.max-parallel }}'
+            --max-parallel '${{ strategy.max-parallel }}' --compiled-from-official-results
       - name: Recheck the sensitive scan before publishing
         id: scan
         if: always()
@@ -192,7 +195,7 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: ${{ fromJSON(needs.selection.outputs.ipad_capacity) }}
       matrix:
         device: [ipad]
         shard: ${{ fromJSON(needs.selection.outputs.ipad_shards) }}
@@ -244,7 +247,7 @@ jobs:
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
             --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30 \
-            --max-parallel '${{ strategy.max-parallel }}'
+            --max-parallel '${{ strategy.max-parallel }}' --compiled-from-official-results
       - name: Recheck the sensitive scan before publishing
         id: scan
         if: always()
@@ -407,7 +410,7 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: ${{ fromJSON(needs.selection.outputs.appletv_capacity) }}
       matrix:
         device: [appletv]
         shard: ${{ fromJSON(needs.selection.outputs.appletv_shards) }}
@@ -459,7 +462,7 @@ jobs:
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
             --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30 \
-            --max-parallel '${{ strategy.max-parallel }}'
+            --max-parallel '${{ strategy.max-parallel }}' --compiled-from-official-results
       - name: Recheck the sensitive scan before publishing
         id: scan
         if: always()

@@ -915,7 +915,8 @@ class GroupProducerTests(unittest.TestCase):
         files = {path: (root / path).read_text() for path in subprocess.check_output(
                  ["git", "ls-files"], cwd=root, text=True).splitlines()
                  if path.startswith(("scripts/", "ci_scripts/", "immichSlidesUITests/")) and path.endswith((".py", ".json", ".swift"))}
-        for path in ("immichSlides-iOS.xctestplan", "immichSlides-tvOS.xctestplan", "immichSlides.xcodeproj/project.pbxproj"):
+        for path in ("immichSlides-iOS.xctestplan", "immichSlides-tvOS.xctestplan", "immichSlides.xcodeproj/project.pbxproj",
+                     ".github/workflows/ci-ui.yml"):
             files[path] = (root / path).read_text()
         for path in (root / "ci_scripts").iterdir():
             if path.is_file():
@@ -926,14 +927,20 @@ class GroupProducerTests(unittest.TestCase):
         files[scheme] = '<Scheme><TestAction><TestPlans><TestPlanReference reference="container:Cloud-iOS.xctestplan"/></TestPlans></TestAction></Scheme>'
         members = [path.relative_to(root).as_posix() for path in (root / "immichSlides").rglob("*.swift")]
         listing = [{"path": path, "type": "blob", "mode": "100644"} for path in set(files) | set(members)]
-        for changed in ("immichSlides/iOS/Settings/SettingsViewIOS.swift", "immichSlides/tvOS/Filter/AlbumFilterViewTV.swift",
-                        "immichSlides/Shared/Models/Album.swift"):
-            record = recompute(self.identity, self.run, self.record["cloud_pr_author"], listing=lambda revision: listing,
-                read_blob=lambda revision, path: files[path], changed_paths=[changed], head_tree=self.identity["tree_sha"])
-            with patch.object(producer, "git_blob", side_effect=lambda revision, path: files[path].encode()), \
-                    patch.object(producer.subprocess, "check_output", side_effect=[changed + "\n", "\n".join(members), "\n".join(members)]):
-                planned = producer.planned_ui_selection(self.identity, pack_scoped_ui=True)
-            self.assertEqual(record["ui_inputs"]["base"]["selection"]["packing"], planned["packing"])
+        workflow = files[producer.WORKFLOW]
+        for accelerated in (False, True):
+            files[producer.WORKFLOW] = workflow if accelerated else workflow.replace("--scoped-ui-v2", "")
+            for changed in ("immichSlides/iOS/Core/SettingsViewIOS.swift", "immichSlides/tvOS/Core/AlbumFilterViewTV.swift",
+                            "immichSlides/Shared/Core/SettingsView+Actions.swift"):
+                with self.subTest(accelerated=accelerated, path=changed):
+                    record = recompute(self.identity, self.run, self.record["cloud_pr_author"], listing=lambda revision: listing,
+                        read_blob=lambda revision, path: (workflow.replace("--scoped-ui-v2", "") if accelerated else workflow)
+                            if path == producer.WORKFLOW and revision != self.identity["base_sha"] else files[path],
+                        changed_paths=[changed], head_tree=self.identity["tree_sha"])
+                    with patch.object(producer, "git_blob", side_effect=lambda revision, path: files[path].encode()), \
+                            patch.object(producer.subprocess, "check_output", side_effect=[changed + "\n", "\n".join(members), "\n".join(members)]):
+                        planned = producer.planned_ui_selection(self.identity, pack_scoped_ui=True, scoped_ui_v2=accelerated)
+                    self.assertEqual(record["ui_inputs"]["base"]["selection"]["packing"], planned["packing"])
 
     def test_group_waits_do_not_wait_for_an_archive_when_cloud_is_verified_and_fallback_is_exact(self):
         import json

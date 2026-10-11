@@ -39,8 +39,10 @@ class BuildArchiveTests(unittest.TestCase):
         build.assert_not_called()
 
     def test_functional_producer_plan_and_serialized_fixture_population_equal_the_base_reader(self):
+        from types import SimpleNamespace
+        import ci_xcode_cloud_ui as grouped
         from ci_population import ui_identities
-        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES, ui_inputs
+        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES, ui_capacities, ui_inputs
         from ci_summary import identity_key
         from run_fixture_ui_tests import fixture_inputs
         root = Path(ui.__file__).resolve().parent.parent
@@ -68,12 +70,30 @@ class BuildArchiveTests(unittest.TestCase):
                         patch.object(ui.subprocess, 'check_output', side_effect=lambda command, **kwargs:
                                      changed + '\n' if command[1] == 'diff' else '\n'.join(members)), \
                         patch('ci_publish_git.read_blob', side_effect=lambda revision, path: (root / path).read_text()):
-                    produced = ui.planned_ui_selection(self.identity, pack_scoped_ui=True)
+                    produced = ui.planned_ui_selection(self.identity, pack_scoped_ui=True, scoped_ui_v2=True)
                     admitted = ui_inputs(self.identity['base_sha'], listing, populations=populations,
                         base_populations=populations, workflow=workflow,
                         run={'path': ui.WORKFLOW, 'event': 'pull_request', 'id': 100, 'run_attempt': 1},
                         modules=modules, selection_inputs=inputs)
                 self.assertEqual(produced['packing'], admitted['selection']['packing'])
+                directory = self.root / ('accelerated-selection-' + str(cases.index(changed)))
+                context = {'identity': self.identity,
+                    'source': {'repository': 'owner/repo', 'event': 'pull_request',
+                               'workflow_path': ui.WORKFLOW, 'fork_originated': False, 'ci_changing': False},
+                    'run': {'id': '100', 'attempt': 1, 'tier': 'ui', 'job': 'ui-selection', 'shard': None}}
+                with patch.object(ui, 'context', return_value=context), \
+                        patch.object(ui, 'workspace_preflight'), \
+                        patch.object(ui, 'app_affected', return_value=True), \
+                        patch.object(ui, 'planned_ui_selection', return_value=produced) as planner, \
+                        patch.object(ui, 'output') as outputs:
+                    self.assertEqual(grouped.select(SimpleNamespace(output_dir=directory,
+                        pack_scoped_ui=True, scoped_ui_v2=True, defer_main_ui=True)), 0)
+                planner.assert_called_once_with(self.identity, pack_scoped_ui=True, scoped_ui_v2=True)
+                published = json.loads((directory / 'ui-selection.json').read_text())
+                self.assertEqual(published['packing'], admitted['selection']['packing'])
+                values = dict(call.args for call in outputs.call_args_list)
+                for device, capacity in ui_capacities(admitted).items():
+                    self.assertEqual(values[device + '_capacity'], str(capacity))
                 recorded = json.loads(json.dumps({'packing': produced['packing']}))
                 for device, shards in produced['packing']['shards'].items():
                     platform = ui.DEVICES[device]

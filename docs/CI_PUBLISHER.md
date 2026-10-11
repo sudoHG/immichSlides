@@ -389,7 +389,7 @@ Plan estimates are diagnostic data, not passing samples or duration acceptance.
 
 ### Prepared scoped UI acceleration reader
 
-The additional literal `--scoped-ui-v2` on the same packed selection command opts
+The producer now uses the additional literal `--scoped-ui-v2` on the same packed selection command to opt
 into the base-owned `capacity-v2` planner. Historical producers keep `capacity-v1`.
 Every `ci_ui_tests.py run` command must also carry the literal
 `--compiled-from-official-results`; planner-only activation fails admission and
@@ -414,7 +414,12 @@ Separately, a shard's literal `--compiled-from-official-results` enables only th
 [version 2 discovery evidence](CI_SUMMARY.md#prepared-version-2-scoped-official-discovery)
 for exact packed functional PR shards with no approved base fixture deselection
 matching their admitted population. The producer uses the same eligibility rule;
-a matching deselection retains version 1 and preliminary enumeration. The isolated base
+a matching base deselection retains version 1 and preliminary enumeration. Only
+eligibility comes from base policy; the producer's deselections, expected skips,
+verdict and policy hash continue to use the tested-tree policy. Candidate policy
+still needs exact-head approval at publication. A candidate fixture deselection
+on a base-eligible shard fails before execution with a clear conflict; merge that
+policy change first. The isolated base
 reader parses the official case tree independently and checks the complete
 declared/discovered/compiled/observed equality, raw first exit, run/attempt, plan
 and evidence hashes. Other eligible shards cannot fall back to version 1.
@@ -423,11 +428,20 @@ exit is nonzero, producer status is `failed`, compiled equals the strict discove
 subset, and each undiscovered declared identity is `not-run` or `timed-out` with
 that raw exit. A missing export is `official_tests: null`. The fixture's final writer
 preserves these diagnostics; the verdict reports missing compiled identities and
-cannot pass. Malformed exports remain rejected.
+cannot pass. Malformed exports remain rejected. Scanned failed diagnostics marked
+`discovery-record-invalid` may be uploaded without a valid discovery proof; this
+does not make them valid summaries or allow a passing trusted verdict.
 The [host partition](CI_SUMMARY.md#prepared-linuxmacos-host-partition) likewise
-requires the base-owned disjoint union of Linux and macOS producers.
-These compatibility paths precede producer activation; current workflows, product
-assertions, skips, deadlines, Cloud routing and nightly execution are unchanged.
+requires the base-owned disjoint union of Linux and macOS producers. The producer
+derives that partition from the merge first parent's reader, then verifies the
+complete Python discovery before selecting execution members. `host-linux` runs
+portable rules and all portable Python methods on `ubuntu-24.04`; `host-macos`
+runs swift-format and the base-listed Swift-calling methods. The portable setup
+adds the existing Pillow pin to the publisher environment; portable prerequisites
+still require zstd, Pillow and PyYAML, while actual Swift execution stays on macOS.
+Both jobs publish separately bound summaries. Default local host checks remain
+the complete suite. Product assertions, skips, deadlines, Cloud routing and
+nightly execution are unchanged.
 
 ### Prepared grouped Xcode Cloud reader
 
@@ -471,9 +485,9 @@ passing evidence. Additional archive proof jobs remain required. Main pushes
 and nightly do not acquire this exception. Forks still require exact-head
 approval; CI-changing and unknown paths cannot take this path, even with approval.
 
-The `ci-gate` producer's Linux `gate-classification` job keeps host checks on
-macOS and skips the four app build/unit jobs when they are not applicable,
-retaining one macOS host job for docs-only pull requests. Publication executes
+The `ci-gate` producer's Linux `gate-classification` job skips the four app
+build/unit jobs when they are not applicable. Docs-only pull requests still run
+both the portable Linux host partition and the short macOS host partition. Publication executes
 the admitted first parent's verdict reader and independently verifies that
 classification before reporting the skipped populations as not applicable.
 

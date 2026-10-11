@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared macOS host-check entry point for CI, agents and check_all.sh."""
+"""Shared host-check entry point with optional base-owned Linux/macOS partitions."""
 
 from __future__ import annotations
 
@@ -59,6 +59,31 @@ def host_partition(population, scope):
         return (entry["kind"] == "host" and entry["key"] == "swift-format lint"
                 or entry["kind"] == "python" and entry["key"] in MACOS_PYTHON_TESTS)
     return sorted([entry for entry in population if needs_macos(entry) == (scope == "macos")], key=identity_key)
+
+
+def admitted_host_partition(identity, population, scope):
+    if identity["event"] == "local":
+        return host_partition(population, scope)
+    from ci_publish_git import base_reader, revision_modules
+    revision = identity.get("base_sha", identity.get("pushed_sha"))
+    return base_reader(revision_modules(revision), {"operation": "host", "population": population})["host-" + scope]
+
+
+def partition_steps(population, selected, output, scope):
+    manifest = {"inventory": [entry for entry in population if entry["kind"] == "python"],
+                "selected": [entry for entry in selected if entry["kind"] == "python"]}
+    path = output / "python-selection.json"
+    path.write_text(json.dumps(manifest, indent=2) + "\n")
+    names = {entry["key"] for entry in selected if entry["kind"] == "host"}
+    steps = []
+    for name, command in HOST_CHECKS:
+        if name not in names and name != "python tests":
+            continue
+        options = (["--output", str(output / "python-results.json"), "--selection-path", str(path)]
+                   if name == "python tests" else ["--portable"]
+                   if name == "Python test prerequisites" and scope == "linux" else [])
+        steps.append((name, command + options))
+    return steps
 
 
 def git(*args):
@@ -156,7 +181,7 @@ def toolchain():
             xcode = f"{plist['CFBundleShortVersionString']} ({plist['ProductBuildVersion']})"
         except (OSError, KeyError, ValueError):
             pass
-    return {"versions": {"macos": platform.mac_ver()[0], "python": platform.python_version(),
+    return {"versions": {"macos": platform.mac_ver()[0] or None, "python": platform.python_version(),
                          "swift": version(["swift", "--version"]), "xcode": xcode,
                          "pillow": pillow, "zstd": version(["zstd", "--version"])},
             "signing_mode": "not-applicable"}
@@ -302,6 +327,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, help="Outside the repository; default is a new temporary directory")
     parser.add_argument("--timeout-seconds", type=float, default=900, help="Total host-check budget; default 900")
     parser.add_argument("--workflow-path", help="Enable CI identity; assert this path against GITHUB_WORKFLOW_REF. Omit for local identity, regardless of CI environment")
+    parser.add_argument("--host-platform", choices=("linux", "macos"), help="Run the admitted platform partition; default runs the complete host suite")
     parser.add_argument("--no-summary-path", action="store_true", help="Suppress the record path in the final report")
     args = parser.parse_args()
     if not 0 < args.timeout_seconds <= 1200:
@@ -317,6 +343,8 @@ def main():
     try:
         identity = run_identity(os.environ, ci=args.workflow_path is not None)
         is_ci = identity["event"] != "local"
+        if is_ci and args.host_platform and (sys.platform == "darwin") != (args.host_platform == "macos"):
+            raise ContractError("host partition differs from the runner platform")
         workflow_path, fork = source_metadata(identity, os.environ, args.workflow_path)
         print(f"Python interpreter: {sys.executable} ({platform.python_version()})", flush=True)
         policy_path = REPO_ROOT / "scripts/ci-test-policy.json"
@@ -326,7 +354,7 @@ def main():
                               "event": identity["event"], "fork_originated": fork, "ci_changing": None},
                    "run": {"id": os.environ.get("GITHUB_RUN_ID") if is_ci else None,
                            "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")) if is_ci else 1,
-                           "tier": "host", "job": "host-checks", "shard": None},
+                           "tier": "host", "job": "host-" + args.host_platform if args.host_platform else "host-checks", "shard": None},
                    "hashes": {
                        "manifests": {"ci-pins": hashlib.sha256((REPO_ROOT / "scripts/ci-pins.json").read_bytes()).hexdigest()}
                        if is_ci else {},
@@ -360,8 +388,15 @@ def main():
             summary["infrastructure"].append({"code": "population-invalid", "message": f"Static inventory: {error}"})
         steps = [(name, command + (["--output", str(output / "python-results.json")] if name == "python tests" else []))
                  for name, command in HOST_CHECKS]
+        if args.host_platform:
+            complete = declared
+            declared = admitted_host_partition(identity, complete, args.host_platform)
+            summary["population"]["declared"] = declared
+            summary["population"]["compiled"] = [entry for entry in declared if entry["kind"] == "host"]
+            steps = partition_steps(complete, declared, output, args.host_platform)
         records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds)
-        summary["population"]["observed"] = list(records)
+        admitted_checks = {entry["key"] for entry in declared if entry["kind"] == "host"}
+        summary["population"]["observed"] = [entry for entry in records if entry["identity"]["key"] in admitted_checks]
         summary["infrastructure"].extend(infrastructure)
         try:
             python = json.loads((output / "python-results.json").read_text(encoding="utf-8"))

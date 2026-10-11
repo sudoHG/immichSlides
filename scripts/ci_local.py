@@ -194,7 +194,7 @@ def option_value(arguments, names):
 def probe_processes(columns, *flags):
     for attempt in range(PROBE_ATTEMPTS):
         try:
-            return subprocess.check_output(["ps", *flags, "-axo", columns], text=True,
+            return subprocess.check_output(["ps", *flags, "-A", "-o", columns], text=True,
                                            timeout=PROBE_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             if attempt + 1 == PROBE_ATTEMPTS:
@@ -212,7 +212,9 @@ def tagged_groups(token):
     # the per-run token in its environment is the only remaining proof of ownership.
     marker = re.compile(re.escape(RUN_TOKEN + "=" + token) + r"(?:\s|$)")
     groups = set()
-    for line in probe_processes("pid=,pgid=,stat=,command=", "-Eww").splitlines():
+    # procps uses the BSD e option; Darwin uses -E to include the environment.
+    environment_flag = "-Eww" if sys.platform == "darwin" else "eww"
+    for line in probe_processes("pid=,pgid=,stat=,command=", environment_flag).splitlines():
         fields = line.split(None, 3)
         if len(fields) < 4 or fields[2].startswith("Z") or int(fields[0]) == os.getpid():
             continue

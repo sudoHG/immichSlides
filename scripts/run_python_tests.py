@@ -10,7 +10,7 @@ import time
 import unittest
 from pathlib import Path
 
-from ci_summary import observation, test_identity
+from ci_summary import identity_key, observation, require, test_identity, validate_test_identity
 
 
 def test_cases(suite):
@@ -119,7 +119,26 @@ class RecordingResult(unittest.TextTestResult):
         self.current = None
 
 
-def run_suite(suite, stream):
+def partition_suite(suite, manifest):
+    """Filter execution only after the complete dynamic inventory matches static admission."""
+    require(isinstance(manifest, dict) and set(manifest) == {"inventory", "selected"}, "invalid Python partition")
+    def keys(entries):
+        require(isinstance(entries, list), "Python partition needs identity lists")
+        for entry in entries:
+            validate_test_identity(entry)
+            require(entry["kind"] == "python" and not entry["dimensions"], "invalid Python partition identity")
+        tokens = [identity_key(entry) for entry in entries]
+        require(len(set(tokens)) == len(tokens), "duplicate Python partition identity")
+        return {entry["key"] for entry in entries}
+    inventory, selected = keys(manifest["inventory"]), keys(manifest["selected"])
+    cases = list(test_cases(suite))
+    actual = [case.id() for case in cases]
+    require(len(set(actual)) == len(actual) and set(actual) == inventory and selected <= inventory,
+            "Python discovery differs from complete static admission")
+    return unittest.TestSuite(case for case in cases if case.id() in selected)
+
+
+def run_suite(suite, stream, *, allow_empty=False):
     # Snapshot discovery before unittest consumes the suite or skips a fixture's members.
     cases = list(test_cases(suite))
     compiled = [test_identity("python", test.id()) for test in cases]
@@ -139,7 +158,7 @@ def run_suite(suite, stream):
             result.observed.append(observation(identity, "not-run", 0, exit_code=None,
                                                message="Discovered test was not executed"))
     # Preserve environment skips, but an expected failure is still failed coverage.
-    successful = bool(compiled) and result.wasSuccessful() and not result.expectedFailures
+    successful = (bool(compiled) or allow_empty) and result.wasSuccessful() and not result.expectedFailures
     payload = {"compiled": compiled, "observed": result.observed, "exit_code": 0 if successful else 1}
     return payload, payload["exit_code"]
 
@@ -147,9 +166,12 @@ def run_suite(suite, stream):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--selection-path", type=Path, help="Complete static inventory and base-owned execution subset")
     args = parser.parse_args()
     suite = unittest.defaultTestLoader.discover(str(Path(__file__).resolve().parent), pattern="test_*.py")
-    payload, code = run_suite(suite, sys.stderr)
+    if args.selection_path:
+        suite = partition_suite(suite, json.loads(args.selection_path.read_text()))
+    payload, code = run_suite(suite, sys.stderr, allow_empty=bool(args.selection_path))
     args.output.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return code
 

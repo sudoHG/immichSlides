@@ -42,7 +42,8 @@ def select(args):
     started, code = time.monotonic(), 1
     try:
         producer.workspace_preflight(producer.ROOT)
-        planned = producer.planned_ui_selection(ctx["identity"], pack_scoped_ui=args.pack_scoped_ui)
+        planned = producer.planned_ui_selection(ctx["identity"], pack_scoped_ui=args.pack_scoped_ui,
+                                               scoped_ui_v2=getattr(args, "scoped_ui_v2", False))
         affected = producer.app_affected(ctx["identity"])
         producer.output("app_affected", str(affected).lower())
         producer.output("selection_artifact", f"ui-selection-{ctx['run']['id']}-{ctx['run']['attempt']}")
@@ -50,6 +51,8 @@ def select(args):
             summary["hashes"]["manifests"]["ui-scoped-plan"] = planned["packing"]["sha256"]
         for device, shards in planned["device_shards"].items():
             producer.output(device + "_shards", json.dumps(shards, separators=(",", ":")))
+            from ci_publish_git import ui_capacities
+            producer.output(device + "_capacity", str(ui_capacities({"selection": {"packing": planned["packing"]}})[device]))
         producer.output("scoped_plan_sha256", planned["packing"]["sha256"] if planned["packing"] else "")
         run_ui = affected
         if ctx["identity"]["event"] == "push":

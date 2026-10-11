@@ -53,6 +53,20 @@ in the same PR as the test cannot move that PR's test to the macOS share. The
 workflow-policy host check rejects Darwin-only skip conditions whose test identities
 are missing from `MACOS_PYTHON_TESTS`.
 
+For a UI method, assign its class or exact method to the behavior areas in
+`scripts/ci-ui-areas.json`. The host audit classifies each method exactly once:
+names containing `Screenshot` or `Acceptance` are screenshots; all others are
+functional. PRs select functional methods by each changed path's area and proven
+platform, plus smoke on selected platforms; core, unknown and CI-changing PRs
+select all functional methods. The nightly runs the complete default plans,
+including locale screenshots. New methods receive a conservative duration weight
+and still execute. Scoped packing preserves the exact selection and bounds jobs
+by `ceil(selected estimated minutes / 15)`, with base-owned matrix capacities
+within five shared macOS slots; see [the UI protocol](CI_UI.md#platform-selection-and-capacity-packing).
+Every Python method outside `MACOS_PYTHON_TESTS` belongs to the portable Linux
+partition. Both
+partitions must cover the complete discovered suite without new environment skips.
+
 ## 1. Where tests live
 
 | Location | What goes there | Runs by default |
@@ -258,7 +272,9 @@ per-file/function timeout-literal allowlist and rejects production factor access
 Run it with the other Python tests: `python3 -B -m unittest discover -s scripts -p 'test_*.py'`, or directly
 with `python3 scripts/check_test_conventions.py`.
 
-For the shared macOS CI host entry point, use `"${PYTHON:-python3}" -B scripts/run_host_checks.py`.
+For the complete local host entry point, use `"${PYTHON:-python3}" -B scripts/run_host_checks.py`.
+Hosted CI splits the same inventory with `--host-platform linux` and
+`--host-platform macos`; runner ownership comes from the trusted base reader.
 It runs these Python tests and records each discovered identity, outcome and duration
 alongside the other host checks. `scripts/check_all.sh` delegates its host checks to
 that entry point and uses the same interpreter for optional unit runners.

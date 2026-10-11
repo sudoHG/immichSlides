@@ -475,6 +475,7 @@ class StrictCITracerTests(unittest.TestCase):
                 with mock.patch.object(tracer, "run_runner", side_effect=runner), mock.patch.object(tracer, "workspace_preflight"), \
                         mock.patch.object(tracer, "run_identity", return_value=identity), \
                         mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                        mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
                         mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
                     self.assertEqual(tracer.main(["--platform", "ios", "--destination", "unused", "--manifest", str(manifest),
                                                   "--output-dir", str(output)]), 1)
@@ -571,6 +572,8 @@ class StrictCITracerTests(unittest.TestCase):
             ), mock.patch("run_strict_ci_tracer.workspace_preflight"), mock.patch(
                 "run_strict_ci_tracer.run_identity", return_value=identity
             ), mock.patch("run_strict_ci_tracer.source_metadata", return_value=(None, False)), mock.patch(
+                "run_strict_ci_tracer.shutil.disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)
+            ), mock.patch(
                 "run_strict_ci_tracer.toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}
             ):
                 output = Path(raw) / "trace"
