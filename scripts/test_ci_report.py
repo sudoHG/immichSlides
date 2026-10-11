@@ -129,6 +129,7 @@ class ReporterTests(unittest.TestCase):
                                          "invocations": [{"exit_code": 65 if outcome == "failed" else 0}]}
                                 execution_day = [date(2026, 10, 1)]
                                 def simulator_preflight(*args):
+                                    fixture.prepare_simulator.assert_called_once()
                                     execution_day[0] = date(2026, 10, 2)
                                     if number == 0:
                                         raise OSError("simulator unavailable")
@@ -137,6 +138,7 @@ class ReporterTests(unittest.TestCase):
                                     patches = [patch.object(fixture, "ROOT", root), patch.object(fixture, "run_identity", return_value=identity),
                                         patch.object(fixture, "source_metadata", return_value=(ci_report.NIGHTLY_PATH, False)),
                                         patch.object(fixture, "toolchain", return_value={"versions": {}, "signing_mode": "not-applicable"}),
+                                        patch.object(fixture, "prepare_simulator", return_value=(None, "ready\n")),
                                         patch.object(fixture, "registry_revision", return_value="HEAD"),
                                         patch.object(fixture, "load_registry", return_value=(registry, hashlib.sha256(
                                             blobs["scripts/ci-known-flaky.json"]).hexdigest())),
