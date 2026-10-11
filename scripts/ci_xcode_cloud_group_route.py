@@ -26,8 +26,9 @@ import ci_xcode_cloud_state as state
 FAILURES = (ContractError, KeyError, TypeError, ValueError, OSError, URLError, subprocess.SubprocessError)
 RECONCILIATION_HOURS = 2
 SCAN_RATE_RESERVE = 200
-# Two artifact-list reads, authentication/download of both receipts in both checks,
-# and a matching admission/producer lookup. Extra attempts consume this again.
+# Unmarked attempts only list artifacts; marked attempts also authenticate both
+# receipts in both checks and look up their admission/producer.
+SCAN_REQUESTS_UNMARKED = 1
 SCAN_REQUESTS_PER_ATTEMPT = 16
 CLOCK_SKEW_SECONDS = 10
 
@@ -85,7 +86,8 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
         # Publishers and privacy runs dominate repository-wide history. Query
         # only macOS producers, once under the account lock, with bounded samples.
         for workflow in ("ci-gate.yml", "ci-ui.yml", "ci-nightly.yml", "ci-toolchain.yml"):
-            recent = api.repo("actions/workflows/" + workflow + "/runs?status=success&per_page=3")["workflow_runs"]
+            query = "status=completed&per_page=10" if workflow == "ci-ui.yml" else "status=success&per_page=3"
+            recent = api.repo("actions/workflows/" + workflow + "/runs?" + query)["workflow_runs"]
             for run in recent:
                 for job in api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"):
                     if job["id"] in seen or job["conclusion"] != "success" or not job.get("runner_id"):
@@ -263,7 +265,7 @@ def route_sources(api, workflow):
         require(type(total) is int and 0 <= total < 1000 and (count is None or count == total),
                 "recent Cloud reconciliation run list is truncated or changed during pagination")
         count = total
-        require(max(1, math.ceil(count / 100)) + SCAN_REQUESTS_PER_ATTEMPT * count + SCAN_RATE_RESERVE <= remaining,
+        require(max(1, math.ceil(count / 100)) + SCAN_REQUESTS_UNMARKED * count + SCAN_RATE_RESERVE <= remaining,
                 "GitHub rate budget cannot cover recent Cloud reconciliation runs")
         require(isinstance(batch, list) and len(batch) == min(100, max(0, count - len(rows))),
                 "recent Cloud reconciliation run page is incomplete")
@@ -290,24 +292,26 @@ def scheduling_attempts(api, sources, *, current_uploader=None):
     if not sources:
         return
     remaining = api.request("/rate_limit")["resources"]["core"]["remaining"]
-    require(type(remaining) is int, "GitHub reconciliation rate budget is unavailable")
-    count = 0
+    require(type(remaining) is int and SCAN_REQUESTS_UNMARKED * len(sources) + SCAN_RATE_RESERVE <= remaining,
+            "GitHub reconciliation rate budget is unavailable or too low")
+    cost = 0
     for source in sources:
         latest = positive(source["run_attempt"])
         require(latest <= 100, "Cloud scheduling run has excessive attempts")
         artifacts = api.pages(f"actions/runs/{source['id']}/artifacts", "artifacts")
-        attempts = {latest}
+        attempts, marked = {latest}, set()
         for artifact in artifacts:
             match = re.fullmatch(r"ci-xcc-(?:post|start)-" + str(positive(source["id"])) + r"-([1-9][0-9]*)", artifact.get("name", ""))
             if match:
                 attempt = int(match[1])
                 require(attempt <= latest, "Cloud scheduling artifact refers to a future attempt")
                 attempts.add(attempt)
+                marked.add(attempt)
         for attempt in sorted(attempts):
             if current_uploader == (source["id"], attempt):
                 continue
-            count += 1
-            require(SCAN_REQUESTS_PER_ATTEMPT * count + SCAN_RATE_RESERVE <= remaining,
+            cost += SCAN_REQUESTS_PER_ATTEMPT if attempt in marked else SCAN_REQUESTS_UNMARKED
+            require(cost + SCAN_RATE_RESERVE <= remaining,
                     "recent Cloud scheduling attempts exceed the remaining rate budget")
             yield dict(source, run_attempt=attempt), artifacts
 

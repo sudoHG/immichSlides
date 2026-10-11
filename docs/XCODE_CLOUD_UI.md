@@ -127,18 +127,25 @@ runs all default-plan tests on GitHub, and forks/external authors never route.
 live assigned jobs and ready queued jobs. Static UI duration estimates use the admitted
 base's `scripts/ci-ui-durations.json`, default-plan population and static shard
 assignments, with the same device startup overhead as trusted packing. Static
-jobs use their shard estimate; scoped jobs use the median of at most 100 recent
-successful assigned scoped jobs for their device family (iPhone, iPad or Apple TV).
-Without scoped samples, the estimate uses the 120-second lower bound instead of
-packing's 28-minute cap, so uncertainty shortens the GitHub forecast. Unknown static shard suffixes use
+jobs use their shard estimate; scoped jobs use the median of at most 100 successful
+assigned scoped jobs for their device family (iPhone, iPad or Apple TV), sampled
+from the ten most recent completed `ci-ui` runs. A run's aggregate failure or
+cancellation does not discard its successful jobs; failed, skipped, unassigned
+and non-macOS jobs are excluded.
+Without scoped samples, the estimate uses the 120-second floor instead of
+packing's 28-minute cap, generally shortening the GitHub forecast. Unknown static shard suffixes use
 the device family's largest static shard. These are predictions for another
 PR's unknown selection; scoped medians reflect earlier jobs, not this PR's runtime. Skipped jobs and unexpanded UI
 template names cannot remove this model. Non-UI jobs use successful job duration
-p90s from at most three recent runs of each of `ci-gate`, `ci-ui`, `ci-nightly`
-and `ci-toolchain`; publisher/privacy runs cannot displace these samples.
+p90s from the same ten completed `ci-ui` runs and at most three recent successful
+runs of each of `ci-gate`, `ci-nightly` and `ci-toolchain`;
+publisher/privacy runs cannot displace these samples.
 Any macOS job without duration samples, including nightly, live, review, probe
-and tracer jobs, also uses the 120-second lower bound. This can underestimate
-GitHub waiting and cannot increase Cloud spending through missing history.
+and tracer jobs, also uses the 120-second estimate floor. Missing history generally
+shortens the GitHub forecast, but 120 seconds is not a strict lower bound for every
+job (for example, admission and planning can finish sooner). The forecast and
+two-minute comparison margin cannot guarantee that missing samples never increase
+Cloud spending; record measured routing outcomes before activation.
 Per-device UI caps are two iPhone, one iPad and one Apple TV. A queue job without
 known labels or fewer than five assigned macOS jobs keeps GitHub.
 Account-wide free slots and exact FIFO order are not exposed; predictions state
@@ -162,14 +169,17 @@ The start job holds the shared account lock and refreshes head, pointer, queue,
 inventory and budget immediately before its single POST. Reconciliation scans
 only route runs created in the last two hours, once per preparation. Its count
 limit comes from the measured remaining core rate budget: run-list pages
-(at most 100 runs each), 16 estimated requests per scheduling attempt and a
-200-request reserve must fit. The per-attempt estimate covers artifact lists,
-both receipts' authentication/download in both checks and admission/producer
-lookups. At 1,000 remaining requests, the observed peak of 46 runs fits; a lower
-budget, incomplete or changing pages, duplicate runs, or the filtered-list
+(at most 100 runs each), one artifact-list request per unmarked scheduling attempt
+and a 200-request reserve must fit. An attempt carrying a `ci-xcc-post-` or
+`ci-xcc-start-` marker instead costs 16 estimated requests, covering its artifact
+lists, both receipts' authentication/download in both checks and admission/producer
+lookups. Marker discovery checks the full cost before authentication; a partial
+scan never proves a start absent. The peak of 46 unmarked runs fits at 500 remaining
+requests (one page + 46 lists + 200 reserve = 247, formerly 937). Insufficient
+budget for discovered markers, incomplete or changing pages, duplicate runs, or the filtered-list
 1,000-result ceiling selects GitHub. Retained scheduling artifacts identify
 older attempts after a router rerun; their exact attempts remain authenticated
-and each consumes the same allowance against a freshly measured budget.
+and each consumes its marked or unmarked allowance against a freshly measured budget.
 Excluding the current uploader never excludes its older markers.
 The start refresh reuses authenticated history and duration samples under
 the same lock. These bounds limit scan pressure on the shared 1,000-request/hour
@@ -177,9 +187,29 @@ repository token; exceptional artifact pagination and concurrent consumers can
 still exhaust it, which selects GitHub. A persisted, authenticated reconciliation
 ledger is the long-term way to avoid scan cost growing with window traffic
 (Refs #297); this slice does not introduce one.
+A read-only API capture/replay on 2026-10-11 reconstructed the 10-09 18:07:20 UTC
+peak from 823 runs created in the preceding 12 hours: 16 runs had unfinished jobs,
+and 23 same-repository PR UI runs in two hours imply 46 grouped route attempts.
+With that queue, current bounded history and hypothetical unmarked route attempts,
+`queue_snapshot` made 43 GET calls and reconciliation (`route_history`,
+`group_started`, `unknown_starts`) made 52: 95 per preparation, including three
+`/rate_limit` calls that do not charge the primary budget. At 23 preparations/hour,
+this projects 2,116 primary requests/hour, before admission, pointers, waiters or
+POST refreshes, exceeding the
+[shared 1,000-request/hour limit](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#primary-rate-limit-for-github_token-in-github-actions).
+This is a request-count replay, not an activated Actions-token measurement or a
+routing forecast: historical job names predate the scheduler, older waiting runs
+are outside the capture, and no Cloud route attempts existed at that peak. The
+recent ten completed UI runs had no eligible scoped samples in this capture.
+Marked attempts, artifact pagination and retries add requests. Removing overpricing
+does not make sustained peak routing fit the shared budget; measure live use and
+revisit the authenticated ledger before activation.
 The Linux group waiter reads just one page each of route/import runs, filtered
 to creation after the producer attempt start minus five minutes. Its polling
-delay doubles from 60 seconds to a maximum of 300 seconds. Missing final import
+delay doubles from 60 seconds to a maximum of 300 seconds. A full 100-run route
+page without a matching title is unknown, so it keeps waiting even after the
+five-minute start deadline; Cloud may already be running beyond that page.
+Missing final import
 proof still selects GitHub within the existing 110-minute deadline.
 A complete refreshed ASC workflow inventory remains the source of active
 compute evidence. Missing history, pagination or API limits select GitHub. The policy cap is
