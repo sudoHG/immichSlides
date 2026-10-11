@@ -486,8 +486,9 @@ class GroupProducerTests(unittest.TestCase):
         gate = {"id": 902, "run_attempt": 1, "head_sha": self.run["head_sha"], "path": ".github/workflows/ci-gate.yml"}
         completed = [{"id": i, "name": name, "status": "completed", "conclusion": "success"}
                      for i, name in enumerate(("build-ios", "unit-ios"), 200)]
-        api = Mock()
-        api.repo.side_effect = lambda path: {"workflow_runs": [gate] if "head_sha=" in path else [{"id": 901, "run_attempt": 1}]}
+        api = Mock(repository=self.identity["repository"])
+        api.repo.side_effect = lambda path: {"workflow_runs": [gate] if "head_sha=" in path else
+            [dict(self.run, id=901, run_attempt=1, path=".github/workflows/" + path.split("/")[2], conclusion="success")]}
         api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
             [{"id": 900, "run_attempt": 1}] if path == "actions/runs" else
             skipped if "/901/" in path else completed if "/902/" in path else running + queued)
@@ -509,19 +510,84 @@ class GroupProducerTests(unittest.TestCase):
         sampled = [dict(running[0], id=300 + i, name="ui-iphone-scoped-" + str(i), status="completed", conclusion="success",
                         started_at=now.isoformat(), completed_at=(now + timedelta(minutes=minutes)).isoformat())
                    for i, minutes in enumerate((15.9, 16.3, 17.0, 18.6, 21.9, 26.5, 27.4))]
-        for recent, expected in ((skipped + sampled, 18.6 * 60), (skipped, 120)):
+        ipad_sample = dict(sampled[0], id=400, name="ui-ipad-scoped-b")
+        rejected = [dict(ipad_sample, id=401, conclusion="failure"), dict(ipad_sample, id=402, runner_id=0),
+                    dict(ipad_sample, id=403, labels=["ubuntu-24.04"])]
+        for recent, expected, ipad_expected in ((skipped + sampled + [ipad_sample] + rejected, 18.6 * 60, 15.9 * 60),
+                                                (skipped, 120, 120)):
             with self.subTest(samples=len(recent)):
+                api.repo.side_effect = lambda path: {"workflow_runs": [gate] if "head_sha=" in path else
+                    [dict(self.run, id=904, run_attempt=1, conclusion="failure")] if "ci-ui.yml/runs?status=completed" in path else
+                    [dict(self.run, id=901, run_attempt=1, path=".github/workflows/" + path.split("/")[2], conclusion="success")]}
                 api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
                     [{"id": 900, "run_attempt": 1}] if path == "actions/runs" else
-                    recent if "/901/" in path else completed if "/902/" in path else running + queued)
+                    recent if "/904/" in path else skipped if "/901/" in path else completed if "/902/" in path else running + queued)
                 with patch("ci_publish_git.read_blob", return_value=json.dumps(durations)):
                     estimate = router.queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"],
                                                      base_sha=self.identity["base_sha"], ui_inputs=base_ui)
                 self.assertAlmostEqual(estimate["duration_history"]["ui-iphone-scoped-a"][0], expected)
-                self.assertEqual(estimate["duration_history"]["ui-ipad-scoped-a"], [120])
+                self.assertAlmostEqual(estimate["duration_history"]["ui-ipad-scoped-a"][0], ipad_expected)
                 if recent == skipped:
                     self.assertFalse(choose_cloud(estimate, {"seconds": 1700, "reservation_minutes": 80}, 0,
                                                  month_policy(now, self.registry["billing_anchor"]))["route"])
+
+    def test_queue_history_rejects_forged_workflow_jobs_before_reading_untrusted_runs(self):
+        from ci_xcode_cloud_group_route import queue_snapshot
+        now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+        gate = dict(self.run, id=902, run_attempt=1, path=".github/workflows/ci-gate.yml")
+        own_jobs = [{"id": i, "name": name, "status": "completed", "conclusion": "success"}
+                    for i, name in enumerate(("build-ios", "unit-ios"), 200)]
+        forged = [{"id": i, "name": name, "status": "completed", "conclusion": "success", "runner_id": i,
+                   "labels": ["macos-15"], "started_at": now.isoformat(),
+                   "completed_at": (now + timedelta(hours=10)).isoformat()}
+                  for i, name in enumerate(("ui-iphone-scoped-forged", "build-ios"), 300)]
+        selected = {"packing": {"estimated_job_seconds": {"iphone": [600], "ipad": [600]}}}
+        mutations = ({"head_repository": {"full_name": "fork/repo"}}, {"repository": {"full_name": "fork/repo"}},
+                     {"head_repository": None}, {"path": ".github/workflows/forged.yml"}, {"event": "workflow_dispatch"})
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                api = Mock(repository=self.identity["repository"])
+                api.repo.side_effect = lambda path: {"workflow_runs": [gate] if "head_sha=" in path else
+                    [dict(dict(self.run, id=901, run_attempt=1, conclusion="success",
+                               path=".github/workflows/" + path.split("/")[2]), **mutation)]}
+                api.pages.side_effect = lambda path, collection, **query: ([] if path == "actions/runs" else
+                    own_jobs if "/902/" in path else forged)
+                result = queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"])
+                self.assertEqual(result["duration_history"], {})
+                self.assertFalse(any("/901/" in call.args[0] for call in api.pages.call_args_list))
+
+    def test_scoped_history_fills_from_bounded_non_cancelled_pr_pages(self):
+        from ci_xcode_cloud_group_route import queue_snapshot
+        now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+        gate = dict(self.run, id=902, run_attempt=1, path=".github/workflows/ci-gate.yml")
+        own_jobs = [{"id": i, "name": name, "status": "completed", "conclusion": "success"}
+                    for i, name in enumerate(("build-ios", "unit-ios"), 200)]
+        selected = {"packing": {"estimated_job_seconds": {"iphone": [600], "ipad": [600]}}}
+        for cancelled in (False, True):
+            with self.subTest(all_cancelled=cancelled):
+                api = Mock(repository=self.identity["repository"])
+                def response(path):
+                    if "head_sha=" in path:
+                        return {"workflow_runs": [gate]}
+                    if "ci-ui.yml/runs?" not in path:
+                        return {"workflow_runs": []}
+                    from urllib.parse import parse_qs, urlsplit
+                    query = parse_qs(urlsplit(path).query)
+                    self.assertEqual(query.get("event"), ["pull_request"])
+                    page = int(query.get("page", [1])[0])
+                    return {"workflow_runs": [dict(self.run, id=1000 + page * 10 + i, run_attempt=1,
+                        conclusion="cancelled" if cancelled or page == 1 and i < 8 else "failure") for i in range(10)]}
+                api.repo.side_effect = response
+                api.pages.side_effect = lambda path, collection, **query: ([] if path == "actions/runs" else
+                    own_jobs if "/902/" in path else [{"id": int(path.split("/")[2]), "name": "ui-iphone-scoped-a",
+                        "status": "completed", "conclusion": "success", "runner_id": 1, "labels": ["macos-15"],
+                        "started_at": now.isoformat(), "completed_at": (now + timedelta(seconds=600)).isoformat()}])
+                result = queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"])
+                lists = [call for call in api.repo.call_args_list if "ci-ui.yml/runs?" in call.args[0]]
+                self.assertEqual(len(lists), 3 if cancelled else 2)
+                sampled = [call for call in api.pages.call_args_list if "actions/runs/10" in call.args[0]]
+                self.assertEqual(len(sampled), 0 if cancelled else 10)
+                self.assertEqual(result["duration_history"], {} if cancelled else {"ui-iphone-scoped": [600] * 10})
 
     def test_job_phases_share_the_runner_job_deadline_and_leave_upload_time(self):
         import json
@@ -624,8 +690,16 @@ class GroupProducerTests(unittest.TestCase):
         api.pages.return_value = []
         self.assertEqual(len(list(router.scheduling_attempts(api, peak))), 46)
         api.request.return_value["resources"]["core"]["remaining"] = 500
-        with self.assertRaises(ContractError):
-            router.route_sources(api, {"id": 42})
+        self.assertEqual(router.route_sources(api, {"id": 42}), peak)
+        self.assertEqual(len(list(router.scheduling_attempts(api, peak))), 46)
+        for prefix in ("ci-xcc-post-", "ci-xcc-start-"):
+            with self.subTest(prefix=prefix):
+                api.pages.side_effect = lambda path, *args: [{"name": prefix + "900-1"}] if "/900/" in path else []
+                self.assertEqual(len(list(router.scheduling_attempts(api, peak))), 46)
+                api.pages.side_effect = lambda path, *args: [{"name": prefix + path.split("/")[2] + "-1"}]
+                with self.assertRaises(ContractError):
+                    list(router.scheduling_attempts(api, peak))
+        api.pages.side_effect = None
         api.request.return_value["resources"]["core"]["remaining"] = 2500
         paginated = [{"id": 900 + i, "run_attempt": 1} for i in range(101)]
         api.repo.side_effect = [{"total_count": 101, "workflow_runs": paginated[:100]},
@@ -741,14 +815,16 @@ class GroupProducerTests(unittest.TestCase):
                    "name": "ui-iphone-scoped-a", "created_at": "2026-10-09T23:59:00Z"}
         history = dict(running[0], id=9, status="completed", conclusion="success", started_at="2026-10-09T23:00:00Z",
                        completed_at="2026-10-09T23:45:00Z")
-        api = Mock()
+        api = Mock(repository=self.identity["repository"])
         gate = {"id": 902, "run_attempt": 1, "head_sha": self.run["head_sha"], "path": ".github/workflows/ci-gate.yml"}
         archive = {"id": 8, "name": "build-ios", "status": "completed", "conclusion": "success", "labels": ["xcode-27"]}
         unit = dict(archive, id=10, name="unit-ios")
         def response(path):
             if path.startswith("actions/runs?"):
                 return {"workflow_runs": [{"id": 903, "run_attempt": 1, "name": "ci-publish"}]}
-            return {"workflow_runs": [gate] if "head_sha=" in path else [{"id": 901, "run_attempt": 1, "name": "ci-gate"}]}
+            return {"workflow_runs": [gate] if "head_sha=" in path else
+                [dict(self.run, id=901, run_attempt=1, path=".github/workflows/" + path.split("/")[2],
+                      event="pull_request" if "ci-ui.yml" in path else "push", conclusion="success")]}
         api.repo.side_effect = response
         api.pages.side_effect = lambda path, collection, **query: ([] if query.get("status") == "queued" else
             [{"id": 900, "run_attempt": 1}, {"id": 123, "run_attempt": 2}] if path == "actions/runs" else
@@ -760,12 +836,27 @@ class GroupProducerTests(unittest.TestCase):
         self.assertEqual(result["queued_mac_jobs"], 0)
         self.assertEqual(result["archive_ready_seconds"], 0)
         queried = [call.args[0] for call in api.repo.call_args_list]
-        self.assertEqual(sum("status=success" in path for path in queried), 4)
+        self.assertEqual(sum("status=success" in path for path in queried), 3)
+        self.assertEqual(sum("ci-ui.yml/runs?status=completed" in path for path in queried), 1)
         self.assertTrue(all("actions/workflows/" in path for path in queried))
         cached = result["duration_history"]
         api.repo.reset_mock()
         queue_snapshot(api, now, selected, "ios", producer_run_id=123, head_sha=self.run["head_sha"], history=cached)
-        self.assertFalse(any("status=success" in call.args[0] for call in api.repo.call_args_list))
+        self.assertFalse(any("status=success" in call.args[0] or "status=completed" in call.args[0]
+                             for call in api.repo.call_args_list))
+        for group, device in (("ios", "ipad"), ("tvos", "appletv")):
+            with self.subTest(capacity_v2_device=device):
+                archive["name"], unit["name"] = "build-" + group, "unit-" + group
+                packing = {"algorithm": "capacity-v2", "capacity": {"device_slots": {"iphone": 1, "ipad": 2, "appletv": 2}},
+                           "estimated_job_seconds": {family: [600] * 3 if family == device else []
+                                                     for family in ("iphone", "ipad", "appletv")}}
+                accelerated = queue_snapshot(api, now, {"packing": packing}, group, producer_run_id=123,
+                                             head_sha=self.run["head_sha"], history=cached)
+                legacy = queue_snapshot(api, now, {"packing": dict(packing, algorithm="legacy")}, group,
+                                        producer_run_id=123, head_sha=self.run["head_sha"], history=cached)
+                self.assertEqual(accelerated["seconds"], 3900)
+                self.assertEqual(legacy["seconds"], 4500)
+        archive["name"], unit["name"] = "build-ios", "unit-ios"
         names = ("nightly-strict-ipad-immichSlides-iOS-debug-4", "nightly-strict-ipad-immichSlides-iOS-debug-6",
                  "nightly-strict-iphone-immichSlides-iOS-debug-0", "nightly-strict-tv-immichSlides-tvOS-debug-0",
                  "live-unit (ios)", "live-unit (tvos)", "live-build (tvos)", "ci-p2-review", "ci-probe", "ci-strict-tracer")
@@ -1038,6 +1129,39 @@ class GroupProducerTests(unittest.TestCase):
         queried = [call.args[0] for call in api.repo.call_args_list if "/runs?" in call.args[0]]
         self.assertTrue(any("/42/" in path for path in queried) and any("/43/" in path for path in queried))
 
+    def test_group_wait_keeps_full_unmatched_route_pages_unknown_until_proof_or_deadline(self):
+        import ci_xcode_cloud_ui as consumer
+        self.registry["routing_enabled"] = True
+        cases = ((99, True, 1, "github", 420), (100, True, 1, "routed", 1020),
+                 (100, False, 1, "github", 110 * 60), (99, True, 2, "github", 0), (100, True, 2, "routed", 1020))
+        for count, prove_import, attempt, expected, seconds in cases:
+            with self.subTest(count=count, prove_import=prove_import, attempt=attempt):
+                context = {"identity": self.identity, "source": {"fork_originated": False},
+                           "run": {"id": "123", "attempt": attempt}}
+                elapsed = [0]
+                run = dict(self.run, run_attempt=attempt, status="in_progress", run_started_at="2026-10-10T00:00:00Z")
+                api = Mock(repository="owner/repo")
+                sources = [{"id": 1000 + i, "run_attempt": 1, "display_title": "xcc-route-other", "status": "completed"}
+                           for i in range(count)]
+                api.repo.side_effect = lambda path: run if path.startswith("actions/runs/") else (
+                    {"workflow_runs": sources} if "/runs?" in path else {"id": 42, "state": "active"})
+                def artifact(*args, **kwargs):
+                    if prove_import and elapsed[0] >= 1000:
+                        return self.route, 99
+                    raise ContractError("route not visible yet")
+                def sleep(seconds):
+                    elapsed[0] += seconds
+                with patch.object(consumer, "registration_hint", return_value=True), patch("ci_publish.verify_workflow"), \
+                        patch("ci_publish.trusted_admissions", return_value={123: self.record}), \
+                        patch("ci_xcode_cloud_group_route.anchor", return_value="ui-selection"), \
+                        patch.object(consumer, "archive_evidence_run", return_value=run), \
+                        patch.object(consumer, "trusted_artifact", side_effect=artifact), \
+                        patch.object(self.groups, "trusted_groups", return_value={}):
+                    self.assertEqual(consumer.wait_cloud_group(context, api, "ios", sleep=sleep,
+                                                              monotonic=lambda: elapsed[0]), expected)
+                self.assertEqual(elapsed[0], seconds)
+                api.pages.assert_not_called()
+
     def test_router_waits_for_the_publishers_pointer_before_releasing_the_group(self):
         import ci_xcode_cloud_group_route as router
         self.registry.update(routing_enabled=True, scm_repository_id="33333333-3333-3333-3333-333333333333")
@@ -1065,6 +1189,34 @@ class GroupProducerTests(unittest.TestCase):
             self.assertEqual(queue.call_args.kwargs["history"], {})
         self.assertEqual(result["decision"], "pending")
         sleep.assert_called_once_with(15)
+
+    def test_github_capacity_or_winning_forecast_skips_cloud_inventory_and_reconciliation(self):
+        import ci_xcode_cloud_group_route as router
+        self.registry["routing_enabled"] = True
+        api = Mock()
+        api.pages.return_value = [self.pointer]
+        cases = ((7200, 1, False, "github-capacity-or-queue-uncertain"),
+                 (7200, 0, False, "github-capacity-or-queue-uncertain"),
+                 (600, 0, True, "github-estimated-faster"), (1120, 0, True, "github-estimated-faster"))
+        for seconds, free_slots, saturation, reason in cases:
+            with self.subTest(seconds=seconds, free_slots=free_slots, saturation=saturation):
+                factory = Mock()
+                with patch.object(router, "current_producer"), patch.object(router, "trusted_admissions", return_value={123: self.record}), \
+                        patch.object(router, "anchor", return_value="ui-selection"), \
+                        patch.object(router, "archive_evidence_run", return_value=dict(self.run,
+                            archive_job={"status": "completed", "conclusion": "success"})), \
+                        patch.object(router, "selection_open", return_value=True), patch.object(router, "remaining_seconds", return_value=100), \
+                        patch.object(router, "queue_snapshot", return_value={"seconds": seconds, "free_slots": free_slots,
+                                                                             "can_prove_saturation": saturation}), \
+                        patch.object(router, "cloud_estimate", return_value={"seconds": 1000, "reservation_minutes": 80}), \
+                        patch.object(router, "route_history") as history, patch.object(router, "group_started") as started, \
+                        patch.object(router, "unknown_starts") as unresolved:
+                    receipt = router.prepare_group(api, factory, self.run, "ios")
+                self.assertEqual((receipt["decision"], receipt["reason"]), ("github", reason))
+                factory.assert_not_called()
+                history.assert_not_called()
+                started.assert_not_called()
+                unresolved.assert_not_called()
 
     def test_missing_confirmed_allowance_or_billing_period_refuses_cloud_before_asc(self):
         import ci_xcode_cloud_group_route as router

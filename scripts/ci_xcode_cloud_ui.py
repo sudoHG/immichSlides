@@ -169,8 +169,10 @@ def wait_cloud_group(ctx, api, group, *, sleep=time.sleep, monotonic=time.monoto
                                 and started["selection_sha256"] == groups.canonical_hash(descriptor), "group start selection differs")
                         if started["decision"] in {"github", "fallback"}:
                             return "github"
-                elif monotonic() >= start_deadline or run["run_attempt"] > 1:
+                elif len(sources) < 100 and (monotonic() >= start_deadline or run["run_attempt"] > 1):
                     return "github"
+                # A full first page cannot prove our route is absent; Cloud may
+                # already be running beyond it. Keep the bounded import wait.
             except FAILURES as error:
                 if not transient(error):
                     raise

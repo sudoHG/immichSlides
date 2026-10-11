@@ -26,9 +26,12 @@ import ci_xcode_cloud_state as state
 FAILURES = (ContractError, KeyError, TypeError, ValueError, OSError, URLError, subprocess.SubprocessError)
 RECONCILIATION_HOURS = 2
 SCAN_RATE_RESERVE = 200
-# Two artifact-list reads, authentication/download of both receipts in both checks,
-# and a matching admission/producer lookup. Extra attempts consume this again.
+# Unmarked attempts only list artifacts; marked attempts also authenticate both
+# receipts in both checks and look up their admission/producer.
+SCAN_REQUESTS_UNMARKED = 1
 SCAN_REQUESTS_PER_ATTEMPT = 16
+UI_HISTORY_RUNS = 10
+UI_HISTORY_PAGES = 3
 CLOCK_SKEW_SECONDS = 10
 
 
@@ -85,7 +88,24 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
         # Publishers and privacy runs dominate repository-wide history. Query
         # only macOS producers, once under the account lock, with bounded samples.
         for workflow in ("ci-gate.yml", "ci-ui.yml", "ci-nightly.yml", "ci-toolchain.yml"):
-            recent = api.repo("actions/workflows/" + workflow + "/runs?status=success&per_page=3")["workflow_runs"]
+            ui_history = workflow == "ci-ui.yml"
+            limit, recent = UI_HISTORY_RUNS if ui_history else 3, []
+            for page in range(1, (UI_HISTORY_PAGES if ui_history else 1) + 1):
+                query = (f"status=completed&event=pull_request&per_page={limit}&page={page}" if ui_history
+                         else "status=success&per_page=3")
+                rows = api.repo("actions/workflows/" + workflow + "/runs?" + query)["workflow_runs"]
+                for run in rows:
+                    if ((run.get("repository") or {}).get("full_name") != api.repository
+                            or (run.get("head_repository") or {}).get("full_name") != api.repository
+                            or run.get("path") != ".github/workflows/" + workflow
+                            or run.get("event") not in {"pull_request", "push"}
+                            or ui_history and (run["event"] != "pull_request" or run.get("conclusion") == "cancelled")):
+                        continue  # Untrusted workflows cannot influence a Cloud spending decision.
+                    recent.append(run)
+                    if len(recent) == limit:
+                        break
+                if len(recent) == limit or len(rows) < limit:
+                    break
             for run in recent:
                 for job in api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"):
                     if job["id"] in seen or job["conclusion"] != "success" or not job.get("runner_id"):
@@ -121,8 +141,10 @@ def queue_snapshot(api, now, selection, group, *, producer_run_id, head_sha, his
     require(gates, "this head has no GitHub gate for an archive forecast")
     gate = max(gates, key=lambda run: run["id"])
     own_jobs = api.pages(f"actions/runs/{gate['id']}/attempts/{gate['run_attempt']}/jobs", "jobs")
+    from ci_publish_git import ui_capacities
+    capacities = ui_capacities({"selection": selection})
     result = github_estimate(jobs, now, seconds, history=history,
-        matrix_cap={device: 2 if device == "iphone" else 1 for device in seconds}, gate=dict(gate, jobs=own_jobs), platform=group)
+        matrix_cap={device: capacities[device] for device in seconds}, gate=dict(gate, jobs=own_jobs), platform=group)
     return dict(result, duration_history=history, duration_model="base-static-ui-scoped-median-non-ui-p90-or-floor",
                 ui_duration_base_sha=base_sha if static_jobs else None)
 
@@ -263,7 +285,7 @@ def route_sources(api, workflow):
         require(type(total) is int and 0 <= total < 1000 and (count is None or count == total),
                 "recent Cloud reconciliation run list is truncated or changed during pagination")
         count = total
-        require(max(1, math.ceil(count / 100)) + SCAN_REQUESTS_PER_ATTEMPT * count + SCAN_RATE_RESERVE <= remaining,
+        require(max(1, math.ceil(count / 100)) + SCAN_REQUESTS_UNMARKED * count + SCAN_RATE_RESERVE <= remaining,
                 "GitHub rate budget cannot cover recent Cloud reconciliation runs")
         require(isinstance(batch, list) and len(batch) == min(100, max(0, count - len(rows))),
                 "recent Cloud reconciliation run page is incomplete")
@@ -290,24 +312,26 @@ def scheduling_attempts(api, sources, *, current_uploader=None):
     if not sources:
         return
     remaining = api.request("/rate_limit")["resources"]["core"]["remaining"]
-    require(type(remaining) is int, "GitHub reconciliation rate budget is unavailable")
-    count = 0
+    require(type(remaining) is int and SCAN_REQUESTS_UNMARKED * len(sources) + SCAN_RATE_RESERVE <= remaining,
+            "GitHub reconciliation rate budget is unavailable or too low")
+    cost = 0
     for source in sources:
         latest = positive(source["run_attempt"])
         require(latest <= 100, "Cloud scheduling run has excessive attempts")
         artifacts = api.pages(f"actions/runs/{source['id']}/artifacts", "artifacts")
-        attempts = {latest}
+        attempts, marked = {latest}, set()
         for artifact in artifacts:
             match = re.fullmatch(r"ci-xcc-(?:post|start)-" + str(positive(source["id"])) + r"-([1-9][0-9]*)", artifact.get("name", ""))
             if match:
                 attempt = int(match[1])
                 require(attempt <= latest, "Cloud scheduling artifact refers to a future attempt")
                 attempts.add(attempt)
+                marked.add(attempt)
         for attempt in sorted(attempts):
             if current_uploader == (source["id"], attempt):
                 continue
-            count += 1
-            require(SCAN_REQUESTS_PER_ATTEMPT * count + SCAN_RATE_RESERVE <= remaining,
+            cost += SCAN_REQUESTS_PER_ATTEMPT if attempt in marked else SCAN_REQUESTS_UNMARKED
+            require(cost + SCAN_RATE_RESERVE <= remaining,
                     "recent Cloud scheduling attempts exceed the remaining rate budget")
             yield dict(source, run_attempt=attempt), artifacts
 
@@ -396,6 +420,14 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         visibility_delay(registration)
         policy = month_policy(now, registration["billing_anchor"], cap_minutes=registration["cap_minutes"])
         receipt["budget_policy"] = policy
+        receipt["cloud_estimate"] = cloud_estimate(descriptor, selected,
+            queue_seconds=registration["groups"][group]["queue_seconds_upper"])
+        # A losing Cloud forecast needs no inventory or historical start reads.
+        # Zero usage is optimistic for Cloud and can only refuse a possible start.
+        early = choose_cloud(receipt["capacity"], receipt["cloud_estimate"], 0, policy)
+        if not early["route"]:
+            receipt.update(reason=early["reason"], estimate_decision=early)
+            return receipt
         asc = asc_factory()
         stage = "cloud-inventory-unavailable"
         inventory = inventories(asc, registration)
@@ -406,8 +438,6 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         if any(row["attributes"]["executionProgress"] != "COMPLETE" for row in inventory[group]):
             receipt["reason"] = "group-cloud-capacity-in-use"
             return receipt
-        receipt["cloud_estimate"] = cloud_estimate(descriptor, selected,
-            queue_seconds=registration["groups"][group]["queue_seconds_upper"])
         stage = "cloud-budget-unavailable"
         usage = [account_usage(asc, registration, now, start) for start, _ in policy["windows"]]
         unresolved = unknown_starts(api, registration, inventory, current_uploader=current_uploader,
