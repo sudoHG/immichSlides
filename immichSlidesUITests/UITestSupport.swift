@@ -6,7 +6,7 @@ import XCTest
 extension XCUIApplication {
     func tapSlideshowControlBarButton(identifier: String) {
         // This playback leaf remains present when the control bar auto-hides.
-        if buttons["slideshow.currentAssetId.flag"].exists {
+        if descendants(matching: .any)["slideshow.currentAssetId.flag"].exists {
             tap()
         }
         // Resolve and act immediately after revealing, before another snapshot can outlast the timer.
