@@ -614,6 +614,7 @@
     },
     "localization-settings": {
       "sources": [
+        "immichSlides/iOS/Core/SlideShowViewIOS.swift",
         "immichSlides/Shared/Core/SettingsView+Sections.swift",
         "immichSlides/Shared/Core/SettingsView+Helpers.swift",
         "immichSlides/Shared/Component/SettingsSectionCardView.swift",
@@ -651,6 +652,7 @@
     },
     "localization-about": {
       "sources": [
+        "immichSlides/iOS/Core/SlideShowViewIOS.swift",
         "immichSlides/Shared/Core/SettingsView+Sections.swift",
         "immichSlides/iOS/Core/SettingsViewIOS.swift",
         "immichSlides/tvOS/Core/SettingsViewTV+AboutPages.swift",
@@ -672,6 +674,7 @@
     },
     "localization-filter": {
       "sources": [
+        "immichSlides/iOS/Core/SlideShowViewIOS.swift",
         "immichSlides/Shared/Core/AlbumFilterView.swift",
         "immichSlides/Shared/Core/PersonFilterView.swift",
         "immichSlides/Shared/Core/FilterView.swift",

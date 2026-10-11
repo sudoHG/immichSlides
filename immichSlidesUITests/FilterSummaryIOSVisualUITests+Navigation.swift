@@ -5,13 +5,12 @@ import XCTest
 extension FilterSummaryIOSVisualUITests {
     @MainActor
     func openSettingsFromSlideShow(app: XCUIApplication) {
-        let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
             waitForSlideshowSettingsButton(
                 app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "Playback page should show the settings button")
 
-        tapElement(settingsButton)
+        app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
 
         XCTAssertTrue(
             waitForAnySettingsRootEntry(

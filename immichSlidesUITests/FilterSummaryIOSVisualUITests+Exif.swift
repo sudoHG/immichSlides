@@ -185,7 +185,7 @@ extension FilterSummaryIOSVisualUITests {
                 nextButton.waitForExistence(
                     timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "Playback page should show the 'Next' button")
-            tapElement(nextButton)
+            app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
 
             if let previousAssetID {
                 if waitUntil(

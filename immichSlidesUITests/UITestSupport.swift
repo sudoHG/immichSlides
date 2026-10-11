@@ -2,6 +2,19 @@ import ImageIO
 import UIKit
 import XCTest
 
+#if os(iOS)
+extension XCUIApplication {
+    func tapSlideshowControlBarButton(identifier: String) {
+        // This playback leaf remains present when the control bar auto-hides.
+        if descendants(matching: .any)["slideshow.currentAssetId.flag"].exists {
+            tap()
+        }
+        // Resolve and act immediately after revealing, before another snapshot can outlast the timer.
+        buttons[identifier].tap()
+    }
+}
+#endif
+
 enum UITestSupportWaitTiming {
     static let briefElementTimeoutSeconds: TimeInterval = TestWait.seconds(.product(1))
     static let connectionTimeoutSeconds: TimeInterval = TestWait.seconds(.product(15))
