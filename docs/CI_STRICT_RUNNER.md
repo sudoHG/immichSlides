@@ -69,10 +69,24 @@ rejected in that default mode. Explicit shard DerivedData is retained
 until its owner finishes all cases. Package resolution stays locked and simulator
 signing stays **Sign to Run Locally**, verified as `adhoc` by `codesign` after warm-up.
 
-The strict and standalone access runners share the same reset: boot, terminate,
-uninstall, require the app container to be absent, reset keychain, reset all privacy
-permissions. A reset error fails the case. Use dedicated simulators: keychain/privacy
-reset applies to the whole device. Server/UI test variables in direct,
+## Shared simulator reset
+
+Strict, fixture UI, listed-retry and standalone access runners share
+`reset_simulator_app`: boot and wait for `bootstatus -b`, query the app container,
+terminate only when the app is installed, uninstall with one retry, require the
+app container to be absent afterward, then reset keychain and all privacy
+permissions. Only a container lookup confirming absence skips termination; an
+unknown or timed-out lookup fails. Uninstall and the remaining reset steps are
+still mandatory before Xcode may install the app. A reset error fails the case.
+
+Boot finishes before the existing 120-second reset deadline starts; the presence
+query and all remaining reset commands share that deadline. Individual reset
+commands retain their 60-second cap. Boot phases, the extra presence-query seconds,
+skipped termination and total reset seconds are logged. This adds no fixed
+post-boot sleep and extends no reset or product deadline.
+
+Use dedicated simulators: keychain/privacy reset applies to the whole device.
+Server/UI test variables in direct,
 `TEST_RUNNER_` and `SIMCTL_CHILD_` forms are filtered. Strict fixture inputs are
 passed explicitly; real server configuration is never used.
 

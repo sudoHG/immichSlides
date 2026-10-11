@@ -472,7 +472,7 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
         line = f"simulator-app-presence: elapsed={time.monotonic() - started:.1f}s; total budget={SIMULATOR_RESET_TIMEOUT_SECONDS}s"
         lines.append(line)
         report(line)
-    # Cold official-result runs have never installed the app; terminate can stall on that lookup.
+    # Terminate stalled after cold boot on hosted runners; skip it only when the app is absent.
     if installed:
         terminate = simulator_command(
             ["xcrun", "simctl", "terminate", simulator_udid, bundle_id], "simulator-terminate", deadline=deadline,
