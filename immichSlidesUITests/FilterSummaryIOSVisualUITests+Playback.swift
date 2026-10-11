@@ -254,7 +254,7 @@ extension FilterSummaryIOSVisualUITests {
             "Playback page should show the play button in the control bar"
         )
 
-        playPauseButton.tap()
+        app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
         XCTAssertTrue(
             entryHintBanner.waitForExistence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.briefElementTimeoutSeconds),

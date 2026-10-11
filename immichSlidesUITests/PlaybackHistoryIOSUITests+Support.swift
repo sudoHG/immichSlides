@@ -63,7 +63,7 @@ extension PlaybackHistoryIOSUITests {
             waitUntil(timeout: TestWait.seconds(.infrastructure(8))) {
                 settingsButton.exists && settingsButton.isHittable
             })
-        tapElement(settingsButton)
+        app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
 
         let playbackEntry: XCUIElement
         if UIDevice.current.userInterfaceIdiom == .pad {
