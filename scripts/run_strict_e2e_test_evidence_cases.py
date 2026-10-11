@@ -85,36 +85,44 @@ from run_strict_e2e_test_fixtures import (
 
 class StrictE2ERunnerTestsCasesEvidence:
     def test_reset_simulator_app_retries_uninstall_and_records_log(self) -> None:
-        calls: list[list[str]] = []
+        for installed in (False, True):
+            with self.subTest(installed=installed):
+                calls: list[list[str]] = []
 
-        def fake_run(command: list[str], **kwargs: object) -> mock.Mock:
-            calls.append(command)
-            result = mock.Mock()
-            result.stdout = ""
-            uninstall_count = sum(1 for item in calls if item[:3] == ["xcrun", "simctl", "uninstall"])
-            if command[:3] == ["xcrun", "simctl", "uninstall"] and uninstall_count == 1:
-                result.returncode = 149
-                result.stderr = "Failed to uninstall: Application not found"
-            elif command[:3] == ["xcrun", "simctl", "get_app_container"]:
-                result.returncode = 2
-                result.stderr = "No such container"
-            else:
-                result.returncode = 0
-                result.stderr = ""
-            return result
+                def fake_run(command: list[str], **kwargs: object) -> mock.Mock:
+                    calls.append(command)
+                    result = mock.Mock(returncode=0, stdout="", stderr="")
+                    uninstall_count = sum(1 for item in calls if item[2] == "uninstall")
+                    if command[2] == "terminate" and not installed:
+                        # A cold device must not wait on termination of an app it never installed.
+                        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+                    if command[2] == "uninstall" and uninstall_count == 1:
+                        result.returncode = 149
+                        result.stderr = "Failed to uninstall: Application not found"
+                    elif command[2] == "get_app_container":
+                        if installed and uninstall_count == 0:
+                            result.stdout = "/sim/containers/immichSlides\n"
+                        else:
+                            result.returncode = 2
+                            result.stderr = "No such container"
+                    return result
 
-        with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch(
-            "run_strict_e2e.time.sleep"
-        ):
-            log = reset_simulator_app("SIM-UDID")
+                with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch(
+                    "run_strict_e2e.time.sleep"
+                ):
+                    log = reset_simulator_app("SIM-UDID")
 
-        self.assertIn("simulator_id=SIM-UDID", log)
-        self.assertIn("uninstall_exit=149", log)
-        self.assertIn("uninstall_retry_exit=0", log)
-        self.assertIn("app_container=absent", log)
-        self.assertTrue(any(command[:3] == ["xcrun", "simctl", "boot"] for command in calls))
-        self.assertTrue(any(command[:3] == ["xcrun", "simctl", "terminate"] for command in calls))
-        self.assertEqual(sum(1 for command in calls if command[:3] == ["xcrun", "simctl", "uninstall"]), 2)
+                self.assertIn("simulator_id=SIM-UDID", log)
+                self.assertIn("uninstall_exit=149", log)
+                self.assertIn("uninstall_retry_exit=0", log)
+                self.assertIn("app_container=absent", log)
+                self.assertTrue(any(command[2] == "boot" for command in calls))
+                self.assertEqual(sum(command[2] == "terminate" for command in calls), int(installed))
+                self.assertEqual(sum(command[2] == "uninstall" for command in calls), 2)
+                self.assertEqual(sum(command[2] == "get_app_container" for command in calls), 2)
+                self.assertTrue(any(command[2] == "keychain" for command in calls))
+                self.assertTrue(any(command[2] == "privacy" for command in calls))
+                self.assertIn("simulator-app-presence: elapsed=", log)
 
 
     def test_reset_simulator_app_fails_when_container_still_exists(self) -> None:

@@ -451,6 +451,9 @@ without a real server, private configuration or changed test assertions. They
 retain default simulator signing, pinned toolchains and runtime fixture inputs.
 Only each job's pinned device simulator is created and deleted.
 
+Fixture UI runners use the [shared simulator reset](CI_STRICT_RUNNER.md#shared-simulator-reset),
+including its clean-install requirements, preparation bounds and timing logs.
+
 `--listed-only-retry` reads the PR's first-parent registry, never the candidate
 registry. Only a listed, unexpired assertion failure can receive a second,
 exact-method `test-without-building` call after app reset. No global retry or
