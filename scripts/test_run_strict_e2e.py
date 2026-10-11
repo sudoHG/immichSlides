@@ -366,13 +366,21 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "get_app_container": "simulator-container", "keychain": "simulator-keychain-reset",
             "privacy": "simulator-privacy-reset",
         }
-        for step, phase in commands.items():
+        for step, phase in [*commands.items(), ("get_app_container_after_uninstall", "simulator-container")]:
             with self.subTest(step=step):
+                container_calls = []
+
                 def run(command, **kwargs):
-                    if command[2] == step:
+                    if command[2] == "get_app_container":
+                        container_calls.append(command)
+                    timed_step = "get_app_container" if step == "get_app_container_after_uninstall" else step
+                    if command[2] == timed_step and (step == timed_step or len(container_calls) == 2):
                         self.assertGreater(kwargs.get("timeout", 0), 0)
                         raise subprocess.TimeoutExpired(["private-test-input"], kwargs["timeout"],
                                                         output=b"private-test-input")
+                    if command[2] == "get_app_container":
+                        if len(container_calls) == 1:
+                            return subprocess.CompletedProcess(command, 0, "/sim/containers/immichSlides\n", "")
                     return subprocess.CompletedProcess(command, 2 if command[2] == "get_app_container" else 0, "", "")
                 with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=run), mock.patch(
                     "strict_e2e_runner_support.time.sleep"

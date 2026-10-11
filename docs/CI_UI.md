@@ -451,6 +451,17 @@ without a real server, private configuration or changed test assertions. They
 retain default simulator signing, pinned toolchains and runtime fixture inputs.
 Only each job's pinned device simulator is created and deleted.
 
+All fixture and strict runners share `reset_simulator_app`. After bounded boot
+and `bootstatus -b`, reset queries the app container inside the existing
+120-second reset deadline. Only confirmed absence skips `terminate`: cold
+official-result discovery has not installed the app yet, and terminating that
+missing app can stall. Installed apps retain bounded termination. An unknown or
+timed-out lookup fails; every path still requires successful uninstall (including
+the existing single retry), absent container afterward, and successful Keychain
+and privacy resets before Xcode may install the app. Boot phases, the extra
+presence-query seconds, skipped termination and total reset seconds are logged.
+This adds no fixed post-boot sleep and extends no reset or product deadline.
+
 `--listed-only-retry` reads the PR's first-parent registry, never the candidate
 registry. Only a listed, unexpired assertion failure can receive a second,
 exact-method `test-without-building` call after app reset. No global retry or

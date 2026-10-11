@@ -462,12 +462,25 @@ def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None 
 
 def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides") -> str:
     # The fixed sleep waits for simctl to release the container lock; a second uninstall failure must stop the run.
-    lines = [f"simulator_id={simulator_udid}", *boot_simulator(simulator_udid).splitlines()]
-    deadline = time.monotonic() + SIMULATOR_RESET_TIMEOUT_SECONDS
-    terminate = simulator_command(
-        ["xcrun", "simctl", "terminate", simulator_udid, bundle_id], "simulator-terminate", deadline=deadline,
-    )
-    lines.append(f"terminate_exit={terminate.returncode}")
+    report = lambda line: print(line, flush=True)
+    lines = [f"simulator_id={simulator_udid}", *boot_simulator(simulator_udid, report=report).splitlines()]
+    started = time.monotonic()
+    deadline = started + SIMULATOR_RESET_TIMEOUT_SECONDS
+    try:
+        installed = simulator_app_container(simulator_udid, bundle_id, deadline=deadline) is not None
+    finally:
+        line = f"simulator-app-presence: elapsed={time.monotonic() - started:.1f}s; total budget={SIMULATOR_RESET_TIMEOUT_SECONDS}s"
+        lines.append(line)
+        report(line)
+    # Cold official-result runs have never installed the app; terminate can stall on that lookup.
+    if installed:
+        terminate = simulator_command(
+            ["xcrun", "simctl", "terminate", simulator_udid, bundle_id], "simulator-terminate", deadline=deadline,
+        )
+        lines.append(f"terminate_exit={terminate.returncode}")
+    else:
+        lines.append("terminate_skipped=app-absent")
+        report(lines[-1])
     uninstall = simulator_command(
         ["xcrun", "simctl", "uninstall", simulator_udid, bundle_id], "simulator-uninstall", deadline=deadline,
     )
@@ -501,6 +514,8 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
         lines.append(f"{step}_reset_exit={completed.returncode}")
         if completed.returncode != 0:
             raise CommandError(f"Simulator {step} reset failed; cannot continue with isolated state.\n" + "\n".join(lines))
+    lines.append(f"simulator-reset: elapsed={time.monotonic() - started:.1f}s; total budget={SIMULATOR_RESET_TIMEOUT_SECONDS}s")
+    report(lines[-1])
     return "\n".join(lines) + "\n"
 
 
