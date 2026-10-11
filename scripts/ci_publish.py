@@ -9,16 +9,19 @@ from __future__ import annotations
 
 import argparse
 import base64
+import errno
 import io
 import json
 import os
 import re
+import ssl
 import subprocess
 import tempfile
 import time
 import zipfile
+from http.client import IncompleteRead, RemoteDisconnected
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -186,7 +189,7 @@ def publication_plan(pr, runs, admissions, evaluations, *, approved, needs_appro
         else:
             state = dict(evaluations.get(context, {"state": "failure", "description": "Missing or invalid producer evidence"}))
         # Failure/approval state is independent of the retained producer diagnostics.
-        for key in ("diagnostics", "report_source"):
+        for key in ("diagnostics", "report_source", "failure_diagnostics"):
             if key in evaluations.get(context, {}):
                 state[key] = evaluations[context][key]
         if state["state"] == "failure" and run:
@@ -208,15 +211,45 @@ def check_credential_context(environment, path):
     require(environment.get("GITHUB_EVENT_NAME") in allowed, "publisher credential refused to this event")
 
 
-class RateLimited(ContractError):
+class GitHubRequestError(ContractError):
+    """Safe transport metadata, without the response or request URL."""
+
+    def __init__(self, message, *, exception_type="HTTPError", http_status=None, retry_delay=None):
+        super().__init__(message)
+        self.exception_type, self.http_status, self.retry_delay = exception_type, http_status, retry_delay
+
+
+class RateLimited(GitHubRequestError):
     """A GitHub rate-limit refusal; carries only the seconds until a retry may succeed."""
 
-    def __init__(self, message, wait_seconds):
-        super().__init__(message)
+    def __init__(self, message, wait_seconds, **metadata):
+        super().__init__(message, **metadata)
         self.wait_seconds = wait_seconds
 
 
 SECONDARY_RATE_LIMIT_SECONDS = 60  # GitHub documents waiting at least a minute when no reset header is sent
+MAX_GET_ATTEMPTS = 3
+
+
+def failure_detail(error, stage):
+    if isinstance(error, ArtifactReadError):
+        return error.detail
+    return {"stage": stage,
+            "exception_type": error.exception_type if isinstance(error, GitHubRequestError) else type(error).__name__,
+            "http_status": error.http_status if isinstance(error, GitHubRequestError) else None}
+
+
+def record_failure(error, stage, failures):
+    detail = failure_detail(error, stage)
+    failures.append(detail)
+    if not isinstance(error, ArtifactReadError):
+        print("Trusted CI failure: " + json.dumps(detail, sort_keys=True), flush=True)
+
+
+class ArtifactReadError(ContractError):
+    def __init__(self, error, stage):
+        super().__init__("artifact read refused")
+        self.detail = failure_detail(error, stage)
 
 
 def rate_limit_wait(error):
@@ -239,12 +272,41 @@ def rate_limit_wait(error):
 
 
 class GitHub:
-    def __init__(self, repository, token, *, response_headers=None):
+    def __init__(self, repository, token, *, response_headers=None, retry_reads=False):
         require(re.fullmatch(r"[\w.-]+/[\w.-]+", repository) is not None, "invalid repository")
         self.repository, self.token = repository, token
         self.response_headers = response_headers
+        self.retry_reads = retry_reads
 
     def request(self, path, *, method="GET", payload=None, binary=False, missing=False, timeout=45):
+        # Other clients own their retry deadlines and depend on the original exception types.
+        if not self.retry_reads:
+            return self._request(path, method=method, payload=payload, binary=binary, missing=missing, timeout=timeout)
+        deadline = time.monotonic() + timeout
+        last_error = None
+        for attempt in range(MAX_GET_ATTEMPTS):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise last_error or GitHubRequestError("GitHub request deadline exhausted", exception_type="TimeoutError")
+            try:
+                return self._request(path, method=method, payload=payload, binary=binary,
+                                     missing=missing, timeout=remaining)
+            except GitHubRequestError as error:
+                last_error = error
+                delay = error.retry_delay
+                if method != "GET" or delay is None or attempt + 1 == MAX_GET_ATTEMPTS:
+                    raise
+                delay = delay if isinstance(error, RateLimited) else delay * (attempt + 1)
+                if delay + 1 >= deadline - time.monotonic():
+                    raise
+                detail = failure_detail(error, "github-get-retry")
+                print("Trusted CI retry: " + json.dumps(dict(detail, attempt=attempt + 1,
+                      delay_seconds=delay), sort_keys=True), flush=True)
+                time.sleep(delay)
+                if time.monotonic() >= deadline:
+                    raise
+
+    def _request(self, path, *, method, payload, binary, missing, timeout):
         url = "https://api.github.com" + path
         data = json.dumps(payload).encode() if payload is not None else None
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
@@ -265,8 +327,26 @@ class GitHub:
             message = f"GitHub API {method} refused request (HTTP {error.code})"
             wait = rate_limit_wait(error)
             if wait is not None:
-                raise RateLimited(message, wait) from None
-            raise ContractError(message) from None
+                if not self.retry_reads:
+                    raise RateLimited(message, wait) from None
+                retry_after = (error.headers or {}).get("Retry-After", "")
+                secondary = (error.headers or {}).get("X-RateLimit-Remaining") != "0"
+                delay = wait + 1 if secondary and retry_after.isdecimal() else None
+                raise RateLimited(message, wait, http_status=error.code, retry_delay=delay) from None
+            if not self.retry_reads:
+                raise ContractError(message) from None
+            raise GitHubRequestError(message, http_status=error.code,
+                                     retry_delay=1 if 500 <= error.code <= 599 else None) from None
+        except (OSError, EOFError, IncompleteRead, RemoteDisconnected) as error:
+            if not self.retry_reads:
+                raise
+            reason = error.reason if isinstance(error, URLError) else error
+            transient = (isinstance(reason, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError,
+                                             ssl.SSLError, EOFError, IncompleteRead, RemoteDisconnected))
+                         or isinstance(reason, OSError) and reason.errno in {errno.ECONNRESET, errno.ECONNABORTED, errno.EPIPE})
+            raise GitHubRequestError("GitHub transport request failed",
+                                     exception_type=type(reason if isinstance(reason, BaseException) else error).__name__,
+                                     retry_delay=1 if transient else None) from None
         require(len(raw) <= MAX_JSON_BYTES, "GitHub payload exceeds limit")
         return raw if binary else json.loads(raw) if raw else None
 
@@ -359,18 +439,27 @@ def mint_app(environment, path):
 
 
 def json_member(api, artifact, filename, *, optional=False):
-    require(not artifact["expired"] and artifact["size_in_bytes"] <= MAX_JSON_BYTES, "artifact expired or oversized")
-    archive = api.repo(f"actions/artifacts/{positive(artifact['id'])}/zip", binary=True)
-    with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
-        members = [entry for entry in zipped.infolist() if entry.filename == filename]
-        if optional and not members:
-            require(not any(entry.filename.rsplit("/", 1)[-1] == filename for entry in zipped.infolist()),
-                    "artifact member has an unexpected path")
-            return None
-        require(len(members) == 1 and members[0].file_size <= MAX_JSON_BYTES, "artifact member missing, duplicated or oversized")
-        value = json.loads(zipped.read(members[0]))
-        require(not optional or value is not None, "optional artifact member cannot be null")
-        return value
+    stage = "artifact-metadata"
+    try:
+        require(not artifact["expired"] and artifact["size_in_bytes"] <= MAX_JSON_BYTES, "artifact expired or oversized")
+        stage = "artifact-download"
+        archive = api.repo(f"actions/artifacts/{positive(artifact['id'])}/zip", binary=True)
+        stage = "artifact-decode"
+        with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+            members = [entry for entry in zipped.infolist() if entry.filename == filename]
+            if optional and not members:
+                require(not any(entry.filename.rsplit("/", 1)[-1] == filename for entry in zipped.infolist()),
+                        "artifact member has an unexpected path")
+                return None
+            require(len(members) == 1 and members[0].file_size <= MAX_JSON_BYTES, "artifact member missing, duplicated or oversized")
+            value = json.loads(zipped.read(members[0]))
+            require(not optional or value is not None, "optional artifact member cannot be null")
+            return value
+    except (ContractError, KeyError, ValueError, TypeError, OSError, EOFError, zipfile.BadZipFile) as error:
+        if getattr(api, "retry_reads", False) is not True:
+            raise
+        record_failure(error, stage, [])
+        raise ArtifactReadError(error, stage) from None
 
 
 def trusted_admissions(api, run_ids):
@@ -495,7 +584,7 @@ def approved_status(api, pr, login):
                and status["creator"]["login"] == login for status in statuses)
 
 
-def producer_evidence(api, run, source, *, diagnostics=None, admission=None, cloud=None):
+def producer_evidence(api, run, source, *, diagnostics=None, admission=None, cloud=None, failures=None):
     """Bind each retained artifact to its job's latest execution attempt.
 
     Failed-job reruns legitimately retain successful jobs and their old records.
@@ -553,6 +642,7 @@ def producer_evidence(api, run, source, *, diagnostics=None, admission=None, clo
         attempt_run = dict(run, run_attempt=job["evidence_attempt"])
         _, _, names = workflow_contract(source, attempt_run, details=True)
         for artifact_name in names[name]:
+            stage = "artifact-selection"
             try:
                 expired = [artifact for artifact in artifacts if artifact["name"] == artifact_name and artifact["expired"]]
                 if expired and diagnostics is not None:
@@ -560,13 +650,16 @@ def producer_evidence(api, run, source, *, diagnostics=None, admission=None, clo
                     continue
                 matches = [artifact for artifact in artifacts if artifact["name"] == artifact_name and not artifact["expired"]]
                 require(len(matches) == 1, "required artifact is missing, expired or duplicated")
+                stage = "artifact-summary"
                 summary = parse_summary(json_member(api, matches[0], "summary.json"))
+                stage = "artifact-binding"
                 require(summary["run"]["id"] == str(run["id"]) and summary["run"]["attempt"] == job["evidence_attempt"],
                         "artifact does not match its job's latest execution attempt")
                 require(all(summary["run"][key] == metadata[name][key] for key in ("tier", "job", "shard")),
                         "summary tier/job/shard differs from its verified uploading job")
                 summaries.append(summary)
-            except (ContractError, KeyError, ValueError, TypeError):
+            except (ContractError, KeyError, ValueError, TypeError) as error:
+                record_failure(error, stage, failures if failures is not None else [])
                 if diagnostics is None:
                     raise
                 diagnostics.append("required artifact missing or invalid: " + artifact_name)
@@ -692,7 +785,9 @@ def compute(api, pr_number, pushed, login):
         record = admissions[run["id"]]
         summaries = []
         diagnostic_errors = []
+        failure_diagnostics = []
         missing_cloud = []
+        stage = "admission-validation"
         try:
             require(record["workflow_id"] == run["workflow_id"] and record["workflow_path"] == run["path"], "admission producer mismatch")
             identity = record["identity"]
@@ -706,6 +801,7 @@ def compute(api, pr_number, pushed, login):
                 if ui is not None:
                     require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
             cloud = None
+            stage = "cloud-evidence"
             if context == "ci-ui" and pr and not fork:
                 from ci_xcode_cloud_groups import skipped_groups, trusted_groups
                 from ci_xcode_cloud import apple_tv_skip_names
@@ -720,7 +816,8 @@ def compute(api, pr_number, pushed, login):
                             try:
                                 proof = trusted_groups(api, record, run, {group}, approved=approved)
                                 proofs.update(proof["groups"])
-                            except (ContractError, KeyError, ValueError, TypeError):
+                            except (ContractError, KeyError, ValueError, TypeError) as error:
+                                record_failure(error, stage, failure_diagnostics)
                                 for device in GROUPS[group]:
                                     missing_cloud.extend({"identity": item, "reason": "NOT_RUN: no accepted Cloud " + group + " proof"}
                                         for entries in ui["selection"]["shards"][device].values() for item in entries)
@@ -731,11 +828,16 @@ def compute(api, pr_number, pushed, login):
                 elif any(job["conclusion"] == "skipped" and job["name"] in cloud_skips for job in current_jobs):
                     from ci_xcode_cloud import trusted_cloud
                     cloud = trusted_cloud(api, record, run, approved=approved)
-            jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors, admission=record, cloud=cloud)
+            stage = "producer-evidence"
+            jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors, admission=record,
+                                               cloud=cloud, failures=failure_diagnostics)
+            stage = "producer-identity"
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)
                 require(mismatch is None, mismatch or "identity mismatch")
+            stage = "evidence-completeness"
             require(not diagnostic_errors, "missing or invalid artifact evidence")
+            stage = "base-evaluation"
             if context == "ci-ui" and not pr and archive_blocked_ui(api, record, run, jobs, summaries):
                 not_evaluated[context] = {"state": "pending", "description": "Not evaluated: archive unavailable for unexecuted gate",
                     "target_url": f"https://github.com/{api.repository}/actions/runs/{run['id']}"}
@@ -751,12 +853,14 @@ def compute(api, pr_number, pushed, login):
                     if receipt is not None:
                         evaluations[context]["reuse_verdict"] = receipt
             from ci_report import summary_diagnostics
+            stage = "producer-diagnostics"
             if cloud is not None:
                 from ci_report import cloud_pr_diagnostics
                 evaluations[context]["diagnostics"] = cloud_pr_diagnostics(summaries, cloud=cloud)
             else:
                 evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
         except (ContractError, KeyError, ValueError, TypeError) as error:
+            record_failure(error, stage, failure_diagnostics)
             evaluations[context] = {"state": "failure", "description": ui_failure_hint(error) or
                                    "Missing, invalid or mismatched admitted evidence"}
             # The infrastructure advice is deterministic, without candidate text.
@@ -768,13 +872,16 @@ def compute(api, pr_number, pushed, login):
             try:
                 from ci_report import summary_diagnostics
                 evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
-            except (ContractError, KeyError, ValueError, TypeError):
+            except (ContractError, KeyError, ValueError, TypeError) as error:
+                record_failure(error, "producer-diagnostics", failure_diagnostics)
                 evaluations[context]["diagnostics"] = {"counts": {}, "failures": [], "missing": [],
                     "infrastructure": ["failure diagnostics unavailable"], "skipped": [], "deselected": []}
         if missing_cloud:
             diagnostics = evaluations[context]["diagnostics"]
             diagnostics["missing"].extend(missing_cloud)
             diagnostics["counts"]["not_run"] = len(missing_cloud)
+        if failure_diagnostics:
+            evaluations[context]["failure_diagnostics"] = failure_diagnostics
         evaluations[context]["report_source"] = {
             "repository": api.repository, "workflow_path": run["path"], "event": run["event"],
             "run_id": run["id"], "attempt": run["run_attempt"],
@@ -904,6 +1011,8 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                     handle.write(f"  Expected skips {len(status['expected_skips'])}, deselected {len(status['deselected'])}, "
                                  f"removed by PR {len(status['removed_by_pr'])}.\n")
                 diagnostics = status.get("diagnostics")
+                for detail in status.get("failure_diagnostics", []):
+                    handle.write("  Failure diagnostic: " + json.dumps(detail, sort_keys=True) + ".\n")
                 if diagnostics:
                     from ci_summary import markdown_text
                     handle.write("\n  Producer counts (admission/verdict acceptance is separate): " +
@@ -947,7 +1056,7 @@ def main():
     parser.add_argument("--app-login", default="")
     args = parser.parse_args()
     environment = os.environ
-    api = GitHub(args.repository, environment.get("GH_TOKEN", environment.get("CI_WORKFLOW_TOKEN", "")))
+    api = GitHub(args.repository, environment.get("GH_TOKEN", environment.get("CI_WORKFLOW_TOKEN", "")), retry_reads=True)
     event = json.loads(Path(environment["GITHUB_EVENT_PATH"]).read_text()) if args.command != "dry-run" else {}
     try:
         if args.command == "dry-run":

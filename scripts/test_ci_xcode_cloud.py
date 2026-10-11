@@ -1129,6 +1129,67 @@ class GroupProducerTests(unittest.TestCase):
         queried = [call.args[0] for call in api.repo.call_args_list if "/runs?" in call.args[0]]
         self.assertTrue(any("/42/" in path for path in queried) and any("/43/" in path for path in queried))
 
+    def test_group_wait_keeps_waiting_after_real_transport_or_artifact_read_retries_are_exhausted(self):
+        import io
+        import json
+        import zipfile
+        from urllib.error import HTTPError, URLError
+        from unittest.mock import MagicMock
+        import ci_xcode_cloud_ui as consumer
+        from ci_publish import json_member
+        from ci_xcode_cloud_client import RetryingGitHub
+        self.registry["routing_enabled"] = True
+        run = dict(self.run, status="in_progress", run_started_at="2026-10-10T00:00:00Z")
+        context = {"identity": self.identity, "source": {"fork_originated": False}, "run": {"id": "123", "attempt": 2}}
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("route.json", json.dumps(self.route))
+        artifact = {"id": 99, "expired": False, "size_in_bytes": len(buffer.getvalue())}
+        for error in (TimeoutError(), URLError(ConnectionResetError()), URLError("DNS unavailable"),
+                      HTTPError("https://example.invalid", 503, "unavailable", {}, io.BytesIO())):
+            elapsed, retry_pauses, poll_pauses, run_reads = [0], [], [], [0]
+            def retry_sleep(seconds):
+                retry_pauses.append(seconds)
+                elapsed[0] += seconds
+            def poll_sleep(seconds):
+                poll_pauses.append(seconds)
+                elapsed[0] += seconds
+            def respond(request, **options):
+                if request.full_url.endswith("actions/runs/123"):
+                    run_reads[0] += 1
+                    if run_reads[0] > 1 and elapsed[0] < 60 and not isinstance(error, HTTPError):
+                        raise error
+                    payload = json.dumps(run).encode()
+                elif request.full_url.endswith("actions/artifacts/99/zip"):
+                    if elapsed[0] < 60 and isinstance(error, HTTPError):
+                        raise error
+                    payload = buffer.getvalue()
+                elif "/runs?" in request.full_url:
+                    payload = json.dumps({"workflow_runs": [{"id": 900, "status": "completed",
+                        "display_title": "xcc-route-123-2-ios"}]}).encode()
+                else:
+                    payload = b'{"id":42,"state":"active"}'
+                response = MagicMock()
+                response.__enter__.return_value.read.return_value = payload
+                return response
+            api = RetryingGitHub("owner/repo", "test-token", 110 * 60, timer=lambda: elapsed[0],
+                                 sleep=retry_sleep, wait_out_rate_limits=True)
+            with self.subTest(error=type(error).__name__), patch("ci_publish.build_opener") as opener, \
+                    patch("ci_publish.time.sleep", side_effect=lambda seconds: self.fail("shared client must not sleep")), \
+                    patch.object(consumer, "registration_hint", return_value=True), patch("ci_publish.verify_workflow"), \
+                    patch("ci_publish.trusted_admissions", return_value={123: self.record}), \
+                    patch("ci_xcode_cloud_group_route.anchor", return_value="ui-selection"), \
+                    patch.object(consumer, "archive_evidence_run", return_value=run), \
+                    patch.object(consumer, "trusted_artifact", side_effect=lambda api, *args, **kwargs:
+                        (json_member(api, artifact, "route.json"), 99)), \
+                    patch.object(self.groups, "trusted_groups", return_value={}):
+                opener.return_value.open.side_effect = respond
+                self.assertEqual(consumer.wait_cloud_group(context, api, "ios", sleep=poll_sleep,
+                                                          monotonic=lambda: elapsed[0]), "routed")
+                self.assertEqual(retry_pauses, [2, 4, 8, 16])
+                self.assertEqual(poll_pauses, [60])
+                self.assertEqual(elapsed[0], 90)
+
     def test_group_wait_keeps_full_unmatched_route_pages_unknown_until_proof_or_deadline(self):
         import ci_xcode_cloud_ui as consumer
         self.registry["routing_enabled"] = True
@@ -2026,17 +2087,26 @@ class RoutingPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(cloud_wait_deadline(50 * 60), 149.7 * 60)
 
     def test_github_reads_retry_transient_errors_but_dispatches_do_not_replay(self):
+        import io
+        from urllib.error import HTTPError, URLError
+        from unittest.mock import MagicMock
         from ci_xcode_cloud_client import RetryingGitHub
-        from ci_publish import GitHub
         elapsed = [0]
         client = RetryingGitHub("owner/repo", "test-token", 120, timer=lambda: elapsed[0],
                               sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
-        with patch.object(GitHub, "request", side_effect=[ContractError("HTTP 429"), TimeoutError(), {"id": 1}, ContractError("HTTP 503")]) as network:
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"id":1}'
+        with patch("ci_publish.build_opener") as opener, \
+                patch("ci_publish.time.sleep", side_effect=lambda seconds: self.fail("shared client must not sleep")):
+            network = opener.return_value.open
+            network.side_effect = [HTTPError("https://example.invalid", 429, "limited", {}, io.BytesIO()),
+                TimeoutError(), URLError(ConnectionResetError()), URLError("DNS unavailable"), response,
+                HTTPError("https://example.invalid", 503, "unavailable", {}, io.BytesIO())]
             self.assertEqual(client.request("/repos/owner/repo/actions/runs/1"), {"id": 1})
-            self.assertEqual(elapsed[0], 6)
+            self.assertEqual(elapsed[0], 30)
             with self.assertRaises(ContractError):
                 client.request("/repos/owner/repo/actions/workflows/route/dispatches", method="POST", payload={})
-            self.assertEqual(network.call_count, 4)
+            self.assertEqual(network.call_count, 6)
 
     def test_cloud_wait_reads_wait_out_a_rate_limit_only_inside_the_deadline(self):
         from ci_xcode_cloud_client import RetryingGitHub
@@ -2069,13 +2139,18 @@ class RoutingPolicyTests(unittest.TestCase):
         self.assertEqual(network.call_count, 1)
 
     def test_router_importer_and_dispatcher_clients_still_fail_at_once_on_a_rate_limited_403(self):
+        import io
         import re
+        from urllib.error import HTTPError
         import ci_xcode_cloud_dispatch, ci_xcode_cloud_import, ci_xcode_cloud_route
         from ci_xcode_cloud_client import RetryingGitHub
-        from ci_publish import GitHub, RateLimited
+        from ci_publish import RateLimited
         client = RetryingGitHub("owner/repo", "test-token", 600, timer=lambda: 0, sleep=lambda seconds: self.fail("must not wait"))
-        with patch.object(GitHub, "request", side_effect=[RateLimited("GitHub API GET refused request (HTTP 403)", 30), {"id": 1}]) as network, \
+        with patch("ci_publish.build_opener") as opener, \
+                patch("ci_publish.time.sleep", side_effect=lambda seconds: self.fail("shared client must not sleep")), \
                 self.assertRaises(RateLimited):
+            network = opener.return_value.open
+            network.side_effect = HTTPError("https://example.invalid", 403, "limited", {"Retry-After": "30"}, io.BytesIO())
             client.request("/repos/owner/repo/actions/runs/1")
         self.assertEqual(network.call_count, 1)
         for module in (ci_xcode_cloud_dispatch, ci_xcode_cloud_import, ci_xcode_cloud_route):
