@@ -571,6 +571,16 @@ EMPTY_RESULT_PHOTO_REGIONS = (
 
 
 def _empty_result_shows_fixture_photo(image_bytes: bytes) -> bool:
+    import io
+
+    from PIL import Image
+
+    # Region classification tolerates decoding errors; unreadable evidence cannot prove an empty result.
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image.load()
+    except (OSError, ValueError) as error:
+        raise AlbumServerContractError("Unrecognizable input: empty-album result screenshot cannot be decoded") from error
     # Still identify photos: full screen plus main regions. The empty-result copy is no reason to skip
     # classification.
     regions = classify_display_regions(image_bytes)
