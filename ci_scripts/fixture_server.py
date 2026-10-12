@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import socket
+import socketserver
 import struct
 import sys
 import threading
@@ -327,6 +328,11 @@ def fixture_manifest(name: str) -> dict[str, Any]:
 
 class StrictE2EServer(ThreadingHTTPServer):
     daemon_threads = True
+
+    def server_bind(self) -> None:
+        # Fixture readiness must not wait for HTTPServer's reverse DNS lookup.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address
 
     def __init__(
         self,
