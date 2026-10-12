@@ -167,6 +167,16 @@ def logged_request_events(log: str, *, size: str) -> list[tuple[str, str, int]]:
 
 
 class StrictE2EServerContractTests(unittest.TestCase):
+    def test_binding_serves_health_without_reverse_dns(self) -> None:
+        with mock.patch.object(socket, "getfqdn", side_effect=AssertionError("Bind must not resolve reverse DNS")) as lookup:
+            with RunningServer() as server:
+                lookup.assert_not_called()
+                host, port = server.server.server_address
+                self.assertEqual(server.server.server_name, host)
+                self.assertEqual(server.server.server_port, port)
+                self.assertGreater(port, 0)
+                self.assertEqual(server.health()[0], 200)
+
     def test_ui_corpus_preserves_frozen_sets_and_supports_album_person_playback(self) -> None:
         self.assertEqual(fixture_manifest("c")["fixture_sha256"],
                          "e600a8feadd7f6d142f862698b58cacdaba116164e69bc27f5bc6278d96b087d")
