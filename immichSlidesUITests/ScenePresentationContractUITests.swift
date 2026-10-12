@@ -650,14 +650,17 @@ final class ScenePresentationContractUITests: XCTestCase {
     @MainActor
     private func prepareNextButton(app: XCUIApplication) -> XCUIElement {
         let nextButton = app.buttons["slideshow.control.next.button"]
-        XCTAssertTrue(nextButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
-
         #if os(tvOS)
+        XCTAssertTrue(nextButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
         for _ in 0..<4 where !nextButton.hasFocus {
             XCUIRemote.shared.press(.right)
             RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusSettleSeconds))
         }
         XCTAssertTrue(nextButton.hasFocus, "The tvOS Next button must be able to take focus")
+        #else
+        XCTAssertTrue(
+            app.waitForSlideshowControlBarButton(
+                identifier: "slideshow.control.next.button", timeout: TestWait.seconds(.infrastructure(6))))
         #endif
         return nextButton
     }

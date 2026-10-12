@@ -350,7 +350,8 @@ final class immichSlidesUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         returnToSlideshowFromSettings(app: app)
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.waitForSlideshowControlBarButton(
+                identifier: "slideshow.control.settings.button",
                 timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
     }
 
@@ -539,7 +540,9 @@ final class immichSlidesUITests: XCTestCase {
 
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+            app.waitForSlideshowControlBarButton(
+                identifier: "slideshow.control.settings.button",
+                timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         settingsButton.tap()
 
         let closePinEntry = app.buttons["pinEntry.close.button"]

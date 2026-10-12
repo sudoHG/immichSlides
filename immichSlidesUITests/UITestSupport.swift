@@ -4,6 +4,14 @@ import XCTest
 
 #if os(iOS)
 extension XCUIApplication {
+    // Use only for functional checks, never to verify control-bar visibility or auto-hide timing.
+    func waitForSlideshowControlBarButton(identifier: String, timeout: TimeInterval) -> Bool {
+        if descendants(matching: .any)["slideshow.currentAssetId.flag"].exists {
+            tap()
+        }
+        return buttons[identifier].waitForExistence(timeout: timeout)
+    }
+
     func tapSlideshowControlBarButton(identifier: String) {
         // This playback leaf remains present when the control bar auto-hides.
         if descendants(matching: .any)["slideshow.currentAssetId.flag"].exists {
