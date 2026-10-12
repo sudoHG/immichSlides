@@ -24,7 +24,7 @@
     "E7272E02-75B9-46D5-AA6C-F5638651DFCC": "47c79b4f4698503d13e2fabc8f01231d2d9c8611ed27eba13685bcd6be2c93ad"
   },
   "unknown_active_minutes": 225,
-  "cap_minutes": 2400,
+  "cap_minutes": null,
   "billing_anchor": null,
   "asc_visibility_delay_seconds": 300,
   "groups": {

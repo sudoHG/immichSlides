@@ -303,9 +303,11 @@ trusted selection whenever complete Cloud evidence is unavailable.
 ## Maintainer morning checklist (routing remains inactive)
 
 The inactive registry records real ASC workflow UUIDs, action/check names and
-device/runtime labels. Its 2,400-minute cap is a proposal below the 2,700-minute
-strategy ceiling; the billing anchor remains null until the account renewal
-is confirmed. Queue and visibility bounds also require review before activation.
+device/runtime labels. The cap and billing anchor remain null (PENDING), as does
+confirmation that the runtime key covers every billable product. A 2,400-minute
+cap is proposed below the 2,700-minute strategy ceiling only if the actual monthly
+allowance matches that strategy. Queue and visibility bounds also require review
+before activation.
 The maintainer confirmed in the ASC UI on 2026-10-12 that both registered test
 workflows have empty environments: no custom, shared or secret variables.
 Two single-method setup probes, one per platform, observed accepted-start to
