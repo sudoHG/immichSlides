@@ -148,7 +148,9 @@ extension StrictE2EFilterIOSUITests {
                     continueButton.tap()
                 }
             }
-            if !modeButton.exists { return }
+            // A cold-start password sheet can arrive after the mode page disappears. Keep observing
+            // within the existing departure budget, and return early only after declining that sheet.
+            if didResumeAfterPrompt && !modeButton.exists { return }
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
     }
