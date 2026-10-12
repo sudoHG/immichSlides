@@ -414,7 +414,7 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
             receipt["reason"] = "github-capacity-or-queue-uncertain"
             return receipt
         stage = "cloud-budget-unavailable"
-        require(isinstance(registration.get("billing_anchor"), dict) and "cap_minutes" in registration,
+        require(isinstance(registration.get("billing_anchor"), dict) and registration.get("cap_minutes") is not None,
                 "confirmed Cloud allowance and Apple billing anchor are required")
         require("queue_seconds_upper" in registration["groups"][group], "reviewed Cloud queue upper bound is required")
         visibility_delay(registration)

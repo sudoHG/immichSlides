@@ -6,7 +6,8 @@ start on a branch, and uses the `immichSlides-tvOS` scheme with the
 `XcodeCloud-UI-tvOS` plan on Apple TV 4K (3rd generation), tvOS 27.0. Workflow
 configuration belongs to the maintainer. Only the trusted main router and API
 importer described below can replace GitHub's pull-request evidence. New routing
-is inactive until the grouped registry is reviewed and installed.
+is inactive until a reviewed main change sets `routing_enabled: true`, after
+the allowance cap and billing anchor are confirmed.
 
 ## Prepared grouped evidence reader (v2)
 
@@ -314,7 +315,7 @@ Two single-method setup probes, one per platform, observed accepted-start to
 complete-inventory visibility within 4.273 seconds (iOS) and 4.597 seconds (tvOS).
 Recovery located each accepted build without using the POST build ID for lookup,
 simulating a lost response; no process was terminated around POST. The proposed
-300-second visibility delay adds over 65 times the largest sampled delay; two
+300-second visibility delay is about 65 times the largest sampled delay; two
 samples cannot establish an API guarantee. Queues were 10.621 and 14.479 seconds;
 the proposed 300-second queue allowance likewise needs review under load.
 The iOS destination command intervals overlapped by 46.010 seconds, but the

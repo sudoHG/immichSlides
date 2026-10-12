@@ -1285,10 +1285,16 @@ class GroupProducerTests(unittest.TestCase):
         api = Mock()
         api.pages.return_value = [self.pointer]
         reviewed = dict(self.registry)
-        for missing in ("cap_minutes", "billing_anchor", "asc_visibility_delay_seconds"):
-            with self.subTest(missing=missing):
+        for field, is_pending in (("cap_minutes", False), ("billing_anchor", False),
+                                  ("asc_visibility_delay_seconds", False), ("cap_minutes", True),
+                                  ("billing_anchor", True)):
+            with self.subTest(field=field, is_pending=is_pending):
                 self.registry.clear()
-                self.registry.update({key: value for key, value in reviewed.items() if key != missing})
+                self.registry.update(reviewed)
+                if is_pending:
+                    self.registry[field] = None
+                else:
+                    del self.registry[field]
                 factory = Mock(side_effect=AssertionError("ASC must not be accessed without confirmed account policy"))
                 with patch.object(router, "current_producer"), patch.object(router, "trusted_admissions", return_value={123: self.record}), \
                         patch.object(router, "anchor", return_value="ui-selection"), \
