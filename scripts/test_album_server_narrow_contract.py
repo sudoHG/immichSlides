@@ -239,14 +239,15 @@ def _stacked_screen(top: str, bottom: str, screen: tuple[int, int], fixture_set:
     return _png(canvas)
 
 
-def _with_ipad_home_indicator(frame: bytes, footer_patch: str | None = None) -> bytes:
+def _with_home_indicator(frame: bytes, footer_patch: str | None = None) -> bytes:
     canvas = Image.open(io.BytesIO(frame)).convert("RGB")
-    # Real system ink spans x=547..1093, y=2334..2345. Its sampled blend
-    # (100,52,90) collides with A1's public palette over the A3 footer.
-    ImageDraw.Draw(canvas).rounded_rectangle((547, 2334, 1092, 2344), radius=5, fill=(100, 52, 90))
+    # Real iPad ink (547,2334)-(1093,2345), iPhone ink (377,2493)-(794,2508).
+    # The sampled blend (100,52,90) collides with A1's palette over an A3 footer.
+    left, top, right, bottom = (547, 2334, 1093, 2345) if canvas.size == IPAD_SCREEN else (377, 2493, 794, 2508)
+    ImageDraw.Draw(canvas).rounded_rectangle((left, top, right - 1, bottom - 1), radius=5, fill=(100, 52, 90))
     if footer_patch:
         # Keep this photo patch just left of the ink plus its four-pixel margin.
-        canvas.paste(_cover(_fixture_image("A1", footer_patch), (152, 19)), (383, 2330))
+        canvas.paste(_cover(_fixture_image("A1", footer_patch), (152, bottom - top + 8)), (left - 164, top - 4))
     return _png(canvas)
 
 
@@ -634,14 +635,16 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
 class AlbumEmptyFixtureBTests(unittest.TestCase):
     def test_measured_system_boxes_cannot_hide_a_photo_slot(self) -> None:
         from strict_e2e_filter_contract import TARGET_ALBUM_HOME_INDICATOR_BOXES
-        self.assertEqual(set(TARGET_ALBUM_HOME_INDICATOR_BOXES), {IPAD_SCREEN})
-        left, top, right, bottom = TARGET_ALBUM_HOME_INDICATOR_BOXES[IPAD_SCREEN]
-        self.assertEqual((left, top, right, bottom), (543, 2330, 1097, 2349))
-        # Every reader slot spans the full image width, even an arbitrarily thin one.
-        self.assertLess(right - left, IPAD_SCREEN[0])
-        self.assertGreaterEqual((IPAD_SCREEN[0] - right + left) * 480 // IPAD_SCREEN[0], 18)
-        for slot_height in (938, 2360 - 938):
-            self.assertLess(bottom - top, slot_height)
+        self.assertEqual(TARGET_ALBUM_HOME_INDICATOR_BOXES, {
+            IPAD_SCREEN: (543, 2330, 1097, 2349), IPHONE_SCREEN: (373, 2489, 798, 2512),
+        })
+        for screen, slot_heights in ((IPAD_SCREEN, (938, 1422)), (IPHONE_SCREEN, (1824, 708))):
+            left, top, right, bottom = TARGET_ALBUM_HOME_INDICATOR_BOXES[screen]
+            # Every reader slot spans the full image width, even an arbitrarily thin one.
+            self.assertLess(right - left, screen[0])
+            self.assertGreaterEqual((screen[0] - right + left) * 480 // screen[0], 18)
+            for slot_height in slot_heights:
+                self.assertLess(bottom - top, slot_height)
 
     def test_control_bar_split_glyph_requires_one_letter_and_a_bounded_gap(self) -> None:
         for fixture_set in ("a", "b"):
@@ -662,20 +665,23 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                             require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
 
     def test_system_home_indicator_does_not_hide_a_footer_photo_patch(self) -> None:
-        for fixture_set in ("a", "b"):
-            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+        for fixture_set, screen in (
+            ("a", IPAD_SCREEN), ("a", IPHONE_SCREEN), ("b", IPAD_SCREEN), ("b", IPHONE_SCREEN),
+        ):
+            with self.subTest(fixture_set=fixture_set, screen=screen), tempfile.TemporaryDirectory() as raw:
                 directory = Path(raw)
                 _write_album_empty_pass(directory, fixture_set)
-                frame = _with_ipad_home_indicator(_stacked_album_frame(fixture_set))
+                photo = _stacked_album_frame(fixture_set) if screen == IPAD_SCREEN else _full_screen("A3", screen, fixture_set)
+                frame = _with_home_indicator(photo)
                 with self.assertRaisesRegex(IdentityAssertionError, "public photo colors are missing or mixed"):
                     public_frame_photos_from_bytes(frame)
                 (directory / "album-play-1.png").write_bytes(frame)
-                self.assertEqual(require_visual_identity(directory, "album-empty", fixture_set=fixture_set)["marks"],
-                                 ["A1", "A3", "A2"])
+                expected = ["A1", "A3", "A2"] if screen == IPAD_SCREEN else ["A3", "A2"]
+                self.assertEqual(require_visual_identity(directory, "album-empty", fixture_set=fixture_set)["marks"], expected)
                 for patch_fixture in (fixture_set, "b" if fixture_set == "a" else "a"):
                     with self.subTest(patch_fixture=patch_fixture):
                         (directory / "album-play-1.png").write_bytes(
-                            _with_ipad_home_indicator(_stacked_album_frame(fixture_set), patch_fixture))
+                            _with_home_indicator(photo, patch_fixture))
                         with self.assertRaises(CommandError):
                             require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
 

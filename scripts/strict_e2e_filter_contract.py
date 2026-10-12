@@ -671,7 +671,10 @@ def _classified_mark_from_png(evidence_dir: Path, name: str) -> str:
 
 # Measured scanner-approved portrait captures, with four pixels around system ink.
 # Unknown geometries keep the unmodified reader; these options are iOS album-only.
-TARGET_ALBUM_HOME_INDICATOR_BOXES = {(1640, 2360): (543, 2330, 1097, 2349)}
+TARGET_ALBUM_HOME_INDICATOR_BOXES = {
+    (1640, 2360): (543, 2330, 1097, 2349),
+    (1170, 2532): (373, 2489, 798, 2512),
+}
 TARGET_ALBUM_GLYPH_OVERLAY_BOXES = {(1170, 2532): (68, 2126, 1102, 2314)}
 
 

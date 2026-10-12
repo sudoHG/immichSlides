@@ -54,8 +54,9 @@ at least two different target photos and different identity sets in the two
 captures. Empty-selection, controlled-empty-album, exact-copy and old-pool-photo
 rejection checks are unchanged. `tvos-album-empty` retains its whole-frame reader.
 Only these two iOS contracts opt into measured system-overlay handling: the
-1640x2360 iPad home-indicator box (543,2330)-(1097,2349) is excluded from color
-sampling, with glyph pixels unchanged. It is narrower than every full-width slot.
+1640x2360 iPad home-indicator box (543,2330)-(1097,2349), or 1170x2532 iPhone
+box (373,2489)-(798,2512), is excluded from color sampling, with glyph pixels
+unchanged. Each box is narrower than every full-width slot.
 For 1170x2532 iPhone captures, glyph bands may join only across gaps wholly inside
 the control-bar rows (2126..2314); overlay cells in (68,2126)-(1102,2314) cannot
 supply glyph evidence. The merged letter and digit still agree with every observed
