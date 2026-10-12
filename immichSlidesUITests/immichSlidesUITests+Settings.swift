@@ -218,7 +218,8 @@ extension immichSlidesUITests {
 
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))))
+            app.waitForSlideshowControlBarButton(
+                identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.infrastructure(8))))
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 ((playPauseButton.value as? String) ?? "").lowercased() == "play"

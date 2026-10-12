@@ -61,7 +61,9 @@ extension PlaybackHistoryIOSUITests {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.infrastructure(8))) {
-                settingsButton.exists && settingsButton.isHittable
+                app.waitForSlideshowControlBarButton(
+                    identifier: "slideshow.control.settings.button", timeout: TestWait.seconds(.product(0)))
+                    && settingsButton.isHittable
             })
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
 
@@ -101,7 +103,12 @@ extension PlaybackHistoryIOSUITests {
     func returnToSlideshowFromPlaybackSettings(app: XCUIApplication) {
         for _ in 0..<6 {
             let settingsButton = app.buttons["slideshow.control.settings.button"]
-            if settingsButton.exists && settingsButton.isHittable { return }
+            if app.waitForSlideshowControlBarButton(
+                identifier: "slideshow.control.settings.button", timeout: TestWait.seconds(.product(0)))
+                && settingsButton.isHittable
+            {
+                return
+            }
 
             let globalBack = app.buttons["global.back.button"]
             if globalBack.exists && globalBack.isHittable {
@@ -125,7 +132,9 @@ extension PlaybackHistoryIOSUITests {
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.infrastructure(6))) {
                 let settingsButton = app.buttons["slideshow.control.settings.button"]
-                return settingsButton.exists && settingsButton.isHittable
+                return app.waitForSlideshowControlBarButton(
+                    identifier: "slideshow.control.settings.button", timeout: TestWait.seconds(.product(0)))
+                    && settingsButton.isHittable
             },
             "Could not return from the playback settings page to the slideshow"
         )
