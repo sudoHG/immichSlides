@@ -750,6 +750,20 @@ extension AccessLifecycleIOSUITests {
             if intervalLabelExists(app: app, label: targetLabel) { return }
             guard let current = readIntervalSeconds(app: app) else { return }
             if current == targetSeconds && intervalLabelExists(app: app, label: targetLabel) { return }
+            if Double(targetSeconds) == intervalMinimumSeconds || Double(targetSeconds) == intervalMaximumSeconds {
+                // Endpoint drags must begin on the thumb and finish beyond the track.
+                let frame = slider.frame
+                let thumbInset = frame.height / 2
+                let trackWidth = max(frame.width - 2 * thumbInset, 0)
+                let thumbOffset = thumbInset + slider.normalizedSliderPosition * trackWidth
+                let origin = slider.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: thumbOffset, dy: frame.height / 2))
+                let endOffset =
+                    Double(targetSeconds) == intervalMinimumSeconds ? -thumbInset : frame.width + thumbInset
+                let end = origin.withOffset(CGVector(dx: endOffset, dy: frame.height / 2))
+                start.press(forDuration: TestWait.seconds(.product(0.05)), thenDragTo: end)
+                continue
+            }
             let delta: CGFloat =
                 current < targetSeconds
                 ? AccessLifecycleIOSUITestsCalibration.sliderNudgeStep
