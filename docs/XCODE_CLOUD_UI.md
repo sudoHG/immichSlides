@@ -6,14 +6,15 @@ start on a branch, and uses the `immichSlides-tvOS` scheme with the
 `XcodeCloud-UI-tvOS` plan on Apple TV 4K (3rd generation), tvOS 27.0. Workflow
 configuration belongs to the maintainer. Only the trusted main router and API
 importer described below can replace GitHub's pull-request evidence. New routing
-is inactive until the grouped registry is reviewed and installed.
+is inactive until a reviewed main change sets `routing_enabled: true`, after
+the allowance cap and billing anchor are confirmed.
 
 ## Prepared grouped evidence reader (v2)
 
 The reader supports a separate, **inactive** v2 protocol for functional PR tests:
 `ios` covers both iPhone and iPad; `tvos` covers Apple TV. The grouped producer,
-router and importer are prepared, but no registry is installed and no new Cloud
-builds are dispatched. Historical v1 Apple TV evidence remains readable. ASC
+router and importer are prepared with an inactive registry; automatic Cloud
+builds remain disabled. Historical v1 Apple TV evidence remains readable. ASC
 configuration and activation require the maintainer's separate rollout.
 Part of #283 and Part of #83.
 
@@ -302,9 +303,33 @@ trusted selection whenever complete Cloud evidence is unavailable.
 
 ## Maintainer morning checklist (routing remains inactive)
 
-No runtime placeholder registry is committed. The iOS ASC workflow UUID, exact
-action/check names and device/runtime labels are deliberately unset. The optional
-`XcodeCloud-UI-iOS` template is attached to the iOS scheme without changing its
+The inactive registry records real ASC workflow UUIDs, action/check names and
+device/runtime labels. The cap and billing anchor remain null (PENDING), as does
+confirmation that the runtime key covers every billable product. A 2,400-minute
+cap is proposed below the 2,700-minute strategy ceiling only if the actual monthly
+allowance matches that strategy. Queue and visibility bounds also require review
+before activation.
+The maintainer confirmed in the ASC UI on 2026-10-12 that both registered test
+workflows have empty environments: no custom, shared or secret variables.
+Two single-method setup probes, one per platform, observed accepted-start to
+complete-inventory visibility within 4.273 seconds (iOS) and 4.597 seconds (tvOS).
+Recovery located each accepted build without using the POST build ID for lookup,
+simulating a lost response; no process was terminated around POST. The proposed
+300-second visibility delay is about 65 times the largest sampled delay; two
+samples cannot establish an API guarantee. Queues were 10.621 and 14.479 seconds;
+the proposed 300-second queue allowance likewise needs review under load.
+The iOS destination command intervals overlapped by 46.010 seconds, but the
+iPad method intentionally skipped because it was iPhone-only. Keep parallel
+prediction flags false until concurrent selected tests are verified. A shared
+iOS action accepts identical iPhone/iPad selections only; different populations
+need separate actions and plan templates before activation. These probes used
+29.246 action-wall minutes, with a destination-multiplied upper estimate of
+44.476 minutes; exact billed usage is not exposed by ASC.
+The live account inventory also contains the uppercase UUID of the disabled
+Default workflow, which the current lowercase-only accounting UUID validator
+rejects. Resolve that accounting incompatibility and confirm visibility of all
+billable products before activation.
+The optional `XcodeCloud-UI-iOS` template is attached to the iOS scheme without changing its
 default plan; its explicit one-method seed is replaced by a verified pointer
 before every Cloud test build. The existing tvOS template is replaced likewise.
 
@@ -332,6 +357,13 @@ before every Cloud test build. The existing tvOS template is replaced likewise.
    markers and started builds to reconcile; do not substitute a new workflow.
    The existing Developer runtime key must separately prove read/start/results
    access to the new iOS workflow. Editing permission does not prove runtime scope.
+   Apple's published [ASC OpenAPI specification](https://developer.apple.com/sample-code/app-store-connect/app-store-connect-openapi-specification.zip) does not expose workflow
+   environment variables, Cloud allowance, billed compute totals or the billing
+   period. Omitting variables from a workflow creation request does not prove
+   that its environment contains none. Read those settings in the ASC UI and
+   confirm that the runtime key can see every billable product; matching visible
+   product lists from two keys cannot prove that neither key has restricted access.
+   Keep an unconfirmed billing anchor null in an inactive candidate registry.
 3. Prepare a reviewable `scripts/ci-xcode-cloud-groups.json` with `schema_version: 2`,
    initially `routing_enabled: false`, `groups` as described above,
    `scm_repository_id`, `account_product_ids`, `account_action_destinations`
@@ -581,11 +613,15 @@ attempt instead. Receipts are validated against
 must have succeeded independently of an in-progress, failed or cancelled latest
 attempt; the latest run supplies only trusted provenance before opening bytes.
 
-The following switch belongs to the historical v1 Apple TV router only; it does
-not control grouped v2 routing. Use the grouped disable procedure above for new
-dispatches. Historical v1 routing used a reviewed main change setting
-`ROUTING_ENABLED = False` in `scripts/ci_xcode_cloud_route.py` to publish a
-prompt GitHub decision. The current CLI refuses all new v1 starts. Disabling the GitHub route or import workflow also causes
+The historical v1 Apple TV router is disabled with `ROUTING_ENABLED = False`
+in `scripts/ci_xcode_cloud_route.py`; its policy returns a prompt GitHub decision
+before creating an ASC client, including for forced diagnostic modes. The current
+CLI also refuses all new v1 starts. Grouped v2 routing uses the separate
+`routing_enabled` registry flag, which remains false. Both gates stay closed
+pending a separately reviewed grouped activation in the next allowance period;
+the maintainer reported only 145 minutes left before the two setup probes on
+2026-10-12. Use the grouped disable procedure above for future dispatches.
+Disabling the GitHub route or import workflow also causes
 an immediate GitHub choice once the Linux selection runs. Disabling the bridge
 leaves no matching started build, so the Linux selection chooses GitHub
 immediately. None changes the Xcode Cloud

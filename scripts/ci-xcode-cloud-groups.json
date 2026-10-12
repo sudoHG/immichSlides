@@ -1,0 +1,69 @@
+{
+  "schema_version": 2,
+  "routing_enabled": false,
+  "scm_repository_id": "894b3bbd-682b-454d-b797-0b7f63a2dd73",
+  "account_product_ids": [
+    "30df2c69-df90-4773-b243-f58830f73c9f"
+  ],
+  "account_action_destinations": {
+    "Archive - iOS": 1,
+    "Archive - tvOS": 1,
+    "Build - iOS": 1,
+    "Build - tvOS": 1,
+    "immichSlides-iOS - iOS": 1,
+    "immichSlides-tvOS - tvOS": 1,
+    "XcodeCloudProbe-tvOS - tvOS": 1,
+    "XcodeCloud-UI-iOS - iOS": 2,
+    "XcodeCloud-UI-tvOS - tvOS": 1
+  },
+  "account_workflow_attributes_sha256": {
+    "67a45473-38c8-4aed-b2db-14eb50ee4a9a": "ba8ee56c5f2d1233712eb4ffe6ff4979cb37e82ad126e6b4edecada62843855b",
+    "72574ec0-c168-4317-b469-d3090357ab21": "ddd15f6eb71c1b93121cdd17dcbae56e0f83af71da8355a60b3e68010e9cb53a",
+    "9e27d887-f442-4083-83d4-b7bcdce17a4a": "1dc4b654c141032f6f5ee3561190939d6035727eb4597c53274f1f7f020a5c4d",
+    "b1511038-08b0-4d54-aef3-e124a730853d": "a4dd21002ad2ff0d12c2cb391f060fa2daa1a833adba6d0f21548635b486c78c",
+    "E7272E02-75B9-46D5-AA6C-F5638651DFCC": "47c79b4f4698503d13e2fabc8f01231d2d9c8611ed27eba13685bcd6be2c93ad"
+  },
+  "unknown_active_minutes": 225,
+  "cap_minutes": null,
+  "billing_anchor": null,
+  "asc_visibility_delay_seconds": 300,
+  "groups": {
+    "ios": {
+      "workflow_id": "b1511038-08b0-4d54-aef3-e124a730853d",
+      "workflow_attributes_sha256": "a4dd21002ad2ff0d12c2cb391f060fa2daa1a833adba6d0f21548635b486c78c",
+      "queue_seconds_upper": 300,
+      "destinations_parallel": false,
+      "actions_parallel": false,
+      "actions": [
+        {
+          "name": "XcodeCloud-UI-iOS - iOS",
+          "check_name": "immichSlides | UI - iPhone and iPad (overflow) | XcodeCloud-UI-iOS - iOS",
+          "plan_path": "XcodeCloud-UI-iOS.xctestplan",
+          "scheme_path": "immichSlides.xcodeproj/xcshareddata/xcschemes/immichSlides-iOS.xcscheme",
+          "devices": {
+            "iphone": { "device": "iPhone 17e", "os": "27.0" },
+            "ipad": { "device": "iPad Air 11-inch (M4)", "os": "27.0" }
+          }
+        }
+      ]
+    },
+    "tvos": {
+      "workflow_id": "72574ec0-c168-4317-b469-d3090357ab21",
+      "workflow_attributes_sha256": "ddd15f6eb71c1b93121cdd17dcbae56e0f83af71da8355a60b3e68010e9cb53a",
+      "queue_seconds_upper": 300,
+      "destinations_parallel": false,
+      "actions_parallel": false,
+      "actions": [
+        {
+          "name": "XcodeCloud-UI-tvOS - tvOS",
+          "check_name": "immichSlides | UI - Apple TV (overflow) | XcodeCloud-UI-tvOS - tvOS",
+          "plan_path": "XcodeCloud-UI-tvOS.xctestplan",
+          "scheme_path": "immichSlides.xcodeproj/xcshareddata/xcschemes/immichSlides-tvOS.xcscheme",
+          "devices": {
+            "appletv": { "device": "Apple TV 4K (3rd generation)", "os": "27.0" }
+          }
+        }
+      ]
+    }
+  }
+}
