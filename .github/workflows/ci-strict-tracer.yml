@@ -43,6 +43,7 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/strict-python" --verify-toolchain
       - name: Create a dedicated simulator
+        id: simulator
         run: |
           platform='${{ matrix.platform }}'
           device=$(/usr/bin/python3 -c 'import json,sys; p=json.load(open("scripts/ci-pins.json")); print(p["device_types"]["iphone" if sys.argv[1]=="ios" else "appletv"])' "$platform")
@@ -52,6 +53,7 @@ jobs:
           os_name=$([ "$platform" = ios ] && echo iOS || echo tvOS)
           echo "STRICT_DESTINATION=platform=$os_name Simulator,id=$udid" >> "$GITHUB_ENV"
       - name: Prepare the dedicated simulator before fixture health checks and case resets
+        id: preparation
         timeout-minutes: 11
         run: |
           "$RUNNER_TEMP/strict-python/bin/python3" -B - <<'PY'
@@ -71,6 +73,12 @@ jobs:
             --platform '${{ matrix.platform }}' --destination "$STRICT_DESTINATION" \
             --output-dir "$RUNNER_TEMP/strict-tracer" --min-free-gib 30 \
             --cold-timeout-seconds 1200 --warm-timeout-seconds 600
+      - name: Account for every case after simulator preparation failure
+        if: always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')
+        run: |
+          "$RUNNER_TEMP/strict-python/bin/python3" -B scripts/run_strict_ci_tracer.py \
+            --platform '${{ matrix.platform }}' --destination "${STRICT_DESTINATION:-unavailable}" \
+            --output-dir "$RUNNER_TEMP/strict-tracer" --preparation-failed
       - name: Publish only compact records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

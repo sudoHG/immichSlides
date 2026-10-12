@@ -15,6 +15,29 @@ from test_ci_summary import valid_summary
 
 
 class NightlyVerdictTests(unittest.TestCase):
+    def test_preparation_failure_keeps_all_cases_failed_and_zero_cases_executed(self):
+        from ci_nightly import aggregate_nightly
+        cases = [ci_summary.test_identity("strict", "p2-exif", device="ipad", configuration="Debug",
+                 suite="p2-exif", scenario="normal", fixture=str(number)) for number in range(6)]
+        summary = valid_summary()
+        summary["population"].update(declared=cases, compiled=[], observed=[
+            dict(ci_summary.observation(case, "not-run", 0, reason="simulator preparation infrastructure failure",
+                                        exit_code=None), outcome="failed") for case in cases])
+        summary["status"] = "failed"
+        summary["infrastructure"] = [{"code": "simulator-preparation-failed", "message": "Preparation failed before tracer execution"}]
+        for claimed_status in ("failed", "passed"):
+            with self.subTest(claimed_status=claimed_status):
+                summary["status"] = claimed_status
+                result = aggregate_nightly(cases, [summary], live_in_scope=False)
+                self.assertEqual("failed", result["status"])
+                self.assertEqual(summary["population"]["observed"], result["observed"])
+                self.assertEqual(6, result["matrix"]["scheduled"])
+                self.assertEqual(0, result["matrix"]["executed"])
+                self.assertFalse(result["matrix"]["equal"])
+                self.assertEqual(6, len(result["matrix"]["missing"]))
+                self.assertTrue(any(error.startswith("producer infrastructure failure:") for error in result["errors"]))
+                self.assertFalse(result["release_eligible"])
+
     def test_ipad_smoke_exclusions_follow_the_selected_tests_phone_guard(self):
         from ci_nightly import contract_population
         cases, exclusions = contract_population()
@@ -170,8 +193,18 @@ class NightlyVerdictTests(unittest.TestCase):
             setup = next(i for i, step in enumerate(steps) if "setup_ci_python.py" in step.get("run", ""))
             preparation = next(i for i, step in enumerate(steps) if "prepare_simulator(" in step.get("run", ""))
             consumer = next(i for i, step in enumerate(steps) if "scripts/run_strict_ci_tracer.py" in step.get("run", ""))
+            accounting = next(i for i, step in enumerate(steps) if "--preparation-failed" in step.get("run", ""))
+            upload = next(i for i, step in enumerate(steps) if "actions/upload-artifact@" in step.get("uses", "")
+                          and "/records" in step.get("with", {}).get("path", ""))
+            creation = next(i for i, step in enumerate(steps) if "simctl create" in step.get("run", ""))
             self.assertLess(setup, preparation)
             self.assertLess(preparation, consumer)
+            self.assertLess(consumer, accounting)
+            self.assertLess(accounting, upload)
+            self.assertEqual("simulator", steps[creation].get("id"))
+            self.assertEqual("preparation", steps[preparation].get("id"))
+            self.assertEqual("always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')",
+                             steps[accounting]["if"])
             command = next(step["run"] for step in job["steps"]
                            if "scripts/run_strict_ci_tracer.py" in step.get("run", ""))
             cold = int(re.search(r"--cold-timeout-seconds\s+(\d+)", command)[1])

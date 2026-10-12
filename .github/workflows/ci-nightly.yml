@@ -182,6 +182,7 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
       - name: Create a dedicated simulator for this shard
+        id: simulator
         env:
           NIGHTLY_DEVICE: ${{ matrix.device }}
           NIGHTLY_PLATFORM: ${{ matrix.platform }}
@@ -193,6 +194,7 @@ jobs:
           os_name=$([ "$NIGHTLY_PLATFORM" = ios ] && echo iOS || echo tvOS)
           echo "NIGHTLY_DESTINATION=platform=$os_name Simulator,id=$udid" >> "$GITHUB_ENV"
       - name: Prepare the dedicated simulator before fixture health checks and case resets
+        id: preparation
         timeout-minutes: 11
         run: |
           "$RUNNER_TEMP/nightly-python/bin/python3" -B - <<'PY'
@@ -216,6 +218,16 @@ jobs:
             --platform "$NIGHTLY_PLATFORM" --destination "$NIGHTLY_DESTINATION" \
             --output-dir "$RUNNER_TEMP/nightly-strict" --min-free-gib 30 \
             --cold-timeout-seconds 1200 --warm-timeout-seconds 600
+      - name: Account for every case after simulator preparation failure
+        if: always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')
+        env:
+          NIGHTLY_SHARD: ${{ matrix.id }}
+          NIGHTLY_PLATFORM: ${{ matrix.platform }}
+        run: |
+          "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/run_strict_ci_tracer.py \
+            --manifest scripts/nightly-matrix.json --shard "$NIGHTLY_SHARD" \
+            --platform "$NIGHTLY_PLATFORM" --destination "${NIGHTLY_DESTINATION:-unavailable}" \
+            --output-dir "$RUNNER_TEMP/nightly-strict" --preparation-failed
       - name: Export scanned public fixture review packages
         id: review
         if: always()

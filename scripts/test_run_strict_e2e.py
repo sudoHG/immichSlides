@@ -549,6 +549,45 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def test_preparation_failure_records_every_planned_case_without_starting_a_runner(self):
+        import run_strict_ci_tracer as tracer
+        from ci_nightly import case_identity, parse_manifest, shards, validate_shard
+        from ci_review_packages import export_shard
+        from ci_summary import parse_summary
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        selected = next(shard for shard in shards(parse_manifest(tracer.ROOT.joinpath("scripts/nightly-matrix.json").read_text()))
+                        if shard["id"] == "ipad-immichSlides-iOS-debug-4")
+        expected = [case_identity(case) for case in selected["cases"]]
+        with tempfile.TemporaryDirectory() as raw, mock.patch.object(tracer, "run_runner") as runner, \
+                mock.patch.object(tracer, "workspace_preflight"), mock.patch.object(tracer, "run_identity", return_value=identity), \
+                mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
+            output = Path(raw) / "trace"
+            self.assertEqual(1, tracer.main(["--platform", "ios", "--destination", "unavailable",
+                "--manifest", str(tracer.ROOT / "scripts/nightly-matrix.json"), "--shard", selected["id"],
+                "--output-dir", str(output), "--preparation-failed"]))
+            runner.assert_not_called()
+            summary = parse_summary((output / "records/summary.json").read_text())
+            validate_shard(summary, identity, summary["run"], summary["hashes"], expected)
+            self.assertEqual(expected, summary["population"]["declared"])
+            self.assertEqual([], summary["population"]["compiled"])
+            self.assertEqual(expected, [entry["identity"] for entry in summary["population"]["observed"]])
+            self.assertEqual("failed", summary["status"])
+            self.assertEqual("simulator-preparation-failed", summary["infrastructure"][0]["code"])
+            for entry in summary["population"]["observed"]:
+                self.assertEqual("failed", entry["outcome"])
+                self.assertEqual("not-run", entry["attempts"][0]["outcome"])
+                self.assertIsNone(entry["attempts"][0]["exit_code"])
+                self.assertIn("infrastructure", entry["attempts"][0]["reason"])
+                self.assertEqual(0, entry["duration_seconds"])
+            trace = json.loads((output / "records/trace.json").read_text())
+            self.assertEqual([], trace["cold"])
+            self.assertEqual([], trace["warm"])
+            self.assertGreaterEqual(trace["finished_epoch"], trace["started_epoch"])
+            self.assertEqual(0, export_shard(output, Path(raw) / "packages"))
+            self.assertEqual([], json.loads((output / "records/p2-review-bindings.json").read_text())["review_packages"])
+
     def test_failed_runner_keeps_official_counts_and_compilation_without_becoming_passed(self):
         import run_strict_ci_tracer as tracer
         case = {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "smoke", "scenario": "normal", "fixture": "a"}

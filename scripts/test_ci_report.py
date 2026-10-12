@@ -38,6 +38,44 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_nightly_preparation_failure_tracks_missing_cases_under_one_infrastructure_issue(self):
+        from ci_nightly import aggregate_nightly
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+               "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
+               "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "failure"}
+        identity = {"schema_version": 1, "repository": api.repository, "event": "schedule", "ref": "refs/heads/main",
+                    "commit_sha": run["head_sha"], "tree_sha": "b" * 40}
+        cases = [test_identity("strict", "p2-exif", **{**IDENTITY["dimensions"], "device": "ipad",
+                  "suite": "p2-exif", "fixture": str(number)}) for number in range(6)]
+        summary = valid_summary()
+        summary["identity"] = identity
+        summary["source"].update(event="schedule", workflow_path=ci_report.NIGHTLY_PATH)
+        summary["run"] = {"id": "10", "attempt": 1, "tier": "strict", "job": "nightly-strict", "shard": "ipad"}
+        summary["population"].update(declared=cases, compiled=[], observed=[
+            dict(observation(case, "not-run", 0, reason="simulator preparation infrastructure failure", exit_code=None),
+                 outcome="failed") for case in cases])
+        summary["status"] = "failed"
+        summary["infrastructure"] = [{"code": "simulator-preparation-failed", "message": "Preparation failed before tracer execution"}]
+        aggregate = aggregate_nightly(cases, [summary], live_in_scope=False)
+        aggregate.update(identity=identity, hashes=summary["hashes"], run={"id": "10", "attempt": 1},
+                         source=summary["source"], capacity={"shard_intervals": [{"shard": "ipad"}]})
+        artifacts = [{"name": name, "expired": False} for name in ("nightly-aggregate-10-1", "nightly-strict-ipad-10-1")]
+        with patch("ci_publish.json_member", side_effect=[aggregate, summary, {"cold": [], "warm": []}]):
+            report = ci_report.nightly_attempt(api, run, 1, artifacts)
+        self.assertEqual("failed", report["status"])
+        self.assertEqual([], report["observed"])
+        self.assertEqual(0, report["diagnostics"]["counts"]["executed_cases"])
+        self.assertEqual([], report["diagnostics"]["failures"])
+        self.assertTrue(report["diagnostics"]["infrastructure"])
+        missing_cases = [item for item in report["diagnostics"]["missing"]
+                         if item["reason"] == "strict-case-infrastructure-or-unverified-failure"]
+        self.assertEqual(cases, [item["identity"] for item in missing_cases])
+        for case in cases:
+            with self.subTest(case=case):
+                self.assertEqual("none", issue_decision(None, case, [report], registry_referenced=False)["action"])
+        self.assertEqual("open", issue_decision(None, NIGHTLY_INFRASTRUCTURE, [report], registry_referenced=False)["action"])
+
     def test_nightly_producer_failure_paths_preserve_other_shards_and_diagnostic_identity(self):
         import ci_nightly
         import ci_nightly_ui

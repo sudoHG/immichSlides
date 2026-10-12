@@ -215,6 +215,12 @@ nonzero exits remain failures. Filter-person combines its three session exports
 and requires all three passes. Exit 0 means all automated tracer checks completed,
 not release eligibility.
 
+The separate simulator creation/preparation steps also publish compact records on
+failure using `--preparation-failed`: each declared case is failed with a `not-run`
+attempt and an infrastructure reason, with no claimed compilation or execution.
+The [nightly accounting policy](CI_NIGHTLY.md#population-and-capacity) describes how
+aggregation and trusted reporting retain these failures.
+
 CI uploads compact records plus the scanned P2 recording, recording timing proof
 and SHA-bound hashes. Screenshots, fixture originals and review-package formats
 belong to the separate visual-review work. It never uploads raw `.xcresult`, DerivedData, package clones,
