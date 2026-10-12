@@ -82,9 +82,10 @@ contract, including its known stacked-frame false pass. Successful iOS
 at least one frame used the original path. `target_album_frame_geometry` maps
 each playback screenshot step to `measured` or `unmeasured`, so mixed-size evidence
 does not hide which path judged each frame. These fields are written unchanged to
-`visual-identity-runner.json`; they do not affect verdicts or runner exit codes.
-Unreadable screenshot bytes produce a FAIL contract report. File-read failures
-remain I/O errors. tvOS reports retain their existing fields.
+`visual-identity-runner.json` and to `case-manifest.json` under `visual_identity`;
+no consumer reads either field. They do not affect verdicts or runner exit codes.
+Unreadable target-album playback screenshots (album-play-*) produce a FAIL contract report.
+File-read failures remain I/O errors. tvOS reports retain their existing fields.
 
 ## Explicit shard warm-up and reuse
 
