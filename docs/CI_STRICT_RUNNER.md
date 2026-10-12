@@ -44,6 +44,36 @@ unrecognized, but cannot supply a missing slot's identity.
 `tvos-edit-switch` retains the previous centered region reader and whole-frame
 album membership check. The reader used for single-photo surrounds is unchanged.
 
+The iOS `album-empty` and `filter-album` contracts select their path by the raw
+capture size. Unmeasured sizes retain the original whole-frame classifier and
+target-album membership rules entirely, without foreground/background checks,
+slot counting or per-slot glyph reading. The measured sizes below first check
+the foreground/background and count public color slots before reading glyphs.
+Exactly one identified slot then uses the original whole-frame classifier and
+membership rules, including zoomed photos with clipped glyphs. A measured frame
+that fails the palette splitter or background check fails, even if the original
+whole-frame classifier matches. This includes letterboxed single-photo frames
+whose black surround does not match the photo's blurred background.
+Multiple slots use the per-slot reader: every slot must have a readable active-fixture
+glyph and a color identity in the original target-album membership set. An unreadable
+stacked frame never falls back to whole-frame classification. Stacked frames
+are checked as separate photos, never as one dominant whole-frame identity.
+Single-photo surrounds are excluded only by the existing matched-original and
+blurred-surround checks. `album-empty` still requires both playback captures,
+at least two different target photos and different identity sets in the two
+captures. Empty-selection, controlled-empty-album, exact-copy and old-pool-photo
+rejection checks are unchanged. `tvos-album-empty` retains its whole-frame reader.
+Only these two iOS contracts opt into measured system-overlay handling: the
+1640x2360 iPad home-indicator box (543,2330)-(1097,2349), or 1170x2532 iPhone
+box (373,2489)-(798,2512), is excluded from color sampling, with glyph pixels
+unchanged. Each box is narrower than every full-width slot.
+For 1170x2532 iPhone captures, glyph bands may join only across gaps wholly inside
+the control-bar rows (2126..2314); overlay cells in (68,2126)-(1102,2314) cannot
+supply glyph evidence. The merged letter and digit still agree with every observed
+cell, and all original cell-count, white-cell, texture and slot checks apply.
+`filter-edit-switch` does not opt in. Every pinned iOS strict-suite device must
+have a measured geometry; changing a pinned device requires new measurements.
+
 ## Explicit shard warm-up and reuse
 
 Each shard is grouped by scheme and configuration. Ordinary suites default to their

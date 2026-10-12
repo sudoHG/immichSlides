@@ -20,6 +20,7 @@ from strict_e2e_filter_contract import (
     load_member_manifest,
     member_manifest,
     require_photo_mark,
+    target_album_frame_marks,
 )
 from strict_e2e_photo_identity import (
     MARKS,
@@ -305,7 +306,8 @@ def _empty_album_start_state(payload: Mapping[str, Any]) -> bool | str:
     return value
 
 
-def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a") -> dict[str, Any]:
+def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
+                                  read_stacked_slots: bool) -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     if str(manifest["fixture_set"]) != fixture_set:
         raise AlbumServerContractError("Album-empty member-manifest does not match the requested fixture")
@@ -319,14 +321,20 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a") ->
         person_filters=list(empty_selection.get("person_filters") or []),
         start_enabled=_recorded_start_enabled(empty_selection, "empty-selection.json"),
     )
-    marks = [
-        _classified_mark(evidence_dir, name)
+    playback_names = [
+        name
         for name in ("album-play-1", "album-play-2")
         if (evidence_dir / f"{name}.png").is_file()
     ]
-    if len(marks) < 2:
+    if len(playback_names) < 2:
         raise AlbumServerContractError("The target album needs screenshots of at least two different public identities")
-    if len(set(marks)) < 2:
+    frame_marks = [
+        target_album_frame_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set)
+        if read_stacked_slots else (_classified_mark(evidence_dir, name),)
+        for name in playback_names
+    ]
+    marks = [mark for frame in frame_marks for mark in frame]
+    if len(set(marks)) < 2 or len({frozenset(frame) for frame in frame_marks}) < 2:
         raise AlbumServerContractError("The two playback screenshots must be different public identities; an asset ID is not visual proof")
     assert_playback_marks_in_target(marks, fixture_set)
 

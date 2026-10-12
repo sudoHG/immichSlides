@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shared filter contract.
 
-Member labels must be checked against classify_screenshot; the final pool is the union of the per-object sets.
+Member labels must be checked against public fixture pixels; the final pool is the union of the per-object sets.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 
 from strict_e2e_photo_identity import (
     MARKS, IdentityAssertionError, classify_public_pattern, classify_screenshot,
-    public_frame_photos_from_bytes, public_letter_from_bytes,
+    public_frame_photos_from_bytes, public_frame_slot_count_from_bytes, public_letter_from_bytes,
 )
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest, public_visual_label
 
@@ -669,6 +669,48 @@ def _classified_mark_from_png(evidence_dir: Path, name: str) -> str:
     return require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
 
 
+# Measured scanner-approved portrait captures, with four pixels around system ink.
+# Unmeasured capture sizes keep the original whole-frame contract, without these gates.
+TARGET_ALBUM_HOME_INDICATOR_BOXES = {
+    (1640, 2360): (543, 2330, 1097, 2349),
+    (1170, 2532): (373, 2489, 798, 2512),
+}
+TARGET_ALBUM_GLYPH_OVERLAY_BOXES = {(1170, 2532): (68, 2126, 1102, 2314)}
+
+
+def target_album_frame_marks(image_bytes: bytes, fixture_set: str) -> tuple[str, ...]:
+    # Unmeasured captures keep the original contract. Measured captures must pass
+    # the foreground and slot gates; unreadable collages never fall back to whole-frame color.
+    try:
+        from PIL import Image
+        import io
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            capture_size = image.size
+        if capture_size not in TARGET_ALBUM_HOME_INDICATOR_BOXES:
+            identity = classify_screenshot(image_bytes)
+            marks = (require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark),)
+            assert_playback_marks_in_target(marks, fixture_set)
+            return marks
+        foreground = _display_foreground_png(image_bytes)
+        with Image.open(io.BytesIO(foreground)) as image:
+            size = image.size
+        exclusion = TARGET_ALBUM_HOME_INDICATOR_BOXES.get(size)
+        if public_frame_slot_count_from_bytes(foreground, color_exclusion_box=exclusion) == 1:
+            identity = classify_screenshot(image_bytes)
+            marks = (require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark),)
+        else:
+            photos = public_frame_photos_from_bytes(
+                foreground, color_exclusion_box=exclusion,
+                glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES.get(size))
+            marks = tuple(photo.mark for photo in photos)
+            if any(photo.letter != fixture_set.upper() for photo in photos):
+                raise FilterContractError(f"target album frame must show the public glyph of fixture {fixture_set.upper()}")
+    except IdentityAssertionError as error:
+        raise FilterContractError(str(error)) from error
+    assert_playback_marks_in_target(marks, fixture_set)
+    return marks
+
+
 def _extract_ids_from_request_log(log_text: str) -> list[str]:
     found: list[str] = []
     for match in re.finditer(r"(asset|album|person)-[ab]-[a-z0-9-]+", log_text):
@@ -679,8 +721,12 @@ def _extract_ids_from_request_log(log_text: str) -> list[str]:
 def _evaluate_filter_album(evidence_dir: Path) -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     fixture_set = str(manifest["fixture_set"])
-    marks = [_classified_mark_from_png(evidence_dir, name) for name in FILTER_ALBUM_STEPS]
-    assert_playback_marks_in_target(marks, fixture_set)
+    marks = []
+    for name in FILTER_ALBUM_STEPS:
+        path = evidence_dir / f"{name}.png"
+        if not path.is_file():
+            raise FilterContractError(f"Missing visual input {name}.png")
+        marks.extend(target_album_frame_marks(path.read_bytes(), fixture_set))
     return {
         "verdict": "PASS",
         "suite": "filter-album",

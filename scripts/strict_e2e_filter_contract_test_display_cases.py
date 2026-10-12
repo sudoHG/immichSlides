@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from access_lifecycle_contract_test_fixtures import IPAD_SCREEN
-from test_album_server_narrow_contract import IPHONE_SCREEN, TV_SCREEN, _cover
-from strict_e2e_photo_identity import public_frame_letter_from_bytes, public_letter_from_bytes
+from test_album_server_narrow_contract import (
+    IPHONE_SCREEN, TV_SCREEN, UNMEASURED_SCREEN, _cover, _full_screen, _iphone_control_split_frame,
+    _letterbox, _stacked_album_frame, _unmeasured_album_frame, _with_home_indicator,
+)
+from strict_e2e_photo_identity import (
+    IdentityAssertionError, public_frame_photos_from_bytes, public_frame_slot_count_from_bytes,
+    public_frame_letter_from_bytes, public_letter_from_bytes,
+)
 
 from strict_e2e_filter_contract_test_fixtures import (
     DISPLAY_POLICY_CANDIDATE_PREFIX,
@@ -53,6 +59,113 @@ from strict_e2e_filter_contract_test_fixtures import (
 )
 
 class DeviceFilterVisualIdentityTestsCases:
+    def test_filter_album_unmeasured_geometry_keeps_the_main_result(self) -> None:
+        for fixture_set in ("a", "b"):
+            for shape, frame in (
+                ("home indicator", _unmeasured_album_frame(fixture_set)),
+                ("letterbox", _letterbox(_fixture_png("A3", fixture_set), UNMEASURED_SCREEN)),
+            ):
+                with self.subTest(fixture_set=fixture_set, shape=shape), tempfile.TemporaryDirectory() as raw:
+                    evidence = Path(raw)
+                    self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")], fixture_set)
+                    self.assertEqual(Image.open(io.BytesIO(frame)).size, UNMEASURED_SCREEN)
+                    identity = classify_screenshot(frame)
+                    mark = require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
+                    self.assertEqual(mark, "A3")
+                    (evidence / "album-play-1.png").write_bytes(frame)
+                    self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-album")["marks"], [mark, "A2", "A3"])
+        for screen in (IPHONE_SCREEN, IPAD_SCREEN):
+            with self.subTest(measured_screen=screen), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")])
+                frame = _letterbox(_fixture_png("A3"), screen)
+                self.assertEqual(classify_screenshot(frame).status, "MATCH")
+                (evidence / "album-play-1.png").write_bytes(frame)
+                with self.assertRaisesRegex(FilterContractError, "does not match.*blurred background"):
+                    evaluate_filter_visual_identity(evidence, "filter-album")
+
+    def test_filter_album_single_slot_zoomed_glyph_keeps_the_main_result(self) -> None:
+        from strict_e2e_filter_contract import TARGET_ALBUM_GLYPH_OVERLAY_BOXES
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")], fixture_set)
+                frame = _full_screen("A1", IPHONE_SCREEN, fixture_set)
+                self.assertEqual(Image.open(io.BytesIO(frame)).size, IPHONE_SCREEN)
+                identity = classify_screenshot(frame)
+                mark = require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
+                self.assertEqual(mark, "A1")
+                self.assertEqual(public_frame_slot_count_from_bytes(frame), 1)
+                with self.assertRaises(IdentityAssertionError):
+                    public_frame_photos_from_bytes(frame, glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES[IPHONE_SCREEN])
+                (evidence / "album-play-1.png").write_bytes(frame)
+                self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-album")["marks"], [mark, "A2", "A3"])
+
+    def test_filter_album_control_bar_gap_cannot_join_different_glyphs(self) -> None:
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")], fixture_set)
+                (evidence / "album-play-1.png").write_bytes(_iphone_control_split_frame(fixture_set))
+                self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-album")["marks"], ["A2", "A1", "A2", "A3"])
+                for case in ("foreign_bottom_half", "outside_gap"):
+                    with self.subTest(case=case):
+                        invalid = _iphone_control_split_frame(fixture_set, **{case: True})
+                        self.assertEqual(classify_screenshot(invalid).status, "MATCH")
+                        (evidence / "album-play-1.png").write_bytes(invalid)
+                        with self.assertRaises(FilterContractError):
+                            evaluate_filter_visual_identity(evidence, "filter-album")
+
+    def test_filter_album_system_ink_exclusion_keeps_footer_photo_patches_visible(self) -> None:
+        for fixture_set, screen in (
+            ("a", IPAD_SCREEN), ("a", IPHONE_SCREEN), ("b", IPAD_SCREEN), ("b", IPHONE_SCREEN),
+        ):
+            with self.subTest(fixture_set=fixture_set, screen=screen), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")], fixture_set)
+                photo = _stacked_album_frame(fixture_set) if screen == IPAD_SCREEN else _full_screen("A3", screen, fixture_set)
+                (evidence / "album-play-1.png").write_bytes(_with_home_indicator(photo))
+                expected = ["A1", "A3", "A2", "A3"] if screen == IPAD_SCREEN else ["A3", "A2", "A3"]
+                self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-album")["marks"], expected)
+                for patch_fixture in (fixture_set, "b" if fixture_set == "a" else "a"):
+                    with self.subTest(patch_fixture=patch_fixture):
+                        (evidence / "album-play-1.png").write_bytes(
+                            _with_home_indicator(photo, patch_fixture))
+                        with self.assertRaises(FilterContractError):
+                            evaluate_filter_visual_identity(evidence, "filter-album")
+
+    def test_filter_album_reads_every_slot_in_real_size_stacked_target_frames(self) -> None:
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")], fixture_set)
+                stacked = _stacked_album_frame(fixture_set)
+                self.assertEqual(Image.open(io.BytesIO(stacked)).size, IPAD_SCREEN)
+                self.assertNotEqual(classify_screenshot(stacked).status, "MATCH")
+                (evidence / "album-play-1.png").write_bytes(stacked)
+                for name, mark in (("album-play-2", "A2"), ("album-play-3", "A3")):
+                    (evidence / f"{name}.png").write_bytes(_full_screen(mark, IPAD_SCREEN, fixture_set))
+                report = evaluate_filter_visual_identity(evidence, "filter-album")
+                self.assertEqual(report["verdict"], "PASS")
+                self.assertEqual(report["marks"], ["A1", "A3", "A2", "A3"])
+
+    def test_filter_album_rejects_wrong_or_unreadable_stacked_slots(self) -> None:
+        for fixture_set, other in (("a", "b"), ("b", "a")):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")], fixture_set)
+                for case, frame in (
+                    ("wrong album", _stacked_album_frame(fixture_set, top_mark="A4")),
+                    ("mixed fixture", _stacked_album_frame(fixture_set, top_fixture=other)),
+                    ("other fixture", _stacked_album_frame(other)),
+                    ("unreadable slot", _stacked_album_frame(fixture_set, unreadable_top=True)),
+                    ("unreadable foreign slot", _stacked_album_frame(fixture_set, top_fixture=other, unreadable_top=True)),
+                ):
+                    with self.subTest(case=case):
+                        (evidence / "album-play-1.png").write_bytes(frame)
+                        with self.assertRaises(FilterContractError):
+                            evaluate_filter_visual_identity(evidence, "filter-album")
+
     def test_filter_album_identity_comes_from_classify_screenshot_not_json(self) -> None:
         self.assertIn("filter-album", FILTER_VISUAL_SUITES)
         with tempfile.TemporaryDirectory() as raw_directory:
