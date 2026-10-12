@@ -306,6 +306,8 @@ The inactive registry records real ASC workflow UUIDs, action/check names and
 device/runtime labels. Its 2,400-minute cap is a proposal below the 2,700-minute
 strategy ceiling; the billing anchor remains null until the account renewal
 is confirmed. Queue and visibility bounds also require review before activation.
+The maintainer confirmed in the ASC UI on 2026-10-12 that both registered test
+workflows have empty environments: no custom, shared or secret variables.
 The optional `XcodeCloud-UI-iOS` template is attached to the iOS scheme without changing its
 default plan; its explicit one-method seed is replaced by a verified pointer
 before every Cloud test build. The existing tvOS template is replaced likewise.
