@@ -140,7 +140,7 @@ class BuildArchiveTests(unittest.TestCase):
                             failed_output = self.root / 'packed-readiness-failure'
                             with patch.dict(os.environ, {'UI_SIMULATOR': 'cold-device'}), \
                                     patch.object(ui, 'context', side_effect=after_gate), patch.object(ui, 'workspace_preflight'), \
-                                    patch('strict_e2e_runner_support.prepare_simulator', side_effect=gate, create=True), \
+                                    patch('strict_e2e_runner_support.prepare_simulator', side_effect=gate), \
                                     patch('run_fixture_ui_tests.registry_revision', return_value='HEAD'), \
                                     patch('run_fixture_ui_tests.load_registry', return_value=(
                                         {'schema_version': 1, 'entries': []}, 'f' * 64)), patch('builtins.print'):

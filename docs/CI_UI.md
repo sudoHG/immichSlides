@@ -510,7 +510,9 @@ The Linux selection timeout is one 120-minute deadline shared by both archive
 platforms, extended by up to 50 minutes in total while the same-head gate run is held
 pending, inside a 185-minute job. Xcode calls
 have a 65-minute timeout and share an 85-minute shard budget inside a 110-minute
-job. The earlier visual invocation consumed 2,643 seconds of its 2,700-second
+job. The host tests require that cap to cover the shard, the separate ten-minute
+simulator preparation gate and at least 13 minutes for setup, query cleanup and
+publication. The earlier visual invocation consumed 2,643 seconds of its 2,700-second
 budget and was stopped at 2,715 seconds in [the hosted run](https://github.com/sudoHG/immichSlides/actions/runs/37796334799/job/113382323589).
 A subsequent control completed all 61 visual cases in 3,097.84 seconds of shard
 wall time, [exit 65 with one EXIF assertion](https://github.com/sudoHG/immichSlides/actions/runs/37798609844/job/113394133806).

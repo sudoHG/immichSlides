@@ -425,7 +425,7 @@ def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, 
                    and entry["identity"] in declared] if mode == "pr" else []
     hashes = {"manifests": {"fixture-c": fixture_manifest("c")["fixture_sha256"],
                             "test-plan": hashlib.sha256(plan_path.read_bytes()).hexdigest()},
-              "policies": {"test-policy": hashlib.sha256(policy_text.encode()).hexdigest()}}
+              "policies": {"test-policy": hashlib.sha256(policy_path.read_bytes()).hexdigest()}}
     if shard_manifest:
         hashes["manifests"]["ui-shards"] = hashlib.sha256(shard_manifest.read_bytes()).hexdigest()
     if scoped_plan_sha256:
@@ -445,7 +445,7 @@ def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, 
             "official_discovery_eligible": discovery_eligible(declared, discovery_policy)}
 
 
-def main(argv=None):
+def main(argv=None, *, simulator_prepared=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=DEVICES, required=True)
     parser.add_argument("--destination", required=True)
@@ -510,7 +510,7 @@ def main(argv=None):
         udid = destination_udid(args.destination)
         official_mode = start_official_discovery(summary, udid, inputs_record["discovery_policy"],
                                                 enabled=args.compiled_from_official_results)
-        prepare_simulator(udid)
+        prepare_simulator(udid, boot_submitted=simulator_prepared)
         summary["toolchain"] = toolchain()
         summary["toolchain"]["versions"]["test_wait_factor"] = str(waits["infrastructure_factor"])
         write_json(output / "wait-configuration.json", waits)
@@ -595,7 +595,7 @@ def main(argv=None):
             require(code == 0, "compiled enumeration failed")
             summary["population"]["compiled"] = compiled_tests(json.loads(enumeration.read_text()), declared)
             rows = coverage_rows(declared, summary["population"]["compiled"], {"testNodes": []}, args.device)
-        reset_simulator_app(udid)
+        reset_simulator_app(udid, boot_submitted=True)
         crash_directories = crash_report_directories()
         crash_reports_before = crash_report_snapshot(crash_directories)
         selected = [entry for entry in declared if not any(rule["identity"] == entry for rule in deselections)]
@@ -641,7 +641,7 @@ def main(argv=None):
                     summary["compiled_evidence"]["first_exit_code"] = raw_code
                 return raw_code, time.monotonic() - started
             retry_result = run_xcode_attempts(command, registry, tier="ui", environment="fixture", today=evaluated_on,
-                identity_for_key=lambda key: expected_by_key[key], reset=lambda: reset_simulator_app(udid),
+                identity_for_key=lambda key: expected_by_key[key], reset=lambda: reset_simulator_app(udid, boot_submitted=True),
                 execute=attempt, allocate_bundle=allocate, read=read_attempt)
             if official_mode:
                 summary["compiled_evidence"]["first_exit_code"] = retry_result["invocations"][0]["exit_code"]

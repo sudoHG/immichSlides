@@ -556,12 +556,12 @@ router/importer/dispatcher clients fail immediately on a rate-limited 403, and
 the CI reporter's HTTP request budget is unchanged.
 
 The publisher's GitHub GET reads make at most three attempts within the original
-request timeout (45 seconds by default). Connection resets, EOF/TLS failures and HTTP 5xx use
+request timeout (45 seconds by default). Connection resets, EOF/TLS transport failures and HTTP 5xx use
 one- then two-second waits. A secondary rate limit is retried only with a numeric
 `Retry-After` that fits the remaining budget, including a one-second margin.
 Each attempt receives only the remaining time; the workflow's existing deadline
 is unchanged. POST/DELETE requests, authorization refusals, HTTP 404, malformed
-records, missing evidence and identity/contract mismatches are never retried.
+records, missing evidence, certificate verification failures and identity/contract mismatches are never retried.
 Exhausted reads still fail closed and every publication evaluates current evidence
 again; no previous green status is reused.
 
@@ -570,6 +570,8 @@ in the publisher log and publication summary: a fixed stage, exception type and
 HTTP status (null for non-HTTP errors). Artifact metadata, download, decoding and
 summary binding are distinguished. Exception text, response bodies, request URLs
 and credentials are excluded; producer counts and test failures remain separate.
+Only publisher calls print the `Trusted CI failure:` line; the reporter retains
+its own diagnostic output and the same structured evidence.
 
 ## Approval and credentials
 

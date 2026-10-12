@@ -16,8 +16,8 @@ records and private quarantine follow the [nightly infrastructure policy](CI_NIG
 The shared preparation gate caps `simctl boot` at 60 seconds and gives boot,
 bootstatus and responsive app queries 600 seconds total. Post-boot queries use at
 most 300 seconds within that gate. The [shared reset](#shared-simulator-reset)
-then starts the separate 120-second app/keychain/privacy
-reset clock starts; individual reset commands have at most 60 seconds. Local strict,
+then starts the separate 120-second app/keychain/privacy reset clock;
+individual reset commands have at most 60 seconds. Local strict,
 fixture UI, listed retry and access-lifecycle runs use these preparation bounds too.
 Official tests and summary exports each have 60 seconds. Unit callers retain
 `unit-results-timed-out` with export phase and elapsed time; strict callers retain
@@ -150,7 +150,10 @@ remaining reset steps are still mandatory before Xcode may install the app. A re
 UI consumers run this gate before identity/archive checks, simulator inventory
 and fixture server startup/health checks. Standalone fixture and strict runners
 also gate before simulator lookups and fixture health checks; resets use the same
-gate again, normally returning on the first warm query. Strict hosted jobs prepare
+gate again, normally returning on the first warm query. UI consumers pass their
+successful preparation state to the fixture runner, which skips the redundant
+`simctl boot`; fixture resets and retries do the same after their initial gate.
+Bootstatus, readiness queries and all reset mutations still run. Strict hosted jobs prepare
 the device before cold builds or case runners. Toolchain/pins checks run before
 early boot; only archive downloads overlap boot in the UI workflows.
 
@@ -177,7 +180,7 @@ toolchain verification. The fourth reached tests after a warm 0.4-second boot ch
 0.3-second readiness query and 3.1-second reset, then failed an XCTest assertion.
 This is preparation evidence, not a passing UI run.
 
-For capacity planning, adding the measured 56.5–202-second cold boot range to the
+For capacity planning, adding the measured 56.5–202-second cold boot plus bootstatus range to the
 tested 54.2-second-per-query scenario (10 + 20 + 40 + 54.2 = 124.2 seconds) gives
 180.7–326.2 seconds, about 3–5.4 minutes per cold iOS job before download overlap.
 These are modeled costs, not hosted recovery measurements. Download overlap may
@@ -219,6 +222,10 @@ helper as local resets. Initial boot phases and elapsed times are logged before 
 first case, so cold boot does not consume the 120-second case-reset
 budget. The [nightly capacity policy](CI_NIGHTLY.md#population-and-capacity) records the
 hosted measurement used for this boot allowance.
+The hosted preparation step has a 13-minute cap, leaving three minutes beyond
+the nominal gate for query cleanup and failure diagnostics. Hosted preparation
+and local strict runners write partial `simulator-preparation.log` files in a
+`finally` block on failure; these raw logs remain outside public uploads.
 The initial allowance follows
 the archive producer's [measured hosted disk use](CI_BUILD_ARCHIVE.md); the tracer
 reports its own measurements for review. Hosted cold/warm budgets and the disk exception

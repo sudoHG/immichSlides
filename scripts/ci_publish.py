@@ -239,10 +239,10 @@ def failure_detail(error, stage):
             "http_status": error.http_status if isinstance(error, GitHubRequestError) else None}
 
 
-def record_failure(error, stage, failures):
+def record_failure(error, stage, failures, *, log=False):
     detail = failure_detail(error, stage)
     failures.append(detail)
-    if not isinstance(error, ArtifactReadError):
+    if log and not isinstance(error, ArtifactReadError):
         print("Trusted CI failure: " + json.dumps(detail, sort_keys=True), flush=True)
 
 
@@ -341,9 +341,11 @@ class GitHub:
             if not self.retry_reads:
                 raise
             reason = error.reason if isinstance(error, URLError) else error
-            transient = (isinstance(reason, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError,
-                                             ssl.SSLError, EOFError, IncompleteRead, RemoteDisconnected))
-                         or isinstance(reason, OSError) and reason.errno in {errno.ECONNRESET, errno.ECONNABORTED, errno.EPIPE})
+            transient = (not isinstance(reason, ssl.SSLCertVerificationError)
+                         and (isinstance(reason, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError,
+                                                  ssl.SSLError, EOFError, IncompleteRead, RemoteDisconnected))
+                              or isinstance(reason, OSError)
+                              and reason.errno in {errno.ECONNRESET, errno.ECONNABORTED, errno.EPIPE}))
             raise GitHubRequestError("GitHub transport request failed",
                                      exception_type=type(reason if isinstance(reason, BaseException) else error).__name__,
                                      retry_delay=1 if transient else None) from None
@@ -458,7 +460,7 @@ def json_member(api, artifact, filename, *, optional=False):
     except (ContractError, KeyError, ValueError, TypeError, OSError, EOFError, zipfile.BadZipFile) as error:
         if getattr(api, "retry_reads", False) is not True:
             raise
-        record_failure(error, stage, [])
+        record_failure(error, stage, [], log=True)
         raise ArtifactReadError(error, stage) from None
 
 
@@ -659,7 +661,8 @@ def producer_evidence(api, run, source, *, diagnostics=None, admission=None, clo
                         "summary tier/job/shard differs from its verified uploading job")
                 summaries.append(summary)
             except (ContractError, KeyError, ValueError, TypeError) as error:
-                record_failure(error, stage, failures if failures is not None else [])
+                record_failure(error, stage, failures if failures is not None else [],
+                               log=getattr(api, "retry_reads", False) is True)
                 if diagnostics is None:
                     raise
                 diagnostics.append("required artifact missing or invalid: " + artifact_name)
@@ -817,7 +820,7 @@ def compute(api, pr_number, pushed, login):
                                 proof = trusted_groups(api, record, run, {group}, approved=approved)
                                 proofs.update(proof["groups"])
                             except (ContractError, KeyError, ValueError, TypeError) as error:
-                                record_failure(error, stage, failure_diagnostics)
+                                record_failure(error, stage, failure_diagnostics, log=True)
                                 for device in GROUPS[group]:
                                     missing_cloud.extend({"identity": item, "reason": "NOT_RUN: no accepted Cloud " + group + " proof"}
                                         for entries in ui["selection"]["shards"][device].values() for item in entries)
@@ -860,7 +863,7 @@ def compute(api, pr_number, pushed, login):
             else:
                 evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
         except (ContractError, KeyError, ValueError, TypeError) as error:
-            record_failure(error, stage, failure_diagnostics)
+            record_failure(error, stage, failure_diagnostics, log=True)
             evaluations[context] = {"state": "failure", "description": ui_failure_hint(error) or
                                    "Missing, invalid or mismatched admitted evidence"}
             # The infrastructure advice is deterministic, without candidate text.
@@ -873,7 +876,7 @@ def compute(api, pr_number, pushed, login):
                 from ci_report import summary_diagnostics
                 evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
             except (ContractError, KeyError, ValueError, TypeError) as error:
-                record_failure(error, "producer-diagnostics", failure_diagnostics)
+                record_failure(error, "producer-diagnostics", failure_diagnostics, log=True)
                 evaluations[context]["diagnostics"] = {"counts": {}, "failures": [], "missing": [],
                     "infrastructure": ["failure diagnostics unavailable"], "skipped": [], "deselected": []}
         if missing_cloud:

@@ -642,7 +642,7 @@ def run_shard(args):
             if getattr(args, "compiled_from_official_results", False):
                 command += ["--compiled-from-official-results"]
         started, started_epoch = time.monotonic(), time.time()
-        code = fixture_main(command)
+        code = fixture_main(command, simulator_prepared=True)
         write_json(args.output_dir / "shard-timing.json", {"schema_version": 1, "device": args.device, "shard": args.shard,
                    "wall_seconds": time.monotonic() - started, "exit_code": code,
                    "started_epoch": started_epoch, "finished_epoch": time.time(),

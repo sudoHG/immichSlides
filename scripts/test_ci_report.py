@@ -71,6 +71,12 @@ class ReporterTests(unittest.TestCase):
         missing_cases = [item for item in report["diagnostics"]["missing"]
                          if item["reason"] == "strict-case-infrastructure-or-unverified-failure"]
         self.assertEqual(cases, [item["identity"] for item in missing_cases])
+        from run_strict_e2e import resolve_suite_selector
+        missing_methods = [item["identity"] for item in report["diagnostics"]["missing"]
+                           if item["reason"] == "official-method-not-observed"]
+        expected_methods = [test_identity("strict", resolve_suite_selector("ios", case["dimensions"]["suite"]).split("/", 1)[1],
+                            **case["dimensions"]) for case in cases]
+        self.assertCountEqual(expected_methods, missing_methods)
         for case in cases:
             with self.subTest(case=case):
                 self.assertEqual("none", issue_decision(None, case, [report], registry_referenced=False)["action"])
@@ -817,6 +823,16 @@ class ReporterTests(unittest.TestCase):
             daily_rollup("2026-10-01", [new, conflicting])
 
     def test_diagnostics_keep_failed_identities_counts_exit_codes_and_missing_evidence(self):
+        from ci_publish import record_failure
+        for publisher in (False, True):
+            failures = []
+            with self.subTest(publisher=publisher), patch("builtins.print") as output:
+                record_failure(ContractError("private response"), "artifact-binding", failures, log=publisher)
+                self.assertEqual(failures, [{"stage": "artifact-binding", "exception_type": "ContractError", "http_status": None}])
+                self.assertEqual(output.call_count, int(publisher))
+                if publisher:
+                    self.assertTrue(output.call_args.args[0].startswith("Trusted CI failure: "))
+                    self.assertNotIn("private response", output.call_args.args[0])
         summary = valid_summary()
         summary["population"]["observed"][0] = observation(summary["population"]["declared"][0], "failed", 1, exit_code=65)
         summary["status"] = "failed"

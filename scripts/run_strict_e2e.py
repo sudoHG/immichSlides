@@ -749,8 +749,15 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             encoding="utf-8",
         )
 
-        _, preparation_log = prepare_simulator(simulator_udid)
-        (arguments.evidence_dir / "simulator-preparation.log").write_text(preparation_log, encoding="utf-8")
+        preparation_lines = []
+        def report_preparation(line):
+            preparation_lines.append(line)
+            print(line, flush=True)
+        try:
+            prepare_simulator(simulator_udid, report=report_preparation)
+        finally:
+            (arguments.evidence_dir / "simulator-preparation.log").write_text(
+                "\n".join(preparation_lines) + "\n", encoding="utf-8")
         if arguments.listed_retry_device:
             from ci_flaky import simulator_device_class
             retry_device_class = simulator_device_class(simulator_udid, arguments.listed_retry_device)
