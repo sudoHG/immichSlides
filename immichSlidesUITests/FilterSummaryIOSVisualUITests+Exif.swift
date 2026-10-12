@@ -180,9 +180,9 @@ extension FilterSummaryIOSVisualUITests {
                     app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "Before retrying next, the playback control bar should wake up again"
             )
-            let nextButton = app.buttons["slideshow.control.next.button"]
             XCTAssertTrue(
-                nextButton.waitForExistence(
+                app.waitForSlideshowControlBarButton(
+                    identifier: "slideshow.control.next.button",
                     timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "Playback page should show the 'Next' button")
             app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
