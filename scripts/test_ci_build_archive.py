@@ -129,11 +129,13 @@ class BuildArchiveTests(unittest.TestCase):
                             self.assertEqual(diagnostic['infrastructure'][0]['code'], 'ui-shard-preflight-failed')
                             from strict_e2e_runner_support import InfrastructureTimeout
                             gate_finished = []
+                            preparation_fails = True
                             def gate(udid, **kwargs):
                                 self.assertEqual(udid, 'cold-device')
                                 self.assertTrue(kwargs['boot_submitted'])
                                 gate_finished.append(True)
-                                raise InfrastructureTimeout('simulator-readiness', 300)
+                                if preparation_fails:
+                                    raise InfrastructureTimeout('simulator-readiness', 300)
                             def after_gate():
                                 self.assertTrue(gate_finished, 'context must wait for simulator readiness')
                                 return context
@@ -143,14 +145,31 @@ class BuildArchiveTests(unittest.TestCase):
                                     patch('strict_e2e_runner_support.prepare_simulator', side_effect=gate), \
                                     patch('run_fixture_ui_tests.registry_revision', return_value='HEAD'), \
                                     patch('run_fixture_ui_tests.load_registry', return_value=(
-                                        {'schema_version': 1, 'entries': []}, 'f' * 64)), patch('builtins.print'):
+                                        {'schema_version': 1, 'entries': []}, 'f' * 64)), \
+                                    patch('run_fixture_ui_tests.main') as fixture_main, patch('builtins.print'):
                                 self.assertEqual(ui.run_shard(SimpleNamespace(output_dir=failed_output, device=device, shard=name,
                                     destination='platform=iOS Simulator,id=cold-device',
                                     manifest_revision=None, selection_path=retained)), 124)
+                                fixture_main.assert_not_called()
                             failed = json.loads((failed_output / 'summary.json').read_text())
                             self.assertEqual(failed['infrastructure'][0]['code'], 'simulator-readiness-timeout')
                             self.assertEqual(failed['population']['declared'], diagnostic['population']['declared'])
                             self.assertEqual(failed['population']['observed'], [])
+                            preparation_fails = False
+                            gate_finished.clear()
+                            passed_output = self.root / 'packed-readiness-success'
+                            passed_output.mkdir()
+                            with patch.dict(os.environ, {'UI_SIMULATOR': 'cold-device'}), \
+                                    patch.object(ui, 'context', side_effect=after_gate), patch.object(ui, 'workspace_preflight'), \
+                                    patch('strict_e2e_runner_support.prepare_simulator', side_effect=gate), \
+                                    patch('run_fixture_ui_tests.main', return_value=0) as fixture_main:
+                                self.assertEqual(ui.run_shard(SimpleNamespace(output_dir=passed_output, device=device, shard=name,
+                                    destination='platform=iOS Simulator,id=cold-device', manifest_revision=None,
+                                    selection_path=retained, archive_dir=None, xctestrun=self.plist,
+                                    timeout_minutes=65, total_timeout_minutes=85, result_export_timeout_seconds=180,
+                                    wait_factor=1, min_free_gib=80, max_parallel=1)), 0)
+                                fixture_main.assert_called_once()
+                                self.assertEqual(fixture_main.call_args.kwargs, {'simulator_prepared': True})
 
     def test_functional_archive_selection_waits_only_for_platforms_with_selected_jobs(self):
         from types import SimpleNamespace

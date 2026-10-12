@@ -190,8 +190,6 @@ class NightlyVerdictTests(unittest.TestCase):
     def test_workflow_budgets_cover_preparation_execution_and_diagnostic_margin(self):
         import yaml
         import shlex
-        import os
-        import tempfile
         from ci_nightly import shards
         from strict_e2e_build import build_settings
         from strict_e2e_runner_support import (FILTER_PERSON_SESSIONS, SIMULATOR_READINESS_TIMEOUT_SECONDS,
@@ -221,24 +219,6 @@ class NightlyVerdictTests(unittest.TestCase):
             self.assertEqual("preparation", steps[preparation].get("id"))
             self.assertGreaterEqual(steps[preparation]["timeout-minutes"] * 60,
                                     SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180)
-            script = steps[preparation]["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-            for fails in (False, True):
-                with self.subTest(workflow=filename, preparation_fails=fails), tempfile.TemporaryDirectory() as directory:
-                    def prepare(udid, *, report):
-                        report("simulator-readiness: failed" if fails else "simulator-preparation: passed")
-                        if fails:
-                            raise ci_summary.ContractError("preparation failed")
-                    with patch.dict(os.environ, {"RUNNER_TEMP": directory, "GITHUB_STEP_SUMMARY": directory + "/summary",
-                                                 "NIGHTLY_SIMULATOR": "device", "STRICT_SIMULATOR": "device"}), \
-                            patch("strict_e2e_runner_support.prepare_simulator", side_effect=prepare), patch("builtins.print"):
-                        if fails:
-                            with self.assertRaises(ci_summary.ContractError):
-                                exec(script, {})
-                        else:
-                            exec(script, {})
-                    logs = list(Path(directory).glob("*/simulator-preparation.log"))
-                    self.assertEqual(len(logs), 1)
-                    self.assertIn("failed" if fails else "passed", logs[0].read_text())
             self.assertEqual("always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')",
                              steps[accounting]["if"])
             accounting_args = shlex.split(steps[accounting]["run"])

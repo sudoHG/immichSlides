@@ -171,7 +171,7 @@ it is not a hard wall-clock bound on subprocess timeout cleanup. Wall time can r
 Logs record each timed-out query's cap and actual elapsed time, plus the final
 readiness `deadline_overrun`. Outer runner and job timeouts remain the final bounds.
 
-The combined 600-second gate allows headroom above the observed 202-second boot
+The combined 600-second gate allows headroom above the observed 202-second boot plus bootstatus
 plus a 130-second unresponsive query (332 seconds); the post-boot allowance remains
 300 seconds. It logs total preparation elapsed time and overrun as well. In the
 [early-boot probe](https://github.com/sudoHG/immichSlides/actions/runs/38116564553),
@@ -223,9 +223,7 @@ first case, so cold boot does not consume the 120-second case-reset
 budget. The [nightly capacity policy](CI_NIGHTLY.md#population-and-capacity) records the
 hosted measurement used for this boot allowance.
 The hosted preparation step has a 13-minute cap, leaving three minutes beyond
-the nominal gate for query cleanup and failure diagnostics. Hosted preparation
-and local strict runners write partial `simulator-preparation.log` files in a
-`finally` block on failure; these raw logs remain outside public uploads.
+the nominal gate for query cleanup and failure diagnostics.
 The initial allowance follows
 the archive producer's [measured hosted disk use](CI_BUILD_ARCHIVE.md); the tracer
 reports its own measurements for review. Hosted cold/warm budgets and the disk exception

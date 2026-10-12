@@ -823,16 +823,28 @@ class ReporterTests(unittest.TestCase):
             daily_rollup("2026-10-01", [new, conflicting])
 
     def test_diagnostics_keep_failed_identities_counts_exit_codes_and_missing_evidence(self):
-        from ci_publish import record_failure
+        from ci_publish import GitHub, producer_evidence
+        from ci_publish_git import workflow_contract
+        from test_ci_publish import gate_fixture, REPOSITORY, RUN
+        record, jobs, summaries = gate_fixture(units=False)
+        source = record["workflows"][RUN["path"]]["base"]
+        _, _, names = workflow_contract(source, RUN, details=True)
+        artifacts = [{"name": name, "expired": False} for values in names.values() for name in values]
+        invalid_summaries = copy.deepcopy(summaries)
+        invalid_summaries[0]["run"]["id"] = "999"
         for publisher in (False, True):
-            failures = []
-            with self.subTest(publisher=publisher), patch("builtins.print") as output:
-                record_failure(ContractError("private response"), "artifact-binding", failures, log=publisher)
+            api = GitHub(REPOSITORY, "", retry_reads=publisher)
+            failures, evidence_errors = [], []
+            with self.subTest(publisher=publisher), patch.object(api, "pages", side_effect=[jobs, artifacts]), \
+                    patch("ci_publish.json_member", side_effect=copy.deepcopy(invalid_summaries)), \
+                    patch("builtins.print") as output:
+                _, accepted = producer_evidence(api, RUN, source, diagnostics=evidence_errors, failures=failures)
+                self.assertEqual(accepted, summaries[1:])
+                self.assertEqual(len(evidence_errors), 1)
                 self.assertEqual(failures, [{"stage": "artifact-binding", "exception_type": "ContractError", "http_status": None}])
-                self.assertEqual(output.call_count, int(publisher))
-                if publisher:
-                    self.assertTrue(output.call_args.args[0].startswith("Trusted CI failure: "))
-                    self.assertNotIn("private response", output.call_args.args[0])
+                lines = [call.args[0] for call in output.call_args_list
+                         if call.args and call.args[0].startswith("Trusted CI failure: ")]
+                self.assertEqual(len(lines), int(publisher))
         summary = valid_summary()
         summary["population"]["observed"][0] = observation(summary["population"]["declared"][0], "failed", 1, exit_code=65)
         summary["status"] = "failed"

@@ -388,6 +388,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             evidence = root / "evidence"
             code, _, stderr, _ = self._run_p2_main(evidence, suite="smoke", platform="ios", model="iPhone", warm=True)
             self.assertEqual(code, 0, stderr)
+            self.assertEqual((evidence / "simulator-preparation.log").read_text(), "ready\n")
             self.assertEqual(list((root / "private").iterdir()), [])
 
     def test_inner_timeout_records_its_phase_and_finishes_private_cleanup(self):

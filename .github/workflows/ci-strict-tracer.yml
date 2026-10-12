@@ -61,18 +61,11 @@ jobs:
           from pathlib import Path
           sys.path.insert(0, "scripts")
           from strict_e2e_runner_support import prepare_simulator
-          lines = []
           def report(line):
-              lines.append(line)
               print(line, flush=True)
               with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
                   summary.write(line + "\n")
-          try:
-              prepare_simulator(os.environ["STRICT_SIMULATOR"], report=report)
-          finally:
-              output = Path(os.environ["RUNNER_TEMP"], "strict-preparation")
-              output.mkdir(exist_ok=True)
-              (output / "simulator-preparation.log").write_text("\n".join(lines) + "\n")
+          prepare_simulator(os.environ["STRICT_SIMULATOR"], report=report)
           PY
       - name: Measure cold build and run warm cases
         run: |
