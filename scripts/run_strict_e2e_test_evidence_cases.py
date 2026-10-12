@@ -718,10 +718,16 @@ class StrictE2ERunnerTestsCasesEvidence:
             report = require_visual_identity(evidence, "filter-album")
             self.assertEqual(report["target_album_geometry"], "unmeasured")
             self.assertEqual(json.loads((evidence / "visual-identity-runner.json").read_text()), report)
-            for suite in ("album-empty", "filter-album"):
+            for suite, screenshot in (
+                ("album-empty", "album-play-1.png"),
+                ("filter-album", "album-play-1.png"),
+                ("album-empty", "empty-album-result.png"),
+                ("tvos-album-empty", "empty-album-result.png"),
+            ):
                 for image_bytes in (b"", b"corrupt PNG"):
-                    with self.subTest(suite=suite, image_bytes=image_bytes):
-                        (evidence / "album-play-1.png").write_bytes(image_bytes)
+                    with self.subTest(suite=suite, screenshot=screenshot, image_bytes=image_bytes):
+                        _write_album_empty_pass(evidence)
+                        (evidence / screenshot).write_bytes(image_bytes)
                         with self.assertRaises(CommandError) as raised:
                             require_visual_identity(evidence, suite)
                         self.assertEqual(raised.exception.code, 2)
@@ -730,6 +736,19 @@ class StrictE2ERunnerTestsCasesEvidence:
                         self.assertEqual(report["verdict"], "FAIL")
                         self.assertEqual(report["suite"], suite)
                         self.assertIn("Unrecognizable input", report["error"])
+
+            for suite in ("album-empty", "tvos-album-empty"):
+                with self.subTest(suite=suite, screenshot="readable empty result"):
+                    _write_album_empty_pass(evidence)
+                    self.assertEqual(require_visual_identity(evidence, suite)["verdict"], "PASS")
+                    (evidence / "empty-album-result.png").write_bytes(_fixture_data("a")["images"]["asset-a-1"])
+                    with self.assertRaises(CommandError) as raised:
+                        require_visual_identity(evidence, suite)
+                    self.assertEqual(raised.exception.code, 2)
+                    report = json.loads((evidence / "visual-identity-runner.json").read_text())
+                    self.assertEqual(report["verdict"], "FAIL")
+                    self.assertEqual(report["suite"], suite)
+                    self.assertIn("old non-empty pool", report["error"])
 
 
     def test_pause_window_rejects_wrong_or_unreadable_window_detected(self) -> None:

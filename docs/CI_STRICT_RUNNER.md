@@ -84,7 +84,9 @@ each playback screenshot step to `measured` or `unmeasured`, so mixed-size evide
 does not hide which path judged each frame. These fields are written unchanged to
 `visual-identity-runner.json` and to `case-manifest.json` under `visual_identity`;
 no consumer reads either field. They do not affect verdicts or runner exit codes.
-Unreadable target-album playback screenshots (album-play-*) produce a FAIL contract report.
+Unreadable target-album playback screenshots (album-play-*) and empty-result
+screenshots (empty-album-result.png, for both iOS and tvOS album-empty suites)
+produce a FAIL contract report.
 File-read failures remain I/O errors. tvOS reports retain their existing fields.
 
 ## Explicit shard warm-up and reuse
