@@ -392,6 +392,47 @@ def public_frame_letter_from_bytes(image_bytes: bytes) -> str | None:
         return None
 
 
+def _public_frame_sample(image: object) -> object:
+    rgb = image.convert("RGB")
+    width, height = rgb.size
+    if width < IDENTITY_MINIMUM_IMAGE_PIXELS or height < IDENTITY_MINIMUM_IMAGE_PIXELS:
+        raise IdentityAssertionError("no public glyph")
+    if width > 480:
+        rgb = rgb.resize((480, max(8, round(480 * height / width))), _pil_image().Resampling.NEAREST)
+    return rgb
+
+
+def _public_frame_sample_box(box: tuple[int, int, int, int] | None,
+                             original_size: tuple[int, int], sample_size: tuple[int, int]) -> tuple[int, int, int, int] | None:
+    if box is None:
+        return None
+    width, height = original_size
+    sample_width, sample_height = sample_size
+    left, top, right, bottom = box
+    if not (0 <= left < right <= width and 0 <= top < bottom <= height):
+        raise IdentityAssertionError("system overlay box is outside the public frame")
+    return (left * sample_width // width, top * sample_height // height,
+            (right * sample_width + width - 1) // width, (bottom * sample_height + height - 1) // height)
+
+
+@functools.lru_cache(maxsize=4096)
+def public_frame_slot_count_from_bytes(image_bytes: bytes, *,
+                                      color_exclusion_box: tuple[int, int, int, int] | None = None) -> int:
+    """Count palette-defined slots without requiring a readable letter or digit."""
+    if not image_bytes:
+        raise IdentityAssertionError("no public glyph")
+    Image = _pil_image()
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgb = _public_frame_sample(image)
+            slots, _ = _public_frame_slots(rgb, _public_frame_sample_box(color_exclusion_box, image.size, rgb.size))
+            return len(slots)
+    except IdentityAssertionError:
+        raise
+    except Exception as error:
+        raise IdentityAssertionError(f"unreadable public glyph: {type(error).__name__}") from error
+
+
 @functools.lru_cache(maxsize=4096)
 def public_frame_photos_from_bytes(image_bytes: bytes, *,
                                   color_exclusion_box: tuple[int, int, int, int] | None = None,
@@ -402,23 +443,9 @@ def public_frame_photos_from_bytes(image_bytes: bytes, *,
     Image = _pil_image()
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
-            rgb = image.convert("RGB")
-            width, height = rgb.size
-            if width < IDENTITY_MINIMUM_IMAGE_PIXELS or height < IDENTITY_MINIMUM_IMAGE_PIXELS:
-                raise IdentityAssertionError("no public glyph")
-            if width > 480:
-                rgb = rgb.resize((480, max(8, round(480 * height / width))), Image.Resampling.NEAREST)
-            def sample_box(box: tuple[int, int, int, int] | None) -> tuple[int, int, int, int] | None:
-                if box is None:
-                    return None
-                left, top, right, bottom = box
-                if not (0 <= left < right <= width and 0 <= top < bottom <= height):
-                    raise IdentityAssertionError("system overlay box is outside the public frame")
-                return (left * rgb.width // width, top * rgb.height // height,
-                        (right * rgb.width + width - 1) // width, (bottom * rgb.height + height - 1) // height)
-
-            slots, patterns = _public_frame_slots(rgb, sample_box(color_exclusion_box))
-            overlay = sample_box(glyph_overlay_box)
+            rgb = _public_frame_sample(image)
+            slots, patterns = _public_frame_slots(rgb, _public_frame_sample_box(color_exclusion_box, image.size, rgb.size))
+            overlay = _public_frame_sample_box(glyph_overlay_box, image.size, rgb.size)
             photos = []
             for mark, top, bottom in slots:
                 slot_overlay = (overlay[0], overlay[1] - top, overlay[2], overlay[3] - top) if overlay else None

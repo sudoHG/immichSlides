@@ -45,6 +45,7 @@ from strict_e2e_photo_identity import (  # noqa: E402
     classify_public_pattern,
     classify_screenshot,
     public_frame_photos_from_bytes,
+    public_frame_slot_count_from_bytes,
 )
 from strict_e2e_server import GLYPHS, PUBLIC_API_KEY, _fixture_data, fixture_manifest  # noqa: E402
 from test_strict_e2e_server import RunningServer  # noqa: E402
@@ -633,6 +634,24 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
 
 
 class AlbumEmptyFixtureBTests(unittest.TestCase):
+    def test_single_slot_zoomed_glyph_keeps_the_main_whole_frame_result(self) -> None:
+        from strict_e2e_filter_contract import TARGET_ALBUM_GLYPH_OVERLAY_BOXES
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_album_empty_pass(directory, fixture_set)
+                # The real iPhone B1 cover zoom clips the letter horizontally.
+                frame = _full_screen("A1", IPHONE_SCREEN, fixture_set)
+                self.assertEqual(Image.open(io.BytesIO(frame)).size, IPHONE_SCREEN)
+                identity = classify_screenshot(frame)
+                self.assertEqual((identity.status, identity.mark), ("MATCH", "A1"))
+                self.assertEqual(public_frame_slot_count_from_bytes(frame), 1)
+                with self.assertRaises(IdentityAssertionError):
+                    public_frame_photos_from_bytes(frame, glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES[IPHONE_SCREEN])
+                (directory / "album-play-1.png").write_bytes(frame)
+                main_result = evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=False)
+                self.assertEqual(evaluate_album_empty_evidence(directory, fixture_set), main_result)
+
     def test_measured_system_boxes_cannot_hide_a_photo_slot(self) -> None:
         from strict_e2e_filter_contract import TARGET_ALBUM_HOME_INDICATOR_BOXES
         self.assertEqual(TARGET_ALBUM_HOME_INDICATOR_BOXES, {
@@ -660,7 +679,10 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                                  ["A2", "A1", "A2"])
                 for case in ("foreign_bottom_half", "outside_gap"):
                     with self.subTest(case=case):
-                        (directory / "album-play-1.png").write_bytes(_iphone_control_split_frame(fixture_set, **{case: True}))
+                        invalid = _iphone_control_split_frame(fixture_set, **{case: True})
+                        # Whole-frame MATCH must never rescue an unreadable stacked slot.
+                        self.assertEqual(classify_screenshot(invalid).status, "MATCH")
+                        (directory / "album-play-1.png").write_bytes(invalid)
                         with self.assertRaises(CommandError):
                             require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
 

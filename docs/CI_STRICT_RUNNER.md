@@ -44,9 +44,12 @@ unrecognized, but cannot supply a missing slot's identity.
 `tvos-edit-switch` retains the previous centered region reader and whole-frame
 album membership check. The reader used for single-photo surrounds is unchanged.
 
-The iOS `album-empty` and `filter-album` contracts use the same per-slot reader
-for target-album playback. Every slot must have a readable active-fixture glyph
-and a color identity in the original target-album membership set. Stacked frames
+The iOS `album-empty` and `filter-album` contracts count public color slots before
+reading glyphs. Exactly one slot retains the original whole-frame classifier and
+target-album membership rules, including zoomed photos with clipped glyphs.
+Multiple slots use the per-slot reader: every slot must have a readable active-fixture
+glyph and a color identity in the original target-album membership set. An unreadable
+stacked frame never falls back to whole-frame classification. Stacked frames
 are checked as separate photos, never as one dominant whole-frame identity.
 Single-photo surrounds are excluded only by the existing matched-original and
 blurred-surround checks. `album-empty` still requires both playback captures,

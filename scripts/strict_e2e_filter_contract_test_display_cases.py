@@ -7,7 +7,10 @@ from test_album_server_narrow_contract import (
     IPHONE_SCREEN, TV_SCREEN, _cover, _full_screen, _iphone_control_split_frame,
     _stacked_album_frame, _with_home_indicator,
 )
-from strict_e2e_photo_identity import public_frame_letter_from_bytes, public_letter_from_bytes
+from strict_e2e_photo_identity import (
+    IdentityAssertionError, public_frame_photos_from_bytes, public_frame_slot_count_from_bytes,
+    public_frame_letter_from_bytes, public_letter_from_bytes,
+)
 
 from strict_e2e_filter_contract_test_fixtures import (
     DISPLAY_POLICY_CANDIDATE_PREFIX,
@@ -56,6 +59,23 @@ from strict_e2e_filter_contract_test_fixtures import (
 )
 
 class DeviceFilterVisualIdentityTestsCases:
+    def test_filter_album_single_slot_zoomed_glyph_keeps_the_main_result(self) -> None:
+        from strict_e2e_filter_contract import TARGET_ALBUM_GLYPH_OVERLAY_BOXES
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")], fixture_set)
+                frame = _full_screen("A1", IPHONE_SCREEN, fixture_set)
+                self.assertEqual(Image.open(io.BytesIO(frame)).size, IPHONE_SCREEN)
+                identity = classify_screenshot(frame)
+                mark = require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
+                self.assertEqual(mark, "A1")
+                self.assertEqual(public_frame_slot_count_from_bytes(frame), 1)
+                with self.assertRaises(IdentityAssertionError):
+                    public_frame_photos_from_bytes(frame, glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES[IPHONE_SCREEN])
+                (evidence / "album-play-1.png").write_bytes(frame)
+                self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-album")["marks"], [mark, "A2", "A3"])
+
     def test_filter_album_control_bar_gap_cannot_join_different_glyphs(self) -> None:
         for fixture_set in ("a", "b"):
             with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
@@ -65,7 +85,9 @@ class DeviceFilterVisualIdentityTestsCases:
                 self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-album")["marks"], ["A2", "A1", "A2", "A3"])
                 for case in ("foreign_bottom_half", "outside_gap"):
                     with self.subTest(case=case):
-                        (evidence / "album-play-1.png").write_bytes(_iphone_control_split_frame(fixture_set, **{case: True}))
+                        invalid = _iphone_control_split_frame(fixture_set, **{case: True})
+                        self.assertEqual(classify_screenshot(invalid).status, "MATCH")
+                        (evidence / "album-play-1.png").write_bytes(invalid)
                         with self.assertRaises(FilterContractError):
                             evaluate_filter_visual_identity(evidence, "filter-album")
 

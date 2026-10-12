@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 
 from strict_e2e_photo_identity import (
     MARKS, IdentityAssertionError, classify_public_pattern, classify_screenshot,
-    public_frame_photos_from_bytes, public_letter_from_bytes,
+    public_frame_photos_from_bytes, public_frame_slot_count_from_bytes, public_letter_from_bytes,
 )
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest, public_visual_label
 
@@ -679,23 +679,28 @@ TARGET_ALBUM_GLYPH_OVERLAY_BOXES = {(1170, 2532): (68, 2126, 1102, 2314)}
 
 
 def target_album_frame_marks(image_bytes: bytes, fixture_set: str) -> tuple[str, ...]:
-    # A SmartFill collage has no single whole-frame color identity. Every sharp slot
-    # must independently prove membership and fixture identity; none may be ignored.
+    # Keep the original whole-frame contract for one palette-defined slot. A collage
+    # must prove every slot; unreadable stacked glyphs never fall back to whole-frame color.
     try:
         foreground = _display_foreground_png(image_bytes)
         from PIL import Image
         import io
         with Image.open(io.BytesIO(foreground)) as image:
             size = image.size
-        photos = public_frame_photos_from_bytes(
-            foreground, color_exclusion_box=TARGET_ALBUM_HOME_INDICATOR_BOXES.get(size),
-            glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES.get(size))
+        exclusion = TARGET_ALBUM_HOME_INDICATOR_BOXES.get(size)
+        if public_frame_slot_count_from_bytes(foreground, color_exclusion_box=exclusion) == 1:
+            identity = classify_screenshot(image_bytes)
+            marks = (require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark),)
+        else:
+            photos = public_frame_photos_from_bytes(
+                foreground, color_exclusion_box=exclusion,
+                glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES.get(size))
+            marks = tuple(photo.mark for photo in photos)
+            if any(photo.letter != fixture_set.upper() for photo in photos):
+                raise FilterContractError(f"target album frame must show the public glyph of fixture {fixture_set.upper()}")
     except IdentityAssertionError as error:
         raise FilterContractError(str(error)) from error
-    marks = tuple(photo.mark for photo in photos)
     assert_playback_marks_in_target(marks, fixture_set)
-    if any(photo.letter != fixture_set.upper() for photo in photos):
-        raise FilterContractError(f"target album frame must show the public glyph of fixture {fixture_set.upper()}")
     return marks
 
 
