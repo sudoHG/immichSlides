@@ -12,8 +12,8 @@ is inactive until the grouped registry is reviewed and installed.
 
 The reader supports a separate, **inactive** v2 protocol for functional PR tests:
 `ios` covers both iPhone and iPad; `tvos` covers Apple TV. The grouped producer,
-router and importer are prepared, but no registry is installed and no new Cloud
-builds are dispatched. Historical v1 Apple TV evidence remains readable. ASC
+router and importer are prepared with an inactive registry; automatic Cloud
+builds remain disabled. Historical v1 Apple TV evidence remains readable. ASC
 configuration and activation require the maintainer's separate rollout.
 Part of #283 and Part of #83.
 
@@ -302,9 +302,11 @@ trusted selection whenever complete Cloud evidence is unavailable.
 
 ## Maintainer morning checklist (routing remains inactive)
 
-No runtime placeholder registry is committed. The iOS ASC workflow UUID, exact
-action/check names and device/runtime labels are deliberately unset. The optional
-`XcodeCloud-UI-iOS` template is attached to the iOS scheme without changing its
+The inactive registry records real ASC workflow UUIDs, action/check names and
+device/runtime labels. Its 2,400-minute cap is a proposal below the 2,700-minute
+strategy ceiling; the billing anchor remains null until the account renewal
+is confirmed. Queue and visibility bounds also require review before activation.
+The optional `XcodeCloud-UI-iOS` template is attached to the iOS scheme without changing its
 default plan; its explicit one-method seed is replaced by a verified pointer
 before every Cloud test build. The existing tvOS template is replaced likewise.
 
@@ -332,6 +334,13 @@ before every Cloud test build. The existing tvOS template is replaced likewise.
    markers and started builds to reconcile; do not substitute a new workflow.
    The existing Developer runtime key must separately prove read/start/results
    access to the new iOS workflow. Editing permission does not prove runtime scope.
+   Apple's published [ASC OpenAPI specification](https://developer.apple.com/sample-code/app-store-connect/app-store-connect-openapi-specification.zip) does not expose workflow
+   environment variables, Cloud allowance, billed compute totals or the billing
+   period. Omitting variables from a workflow creation request does not prove
+   that its environment contains none. Read those settings in the ASC UI and
+   confirm that the runtime key can see every billable product; matching visible
+   product lists from two keys cannot prove that neither key has restricted access.
+   Keep an unconfirmed billing anchor null in an inactive candidate registry.
 3. Prepare a reviewable `scripts/ci-xcode-cloud-groups.json` with `schema_version: 2`,
    initially `routing_enabled: false`, `groups` as described above,
    `scm_repository_id`, `account_product_ids`, `account_action_destinations`
