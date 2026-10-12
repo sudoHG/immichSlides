@@ -29,8 +29,12 @@ from strict_e2e_photo_identity import (  # noqa: E402
     classify_screenshot,
     evaluate_visual_identity,
     overlay_model_from_text,
+    public_frame_letter_from_bytes,
+    _public_bitmap_bands,
+    _public_letters_for_cells,
 )
-from strict_e2e_server import _fixture_data  # noqa: E402
+from strict_e2e_server import GLYPHS, _fixture_data, _png as fixture_png  # noqa: E402
+from test_album_server_narrow_contract import IPHONE_SCREEN  # noqa: E402
 
 
 REVIEWED_SCREENSHOT_RELATIVE_PATHS = (
@@ -186,6 +190,53 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
         draw.rounded_rectangle((230, 24, 378, 150), radius=16, fill=(40, 80, 70, 180))
         draw.text((242, 40), f"immichSlides Synthetic {model}", fill=(255, 255, 255, 255))
         return _png(rgb.convert("RGB"))
+
+
+class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_real_size_crop_requires_two_letter_columns_and_never_accepts_only_the_digit(self) -> None:
+        for fixture_set in ("a", "b"):
+            source = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-4"])).convert("RGB")
+            scale = IPHONE_SCREEN[1] / source.height
+            enlarged = source.resize((round(source.width * scale), IPHONE_SCREEN[1]), Image.Resampling.BILINEAR)
+            # A4/B4's letter starts at x=70 with 20px cells. Preserve the Release
+            # scale and vertical crop; only pan horizontally at the column boundary.
+            for case, source_left, expected in (("two letter columns", 130, fixture_set.upper()),
+                                                 ("one letter column", 150, None), ("digit only", 190, None)):
+                with self.subTest(fixture_set=fixture_set, case=case):
+                    left = round(source_left * scale)
+                    frame = enlarged.crop((left, 0, left + IPHONE_SCREEN[0], IPHONE_SCREEN[1]))
+                    self.assertEqual(public_frame_letter_from_bytes(_png(frame)), expected)
+
+    def test_observed_cell_and_ink_boundaries_reject_insufficient_evidence(self) -> None:
+        for letter in ("A", "B"):
+            glyph = GLYPHS[letter]
+            observed = [(row, column, glyph[row][column] == "1") for row in range(7) for column in (0, 4)]
+            with self.subTest(letter=letter, case="fourteen cells"):
+                self.assertEqual(_public_letters_for_cells(observed), [letter])
+                self.assertEqual(_public_letters_for_cells(observed[:-1]), [])
+                self.assertEqual(_public_letters_for_cells(observed[::2]), [])
+            ink = [cell for cell in observed if cell[2]]
+            background = [(row, column, False) for row in range(7) for column in range(5) if glyph[row][column] == "0"]
+            with self.subTest(letter=letter, case="five white cells"):
+                self.assertEqual(_public_letters_for_cells(ink[:5] + background[:9]), [letter])
+                self.assertEqual(_public_letters_for_cells(ink[:4] + background[:10]), [])
+
+    def test_bitmap_bands_pin_minimum_height_and_four_blank_rows(self) -> None:
+        self.assertEqual(_public_bitmap_bands([[True]] * 9), [])
+        self.assertEqual(_public_bitmap_bands([[True]] * 10), [(0, 10)])
+        self.assertEqual(_public_bitmap_bands([[True]] * 10 + [[False]] * 4 + [[True]] * 10), [(0, 24)])
+        self.assertEqual(_public_bitmap_bands([[True]] * 10 + [[False]] * 5 + [[True]] * 10), [(0, 10), (15, 25)])
+
+    def test_public_palette_tolerance_and_digit_agreement_fail_closed(self) -> None:
+        for fixture_set in ("a", "b"):
+            source = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-4"])).convert("RGB")
+            for delta, expected in ((12, fixture_set.upper()), (13, None)):
+                with self.subTest(fixture_set=fixture_set, channel_delta=delta):
+                    shifted = source.copy()
+                    shifted.putdata([color if min(color) >= 240 else tuple(channel + delta for channel in color) for color in source.getdata()])
+                    self.assertEqual(public_frame_letter_from_bytes(_png(shifted)), expected)
+            with self.subTest(fixture_set=fixture_set, case="wrong visible digit"):
+                self.assertIsNone(public_frame_letter_from_bytes(fixture_png(360, 240, 4, f"{fixture_set.upper()}2", striped=fixture_set == "b")))
 
 
 class NegativeIdentityTests(unittest.TestCase):

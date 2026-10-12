@@ -218,6 +218,86 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
 
 _PATTERN_GLYPH_A = ("01110", "10001", "10001", "11111", "10001", "10001", "10001")
 _PATTERN_GLYPH_B = ("11110", "10001", "10001", "11110", "10001", "10001", "11110")
+FRAME_PALETTE_CHANNEL_TOLERANCE = 12
+FRAME_GLYPH_MINIMUM_OBSERVED_CELLS = 14
+FRAME_GLYPH_MINIMUM_WHITE_CELLS = 5
+FRAME_GLYPH_MAXIMUM_BLANK_ROWS = 4
+FRAME_GLYPH_MINIMUM_BAND_HEIGHT = 10
+
+@dataclass(frozen=True)
+class PublicFramePhoto:
+    letter: str
+    mark: str
+
+
+@functools.lru_cache(maxsize=1)
+def _public_photo_palettes() -> dict[str, tuple[tuple[int, int, int], ...]]:
+    from strict_e2e_server import _fixture_data
+
+    Image = _pil_image()
+    palettes = {}
+    for image_bytes in _fixture_data("a")["images"].values():
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgb = image.convert("RGB")
+            palettes[classify_screenshot(image_bytes).mark] = tuple(sorted({color for color in rgb.getdata() if min(color) < 240}))
+    return palettes
+
+
+def _public_frame_slots(rgb: object) -> tuple[list[tuple[str, int, int]], dict[str, str]]:
+    """Locate vertical photo slots by their public background pixels, independently of white glyphs."""
+    palettes = _public_photo_palettes()
+    colors = [(mark, index, color) for mark, palette in palettes.items() for index, color in enumerate(palette)]
+    assignments: dict[tuple[int, int, int], tuple[str, int] | None] = {}
+    slots: list[tuple[str, int, int]] = []
+    patterns: dict[str, str] = {}
+    row_marks: list[str | None] = []
+    pixels = rgb.load()
+    for y in range(rgb.height):
+        counts = {mark: [0, 0] for mark in palettes}
+        has_white = False
+        for x in range(rgb.width):
+            color = pixels[x, y]
+            has_white |= min(color) >= 240
+            if color not in assignments:
+                matches = [(mark, index) for mark, index, reference in colors
+                           if max(abs(actual - expected) for actual, expected in zip(color, reference)) <= FRAME_PALETTE_CHANNEL_TOLERANCE]
+                assignments[color] = matches[0] if len(matches) == 1 else None
+            assignment = assignments[color]
+            if assignment is not None:
+                mark, index = assignment
+                counts[mark][index] += 1
+        marks = [mark for mark, count in counts.items() if sum(count) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+        if len(marks) > 1:
+            raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed")
+        if not marks:
+            row_marks.append(None)
+            continue
+        mark = marks[0]
+        row_marks.append(mark)
+        # Only unobstructed rows vote on texture: controls and white glyphs must not
+        # turn checkerboard into stripes. Each such row must agree, including a foreign
+        # slot whose glyph is unreadable and whose photo number matches its neighbor.
+        count = counts[mark]
+        if not has_white and sum(count) >= rgb.width * IDENTITY_OBSERVED_WIDTH_FRACTION:
+            pattern = "A" if min(count) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT else "B"
+            previous_pattern = patterns.get(mark)
+            if previous_pattern is not None and previous_pattern != pattern:
+                raise IdentityAssertionError("unreadable public glyph slot: conflicting public background patterns")
+            patterns[mark] = pattern
+    for y, mark in enumerate(row_marks):
+        if mark is None:
+            following = next((item for item in row_marks[y + 1:] if item is not None), None)
+            preceding = slots[-1][0] if slots else None
+            # Bilinear texture edges and overlay ink can obscure a row. Keep it in the
+            # same slot only when both surrounding rows independently identify that photo.
+            if preceding is None or preceding != following:
+                raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed")
+            mark = preceding
+        if slots and slots[-1][0] == mark:
+            slots[-1] = (mark, slots[-1][1], y + 1)
+        else:
+            slots.append((mark, y, y + 1))
+    return slots, patterns
 
 
 @functools.lru_cache(maxsize=4096)
@@ -301,60 +381,105 @@ def public_letter_from_bytes(image_bytes: bytes) -> str | None:
 
 @functools.lru_cache(maxsize=4096)
 def public_frame_letter_from_bytes(image_bytes: bytes) -> str | None:
-    """Read sharp fixture glyphs across stacked slots and horizontally cropped photos."""
-    if not image_bytes:
+    """Return a letter only when every visible photo has a readable public glyph."""
+    try:
+        return public_frame_photos_from_bytes(image_bytes)[0].letter
+    except IdentityAssertionError:
         return None
+
+
+@functools.lru_cache(maxsize=4096)
+def public_frame_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto, ...]:
+    """Read each sharp public slot's letter and color identity; cross-check its background pattern."""
+    if not image_bytes:
+        raise IdentityAssertionError("no public glyph")
     Image = _pil_image()
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
             rgb = image.convert("RGB")
             width, height = rgb.size
             if width < IDENTITY_MINIMUM_IMAGE_PIXELS or height < IDENTITY_MINIMUM_IMAGE_PIXELS:
-                return None
+                raise IdentityAssertionError("no public glyph")
             if width > 480:
                 rgb = rgb.resize((480, max(8, round(480 * height / width))), Image.Resampling.NEAREST)
-            width, height = rgb.size
-            pixels = rgb.load()
-            white_rows = [
-                [min(pixels[x, y]) >= 240 for x in range(width)] for y in range(height)
-            ]
-            bands: list[list[int]] = []
-            for y, row in enumerate(white_rows):
-                if any(row):
-                    # Resampled edges can leave a few blank rows between touching bitmap cells.
-                    if not bands or y > bands[-1][1] + 4:
-                        bands.append([y, y + 1])
-                    else:
-                        bands[-1][1] = y + 1
+            slots, patterns = _public_frame_slots(rgb)
+            photos = []
+            for mark, top, bottom in slots:
+                slot_photos = _read_public_slot(rgb.crop((0, top, rgb.width, bottom)), mark)
+                if not slot_photos:
+                    raise IdentityAssertionError("no public glyph" if len(slots) == 1 else "unreadable public glyph slot")
+                photos.extend(slot_photos)
+            if len({photo.letter for photo in photos}) != 1:
+                raise IdentityAssertionError("mixed public glyphs")
+            if any(pattern != photos[0].letter for pattern in patterns.values()):
+                raise IdentityAssertionError("unreadable public glyph slot: foreign public background pattern")
+            return tuple(photos)
+    except IdentityAssertionError:
+        raise
+    except Exception as error:
+        raise IdentityAssertionError(f"unreadable public glyph: {type(error).__name__}") from error
 
-            letters: set[str] = set()
-            for top, bottom in bands:
-                if bottom - top < 10:
+
+def _read_public_slot(rgb: object, mark: str) -> list[PublicFramePhoto]:
+    from strict_e2e_server import GLYPHS
+
+    width, height = rgb.size
+    pixels = rgb.load()
+    white_rows = [[min(pixels[x, y]) >= 240 for x in range(width)] for y in range(height)]
+    photos: list[PublicFramePhoto] = []
+    for top, bottom in _public_bitmap_bands(white_rows):
+        cell = (bottom - top) / 7
+        band_photos = []
+        origins: set[float] = set()
+        for row_index in range(7):
+            row = white_rows[int(top + (row_index + 0.5) * cell)]
+            for x in range(1, width):
+                if row[x] != row[x - 1]:
+                    origins.update(round(x - column * cell, 1) for column in range(6))
+        for origin in origins:
+            observed = []
+            for row_index in range(7):
+                y = int(top + (row_index + 0.5) * cell)
+                for column in range(5):
+                    x = round(origin + (column + 0.5) * cell)
+                    if 0 <= x < width:
+                        observed.append((row_index, column, white_rows[y][x]))
+            for letter in _public_letters_for_cells(observed):
+                # A visible digit must agree with this slot's color identity, so
+                # an isolated digit cannot be mistaken for a cropped letter.
+                digit = GLYPHS[mark[-1]]
+                if any(
+                    (digit[row][column] == "1") != white_rows[int(top + (row + 0.5) * cell)][x]
+                    for row in range(7) for column in range(5)
+                    if 0 <= (x := round(origin + (6 + column + 0.5) * cell)) < width
+                ):
                     continue
-                cell = (bottom - top) / 7
-                origins: set[float] = set()
-                for row_index in range(7):
-                    row = white_rows[int(top + (row_index + 0.5) * cell)]
-                    for x in range(1, width):
-                        if row[x] != row[x - 1]:
-                            origins.update(round(x - column * cell, 1) for column in range(6))
-                for origin in origins:
-                    observed = []
-                    for row_index in range(7):
-                        y = int(top + (row_index + 0.5) * cell)
-                        for column in range(5):
-                            x = round(origin + (column + 0.5) * cell)
-                            if 0 <= x < width:
-                                observed.append((row_index, column, white_rows[y][x]))
-                    # Require at least two visible columns and ink, never only cropped background.
-                    if len(observed) < 14 or sum(white for _, _, white in observed) < 5:
-                        continue
-                    for letter, glyph in (("A", _PATTERN_GLYPH_A), ("B", _PATTERN_GLYPH_B)):
-                        if all((glyph[row][column] == "1") == white for row, column, white in observed):
-                            letters.add(letter)
-            return next(iter(letters)) if len(letters) == 1 else None
-    except Exception:
-        return None
+                band_photos.append(PublicFramePhoto(letter, mark))
+        if not band_photos:
+            ink_x = [x for y in range(top, bottom) for x, white in enumerate(white_rows[y]) if white]
+            if max(ink_x) - min(ink_x) + 1 <= (bottom - top) * 11 / 7 + 2:
+                raise IdentityAssertionError("unreadable public glyph slot")
+        photos.extend(band_photos)
+    return list(dict.fromkeys(photos))
+
+
+def _public_bitmap_bands(white_rows: Sequence[Sequence[bool]]) -> list[tuple[int, int]]:
+    bands: list[list[int]] = []
+    for y, row in enumerate(white_rows):
+        if any(row):
+            if not bands or y > bands[-1][1] + FRAME_GLYPH_MAXIMUM_BLANK_ROWS:
+                bands.append([y, y + 1])
+            else:
+                bands[-1][1] = y + 1
+    return [(top, bottom) for top, bottom in bands if bottom - top >= FRAME_GLYPH_MINIMUM_BAND_HEIGHT]
+
+
+def _public_letters_for_cells(observed: Sequence[tuple[int, int, bool]]) -> list[str]:
+    # One surviving column or a few white pixels cannot identify a cropped fixture.
+    if len(observed) < FRAME_GLYPH_MINIMUM_OBSERVED_CELLS or sum(white for _, _, white in observed) < FRAME_GLYPH_MINIMUM_WHITE_CELLS:
+        return []
+    return [letter for letter, glyph in (("A", _PATTERN_GLYPH_A), ("B", _PATTERN_GLYPH_B))
+            if all((glyph[row][column] == "1") == white for row, column, white in observed)]
 
 
 def _pattern_crops(rgb: object) -> list[object]:

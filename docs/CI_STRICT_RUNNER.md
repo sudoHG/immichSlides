@@ -28,13 +28,21 @@ unit/UI archives. They reuse the [archive workspace preflight](CI_BUILD_ARCHIVE.
 product inventory and signing inspection. No competing archive producer or artifact
 selection mechanism is introduced.
 
-`filter-edit-switch` compares album membership in the color classifier's A1–A5
-namespace for both fixture sets. Each post-switch frame separately requires the
-active fixture's public A/B glyph. The frame reader finds separate bitmap bands
-across stacked slots and matches visible cells when a zoomed photo crops the
-letter horizontally. It requires at least two visible columns, ink and agreement
-with every observed cell; mixed A/B glyphs and unreadable frames fail. The existing
-region-crop reader used for single-photo surrounds is unchanged.
+`filter-edit-switch` checks both the original whole-frame color identity and each
+vertical photo slot against the non-target album's A1–A5 classifier labels. Public
+background colors locate slots independently of glyphs; obscured rows remain in a
+slot only when the surrounding rows identify the same photo. Each slot requires
+the active fixture's sharp A/B bitmap, with at least 14 observed cells, five white
+cells and agreement with every observed cell. A visible digit must also agree
+with the slot's color identity. Unobstructed public texture rows cross-check the
+letter, rejecting an unreadable foreign slot even when its photo number matches
+its neighbor. Mixed letters, missing glyphs and unreadable slots have distinct
+failure reasons. White bands shorter than ten sampled pixels are excluded; up to
+four blank rows join adjacent bitmap ink. Wider EXIF text bands may remain
+unrecognized, but cannot supply a missing slot's identity.
+
+`tvos-edit-switch` retains the previous centered region reader and whole-frame
+album membership check. The reader used for single-photo surrounds is unchanged.
 
 ## Explicit shard warm-up and reuse
 
