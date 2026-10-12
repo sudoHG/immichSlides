@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from access_lifecycle_contract_test_fixtures import IPAD_SCREEN
+from test_album_server_narrow_contract import IPHONE_SCREEN, TV_SCREEN, _cover
+from strict_e2e_photo_identity import public_frame_letter_from_bytes, public_letter_from_bytes
+
 from strict_e2e_filter_contract_test_fixtures import (
     DISPLAY_POLICY_CANDIDATE_PREFIX,
     FILTER_VISUAL_SUITES,
@@ -496,6 +500,136 @@ print("\\(candidate != original)|\\(result.status.rawValue)|\\(result.mark ?? "n
 
 
 class AlbumEditSwitchVisualContractTestsCases:
+    def _render_edit_switch_frame(self, fixture_set: str, shape: str, index: int = 4, second_fixture: str | None = None,
+                                 unreadable_top: str = "") -> bytes:
+        def photo(number: int, source: str = fixture_set):
+            return Image.open(io.BytesIO(_fixture_png(f"A{number}", source))).convert("RGB")
+
+        if shape == "stacked":
+            # Release iPhone capture: the seam is at y=780 on a 1170x2532 screen.
+            frame = Image.new("RGB", IPHONE_SCREEN)
+            top = photo(index)
+            if unreadable_top:
+                from PIL import ImageDraw
+                # Remove the letter or whole label while retaining the photo colors.
+                cell = max(8, min(top.width // 18, top.height // 10))
+                left, y = (top.width - 11 * cell) // 2, (top.height - 7 * cell) // 2
+                columns = 5 if unreadable_top == "letter" else 11
+                ImageDraw.Draw(top).rectangle((left, y, left + columns * cell - 1, y + 7 * cell - 1), fill=top.getpixel((0, 0)))
+            frame.paste(_cover(top, (1170, 780)), (0, 0))
+            frame.paste(_cover(photo(5, second_fixture or fixture_set), (1170, 1752)), (0, 780))
+        else:
+            size = IPAD_SCREEN if shape == "ipad-crop" else TV_SCREEN if shape == "tv" else IPHONE_SCREEN
+            frame = _cover(photo(index), size)
+            if shape == "ipad-crop":
+                # Release 1640x2360 A4 capture: sampled glyph band y=145..546,
+                # letter origin about -72 at width 480. A 16px rightward pan of
+                # the centered 3540x2360 cover reproduces this horizontal crop.
+                frame = _cover(photo(index), (size[0] + 32, size[1])).crop((0, 0, *size))
+            if shape == "iphone-crop" and index == 5:
+                from PIL import ImageDraw
+                # B5's captured Ken Burns translation moves the label 26 screen pixels right.
+                frame = _cover(photo(index), (size[0] + 52, size[1])).crop((0, 0, *size))
+                # Scanner-approved Release B5 capture: EXIF card (325,187)-(1130,590).
+                # White row bounds measured after 1170 -> 480 NEAREST sampling; solid
+                # ink masks conservatively cover the text and icons without depending on a font.
+                draw = ImageDraw.Draw(frame, "RGBA")
+                draw.rounded_rectangle((325, 187, 1130, 590), radius=50, fill=(255, 255, 255, 64))
+                for x0, y0, x1, y1 in ((151, 93, 446, 110), (151, 122, 426, 139),
+                                       (151, 151, 273, 166), (150, 180, 381, 198), (150, 210, 250, 227)):
+                    draw.rectangle(tuple(round(value * 1170 / 480) for value in (x0, y0, x1, y1)), fill="white")
+                draw.rounded_rectangle((73, 2130, 1096, 2310), radius=90, fill=(255, 255, 255, 80))
+        encoded = io.BytesIO()
+        frame.save(encoded, format="PNG")
+        return encoded.getvalue()
+
+    def test_release_smartfill_frame_shapes_preserve_fixture_and_album_identity(self) -> None:
+        for fixture_set, other_set in (("a", "b"), ("b", "a")):
+            for shape, index in (("stacked", 4), ("iphone-crop", 4), ("iphone-crop", 5), ("ipad-crop", 4)):
+                with self.subTest(fixture_set=fixture_set, shape=shape, index=index), tempfile.TemporaryDirectory() as raw_directory:
+                    evidence = Path(raw_directory)
+                    self._write_valid_evidence(evidence, fixture_set)
+                    frame = evidence / "album-switch-b-play-1.png"
+                    frame_bytes = self._render_edit_switch_frame(fixture_set, shape, index)
+                    self.assertEqual(Image.open(io.BytesIO(frame_bytes)).size, IPAD_SCREEN if shape == "ipad-crop" else IPHONE_SCREEN)
+                    # iPad B was already green with the old reader; only the observed
+                    # failing layouts require an old-reader rejection.
+                    if shape == "stacked" or (shape == "iphone-crop" and (index == 4 or fixture_set == "b")) or (shape == "ipad-crop" and fixture_set == "a"):
+                        self.assertIsNone(public_letter_from_bytes(frame_bytes))
+                    frame.write_bytes(frame_bytes)
+                    self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-edit-switch")["verdict"], "PASS")
+
+                    frame.write_bytes(self._render_edit_switch_frame(other_set, shape, index))
+                    with self.assertRaises(FilterContractError) as raised:
+                        evaluate_filter_visual_identity(evidence, "filter-edit-switch")
+                    self.assertIn("public glyph", str(raised.exception))
+
+    def test_mixed_or_missing_public_glyphs_are_rejected(self) -> None:
+        from strict_e2e_server import _png
+
+        for fixture_set, other_set in (("a", "b"), ("b", "a")):
+            for case, frame_bytes, reason in (
+                ("mixed glyphs", self._render_edit_switch_frame(fixture_set, "stacked", second_fixture=other_set), "mixed public glyphs"),
+                ("no glyph", _png(360, 240, 4, "", striped=fixture_set == "b"), "no public glyph"),
+            ):
+                with self.subTest(fixture_set=fixture_set, case=case), tempfile.TemporaryDirectory() as raw_directory:
+                    evidence = Path(raw_directory)
+                    self._write_valid_evidence(evidence, fixture_set)
+                    (evidence / "album-switch-b-play-1.png").write_bytes(frame_bytes)
+                    with self.assertRaises(FilterContractError) as raised:
+                        evaluate_filter_visual_identity(evidence, "filter-edit-switch")
+                    self.assertIn(reason, str(raised.exception))
+
+    def test_every_stacked_slot_must_belong_to_the_non_target_album(self) -> None:
+        for fixture_set in ("a", "b"):
+            for index in (1, 2):
+                with self.subTest(fixture_set=fixture_set, wrong_album_photo=index), tempfile.TemporaryDirectory() as raw:
+                    evidence = Path(raw)
+                    self._write_valid_evidence(evidence, fixture_set)
+                    frame = self._render_edit_switch_frame(fixture_set, "stacked", index)
+                    self.assertEqual(classify_screenshot(frame).mark, "A5")
+                    (evidence / "album-switch-b-play-1.png").write_bytes(frame)
+                    with self.assertRaises(FilterContractError) as raised:
+                        evaluate_filter_visual_identity(evidence, "filter-edit-switch")
+                    self.assertIn("non-target album", str(raised.exception))
+
+    def test_an_unreadable_foreign_slot_cannot_borrow_the_other_slots_glyph(self) -> None:
+        for fixture_set, other_set in (("a", "b"), ("b", "a")):
+            for index in (4, 5):
+                for erased in ("letter", "whole label"):
+                    with self.subTest(fixture_set=fixture_set, unreadable_photo=index, erased=erased), tempfile.TemporaryDirectory() as raw:
+                        evidence = Path(raw)
+                        self._write_valid_evidence(evidence, fixture_set)
+                        frame = self._render_edit_switch_frame(other_set, "stacked", index, fixture_set, unreadable_top=erased)
+                        (evidence / "album-switch-b-play-1.png").write_bytes(frame)
+                        with self.assertRaises(FilterContractError) as raised:
+                            evaluate_filter_visual_identity(evidence, "filter-edit-switch")
+                        if classify_screenshot(frame).status == "MATCH":
+                            self.assertIn("unreadable public glyph slot", str(raised.exception))
+                        else:
+                            self.assertIn("Unrecognizable input", str(raised.exception))
+
+    def test_missing_post_switch_frames_keep_the_original_contract_error(self) -> None:
+        for suite in ("filter-edit-switch", "tvos-edit-switch"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_valid_evidence(evidence)
+                (evidence / "album-switch-b-play-1.png").unlink()
+                with self.assertRaises(FilterContractError) as raised:
+                    evaluate_filter_visual_identity(evidence, suite)
+                self.assertIn("Missing visual input", str(raised.exception))
+
+    def test_tvos_keeps_the_previous_region_reader_at_real_screen_size(self) -> None:
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_valid_evidence(evidence, fixture_set)
+                frame = self._render_edit_switch_frame(fixture_set, "tv", 4)
+                self.assertEqual(Image.open(io.BytesIO(frame)).size, TV_SCREEN)
+                self.assertEqual(public_letter_from_bytes(frame), fixture_set.upper())
+                (evidence / "album-switch-b-play-1.png").write_bytes(frame)
+                self.assertEqual(evaluate_filter_visual_identity(evidence, "tvos-edit-switch")["verdict"], "PASS")
+
     def test_normal_editor_switch_requires_filtered_mode_then_random_after_clear(self) -> None:
         for suite in ("filter-edit-switch", "tvos-edit-switch"):
             with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw_directory:
