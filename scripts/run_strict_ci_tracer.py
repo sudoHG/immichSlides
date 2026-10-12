@@ -157,6 +157,8 @@ def main(argv=None):
     parser.add_argument("--min-free-gib", type=int, default=80)
     parser.add_argument("--manifest", type=Path, default=MANIFEST)
     parser.add_argument("--shard", help="nightly shard from the versioned matrix")
+    parser.add_argument("--preparation-failed", action="store_true",
+                        help="Record infrastructure failure with every case not-run; do not start builds or tests")
     args = parser.parse_args(argv)
     if args.cold_timeout_seconds <= 0 or args.warm_timeout_seconds <= 0 or args.min_free_gib < 0:
         parser.error("timeouts must be positive and free space nonnegative")
@@ -189,6 +191,18 @@ def main(argv=None):
         summary["hashes"]["policies"]["nightly"] = file_hash(ROOT / "scripts/nightly-policy.json")
     records = output / "records"
     records.mkdir()
+    if args.preparation_failed:
+        reason = "simulator preparation infrastructure failure before tracer execution"
+        summary["infrastructure"].append({"code": "simulator-preparation-failed", "message": reason})
+        # Failed case accounting must not claim compilation or an executed attempt.
+        summary["population"]["observed"] = [
+            dict(observation(item, "not-run", 0, reason=reason, exit_code=None), outcome="failed")
+            for item in identities]
+        started = time.time()
+        write_json(records / "trace.json", {"schema_version": 1, "cold": [], "warm": [],
+            "exclusions": manifest["exclusions"], "started_epoch": started, "finished_epoch": time.time()})
+        write_summary(summary, records)
+        return 1
     free_samples = [shutil.disk_usage("/System/Volumes/Data").free]
     stopped = threading.Event()
 

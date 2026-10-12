@@ -15,6 +15,29 @@ from test_ci_summary import valid_summary
 
 
 class NightlyVerdictTests(unittest.TestCase):
+    def test_preparation_failure_keeps_all_cases_failed_and_zero_cases_executed(self):
+        from ci_nightly import aggregate_nightly
+        cases = [ci_summary.test_identity("strict", "p2-exif", device="ipad", configuration="Debug",
+                 suite="p2-exif", scenario="normal", fixture=str(number)) for number in range(6)]
+        summary = valid_summary()
+        summary["population"].update(declared=cases, compiled=[], observed=[
+            dict(ci_summary.observation(case, "not-run", 0, reason="simulator preparation infrastructure failure",
+                                        exit_code=None), outcome="failed") for case in cases])
+        summary["status"] = "failed"
+        summary["infrastructure"] = [{"code": "simulator-preparation-failed", "message": "Preparation failed before tracer execution"}]
+        for claimed_status in ("failed", "passed"):
+            with self.subTest(claimed_status=claimed_status):
+                summary["status"] = claimed_status
+                result = aggregate_nightly(cases, [summary], live_in_scope=False)
+                self.assertEqual("failed", result["status"])
+                self.assertEqual(summary["population"]["observed"], result["observed"])
+                self.assertEqual(6, result["matrix"]["scheduled"])
+                self.assertEqual(0, result["matrix"]["executed"])
+                self.assertFalse(result["matrix"]["equal"])
+                self.assertEqual(6, len(result["matrix"]["missing"]))
+                self.assertTrue(any(error.startswith("producer infrastructure failure:") for error in result["errors"]))
+                self.assertFalse(result["release_eligible"])
+
     def test_ipad_smoke_exclusions_follow_the_selected_tests_phone_guard(self):
         from ci_nightly import contract_population
         cases, exclusions = contract_population()

@@ -183,6 +183,13 @@ can publish its failed records before runner teardown. Readiness can exceed its
 scheduling deadline while the last timed-out query finishes cleanup; see the
 [shared bounds and overrun logs](CI_STRICT_RUNNER.md#shared-simulator-reset).
 Reaching the job cap is a failure; unrun cases remain unverified.
+If simulator creation or the separate preparation gate fails before the tracer starts,
+the workflow invokes the tracer's `--preparation-failed` accounting mode before upload.
+It writes the same bound compact schema with every planned case failed, every attempt
+`not-run` with an infrastructure reason, no compiled cases and empty cold/warm traces.
+The aggregate counts zero executions and retains every failure; the trusted reporter
+counts the failed cases while still reporting their official methods as unobserved.
+This mode starts no builds or tests and changes no preparation or execution budget.
 Planning/aggregate have 15-minute caps.
 Hosted disk floor stays 30 GiB; local default stays 80 GiB.
 
