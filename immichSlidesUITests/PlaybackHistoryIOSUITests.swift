@@ -146,8 +146,9 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         returnToSlideshowFromPlaybackSettings(app: app)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
-                app.waitForSlideshowControlBarButton(
-                    identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0)))
+                (playPause.exists
+                    || app.waitForSlideshowControlBarButton(
+                        identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0))))
                     && self.playPauseState(playPause) == "pause"
             },
             "After Autoplay is turned on in settings, the control bar must show Pause immediately")
@@ -177,8 +178,9 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
-                app.waitForSlideshowControlBarButton(
-                    identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0)))
+                (playPause.exists
+                    || app.waitForSlideshowControlBarButton(
+                        identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0))))
                     && self.playPauseState(playPause) == "pause"
             })
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
@@ -209,8 +211,9 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(3))) {
-                app.waitForSlideshowControlBarButton(
-                    identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0)))
+                (playPause.exists
+                    || app.waitForSlideshowControlBarButton(
+                        identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0))))
                     && self.playPauseState(playPause) == "play"
             },
             "Pausing in settings must sync to the control bar immediately")
@@ -232,8 +235,9 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(8))) {
-                app.waitForSlideshowControlBarButton(
-                    identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0)))
+                (playPause.exists
+                    || app.waitForSlideshowControlBarButton(
+                        identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0))))
                     && self.playPauseState(playPause) == "play"
             },
             "With Autoplay turned off at launch, the first SmartFill scene must stay paused"
