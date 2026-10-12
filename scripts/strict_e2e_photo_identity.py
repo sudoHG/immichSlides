@@ -243,7 +243,7 @@ def _public_photo_palettes() -> dict[str, tuple[tuple[int, int, int], ...]]:
     return palettes
 
 
-def _public_frame_slots(rgb: object) -> tuple[list[tuple[str, int, int]], dict[str, str]]:
+def _public_frame_slots(rgb: object, color_exclusion_box: tuple[int, int, int, int] | None = None) -> tuple[list[tuple[str, int, int]], dict[str, str]]:
     """Locate vertical photo slots by their public background pixels, independently of white glyphs."""
     palettes = _public_photo_palettes()
     colors = [(mark, index, color) for mark, palette in palettes.items() for index, color in enumerate(palette)]
@@ -256,6 +256,10 @@ def _public_frame_slots(rgb: object) -> tuple[list[tuple[str, int, int]], dict[s
         counts = {mark: [0, 0] for mark in palettes}
         has_white = False
         for x in range(rgb.width):
+            if color_exclusion_box is not None:
+                left, top, right, bottom = color_exclusion_box
+                if left <= x < right and top <= y < bottom:
+                    continue
             color = pixels[x, y]
             has_white |= min(color) >= 240
             if color not in assignments:
@@ -389,7 +393,9 @@ def public_frame_letter_from_bytes(image_bytes: bytes) -> str | None:
 
 
 @functools.lru_cache(maxsize=4096)
-def public_frame_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto, ...]:
+def public_frame_photos_from_bytes(image_bytes: bytes, *,
+                                  color_exclusion_box: tuple[int, int, int, int] | None = None,
+                                  glyph_overlay_box: tuple[int, int, int, int] | None = None) -> tuple[PublicFramePhoto, ...]:
     """Read each sharp public slot's letter and color identity; cross-check its background pattern."""
     if not image_bytes:
         raise IdentityAssertionError("no public glyph")
@@ -402,10 +408,21 @@ def public_frame_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto
                 raise IdentityAssertionError("no public glyph")
             if width > 480:
                 rgb = rgb.resize((480, max(8, round(480 * height / width))), Image.Resampling.NEAREST)
-            slots, patterns = _public_frame_slots(rgb)
+            def sample_box(box: tuple[int, int, int, int] | None) -> tuple[int, int, int, int] | None:
+                if box is None:
+                    return None
+                left, top, right, bottom = box
+                if not (0 <= left < right <= width and 0 <= top < bottom <= height):
+                    raise IdentityAssertionError("system overlay box is outside the public frame")
+                return (left * rgb.width // width, top * rgb.height // height,
+                        (right * rgb.width + width - 1) // width, (bottom * rgb.height + height - 1) // height)
+
+            slots, patterns = _public_frame_slots(rgb, sample_box(color_exclusion_box))
+            overlay = sample_box(glyph_overlay_box)
             photos = []
             for mark, top, bottom in slots:
-                slot_photos = _read_public_slot(rgb.crop((0, top, rgb.width, bottom)), mark)
+                slot_overlay = (overlay[0], overlay[1] - top, overlay[2], overlay[3] - top) if overlay else None
+                slot_photos = _read_public_slot(rgb.crop((0, top, rgb.width, bottom)), mark, slot_overlay)
                 if not slot_photos:
                     raise IdentityAssertionError("no public glyph" if len(slots) == 1 else "unreadable public glyph slot")
                 photos.extend(slot_photos)
@@ -420,21 +437,35 @@ def public_frame_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto
         raise IdentityAssertionError(f"unreadable public glyph: {type(error).__name__}") from error
 
 
-def _read_public_slot(rgb: object, mark: str) -> list[PublicFramePhoto]:
+def _read_public_slot(rgb: object, mark: str, glyph_overlay_box: tuple[int, int, int, int] | None = None) -> list[PublicFramePhoto]:
     from strict_e2e_server import GLYPHS
 
     width, height = rgb.size
     pixels = rgb.load()
     white_rows = [[min(pixels[x, y]) >= 240 for x in range(width)] for y in range(height)]
     photos: list[PublicFramePhoto] = []
+    bands: list[tuple[int, int, bool]] = []
     for top, bottom in _public_bitmap_bands(white_rows):
+        # Only a gap wholly inside the measured control-bar rows can join ink.
+        # This operates on one color slot; a merged candidate must prove one glyph.
+        if bands and glyph_overlay_box is not None and glyph_overlay_box[1] <= bands[-1][1] <= top <= glyph_overlay_box[3]:
+            bands[-1] = (bands[-1][0], bottom, True)
+        else:
+            bands.append((top, bottom, False))
+    for top, bottom, merged in bands:
+        def is_observed(x: int, y: int) -> bool:
+            return not (merged and glyph_overlay_box is not None
+                        and glyph_overlay_box[0] <= x < glyph_overlay_box[2]
+                        and glyph_overlay_box[1] <= y < glyph_overlay_box[3])
+
         cell = (bottom - top) / 7
         band_photos = []
         origins: set[float] = set()
         for row_index in range(7):
             row = white_rows[int(top + (row_index + 0.5) * cell)]
             for x in range(1, width):
-                if row[x] != row[x - 1]:
+                y = int(top + (row_index + 0.5) * cell)
+                if is_observed(x, y) and is_observed(x - 1, y) and row[x] != row[x - 1]:
                     origins.update(round(x - column * cell, 1) for column in range(6))
         for origin in origins:
             observed = []
@@ -442,7 +473,7 @@ def _read_public_slot(rgb: object, mark: str) -> list[PublicFramePhoto]:
                 y = int(top + (row_index + 0.5) * cell)
                 for column in range(5):
                     x = round(origin + (column + 0.5) * cell)
-                    if 0 <= x < width:
+                    if 0 <= x < width and is_observed(x, y):
                         observed.append((row_index, column, white_rows[y][x]))
             for letter in _public_letters_for_cells(observed):
                 # A visible digit must agree with this slot's color identity, so
@@ -452,6 +483,7 @@ def _read_public_slot(rgb: object, mark: str) -> list[PublicFramePhoto]:
                     (digit[row][column] == "1") != white_rows[int(top + (row + 0.5) * cell)][x]
                     for row in range(7) for column in range(5)
                     if 0 <= (x := round(origin + (6 + column + 0.5) * cell)) < width
+                    and is_observed(x, int(top + (row + 0.5) * cell))
                 ):
                     continue
                 band_photos.append(PublicFramePhoto(letter, mark))

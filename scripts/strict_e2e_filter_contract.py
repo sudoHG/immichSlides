@@ -669,11 +669,24 @@ def _classified_mark_from_png(evidence_dir: Path, name: str) -> str:
     return require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
 
 
+# Measured scanner-approved portrait captures, with four pixels around system ink.
+# Unknown geometries keep the unmodified reader; these options are iOS album-only.
+TARGET_ALBUM_HOME_INDICATOR_BOXES = {(1640, 2360): (543, 2330, 1097, 2349)}
+TARGET_ALBUM_GLYPH_OVERLAY_BOXES = {(1170, 2532): (68, 2126, 1102, 2314)}
+
+
 def target_album_frame_marks(image_bytes: bytes, fixture_set: str) -> tuple[str, ...]:
     # A SmartFill collage has no single whole-frame color identity. Every sharp slot
     # must independently prove membership and fixture identity; none may be ignored.
     try:
-        photos = public_frame_photos_from_bytes(_display_foreground_png(image_bytes))
+        foreground = _display_foreground_png(image_bytes)
+        from PIL import Image
+        import io
+        with Image.open(io.BytesIO(foreground)) as image:
+            size = image.size
+        photos = public_frame_photos_from_bytes(
+            foreground, color_exclusion_box=TARGET_ALBUM_HOME_INDICATOR_BOXES.get(size),
+            glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES.get(size))
     except IdentityAssertionError as error:
         raise FilterContractError(str(error)) from error
     marks = tuple(photo.mark for photo in photos)
