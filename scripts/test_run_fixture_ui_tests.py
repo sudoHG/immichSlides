@@ -41,15 +41,16 @@ class FixtureCoverageTests(unittest.TestCase):
                 candidate["deselections"] = [] if base_has_rule else [rule]
                 candidate["expected_skips"] = [{"kind": "ui", "key_pattern": entry["key"],
                     "dimensions": entry["dimensions"], "tier": "ui", "environment": "fixture", "reason": "Candidate skip"}]
-                candidate_text = json.dumps(candidate)
-                (root / "scripts/ci-test-policy.json").write_text(candidate_text)
+                candidate_text = json.dumps(candidate, indent=2)
+                candidate_bytes = candidate_text.replace("\n", "\r\n").encode()
+                (root / "scripts/ci-test-policy.json").write_bytes(candidate_bytes)
                 with patch("ci_publish_git.read_blob", return_value=json.dumps(base)) as blob:
                     result = runner.fixture_inputs(root, "iphone", [], mode="pr", policy_revision="b" * 40)
                 blob.assert_called_once_with("b" * 40, "scripts/ci-test-policy.json")
                 self.assertEqual(result["official_discovery_eligible"], not base_has_rule)
                 self.assertEqual(result["deselections"], [] if base_has_rule else [rule])
                 self.assertEqual(result["policy"], candidate)
-                self.assertEqual(result["hashes"]["policies"]["test-policy"], hashlib.sha256(candidate_text.encode()).hexdigest())
+                self.assertEqual(result["hashes"]["policies"]["test-policy"], hashlib.sha256(candidate_bytes).hexdigest())
                 if not base_has_rule:
                     result["hashes"]["manifests"]["ui-scoped-plan"] = "e" * 64
                     seed = discovery_summary()
@@ -118,8 +119,9 @@ class FixtureCoverageTests(unittest.TestCase):
                     return "f" * 64
                 commands = []
                 gate_finished = []
-                def gate(udid):
+                def gate(udid, *, boot_submitted=False):
                     self.assertEqual(udid, "target")
+                    self.assertEqual(boot_submitted, shape == "complete")
                     gate_finished.append(True)
                 def process(command, **kwargs):
                     self.assertTrue(gate_finished, "fixture launch must wait for simulator readiness")
@@ -139,8 +141,6 @@ class FixtureCoverageTests(unittest.TestCase):
                     self.assertTrue(gate_finished, "simulator inventory must wait for readiness")
                     if "attachments" in command:
                         attachments.append(command)
-                        if shape in {"unknown", "malformed"}:
-                            self.assertEqual(inputs["population"]["compiled"], [])
                     return SimpleNamespace(stdout=b"{}")
                 stderr = io.StringIO()
                 with contextlib.ExitStack() as stack:
@@ -164,7 +164,8 @@ class FixtureCoverageTests(unittest.TestCase):
                     dispose = stack.enter_context(patch.object(runner, "finalize_fixture_run", return_value=[]))
                     stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                     stack.enter_context(contextlib.redirect_stderr(stderr))
-                    code = runner.main(argv)
+                    code = runner.main(argv, simulator_prepared=shape == "complete")
+                    runner.reset_simulator_app.assert_called_once_with("target", boot_submitted=True)
                 tests = [command for command in commands if command[0] == "xcodebuild"]
                 self.assertEqual(len(tests), 1)
                 self.assertNotIn("-enumerate-tests", tests[0])

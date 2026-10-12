@@ -175,12 +175,26 @@ class NightlyVerdictTests(unittest.TestCase):
                 self.assertEqual(summary, original)
 
     def test_manifest_rejects_unknown_missing_and_duplicate_cases(self):
-        import yaml
-        from ci_nightly import parse_manifest, shards
-        from strict_e2e_build import build_settings
-        from strict_e2e_runner_support import FILTER_PERSON_SESSIONS, SIMULATOR_READINESS_TIMEOUT_SECONDS
+        from ci_nightly import parse_manifest
         raw = json.loads((Path(__file__).parent / "nightly-matrix.json").read_text())
         parse_manifest(raw)
+        for mutation in (lambda x: x["cases"].pop(), lambda x: x["cases"].append(x["cases"][0]),
+                         lambda x: x["cases"][0].update(suite="unknown"),
+                         lambda x: x.update(schema_version=99)):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(raw)
+                mutation(changed)
+                with self.assertRaises(ci_summary.ContractError):
+                    parse_manifest(changed)
+
+    def test_workflow_budgets_cover_preparation_execution_and_diagnostic_margin(self):
+        import yaml
+        import shlex
+        from ci_nightly import shards
+        from strict_e2e_build import build_settings
+        from strict_e2e_runner_support import (FILTER_PERSON_SESSIONS, SIMULATOR_READINESS_TIMEOUT_SECONDS,
+                                             SIMULATOR_PREPARATION_TIMEOUT_SECONDS)
+        raw = json.loads((Path(__file__).parent / "nightly-matrix.json").read_text())
         root = Path(__file__).parent.parent
         tracer = json.loads((root / "scripts/strict-tracer.json").read_text())
         for filename, job_name, groups, margin_minutes in (
@@ -203,8 +217,14 @@ class NightlyVerdictTests(unittest.TestCase):
             self.assertLess(accounting, upload)
             self.assertEqual("simulator", steps[creation].get("id"))
             self.assertEqual("preparation", steps[preparation].get("id"))
+            self.assertGreaterEqual(steps[preparation]["timeout-minutes"] * 60,
+                                    SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180)
             self.assertEqual("always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')",
                              steps[accounting]["if"])
+            accounting_args = shlex.split(steps[accounting]["run"])
+            output_dir = accounting_args[accounting_args.index("--output-dir") + 1]
+            uploaded = steps[upload]["with"]["path"].strip().replace("${{ runner.temp }}", "$RUNNER_TEMP")
+            self.assertEqual(output_dir + "/records", uploaded)
             command = next(step["run"] for step in job["steps"]
                            if "scripts/run_strict_ci_tracer.py" in step.get("run", ""))
             cold = int(re.search(r"--cold-timeout-seconds\s+(\d+)", command)[1])
@@ -219,14 +239,16 @@ class NightlyVerdictTests(unittest.TestCase):
                     for case in cases)
                 with self.subTest(workflow=filename, cases=cases):
                     self.assertGreaterEqual(job["timeout-minutes"] * 60, budget + margin_minutes * 60)
-        for mutation in (lambda x: x["cases"].pop(), lambda x: x["cases"].append(x["cases"][0]),
-                         lambda x: x["cases"][0].update(suite="unknown"),
-                         lambda x: x.update(schema_version=99)):
-            with self.subTest(mutation=mutation):
-                changed = copy.deepcopy(raw)
-                mutation(changed)
-                with self.assertRaises(ci_summary.ContractError):
-                    parse_manifest(changed)
+        for filename in ("ci-ui.yml", "ci-nightly.yml"):
+            jobs = yaml.safe_load((root / ".github/workflows" / filename).read_text())["jobs"]
+            for name, job in jobs.items():
+                commands = [step["run"] for step in job["steps"]
+                            if "scripts/ci_ui_tests.py run " in step.get("run", "")]
+                for command in commands:
+                    shard_minutes = int(re.search(r"--total-timeout-minutes\s+(\d+)", command)[1])
+                    with self.subTest(workflow=filename, job=name):
+                        self.assertGreaterEqual(job["timeout-minutes"] * 60,
+                                                shard_minutes * 60 + SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 13 * 60)
 
 
 def policy():

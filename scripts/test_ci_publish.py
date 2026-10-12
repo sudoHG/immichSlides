@@ -545,6 +545,8 @@ class PublisherTests(unittest.TestCase):
                 (http_error(503), "GET", 45, 2), (http_error(500), "GET", 45, 2),
                 (URLError(ConnectionResetError("private reset")), "GET", 45, 2),
                 (URLError(ssl.SSLError("private TLS")), "GET", 45, 2),
+                (URLError(ssl.SSLCertVerificationError("private certificate")), "GET", 45, 1),
+                (ssl.SSLCertVerificationError("private certificate"), "GET", 45, 1),
                 (URLError("private DNS refusal"), "GET", 45, 1),
                 (IncompleteRead(b"private bytes"), "GET", 45, 2),
                 (EOFError("private EOF"), "GET", 45, 2),
@@ -2857,9 +2859,11 @@ class OtherUITests: XCTestCase { func testPlay() {} }
             with self.subTest(error=type(error).__name__), \
                     patch("sys.argv", ["ci_publish.py", "dry-run", "--repository", REPOSITORY,
                                        "--pr", "7", "--app-login", "generic-app[bot]"]), \
-                    patch("ci_publish.os.environ", {}), patch("ci_publish.write_publication", side_effect=error), \
+                    patch("ci_publish.os.environ", {}), patch("ci_publish.GitHub") as client, \
+                    patch("ci_publish.write_publication", side_effect=error), \
                     patch("builtins.print") as output:
                 self.assertEqual(main(), 1)
+                client.assert_called_once_with(REPOSITORY, "", retry_reads=True)
                 output.assert_called_once_with("Trusted publisher refused: " + expected)
 
     def test_admission_persists_derived_tree_population_and_base_reader_for_late_approval(self):

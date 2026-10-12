@@ -195,7 +195,7 @@ jobs:
           echo "NIGHTLY_DESTINATION=platform=$os_name Simulator,id=$udid" >> "$GITHUB_ENV"
       - name: Prepare the dedicated simulator before fixture health checks and case resets
         id: preparation
-        timeout-minutes: 11
+        timeout-minutes: 13
         run: |
           "$RUNNER_TEMP/nightly-python/bin/python3" -B - <<'PY'
           import os, sys

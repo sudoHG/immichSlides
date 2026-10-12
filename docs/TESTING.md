@@ -64,8 +64,8 @@ and still execute. Scoped packing preserves the exact selection and bounds jobs
 by `ceil(selected estimated minutes / 15)`, with base-owned matrix capacities
 within five shared macOS slots; see [the UI protocol](CI_UI.md#platform-selection-and-capacity-packing).
 Every Python method outside `MACOS_PYTHON_TESTS` belongs to the portable Linux
-partition. Both
-partitions must cover the complete discovered suite without new environment skips.
+partition. Both partitions must cover the complete discovered suite without new
+environment skips.
 
 ## 1. Where tests live
 

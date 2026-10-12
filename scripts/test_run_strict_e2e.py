@@ -292,6 +292,12 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             run.write_bytes(b"private test inputs")
             return run
 
+        def fake_preparation(udid, *, report):
+            report("simulator-preparation: " + ("failed" if timeout_phase in {"simulator-bootstatus", "simulator-readiness"} else "passed"))
+            if timeout_phase in {"simulator-bootstatus", "simulator-readiness"}:
+                raise strict_runner.InfrastructureTimeout(timeout_phase, 60)
+            return None, "ready\n"
+
         def retry_results(bundle, identity_for_key, elapsed, code, **kwargs):
             from ci_summary import observation
             key = next(item.split(":", 1)[1].split("/", 1)[1] for item in invocations[-1]
@@ -308,9 +314,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "run_strict_e2e.prepare_task_xcconfig", return_value={}
         ), mock.patch("run_strict_e2e.cleanup_task_xcconfig"), mock.patch(
             "run_strict_e2e.subprocess.run", side_effect=fake_subprocess
-        ), mock.patch("run_strict_e2e.prepare_simulator", return_value=(None, "ready\n"),
-                      side_effect=strict_runner.InfrastructureTimeout(timeout_phase, 60)
-                      if timeout_phase in {"simulator-bootstatus", "simulator-readiness"} else None) as prepare, mock.patch(
+        ), mock.patch("run_strict_e2e.prepare_simulator", side_effect=fake_preparation) as prepare, mock.patch(
             "run_strict_e2e.reset_simulator_app", return_value="reset\n"
         ), mock.patch(
             "run_strict_e2e.run_command", side_effect=fake_run_command
@@ -384,6 +388,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             evidence = root / "evidence"
             code, _, stderr, _ = self._run_p2_main(evidence, suite="smoke", platform="ios", model="iPhone", warm=True)
             self.assertEqual(code, 0, stderr)
+            self.assertEqual((evidence / "simulator-preparation.log").read_text(), "ready\n")
             self.assertEqual(list((root / "private").iterdir()), [])
 
     def test_inner_timeout_records_its_phase_and_finishes_private_cleanup(self):
@@ -402,6 +407,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertNotIn("private-test-input", json.dumps(record) + stderr)
                 self.assertEqual(json.loads((evidence / "sensitive-scan.json").read_text())["result"], "PASS")
                 self.assertEqual(list((root / "derived").glob("strict-case-*/case.xctestrun")), [])
+                if phase.startswith("simulator-"):
+                    self.assertIn("simulator-preparation: failed", (evidence / "simulator-preparation.log").read_text())
                 if phase.startswith("official-"):
                     quarantine = json.loads((evidence / "result-bundle-quarantine.json").read_text())
                     self.assertFalse(quarantine["result_bundle_disposed"])
@@ -493,6 +500,12 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         self.assertIsNone(container)
         self.assertEqual(calls, ["bootstatus", "get_app_container"])
         self.assertIn("simulator-preparation: passed; elapsed=197.2s", log)
+        calls.clear()
+        with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=submitted), mock.patch(
+            "strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]
+        ), mock.patch("strict_e2e_runner_support.time.sleep"), mock.patch("builtins.print"):
+            reset_simulator_app("SIM-UDID", boot_submitted=True)
+        self.assertEqual(calls, ["bootstatus", "get_app_container", "uninstall", "get_app_container", "keychain", "privacy"])
         with tempfile.TemporaryDirectory() as raw:
             bundle = Path(raw) / "result.xcresult"
             bundle.mkdir()

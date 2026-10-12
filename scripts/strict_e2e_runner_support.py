@@ -535,10 +535,11 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
     return container, "\n".join(lines) + "\n"
 
 
-def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides") -> str:
+def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
+                        boot_submitted: bool = False) -> str:
     # The fixed sleep waits for simctl to release the container lock; a second uninstall failure must stop the run.
     report = lambda line: print(line, flush=True)
-    container, preparation_log = prepare_simulator(simulator_udid, bundle_id, report=report)
+    container, preparation_log = prepare_simulator(simulator_udid, bundle_id, report=report, boot_submitted=boot_submitted)
     lines = preparation_log.splitlines()
     installed = container is not None
     started = time.monotonic()
