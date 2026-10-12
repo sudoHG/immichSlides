@@ -97,8 +97,6 @@ def method_observations(raw, trace):
     observed, missing = [], []
     compiled = {identity_key(item) for item in summary["population"]["compiled"]}
     outcomes = {identity_key(item["identity"]): item["outcome"] for item in summary["population"]["observed"]}
-    preparation_failed = any(item["code"] == "simulator-preparation-failed" for item in summary["infrastructure"])
-    case_records = {identity_key(item["identity"]): item for item in summary["population"]["observed"]}
     for case in summary["population"]["declared"]:
         dimensions = case["dimensions"]
         suite = dimensions["suite"]
@@ -135,12 +133,6 @@ def method_observations(raw, trace):
                 exit_code=phase.get("exit_code"), reason="Official test was skipped" if outcome == "skipped" else None))
         missing.extend({"identity": wanted[key], "reason": "official-method-not-observed"} for key in sorted(wanted.keys() - seen))
         case_outcome = outcomes.get(identity_key(case))
-        record = case_records.get(identity_key(case))
-        if preparation_failed and record is not None and case_outcome == "failed" and not phase \
-                and identity_key(case) not in compiled and all(attempt["outcome"] == "not-run" for attempt in record["attempts"]):
-            # Preserve planned infrastructure failures without inventing official method results.
-            observed.append(copy.deepcopy(record))
-            continue
         if case_outcome in FAILURES and not counts["Failed"]:
             contract_failed = (phase.get("automated_contract_failed") is True and seen == wanted.keys()
                 and counts["Passed"] == len(wanted) and not phase.get("infrastructure")

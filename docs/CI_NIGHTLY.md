@@ -187,8 +187,10 @@ If simulator creation or the separate preparation gate fails before the tracer s
 the workflow invokes the tracer's `--preparation-failed` accounting mode before upload.
 It writes the same bound compact schema with every planned case failed, every attempt
 `not-run` with an infrastructure reason, no compiled cases and empty cold/warm traces.
-The aggregate counts zero executions and retains every failure; the trusted reporter
-counts the failed cases while still reporting their official methods as unobserved.
+The aggregate counts zero executions and retains every failure. The trusted reporter
+retains the cases as missing with an infrastructure reason and their official methods
+as unobserved, tracking the failure under the separate nightly infrastructure issue
+according to the [reporting boundary](CI_REPORT.md#issue-lifecycle).
 This mode starts no builds or tests and changes no preparation or execution budget.
 Planning/aggregate have 15-minute caps.
 Hosted disk floor stays 30 GiB; local default stays 80 GiB.

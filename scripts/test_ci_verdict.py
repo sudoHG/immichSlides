@@ -193,8 +193,18 @@ class NightlyVerdictTests(unittest.TestCase):
             setup = next(i for i, step in enumerate(steps) if "setup_ci_python.py" in step.get("run", ""))
             preparation = next(i for i, step in enumerate(steps) if "prepare_simulator(" in step.get("run", ""))
             consumer = next(i for i, step in enumerate(steps) if "scripts/run_strict_ci_tracer.py" in step.get("run", ""))
+            accounting = next(i for i, step in enumerate(steps) if "--preparation-failed" in step.get("run", ""))
+            upload = next(i for i, step in enumerate(steps) if "actions/upload-artifact@" in step.get("uses", "")
+                          and "/records" in step.get("with", {}).get("path", ""))
+            creation = next(i for i, step in enumerate(steps) if "simctl create" in step.get("run", ""))
             self.assertLess(setup, preparation)
             self.assertLess(preparation, consumer)
+            self.assertLess(consumer, accounting)
+            self.assertLess(accounting, upload)
+            self.assertEqual("simulator", steps[creation].get("id"))
+            self.assertEqual("preparation", steps[preparation].get("id"))
+            self.assertEqual("always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')",
+                             steps[accounting]["if"])
             command = next(step["run"] for step in job["steps"]
                            if "scripts/run_strict_ci_tracer.py" in step.get("run", ""))
             cold = int(re.search(r"--cold-timeout-seconds\s+(\d+)", command)[1])

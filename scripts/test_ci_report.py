@@ -38,7 +38,7 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
-    def test_nightly_preparation_failure_counts_failed_cases_without_claiming_method_execution(self):
+    def test_nightly_preparation_failure_tracks_missing_cases_under_one_infrastructure_issue(self):
         from ci_nightly import aggregate_nightly
         api = type("API", (), {"repository": "sudoHG/immichSlides"})()
         run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
@@ -64,13 +64,17 @@ class ReporterTests(unittest.TestCase):
         with patch("ci_publish.json_member", side_effect=[aggregate, summary, {"cold": [], "warm": []}]):
             report = ci_report.nightly_attempt(api, run, 1, artifacts)
         self.assertEqual("failed", report["status"])
-        self.assertEqual(summary["population"]["observed"], report["observed"])
-        self.assertEqual(6, report["diagnostics"]["counts"]["failed"])
+        self.assertEqual([], report["observed"])
         self.assertEqual(0, report["diagnostics"]["counts"]["executed_cases"])
-        self.assertEqual(6, len(report["diagnostics"]["failures"]))
-        self.assertIn("nightly infrastructure or scheduling failure", report["diagnostics"]["infrastructure"])
-        self.assertEqual(6, len(report["diagnostics"]["missing"]))
-        self.assertTrue(all(item["reason"] == "official-method-not-observed" for item in report["diagnostics"]["missing"]))
+        self.assertEqual([], report["diagnostics"]["failures"])
+        self.assertTrue(report["diagnostics"]["infrastructure"])
+        missing_cases = [item for item in report["diagnostics"]["missing"]
+                         if item["reason"] == "strict-case-infrastructure-or-unverified-failure"]
+        self.assertEqual(cases, [item["identity"] for item in missing_cases])
+        for case in cases:
+            with self.subTest(case=case):
+                self.assertEqual("none", issue_decision(None, case, [report], registry_referenced=False)["action"])
+        self.assertEqual("open", issue_decision(None, NIGHTLY_INFRASTRUCTURE, [report], registry_referenced=False)["action"])
 
     def test_nightly_producer_failure_paths_preserve_other_shards_and_diagnostic_identity(self):
         import ci_nightly
