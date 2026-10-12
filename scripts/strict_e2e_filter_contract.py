@@ -12,7 +12,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from strict_e2e_photo_identity import MARKS, classify_public_pattern, classify_screenshot, public_letter_from_bytes
+from strict_e2e_photo_identity import (
+    MARKS, classify_public_pattern, classify_screenshot,
+    public_frame_letter_from_bytes, public_letter_from_bytes,
+)
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest, public_visual_label
 
 from strict_e2e_filter_manifest import (
@@ -702,14 +705,14 @@ def _evaluate_filter_edit_switch(evidence_dir: Path, suite: str) -> dict[str, An
         raise FilterContractError("after clearing filters and leaving the editor, the default mode must return to random playback")
 
     # Marks come from the color classifier (A1..A5 for both fixtures), so membership is compared against the
-    # manifest's classifier labels; the A/B glyph letter is checked per frame (zoomed frames defeat classify_public_pattern).
+    # manifest's classifier labels; read all visible A/B glyphs, including stacked and cropped slots.
     fixture_set = str(manifest["fixture_set"])
     marks = [_classified_mark_from_png(evidence_dir, name) for name in FILTER_EDIT_SWITCH_STEPS]
     allowed = set(manifest["non_target_album"]["labels"])
     if not allowed or not set(marks).issubset(allowed):
         raise FilterContractError(f"frames after the album switch must belong to non-target album {expected_album_id}: {marks}")
     for name in FILTER_EDIT_SWITCH_STEPS:
-        if public_letter_from_bytes((evidence_dir / f"{name}.png").read_bytes()) != fixture_set.upper():
+        if public_frame_letter_from_bytes((evidence_dir / f"{name}.png").read_bytes()) != fixture_set.upper():
             raise FilterContractError(
                 f"frames after the album switch must show the public glyph of fixture {fixture_set.upper()}: {name}"
             )

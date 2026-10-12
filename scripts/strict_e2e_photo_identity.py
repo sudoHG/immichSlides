@@ -299,6 +299,64 @@ def public_letter_from_bytes(image_bytes: bytes) -> str | None:
         return None
 
 
+@functools.lru_cache(maxsize=4096)
+def public_frame_letter_from_bytes(image_bytes: bytes) -> str | None:
+    """Read sharp fixture glyphs across stacked slots and horizontally cropped photos."""
+    if not image_bytes:
+        return None
+    Image = _pil_image()
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgb = image.convert("RGB")
+            width, height = rgb.size
+            if width < IDENTITY_MINIMUM_IMAGE_PIXELS or height < IDENTITY_MINIMUM_IMAGE_PIXELS:
+                return None
+            if width > 480:
+                rgb = rgb.resize((480, max(8, round(480 * height / width))), Image.Resampling.NEAREST)
+            width, height = rgb.size
+            pixels = rgb.load()
+            white_rows = [
+                [min(pixels[x, y]) >= 240 for x in range(width)] for y in range(height)
+            ]
+            bands: list[list[int]] = []
+            for y, row in enumerate(white_rows):
+                if any(row):
+                    # Resampled edges can leave a few blank rows between touching bitmap cells.
+                    if not bands or y > bands[-1][1] + 4:
+                        bands.append([y, y + 1])
+                    else:
+                        bands[-1][1] = y + 1
+
+            letters: set[str] = set()
+            for top, bottom in bands:
+                if bottom - top < 10:
+                    continue
+                cell = (bottom - top) / 7
+                origins: set[float] = set()
+                for row_index in range(7):
+                    row = white_rows[int(top + (row_index + 0.5) * cell)]
+                    for x in range(1, width):
+                        if row[x] != row[x - 1]:
+                            origins.update(round(x - column * cell, 1) for column in range(6))
+                for origin in origins:
+                    observed = []
+                    for row_index in range(7):
+                        y = int(top + (row_index + 0.5) * cell)
+                        for column in range(5):
+                            x = round(origin + (column + 0.5) * cell)
+                            if 0 <= x < width:
+                                observed.append((row_index, column, white_rows[y][x]))
+                    # Require at least two visible columns and ink, never only cropped background.
+                    if len(observed) < 14 or sum(white for _, _, white in observed) < 5:
+                        continue
+                    for letter, glyph in (("A", _PATTERN_GLYPH_A), ("B", _PATTERN_GLYPH_B)):
+                        if all((glyph[row][column] == "1") == white for row, column, white in observed):
+                            letters.add(letter)
+            return next(iter(letters)) if len(letters) == 1 else None
+    except Exception:
+        return None
+
+
 def _pattern_crops(rgb: object) -> list[object]:
     width, height = rgb.size
     if width < 16:

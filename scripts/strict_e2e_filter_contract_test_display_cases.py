@@ -496,6 +496,58 @@ print("\\(candidate != original)|\\(result.status.rawValue)|\\(result.mark ?? "n
 
 
 class AlbumEditSwitchVisualContractTestsCases:
+    def _render_edit_switch_frame(self, fixture_set: str, shape: str, index: int = 4, second_fixture: str | None = None) -> bytes:
+        # Recreate the stacked iPhone slots and SmartFill crops from the Release captures.
+        def photo(number: int, source: str = fixture_set):
+            return Image.open(io.BytesIO(_fixture_png(f"A{number}", source))).convert("RGB")
+
+        if shape == "stacked":
+            frame = Image.new("RGB", (390, 844))
+            frame.paste(photo(4).resize((390, 260)), (0, 0))
+            frame.paste(photo(5, second_fixture or fixture_set).resize((390, 584)), (0, 260))
+        else:
+            size = (410, 590) if shape == "ipad-crop" else (390, 844)
+            frame = ImageOps.fit(photo(index), size)
+            if shape == "iphone-crop" and index == 5:
+                from PIL import ImageDraw
+                ImageDraw.Draw(frame).text(
+                    (120, 65), "Synthetic Fixture 5\n50mm  f/2.8  ISO 100\nFixture City\nSynthetic", fill="white"
+                )
+        encoded = io.BytesIO()
+        frame.save(encoded, format="PNG")
+        return encoded.getvalue()
+
+    def test_release_smartfill_frame_shapes_preserve_fixture_and_album_identity(self) -> None:
+        for fixture_set, other_set in (("a", "b"), ("b", "a")):
+            for shape, index in (("stacked", 4), ("iphone-crop", 4), ("iphone-crop", 5), ("ipad-crop", 4)):
+                with self.subTest(fixture_set=fixture_set, shape=shape, index=index), tempfile.TemporaryDirectory() as raw_directory:
+                    evidence = Path(raw_directory)
+                    self._write_valid_evidence(evidence, fixture_set)
+                    frame = evidence / "album-switch-b-play-1.png"
+                    frame.write_bytes(self._render_edit_switch_frame(fixture_set, shape, index))
+                    self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-edit-switch")["verdict"], "PASS")
+
+                    frame.write_bytes(self._render_edit_switch_frame(other_set, shape, index))
+                    with self.assertRaises(FilterContractError) as raised:
+                        evaluate_filter_visual_identity(evidence, "filter-edit-switch")
+                    self.assertIn("public glyph", str(raised.exception))
+
+    def test_mixed_or_missing_public_glyphs_are_rejected(self) -> None:
+        from strict_e2e_server import _png
+
+        for fixture_set, other_set in (("a", "b"), ("b", "a")):
+            for frame_bytes in (
+                self._render_edit_switch_frame(fixture_set, "stacked", second_fixture=other_set),
+                _png(360, 240, 4, "", striped=fixture_set == "b"),
+            ):
+                with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw_directory:
+                    evidence = Path(raw_directory)
+                    self._write_valid_evidence(evidence, fixture_set)
+                    (evidence / "album-switch-b-play-1.png").write_bytes(frame_bytes)
+                    with self.assertRaises(FilterContractError) as raised:
+                        evaluate_filter_visual_identity(evidence, "filter-edit-switch")
+                    self.assertIn("public glyph", str(raised.exception))
+
     def test_normal_editor_switch_requires_filtered_mode_then_random_after_clear(self) -> None:
         for suite in ("filter-edit-switch", "tvos-edit-switch"):
             with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw_directory:

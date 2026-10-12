@@ -28,6 +28,14 @@ unit/UI archives. They reuse the [archive workspace preflight](CI_BUILD_ARCHIVE.
 product inventory and signing inspection. No competing archive producer or artifact
 selection mechanism is introduced.
 
+`filter-edit-switch` compares album membership in the color classifier's A1–A5
+namespace for both fixture sets. Each post-switch frame separately requires the
+active fixture's public A/B glyph. The frame reader finds separate bitmap bands
+across stacked slots and matches visible cells when a zoomed photo crops the
+letter horizontally. It requires at least two visible columns, ink and agreement
+with every observed cell; mixed A/B glyphs and unreadable frames fail. The existing
+region-crop reader used for single-photo surrounds is unchanged.
+
 ## Explicit shard warm-up and reuse
 
 Each shard is grouped by scheme and configuration. Ordinary suites default to their
