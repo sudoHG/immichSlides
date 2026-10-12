@@ -44,6 +44,16 @@ unrecognized, but cannot supply a missing slot's identity.
 `tvos-edit-switch` retains the previous centered region reader and whole-frame
 album membership check. The reader used for single-photo surrounds is unchanged.
 
+The iOS `album-empty` and `filter-album` contracts use the same per-slot reader
+for target-album playback. Every slot must have a readable active-fixture glyph
+and a color identity in the original target-album membership set. Stacked frames
+are checked as separate photos, never as one dominant whole-frame identity.
+Single-photo surrounds are excluded only by the existing matched-original and
+blurred-surround checks. `album-empty` still requires both playback captures,
+at least two different target photos and different identity sets in the two
+captures. Empty-selection, controlled-empty-album, exact-copy and old-pool-photo
+rejection checks are unchanged. `tvos-album-empty` retains its whole-frame reader.
+
 ## Explicit shard warm-up and reuse
 
 Each shard is grouped by scheme and configuration. Ordinary suites default to their

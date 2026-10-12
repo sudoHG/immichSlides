@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shared filter contract.
 
-Member labels must be checked against classify_screenshot; the final pool is the union of the per-object sets.
+Member labels must be checked against public fixture pixels; the final pool is the union of the per-object sets.
 """
 
 from __future__ import annotations
@@ -669,6 +669,20 @@ def _classified_mark_from_png(evidence_dir: Path, name: str) -> str:
     return require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
 
 
+def target_album_frame_marks(image_bytes: bytes, fixture_set: str) -> tuple[str, ...]:
+    # A SmartFill collage has no single whole-frame color identity. Every sharp slot
+    # must independently prove membership and fixture identity; none may be ignored.
+    try:
+        photos = public_frame_photos_from_bytes(_display_foreground_png(image_bytes))
+    except IdentityAssertionError as error:
+        raise FilterContractError(str(error)) from error
+    marks = tuple(photo.mark for photo in photos)
+    assert_playback_marks_in_target(marks, fixture_set)
+    if any(photo.letter != fixture_set.upper() for photo in photos):
+        raise FilterContractError(f"target album frame must show the public glyph of fixture {fixture_set.upper()}")
+    return marks
+
+
 def _extract_ids_from_request_log(log_text: str) -> list[str]:
     found: list[str] = []
     for match in re.finditer(r"(asset|album|person)-[ab]-[a-z0-9-]+", log_text):
@@ -679,8 +693,12 @@ def _extract_ids_from_request_log(log_text: str) -> list[str]:
 def _evaluate_filter_album(evidence_dir: Path) -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     fixture_set = str(manifest["fixture_set"])
-    marks = [_classified_mark_from_png(evidence_dir, name) for name in FILTER_ALBUM_STEPS]
-    assert_playback_marks_in_target(marks, fixture_set)
+    marks = []
+    for name in FILTER_ALBUM_STEPS:
+        path = evidence_dir / f"{name}.png"
+        if not path.is_file():
+            raise FilterContractError(f"Missing visual input {name}.png")
+        marks.extend(target_album_frame_marks(path.read_bytes(), fixture_set))
     return {
         "verdict": "PASS",
         "suite": "filter-album",

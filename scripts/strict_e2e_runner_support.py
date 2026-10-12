@@ -694,7 +694,7 @@ def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str 
         return payload
     if suite in ALBUM_EMPTY_SUITES:
         try:
-            payload = evaluate_album_empty_evidence(evidence_dir, fixture_set)
+            payload = evaluate_album_empty_evidence(evidence_dir, fixture_set, read_stacked_slots=(suite == "album-empty"))
         except (AlbumServerContractError, FilterContractError) as error:
             failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
             _write_visual_runner_report(evidence_dir, failed)

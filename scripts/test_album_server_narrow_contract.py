@@ -40,13 +40,19 @@ from strict_e2e_filter_contract import (  # noqa: E402
     write_member_manifest,
 )
 from strict_e2e_runner_support import CommandError, require_visual_identity  # noqa: E402
-from strict_e2e_photo_identity import classify_public_pattern, classify_screenshot  # noqa: E402
+from strict_e2e_photo_identity import (  # noqa: E402
+    IdentityAssertionError,
+    classify_public_pattern,
+    classify_screenshot,
+    public_frame_photos_from_bytes,
+)
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest  # noqa: E402
 from test_strict_e2e_server import RunningServer  # noqa: E402
 
 TV_SCREEN = (1920, 1080)
 TV_4K_SCREEN = (3840, 2160)
 IPHONE_SCREEN = (1170, 2532)
+IPAD_SCREEN = (1640, 2360)
 
 
 def _fixture_png(label: str, fixture_set: str = "a") -> bytes:
@@ -193,6 +199,36 @@ def _single_on_own_blur(label: str, screen: tuple[int, int], fixture_set: str = 
 
 def _full_screen(label: str, screen: tuple[int, int], fixture_set: str = "a") -> bytes:
     return _png(_cover(_fixture_image(label, fixture_set), screen))
+
+
+def _stacked_album_frame(fixture_set: str, top_mark: str = "A1", bottom_mark: str = "A3",
+                         top_fixture: str | None = None, unreadable_top: bool = False) -> bytes:
+    # Scanner-approved Debug iPad album-empty/filter-album captures: 1640x2360,
+    # seam y=938, glyph bands y=93..839 and 1275..2024, control bar (478,2120)-(1162,2236).
+    # A roughly 2008px-wide public original with a 179px horizontal crop reproduces
+    # the observed SmartFill zoom/pan; use the same geometry for counterexamples.
+    canvas = Image.new("RGB", IPAD_SCREEN)
+    for mark, source, box, crop_top in (
+        (top_mark, top_fixture or fixture_set, (0, 0, 1640, 938), 95),
+        (bottom_mark, fixture_set, (0, 938, 1640, 2360), 292),
+    ):
+        photo = _fixture_image(mark, source)
+        if unreadable_top and box[1] == 0:
+            cell = max(8, min(photo.width // 18, photo.height // 10))
+            left, top = (photo.width - 11 * cell) // 2, (photo.height - 7 * cell) // 2
+            ImageDraw.Draw(photo).rectangle((left, top, left + 11 * cell - 1, top + 7 * cell - 1),
+                                            fill=photo.getpixel((0, 0)))
+        # Preserve the photographed A1/A3 crop, and fit other aspect ratios into the same slots.
+        if mark in {"A1", "A3"}:
+            height = round(photo.height * 2008 / photo.width)
+            resized = photo.resize((2008, height), Image.Resampling.BILINEAR)
+            slot = resized.crop((179, crop_top, 1819, crop_top + box[3] - box[1]))
+        else:
+            slot = _cover(photo, (box[2], box[3] - box[1]))
+        canvas.paste(slot, (box[0], box[1]))
+    ImageDraw.Draw(canvas, "RGBA").rounded_rectangle((478, 2120, 1162, 2236), radius=58,
+                                                      fill=(255, 255, 255, 90))
+    return _png(canvas)
 
 
 def _stacked_screen(top: str, bottom: str, screen: tuple[int, int], fixture_set: str = "a") -> bytes:
@@ -553,6 +589,55 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
 
 
 class AlbumEmptyFixtureBTests(unittest.TestCase):
+    def test_stacked_target_frames_keep_two_different_screenshots_and_empty_result(self) -> None:
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_album_empty_pass(directory, fixture_set)
+                stacked = _stacked_album_frame(fixture_set)
+                self.assertEqual(Image.open(io.BytesIO(stacked)).size, IPAD_SCREEN)
+                self.assertNotEqual(classify_screenshot(stacked).status, "MATCH")
+                self.assertEqual([photo.mark for photo in public_frame_photos_from_bytes(stacked)], ["A1", "A3"])
+                (directory / "album-play-1.png").write_bytes(stacked)
+                (directory / "album-play-2.png").write_bytes(_full_screen("A2", IPAD_SCREEN, fixture_set))
+                report = require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
+                self.assertEqual(report["verdict"], "PASS")
+                self.assertEqual(report["marks"], ["A1", "A3", "A2"])
+                # One multi-photo screenshot cannot stand in for the second capture,
+                # and repeating the same collage cannot prove navigation to a new identity.
+                (directory / "album-play-2.png").unlink()
+                with self.assertRaises(CommandError):
+                    require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
+                (directory / "album-play-2.png").write_bytes(stacked)
+                with self.assertRaises(CommandError):
+                    require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
+                (directory / "album-play-2.png").write_bytes(_full_screen("A2", IPAD_SCREEN, fixture_set))
+                (directory / "empty-album-result.png").write_bytes(stacked)
+                with self.assertRaises(CommandError) as raised:
+                    require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
+                self.assertIn("old non-empty pool", str(raised.exception))
+
+    def test_every_stacked_target_slot_requires_album_membership_and_fixture_identity(self) -> None:
+        for fixture_set, other in (("a", "b"), ("b", "a")):
+            for case, frame in (
+                ("wrong album", _stacked_album_frame(fixture_set, top_mark="A4")),
+                ("mixed fixture", _stacked_album_frame(fixture_set, top_fixture=other)),
+                ("other fixture", _stacked_album_frame(other)),
+                ("unreadable slot", _stacked_album_frame(fixture_set, unreadable_top=True)),
+                ("unreadable foreign slot", _stacked_album_frame(fixture_set, top_fixture=other, unreadable_top=True)),
+            ):
+                with self.subTest(fixture_set=fixture_set, case=case), tempfile.TemporaryDirectory() as raw:
+                    directory = Path(raw)
+                    _write_album_empty_pass(directory, fixture_set)
+                    (directory / "album-play-1.png").write_bytes(frame)
+                    with self.assertRaises(CommandError):
+                        require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
+                    if case == "wrong album":
+                        self.assertEqual({photo.mark for photo in public_frame_photos_from_bytes(frame)}, {"A4", "A3"})
+                    if "unreadable" in case:
+                        with self.assertRaisesRegex(IdentityAssertionError, "unreadable public glyph slot"):
+                            public_frame_photos_from_bytes(frame)
+
     def test_fixture_b_pack_passes_when_the_active_fixture_is_carried_through(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
@@ -593,7 +678,7 @@ class EmptyResultIdentityTests(unittest.TestCase):
                 _single_on_own_blur("A2", TV_SCREEN),
                 _empty_result_screen(TV_SCREEN),
             )
-            report = evaluate_album_empty_evidence(directory)
+            report = require_visual_identity(directory, "tvos-album-empty")
         self.assertEqual(report["verdict"], "PASS")
         self.assertGreaterEqual(len(set(report["marks"])), 2)
 
