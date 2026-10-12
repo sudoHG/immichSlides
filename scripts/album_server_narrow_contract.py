@@ -307,7 +307,7 @@ def _empty_album_start_state(payload: Mapping[str, Any]) -> bool | str:
 
 
 def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
-                                  read_stacked_slots: bool = True) -> dict[str, Any]:
+                                  read_stacked_slots: bool) -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     if str(manifest["fixture_set"]) != fixture_set:
         raise AlbumServerContractError("Album-empty member-manifest does not match the requested fixture")

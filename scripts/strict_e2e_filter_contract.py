@@ -670,7 +670,7 @@ def _classified_mark_from_png(evidence_dir: Path, name: str) -> str:
 
 
 # Measured scanner-approved portrait captures, with four pixels around system ink.
-# Unknown geometries keep the unmodified reader; these options are iOS album-only.
+# Unmeasured capture sizes keep the original whole-frame contract, without these gates.
 TARGET_ALBUM_HOME_INDICATOR_BOXES = {
     (1640, 2360): (543, 2330, 1097, 2349),
     (1170, 2532): (373, 2489, 798, 2512),
@@ -679,12 +679,19 @@ TARGET_ALBUM_GLYPH_OVERLAY_BOXES = {(1170, 2532): (68, 2126, 1102, 2314)}
 
 
 def target_album_frame_marks(image_bytes: bytes, fixture_set: str) -> tuple[str, ...]:
-    # Keep the original whole-frame contract for one palette-defined slot. A collage
-    # must prove every slot; unreadable stacked glyphs never fall back to whole-frame color.
+    # Unmeasured captures keep the original contract. Measured captures must pass
+    # the foreground and slot gates; unreadable collages never fall back to whole-frame color.
     try:
-        foreground = _display_foreground_png(image_bytes)
         from PIL import Image
         import io
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            capture_size = image.size
+        if capture_size not in TARGET_ALBUM_HOME_INDICATOR_BOXES:
+            identity = classify_screenshot(image_bytes)
+            marks = (require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark),)
+            assert_playback_marks_in_target(marks, fixture_set)
+            return marks
+        foreground = _display_foreground_png(image_bytes)
         with Image.open(io.BytesIO(foreground)) as image:
             size = image.size
         exclusion = TARGET_ALBUM_HOME_INDICATOR_BOXES.get(size)

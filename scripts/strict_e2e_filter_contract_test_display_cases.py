@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from access_lifecycle_contract_test_fixtures import IPAD_SCREEN
 from test_album_server_narrow_contract import (
-    IPHONE_SCREEN, TV_SCREEN, _cover, _full_screen, _iphone_control_split_frame,
-    _stacked_album_frame, _with_home_indicator,
+    IPHONE_SCREEN, TV_SCREEN, UNMEASURED_SCREEN, _cover, _full_screen, _iphone_control_split_frame,
+    _letterbox, _stacked_album_frame, _unmeasured_album_frame, _with_home_indicator,
 )
 from strict_e2e_photo_identity import (
     IdentityAssertionError, public_frame_photos_from_bytes, public_frame_slot_count_from_bytes,
@@ -59,6 +59,31 @@ from strict_e2e_filter_contract_test_fixtures import (
 )
 
 class DeviceFilterVisualIdentityTestsCases:
+    def test_filter_album_unmeasured_geometry_keeps_the_main_result(self) -> None:
+        for fixture_set in ("a", "b"):
+            for shape, frame in (
+                ("home indicator", _unmeasured_album_frame(fixture_set)),
+                ("letterbox", _letterbox(_fixture_png("A3", fixture_set), UNMEASURED_SCREEN)),
+            ):
+                with self.subTest(fixture_set=fixture_set, shape=shape), tempfile.TemporaryDirectory() as raw:
+                    evidence = Path(raw)
+                    self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")], fixture_set)
+                    self.assertEqual(Image.open(io.BytesIO(frame)).size, UNMEASURED_SCREEN)
+                    identity = classify_screenshot(frame)
+                    mark = require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
+                    self.assertEqual(mark, "A3")
+                    (evidence / "album-play-1.png").write_bytes(frame)
+                    self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-album")["marks"], [mark, "A2", "A3"])
+        for screen in (IPHONE_SCREEN, IPAD_SCREEN):
+            with self.subTest(measured_screen=screen), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"), ("album-play-3", "A3")])
+                frame = _letterbox(_fixture_png("A3"), screen)
+                self.assertEqual(classify_screenshot(frame).status, "MATCH")
+                (evidence / "album-play-1.png").write_bytes(frame)
+                with self.assertRaisesRegex(FilterContractError, "does not match.*blurred background"):
+                    evaluate_filter_visual_identity(evidence, "filter-album")
+
     def test_filter_album_single_slot_zoomed_glyph_keeps_the_main_result(self) -> None:
         from strict_e2e_filter_contract import TARGET_ALBUM_GLYPH_OVERLAY_BOXES
         for fixture_set in ("a", "b"):

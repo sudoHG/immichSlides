@@ -54,6 +54,7 @@ TV_SCREEN = (1920, 1080)
 TV_4K_SCREEN = (3840, 2160)
 IPHONE_SCREEN = (1170, 2532)
 IPAD_SCREEN = (1640, 2360)
+UNMEASURED_SCREEN = (1206, 2622)
 
 
 def _fixture_png(label: str, fixture_set: str = "a") -> bytes:
@@ -250,6 +251,13 @@ def _with_home_indicator(frame: bytes, footer_patch: str | None = None) -> bytes
         # Keep this photo patch just left of the ink plus its four-pixel margin.
         canvas.paste(_cover(_fixture_image("A1", footer_patch), (152, bottom - top + 8)), (left - 164, top - 4))
     return _png(canvas)
+
+
+def _unmeasured_album_frame(fixture_set: str) -> bytes:
+    # Scale the colliding indicator with the photo to exercise a size without a measured box.
+    frame = _with_home_indicator(_full_screen("A3", IPHONE_SCREEN, fixture_set))
+    with Image.open(io.BytesIO(frame)) as image:
+        return _png(image.resize(UNMEASURED_SCREEN, Image.Resampling.BILINEAR))
 
 
 def _iphone_control_split_frame(fixture_set: str, *, foreign_bottom_half: bool = False,
@@ -535,7 +543,7 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
             _write_album_empty_pass(directory)
             (directory / "album-play-2.png").write_bytes(_fixture_png("A4"))
             with self.assertRaises(Exception):
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
 
     def test_missing_empty_result_screenshot_fails(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -543,7 +551,7 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
             _write_album_empty_pass(directory)
             (directory / "empty-album-result.png").unlink()
             with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
             self.assertIn("Missing empty-album result screenshot", str(raised.exception))
 
     def test_unrecorded_start_state_fails(self) -> None:
@@ -559,7 +567,7 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
                         payload["start_enabled"] = unrecorded
                     (directory / filename).write_text(json.dumps(payload), encoding="utf-8")
                     with self.assertRaises(AlbumServerContractError) as raised:
-                        evaluate_album_empty_evidence(directory)
+                        evaluate_album_empty_evidence(directory, read_stacked_slots=True)
                     self.assertIn(f"{filename} start_enabled must be a recorded Boolean", str(raised.exception))
 
     def test_settings_editor_without_start_button_records_not_applicable(self) -> None:
@@ -569,7 +577,7 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
             payload = json.loads((directory / "empty-album.json").read_text(encoding="utf-8"))
             payload["start_enabled"] = "not_applicable_settings_editor"
             (directory / "empty-album.json").write_text(json.dumps(payload), encoding="utf-8")
-            result = evaluate_album_empty_evidence(directory)
+            result = evaluate_album_empty_evidence(directory, read_stacked_slots=True)
             self.assertEqual(result["verdict"], "PASS")
             self.assertEqual(result["start_enabled_after_empty_album"], "not_applicable_settings_editor")
 
@@ -584,7 +592,7 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
                     payload["entry"] = entry
                 (directory / filename).write_text(json.dumps(payload), encoding="utf-8")
                 with self.assertRaises(AlbumServerContractError):
-                    evaluate_album_empty_evidence(directory)
+                    evaluate_album_empty_evidence(directory, read_stacked_slots=True)
 
     def test_invented_empty_copy_fails(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -594,7 +602,7 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
             payload["empty_copy"] = "Invalid empty-album copy"
             (directory / "empty-album.json").write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(AlbumServerContractError):
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
 
     def test_old_pool_photo_after_empty_album_fails(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -602,7 +610,7 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
             _write_album_empty_pass(directory)
             (directory / "empty-album-result.png").write_bytes(_fixture_png("A1"))
             with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
             self.assertIn("old non-empty pool", str(raised.exception))
 
     def test_unrecorded_target_member_after_empty_album_still_fails(self) -> None:
@@ -611,7 +619,7 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
             _write_album_empty_pass(directory)
             (directory / "empty-album-result.png").write_bytes(_fixture_png("A3"))
             with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
             self.assertIn("old non-empty pool", str(raised.exception))
 
     def test_probe_identity_fails(self) -> None:
@@ -622,18 +630,58 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
             payload["identity_source"] = "probe"
             (directory / "empty-album.json").write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(AlbumServerContractError):
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
 
     def test_public_album_empty_pack_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             _write_album_empty_pass(directory)
-            report = evaluate_album_empty_evidence(directory)
+            report = evaluate_album_empty_evidence(directory, read_stacked_slots=True)
         self.assertEqual(report["verdict"], "PASS")
         self.assertEqual(report["empty_copy"], EMPTY_FILTERED_COPY)
 
 
 class AlbumEmptyFixtureBTests(unittest.TestCase):
+    def test_unmeasured_geometry_keeps_main_without_background_or_palette_gates(self) -> None:
+        from strict_e2e_filter_contract import TARGET_ALBUM_HOME_INDICATOR_BOXES
+        self.assertNotIn(UNMEASURED_SCREEN, TARGET_ALBUM_HOME_INDICATOR_BOXES)
+        for fixture_set in ("a", "b"):
+            for shape, frame in (
+                ("home indicator", _unmeasured_album_frame(fixture_set)),
+                ("letterbox", _letterbox(_fixture_png("A3", fixture_set), UNMEASURED_SCREEN)),
+            ):
+                with self.subTest(fixture_set=fixture_set, shape=shape), tempfile.TemporaryDirectory() as raw:
+                    directory = Path(raw)
+                    _write_album_empty_pass(directory, fixture_set)
+                    self.assertEqual(Image.open(io.BytesIO(frame)).size, UNMEASURED_SCREEN)
+                    identity = classify_screenshot(frame)
+                    self.assertEqual((identity.status, identity.mark), ("MATCH", "A3"))
+                    with self.assertRaises(IdentityAssertionError):
+                        public_frame_slot_count_from_bytes(frame)
+                    (directory / "album-play-1.png").write_bytes(frame)
+                    main_result = evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=False)
+                    self.assertEqual(evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=True), main_result)
+        # Measured sizes retain the background gate even for a main-passing single photo.
+        for screen in (IPHONE_SCREEN, IPAD_SCREEN):
+            with self.subTest(measured_screen=screen), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_album_empty_pass(directory)
+                frame = _letterbox(_fixture_png("A3"), screen)
+                self.assertEqual(classify_screenshot(frame).status, "MATCH")
+                (directory / "album-play-1.png").write_bytes(frame)
+                with self.assertRaisesRegex(FilterContractError, "does not match.*blurred background"):
+                    evaluate_album_empty_evidence(directory, read_stacked_slots=True)
+
+    def test_pinned_ios_devices_have_measured_target_album_geometries(self) -> None:
+        from strict_e2e_filter_contract import TARGET_ALBUM_HOME_INDICATOR_BOXES
+        pins = json.loads((SCRIPT_DIR / "ci-pins.json").read_text())
+        measured_devices = {"iPhone 17e": IPHONE_SCREEN, "iPad Air 11-inch (M4)": IPAD_SCREEN}
+        for role in ("iphone", "ipad"):
+            device = pins["device_types"][role]
+            with self.subTest(role=role, device=device):
+                self.assertIn(device, measured_devices, "A newly pinned device needs target-album frame measurements")
+                self.assertIn(measured_devices[device], TARGET_ALBUM_HOME_INDICATOR_BOXES)
+
     def test_single_slot_zoomed_glyph_keeps_the_main_whole_frame_result(self) -> None:
         from strict_e2e_filter_contract import TARGET_ALBUM_GLYPH_OVERLAY_BOXES
         for fixture_set in ("a", "b"):
@@ -650,7 +698,7 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                     public_frame_photos_from_bytes(frame, glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES[IPHONE_SCREEN])
                 (directory / "album-play-1.png").write_bytes(frame)
                 main_result = evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=False)
-                self.assertEqual(evaluate_album_empty_evidence(directory, fixture_set), main_result)
+                self.assertEqual(evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=True), main_result)
 
     def test_measured_system_boxes_cannot_hide_a_photo_slot(self) -> None:
         from strict_e2e_filter_contract import TARGET_ALBUM_HOME_INDICATOR_BOXES
@@ -760,7 +808,7 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             _write_album_empty_pass(directory, "b")
-            self.assertEqual(evaluate_album_empty_evidence(directory, "b")["verdict"], "PASS")
+            self.assertEqual(evaluate_album_empty_evidence(directory, "b", read_stacked_slots=True)["verdict"], "PASS")
             self.assertEqual(require_visual_identity(directory, "album-empty", fixture_set="b")["verdict"], "PASS")
 
     def test_fixture_b_pack_is_rejected_as_a_and_a_wrong_album_frame_is_rejected_for_both_fixtures(self) -> None:
@@ -768,7 +816,7 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
             directory = Path(raw)
             _write_album_empty_pass(directory, "b")
             with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory, "a")
+                evaluate_album_empty_evidence(directory, "a", read_stacked_slots=True)
             self.assertIn("does not match the requested fixture", str(raised.exception))
             with self.assertRaises(CommandError):
                 require_visual_identity(directory, "album-empty")
@@ -778,7 +826,7 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                 _write_album_empty_pass(directory, fixture_set)
                 (directory / "album-play-2.png").write_bytes(_fixture_png("A4", fixture_set))
                 with self.assertRaises(FilterContractError):
-                    evaluate_album_empty_evidence(directory, fixture_set)
+                    evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=True)
 
 
 class EmptyResultIdentityTests(unittest.TestCase):
@@ -809,7 +857,7 @@ class EmptyResultIdentityTests(unittest.TestCase):
                 _single_on_own_blur("A3", IPHONE_SCREEN),
                 _empty_result_screen(IPHONE_SCREEN),
             )
-            report = evaluate_album_empty_evidence(directory)
+            report = evaluate_album_empty_evidence(directory, read_stacked_slots=True)
         self.assertEqual(report["verdict"], "PASS")
         self.assertGreaterEqual(len(set(report["marks"])), 2)
 
@@ -819,7 +867,7 @@ class EmptyResultIdentityTests(unittest.TestCase):
             _write_album_empty_pass(directory)
             (directory / "empty-album-result.png").write_bytes(_fixture_png("A4"))
             with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
             self.assertIn("old non-empty pool", str(raised.exception))
 
     def test_real_b_single_as_empty_result_still_fails(self) -> None:
@@ -828,7 +876,7 @@ class EmptyResultIdentityTests(unittest.TestCase):
             _write_album_empty_pass(directory)
             (directory / "empty-album-result.png").write_bytes(_fixture_png("A1", "b"))
             with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
             self.assertIn("old non-empty pool", str(raised.exception))
 
     def test_multi_as_empty_result_still_fails(self) -> None:
@@ -839,7 +887,7 @@ class EmptyResultIdentityTests(unittest.TestCase):
                 _side_by_side(_fixture_png("A1"), _fixture_png("A2"))
             )
             with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
             self.assertIn("old non-empty pool", str(raised.exception))
 
     def test_blurred_real_photo_as_empty_result_still_fails(self) -> None:
@@ -848,7 +896,7 @@ class EmptyResultIdentityTests(unittest.TestCase):
             _write_album_empty_pass(directory)
             (directory / "empty-album-result.png").write_bytes(_blurred_photo(_fixture_png("A4")))
             with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
             self.assertIn("old non-empty pool", str(raised.exception))
 
     def test_empty_copy_with_real_photo_still_fails(self) -> None:
@@ -860,7 +908,7 @@ class EmptyResultIdentityTests(unittest.TestCase):
                 _photo_on_empty_background(background, _fixture_png("A1"))
             )
             with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory)
+                evaluate_album_empty_evidence(directory, read_stacked_slots=True)
             self.assertIn("old non-empty pool", str(raised.exception))
 
 
