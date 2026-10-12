@@ -178,8 +178,9 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             name: "empty-selection.json"
         )
 
-        openAlbumFilter(app: app)
-        selectAlbum(app: app, albumID: albumID)
+        // The iOS Save Password sheet can arrive after entering the filter summary.
+        openAlbumFilterHandlingSystemPrompt(app: app)
+        selectAlbumHandlingSystemPrompt(app: app, albumID: albumID)
         returnFromAlbumFilter(app: app)
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
