@@ -311,8 +311,9 @@ before activation.
 The maintainer confirmed in the ASC UI on 2026-10-12 that both registered test
 workflows have empty environments: no custom, shared or secret variables.
 Two single-method setup probes, one per platform, observed accepted-start to
-complete-inventory visibility within 4.273 seconds (iOS) and 4.597 seconds (tvOS),
-including recovery after discarding the accepted POST response. The proposed
+complete-inventory visibility within 4.273 seconds (iOS) and 4.597 seconds (tvOS).
+Recovery located each accepted build without using the POST build ID for lookup,
+simulating a lost response; no process was terminated around POST. The proposed
 300-second visibility delay adds over 65 times the largest sampled delay; two
 samples cannot establish an API guarantee. Queues were 10.621 and 14.479 seconds;
 the proposed 300-second queue allowance likewise needs review under load.
