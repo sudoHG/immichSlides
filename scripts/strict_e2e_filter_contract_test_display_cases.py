@@ -9,7 +9,7 @@ from test_album_server_narrow_contract import (
 )
 from strict_e2e_photo_identity import (
     IdentityAssertionError, public_frame_photos_from_bytes, public_frame_slot_count_from_bytes,
-    public_frame_letter_from_bytes, public_letter_from_bytes,
+    public_letter_from_bytes,
 )
 
 from strict_e2e_filter_contract_test_fixtures import (
@@ -73,7 +73,11 @@ class DeviceFilterVisualIdentityTestsCases:
                     mark = require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
                     self.assertEqual(mark, "A3")
                     (evidence / "album-play-1.png").write_bytes(frame)
-                    self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-album")["marks"], [mark, "A2", "A3"])
+                    report = evaluate_filter_visual_identity(evidence, "filter-album")
+                    self.assertEqual(report["marks"], [mark, "A2", "A3"])
+                    self.assertEqual(report["target_album_geometry"], "unmeasured")
+                    self.assertEqual(report["target_album_frame_geometry"], {
+                        name: "unmeasured" for name in ("album-play-1", "album-play-2", "album-play-3")})
         for screen in (IPHONE_SCREEN, IPAD_SCREEN):
             with self.subTest(measured_screen=screen), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)
@@ -99,7 +103,11 @@ class DeviceFilterVisualIdentityTestsCases:
                 with self.assertRaises(IdentityAssertionError):
                     public_frame_photos_from_bytes(frame, glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES[IPHONE_SCREEN])
                 (evidence / "album-play-1.png").write_bytes(frame)
-                self.assertEqual(evaluate_filter_visual_identity(evidence, "filter-album")["marks"], [mark, "A2", "A3"])
+                report = evaluate_filter_visual_identity(evidence, "filter-album")
+                self.assertEqual(report["marks"], [mark, "A2", "A3"])
+                self.assertEqual(report["target_album_geometry"], "unmeasured")
+                self.assertEqual(report["target_album_frame_geometry"], {
+                    "album-play-1": "measured", "album-play-2": "unmeasured", "album-play-3": "unmeasured"})
 
     def test_filter_album_control_bar_gap_cannot_join_different_glyphs(self) -> None:
         for fixture_set in ("a", "b"):
@@ -148,6 +156,9 @@ class DeviceFilterVisualIdentityTestsCases:
                 report = evaluate_filter_visual_identity(evidence, "filter-album")
                 self.assertEqual(report["verdict"], "PASS")
                 self.assertEqual(report["marks"], ["A1", "A3", "A2", "A3"])
+                self.assertEqual(report["target_album_geometry"], "measured")
+                self.assertEqual(report["target_album_frame_geometry"], {
+                    name: "measured" for name in ("album-play-1", "album-play-2", "album-play-3")})
 
     def test_filter_album_rejects_wrong_or_unreadable_stacked_slots(self) -> None:
         for fixture_set, other in (("a", "b"), ("b", "a")):
@@ -714,6 +725,8 @@ class AlbumEditSwitchVisualContractTestsCases:
                         evidence = Path(raw)
                         self._write_valid_evidence(evidence, fixture_set)
                         frame = self._render_edit_switch_frame(other_set, "stacked", index, fixture_set, unreadable_top=erased)
+                        with self.assertRaisesRegex(IdentityAssertionError, "unreadable public glyph slot"):
+                            public_frame_photos_from_bytes(frame)
                         (evidence / "album-switch-b-play-1.png").write_bytes(frame)
                         with self.assertRaises(FilterContractError) as raised:
                             evaluate_filter_visual_identity(evidence, "filter-edit-switch")

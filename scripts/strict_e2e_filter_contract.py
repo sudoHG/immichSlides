@@ -678,7 +678,7 @@ TARGET_ALBUM_HOME_INDICATOR_BOXES = {
 TARGET_ALBUM_GLYPH_OVERLAY_BOXES = {(1170, 2532): (68, 2126, 1102, 2314)}
 
 
-def target_album_frame_marks(image_bytes: bytes, fixture_set: str) -> tuple[str, ...]:
+def target_album_frame_identity(image_bytes: bytes, fixture_set: str) -> tuple[tuple[str, ...], str]:
     # Unmeasured captures keep the original contract. Measured captures must pass
     # the foreground and slot gates; unreadable collages never fall back to whole-frame color.
     try:
@@ -690,7 +690,7 @@ def target_album_frame_marks(image_bytes: bytes, fixture_set: str) -> tuple[str,
             identity = classify_screenshot(image_bytes)
             marks = (require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark),)
             assert_playback_marks_in_target(marks, fixture_set)
-            return marks
+            return marks, "unmeasured"
         foreground = _display_foreground_png(image_bytes)
         with Image.open(io.BytesIO(foreground)) as image:
             size = image.size
@@ -707,8 +707,10 @@ def target_album_frame_marks(image_bytes: bytes, fixture_set: str) -> tuple[str,
                 raise FilterContractError(f"target album frame must show the public glyph of fixture {fixture_set.upper()}")
     except IdentityAssertionError as error:
         raise FilterContractError(str(error)) from error
+    except (OSError, ValueError) as error:
+        raise FilterContractError("Unrecognizable input: target album screenshot cannot be decoded") from error
     assert_playback_marks_in_target(marks, fixture_set)
-    return marks
+    return marks, "measured"
 
 
 def _extract_ids_from_request_log(log_text: str) -> list[str]:
@@ -722,17 +724,22 @@ def _evaluate_filter_album(evidence_dir: Path) -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     fixture_set = str(manifest["fixture_set"])
     marks = []
+    frame_geometry = {}
     for name in FILTER_ALBUM_STEPS:
         path = evidence_dir / f"{name}.png"
         if not path.is_file():
             raise FilterContractError(f"Missing visual input {name}.png")
-        marks.extend(target_album_frame_marks(path.read_bytes(), fixture_set))
+        frame_marks, geometry = target_album_frame_identity(path.read_bytes(), fixture_set)
+        marks.extend(frame_marks)
+        frame_geometry[name] = geometry
     return {
         "verdict": "PASS",
         "suite": "filter-album",
         "identity_source": "public_fixture_photo_mark",
         "fixture_set": fixture_set,
         "marks": marks,
+        "target_album_geometry": "measured" if set(frame_geometry.values()) == {"measured"} else "unmeasured",
+        "target_album_frame_geometry": frame_geometry,
     }
 
 

@@ -74,6 +74,19 @@ cell, and all original cell-count, white-cell, texture and slot checks apply.
 `filter-edit-switch` does not opt in. Every pinned iOS strict-suite device must
 have a measured geometry; changing a pinned device requires new measurements.
 
+The stacked target-album failure in [#373](https://github.com/sudoHG/immichSlides/issues/373)
+is fixed only on measured sizes. Unmeasured sizes keep the original whole-frame
+contract, including its known stacked-frame false pass. Successful iOS
+`album-empty` and `filter-album` visual reports add `target_album_geometry`:
+`measured` means every playback frame used the measured path; `unmeasured` means
+at least one frame used the original path. `target_album_frame_geometry` maps
+each playback screenshot step to `measured` or `unmeasured`, so mixed-size evidence
+does not hide which path judged each frame. These fields are written unchanged to
+`visual-identity-runner.json` and to `case-manifest.json` under `visual_identity`;
+no consumer reads either field. They do not affect verdicts or runner exit codes.
+Unreadable target-album playback screenshots (album-play-*) produce a FAIL contract report.
+File-read failures remain I/O errors. tvOS reports retain their existing fields.
+
 ## Explicit shard warm-up and reuse
 
 Each shard is grouped by scheme and configuration. Ordinary suites default to their

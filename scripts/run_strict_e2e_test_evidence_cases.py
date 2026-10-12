@@ -712,6 +712,25 @@ class StrictE2ERunnerTestsCasesEvidence:
                 require_visual_identity(evidence, "tvos-person")
             self.assertIn("Visual assertion failed; cannot mark SUCCESS", str(raised.exception))
 
+            from test_album_server_narrow_contract import _write_album_empty_pass
+            _write_album_empty_pass(evidence)
+            (evidence / "album-play-3.png").write_bytes(_fixture_data("a")["images"]["asset-a-3"])
+            report = require_visual_identity(evidence, "filter-album")
+            self.assertEqual(report["target_album_geometry"], "unmeasured")
+            self.assertEqual(json.loads((evidence / "visual-identity-runner.json").read_text()), report)
+            for suite in ("album-empty", "filter-album"):
+                for image_bytes in (b"", b"corrupt PNG"):
+                    with self.subTest(suite=suite, image_bytes=image_bytes):
+                        (evidence / "album-play-1.png").write_bytes(image_bytes)
+                        with self.assertRaises(CommandError) as raised:
+                            require_visual_identity(evidence, suite)
+                        self.assertEqual(raised.exception.code, 2)
+                        self.assertIn("Visual assertion failed; cannot mark SUCCESS", str(raised.exception))
+                        report = json.loads((evidence / "visual-identity-runner.json").read_text())
+                        self.assertEqual(report["verdict"], "FAIL")
+                        self.assertEqual(report["suite"], suite)
+                        self.assertIn("Unrecognizable input", report["error"])
+
 
     def test_pause_window_rejects_wrong_or_unreadable_window_detected(self) -> None:
         a5 = _fixture_data("a")["images"]["asset-a-5"]

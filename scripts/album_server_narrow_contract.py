@@ -20,7 +20,7 @@ from strict_e2e_filter_contract import (
     load_member_manifest,
     member_manifest,
     require_photo_mark,
-    target_album_frame_marks,
+    target_album_frame_identity,
 )
 from strict_e2e_photo_identity import (
     MARKS,
@@ -328,11 +328,15 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
     ]
     if len(playback_names) < 2:
         raise AlbumServerContractError("The target album needs screenshots of at least two different public identities")
-    frame_marks = [
-        target_album_frame_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set)
-        if read_stacked_slots else (_classified_mark(evidence_dir, name),)
-        for name in playback_names
-    ]
+    frame_marks = []
+    frame_geometry = {}
+    for name in playback_names:
+        if read_stacked_slots:
+            marks, geometry = target_album_frame_identity((evidence_dir / f"{name}.png").read_bytes(), fixture_set)
+            frame_geometry[name] = geometry
+        else:
+            marks = (_classified_mark(evidence_dir, name),)
+        frame_marks.append(marks)
     marks = [mark for frame in frame_marks for mark in frame]
     if len(set(marks)) < 2 or len({frozenset(frame) for frame in frame_marks}) < 2:
         raise AlbumServerContractError("The two playback screenshots must be different public identities; an asset ID is not visual proof")
@@ -351,7 +355,7 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
         raise AlbumServerContractError("Missing empty-album result screenshot")
     if _empty_result_shows_fixture_photo(result_path.read_bytes()):
         raise AlbumServerContractError("After the empty album, photos from the old non-empty pool must not keep playing")
-    return {
+    report = {
         "verdict": "PASS",
         "suite": "album-empty",
         "marks": marks,
@@ -359,6 +363,10 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
         "empty_album_id": empty_payload["album_id"],
         "start_enabled_after_empty_album": _empty_album_start_state(empty_payload),
     }
+    if read_stacked_slots:
+        report["target_album_geometry"] = "measured" if set(frame_geometry.values()) == {"measured"} else "unmeasured"
+        report["target_album_frame_geometry"] = frame_geometry
+    return report
 
 
 def evaluate_server_switch_evidence(evidence_dir: Path) -> dict[str, Any]:

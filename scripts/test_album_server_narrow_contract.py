@@ -660,7 +660,12 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                         public_frame_slot_count_from_bytes(frame)
                     (directory / "album-play-1.png").write_bytes(frame)
                     main_result = evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=False)
-                    self.assertEqual(evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=True), main_result)
+                    report = require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
+                    self.assertEqual(json.loads((directory / "visual-identity-runner.json").read_text()), report)
+                    self.assertEqual(report.pop("target_album_geometry"), "unmeasured")
+                    self.assertEqual(report.pop("target_album_frame_geometry"), {
+                        "album-play-1": "unmeasured", "album-play-2": "unmeasured"})
+                    self.assertEqual(report, main_result)
         # Measured sizes retain the background gate even for a main-passing single photo.
         for screen in (IPHONE_SCREEN, IPAD_SCREEN):
             with self.subTest(measured_screen=screen), tempfile.TemporaryDirectory() as raw:
@@ -698,7 +703,12 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                     public_frame_photos_from_bytes(frame, glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES[IPHONE_SCREEN])
                 (directory / "album-play-1.png").write_bytes(frame)
                 main_result = evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=False)
-                self.assertEqual(evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=True), main_result)
+                report = require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
+                self.assertEqual(json.loads((directory / "visual-identity-runner.json").read_text()), report)
+                self.assertEqual(report.pop("target_album_geometry"), "unmeasured")
+                self.assertEqual(report.pop("target_album_frame_geometry"), {
+                    "album-play-1": "measured", "album-play-2": "unmeasured"})
+                self.assertEqual(report, main_result)
 
     def test_measured_system_boxes_cannot_hide_a_photo_slot(self) -> None:
         from strict_e2e_filter_contract import TARGET_ALBUM_HOME_INDICATOR_BOXES
@@ -769,6 +779,10 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                 report = require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
                 self.assertEqual(report["verdict"], "PASS")
                 self.assertEqual(report["marks"], ["A1", "A3", "A2"])
+                self.assertEqual(report["target_album_geometry"], "measured")
+                self.assertEqual(report["target_album_frame_geometry"], {
+                    "album-play-1": "measured", "album-play-2": "measured"})
+                self.assertEqual(json.loads((directory / "visual-identity-runner.json").read_text()), report)
                 # One multi-photo screenshot cannot stand in for the second capture,
                 # and repeating the same collage cannot prove navigation to a new identity.
                 (directory / "album-play-2.png").unlink()
@@ -847,6 +861,8 @@ class EmptyResultIdentityTests(unittest.TestCase):
             report = require_visual_identity(directory, "tvos-album-empty")
         self.assertEqual(report["verdict"], "PASS")
         self.assertGreaterEqual(len(set(report["marks"])), 2)
+        self.assertNotIn("target_album_geometry", report)
+        self.assertNotIn("target_album_frame_geometry", report)
 
     def test_synthetic_iphone_album_empty_pack_passes_offline(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
