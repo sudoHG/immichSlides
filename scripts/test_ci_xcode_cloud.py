@@ -1978,6 +1978,29 @@ class CloudEvidenceTests(unittest.TestCase):
             expand_skipped_ui_matrix(FIXTURE_UI, run, ios_jobs, cloud=True)
 
 
+class DisabledLegacyRoutingTests(unittest.TestCase):
+    def test_disabled_legacy_router_never_creates_an_asc_client_even_for_forced_modes(self):
+        import ci_xcode_cloud_route as router
+        fixture = CloudEvidenceTests()
+        fixture.setUp()
+        api, factory = Mock(), Mock()
+        with patch.object(router, "current_producer", return_value={"head": {"ref": "branch"}}), \
+                patch.object(router, "trusted_admissions", return_value={123: fixture.record}), \
+                patch.object(cloud, "archive_evidence_run", return_value=dict(fixture.run,
+                    archive_job={"status": "completed", "conclusion": "success"})), \
+                patch.object(router, "selection_open", return_value=True), \
+                patch.object(router, "github_capacity", return_value={"congested": True}) as capacity, \
+                patch.object(router, "admitted_population") as population:
+            for mode in ("auto", "force-congestion", "force-start-failure"):
+                with self.subTest(mode=mode):
+                    override = fixture.run["head_sha"] + ":" + mode if mode != "auto" else ""
+                    result = router.route_run(api, factory, fixture.run, override=override)
+                    self.assertEqual((result["decision"], result["reason"]), ("github", "routing-disabled"))
+            factory.assert_not_called()
+            capacity.assert_not_called()
+            population.assert_not_called()
+
+
 class RoutingPolicyTests(unittest.TestCase):
     def test_inventory_reuses_exact_heads_and_bounds_stuck_builds_without_quota_artifacts(self):
         import ci_xcode_cloud_route as router
@@ -2249,7 +2272,9 @@ class RoutingPolicyTests(unittest.TestCase):
 
     def setUp(self):
         import ci_xcode_cloud_route as router
-        for context in (patch.object(router, "selection_open", return_value=True),
+        # Retain enabled-policy coverage independently of the disabled shipping switch.
+        for context in (patch.object(router, "ROUTING_ENABLED", True),
+                        patch.object(router, "selection_open", return_value=True),
                         patch.object(cloud, "archive_evidence_run", side_effect=lambda api, run: dict(run,
                             archive_job={"id": 999, "status": "completed", "conclusion": "success"})),
                         patch("ci_publish.git")):

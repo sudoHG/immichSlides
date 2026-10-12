@@ -22,7 +22,7 @@ from ci_xcode_cloud_api import credential_context, jwt
 import ci_xcode_cloud_state as state
 from ci_xcode_cloud_client import RenewingAppStoreConnect, RetryingGitHub
 
-ROUTING_ENABLED = True
+ROUTING_ENABLED = False
 CAP_MINUTES = 45 * 60
 MAC_RUNNING_THRESHOLD = 5
 QUEUE_SECONDS = 120
