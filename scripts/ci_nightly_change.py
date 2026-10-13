@@ -2,9 +2,10 @@
 """Decide whether a scheduled nightly has anything new to verify.
 
 Runs on Linux from the scheduled main commit with the GitHub API only; the
-workflow never runs it for another event. The baseline is the newest scheduled
-nightly on main that completed with a verified real result (pass or fail).
-Nights skipped by this check are passed over; the first cancelled, unfinished,
+workflow never runs it for another event. Scheduled and full manual nightlies
+on main count; a queued or active one covers only its exact source commit.
+Otherwise the baseline must have a verified real result (pass or fail).
+Nights skipped by this check are passed over; the first cancelled, unrelated unfinished,
 infrastructure-incomplete or unverifiable night ends the search. The nightly is
 skipped when main is still the baseline commit or when every change since it is
 classified as not affecting the app or its tests by the baseline's own
@@ -31,6 +32,9 @@ SKIP_REASONS = {"unchanged", "non-affecting-changes"}
 RUN_REASONS = {"event-not-schedule", "no-baseline", "baseline-not-ancestor", "changes-affect-app-or-ci",
                "decision-unavailable"}
 REAL_RESULT_CONCLUSIONS = {"success", "failure"}
+ACTIVE_RUN_STATUSES = {"queued", "in_progress", "waiting", "pending", "requested"}
+FULL_MANUAL_TITLE = "ci-nightly full"
+DIAGNOSTIC_MANUAL_TITLE = "ci-nightly diagnostic"
 INFRASTRUCTURE_ERROR_PREFIXES = ("missing shard", "invalid or missing", "producer infrastructure", "single-shard")
 EXECUTION_ARTIFACT_PREFIXES = ("nightly-aggregate-", "nightly-strict-", "nightly-ui-aggregate-")
 RECENT_RUNS = 20
@@ -99,6 +103,7 @@ def run_evidence(api, run):
     matrix = raw.get("matrix")
     if (raw.get("run") != {"id": str(run_id), "attempt": attempt} or raw.get("status") not in {"passed", "failed"}
             or not isinstance(identity, dict) or identity.get("commit_sha") != run["head_sha"]
+            or raw.get("diagnostic_shard") is not None
             or not isinstance(matrix, dict) or matrix.get("equal") is not True or not isinstance(raw.get("errors"), list)
             or any(not isinstance(error, str) or error.startswith(INFRASTRUCTURE_ERROR_PREFIXES) for error in raw["errors"])
             or (raw.get("schema_version") == 2) != ("ui" in raw) or raw.get("schema_version") not in {1, 2}
@@ -107,17 +112,35 @@ def run_evidence(api, run):
     return "real"
 
 
-def pick_baseline(runs, repository, current_run_id, evidence):
-    """Newest verified real-result scheduled main night; skipped nights are passed over and doubt ends the search."""
+def pick_baseline(runs, repository, current_run_id, evidence, head_sha=None):
+    """Newest full main night: active only for the same SHA, otherwise a verified real result; doubt ends the search."""
     candidates = sorted((run for run in runs
-                         if run.get("event") == "schedule" and run.get("head_branch") == "main"
+                         if run.get("event") in {"schedule", "workflow_dispatch"} and run.get("head_branch") == "main"
                          and run.get("id") != current_run_id
                          and (run.get("head_repository") or {}).get("full_name") == repository),
                         key=lambda run: (run["created_at"], run["id"]), reverse=True)
     for run in candidates:
+        verdict = None
+        if run["event"] == "workflow_dispatch":
+            title = run.get("display_title")
+            if title == DIAGNOSTIC_MANUAL_TITLE:
+                continue
+            if title != FULL_MANUAL_TITLE:
+                # Older dispatches have no input-derived title; only complete execution can prove their scope.
+                if run.get("status") != "completed" or run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
+                    continue
+                verdict = evidence(run)
+                if verdict != "real":
+                    continue
+        # An older run owns coverage; simultaneous triggers must not both skip in favor of each other.
+        if (run.get("status") in ACTIVE_RUN_STATUSES and run.get("conclusion") is None
+                and run.get("head_sha") == head_sha and (current_run_id == 0 or run["id"] < current_run_id)):
+            sha(run["head_sha"])
+            require(type(run["id"]) is int and run["id"] > 0, "invalid baseline run")
+            return {"run_id": run["id"], "sha": run["head_sha"], "created_at": run["created_at"]}
         if run.get("status") != "completed" or run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
             return None
-        verdict = evidence(run)
+        verdict = verdict or evidence(run)
         if verdict == "skipped":
             continue
         if verdict != "real":
@@ -131,7 +154,7 @@ def pick_baseline(runs, repository, current_run_id, evidence):
 def decide(*, event, head_sha, runs, repository, current_run_id, is_ancestor, classify, evidence):
     if event != "schedule":
         return {"decision": "run", "reason": "event-not-schedule", "baseline": None}
-    baseline = pick_baseline(runs, repository, current_run_id, evidence)
+    baseline = pick_baseline(runs, repository, current_run_id, evidence, head_sha)
     if baseline is None:
         return {"decision": "run", "reason": "no-baseline", "baseline": None}
     result = {"baseline": baseline}
@@ -168,13 +191,15 @@ def classify_between(baseline_sha, head_sha):
 
 
 def scheduled_history(repository, token):
-    """Recent scheduled main runs plus the evidence reader that shares their rate-limit budget."""
+    """Recent scheduled and manual main runs, sharing one rate-limit budget with the evidence reader."""
     from ci_publish import RateLimitWaitingGitHub
     from urllib.parse import urlencode
     deadline = time.monotonic() + API_DEADLINE_SECONDS
     api = RateLimitWaitingGitHub(repository, token, lambda: deadline - time.monotonic())
-    query = urlencode({"event": "schedule", "branch": "main", "per_page": RECENT_RUNS})
-    runs = api.repo(f"actions/workflows/{NIGHTLY_WORKFLOW_FILE}/runs?{query}")["workflow_runs"]
+    runs = []
+    for event in ("schedule", "workflow_dispatch"):
+        query = urlencode({"event": event, "branch": "main", "per_page": RECENT_RUNS})
+        runs.extend(api.repo(f"actions/workflows/{NIGHTLY_WORKFLOW_FILE}/runs?{query}")["workflow_runs"])
     return runs, lambda run: run_evidence(api, run)
 
 
