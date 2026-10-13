@@ -536,15 +536,14 @@ def map_pr(api, run, *, current=True, allow_closed=False):
         pr = api.repo(f"pulls/{positive(candidate['number'])}")
         if allow_closed:
             require(pr["state"] in {"open", "closed"}, "producer PR state is unknown")
-        if ((pr["state"] == "open" or allow_closed and pr["state"] == "closed")
-                and (allow_closed or not current or pr["head"]["sha"] == run["head_sha"])
+        if ((pr["state"] == "open" and (not current or pr["head"]["sha"] == run["head_sha"])
+             or allow_closed and pr["state"] == "closed" and pr["head"]["sha"] == run["head_sha"])
                 and pr["head"]["repo"]["full_name"] == run["head_repository"]["full_name"]
                 and pr["base"]["ref"] == "main" and pr["base"]["repo"]["full_name"] == api.repository):
             matches.append(pr)
     require(len(matches) == 1, "producer has no unique current PR mapping")
     if allow_closed:
         check_closed_pr(matches[0], api.repository)
-        require(not current or matches[0]["head"]["sha"] == run["head_sha"], "producer has no unique current PR mapping")
     return matches[0]
 
 
@@ -574,10 +573,12 @@ def admit(api, event):
                      if w["id"] == run["workflow_id"] and w["path"] == run["path"]), None)
     require(workflow is not None, "untrusted producer")
     verify_workflow(run, workflow, api.repository)
-    pr = map_pr(api, run, allow_closed=True) if run["event"] == "pull_request" else None
+    if run["event"] == "pull_request":
+        map_pr(api, run, current=False, allow_closed=True)
     records = trusted_admissions(api, [run["id"]])
     if run["id"] in records:
         return None
+    pr = map_pr(api, run) if run["event"] == "pull_request" else None
     reference_sha = pr["merge_commit_sha"] if pr else api.repo("git/ref/heads/main")["object"]["sha"]
     sha(reference_sha)
     commit_sha = reference_sha if pr else run["head_sha"]
