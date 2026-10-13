@@ -477,6 +477,12 @@ iteration flags are used. Both official attempts and invocations remain in the
 records. A passing retry is `flaky-passed`; an unlisted failure, skipped/crashed/
 missing retry or reset failure remains failed. Reset failures preserve attempt
 1's observations and `retry-invocations.json`, and record infrastructure failure.
+The producer initializes its registry evaluation date before simulator or fixture
+preparation and retains the existing date refresh before listed-only retries.
+Scoped official-discovery shards (summary v2) therefore retain valid coverage
+diagnostics after early failures, with missing official cases marked `not-run`;
+their shard and coverage verdict stay failed. The trusted publisher still derives its evaluation date independently
+from the producer run metadata.
 An official-result read error records `official-result-read-failed` with its
 exception type and a bounded message. Validated completed cases survive an
 incomplete result; only missing official cases stay `not-run`. Exit 124 marks

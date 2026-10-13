@@ -496,7 +496,8 @@ def main(argv=None, *, simulator_prepared=False):
         declared = inputs_record["population"]["declared"]
         policy, deselections = inputs_record["policy"], inputs_record["deselections"]
         registry, revision = inputs_record["registry"], inputs_record["registry_revision"]
-        evaluated_on = None
+        # Supply a registry date even when preparation fails before retry setup.
+        evaluated_on = date.today()
         rows = coverage_rows(declared, None, {"testNodes": []}, args.device)
         summary = {"schema_version": 1, "identity": identity,
                    "source": {"repository": identity["repository"], "workflow_path": workflow,

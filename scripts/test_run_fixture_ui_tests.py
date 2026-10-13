@@ -50,6 +50,60 @@ class FixtureCoverageTests(unittest.TestCase):
                             self.assertEqual(len(calls), 1)
                 self.assertNotIn("private-input", "\n".join(reports))
 
+    def test_early_fixture_failures_keep_registry_date_and_nonpassing_coverage(self):
+        from datetime import date
+        from strict_e2e_runner_support import InfrastructureTimeout
+        from test_ci_summary import discovery_summary
+        from ci_summary import parse_summary
+        from ci_verdict import parse_policy
+        for stage in ("simulator", "inventory", "service"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                root, output = Path(directory, "checkout"), Path(directory, "output")
+                root.mkdir()
+                bundle = Path(directory, "private/result/fixture.xcresult")
+                bundle.mkdir(parents=True)
+                seed = discovery_summary()
+                policy = parse_policy((runner.ROOT / "scripts/ci-test-policy.json").read_text())
+                inputs = {"hashes": seed["hashes"], "population": dict(seed["population"], compiled=[], observed=[]),
+                          "policy": policy, "discovery_policy": policy, "deselections": [],
+                          "registry": {"schema_version": 1, "entries": []}, "registry_revision": "b" * 40}
+                error = runner.CommandError("Synthetic " + stage + " preparation failure")
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}))
+                    for name, value in (("ROOT", root), ("run_identity", seed["identity"]),
+                                        ("source_metadata", (".github/workflows/ci-ui.yml", False)),
+                                        ("fixture_inputs", inputs), ("toolchain", seed["toolchain"]),
+                                        ("prepare_fixture_result_bundle", bundle), ("verify_simulator_device", None),
+                                        ("stop_exact_process", None), ("finalize_fixture_run", [])):
+                        stack.enter_context(patch.object(runner, name, value if name == "ROOT" else unittest.mock.Mock(return_value=value)))
+                    clock = stack.enter_context(patch.object(runner, "date"))
+                    clock.today.return_value = date(2026, 10, 13)
+                    stack.enter_context(patch.object(runner, "prepare_simulator", side_effect=error if stage == "simulator" else None))
+                    stack.enter_context(patch.object(runner, "simulator_inventory", return_value={},
+                        side_effect=InfrastructureTimeout("simulator-inventory", 60) if stage == "inventory" else None))
+                    stack.enter_context(patch.object(runner.subprocess, "Popen"))
+                    stack.enter_context(patch.object(runner, "wait_for_service", side_effect=error))
+                    launch = stack.enter_context(patch.object(runner, "run_xcode_attempts"))
+                    scan = stack.enter_context(patch.object(runner, "write_sensitive_scan"))
+                    evaluate = stack.enter_context(patch.object(runner, "evaluate_population", wraps=runner.evaluate_population))
+                    stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                    stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                    code = runner.main(["--device", "iphone", "--destination", "platform=iOS Simulator,id=target",
+                        "--output-dir", str(output), "--xctestrun", str(root / "unused.xctestrun"), "--shard", "scoped-a",
+                        "--shard-manifest", str(root / "unused.json"), "--scoped-plan-sha256", "e" * 64,
+                        "--compiled-from-official-results", "--listed-only-retry"])
+                self.assertNotEqual(code, 0)
+                launch.assert_not_called()
+                scan.assert_called_once()
+                self.assertEqual(evaluate.call_args.kwargs["evaluated_on"], date(2026, 10, 13))
+                result = parse_summary((output / "summary.json").read_text())
+                self.assertEqual(result["status"], "failed")
+                self.assertTrue(any(stage in item["message"] for item in result["infrastructure"]))
+                self.assertTrue(all(item["outcome"] == "not-run" for item in result["population"]["observed"]))
+                verdict = json.loads((output / "coverage-verdict.json").read_text())
+                self.assertEqual(verdict["status"], "failed")
+                self.assertFalse(any("trusted producer evaluation date" in message for message in verdict["errors"]))
+
     def test_candidate_deselection_changes_cannot_override_base_discovery_eligibility(self):
         import hashlib
         from test_ci_summary import discovery_summary
