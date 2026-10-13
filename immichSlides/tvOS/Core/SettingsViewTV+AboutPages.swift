@@ -1,5 +1,6 @@
 import SwiftUI
 
+// Validation-only head for the grouped Cloud start-failure path.
 extension SettingsViewTV {
     var aboutSettingsView: some View {
         TVSettingsPageScaffold(
