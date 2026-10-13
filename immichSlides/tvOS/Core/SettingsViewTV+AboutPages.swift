@@ -1,5 +1,7 @@
 import SwiftUI
 
+// The About page keeps its tvOS-specific focus behavior in this source file.
+
 extension SettingsViewTV {
     var aboutSettingsView: some View {
         TVSettingsPageScaffold(
