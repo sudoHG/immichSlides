@@ -170,8 +170,13 @@ class FixtureCoverageTests(unittest.TestCase):
                         "--shard-manifest", str(root / "manifest.json"), "--scoped-plan-sha256", "e" * 64,
                         "--compiled-from-official-results", "--listed-only-retry", "--failure-screenshots"]
                 attachments = []
+                inventory_calls = []
                 def run(command, **kwargs):
                     self.assertTrue(gate_finished, "simulator inventory must wait for readiness")
+                    if command[:3] == ["xcrun", "simctl", "list"]:
+                        inventory_calls.append(command)
+                        if len(inventory_calls) == 1:
+                            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
                     if "attachments" in command:
                         attachments.append(command)
                     return SimpleNamespace(returncode=0, stdout=b"{}")
@@ -199,6 +204,9 @@ class FixtureCoverageTests(unittest.TestCase):
                     stack.enter_context(contextlib.redirect_stderr(stderr))
                     code = runner.main(argv, simulator_prepared=shape == "complete")
                     runner.reset_simulator_app.assert_called_once_with("target", boot_submitted=True)
+                    runner.wait_for_service.assert_called_once_with(work / "ready.json", unittest.mock.ANY,
+                                                                    startup_log=work / "service.log")
+                self.assertEqual(len(inventory_calls), 2)
                 tests = [command for command in commands if command[0] == "xcodebuild"]
                 self.assertEqual(len(tests), 1)
                 self.assertNotIn("-enumerate-tests", tests[0])

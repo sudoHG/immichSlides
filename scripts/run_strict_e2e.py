@@ -789,33 +789,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             write_case_manifest(arguments.evidence_dir, case_manifest)
         service_scenario, input_key, starts_service = scenario_settings(arguments.scenario)
         if starts_service:
-            service_process = subprocess.Popen(
-                [
-                    sys.executable,
-                    str(REPO_ROOT / "scripts/strict_e2e_server.py"),
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    "0",
-                    "--fixture-set",
-                    arguments.fixture_set,
-                    "--scenario",
-                    service_scenario,
-                    "--ready-file",
-                    str(ready_path),
-                    "--log-file",
-                    str(service_log_path),
-                ],
-                cwd=REPO_ROOT,
-                stdout=None,
-                stderr=subprocess.DEVNULL,
-            )
-            host, port = wait_for_service(ready_path, service_process)
-            server_url = f"http://{host}:{port}/api"
-            if arguments.suite in DUAL_SERVER_SUITES:
-                ready_b = arguments.evidence_dir / "service-b-ready.json"
-                service_log_b_path = arguments.evidence_dir / "service-b.log"
-                service_process_b = subprocess.Popen(
+            service_startup_path = arguments.evidence_dir / "service-startup.log"
+            with open(service_startup_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
+                service_process = subprocess.Popen(
                     [
                         sys.executable,
                         str(REPO_ROOT / "scripts/strict_e2e_server.py"),
@@ -824,19 +800,47 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         "--port",
                         "0",
                         "--fixture-set",
-                        "b",
+                        arguments.fixture_set,
                         "--scenario",
                         service_scenario,
                         "--ready-file",
-                        str(ready_b),
+                        str(ready_path),
                         "--log-file",
-                        str(service_log_b_path),
+                        str(service_log_path),
                     ],
                     cwd=REPO_ROOT,
-                    stdout=None,
+                    stdout=log,
                     stderr=subprocess.DEVNULL,
                 )
-                host_b, port_b = wait_for_service(ready_b, service_process_b)
+            host, port = wait_for_service(ready_path, service_process, startup_log=service_startup_path)
+            server_url = f"http://{host}:{port}/api"
+            if arguments.suite in DUAL_SERVER_SUITES:
+                ready_b = arguments.evidence_dir / "service-b-ready.json"
+                service_log_b_path = arguments.evidence_dir / "service-b.log"
+                service_startup_b_path = arguments.evidence_dir / "service-b-startup.log"
+                with open(service_startup_b_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
+                    service_process_b = subprocess.Popen(
+                        [
+                            sys.executable,
+                            str(REPO_ROOT / "scripts/strict_e2e_server.py"),
+                            "--host",
+                            "127.0.0.1",
+                            "--port",
+                            "0",
+                            "--fixture-set",
+                            "b",
+                            "--scenario",
+                            service_scenario,
+                            "--ready-file",
+                            str(ready_b),
+                            "--log-file",
+                            str(service_log_b_path),
+                        ],
+                        cwd=REPO_ROOT,
+                        stdout=log,
+                        stderr=subprocess.DEVNULL,
+                    )
+                host_b, port_b = wait_for_service(ready_b, service_process_b, startup_log=service_startup_b_path)
                 server_url_b = f"http://{host_b}:{port_b}/api"
         else:
             server_url, unreachable_reservation = reserve_unreachable_server_url()
