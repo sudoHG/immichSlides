@@ -502,6 +502,17 @@ main records 7 days. Raw result bundles, Xcode logs and runtime launch inputs
 stay on the private result path and are never uploaded. Successful bundles are
 disposed; failed bundles remain quarantined until reviewed and deleted locally.
 
+Failed method nodes and UI observations also include the fixed `failure_phase`
+and `failure_class` enums described in
+[public failure diagnostics](CI_STRICT_RUNNER.md#public-failure-diagnostics).
+Each failed attempt retains its own labels; the observation keeps the first
+failure's labels even when a listed retry passes. Existing private official
+failure reads feed the reviewed prefix mapper, and unknown messages become
+`unknown`. The non-retry coverage path uses the enriched official method export.
+These optional fields preserve historical summary schemas and do not participate
+in verdicts, population accounting or retry admission. The sensitive scanner
+accepts only paired, allowlisted enum values before either upload check.
+
 ## Capacity, timeouts and measurement
 
 Scoped pull requests bind only their non-empty selected shards with base-computed

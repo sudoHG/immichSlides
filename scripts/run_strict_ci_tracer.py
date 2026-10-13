@@ -67,14 +67,19 @@ def validate_case_export(evidence, platform, suite, official=None):
         path = evidence / f"official-tests{suffix}.json"
         if not path.is_file():
             continue
-        facts = official_tests_facts(decode(path.read_text()))["test_cases"]
+        payload = decode(path.read_text())
+        facts = official_tests_facts(payload)["test_cases"]
         require(len(facts) == 1, "official export must contain exactly one selected method per invocation")
         bundle, name = selector.split("/", 1)
         require(facts[0]["bundle"] == bundle and facts[0]["identifier"] == name + "()", "official selected method differs from case")
         require(facts[0]["result"] in {"Passed", "Failed", "Skipped"}, "unknown official method outcome")
         counts["totalTestCount"] += 1
         counts[{"Passed": "passedTests", "Failed": "failedTests", "Skipped": "skippedTests"}[facts[0]["result"]]] += 1
-        methods.append({"identifier": name, "result": facts[0]["result"]})
+        method = {"identifier": name, "result": facts[0]["result"]}
+        if method["result"] == "Failed":
+            from ci_failure_diagnostics import test_node_diagnostics, unknown_diagnostics
+            method.update(test_node_diagnostics(payload).get(name, unknown_diagnostics()))
+        methods.append(method)
     require(methods, "official test identity export is missing")
     require(official is None or counts == {key: official[key] for key in counts}, "official counts differ from exported method outcomes")
     return methods

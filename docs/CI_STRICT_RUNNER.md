@@ -290,6 +290,39 @@ nonzero exits remain failures. Filter-person combines its three session exports
 and requires all three passes. Exit 0 means all automated tracer checks completed,
 not release eligibility.
 
+### Public failure diagnostics
+
+Failed method nodes in `official-tests*.json` and the tracer's
+`trace.json` `official_methods` carry two fixed enums:
+
+- `failure_phase`: `interval_setup`, `hidden_controls`, `visible_scene_capture`,
+  `background_return`, `continue_timing`, `paused_hold`, `settings_navigation`,
+  `control_action`, `unknown`.
+- `failure_class`: `interval_readback`, `hidden_controls`, `scene_identity`,
+  `process_lifetime`, `timing_window`, `navigation`, `snapshot_query`, `unknown`.
+
+The code-defined allowlists and reviewed assertion-prefix table live in
+[`ci_failure_diagnostics.py`](../scripts/ci_failure_diagnostics.py). The lifecycle
+and History flows have no existing phase activity marker, so the mapper reads
+private official legacy failure summaries and discards all message suffixes.
+Only `testFailureSummaries` supplies messages; a `testWarningSummaries` entry
+for the same method cannot replace or obscure its failure label.
+XCTest assertion and caught `AssertionError.message` wrappers are recognized;
+unmatched, missing or conflicting messages yield `unknown` for both fields.
+Snapshot/hittability failures identify only the class, with an unknown phase.
+These labels locate a check; they do not establish a product or infrastructure
+root cause. No assertion text, observed value, path, identifier or frame is
+added to public records by the mapper.
+
+One additional private export is attempted only for a failed invocation, bounded
+by the existing official export timeout. Read failures yield unknown diagnostics
+without changing the official result, population, retry eligibility or exit code.
+The recorded export hash binds the enriched public bytes. Historical records
+without diagnostics remain valid. The existing sensitive scan additionally
+requires paired string fields from these exact allowlists in JSON records,
+rejecting free text, duplicate diagnostic keys and malformed diagnostic JSON;
+credential scanning, publication checks and bundle quarantine remain in force.
+
 The separate simulator creation/preparation steps also publish compact records on
 failure using `--preparation-failed`: each declared case is failed with a `not-run`
 attempt and an infrastructure reason, with no claimed compilation or execution.

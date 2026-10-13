@@ -622,6 +622,109 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 
+class FailureDiagnosticsTests(unittest.TestCase):
+    def test_official_warnings_do_not_replace_the_selected_method_failure_diagnostics(self):
+        from ci_failure_diagnostics import legacy_diagnostics
+        name = {"_value": "Flow.testFailure()"}
+        payload = {"issues": {
+            "testFailureSummaries": {"_values": [{"testCaseName": name,
+                "message": {"_value": "failed - The iOS slider must be settable to 30 seconds."}}]},
+            "testWarningSummaries": {"_values": [{"testCaseName": name,
+                "message": {"_value": "private warning text"}}]}}}
+        self.assertEqual(legacy_diagnostics(payload), {"Flow/testFailure": {
+            "failure_phase": "interval_setup", "failure_class": "interval_readback"}})
+
+    def test_reviewed_prefixes_map_private_values_and_unmatched_messages_stay_unknown(self):
+        from ci_failure_diagnostics import classify_messages, PREFIX_RULES, unknown_diagnostics
+        for prefix, phase, kind in PREFIX_RULES:
+            with self.subTest(prefix=prefix):
+                expected = {"failure_phase": phase, "failure_class": kind}
+                for message in (prefix + " private-value", "XCTAssertTrue failed - " + prefix + " private-value",
+                                'failed: caught error: "message(\\"' + prefix + '\\")"',
+                                'failed - message("' + prefix + '")'):
+                    self.assertEqual(classify_messages([message]), expected)
+        for messages in ([], ["unreviewed private text"], ["interval_setup"], [None],
+                         ["The iOS slider must be settable to 30 seconds.", "unreviewed private text"],
+                         ["The iOS slider must be settable to 30 seconds.", "Failed to get matching snapshot"]):
+            with self.subTest(messages=messages):
+                self.assertEqual(classify_messages(messages), unknown_diagnostics())
+        self.assertEqual(classify_messages(["XCTAssertTrue failed - The iOS slider must be settable to 30 seconds."]),
+                         {"failure_phase": "interval_setup", "failure_class": "interval_readback"})
+        self.assertEqual(classify_messages(["Failed to get matching snapshot: PRIVATE_SENTINEL"]),
+                         {"failure_phase": "unknown", "failure_class": "snapshot_query"})
+        self.assertEqual(classify_messages(["XCTAssertEqual failed: (PRIVATE_SENTINEL) - After pausing, the rendered transform/frame of every SmartFill slot must stay frozen"]),
+                         {"failure_phase": "paused_hold", "failure_class": "scene_identity"})
+
+    def test_private_export_and_tracer_publish_only_enums_without_changing_failure(self):
+        import subprocess
+        from run_strict_ci_tracer import validate_case_export
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            name = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
+            payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
+                {"nodeType": "Test Case", "nodeIdentifier": name + "()", "result": "Failed"}]}]}
+            legacy = {"issues": {"testFailureSummaries": {"_values": [{
+                "testCaseName": {"_value": name.replace("/", ".") + "()"},
+                "message": {"_value": "XCTAssertTrue failed - The iOS slider must be settable to 30 seconds. PRIVATE_SENTINEL"}}]}}}
+            def export(command, **kwargs):
+                return subprocess.CompletedProcess(command, 0, json.dumps(legacy if "--legacy" in command else payload).encode(), b"")
+            summary = TestResultsSummary(1, 0, 1, 0, "Failed")
+            with mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
+                    mock.patch("run_strict_e2e.read_official_test_results_summary", return_value=summary):
+                strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"])
+            exported = (evidence / "official-tests.json").read_text()
+            self.assertNotIn("PRIVATE_SENTINEL", exported)
+            self.assertNotIn("slider", exported)
+            self.assertEqual(validate_case_export(evidence, "ios", "smoke"), [{"identifier": name, "result": "Failed",
+                "failure_phase": "interval_setup", "failure_class": "interval_readback"}])
+            strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+            self.assertEqual(json.loads((evidence / "sensitive-scan.json").read_text())["result"], "PASS")
+
+    def test_scanner_accepts_enums_and_rejects_free_text_even_without_credentials(self):
+        from ci_failure_diagnostics import FAILURE_PHASES, FAILURE_CLASSES
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            path = evidence / "record.json"
+            for phase in FAILURE_PHASES:
+                for kind in FAILURE_CLASSES:
+                    path.write_text(json.dumps({"methods": [{"failure_phase": phase, "failure_class": kind}]}))
+                    strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+            for value in ("private assertion text", "interval_setup PRIVATE_SENTINEL", None, ["unknown"]):
+                for field in ("failure_phase", "failure_class"):
+                    with self.subTest(field=field, value=value):
+                        path.write_text(json.dumps({"failure_phase": "unknown", "failure_class": "unknown", field: value}))
+                        with self.assertRaises(CommandError):
+                            strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+                        self.assertEqual(json.loads((evidence / "sensitive-scan.json").read_text())["result"], "FAIL")
+            for raw_json in ('{"failure_phase":"private text","failure_phase":"unknown","failure_class":"unknown"}',
+                             '{"failure_phase":"unknown"}', '{"failure_phase":"private text"'):
+                with self.subTest(raw_json=raw_json):
+                    path.write_text(raw_json)
+                    with self.assertRaises(CommandError):
+                        strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+
+    def test_diagnostic_read_failure_retains_official_failure_and_unknown_enums(self):
+        import subprocess
+        from ci_failure_diagnostics import unknown_diagnostics
+        for private_failure in (ValueError("PRIVATE_SENTINEL"), subprocess.TimeoutExpired("private-command", 60)):
+            with self.subTest(private_failure=type(private_failure).__name__), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                payload = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": "Flow/testFailure()", "result": "Failed"}]}
+                def export(command, **kwargs):
+                    if "--legacy" in command:
+                        raise private_failure
+                    return subprocess.CompletedProcess(command, 0, json.dumps(payload).encode(), b"")
+                with mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
+                        mock.patch("run_strict_e2e.read_official_test_results_summary", return_value=TestResultsSummary(1, 0, 1, 0, "Failed")):
+                    digest = strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"])
+                node = json.loads((evidence / "official-tests.json").read_text())["testNodes"][0]
+                self.assertEqual({field: node[field] for field in unknown_diagnostics()}, unknown_diagnostics())
+                self.assertEqual(node["result"], "Failed")
+                self.assertEqual(json.loads((evidence / "official-summary.json").read_text())["failedTests"], 1)
+                self.assertEqual(digest, strict_runner.hashlib.sha256((evidence / "official-tests.json").read_bytes()).hexdigest())
+                self.assertNotIn("PRIVATE_SENTINEL", (evidence / "official-tests.json").read_text())
+
+
 class StrictCITracerTests(unittest.TestCase):
     def test_preparation_failure_records_every_planned_case_without_starting_a_runner(self):
         import run_strict_ci_tracer as tracer
@@ -714,7 +817,10 @@ class StrictCITracerTests(unittest.TestCase):
                 self.assertEqual(summary["population"]["compiled"], summary["population"]["declared"])
                 self.assertEqual(summary["population"]["observed"][0]["outcome"], "failed")
                 self.assertEqual(trace["warm"][0]["official_summary"]["totalTestCount"], 1)
-                self.assertEqual([{"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": official_result}],
+                method = {"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": official_result}
+                if official_result == "Failed":
+                    method.update(failure_phase="unknown", failure_class="unknown")
+                self.assertEqual([method],
                                  trace["warm"][0]["official_methods"])
                 self.assertEqual(trace["warm"][0]["exit_code"], 124 if infrastructure else 65)
                 self.assertEqual(summary["infrastructure"], infrastructure)
@@ -729,7 +835,8 @@ class StrictCITracerTests(unittest.TestCase):
             payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
                 {"nodeType": "Test Case", "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()", "result": "Failed"}]}]}
             (evidence / "official-tests.json").write_text(json.dumps(payload))
-            self.assertEqual([{"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": "Failed"}],
+            self.assertEqual([{"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": "Failed",
+                               "failure_phase": "unknown", "failure_class": "unknown"}],
                              validate_case_export(evidence, "ios", "smoke"))
             with self.assertRaises(ValueError):
                 validate_case_export(evidence, "ios", "smoke", {

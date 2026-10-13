@@ -132,6 +132,8 @@ def duration_seconds(value):
 
 
 def coverage_rows(declared, compiled, official, device):
+    from ci_failure_diagnostics import test_node_diagnostics, unknown_diagnostics
+    diagnostics = test_node_diagnostics(official)
     expected = {entry["key"]: entry for entry in declared}
     compiled_keys = {entry["key"] for entry in compiled or []}
     require(len(compiled_keys) == len(compiled or []), "duplicate compiled identity")
@@ -148,6 +150,8 @@ def coverage_rows(declared, compiled, official, device):
             observed[key] = {"identity": expected[key], "device": device, "outcome": outcome,
                              "duration_seconds": duration_seconds(node["durationInSeconds"]),
                              "reason": None if outcome == "passed" else "Official XCTest " + node["result"]}
+            if outcome == "failed":
+                observed[key].update(diagnostics.get(key, unknown_diagnostics()))
         children = node.get("children", [])
         require(isinstance(children, list), "invalid official test children")
         for child in children:
@@ -615,6 +619,11 @@ def main(argv=None, *, simulator_prepared=False):
                         if item["outcome"] in {"failed", "skipped"}:
                             message = read_problem_reason(path, item["identity"]["key"], export_timeout_seconds=args.result_export_timeout_seconds)
                             item["attempts"][0]["message"] = message
+                            if item["outcome"] == "failed":
+                                from ci_failure_diagnostics import classify_messages
+                                diagnostics = classify_messages([message])
+                                item.update(diagnostics)
+                                item["attempts"][0].update(diagnostics)
                             if item["outcome"] == "skipped":
                                 item["attempts"][0]["reason"] = message
                 except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
@@ -660,6 +669,12 @@ def main(argv=None, *, simulator_prepared=False):
                      "duration_seconds": observed[entry["key"]]["duration_seconds"] if entry["key"] in observed else 0,
                      "reason": observed[entry["key"]]["attempts"][-1]["reason"] if entry["key"] in observed else "compiled but no official result"}
                     for entry in selected]
+            from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, unknown_diagnostics
+            for row in rows:
+                if row["outcome"] in {"failed", "crashed", "flaky-passed"}:
+                    item = observed[row["identity"]["key"]]
+                    row.update({field: item[field] for field in DIAGNOSTIC_FIELDS}
+                               if DIAGNOSTIC_FIELDS <= item.keys() else unknown_diagnostics())
         else:
             code = execute(command, "test")
             if official_mode:
@@ -698,7 +713,9 @@ def main(argv=None, *, simulator_prepared=False):
                 if row["outcome"] in {"skipped", "failed"}:
                     row["reason"] = read_problem_reason(bundle, row["identity"]["key"], export_timeout_seconds=args.result_export_timeout_seconds)
             summary["population"]["observed"] = [observation(row["identity"], row["outcome"], row["duration_seconds"],
-                                                  reason=row["reason"], exit_code=0 if row["outcome"] == "passed" else code if official_mode else None)
+                                                  reason=row["reason"], exit_code=0 if row["outcome"] == "passed" else code if official_mode else None,
+                                                  failure_diagnostics={field: row[field] for field in ("failure_phase", "failure_class")}
+                                                  if row["outcome"] == "failed" else None)
                                                  for row in rows]
         if code == 0:
             summary["status"] = "unverified" if any(row["outcome"] == "skipped" for row in rows) else "passed"

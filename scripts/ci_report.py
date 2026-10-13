@@ -110,7 +110,9 @@ def method_observations(raw, trace):
         require(isinstance(methods, list), "invalid official method list")
         seen, counts = set(), Counter()
         for method in methods:
-            require(set(method) == {"identifier", "result"} and method["identifier"] in wanted
+            from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, validate_diagnostic_fields
+            validate_diagnostic_fields(method)
+            require(set(method) == {"identifier", "result"} | (DIAGNOSTIC_FIELDS & method.keys()) and method["identifier"] in wanted
                     and method["identifier"] not in seen and method["result"] in {"Passed", "Failed", "Skipped"},
                     "unexpected or duplicate official method")
             seen.add(method["identifier"])
@@ -129,8 +131,12 @@ def method_observations(raw, trace):
                 outcome = "not-run"
             if outcome == "passed" and suite in P2_CASES:
                 outcome = "needs-human-review" if outcomes.get(identity_key(case)) == "needs-human-review" else "not-run"
+            from ci_failure_diagnostics import unknown_diagnostics
+            diagnostics = ({field: method[field] for field in DIAGNOSTIC_FIELDS}
+                           if DIAGNOSTIC_FIELDS <= method.keys() else unknown_diagnostics())
             observed.append(observation(wanted[method["identifier"]], outcome, 0,
-                exit_code=phase.get("exit_code"), reason="Official test was skipped" if outcome == "skipped" else None))
+                exit_code=phase.get("exit_code"), reason="Official test was skipped" if outcome == "skipped" else None,
+                failure_diagnostics=diagnostics if outcome == "failed" else None))
         missing.extend({"identity": wanted[key], "reason": "official-method-not-observed"} for key in sorted(wanted.keys() - seen))
         case_outcome = outcomes.get(identity_key(case))
         if case_outcome in FAILURES and not counts["Failed"]:

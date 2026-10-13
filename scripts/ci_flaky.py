@@ -312,12 +312,15 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
             raise ContractError("official result has an unknown simulator class") from error
         require(actual_class == device_class, "official result device class does not match target simulator")
     failure_outcomes = {}
+    failure_diagnostics = {}
     read_errors = []
     if any(case["result"] == "Failed" for case in facts["test_cases"]):
         try:
             details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
                                      capture_output=True, check=True, timeout=export_timeout_seconds)
             failure_outcomes = official_failure_outcomes(json.loads(details.stdout))
+            from ci_failure_diagnostics import legacy_diagnostics
+            failure_diagnostics = legacy_diagnostics(json.loads(details.stdout))
         except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
             read_errors.append(error)
     durations = {}
@@ -351,12 +354,15 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
         require(outcome is not None, "unknown XCTest outcome")
         if outcome == "failed" and failure_outcomes.get(key) == "crashed":
             outcome = "crashed"
+        from ci_failure_diagnostics import unknown_diagnostics
         return observation(identity_for_key(key), outcome, durations[raw_key],
                                    reason=("Official XCTest skip" if outcome == "skipped" else
                                            "Official XCTest crash" if outcome == "crashed" else
                                            ASSERTION_FAILURE if outcome == "failed" and failure_outcomes.get(key) == "assertion" else
                                            "Official non-assertion or unclassified failure" if outcome == "failed" else None),
-                                   exit_code=0 if outcome == "passed" else invocation_exit)
+                                   exit_code=0 if outcome == "passed" else invocation_exit,
+                                   failure_diagnostics=failure_diagnostics.get(key, unknown_diagnostics())
+                                   if outcome in {"failed", "crashed"} else None)
     for case in facts["test_cases"]:
         try:
             records.append(read_case(case))

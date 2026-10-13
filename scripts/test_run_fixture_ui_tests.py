@@ -104,6 +104,31 @@ class FixtureCoverageTests(unittest.TestCase):
                 self.assertEqual(verdict["status"], "failed")
                 self.assertFalse(any("trusted producer evaluation date" in message for message in verdict["errors"]))
 
+    def test_failed_ui_method_diagnostics_survive_coverage_and_summary_without_free_text(self):
+        from ci_summary import observation, test_identity, validate_observation
+        identity = test_identity("ui", "Flow/testFailure", platform="ios")
+        diagnostics = {"failure_phase": "interval_setup", "failure_class": "interval_readback"}
+        node = {"nodeType": "Test Case", "nodeIdentifier": "Flow/testFailure()", "result": "Failed",
+                "durationInSeconds": 1, **diagnostics}
+        for extra in (diagnostics, {}):
+            with self.subTest(extra=extra):
+                official = {"testNodes": [{key: value for key, value in node.items()
+                                           if key not in diagnostics or key in extra}]}
+                row = coverage_rows([identity], [identity], official, "iphone")[0]
+                expected = diagnostics if extra else {"failure_phase": "unknown", "failure_class": "unknown"}
+                self.assertEqual({field: row[field] for field in expected}, expected)
+                entry = observation(identity, row["outcome"], row["duration_seconds"], exit_code=65, failure_diagnostics=expected)
+                validate_observation(entry)
+                self.assertEqual(entry["outcome"], "failed")
+                self.assertEqual(entry["attempts"][0]["exit_code"], 65)
+                for field in expected:
+                    self.assertEqual(entry[field], entry["attempts"][0][field])
+                entry["attempts"][0]["failure_class"] = "private assertion text"
+                with self.assertRaises(ContractError):
+                    validate_observation(entry)
+        with self.assertRaises(ValueError):
+            coverage_rows([identity], [identity], {"testNodes": [dict(node, failure_phase="private assertion text")]}, "iphone")
+
     def test_candidate_deselection_changes_cannot_override_base_discovery_eligibility(self):
         import hashlib
         from test_ci_summary import discovery_summary

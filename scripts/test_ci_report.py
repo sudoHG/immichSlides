@@ -753,6 +753,16 @@ class ReporterTests(unittest.TestCase):
         failed["official_summary"].update(passedTests=0, failedTests=1)
         observed, _ = ci_report.method_observations(shard, {"warm": [failed]})
         self.assertEqual([method], [item["identity"] for item in observed if item["outcome"] == "failed"])
+        self.assertEqual(observed[0]["failure_phase"], "unknown")
+        failed["official_methods"][0].update(failure_phase="interval_setup", failure_class="interval_readback")
+        observed, missing = ci_report.method_observations(shard, {"warm": [failed]})
+        self.assertEqual(observed[0]["failure_phase"], "interval_setup")
+        self.assertEqual(observed[0]["attempts"][0]["failure_class"], "interval_readback")
+        self.assertEqual(observed[0]["attempts"][0]["exit_code"], 124)
+        self.assertEqual(missing, [])
+        failed["official_methods"][0]["failure_phase"] = "private assertion text"
+        with self.assertRaises(ValueError):
+            ci_report.method_observations(shard, {"warm": [failed]})
 
     def test_failures_open_update_and_reopen_one_identity_and_replays_do_not_count(self):
         first = self.transition(None, entry())

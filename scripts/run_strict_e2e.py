@@ -153,6 +153,7 @@ def reserve_unreachable_server_url() -> tuple[str, socket.socket]:
 
 
 def write_sensitive_scan(evidence_dir: Path, sensitive_values: list[str], *, output_path: Path | None = None) -> None:
+    from ci_failure_diagnostics import scan_diagnostic_json
     values = [value for value in sensitive_values if value]
     matched_files: list[str] = []
 
@@ -176,6 +177,11 @@ def write_sensitive_scan(evidence_dir: Path, sensitive_values: list[str], *, out
             raise CommandError(f"The redaction scan could not read {path.relative_to(evidence_dir)}: {error}") from error
         if logical_bytes_contain(data, values):
             matched_files.append(str(path.relative_to(evidence_dir)))
+        if path.suffix == ".json":
+            try:
+                scan_diagnostic_json(data)
+            except ValueError:
+                matched_files.append(str(path.relative_to(evidence_dir)))
     payload = {
         "checked_key_names": ["STRICT_E2E_INPUT_PUBLIC_KEY"],
         "matched_files": matched_files,
@@ -189,7 +195,7 @@ def write_sensitive_scan(evidence_dir: Path, sensitive_values: list[str], *, out
     except OSError as error:
         raise CommandError(f"Could not write the redaction scan results: {error}") from error
     if matched_files:
-        raise CommandError("The evidence redaction scan found API Key values: " + ", ".join(matched_files))
+        raise CommandError("The evidence redaction scan found API Key values or invalid failure enums: " + ", ".join(matched_files))
 
 
 def prepare_private_result_bundle_path(suite: str) -> Path:
@@ -222,7 +228,34 @@ def export_private_result_bundle(
         raise CommandError("Official test export is not a JSON object.")
     if logical_bytes_contain(completed.stdout, sensitive_values):
         raise CommandError("Official test export contains test credentials; refusing to retain it.")
-    (evidence_dir / f"official-tests{suffix}.json").write_bytes(completed.stdout)
+    from ci_failure_diagnostics import legacy_diagnostics, unknown_diagnostics
+    failed = []
+    def visit(node):
+        if isinstance(node, dict):
+            if node.get("nodeType") == "Test Case" and node.get("result") == "Failed":
+                failed.append(node)
+            children = node.get("children", [])
+            for child in children if isinstance(children, list) else []:
+                visit(child)
+    nodes = payload.get("testNodes", [])
+    for node in nodes if isinstance(nodes, list) else []:
+        visit(node)
+    diagnostics = {}
+    if failed:
+        try:
+            details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
+                                     capture_output=True, check=True, timeout=export_timeout_seconds)
+            diagnostics = legacy_diagnostics(json.loads(details.stdout))
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+            # Diagnostic availability must not change the official result or runner exit.
+            pass
+        for node in failed:
+            key = str(node.get("nodeIdentifier", "")).removesuffix("()")
+            node.update(diagnostics.get(key, unknown_diagnostics()))
+        exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
+    else:
+        exported = completed.stdout
+    (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
     if not summary_path.exists():
         # Unit/UI consumers classify explicit export timeouts; strict runs use the phase wrapper.
@@ -233,7 +266,7 @@ def export_private_result_bundle(
             "failedTests": summary.failed_tests, "skippedTests": summary.skipped_tests,
             "result": summary.result,
         }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return hashlib.sha256(completed.stdout).hexdigest()
+    return hashlib.sha256(exported).hexdigest()
 
 
 def finalize_private_result_bundle(
