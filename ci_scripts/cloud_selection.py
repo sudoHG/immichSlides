@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPOSITORY = "sudoHG/immichSlides"
@@ -19,6 +20,31 @@ MODULES = ("ci_summary", "ci_xcode_cloud", "ci_xcode_cloud_groups", "ci_xcode_cl
            "ci_ui_test_kinds", "ci_verdict")
 PUBLISHER = ("sudohg-ci[bot]", 339382712)
 MAX_BYTES = 16 * 1024 * 1024
+PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy")
+_stage = "environment"
+
+
+def stage(name):
+    # Only fixed literals identify stages; build inputs never become diagnostics.
+    global _stage
+    _stage = name
+
+
+def failure_details(error):
+    name = type(error).__name__
+    details = {"stage": _stage, "exception_class": name if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", name) else "Exception"}
+    if isinstance(error, HTTPError) and type(error.code) is int and 100 <= error.code <= 599:
+        details["http_status"] = error.code
+    code = vars(error).get("git_exit_code")
+    if isinstance(error, subprocess.CalledProcessError) and isinstance(error.cmd, (list, tuple)) and error.cmd and error.cmd[0] == "git":
+        code = error.returncode
+    if type(code) is int and -255 <= code <= 255:
+        details["git_exit_code"] = code
+    return details
+
+
+def with_apple_proxies(environment):
+    return {**environment, **{name: os.environ[name] for name in PROXY_VARIABLES if name in os.environ}}
 
 
 def require(condition, message):
@@ -53,13 +79,23 @@ def pages(path, collection=None, *, query=""):
 
 
 def git(root, *arguments):
-    environment = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "GIT_CONFIG_NOSYSTEM": "1",
-                   "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
+    environment = with_apple_proxies({"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "GIT_CONFIG_NOSYSTEM": "1",
+                                    "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"})
     value = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "fetch.recurseSubmodules=false",
                             "-C", str(root), *arguments], capture_output=True, env=environment, timeout=90)
-    require(value.returncode == 0, "Cloud trusted Git object operation failed")
+    try:
+        require(value.returncode == 0, "Cloud trusted Git object operation failed")
+    except ValueError as error:
+        error.git_exit_code = value.returncode
+        raise
     require(len(value.stdout) <= MAX_BYTES, "Cloud Git object exceeds bound")
     return value.stdout.decode("utf-8").rstrip("\n")
+
+
+def read_blob(root, revision, path):
+    return subprocess.check_output(["git", "-C", str(root), "show", revision + ":" + path],
+        env=with_apple_proxies({"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}),
+        stderr=subprocess.PIPE, timeout=60).decode()
 
 
 def listing(root, revision):
@@ -95,11 +131,14 @@ def pointer_for(statuses, head, *, workflow_id, registry_value):
 
 
 def bootstrap(root, environment):
+    stage("environment")
     require(environment.get("CI_XCODE_CLOUD") == "TRUE" and environment.get("CI_XCODEBUILD_ACTION") == "build-for-testing"
             and environment.get("CI_START_CONDITION") in {"manual", "manual_rebuild"}, "Cloud selection requires manual build-for-testing")
+    stage("checkout-identity")
     head = git(root, "rev-parse", "HEAD")
     require(re.fullmatch(r"[0-9a-f]{40}", head) is not None and environment.get("CI_COMMIT", "").lower() == head,
             "Cloud checkout differs from CI_COMMIT")
+    stage("selection-pointer-read")
     statuses = pages("commits/" + head + "/statuses")
     # The pointer chooses a base, but it cannot authorize it. Fetch main from the
     # fixed public repository and prove ancestry before loading any base code.
@@ -111,38 +150,47 @@ def bootstrap(root, environment):
         require(re.fullmatch(r"Selection only: [0-9a-f]{40} [0-9a-f]{64}", candidate.get("description", "")) is not None,
                 "Cloud pointer base is invalid")
     base = max(candidates, key=lambda row: row["id"])["description"].removeprefix("Selection only: ").split()[0]
+    stage("trusted-base-fetch")
     git(root, "fetch", "--no-tags", "https://github.com/" + REPOSITORY + ".git", "refs/heads/main")
     git(root, "merge-base", "--is-ancestor", base, "FETCH_HEAD")
+    stage("workflow-pointer")
     registration = json.loads(git(root, "show", base + ":scripts/ci-xcode-cloud-groups.json"))
     chosen = pointer_for(statuses, head, workflow_id=environment["CI_WORKFLOW_ID"].lower(), registry_value=registration)
     run_id, attempt, pointer_id, group, selected_base, digest, merge = chosen
     require(selected_base == base and registration.get("routing_enabled") is True, "Cloud registered base differs or routing is inactive")
+    stage("producer-read")
     run = public_get("actions/runs/" + str(run_id))
     require(run["id"] == run_id and run["run_attempt"] == attempt and run["head_sha"] == head
             and run["event"] == "pull_request" and run["path"] == ".github/workflows/ci-ui.yml"
             and run["repository"]["full_name"] == run["head_repository"]["full_name"] == REPOSITORY
             and run["status"] != "completed", "Cloud producer is stale or untrusted")
+    stage("producer-authority")
     recent = pages("actions/workflows/" + str(run["workflow_id"]) + "/runs", "workflow_runs",
                    query="&event=pull_request&head_sha=" + head)
     require(max(row["id"] for row in recent if row["head_repository"]["full_name"] == REPOSITORY) == run_id,
             "Cloud producer is no longer authoritative")
+    stage("pr-mapping")
     prs = pages("commits/" + head + "/pulls")
     prs = [pr for pr in prs if pr["state"] == "open" and pr["head"]["sha"] == head
            and pr["head"]["repo"]["full_name"] == REPOSITORY]
     require(len(prs) == 1, "Cloud head has no unique open maintainer PR")
+    stage("pr-admission")
     pr = public_get("pulls/" + str(prs[0]["number"]))
     require(pr["user"]["login"] == "sudoHG" and pr["user"]["id"] == 279902076
             and pr["base"]["ref"] == "main" and pr["base"]["sha"] == base
             and pr["merge_commit_sha"] == merge, "Cloud admission base or author changed")
+    stage("admitted-merge-fetch")
     git(root, "fetch", "--no-tags", "https://github.com/" + REPOSITORY + ".git", merge)
     require(git(root, "rev-list", "--parents", "-n", "1", merge).split() == [merge, base, head],
             "Cloud admitted merge parents differ")
     tree = git(root, "rev-parse", head + "^{tree}")
     require(tree == git(root, "rev-parse", merge + "^{tree}"), "Cloud head differs from admitted merge tree")
+    stage("checkout-cleanliness")
     require(not git(root, "diff", "--name-only", "HEAD"), "Cloud checkout has tracked changes before plan generation")
     identity = {"schema_version": 1, "repository": REPOSITORY, "event": "pull_request", "pull_request": pr["number"],
                 "base_sha": base, "head_sha": head, "merge_sha": merge, "tree_sha": tree}
     # Verify this entry point and all hooks before materializing executable code.
+    stage("trusted-hooks")
     head_listing, base_listing = listing(root, head), listing(root, base)
     hooks = [entry for entry in base_listing if entry["path"].startswith("ci_scripts/")]
     require({entry["path"] for entry in hooks} == {entry["path"] for entry in head_listing if entry["path"].startswith("ci_scripts/")},
@@ -150,6 +198,7 @@ def bootstrap(root, environment):
     for entry in hooks:
         require(entry["mode"] in {"100644", "100755"} and git(root, "show", base + ":" + entry["path"])
                 == git(root, "show", head + ":" + entry["path"]), "Cloud bootstrap/hook differs from trusted base")
+    stage("reader-materialization")
     with tempfile.TemporaryDirectory(prefix="immichslides-xcc-reader-") as directory:
         for module in MODULES:
             Path(directory, module + ".py").write_text(git(root, "show", base + ":scripts/" + module + ".py") + "\n", encoding="utf-8")
@@ -157,18 +206,22 @@ def bootstrap(root, environment):
         try:
             from ci_xcode_cloud_selection import recompute, runtime_plans
             import ci_xcode_cloud_groups as groups
+            stage("selection-recomputation")
             record = recompute(identity, run, pr["user"], listing=lambda revision: listing(root, revision),
-                read_blob=lambda revision, path: subprocess.check_output(["git", "-C", str(root), "show", revision + ":" + path],
-                    env={"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}, timeout=60).decode(),
+                read_blob=lambda revision, path: read_blob(root, revision, path),
                 changed_paths=git(root, "diff", "--name-only", "--no-renames", base + "..." + head).splitlines(), head_tree=tree)
+            stage("selection-hash")
             descriptor = groups.selection(record, run, group, approved=False)
             require(groups.canonical_hash(descriptor) == digest, "Cloud recomputed selection differs from pointer")
+            stage("pointer-validation")
             groups.validate_pointer(record, run, group, digest, pages("commits/" + head + "/statuses"), pointer_id=pointer_id)
+            stage("fresh-admission")
             fresh = public_get("pulls/" + str(pr["number"]))
             fresh_run = public_get("actions/runs/" + str(run_id))
             require(fresh["head"]["sha"] == head and fresh["base"]["sha"] == base
                     and fresh["user"]["login"] == "sudoHG" and fresh["user"]["id"] == 279902076
                     and fresh_run["run_attempt"] == attempt and fresh_run["status"] != "completed", "Cloud head changed during selection")
+            stage("runtime-plan-write")
             for path, plan in runtime_plans(record, descriptor).items():
                 destination = root / path
                 require(destination.is_file() and not destination.is_symlink(), "Cloud runtime plan is not a regular template")
@@ -179,10 +232,12 @@ def bootstrap(root, environment):
 
 
 def main():
+    stage("environment")
     try:
         bootstrap(Path(os.environ["CI_PRIMARY_REPOSITORY_PATH"]), os.environ)
         return 0
-    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
+        print("Cloud selection failure: " + json.dumps(failure_details(error), sort_keys=True), file=sys.stderr)
         print("Cloud selection unavailable or untrusted; refusing template execution", file=sys.stderr)
         return 1
 
