@@ -32,13 +32,12 @@ contract. Reader changes precede producer activation in a separate PR.
 The [grouped Cloud hooks](XCODE_CLOUD_UI.md) require reviewed registration.
 The grouped registry retains `override_only: true`: only an exact-head
 repository-variable override can route. All ordinary pull-request UI runs stay on
-GitHub, including core, unknown and CI-changing PRs. The coordinator restores the
-real billed-minute cap immediately after the single additionally approved
-B2-prime retry's usage is visible, before testing budget fallback. Remove the
-exact-head override as soon as its start receipt appears; if visible retry usage
-is below 0.6236 raw minutes, merge the restore first and rerun nothing.
-Keep `override_only: true` after renewal
-until separate routing activation is approved.
+GitHub, including core, unknown and CI-changing PRs. The real 1,500 billed-minute
+cap was restored before B3 budget-fallback validation. The
+[validation results and admission-snapshot boundary](XCODE_CLOUD_UI.md#budget-and-activation-boundaries)
+record the proven GitHub fallbacks and the deferred Apple TV routed-test/import
+acceptance. Keep `override_only: true` after renewal until separate routing
+activation is approved; never override or rerun pre-restore validation heads.
 Each platform has an independent Linux group wait,
 so iPhone/iPad start when the iOS provider and archive evidence are ready without
 waiting for tvOS. Each wait publishes its own operational summary and gates only

@@ -15,10 +15,12 @@ The reader supports a separate v2 protocol for functional PR tests:
 `ios` covers both iPhone and iPad; `tvos` covers Apple TV. The grouped producer,
 router and importer use the trusted-base registry. The registry permits a
 maintainer-approved Apple TV validation with `override_only: true`;
-ordinary PRs remain on GitHub even under congestion. Its temporary cap must return
-to the real allowance immediately after the real build's usage is visible, before
-budget-fallback validation. Keep `override_only: true` after restoring the cap
-and after renewal until separate routing activation is approved. Historical v1 Apple TV evidence remains
+ordinary PRs remain on GitHub even under congestion. The temporary validation cap
+was restored to the real 1,500 billed-minute allowance before budget-fallback
+validation. Keep `override_only: true` after renewal until separate routing
+activation is approved. Apple TV routed-test and import acceptance remain
+`NOT_RUN`, deferred until the 2026-11-09 04:26 UTC reset and separate approval.
+Historical v1 Apple TV evidence remains
 readable. ASC configuration remains maintainer-owned.
 Part of #283 and Part of #83.
 
@@ -319,7 +321,7 @@ The measured billed/raw ratio is approximately 1.8; it is an estimate, not an AP
 billing total. Destination multiplication remains a conservative upper estimate.
 
 The registry cap is the real 1,500 billed-minute allowance. A separately approved
-validation temporarily used 1,757 billed minutes for the one additionally
+validation temporarily raised the cap to 1,757 billed minutes for the one additionally
 approved B2-prime retry. `override_only: true`
 requires the control source to be `repository-variable` after exact-head parsing;
 the optional field must be a boolean.
@@ -331,7 +333,7 @@ Apple boundary, with no active builds. Unresolved POST
 markers still refuse admission. For the tvOS-only about/legal selection, `R=35`, so the admission
 threshold is `(873.820816667 + 0 + 35) * 1.8 + 120 = 1755.877470`.
 The additional active/unknown reservation is zero in this inventory; unresolved
-POST markers still block admission. The 1.122530 billed-minute margin admits the
+POST markers still block admission. The 1.122530 billed-minute margin admitted the
 approved retry; visible accounted retry usage above
 `(1757 - 1755.877470) / 1.8 = 0.623628` raw minutes refuses another identical
 request while these windows hold.
@@ -345,23 +347,50 @@ Validation heads change only a comment in the tvOS-only
 `immichSlides/tvOS/Core/SettingsViewTV+AboutPages.swift`: four Apple TV functional
 methods and one packed shard, with zero iPhone/iPad methods. An empty iOS group
 cannot route, and its minimum reservation also exceeds the temporary room.
-The forced start rejection (B1) and failed real build (B2) precede the separately
-approved single retry (B2-prime). Remove the exact-head repository variable as
-soon as B2-prime's `start.json` appears. As soon as B2-prime's usage is visible,
-open and merge the reviewed
-restore change: `cap_minutes: 1500`, the same real anchor and billing factor,
-`routing_enabled: true`, and `override_only: true`. Retain override-only routing
-after renewal until separate activation is approved. The temporary 1,757 cap must
-never survive past B2-prime. If visible retry usage is below 0.6236 raw minutes,
-merge the restore first and rerun nothing. An ambiguous POST is not proof of
-zero usage; reconcile it using the reviewed start deadline and visibility delay.
-Then create B3 on a fresh branch from restored main and prove budget refusal
-under the real cap. No further real Cloud start is authorized. The UTC-month/Apple-period
-maximum keeps current-period October usage counted after the November 1 UTC
-boundary;
-the real-cap guard refuses until the November 9 reset. Disable routing as
-described above if acceptance exposes an unsafe path. Full iOS and mixed-provider
-acceptance remain separate work.
+The controlled validation produced these results:
+
+- [B1 / PR #388](https://github.com/sudoHG/immichSlides/pull/388): the trusted start
+  receipt recorded an ASC HTTP 404 rejection, with zero Cloud action minutes.
+  GitHub ran all four selected Apple TV methods and the publisher accepted them.
+- [B2 / PR #389](https://github.com/sudoHG/immichSlides/pull/389): one real Cloud
+  build failed in `ci_post_clone.sh` before tests after 0.750066667 raw action
+  minutes (approximately 1.350120 estimated billed minutes). GitHub fallback ran
+  and passed all four methods; the publisher accepted that GitHub evidence.
+- [B2-prime / PR #391](https://github.com/sudoHG/immichSlides/pull/391): ASC returned
+  HTTP 500 and the receipt recorded `start-outcome-unknown`. A complete read-only
+  inventory after the start deadline plus the reviewed visibility delay found no
+  matching build and no added action minutes. GitHub passed all four methods and
+  the publisher accepted them. An ambiguous POST alone is never proof of zero usage.
+- [B3 / PR #393](https://github.com/sudoHG/immichSlides/pull/393), admitted on
+  restored main `5ba285f67c86c8d401ea34b7bdf650fa0b61d0f7`: the
+  [trusted router](https://github.com/sudoHG/immichSlides/actions/runs/38360203730/job/115172340596)
+  refused with `monthly-cap-or-reserve`, since `1755.877470 > 1500`.
+  Read-only inventory confirmed no new Cloud build or action minutes;
+  [GitHub Apple TV](https://github.com/sudoHG/immichSlides/actions/runs/38360173561/job/115173789626)
+  ran and passed all four methods, each once, with no skips. The
+  [trusted main publisher](https://github.com/sudoHG/immichSlides/actions/runs/38361328909)
+  published success for both `ci-ui` and `ci-pr-gate` from that GitHub evidence.
+
+The coordinator removed each exact-head override immediately after its start
+receipt or budget decision. The reviewed restore retained the real anchor and
+billing factor, `routing_enabled: true`, and `override_only: true`, and returned
+`cap_minutes` to 1500 before B3. No retry was rerun. Keep override-only routing
+after renewal until separate activation is approved. No further real Cloud start
+is authorized in this task.
+
+Budget decisions use the immutable producer admission's registry snapshot.
+Restoring the cap constrains new admissions on restored main; it does not rewrite
+pre-restore admissions. Never set an override for, or rerun, a pre-restore
+validation head. PRs #388, #389 and #391 were closed without merging after restore;
+the router's open-PR requirement rejects those producers.
+
+The UTC-month/Apple-period maximum keeps current-period October usage counted
+after the November 1 UTC boundary; with this inventory, new real-cap admissions
+refuse until the November 9 reset. Disable routing as described above if acceptance
+exposes an unsafe path. Cloud selected-test execution and imported evidence were
+never accepted: Apple TV routed-test/import acceptance is `NOT_RUN` and deferred
+until **2026-11-09 04:26 UTC**, requiring separate maintainer approval. Full iOS and
+mixed-provider acceptance also remain separate work.
 
 ## Maintainer setup and activation checklist
 
