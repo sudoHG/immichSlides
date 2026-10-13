@@ -582,7 +582,7 @@ class Run:
         )
         self.fixture_process = subprocess.Popen(
             command,
-            stdout=subprocess.DEVNULL,
+            stdout=None,
             stderr=subprocess.DEVNULL,
         )
         try:

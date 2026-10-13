@@ -53,6 +53,10 @@ to the archive consumer, which must run before passing the xctestrun here.
 The runner verifies the destination UDID's CoreSimulator device type before
 building, then requires the official result to record exactly that UDID, model
 class and simulator platform. A CLI device label alone cannot claim coverage.
+Only timed-out inventory queries use the shared bounded readiness retry;
+invalid or mismatched results fail immediately. Service phase timing is
+forwarded from the private log with bounded, allowlisted fields. Both contracts
+are described in the [strict-runner guide](CI_STRICT_RUNNER.md#fixture-service-startup).
 
 `--only-testing immichSlidesUITests/<Class>/<method>` reproduces an exact test;
 repeat it for multiple tests. The runner rejects selections outside the default

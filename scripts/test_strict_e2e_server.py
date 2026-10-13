@@ -15,7 +15,7 @@ import unittest
 import urllib.error
 import urllib.request
 import zlib
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
@@ -167,6 +167,35 @@ def logged_request_events(log: str, *, size: str) -> list[tuple[str, str, int]]:
 
 
 class StrictE2EServerContractTests(unittest.TestCase):
+    def test_startup_phases_distinguish_fixture_bind_and_ready_write_failures(self) -> None:
+        for phase in ("fixture-build", "bind", "ready-write", "success"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                output, errors = io.StringIO(), io.StringIO()
+                ready = Path(directory) / "private-input" / "ready.json"
+                with mock.patch.object(strict_e2e_server.StrictE2EServer, "serve_forever"), \
+                        redirect_stdout(output), redirect_stderr(errors):
+                    if phase == "fixture-build":
+                        failure = mock.patch.object(strict_e2e_server, "fixture_manifest", side_effect=OSError("private-input"))
+                    elif phase == "bind":
+                        failure = mock.patch.object(strict_e2e_server.socketserver.TCPServer, "server_bind", side_effect=OSError("private-input"))
+                    elif phase == "ready-write":
+                        failure = mock.patch.object(Path, "write_text", side_effect=OSError("private-input"))
+                    else:
+                        failure = mock.patch.object(strict_e2e_server.time, "monotonic", wraps=time.monotonic)
+                    with failure:
+                        code = server_main(["--port", "0", "--fixture-set", "c", "--ready-file", str(ready)])
+                self.assertEqual(code, 0 if phase == "success" else 2)
+                self.assertNotIn("private-input", output.getvalue() + errors.getvalue())
+                lines = output.getvalue().splitlines()
+                for line in lines:
+                    self.assertRegex(line, r"^fixture-startup: phase=(fixture-build|bind|ready-write); state=(started|completed); elapsed=\d+\.\d{3}s; total=\d+\.\d{3}s$")
+                if phase == "success":
+                    self.assertTrue(ready.is_file())
+                    self.assertIn("phase=ready-write; state=completed", lines[-1])
+                else:
+                    self.assertIn(f"phase={phase}; state=started", lines[-1])
+                    self.assertFalse(ready.exists())
+
     def test_binding_serves_health_without_reverse_dns(self) -> None:
         with mock.patch.object(socket, "getfqdn", side_effect=AssertionError("Bind must not resolve reverse DNS")) as lookup:
             with RunningServer() as server:

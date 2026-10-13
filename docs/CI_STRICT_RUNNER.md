@@ -146,6 +146,23 @@ after simulator preparation succeeded. Sixty seconds provides bounded startup
 headroom; the actual delayed recovery time was not recorded. Test and product
 deadlines are unchanged, and an unhealthy service still fails the run.
 
+The service flushes fixed startup-phase records for import, fixture build, bind
+and ready-file write, with elapsed and total seconds at each boundary. They
+contain no input values, addresses or paths. Strict runs capture stdout in the
+private `service-startup.log` and, for a peer service, `service-b-startup.log`
+inside the evidence directory; request logs remain separate. Strict and fixture
+UI waiters forward at most eight allowlisted records from the first 4 KiB of
+their service stdout log and append the last observed phase/state to a startup
+`CommandError`. Hosted strict tracers keep the detailed records in private
+`runner.log`, but echo that phase-bearing error line to the public job log.
+iPad pause host runs publish the service's records directly.
+
+The absence of separate phase lines in a hosted strict public log does not
+imply that the child reported none. An absent phase field on a strict or fixture
+UI startup error means the bounded reader obtained no valid record; an unreadable log or
+records beyond its prefix can also explain that absence. Neither establishes
+where startup stalled.
+
 ## Shared simulator reset
 
 Strict, fixture UI, listed-retry and standalone access runners share
@@ -171,6 +188,14 @@ successful preparation state to the fixture runner, which skips the redundant
 Bootstatus, readiness queries and all reset mutations still run. Strict hosted jobs prepare
 the device before cold builds or case runners. Toolchain/pins checks run before
 early boot; only archive downloads overlap boot in the UI workflows.
+
+The fixture UI device-inventory query uses the same timed-out-query retry logic
+and a separate 300-second readiness budget: 10, 20, 40, then at most 60 seconds
+per attempt, clamped to the remaining budget. Nonzero exits, malformed JSON,
+missing/unavailable destinations and mismatched device types fail without a
+retry; even a valid response after the deadline fails. Logs name
+`simulator-inventory`, attempt counts, elapsed time and deadline overrun without
+command arguments or output. This does not change the service's 60-second budget.
 
 Boot and readiness finish before the existing 120-second reset deadline starts;
 termination, uninstall, the post-uninstall container check and state resets share

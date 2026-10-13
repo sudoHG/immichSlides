@@ -30,7 +30,7 @@ from run_host_checks import run_identity, source_metadata, toolchain
 from run_offline_unit_tests import CommandError as OfflineCommandError, _stop_process_group
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
                             prepare_private_result_bundle_path, write_sensitive_scan)
-from strict_e2e_runner_support import CommandError, destination_udid, prepare_simulator, reset_simulator_app, stop_exact_process, wait_for_service
+from strict_e2e_runner_support import CommandError, destination_udid, prepare_simulator, reset_simulator_app, simulator_inventory, stop_exact_process, wait_for_service
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 from access_lifecycle_contract import logical_bytes_contain
 from ci_wait_policy import FACTOR_ENVIRONMENT_KEY, wait_configuration
@@ -518,9 +518,7 @@ def main(argv=None, *, simulator_prepared=False):
         platform = DEVICES[args.device]
         expected_destination = "tvOS Simulator" if platform == "tvos" else "iOS Simulator"
         require(args.destination.startswith("platform=" + expected_destination + ","), "wrong simulator platform")
-        inventory = subprocess.run(["xcrun", "simctl", "list", "devices", "available", "--json"],
-                                   capture_output=True, check=True, timeout=60)
-        verify_simulator_device(json.loads(inventory.stdout), udid, args.device)
+        verify_simulator_device(simulator_inventory(), udid, args.device)
         plan_name = "immichSlides-" + ("tvOS" if platform == "tvos" else "iOS")
         bundle = prepare_fixture_result_bundle()
         bundles.append(bundle)
@@ -532,7 +530,7 @@ def main(argv=None, *, simulator_prepared=False):
                                         "--host", "127.0.0.1", "--port", "0", "--ready-file", str(work / "ready.json"),
                                         "--log-file", str(work / "service-requests.log")],
                                        env=env, stdout=log, stderr=subprocess.STDOUT)
-        host, port = wait_for_service(work / "ready.json", service)
+        host, port = wait_for_service(work / "ready.json", service, startup_log=work / "service.log")
         print(f"Fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
         timeout = args.timeout_minutes * 60
         def execute(command, name):

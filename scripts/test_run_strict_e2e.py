@@ -94,6 +94,28 @@ from run_strict_e2e_test_configuration_cases import StrictE2ERunnerTestsCasesCon
 from run_strict_e2e_test_evidence_cases import StrictE2ERunnerTestsCasesEvidence
 
 class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunnerTestsCasesEvidence, unittest.TestCase):
+    def test_service_timeout_reports_only_bounded_allowlisted_startup_phases(self):
+        import strict_e2e_runner_support as support
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            startup_log = root / "startup.log"
+            safe = "fixture-startup: phase=fixture-build; state=started; elapsed=0.000s; total=0.123s"
+            startup_log.write_text("private-input /private/path\n" + safe + "\n" +
+                safe + " private-input\n" + "x" * 4096 + "\n" +
+                "fixture-startup: phase=ready-write; state=completed; elapsed=0.001s; total=0.124s\n")
+            clock = [0.0]
+            process = mock.Mock(pid=7)
+            process.poll.return_value = None
+            with mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                    mock.patch.object(support.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                    mock.patch("builtins.print") as report, self.assertRaises(CommandError) as error:
+                support.wait_for_service(root / "ready.json", process, startup_log=startup_log)
+            output = "\n".join(call.args[0] for call in report.call_args_list)
+            self.assertEqual(output, safe)
+            self.assertNotIn("private-input", str(error.exception) + output)
+            self.assertIn("startup_phase=fixture-build; startup_state=started", str(error.exception))
+            self.assertGreaterEqual(clock[0], 60)
+
     def test_service_startup_accepts_slow_health_but_preserves_failure_checks(self):
         import strict_e2e_runner_support as support
         from urllib.error import HTTPError
@@ -230,6 +252,45 @@ from run_strict_e2e_test_p2_cases import StrictE2EP2RunnerTestsCases
 import run_strict_e2e as strict_runner
 
 class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
+    def test_service_failure_exposes_private_startup_phase_for_either_server(self):
+        import contextlib
+        import strict_e2e_runner_support as support
+        for failed_server in (1, 2):
+            with self.subTest(failed_server=failed_server), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw) / "evidence"
+                logs = []
+                def launch(command, **kwargs):
+                    phase = "fixture-build" if not logs else "bind"
+                    line = f"fixture-startup: phase={phase}; state=started; elapsed=0.000s; total=0.123s\n"
+                    log = kwargs["stdout"]
+                    logs.append(Path(log.name) if log is not None else None)
+                    if log is not None:
+                        log.write(("private-input /private/path\n" + line).encode())
+                        log.flush()
+                    process = mock.Mock(pid=100 + len(logs))
+                    process.poll.return_value = 0
+                    process.wait.return_value = 0
+                    return process
+                def wait(ready, process):
+                    if len(logs) == failed_server:
+                        raise CommandError("Test service health check timed out (last_state=ready-file-missing).")
+                    return "127.0.0.1", 1234
+                with mock.patch("run_strict_e2e.subprocess.Popen", side_effect=launch), \
+                        mock.patch.object(support, "_wait_for_service", side_effect=wait), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    code, _, stderr, _ = self._run_p2_main(
+                        evidence, suite="filter-switch", platform="ios", model="iPhone")
+                self.assertEqual(code, 2, stderr)
+                phase = "fixture-build" if failed_server == 1 else "bind"
+                self.assertIn(f"CommandError: Test service health check timed out (last_state=ready-file-missing). "
+                              f"startup_phase={phase}; startup_state=started.", stderr)
+                self.assertNotIn("private-input", stderr)
+                self.assertNotIn("/private/path", stderr)
+                expected = [evidence / "service-startup.log", evidence / "service-b-startup.log"][:failed_server]
+                self.assertEqual(logs, expected)
+                for log in logs:
+                    self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
+
     def _run_p2_main(
         self,
         evidence: Path,
