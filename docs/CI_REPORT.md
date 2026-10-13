@@ -13,6 +13,9 @@ triggering producer run and the prior verified reporting snapshot. Its job condi
 checks the head repository and event: gate/UI must be main pushes, and nightly must
 be scheduled or manually dispatched on main. PR and fork completions do not start
 reporter jobs and are also excluded by collection and issue synchronization.
+Producer selection uses `workflow_run.path`, so custom run names cannot suppress a
+nightly completion report. Workflow policy rejects name-based conditions in consumers
+of producers with `run-name`.
 Daily scheduled/manual collection finds recent main pushes and nightlies, skips completed attempts already in the snapshot
 and revisits pending runs. It never repeats two days of artifact reads per completion.
 Branch diagnostic nightlies, including historical #158 probes, remain excluded.

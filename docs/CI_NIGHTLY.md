@@ -1,7 +1,14 @@
 # Nightly strict and fixture UI tiers
 
-`ci-nightly` schedules at 21:15 UTC on the default branch
-and supports `workflow_dispatch` on a selected branch. PRs touching its entry points
+`ci-nightly` schedules a primary run at 14:07 UTC (22:07 Beijing) and a backup at
+19:07 UTC (03:07 Beijing the next day) on the default branch, avoiding the busy
+top of the hour, and supports
+`workflow_dispatch` on a selected branch. GitHub has typically started scheduled
+runs 3–4 hours late and can miss a trigger entirely; these times are requests, not
+start-time guarantees. A full nightly takes about seven hours, so the primary is
+expected to deliver results in the Beijing morning, around 08:07–09:07 with that
+delay (05:07 without it). If the primary is lost, the backup targets 10:07 without
+delay; the same delay can push its results to 13:07–14:07. PRs touching its entry points
 run planning and credential-free live probes. Branch dispatches provide diagnostic
 execution evidence. It has read-only permissions and no publisher, reporter or
 release authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
@@ -58,14 +65,39 @@ dependencies are `scripts/ci_*.py`, the setup scripts and the pins, all CI-trust
 so a commit that edits any of them is classified as affecting by the baseline's policy and
 runs the night instead of deciding its own fate.
 
-`scripts/ci_nightly_change.py` walks the recent scheduled `ci-nightly` runs on main from the
-newest. A night skipped by this check (a verified `nightly-change` record, no execution
+`scripts/ci_nightly_change.py` walks recent scheduled and full manual `ci-nightly` runs
+on main from the newest. A full manual run has no diagnostic input: `shard` is empty
+and `live_only`, `ui_only`, `strict_only` and `probe_environment_refusal` are all false.
+Manual dispatches have the input-derived run name `ci-nightly full` or `ci-nightly diagnostic`,
+so the API reader can identify full manual runs even before they produce artifacts;
+diagnostic manual runs never count. Older manual runs without this name count only
+after their aggregate proves complete execution with a real result.
+Scheduled runs are named `ci-nightly scheduled`; PR planning/probe runs are named
+`ci-nightly PR <number>` and cannot be mistaken for a full manual nightly.
+
+A scheduled run (primary or backup) skips when a full nightly already covers the same main SHA:
+it is queued or in progress (including waiting/pending/requested states), or completed
+with a verified real result, pass **or** fail. Active coverage applies only to the same
+SHA and supplies no completed-result evidence. A new app- or CI-affecting main commit
+runs. A cancelled primary or an infrastructure failure without a real result cannot
+suppress the backup. Manual dispatches themselves still always execute.
+An interrupted later run does not erase another full run's proven or active coverage
+of that exact SHA.
+Only an older active run can cover the current run, so simultaneous triggers cannot
+both skip in favor of each other.
+If the backup skips on an active primary that is then cancelled or fails infrastructure
+without a real result, that night can be lost. The next scheduled trigger runs to recover
+when no other complete nightly covers the SHA; the skipped backup is not restarted.
+
+Without exact-SHA coverage, the original real-result baseline rule still applies.
+A night skipped by this check (a verified `nightly-change` record, no execution
 artifacts) is passed over. The first other night must be the baseline: completed with a
 real result, pass **or** fail, with its aggregate artifact present, for the same run,
 attempt and commit, a complete strict matrix and no infrastructure error, and a complete UI
 tier (every planned shard and sample present, timing for every shard, and only genuine test
 failures in its verdict, so a missing shard or a step timeout never counts). A cancelled, timed-out,
-unfinished or infrastructure-incomplete night, or one whose evidence is expired or missing,
+unfinished night that cannot cover this run (including a newer active run for the same SHA),
+an infrastructure-incomplete night, or one whose evidence is expired or missing,
 ends the search with no baseline and the nightly runs. The nightly is skipped when:
 
 - the SHA equals the baseline's, or
@@ -116,8 +148,8 @@ python3 -B scripts/ci_nightly_change.py --dry-run --repository <owner>/<name> \
     [--head-sha <commit>] [--event schedule]
 ```
 
-Set `GH_TOKEN` to avoid unauthenticated rate limits. A real `workflow_dispatch` runs the job
-but cannot prove the schedule path (the event differs, and a dispatch is never a baseline),
+Set `GH_TOKEN` to avoid unauthenticated rate limits. A real `workflow_dispatch` leaves the
+change job empty and cannot prove the schedule path (the event differs),
 so the first scheduled nights after this lands are the real acceptance: check the
 `nightly-change-*` artifact and summary of each, and that a skipped night shows only the
 `change` job.

@@ -28,8 +28,8 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name != 'workflow_run' ||
       (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' &&
-      ((github.event.workflow_run.name == 'ci-nightly' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event.workflow_run.event)) ||
-      (contains(fromJSON('["ci-gate","ci-ui"]'), github.event.workflow_run.name) && github.event.workflow_run.event == 'push'))))
+      ((github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event.workflow_run.event)) ||
+      (contains(fromJSON('[".github/workflows/ci-gate.yml",".github/workflows/ci-ui.yml"]'), github.event.workflow_run.path) && github.event.workflow_run.event == 'push'))))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

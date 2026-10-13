@@ -531,7 +531,7 @@ class AdmissionVerdictTests(unittest.TestCase):
             return {"id": number, "event": event, "head_branch": branch, "status": status, "conclusion": conclusion, "run_attempt": 1,
                     "head_repository": {"full_name": repository}, "created_at": created, "head_sha": sha}
         verdicts = {1: "real", 2: "real", 3: "skipped", 4: "real", 5: None}
-        ignored = [run(20, head, "2026-10-04T21:15:00Z", event="workflow_dispatch"),
+        ignored = [dict(run(20, head, "2026-10-04T21:15:00Z", event="workflow_dispatch"), display_title="ci-nightly diagnostic"),
                    run(21, head, "2026-10-04T21:16:00Z", branch="topic"), run(22, head, "2026-10-04T21:17:00Z", repository="other/photos")]
         calls = []
         def classify(baseline, source):
@@ -562,7 +562,7 @@ class AdmissionVerdictTests(unittest.TestCase):
         # The newest night that is cancelled, unfinished, unverifiable or concluded another way ends the search: run.
         for label, newest in (("cancelled", run(4, head, "2026-10-05T21:15:00Z", "cancelled")),
                               ("timed out", run(4, head, "2026-10-05T21:15:00Z", "timed_out")),
-                              ("unfinished", run(4, head, "2026-10-05T21:15:00Z", None, status="in_progress")),
+                              ("unfinished older commit", run(4, old, "2026-10-05T21:15:00Z", None, status="in_progress")),
                               ("unverified", run(5, head, "2026-10-05T21:15:00Z", "failure"))):
             with self.subTest(newest=label):
                 self.assertEqual(("run", "no-baseline"), outcome(decide([real_older, real_old, newest])))
@@ -604,6 +604,8 @@ class AdmissionVerdictTests(unittest.TestCase):
                 ("wrong commit", [aggregate_artifact], {**aggregate, "identity": {"commit_sha": head}}, night),
                 ("wrong run", [aggregate_artifact], {**aggregate, "run": {"id": "8", "attempt": 1}}, night),
                 ("matrix incomplete", [aggregate_artifact], {**aggregate, "matrix": {"equal": False}}, night),
+                ("diagnostic manual", [aggregate_artifact], {**aggregate, "diagnostic_shard": "strict-only"},
+                 dict(night, event="workflow_dispatch")),
                 ("infrastructure error", [aggregate_artifact], {**aggregate, "errors": ["missing shard ui-a"]}, night),
                 ("UI aggregate absent", [aggregate_artifact], {**aggregate, "schema_version": 2}, night),
                 ("UI record unreadable", [aggregate_artifact], {**aggregate, "schema_version": 2, "ui": {}}, night)):
@@ -617,6 +619,83 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.assertIsNone(evidence(dict(skipped_night, conclusion="failure"), [record_artifact], skip_record))
         with self.assertRaises(ci_summary.ContractError):
             evidence(skipped_night, [record_artifact], {**skip_record, "head_sha": head})
+
+    def test_nightly_backup_uses_only_full_main_runs_for_the_same_commit(self):
+        import ci_nightly_change as change
+        head, old = "c" * 40, "b" * 40
+        primary = {"id": 9, "event": "schedule", "head_branch": "main", "status": "in_progress", "conclusion": None,
+                   "run_attempt": 1, "head_repository": {"full_name": "example/photos"}, "head_sha": head,
+                   "created_at": "2026-10-13T14:00:00Z"}
+        def decide(run, verdict=None):
+            return change.decide(event="schedule", head_sha=head, runs=[run], repository="example/photos", current_run_id=10,
+                                 is_ancestor=lambda *args: True,
+                                 classify=lambda *args: {"app_affected": True, "ci_changing": False, "paths": 1,
+                                                         "affected_paths": ["immichSlides/App.swift"], "ci_paths": []},
+                                 evidence=lambda item: verdict)
+        for status in ("queued", "in_progress", "waiting", "pending", "requested"):
+            with self.subTest(status=status):
+                result = decide({**primary, "status": status})
+                self.assertEqual(("skip", "unchanged"), (result["decision"], result["reason"]))
+                record = change.make_record(result, event="schedule", repository="example/photos", head_sha=head, run_id=10, attempt=1)
+                change.validate_record(record, repository="example/photos", head_sha=head, run_id=10, attempt=1, event="schedule")
+                self.assertEqual(9, record["baseline"]["run_id"])
+        for conclusion in ("success", "failure"):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual("skip", decide({**primary, "status": "completed", "conclusion": conclusion}, "real")["decision"])
+        for conclusion in ("cancelled", "timed_out", "failure", "success"):
+            with self.subTest(no_result=conclusion):
+                self.assertEqual("run", decide({**primary, "status": "completed", "conclusion": conclusion})["decision"])
+        for status in ("in_progress", "completed"):
+            with self.subTest(new_commit=status):
+                self.assertEqual("run", decide({**primary, "head_sha": old, "status": status, "conclusion": "success"}, "real")["decision"])
+        for changes in ({"event": "pull_request"}, {"head_branch": "topic"}, {"id": 10}, {"id": 11}, {"conclusion": "cancelled"},
+                        {"head_repository": {"full_name": "other/photos"}}, {"status": "unknown"}):
+            with self.subTest(untrusted=changes):
+                self.assertEqual("run", decide({**primary, **changes})["decision"])
+        manual = {**primary, "event": "workflow_dispatch", "display_title": "ci-nightly full"}
+        self.assertEqual("skip", decide(manual)["decision"])
+        self.assertEqual("skip", decide({**manual, "status": "queued"})["decision"])
+        self.assertEqual("skip", decide({**manual, "status": "completed", "conclusion": "success"}, "real")["decision"])
+        self.assertEqual("run", decide({**manual, "status": "completed", "conclusion": "failure"})["decision"])
+        self.assertEqual("run", decide({**manual, "status": "completed", "conclusion": "cancelled"})["decision"])
+        self.assertEqual("run", decide({**manual, "head_sha": old, "status": "completed", "conclusion": "success"}, "real")["decision"])
+        # A later interrupted full dispatch cannot erase coverage already owned by the primary.
+        interrupted = {**manual, "id": 11, "created_at": "2026-10-13T18:00:00Z", "status": "completed", "conclusion": "cancelled"}
+        for status in ("in_progress", "completed"):
+            with self.subTest(covered_primary=status):
+                result = change.decide(event="schedule", head_sha=head,
+                                       runs=[{**primary, "status": status, "conclusion": "success" if status == "completed" else None}, interrupted],
+                                       repository="example/photos", current_run_id=12, is_ancestor=lambda *args: True,
+                                       classify=lambda *args: self.fail("covered primary must not classify changes"),
+                                       evidence=lambda item: "real" if item["id"] == 9 else None)
+                self.assertEqual("skip", result["decision"])
+        # Legacy full dispatches need real evidence; an ambiguous active dispatch cannot suppress the backup.
+        legacy = {**manual, "display_title": "ci-nightly"}
+        self.assertEqual("run", decide(legacy)["decision"])
+        self.assertEqual("skip", decide({**legacy, "status": "completed", "conclusion": "success"}, "real")["decision"])
+        for status in ("queued", "in_progress", "completed"):
+            with self.subTest(diagnostic=status):
+                self.assertEqual("run", decide({**manual, "display_title": "ci-nightly diagnostic", "status": status,
+                                               "conclusion": "success"}, "real")["decision"])
+
+        # Both histories must reach the real decision seam; querying only schedules loses manual coverage.
+        from urllib.parse import parse_qs, urlsplit
+        queries = []
+        class Api:
+            def __init__(self, *args):
+                pass
+            def repo(self, path):
+                query = parse_qs(urlsplit(path).query)
+                queries.append(query)
+                return {"workflow_runs": [manual] if query["event"] == ["workflow_dispatch"] else []}
+        with patch("ci_publish.RateLimitWaitingGitHub", Api):
+            runs, evidence = change.scheduled_history("example/photos", "")
+            result = change.decide(event="schedule", head_sha=head, runs=runs, repository="example/photos", current_run_id=10,
+                                   is_ancestor=lambda *args: self.fail("same-SHA coverage must not classify changes"),
+                                   classify=lambda *args: self.fail("same-SHA coverage must not classify changes"), evidence=evidence)
+        self.assertEqual("skip", result["decision"])
+        self.assertEqual(["schedule", "workflow_dispatch"], [query["event"][0] for query in queries])
+        self.assertTrue(all(query["branch"] == ["main"] for query in queries))
 
     def test_nightly_change_check_fails_open_and_records_the_decision(self):
         import ci_nightly_change as change

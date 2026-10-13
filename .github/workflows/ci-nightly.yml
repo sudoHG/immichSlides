@@ -1,8 +1,12 @@
 name: ci-nightly
+run-name: >-
+  ci-nightly ${{ github.event_name == 'workflow_dispatch' && ((inputs.shard != '' || inputs.live_only || inputs.ui_only || inputs.strict_only || inputs.probe_environment_refusal) && 'diagnostic' || 'full') || github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || 'scheduled' }}
 
 on:
   schedule:
-    - cron: '15 21 * * *'
+    # Primary: 14:07 UTC / 22:07 Beijing; backup: 19:07 UTC / 03:07 Beijing the next day.
+    - cron: '7 14 * * *'
+    - cron: '7 19 * * *'
   workflow_dispatch:
     inputs:
       shard:
@@ -75,7 +79,7 @@ jobs:
         run: |
           /usr/bin/python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from ci_build_archive import workspace_preflight; workspace_preflight(Path.cwd())'
           /usr/bin/python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/nightly-python"
-      - name: Compare this commit with the last scheduled nightly that produced a real result
+      - name: Check full nightly coverage and changes since the last real result
         id: decision
         if: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/main' }}
         env:
