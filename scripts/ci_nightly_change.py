@@ -113,41 +113,53 @@ def run_evidence(api, run):
 
 
 def pick_baseline(runs, repository, current_run_id, evidence, head_sha=None):
-    """Newest full main night: active only for the same SHA, otherwise a verified real result; doubt ends the search."""
+    """Prefer exact-SHA coverage; otherwise the newest real result, with the original uncertainty barriers."""
     candidates = sorted((run for run in runs
                          if run.get("event") in {"schedule", "workflow_dispatch"} and run.get("head_branch") == "main"
                          and run.get("id") != current_run_id
                          and (run.get("head_repository") or {}).get("full_name") == repository),
                         key=lambda run: (run["created_at"], run["id"]), reverse=True)
-    for run in candidates:
-        verdict = None
-        if run["event"] == "workflow_dispatch":
-            title = run.get("display_title")
-            if title == DIAGNOSTIC_MANUAL_TITLE:
-                continue
-            if title != FULL_MANUAL_TITLE:
-                # Older dispatches have no input-derived title; only complete execution can prove their scope.
-                if run.get("status") != "completed" or run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
-                    continue
-                verdict = evidence(run)
-                if verdict != "real":
-                    continue
-        # An older run owns coverage; simultaneous triggers must not both skip in favor of each other.
-        if (run.get("status") in ACTIVE_RUN_STATUSES and run.get("conclusion") is None
-                and run.get("head_sha") == head_sha and (current_run_id == 0 or run["id"] < current_run_id)):
-            sha(run["head_sha"])
-            require(type(run["id"]) is int and run["id"] > 0, "invalid baseline run")
-            return {"run_id": run["id"], "sha": run["head_sha"], "created_at": run["created_at"]}
-        if run.get("status") != "completed" or run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
-            return None
-        verdict = verdict or evidence(run)
-        if verdict == "skipped":
-            continue
-        if verdict != "real":
-            return None
+    verified = {}
+    def evidence_verdict(run):
+        if run["id"] not in verified:
+            verified[run["id"]] = evidence(run)
+        return verified[run["id"]]
+    def is_full_nightly(run):
+        if run["event"] == "schedule":
+            return True
+        title = run.get("display_title")
+        if title == DIAGNOSTIC_MANUAL_TITLE:
+            return False
+        if title == FULL_MANUAL_TITLE:
+            return True
+        # Older dispatches have no input-derived title; only complete execution can prove their scope.
+        return (run.get("status") == "completed" and run.get("conclusion") in REAL_RESULT_CONCLUSIONS
+                and evidence_verdict(run) == "real")
+    def baseline_record(run):
         sha(run["head_sha"])
         require(type(run["id"]) is int and run["id"] > 0, "invalid baseline run")
         return {"run_id": run["id"], "sha": run["head_sha"], "created_at": run["created_at"]}
+    for run in candidates:
+        if run.get("head_sha") != head_sha or not is_full_nightly(run):
+            continue
+        # An older run owns coverage; simultaneous triggers must not both skip in favor of each other.
+        active = (run.get("status") in ACTIVE_RUN_STATUSES and run.get("conclusion") is None
+                  and (current_run_id == 0 or run["id"] < current_run_id))
+        real = (run.get("status") == "completed" and run.get("conclusion") in REAL_RESULT_CONCLUSIONS
+                and evidence_verdict(run) == "real")
+        if active or real:
+            return baseline_record(run)
+    for run in candidates:
+        if not is_full_nightly(run):
+            continue
+        if run.get("status") != "completed" or run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
+            return None
+        result = evidence_verdict(run)
+        if result == "skipped":
+            continue
+        if result != "real":
+            return None
+        return baseline_record(run)
     return None
 
 

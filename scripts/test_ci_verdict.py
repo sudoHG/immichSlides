@@ -659,6 +659,16 @@ class AdmissionVerdictTests(unittest.TestCase):
         self.assertEqual("run", decide({**manual, "status": "completed", "conclusion": "failure"})["decision"])
         self.assertEqual("run", decide({**manual, "status": "completed", "conclusion": "cancelled"})["decision"])
         self.assertEqual("run", decide({**manual, "head_sha": old, "status": "completed", "conclusion": "success"}, "real")["decision"])
+        # A later interrupted full dispatch cannot erase coverage already owned by the primary.
+        interrupted = {**manual, "id": 11, "created_at": "2026-10-13T18:00:00Z", "status": "completed", "conclusion": "cancelled"}
+        for status in ("in_progress", "completed"):
+            with self.subTest(covered_primary=status):
+                result = change.decide(event="schedule", head_sha=head,
+                                       runs=[{**primary, "status": status, "conclusion": "success" if status == "completed" else None}, interrupted],
+                                       repository="example/photos", current_run_id=12, is_ancestor=lambda *args: True,
+                                       classify=lambda *args: self.fail("covered primary must not classify changes"),
+                                       evidence=lambda item: "real" if item["id"] == 9 else None)
+                self.assertEqual("skip", result["decision"])
         # Legacy full dispatches need real evidence; an ambiguous active dispatch cannot suppress the backup.
         legacy = {**manual, "display_title": "ci-nightly"}
         self.assertEqual("run", decide(legacy)["decision"])

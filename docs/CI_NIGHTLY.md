@@ -72,15 +72,18 @@ so the API reader can identify full manual runs even before they produce artifac
 diagnostic manual runs never count. Older manual runs without this name count only
 after their aggregate proves complete execution with a real result.
 
-The backup skips when the newest full nightly already covers the same main SHA:
+The backup skips when a full nightly already covers the same main SHA:
 it is queued or in progress (including waiting/pending/requested states), or completed
 with a verified real result, pass **or** fail. Active coverage applies only to the same
 SHA and supplies no completed-result evidence. A new app- or CI-affecting main commit
 runs. A cancelled primary or an infrastructure failure without a real result cannot
 suppress the backup. Manual dispatches themselves still always execute.
+An interrupted later run does not erase another full run's proven or active coverage
+of that exact SHA.
 Only an older active run can cover the current run, so simultaneous triggers cannot
 both skip in favor of each other.
 
+Without exact-SHA coverage, the original real-result baseline rule still applies.
 A night skipped by this check (a verified `nightly-change` record, no execution
 artifacts) is passed over. The first other night must be the baseline: completed with a
 real result, pass **or** fail, with its aggregate artifact present, for the same run,
