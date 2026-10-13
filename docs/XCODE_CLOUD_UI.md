@@ -14,8 +14,10 @@ confirmed allowance cap and billing anchor, and a measured billing factor.
 The reader supports a separate v2 protocol for functional PR tests:
 `ios` covers both iPhone and iPad; `tvos` covers Apple TV. The grouped producer,
 router and importer use the trusted-base registry. The registry permits a
-maintainer-approved, one-build Apple TV validation; its temporary cap must return
-to the real allowance after validation. Historical v1 Apple TV evidence remains
+maintainer-approved, one-build Apple TV validation with `override_only: true`;
+ordinary PRs remain on GitHub even under congestion. Its temporary cap must return
+to the real allowance immediately after the real build's usage is visible, before
+budget-fallback validation. Historical v1 Apple TV evidence remains
 readable. ASC configuration remains maintainer-owned.
 Part of #283 and Part of #83.
 
@@ -315,13 +317,19 @@ minutes used and 34 remaining on 2026-10-13. Renewal is the 9th at 04:26 UTC:
 The measured billed/raw ratio is approximately 1.8; it is an estimate, not an API
 billing total. Destination multiplication remains a conservative upper estimate.
 
-The temporary validation cap is 1,755 billed minutes. A complete read-only
-inventory measured 873.070750 destination-wall upper minutes in the UTC month
+The temporary validation cap is 1,755 billed minutes and `override_only: true`
+requires the control source to be `repository-variable` after exact-head parsing.
+Automatic PRs and manual dispatches without a matching variable stay on GitHub
+before queue, budget or ASC access; malformed variables still fail closed.
+A complete read-only inventory measured 873.070750 destination-wall upper minutes in the UTC month
 and 835.200517 since the Apple boundary, with no active builds. Unresolved POST
 markers still refuse admission. For the tvOS-only about/legal selection, `R=35`, so the admission
 threshold is `873.070750 * 1.8 + 35 * 1.8 + 120 = 1754.527350`.
-The 0.472650-minute rounding margin admits the first run; any actual charge above
-0.262584 raw minutes refuses another identical run. This temporary cap exceeds
+The 0.472650-minute rounding margin admits the first run; visible accounted usage
+above 0.262584 raw minutes refuses another identical run while these windows hold.
+A near-zero run or a later UTC-month boundary can leave or reopen that room, so
+validation must not rely on this arithmetic to prevent a second real start. This
+temporary cap exceeds
 the real allowance only for the explicitly approved validation. It cannot extend
 Apple's allowance, and an exhausted allowance may stop the one build.
 
@@ -329,11 +337,19 @@ Validation heads change only a comment in the tvOS-only
 `immichSlides/tvOS/Core/SettingsViewTV+AboutPages.swift`: four Apple TV functional
 methods and one packed shard, with zero iPhone/iPad methods. An empty iOS group
 cannot route, and its minimum reservation also exceeds the temporary room.
-Run forced start rejection first, one real routed build second, and budget
-refusal on a fresh head third; never start a second real build. Then restore
-`cap_minutes: 1500` in a reviewed main change. Disable routing as described above
-if acceptance exposes an unsafe path. Full iOS and mixed-provider acceptance
-remain separate work.
+Run forced start rejection (B1) and the one real routed build (B2) under this
+override-only cap. As soon as B2's usage is visible, open and merge the reviewed
+restore change: `cap_minutes: 1500`, the same real anchor and billing factor,
+`routing_enabled: true`, and no `override_only`. The temporary 1,755 cap must
+never survive past B2. If Apple stops B2 before an action starts and visible
+usage is about zero, restore first and run nothing else under 1,755.
+Then create B3 on a fresh branch from restored main and prove budget refusal
+under the real cap. Never start a second real build. The UTC-month/Apple-period
+maximum keeps current-period October usage counted after the November 1 UTC
+boundary;
+the real-cap guard refuses until the November 9 reset. Disable routing as
+described above if acceptance exposes an unsafe path. Full iOS and mixed-provider
+acceptance remain separate work.
 
 ## Maintainer setup and activation checklist
 
@@ -669,14 +685,15 @@ repository variable `CI_XCC_ROUTING_OVERRIDE` to one reviewed head and mode:
 
 Set the variable **before pushing** that exact ordinary app head, let its
 requested event dispatch the main router, and remove the variable after the
-decision. Other heads use automatic congestion; malformed values fail closed.
+decision. Other heads use automatic congestion unless the reviewed registry sets
+`override_only: true`, which keeps them on GitHub; malformed values fail closed.
 All admission, population, remaining-budget and quota guards still apply.
 The grouped main router uses the same exact-head override parser. It retains the
 measured queue separately from the forced decision forecast, and preserves the
 reviewed control when refreshing all mutable guards immediately before POST.
 For forced fallback, use a fresh app head with the last mode, verify the real
-ASC 400/404/422 rejection in its trusted receipt, then verify all three GitHub
-TV shard populations and the final publisher verdict. The diagnostic cannot
+ASC 400/404/422 rejection in its trusted receipt, then verify every selected GitHub
+TV shard population and the final publisher verdict. The diagnostic cannot
 create a valid Cloud build or authorize a skip. A main-only manual dispatch also
 accepts producer ID, archive evidence attempt and `mode: github` or
 `mode: force-start-failure` before any decision exists.

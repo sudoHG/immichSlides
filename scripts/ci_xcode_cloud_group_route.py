@@ -374,7 +374,8 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         receipt["control"] = routing_control(mode, run["head_sha"], override)
         mode = receipt["control"]["mode"]
         registration = (record.get("cloud_v2_inputs") or {}).get("registry") or {}
-        if registration.get("routing_enabled") is not True or mode == "github":
+        if registration.get("routing_enabled") is not True or mode == "github" or (
+                registration.get("override_only") is True and receipt["control"]["source"] != "repository-variable"):
             receipt["reason"] = "routing-inactive"
             return receipt
         stage = "cloud-registry-unavailable"

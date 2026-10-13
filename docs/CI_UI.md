@@ -29,9 +29,13 @@ record for deferred UI. Main build, unit and host checks retain their own verdic
 Pull-request and nightly population selection is independent of this main-only
 contract. Reader changes precede producer activation in a separate PR.
 
-The [grouped Cloud hooks](XCODE_CLOUD_UI.md) remain inactive without reviewed
-registration. All pull-request UI runs currently stay on GitHub, including core,
-unknown and CI-changing PRs. Each platform has an independent Linux group wait,
+The [grouped Cloud hooks](XCODE_CLOUD_UI.md) require reviewed registration.
+The temporary validation registry sets `override_only: true`: only an exact-head
+repository-variable override can route. All ordinary pull-request UI runs stay on
+GitHub, including core, unknown and CI-changing PRs. The coordinator restores the
+real billed-minute cap and removes `override_only` immediately after the one
+approved Cloud build's usage is visible, before testing budget fallback.
+Each platform has an independent Linux group wait,
 so iPhone/iPad start when the iOS provider and archive evidence are ready without
 waiting for tvOS. Each wait publishes its own operational summary and gates only
 its platform using `!cancelled()`. Invalid retained Cloud proof requires a full
@@ -56,7 +60,7 @@ For an app-affecting PR, two independent Linux group waits select Cloud proof or
 their own affected platform's `ci-gate` archive within 180 minutes. No archive is
 awaited for a verified Cloud group. iPhone and iPad share the iOS archive; Apple TV
 uses the tvOS archive. An excluded platform is never awaited. Routing remains
-inactive without the reviewed [group registry](XCODE_CLOUD_UI.md#maintainer-morning-checklist-routing-remains-inactive).
+inactive without the reviewed [group registry](XCODE_CLOUD_UI.md#maintainer-setup-and-activation-checklist).
 
 Each platform is checked at least once, even if downloading and verifying the
 first platform consumed the remaining deadline; an already-ready archive is

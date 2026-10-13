@@ -445,7 +445,7 @@ nightly execution are unchanged.
 
 ### Prepared grouped Xcode Cloud reader
 
-The [v2 Cloud evidence contract](XCODE_CLOUD_UI.md#prepared-grouped-evidence-reader-v2)
+The [v2 Cloud evidence contract](XCODE_CLOUD_UI.md#grouped-evidence-reader-v2)
 adds independent iOS (iPhone plus iPad) and tvOS groups to packed functional PR
 evaluation. The trusted base registry, exact per-device selection, publisher
 pointer/hash, main uploader provenance, retained selection attempt and newest

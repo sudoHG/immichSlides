@@ -929,7 +929,7 @@ class GroupProducerTests(unittest.TestCase):
                                 [{"id": cloud.WORKFLOW_ID, "attributes": {"reviewed": False}}]]
         with self.assertRaises(ContractError):
             account_usage(asc, registration, now, "2026-10-01T00:00:00Z")
-        asc.pages.side_effect = [[{"id": "66666666-6666-6666-666666666666"}]]
+        asc.pages.side_effect = [[{"id": "66666666-6666-6666-6666-666666666666"}]]
         with self.assertRaises(ContractError):
             account_usage(asc, registration, now, "2026-10-01T00:00:00Z")
 
@@ -1347,6 +1347,46 @@ class GroupProducerTests(unittest.TestCase):
                         self.assertEqual(asc.request.call_args.kwargs["payload"]["data"]["relationships"]
                                          ["sourceBranchOrTag"]["data"]["id"], "invalid-reference")
                         asc.request.reset_mock()
+
+    def test_override_only_window_refuses_ordinary_congested_prs_before_budget_or_asc(self):
+        import ci_xcode_cloud_group_route as router
+        self.registry.update(routing_enabled=True, override_only=True, cap_minutes=1500, billing_factor=1.8,
+                             scm_repository_id="33333333-3333-3333-3333-333333333333")
+        self.record["ui_inputs"]["base"]["selection"]["packing"]["estimated_test_seconds"] = {"iphone": 60, "ipad": 120}
+        api, asc = Mock(), Mock()
+        api.pages.return_value = [self.pointer]
+        asc.pages.return_value = [{"id": "branch-ref", "attributes": {"canonicalName": "refs/heads/topic"}}]
+        pr = {"user": self.record["cloud_pr_author"], "base": {"sha": self.identity["base_sha"]}, "head": {"ref": "topic"}}
+        head = self.run["head_sha"]
+        cases = (("", "auto", "github", "routing-inactive"),
+                 ("b" * 40 + ":force-congestion", "auto", "github", "routing-inactive"),
+                 ("", "force-start-failure", "github", "routing-inactive"),
+                 (head + ":force-congestion", "auto", "pending", "cloud-estimated-faster"),
+                 (head + ":force-start-failure", "auto", "pending", "cloud-estimated-faster"),
+                 (head + ":invalid", "auto", "fallback", "invalid-routing-control"))
+        for override, mode, decision, reason in cases:
+            with self.subTest(override=override, mode=mode):
+                factory = Mock(return_value=asc)
+                with patch.object(router, "current_producer"), patch.object(router, "trusted_admissions", return_value={123: self.record}), \
+                        patch.object(router, "anchor", return_value="ui-selection"), \
+                        patch.object(router, "archive_evidence_run", return_value=dict(self.run, archive_job={"status": "completed", "conclusion": "success"})), \
+                        patch.object(router, "selection_open", return_value=True), patch.object(router, "remaining_seconds", return_value=100), \
+                        patch.object(router, "refresh_producer", return_value=pr), patch.object(router, "group_started", return_value=False), \
+                        patch.object(router, "queue_snapshot", return_value={"seconds": 5000, "free_slots": 0, "can_prove_saturation": True}) as capacity, \
+                        patch.object(router, "month_policy", wraps=router.month_policy) as budget, \
+                        patch.object(router, "inventories", return_value={"ios": []}), \
+                        patch.object(router, "account_usage", return_value={"minutes": 300}), \
+                        patch.object(router, "route_history"), patch.object(router, "unknown_starts", return_value=[]):
+                    result = router.prepare_group(api, factory, self.run, "ios", mode=mode, override=override)
+                self.assertEqual((result["decision"], result["reason"]), (decision, reason))
+                if decision == "pending":
+                    self.assertEqual(result["control"]["source"], "repository-variable")
+                    factory.assert_called_once_with()
+                else:
+                    capacity.assert_not_called()
+                    budget.assert_not_called()
+                    factory.assert_not_called()
+                asc.request.assert_not_called()
 
     def test_missing_confirmed_allowance_or_billing_period_refuses_cloud_before_asc(self):
         import ci_xcode_cloud_group_route as router

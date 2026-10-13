@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
   "routing_enabled": true,
+  "override_only": true,
   "scm_repository_id": "894b3bbd-682b-454d-b797-0b7f63a2dd73",
   "account_product_ids": [
     "30df2c69-df90-4773-b243-f58830f73c9f"
