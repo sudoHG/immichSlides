@@ -558,8 +558,8 @@ def phase(api, asc, run, event, name, uploader, *, deadline=None):
                               override=os.environ.get("CI_XCC_ROUTING_OVERRIDE", ""))
         # Publish only decision diagnostics, never the full selection or API inventory.
         receipt = {key: value[key] for key in ("schema_version", "identity", "head_sha", "producer_run_id",
-                   "producer_attempt", "group", "decision", "reason", "budget_policy", "cloud_estimate",
-                   "estimate_decision") if key in value}
+                   "producer_attempt", "group", "decision", "reason", "control", "budget_policy", "cloud_estimate",
+                   "estimate_decision", "usage", "unresolved_starts") if key in value}
         receipt.update(uploader)
         require(len((json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode("utf-8")) <= MAX_JSON_BYTES,
                 "Cloud prepare receipt exceeds limit")

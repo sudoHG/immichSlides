@@ -599,13 +599,26 @@ class GroupProducerTests(unittest.TestCase):
         import tempfile
         import ci_xcode_cloud_group_route as router
         uploader = {"uploader_run_id": 900, "uploader_attempt": 1}
+        selected = self.record["ui_inputs"]["base"]["selection"]
+        selected["packing"]["estimated_test_seconds"] = {"iphone": 60, "ipad": 120}
+        policy = json.loads(json.dumps(router.month_policy(datetime(2026, 10, 13, tzinfo=timezone.utc),
+            self.registry["billing_anchor"], cap_minutes=1500, billing_factor=1.8)))
+        estimate = router.cloud_estimate(self.descriptor, selected, queue_seconds=120)
+        usage = [{"window_start": start, "minutes": 820, "elapsed_minutes": 800, "projected_minutes": 20,
+                  "products": 1, "actions": 2, "basis": "destination-wall-upper-bound"} for start, _ in policy["windows"]]
+        unresolved = [{"uploader_run_id": 899, "uploader_attempt": 1, "minutes": estimate["reservation_minutes"]}]
+        budget = router.choose_cloud({"seconds": estimate["seconds"] + policy["margin_seconds"] + 121,
+                                      "free_slots": 0, "can_prove_saturation": True}, estimate, 820, policy)
         for decision, reason in (("github", "routing-inactive"), ("github", "monthly-cap-or-reserve"),
-                                 ("github", "linux-selection-failed"), ("fallback", "cloud-registry-unavailable")):
+                                 ("github", "linux-selection-failed"), ("fallback", "cloud-registry-unavailable"),
+                                 ("github", "unresolved-cloud-post")):
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as directory:
+                control = router.routing_control("auto", self.run["head_sha"], self.run["head_sha"] + ":force-congestion"
+                                                 if reason == "unresolved-cloud-post" else "")
                 value = dict(self.route, decision=decision, reason=reason, head_sha=self.run["head_sha"],
                              selection={"private": "not-for-publication"},
-                             estimate_decision={"estimated_billed_usage_minutes": 820},
-                             budget_policy={"cap_minutes": 1500})
+                             control=control, estimate_decision=budget, budget_policy=policy,
+                             cloud_estimate=estimate, usage=usage, unresolved_starts=unresolved)
                 output = Path(directory, "output")
                 asc = Mock()
                 with patch.dict(router.os.environ, {"RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(output)}), \
@@ -613,17 +626,48 @@ class GroupProducerTests(unittest.TestCase):
                     self.assertEqual(router.phase(Mock(), asc, self.run, {"inputs": {"group": "ios"}},
                                                   "prepare", uploader), 0)
                 receipt = json.loads(Path(directory, "ci-xcc-route/prepare.json").read_text())
+                self.assertEqual(set(receipt), {"schema_version", "identity", "head_sha", "producer_run_id",
+                    "producer_attempt", "group", "decision", "reason", "control", "budget_policy", "cloud_estimate",
+                    "estimate_decision", "usage", "unresolved_starts", "uploader_run_id", "uploader_attempt"})
                 self.assertEqual((receipt["decision"], receipt["reason"]), (decision, reason))
                 for key in ("identity", "head_sha", "producer_run_id", "producer_attempt", "group"):
                     self.assertEqual(receipt[key], value[key])
-                self.assertEqual(receipt["budget_policy"], {"cap_minutes": 1500})
-                self.assertEqual(receipt["estimate_decision"], {"estimated_billed_usage_minutes": 820})
+                self.assertEqual(receipt["budget_policy"], policy)
+                self.assertEqual(receipt["cloud_estimate"], estimate)
+                self.assertEqual(receipt["estimate_decision"], budget)
+                self.assertEqual(receipt["control"], control)
+                self.assertEqual(receipt["usage"], usage)
+                self.assertEqual(receipt["unresolved_starts"], unresolved)
                 self.assertEqual(receipt["uploader_run_id"], 900)
                 self.assertEqual(receipt["uploader_attempt"], 1)
                 self.assertNotIn("not-for-publication", json.dumps(receipt))
                 self.assertIn("recorded=true", output.read_text())
                 self.assertIn("post=false", output.read_text())
-                asc.request.assert_not_called()
+
+    def test_override_only_refusal_reaches_prepare_receipt_with_its_actual_control(self):
+        import json
+        import tempfile
+        import ci_xcode_cloud_group_route as router
+        self.registry.update(routing_enabled=True, override_only=True)
+        for override, source, mode in (("", "automatic", "auto"),
+                                       (self.run["head_sha"] + ":github", "repository-variable", "github")):
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory, "output")
+                asc = Mock()
+                with patch.dict(router.os.environ, {"RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(output),
+                                                    "CI_XCC_ROUTING_OVERRIDE": override}), \
+                        patch.object(router, "current_producer"), \
+                        patch.object(router, "trusted_admissions", return_value={123: self.record}):
+                    self.assertEqual(router.phase(Mock(), asc, self.run, {"inputs": {"group": "ios"}}, "prepare",
+                                                  {"uploader_run_id": 900, "uploader_attempt": 1}), 0)
+                receipt = json.loads(Path(directory, "ci-xcc-route/prepare.json").read_text())
+                self.assertEqual(set(receipt), {"schema_version", "identity", "head_sha", "producer_run_id",
+                    "producer_attempt", "group", "decision", "reason", "control", "uploader_run_id", "uploader_attempt"})
+                self.assertEqual((receipt["decision"], receipt["reason"]), ("github", "routing-inactive"))
+                self.assertEqual(receipt["control"], {"source": source, "mode": mode})
+                self.assertIn("recorded=true", output.read_text())
+                self.assertIn("post=false", output.read_text())
+                self.assertEqual(asc.method_calls, [])
 
     def test_oversized_prepare_decision_never_exposes_upload_outputs(self):
         import tempfile
