@@ -619,11 +619,6 @@ def main(argv=None, *, simulator_prepared=False):
                         if item["outcome"] in {"failed", "skipped"}:
                             message = read_problem_reason(path, item["identity"]["key"], export_timeout_seconds=args.result_export_timeout_seconds)
                             item["attempts"][0]["message"] = message
-                            if item["outcome"] == "failed":
-                                from ci_failure_diagnostics import classify_messages
-                                diagnostics = classify_messages([message])
-                                item.update(diagnostics)
-                                item["attempts"][0].update(diagnostics)
                             if item["outcome"] == "skipped":
                                 item["attempts"][0]["reason"] = message
                 except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
@@ -697,7 +692,8 @@ def main(argv=None, *, simulator_prepared=False):
                                capture_output=True, check=True, timeout=args.result_export_timeout_seconds)
             export_started = time.monotonic()
             digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix,
-                summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds)
+                summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds,
+                enrich_failure_diagnostics=True)
             write_json(output / ("export-timing" + suffix + ".json"), {"schema_version": 1,
                 "official_export_seconds": time.monotonic() - export_started, "timeout_seconds": args.result_export_timeout_seconds})
             official = json.loads((output / ("official-tests" + suffix + ".json")).read_text())

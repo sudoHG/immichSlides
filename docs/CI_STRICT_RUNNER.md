@@ -310,12 +310,17 @@ for the same method cannot replace or obscure its failure label.
 XCTest assertion and caught `AssertionError.message` wrappers are recognized;
 unmatched, missing or conflicting messages yield `unknown` for both fields.
 Snapshot/hittability failures identify only the class, with an unknown phase.
+Empty screenshot data and Autoplay control-state assertions yield unknown for
+both fields because they do not establish scene identity or navigation.
 These labels locate a check; they do not establish a product or infrastructure
 root cause. No assertion text, observed value, path, identifier or frame is
 added to public records by the mapper.
 
-One additional private export is attempted only for a failed invocation, bounded
-by the existing official export timeout. Read failures yield unknown diagnostics
+The shared export defaults to byte-preserving output without diagnostics. Only
+strict and UI callers opt in with `enrich_failure_diagnostics=True`; unit and
+lifecycle consumers retain the original tests/summary exports and budgets.
+An opted-in failed invocation attempts one additional private export, bounded by
+the existing official export timeout. Read failures yield unknown diagnostics
 without changing the official result, population, retry eligibility or exit code.
 The recorded export hash binds the enriched public bytes. Historical records
 without diagnostics remain valid. The existing sensitive scan additionally

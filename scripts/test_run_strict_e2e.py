@@ -623,6 +623,37 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_shared_export_without_opt_in_preserves_failed_bytes_and_two_export_budget(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            bundle = evidence / "private.xcresult"
+            bundle.mkdir()
+            payload = b'{"testNodes":[{"nodeType":"Test Case","nodeIdentifier":"Unit/works()","result":"Failed"}]}'
+            commands = []
+            def export(command, **kwargs):
+                commands.append(command)
+                self.assertEqual(kwargs["timeout"], 180)
+                self.assertNotIn("--legacy", command)
+                body = (json.dumps({"totalTestCount": 1, "passedTests": 0, "failedTests": 1,
+                                    "skippedTests": 0, "result": "Failed"})
+                        if "summary" in command else payload)
+                return subprocess.CompletedProcess(command, 0, body, "" if kwargs.get("text") else b"")
+            with mock.patch("run_strict_e2e.subprocess.run", side_effect=export):
+                digest = strict_runner.export_private_result_bundle(
+                    bundle, evidence, [], summary_timeout_seconds=180, export_timeout_seconds=180)
+            self.assertEqual(len(commands), 2)
+            self.assertEqual((evidence / "official-tests.json").read_bytes(), payload)
+            self.assertEqual(digest, strict_runner.hashlib.sha256(payload).hexdigest())
+            self.assertEqual(json.loads((evidence / "official-summary.json").read_text())["failedTests"], 1)
+
+    def test_capture_and_control_state_assertions_do_not_claim_identity_or_navigation(self):
+        from ci_failure_diagnostics import classify_messages, unknown_diagnostics
+        for message in ("Screenshot must not be empty: before-background",
+                        "Turning off Autoplay in settings must take effect immediately"):
+            with self.subTest(message=message):
+                self.assertEqual(classify_messages([message]), unknown_diagnostics())
+
     def test_official_warnings_do_not_replace_the_selected_method_failure_diagnostics(self):
         from ci_failure_diagnostics import legacy_diagnostics
         name = {"_value": "Flow.testFailure()"}
@@ -671,7 +702,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
             summary = TestResultsSummary(1, 0, 1, 0, "Failed")
             with mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
                     mock.patch("run_strict_e2e.read_official_test_results_summary", return_value=summary):
-                strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"])
+                strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"],
+                                                           enrich_failure_diagnostics=True)
             exported = (evidence / "official-tests.json").read_text()
             self.assertNotIn("PRIVATE_SENTINEL", exported)
             self.assertNotIn("slider", exported)
@@ -716,7 +748,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps(payload).encode(), b"")
                 with mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
                         mock.patch("run_strict_e2e.read_official_test_results_summary", return_value=TestResultsSummary(1, 0, 1, 0, "Failed")):
-                    digest = strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"])
+                    digest = strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"],
+                                                                        enrich_failure_diagnostics=True)
                 node = json.loads((evidence / "official-tests.json").read_text())["testNodes"][0]
                 self.assertEqual({field: node[field] for field in unknown_diagnostics()}, unknown_diagnostics())
                 self.assertEqual(node["result"], "Failed")

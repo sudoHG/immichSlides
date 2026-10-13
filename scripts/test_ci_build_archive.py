@@ -506,6 +506,41 @@ class BuildArchiveTests(unittest.TestCase):
         # Declarations survive without any source; they cannot be copied from enumeration.
         declared = units.read_declarations(staged, {"identity": self.identity, "platform": "ios"})
         self.assertEqual(declared, [{"kind": "swift", "key": "ExampleTests/works", "dimensions": {"platform": "ios"}}])
+        from test_ci_summary import valid_summary
+        from textwrap import dedent
+        (staged / "input-summary.json").write_text(json.dumps(valid_summary()))
+        relocated_checks = dedent("""
+            import json, subprocess, sys
+            from pathlib import Path
+            from unittest.mock import patch
+            tools = Path(sys.argv[1]).resolve()
+            sys.path.insert(0, str(tools / 'scripts'))
+            from ci_summary import parse_summary
+            from run_offline_unit_tests import TestResultsSummary
+            from run_strict_e2e import export_private_result_bundle, write_sensitive_scan
+            assert parse_summary((tools / 'input-summary.json').read_text())['status'] == 'passed'
+            evidence = tools / 'export-check'
+            evidence.mkdir()
+            write_sensitive_scan(evidence, [])
+            payload = {'testNodes': [{'nodeType': 'Test Case', 'nodeIdentifier': 'Example/works()',
+                                     'result': 'Failed'}]}
+            def exported(command, **kwargs):
+                return subprocess.CompletedProcess(command, 0, json.dumps(payload).encode(), b'')
+            with patch('run_strict_e2e.subprocess.run', side_effect=exported), \
+                    patch('run_strict_e2e.read_official_test_results_summary',
+                          return_value=TestResultsSummary(1, 0, 1, 0, 'Failed')):
+                digest = export_private_result_bundle(tools / 'private.xcresult', evidence, [])
+                export_private_result_bundle(tools / 'private.xcresult', evidence, [], suffix='-ui',
+                                             enrich_failure_diagnostics=True)
+            assert len(digest) == 64
+            assert json.loads((evidence / 'official-tests.json').read_text())['testNodes'][0]['result'] == 'Failed'
+            assert json.loads((evidence / 'official-tests-ui.json').read_text())['testNodes'][0]['failure_phase'] == 'unknown'
+            write_sensitive_scan(evidence, [])
+            assert json.loads((evidence / 'sensitive-scan.json').read_text())['result'] == 'PASS'
+        """)
+        checked = subprocess.run([sys.executable, "-I", "-B", "-c", relocated_checks, str(staged)],
+                                 cwd=staged, capture_output=True, text=True, timeout=30)
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
         # Lazy cleanup imports must work after the source checkout is removed too.
         child = ("import json, os, signal, sys, time\nfrom pathlib import Path\n"
                  "output = Path(sys.argv[1])\n"

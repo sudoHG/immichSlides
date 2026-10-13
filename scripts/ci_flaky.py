@@ -574,7 +574,8 @@ def run_ui(args):
             exported = False
             if bundle.exists():
                 try:
-                    digest = export_private_result_bundle(bundle, output, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=f"-attempt-{number}")
+                    digest = export_private_result_bundle(bundle, output, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY],
+                                                          suffix=f"-attempt-{number}", enrich_failure_diagnostics=True)
                     write_sensitive_scan(output, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY])
                     exported = True
                 except (CommandError, ContractError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

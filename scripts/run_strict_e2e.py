@@ -211,6 +211,7 @@ def export_private_result_bundle(
     bundle: Path, evidence_dir: Path, sensitive_values: list[str], *, suffix: str = "",
     summary_timeout_seconds: float | None = None,
     export_timeout_seconds: float = OFFICIAL_EXPORT_TIMEOUT_SECONDS,
+    enrich_failure_diagnostics: bool = False,
 ) -> str:
     try:
         completed = subprocess.run(
@@ -228,33 +229,33 @@ def export_private_result_bundle(
         raise CommandError("Official test export is not a JSON object.")
     if logical_bytes_contain(completed.stdout, sensitive_values):
         raise CommandError("Official test export contains test credentials; refusing to retain it.")
-    from ci_failure_diagnostics import legacy_diagnostics, unknown_diagnostics
-    failed = []
-    def visit(node):
-        if isinstance(node, dict):
-            if node.get("nodeType") == "Test Case" and node.get("result") == "Failed":
-                failed.append(node)
-            children = node.get("children", [])
-            for child in children if isinstance(children, list) else []:
-                visit(child)
-    nodes = payload.get("testNodes", [])
-    for node in nodes if isinstance(nodes, list) else []:
-        visit(node)
-    diagnostics = {}
-    if failed:
-        try:
-            details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
-                                     capture_output=True, check=True, timeout=export_timeout_seconds)
-            diagnostics = legacy_diagnostics(json.loads(details.stdout))
-        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
-            # Diagnostic availability must not change the official result or runner exit.
-            pass
-        for node in failed:
-            key = str(node.get("nodeIdentifier", "")).removesuffix("()")
-            node.update(diagnostics.get(key, unknown_diagnostics()))
-        exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
-    else:
-        exported = completed.stdout
+    exported = completed.stdout
+    if enrich_failure_diagnostics:
+        from ci_failure_diagnostics import legacy_diagnostics, unknown_diagnostics
+        failed = []
+        def visit(node):
+            if isinstance(node, dict):
+                if node.get("nodeType") == "Test Case" and node.get("result") == "Failed":
+                    failed.append(node)
+                children = node.get("children", [])
+                for child in children if isinstance(children, list) else []:
+                    visit(child)
+        nodes = payload.get("testNodes", [])
+        for node in nodes if isinstance(nodes, list) else []:
+            visit(node)
+        if failed:
+            diagnostics = {}
+            try:
+                details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
+                                         capture_output=True, check=True, timeout=export_timeout_seconds)
+                diagnostics = legacy_diagnostics(json.loads(details.stdout))
+            except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+                # Diagnostic availability must not change the official result or runner exit.
+                pass
+            for node in failed:
+                key = str(node.get("nodeIdentifier", "")).removesuffix("()")
+                node.update(diagnostics.get(key, unknown_diagnostics()))
+            exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
     if not summary_path.exists():
@@ -1199,7 +1200,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 return
             try:
                 digest = export_private_result_bundle(
-                    bundle, arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=suffix
+                    bundle, arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=suffix,
+                    enrich_failure_diagnostics=True,
                 )
             except InfrastructureTimeout as error:
                 record_timeout(error)
