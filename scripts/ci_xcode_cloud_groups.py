@@ -35,6 +35,8 @@ def registry(value):
     require(isinstance(value, dict) and type(value.get("schema_version")) is int
             and value["schema_version"] == 2 and isinstance(value.get("groups"), dict)
             and value["groups"] and set(value["groups"]) <= set(GROUPS), "unsupported Cloud group registry")
+    require("override_only" not in value or type(value["override_only"]) is bool,
+            "Cloud override_only must be a boolean")
     workflows, check_names, plan_paths = set(), set(), set()
     for group, registration in value["groups"].items():
         if value.get("routing_enabled") is True or "queue_seconds_upper" in registration:
