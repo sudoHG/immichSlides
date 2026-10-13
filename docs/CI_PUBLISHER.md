@@ -156,9 +156,9 @@ ignore untrusted same-name objects before reading any artifact bytes,
 and read only the bounded JSON member; no ZIP is extracted and no artifact code
 is executed. Base-reader modules are loaded from Git objects at the verified
 main first parent, rechecked against main history, and run in a temporary isolated
-subprocess without credentials. Evaluator dependencies, including `ci_flaky.py`
-and `ci_ui_shards.py` when present, come from the same base; older bases without
-them remain supported. Recording-suite eligibility is declared in `ci_flaky.py`
+subprocess without credentials. Evaluator dependencies, including `ci_flaky.py`,
+`ci_ui_shards.py` and `ci_failure_diagnostics.py` when present, come from the same
+base; older bases without them remain supported. Recording-suite eligibility is declared in `ci_flaky.py`
 and shared with the strict runner/P2 contract, so parsing a mixed strict/UI
 registry needs no image processing or strict-runner imports in the isolated reader.
 Main retains that base; late approval does not
@@ -446,6 +446,14 @@ preserves these diagnostics; the verdict reports missing compiled identities and
 cannot pass. Malformed exports remain rejected. Scanned failed diagnostics marked
 `discovery-record-invalid` may be uploaded without a valid discovery proof; this
 does not make them valid summaries or allow a passing trusted verdict.
+
+Public strict/UI method records may carry the optional paired `failure_phase`
+and `failure_class` fields, including on individual failed retry attempts.
+The [fixed diagnostic contract](CI_STRICT_RUNNER.md#public-failure-diagnostics)
+defines the allowlists and private prefix mapping. Summary validation and the
+existing publication sensitive scan reject arbitrary diagnostic strings;
+historical records without these fields remain readable. The enums convey no
+assertion text and do not change the trusted verdict or any identity population.
 The [host partition](CI_SUMMARY.md#prepared-linuxmacos-host-partition) likewise
 requires the base-owned disjoint union of Linux and macOS producers. The producer
 derives that partition from the merge first parent's reader, then verifies the

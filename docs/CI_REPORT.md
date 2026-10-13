@@ -91,6 +91,10 @@ identities and infrastructure codes. It retains nightly observations only for fa
 or already tracked methods; complete declared/compiled/observed populations stay in
 the producer's own artifact. Fork, CI-changing and approval-based provenance remain
 explicit. Candidate error messages, credentials and private runner text are not copied.
+Retained strict/UI observations and attempts preserve the optional paired
+`failure_phase` / `failure_class` enums from the
+[summary contract](CI_SUMMARY.md#version-1), including in compact attempt history;
+historical records without them remain supported.
 
 The repository's `GITHUB_TOKEN` quota is shared with its other workflows. The reporter
 uses `X-RateLimit-Limit` and `X-RateLimit-Remaining`, stops before a request would leave

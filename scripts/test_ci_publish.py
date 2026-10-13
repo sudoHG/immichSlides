@@ -2655,9 +2655,10 @@ class OtherUITests: XCTestCase { func testPlay() {} }
 
     def test_complete_gate_requires_both_unit_populations_and_refuses_host_impersonation(self):
         modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES}
-        dependency = Path(__file__).parent / "ci_flaky.py"
-        if dependency.exists():
-            modules[dependency.name] = dependency.read_text()
+        for name in ("ci_flaky.py", "ci_failure_diagnostics.py"):
+            dependency = Path(__file__).parent / name
+            if dependency.exists():
+                modules[name] = dependency.read_text()
         with patch("ci_publish_git.trusted_reader", return_value=modules):
             record, jobs, summaries = gate_fixture(units=False)
             self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False),
@@ -2699,13 +2700,17 @@ class OtherUITests: XCTestCase { func testPlay() {} }
         modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES}
         dependency = Path(__file__).parent / "ci_flaky.py"
         modules["ci_flaky.py"] = dependency.read_text() if dependency.exists() else "from ci_summary import require\n"
+        diagnostics = Path(__file__).parent / "ci_failure_diagnostics.py"
+        if diagnostics.exists():
+            modules[diagnostics.name] = diagnostics.read_text()
         # Old evaluators do not import ci_flaky; retain the dependency seam on
         # old checkouts as well as the current evaluator used by PR merge CI.
         modules["ci_verdict.py"] += "\nimport ci_flaky\n"
         def blob(revision, path):
             self.assertEqual(revision, BASE)
             return modules[path.removeprefix("scripts/")]
-        with patch("ci_publish_git.git", side_effect=lambda *args: args[-1] if args[-1].endswith("ci_flaky.py") else ""), \
+        with patch("ci_publish_git.git", side_effect=lambda *args: args[-1] if args[-1].removeprefix("scripts/")
+                   in set(modules) - set(BASE_MODULES) else ""), \
                 patch("ci_publish_git.read_blob", side_effect=blob):
             loaded = revision_modules(BASE)
         self.assertEqual(loaded, modules)

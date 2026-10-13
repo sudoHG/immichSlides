@@ -123,20 +123,35 @@ def identity_key(identity):
     return json.dumps(identity, sort_keys=True, separators=(",", ":"))
 
 
-def observation(identity, outcome, duration_seconds, *, reason=None, message=None, exit_code=0):
-    return {"identity": identity, "outcome": outcome, "duration_seconds": duration_seconds,
+def observation(identity, outcome, duration_seconds, *, reason=None, message=None, exit_code=0, failure_diagnostics=None):
+    entry = {"identity": identity, "outcome": outcome, "duration_seconds": duration_seconds,
             "attempts": [{"number": 1, "outcome": outcome, "duration_seconds": duration_seconds,
                           "exit_code": exit_code, "reason": reason, "message": message}]}
+    if failure_diagnostics is not None:
+        from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, validate_diagnostic_fields
+        require(set(failure_diagnostics) == DIAGNOSTIC_FIELDS, "invalid failure diagnostic fields")
+        validate_diagnostic_fields(failure_diagnostics)
+        entry.update(failure_diagnostics)
+        entry["attempts"][0].update(failure_diagnostics)
+    return entry
 
 
 def validate_observation(entry):
-    fields(entry, {"identity", "outcome", "duration_seconds", "attempts"}, "observation")
+    from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, validate_diagnostic_fields
+    require(isinstance(entry, dict), "observation must be an object")
+    try:
+        validate_diagnostic_fields(entry)
+    except ValueError as error:
+        raise ContractError(str(error)) from error
+    fields(entry, {"identity", "outcome", "duration_seconds", "attempts"} | (DIAGNOSTIC_FIELDS & entry.keys()), "observation")
     validate_test_identity(entry["identity"])
     require(entry["outcome"] in OUTCOMES, "invalid outcome")
     duration(entry["duration_seconds"])
     require(isinstance(entry["attempts"], list) and bool(entry["attempts"]), "attempts must be nonempty")
     for number, attempt in enumerate(entry["attempts"], 1):
-        fields(attempt, {"number", "outcome", "duration_seconds", "exit_code", "reason", "message"}, "attempt")
+        require(isinstance(attempt, dict), "attempt must be an object")
+        fields(attempt, {"number", "outcome", "duration_seconds", "exit_code", "reason", "message"}
+               | (DIAGNOSTIC_FIELDS & attempt.keys()), "attempt")
         integer(attempt["number"], 1, "attempt number")
         require(attempt["number"] == number, "attempts must be consecutive")
         require(attempt["outcome"] in ATTEMPT_OUTCOMES, "invalid attempt outcome")

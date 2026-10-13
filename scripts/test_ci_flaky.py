@@ -189,7 +189,9 @@ class RetryTests(unittest.TestCase):
             with self.subTest(issue_types=issue_types):
                 issues = {"issues": {"testFailureSummaries": {"_values": [
                     {"testCaseName": {"_value": "ExampleTests.testNavigation()"},
-                     "issueType": {"_value": kind}} for kind in issue_types]}}}
+                     "issueType": {"_value": kind},
+                     "message": {"_value": "XCTAssertTrue failed - The iOS slider must be settable to 30 seconds. PRIVATE_SENTINEL"}}
+                    for kind in issue_types]}}}
                 def run(command, **kwargs):
                     details = {"testIdentifier": identity["key"] + "()", "testResult": "Failed", "testRuns": [
                         {"nodeType": "Test Case Run", "result": "Failed", "name": "failed - Deliberate assertion",
@@ -206,6 +208,10 @@ class RetryTests(unittest.TestCase):
                     self.assertEqual(bool(resets), issue_types in (["Assertion Failure"], ["Uncategorized"]))
                     self.assertEqual(actual[0]["outcome"], "flaky-passed" if resets else
                                      "crashed" if "Crash" in issue_types else "failed")
+                    expected_phase = "interval_setup" if issue_types else "unknown"
+                    self.assertEqual(actual[0]["failure_phase"], expected_phase)
+                    self.assertEqual(actual[0]["attempts"][0]["failure_phase"], expected_phase)
+                    self.assertNotIn("PRIVATE_SENTINEL", json.dumps(actual))
                     with self.assertRaises(ContractError):
                         read_xcode_observations(Path("result"), lambda key: identity, 1, 65,
                                                 expected_device=("target", "ipad"))

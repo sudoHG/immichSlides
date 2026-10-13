@@ -104,6 +104,131 @@ class FixtureCoverageTests(unittest.TestCase):
                 self.assertEqual(verdict["status"], "failed")
                 self.assertFalse(any("trusted producer evaluation date" in message for message in verdict["errors"]))
 
+    def test_listed_only_retry_main_preserves_legacy_labels_for_failed_and_flaky_passed_methods(self):
+        from types import SimpleNamespace
+        from ci_flaky import ASSERTION_FAILURE
+        from ci_summary import observation, parse_summary
+        from ci_verdict import parse_policy
+        from test_ci_flaky import registry
+        from test_ci_summary import discovery_summary
+        for retried in (False, True):
+            for diagnostics in ({"failure_phase": "interval_setup", "failure_class": "interval_readback"},
+                                {"failure_phase": "unknown", "failure_class": "unknown"}):
+                with self.subTest(retried=retried, diagnostics=diagnostics), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory, "checkout").resolve()
+                    root.mkdir()
+                    output = Path(directory, "output")
+                    source = root / "Products" / "app.xctestrun"
+                    source.parent.mkdir()
+                    source.touch()
+                    (source.parent / "Debug-iphonesimulator" / "immichSlides.app").mkdir(parents=True)
+                    seed = discovery_summary()
+                    entry = seed["population"]["declared"][0]
+                    official = seed["compiled_evidence"]["official_tests"]
+                    official["testNodes"][0]["children"][0].update(result="Failed", **diagnostics)
+                    trusted = registry()
+                    trusted["entries"][0]["identity"] = dict(entry, dimensions={"platform": "ios"})
+                    trusted["entries"][0]["review_by"] = "2099-01-01"
+                    if not retried:
+                        trusted["entries"] = []
+                    policy = parse_policy((runner.ROOT / "scripts/ci-test-policy.json").read_text())
+                    inputs = {"hashes": seed["hashes"], "population": dict(seed["population"], compiled=[], observed=[]),
+                              "policy": policy, "discovery_policy": policy, "deselections": [], "registry": trusted,
+                              "registry_revision": "b" * 40}
+                    inputs["hashes"]["policies"]["known-flaky"] = "f" * 64
+                    failed = observation(entry, "failed", 1, exit_code=65, reason=ASSERTION_FAILURE,
+                                         failure_diagnostics=diagnostics)
+                    passed = observation(entry, "passed", 1)
+                    bundles, invocations = [], []
+                    def allocate():
+                        bundle = Path(directory, "private", str(len(bundles)), "fixture.xcresult")
+                        bundle.mkdir(parents=True)
+                        bundles.append(bundle)
+                        return bundle
+                    def process(command, **kwargs):
+                        if command[0] == "xcodebuild":
+                            invocations.append(command)
+                        code = 65 if len(invocations) == 1 else 0
+                        return SimpleNamespace(wait=lambda **kwargs: code, pid=42)
+                    def export(bundle, *args, **kwargs):
+                        self.assertIs(kwargs["enrich_failure_diagnostics"], True)
+                        self.assertEqual(kwargs["export_timeout_seconds"], 60)
+                        suffix = kwargs["suffix"]
+                        payload = copy.deepcopy(official)
+                        if bundle != bundles[0]:
+                            payload["testNodes"][0]["children"][0] = {
+                                "nodeType": "Test Case", "nodeIdentifier": entry["key"] + "()",
+                                "result": "Passed", "durationInSeconds": 1}
+                        (output / ("official-tests" + suffix + ".json")).write_text(json.dumps(payload))
+                        return "f" * 64
+                    # Test-details text disagrees with legacy summaries; it must never replace their labels.
+                    detail = ("Failed to get matching snapshot: private detail" if diagnostics["failure_phase"] != "unknown"
+                              else "The iOS slider must be settable to 30 seconds. conflicting failure")
+                    with contextlib.ExitStack() as stack:
+                        stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}))
+                        for name, value in (("ROOT", root), ("run_identity", seed["identity"]),
+                                            ("source_metadata", (".github/workflows/ci-ui.yml", False)),
+                                            ("fixture_inputs", inputs), ("toolchain", seed["toolchain"]),
+                                            ("prepare_simulator", None), ("verify_simulator_device", None),
+                                            ("wait_for_service", ("127.0.0.1", 1234)), ("disk_check", None),
+                                            ("check_products", None), ("measure_signing", "adhoc"),
+                                            ("prepare_test_run", source), ("reset_simulator_app", None),
+                                            ("crash_report_directories", []), ("crash_report_snapshot", {}),
+                                            ("read_problem_reason", detail), ("stop_exact_process", None)):
+                            stack.enter_context(patch.object(runner, name, value if name == "ROOT"
+                                                            else unittest.mock.Mock(return_value=value)))
+                        stack.enter_context(patch.object(runner, "prepare_fixture_result_bundle", side_effect=allocate))
+                        stack.enter_context(patch.object(runner, "read_xcode_observations",
+                                                         side_effect=[copy.deepcopy([failed]), [passed]]))
+                        stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
+                        stack.enter_context(patch.object(runner, "simulator_inventory", return_value={}))
+                        stack.enter_context(patch.object(runner, "export_private_result_bundle", side_effect=export))
+                        stack.enter_context(patch.object(runner, "finalize_fixture_run", return_value=[]))
+                        stack.enter_context(patch.object(runner, "write_sensitive_scan"))
+                        stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                        stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                        code = runner.main(["--device", "iphone", "--destination", "platform=iOS Simulator,id=target",
+                            "--output-dir", str(output), "--xctestrun", str(source), "--shard", "scoped-a",
+                            "--shard-manifest", str(root / "manifest.json"), "--scoped-plan-sha256", "e" * 64,
+                            "--compiled-from-official-results", "--listed-only-retry"])
+                    self.assertEqual(code, 0 if retried else 65)
+                    self.assertEqual(len(invocations), 2 if retried else 1)
+                    result = parse_summary((output / "summary.json").read_text())
+                    actual = result["population"]["observed"][0]
+                    self.assertEqual(actual["outcome"], "flaky-passed" if retried else "failed")
+                    for field, value in diagnostics.items():
+                        self.assertEqual(actual[field], value)
+                        self.assertEqual(actual["attempts"][0][field], value)
+                        rows = json.loads((output / "fixture-coverage.json").read_text())["tests"]
+                        self.assertEqual(rows[0][field], value)
+                    if retried:
+                        self.assertNotIn("failure_phase", actual["attempts"][1])
+
+    def test_failed_ui_method_diagnostics_survive_coverage_and_summary_without_free_text(self):
+        from ci_summary import observation, test_identity, validate_observation
+        identity = test_identity("ui", "Flow/testFailure", platform="ios")
+        diagnostics = {"failure_phase": "interval_setup", "failure_class": "interval_readback"}
+        node = {"nodeType": "Test Case", "nodeIdentifier": "Flow/testFailure()", "result": "Failed",
+                "durationInSeconds": 1, **diagnostics}
+        for extra in (diagnostics, {}):
+            with self.subTest(extra=extra):
+                official = {"testNodes": [{key: value for key, value in node.items()
+                                           if key not in diagnostics or key in extra}]}
+                row = coverage_rows([identity], [identity], official, "iphone")[0]
+                expected = diagnostics if extra else {"failure_phase": "unknown", "failure_class": "unknown"}
+                self.assertEqual({field: row[field] for field in expected}, expected)
+                entry = observation(identity, row["outcome"], row["duration_seconds"], exit_code=65, failure_diagnostics=expected)
+                validate_observation(entry)
+                self.assertEqual(entry["outcome"], "failed")
+                self.assertEqual(entry["attempts"][0]["exit_code"], 65)
+                for field in expected:
+                    self.assertEqual(entry[field], entry["attempts"][0][field])
+                entry["attempts"][0]["failure_class"] = "private assertion text"
+                with self.assertRaises(ContractError):
+                    validate_observation(entry)
+        with self.assertRaises(ValueError):
+            coverage_rows([identity], [identity], {"testNodes": [dict(node, failure_phase="private assertion text")]}, "iphone")
+
     def test_candidate_deselection_changes_cannot_override_base_discovery_eligibility(self):
         import hashlib
         from test_ci_summary import discovery_summary

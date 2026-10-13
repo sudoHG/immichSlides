@@ -71,7 +71,8 @@ GitHub event, workflow and run metadata. `check_all.sh` does not enable CI ident
 ## Version 1
 
 [`scripts/ci_summary.py`](../scripts/ci_summary.py) is the authoritative, executable
-schema and validator. All fields below are required; unknown fields and versions,
+schema and validator. All top-level fields below are required; the paired failure
+diagnostics on observations and attempts are explicitly optional. Other unknown fields and versions,
 duplicate JSON keys and identities, booleans used as integers, non-finite durations,
 malformed hashes, and incomplete strict identities are rejected. This validates
 producer data, not its provenance or a trusted verdict.
@@ -163,6 +164,19 @@ An observed entry contains `identity`, `outcome`, `duration_seconds` and a nonem
 nonnegative finite `duration_seconds`, integer or null `exit_code`, string or null
 `reason` and `message`. Total duration accounts for every attempt.
 
+| Optional observation / attempt field | Type and meaning |
+| --- | --- |
+| `failure_phase` | String from the fixed [public failure diagnostics](CI_STRICT_RUNNER.md#public-failure-diagnostics) allowlist; paired with `failure_class` |
+| `failure_class` | String from the same contract's fixed class allowlist; paired with `failure_phase` |
+
+These two fields are optional in both summary versions 1 and 2. When either is
+present on an observation or attempt, both must be present and allowlisted strings;
+free text, unpaired fields and all other unknown fields remain invalid. Historical
+records without the pair remain valid. Strict/UI producers label failed methods,
+use `unknown` for unavailable or ambiguous diagnostics, and retain the first
+failure's labels on an observation after a listed retry passes. The enums do not
+participate in outcome, population, retry or verdict evaluation.
+
 Outcomes are `passed`, `failed`, `skipped`, `crashed`, `timed-out`, `not-run`,
 `needs-human-review`, or aggregate `flaky-passed`. A skip requires a reason.
 `flaky-passed` requires exactly two attempts, failed then passed; the host runner
@@ -201,6 +215,12 @@ version 2 is activated only for eligible scoped PR UI producers below.
 A successor parser and validator must land in the
 trusted reader first, alongside the old parser and supported workflow paths. Only
 then can producers emit the successor. A version number alone never enables parsing.
+The same rule applies to optional field extensions: an older trusted base reader
+still rejects the failure diagnostic pair. If reader and producer changes ship
+together, a PR or descendant branch whose `base_sha` predates the reader can have
+its entire record refused when a failed or `flaky-passed` UI observation contains
+the new fields. This transition risk must be stated in the PR; acceptance of the
+fields requires the updated reader in the trusted base.
 
 ## Prepared version 2: scoped official discovery
 
