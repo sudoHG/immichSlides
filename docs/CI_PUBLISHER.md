@@ -23,10 +23,25 @@ repository, event and current PR mapping through GitHub. Forks with empty
 `pull_requests` arrays first use GitHub's commit-to-PR API. If that is also empty,
 the publisher queries open PRs targeting `main` by the producer's
 `head_repository.owner.login:head_branch` label using bounded pagination. Both
-paths retain the same checks: exactly one open PR with the producer's head
-repository, this repository's `main` base, and the current head SHA for admission.
-Stale admission heads, ambiguous matches and pagination failures refuse mapping.
+paths require a unique eligible PR with the producer's head repository and this
+repository's `main` base. New admission requires an open PR at the current producer
+head; the initial lifecycle check allows an advanced open head so an existing
+trusted admission can return successfully without being recreated. Closed
+candidates are eligible only at the producer's exact head. Stale new-admission
+heads, ambiguous matches and pagination failures refuse mapping.
 Workflow names and colliding job names do not establish provenance.
+
+After producer workflow/repository verification, a merged PR that GitHub can
+still associate uniquely with the producer ends as a successful no-op with an
+explicit log line. The route output skips admission and publication, without
+statuses, approval requests or re-dispatch. Closed, unmerged PRs are not discovered
+by these candidate sources and still fail as missing mappings. The initial
+admission lifecycle check stops closed PRs before reading admission artifacts or
+Git data; publication with an already resolved PR number also stops on closure
+during evaluation or before its final check. An already minted installation token
+is still revoked. Missing, ambiguous, malformed or mismatched mappings and every
+refusal for a new open-PR admission still fail closed. Shared Cloud callers retain
+the existing open/current mapping requirement.
 
 The reader treats a cancelled first-attempt main gate as **not evaluated** only
 after verifying its workflow ID/path/repository and the complete attempt jobs

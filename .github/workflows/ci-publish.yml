@@ -30,6 +30,7 @@ jobs:
       pushed: ${{ steps.route.outputs.pushed }}
       key: ${{ steps.route.outputs.key }}
       run_id: ${{ steps.route.outputs.run_id }}
+      no_op: ${{ steps.route.outputs.no_op }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -43,7 +44,7 @@ jobs:
 
   admission:
     needs: route
-    if: github.event_name == 'workflow_run' && github.event.action != 'completed'
+    if: github.event_name == 'workflow_run' && github.event.action != 'completed' && needs.route.outputs.no_op != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -78,6 +79,7 @@ jobs:
 
   publish:
     needs: route
+    if: needs.route.outputs.no_op != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

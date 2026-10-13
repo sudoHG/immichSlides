@@ -293,6 +293,138 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_closed_producers_noop_only_after_unique_authenticated_mapping(self):
+        import ci_publish as publisher
+        from unittest.mock import Mock
+        for merged, candidates in ((True, [{"number": 7}]), (True, [{"number": 7}, {"number": 8}]),
+                                   (True, []), (False, [])):
+            closed = copy.deepcopy(PR)
+            closed.update(state="closed", merged=merged)
+            for forged in (False, True, "state", "head-repository", "base", "head", "api"):
+                with self.subTest(merged=merged, candidates=candidates, forged=forged), tempfile.TemporaryDirectory() as directory:
+                    matched = copy.deepcopy(closed)
+                    if forged == "state":
+                        matched["state"] = "unknown"
+                    elif forged == "head-repository":
+                        matched["head"]["repo"]["full_name"] = "another/photos"
+                    elif forged == "base":
+                        matched["base"]["ref"] = "other"
+                    elif forged == "head":
+                        matched["head"]["sha"] = "e" * 40
+                    run = dict(RUN, pull_requests=[], path="wrong.yml" if forged is True else RUN["path"])
+                    api = Mock(repository=REPOSITORY)
+                    def response(path, **kwargs):
+                        if path.startswith("actions/runs/"):
+                            return run
+                        if path.startswith("commits/"):
+                            return candidates
+                        if forged == "api":
+                            raise publisher.GitHubRequestError("Synthetic API refusal", http_status=503)
+                        return dict(matched, number=int(path.split("/")[-1]))
+                    api.repo.side_effect = response
+                    api.pages.return_value = []
+                    event, output = Path(directory, "event.json"), Path(directory, "output")
+                    event.write_text(json.dumps({"workflow_run": {"id": RUN["id"]}}))
+                    environment = {"GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output),
+                                   "GITHUB_EVENT_NAME": "workflow_run"}
+                    with patch("sys.argv", ["ci_publish.py", "route", "--repository", REPOSITORY]), \
+                            patch.object(publisher.os, "environ", environment), patch.object(publisher, "GitHub", return_value=api), \
+                            patch.object(publisher, "workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                            patch.object(publisher, "check_credential_context"), patch("builtins.print") as log:
+                        self.assertEqual(publisher.main(), 0 if merged and len(candidates) == 1 and not forged else 1)
+                    if merged and len(candidates) == 1 and not forged:
+                        self.assertEqual(output.read_text(), "no_op=true\n")
+                        self.assertIn("closed", log.call_args.args[0])
+                        self.assertEqual(api.repo.call_args_list[1].args, ("commits/" + HEAD + "/pulls",))
+                    else:
+                        self.assertFalse(output.exists())
+                    api.status.assert_not_called()
+                    api.dispatch.assert_not_called()
+
+        for association in ("open", "unrelated-merged", "same-head-merged"):
+            with self.subTest(association=association):
+                current, merged = copy.deepcopy(PR), dict(copy.deepcopy(PR), number=8, state="closed", merged=True)
+                current["head"]["sha"] = "e" * 40
+                merged["head"]["sha"] = HEAD if association == "same-head-merged" else "f" * 40
+                candidates = [{"number": 7}] if association == "open" else [{"number": 7}, {"number": 8}]
+                run = dict(RUN, pull_requests=[])
+                api = Mock(repository=REPOSITORY)
+                api.repo.side_effect = lambda path, **kw: run if path.startswith("actions/runs/") else (
+                    candidates if path.startswith("commits/") else current if path == "pulls/7" else merged)
+                with patch.object(publisher, "workflows", return_value={"ci-pr-gate": WORKFLOW}):
+                    if association == "same-head-merged":
+                        with self.assertRaises(ContractError) as error:
+                            publisher.route(api, {"workflow_run": {"id": RUN["id"]}}, {"GITHUB_EVENT_NAME": "workflow_run"})
+                        self.assertNotIsInstance(error.exception, publisher.ClosedPullRequest)
+                    else:
+                        try:
+                            output = publisher.route(api, {"workflow_run": {"id": RUN["id"]}},
+                                                     {"GITHUB_EVENT_NAME": "workflow_run"})
+                        except ContractError as error:
+                            self.fail("Valid open route refused: " + str(error))
+                        self.assertEqual(output, {"pr": "7", "pushed": "", "key": "pr-7", "run_id": str(RUN["id"])})
+                api.status.assert_not_called()
+                api.dispatch.assert_not_called()
+
+    def test_admission_closure_race_noops_before_artifact_or_git_reads(self):
+        import ci_publish as publisher
+        from unittest.mock import Mock
+        for state in ("closed", "existing", "missing"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                api = Mock(repository=REPOSITORY)
+                current = copy.deepcopy(PR)
+                if state == "closed":
+                    current.update(state="closed", merged=True)
+                else:
+                    current["head"]["sha"] = "e" * 40
+                api.repo.side_effect = lambda path, **kw: RUN if path.startswith("actions/runs/") else current
+                event = Path(directory, "event.json")
+                event.write_text(json.dumps({"workflow_run": {"id": RUN["id"]}}))
+                with patch("sys.argv", ["ci_publish.py", "admit", "--repository", REPOSITORY]), \
+                        patch.object(publisher.os, "environ", {"GITHUB_EVENT_PATH": str(event)}), \
+                        patch.object(publisher, "GitHub", return_value=api), \
+                        patch.object(publisher, "workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                        patch.object(publisher, "check_credential_context"), \
+                        patch.object(publisher, "trusted_admissions", return_value={RUN["id"]: {}} if state == "existing" else {}) as read, \
+                        patch.object(publisher, "git") as git, patch("builtins.print"):
+                    self.assertEqual(publisher.main(), 1 if state == "missing" else 0)
+                if state == "closed":
+                    read.assert_not_called()
+                else:
+                    read.assert_called_once_with(api, [RUN["id"]])
+                self.assertEqual(sum(call.args == ("pulls/7",) for call in api.repo.call_args_list),
+                                 2 if state == "missing" else 1)
+                git.assert_not_called()
+
+    def test_publication_closure_races_never_write_statuses_or_request_approval(self):
+        import ci_publish as publisher
+        from unittest.mock import Mock
+        for stage in ("before-compute", "before-write"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                api, app = Mock(repository=REPOSITORY), Mock()
+                api.repo.side_effect = [dict(PR, state="closed")] if stage == "before-compute" else [PR, dict(PR, state="closed")]
+                plan = {"ci-pr-gate": {"state": "success", "description": "Complete"}}
+                event = Path(directory, "event.json")
+                event.write_text("{}")
+                with patch("sys.argv", ["ci_publish.py", "publish", "--repository", REPOSITORY]), \
+                        patch.object(publisher.os, "environ", {"GITHUB_EVENT_PATH": str(event), "CI_PR_NUMBER": "7"}), \
+                        patch.object(publisher, "GitHub", return_value=api), \
+                        patch.object(publisher, "mint_app", return_value=(app, "generic-app[bot]")), \
+                        patch.object(publisher, "compute", return_value=(HEAD, plan, None)), \
+                        patch("ci_xcode_cloud_selection.publish_pointers") as pointers, patch("builtins.print"):
+                    self.assertEqual(publisher.main(), 0)
+                if stage == "before-compute":
+                    pointers.assert_not_called()
+                app.status.assert_not_called()
+                app.dispatch.assert_not_called()
+                app.request.assert_called_once_with("/installation/token", method="DELETE")
+        api = Mock(repository=REPOSITORY)
+        api.repo.return_value = dict(PR, state="closed", merged=True)
+        with self.assertRaises(publisher.ClosedPullRequest):
+            publisher.compute(api, 7, "", "generic-app[bot]")
+        api.repo.assert_called_once_with("pulls/7")
+        api.pages.assert_not_called()
+
     def test_archive_unavailable_neutrality_retains_the_linux_cloud_selection_guard(self):
         from ci_publish import archive_blocked_ui
         api = UnavailableUIAPI()
@@ -2746,6 +2878,24 @@ class OtherUITests: XCTestCase { func testPlay() {} }
                 map_pr(RecordedAPI(fork, commit_mapping=False, head_candidates=candidates), run)
         with self.assertRaises(ContractError):
             map_pr(RecordedAPI(fork, commit_mapping=False, pagination_error=True), run)
+        from ci_publish import ClosedPullRequest
+        closed = dict(copy.deepcopy(fork), state="closed", merged=True)
+        with self.assertRaises(ClosedPullRequest):
+            map_pr(RecordedAPI(closed), run, allow_closed=True)
+        closed["head"]["sha"] = "e" * 40
+        with self.assertRaises(ContractError) as error:
+            map_pr(RecordedAPI(closed), run, allow_closed=True)
+        self.assertNotIsInstance(error.exception, ClosedPullRequest)
+        for current in (True, False):
+            with self.subTest(current=current):
+                self.assertEqual(map_pr(RecordedAPI(fork), run, current=current, allow_closed=True), fork)
+                newer = copy.deepcopy(fork)
+                newer["head"]["sha"] = "e" * 40
+                if current:
+                    with self.assertRaises(ContractError):
+                        map_pr(RecordedAPI(newer), run, allow_closed=True)
+                else:
+                    self.assertEqual(map_pr(RecordedAPI(newer), run, current=False, allow_closed=True), newer)
 
     def test_repeated_mismatch_requires_a_persisted_earlier_attempt_from_the_app(self):
         run = dict(RUN, run_attempt=3)
