@@ -592,6 +592,19 @@ ASC `createdDate`. A stuck older build stops blocking but still counts at least
 inventory fails closed. A terminal build for another head no longer blocks
 starts; it still cannot supply accepted test evidence.
 
+When grouped prepare records a decision (`recorded=true`), it uploads a bounded `prepare.json` in
+`ci-xcc-prepare-<uploader-run>-<attempt>`, before arm or start. It records the
+decision, reason, group, head, producer/admission identity, routing `control`
+(`source` and `mode`), and available `budget_policy`, `cloud_estimate`,
+`estimate_decision`, `usage` and `unresolved_starts`, including inactive, override-only, selection and budget
+refusals. It excludes the full selection and API inventories and uses the existing
+JSON size limit. Authenticate its main workflow, repository and uploader attempt
+with `ci_xcode_cloud_state.read_state` and `PREPARE_PREFIX`, just as for `start.json`,
+before opening bytes. Retention is 90 days. It is diagnostic evidence only and
+cannot authorize spending, waiting or a test verdict. Superseded runs,
+pre-decision errors and cancellations before recording a decision produce no
+receipt. A failed receipt upload intentionally blocks arm and start (fail-closed).
+
 An immutable **about-to-POST marker** uploads successfully before the start step
 can POST. The marker and start receipt bind the producer ID, archive evidence
 attempt and admitted identity, with main workflow provenance authenticated before

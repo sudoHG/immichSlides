@@ -9,6 +9,7 @@ from ci_summary import require
 from ci_xcode_cloud import ROUTE_PATH, on_main, uuid
 
 START_PREFIX = "ci-xcc-start-"
+PREPARE_PREFIX = "ci-xcc-prepare-"
 POST_PREFIX = "ci-xcc-post-"
 START_TIMEOUT_MINUTES = 20
 

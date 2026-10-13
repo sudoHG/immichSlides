@@ -59,6 +59,13 @@ jobs:
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
           CI_XCC_ROUTING_OVERRIDE: ${{ vars.CI_XCC_ROUTING_OVERRIDE }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py prepare'
+      - if: always() && steps.prepare.outputs.recorded == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-xcc-prepare-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-xcc-route/prepare.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Prepare the durable POST marker
         if: success() && steps.prepare.outputs.post == 'true'
         id: arm
