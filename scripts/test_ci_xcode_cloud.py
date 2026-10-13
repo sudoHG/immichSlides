@@ -48,6 +48,11 @@ class CloudHookDiagnosticsTests(unittest.TestCase):
         actual = run.call_args.kwargs["env"]
         self.assertEqual(actual, dict(proxies, PATH="/usr/bin:/bin:/usr/sbin:/sbin", GIT_CONFIG_NOSYSTEM="1",
                                       GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0"))
+        with patch.dict(self.bootstrap.os.environ, environment, clear=True), \
+                patch.object(self.bootstrap.subprocess, "check_output", return_value=b"") as read:
+            self.assertEqual(self.bootstrap.read_blob(Path("/unused"), "a" * 40, "fixture.swift"), "")
+        self.assertEqual(read.call_args.kwargs["env"], dict(proxies, PATH="/usr/bin:/bin", GIT_CONFIG_NOSYSTEM="1",
+                                                          GIT_CONFIG_GLOBAL="/dev/null"))
 
     def test_environment_refusal_keeps_the_guard_and_emits_only_stage_and_class(self):
         self.environment["CI_START_CONDITION"] = "private-input-value"
@@ -183,6 +188,16 @@ class GroupEvidenceTests(unittest.TestCase):
     def validate(self):
         return self.groups.validate_evidence(self.record, self.run, self.route, self.evidence,
                                              [self.check], [self.pointer], approved=False)
+
+    def test_override_only_requires_an_explicit_boolean_when_present(self):
+        self.assertEqual(self.groups.registry(self.registry), self.registry)
+        for value in (True, False):
+            registration = dict(self.registry, override_only=value)
+            with self.subTest(value=value):
+                self.assertEqual(self.groups.registry(registration), registration)
+        for value in ("true", "false", 1, 0, None, [], {}):
+            with self.subTest(value=value), self.assertRaises(ContractError):
+                self.groups.registry(dict(self.registry, override_only=value))
 
     def test_same_method_requires_both_exact_destinations(self):
         proof = self.validate()

@@ -14,10 +14,11 @@ confirmed allowance cap and billing anchor, and a measured billing factor.
 The reader supports a separate v2 protocol for functional PR tests:
 `ios` covers both iPhone and iPad; `tvos` covers Apple TV. The grouped producer,
 router and importer use the trusted-base registry. The registry permits a
-maintainer-approved, one-build Apple TV validation with `override_only: true`;
+maintainer-approved Apple TV validation with `override_only: true`;
 ordinary PRs remain on GitHub even under congestion. Its temporary cap must return
 to the real allowance immediately after the real build's usage is visible, before
-budget-fallback validation. Historical v1 Apple TV evidence remains
+budget-fallback validation. Keep `override_only: true` after restoring the cap
+and after renewal until separate routing activation is approved. Historical v1 Apple TV evidence remains
 readable. ASC configuration remains maintainer-owned.
 Part of #283 and Part of #83.
 
@@ -317,34 +318,45 @@ minutes used and 34 remaining on 2026-10-13. Renewal is the 9th at 04:26 UTC:
 The measured billed/raw ratio is approximately 1.8; it is an estimate, not an API
 billing total. Destination multiplication remains a conservative upper estimate.
 
-The temporary validation cap is 1,755 billed minutes and `override_only: true`
-requires the control source to be `repository-variable` after exact-head parsing.
+The registry cap is the real 1,500 billed-minute allowance. A separately approved
+validation temporarily used 1,757 billed minutes for the one additionally
+approved B2-prime retry. `override_only: true`
+requires the control source to be `repository-variable` after exact-head parsing;
+the optional field must be a boolean.
 Automatic PRs and manual dispatches without a matching variable stay on GitHub
 before queue, budget or ASC access; malformed variables still fail closed.
-A complete read-only inventory measured 873.070750 destination-wall upper minutes in the UTC month
-and 835.200517 since the Apple boundary, with no active builds. Unresolved POST
+A complete read-only inventory after failed B2 measured 873.820816667
+destination-wall upper minutes in the UTC month and 835.950583333 since the
+Apple boundary, with no active builds. Unresolved POST
 markers still refuse admission. For the tvOS-only about/legal selection, `R=35`, so the admission
-threshold is `873.070750 * 1.8 + 35 * 1.8 + 120 = 1754.527350`.
-The 0.472650-minute rounding margin admits the first run; visible accounted usage
-above 0.262584 raw minutes refuses another identical run while these windows hold.
+threshold is `(873.820816667 + 0 + 35) * 1.8 + 120 = 1755.877470`.
+The additional active/unknown reservation is zero in this inventory; unresolved
+POST markers still block admission. The 1.122530 billed-minute margin admits the
+approved retry; visible accounted retry usage above
+`(1757 - 1755.877470) / 1.8 = 0.623628` raw minutes refuses another identical
+request while these windows hold.
 A near-zero run or a later UTC-month boundary can leave or reopen that room, so
-validation must not rely on this arithmetic to prevent a second real start. This
+validation must not rely on this arithmetic to enforce the approved run limit. This
 temporary cap exceeds
 the real allowance only for the explicitly approved validation. It cannot extend
-Apple's allowance, and an exhausted allowance may stop the one build.
+Apple's allowance, and an exhausted allowance may stop the approved retry.
 
 Validation heads change only a comment in the tvOS-only
 `immichSlides/tvOS/Core/SettingsViewTV+AboutPages.swift`: four Apple TV functional
 methods and one packed shard, with zero iPhone/iPad methods. An empty iOS group
 cannot route, and its minimum reservation also exceeds the temporary room.
-Run forced start rejection (B1) and the one real routed build (B2) under this
-override-only cap. As soon as B2's usage is visible, open and merge the reviewed
+The forced start rejection (B1) and failed real build (B2) precede the separately
+approved single retry (B2-prime). Remove the exact-head repository variable as
+soon as B2-prime's `start.json` appears. As soon as B2-prime's usage is visible,
+open and merge the reviewed
 restore change: `cap_minutes: 1500`, the same real anchor and billing factor,
-`routing_enabled: true`, and no `override_only`. The temporary 1,755 cap must
-never survive past B2. If Apple stops B2 before an action starts and visible
-usage is about zero, restore first and run nothing else under 1,755.
+`routing_enabled: true`, and `override_only: true`. Retain override-only routing
+after renewal until separate activation is approved. The temporary 1,757 cap must
+never survive past B2-prime. If visible retry usage is below 0.6236 raw minutes,
+merge the restore first and rerun nothing. An ambiguous POST is not proof of
+zero usage; reconcile it using the reviewed start deadline and visibility delay.
 Then create B3 on a fresh branch from restored main and prove budget refusal
-under the real cap. Never start a second real build. The UTC-month/Apple-period
+under the real cap. No further real Cloud start is authorized. The UTC-month/Apple-period
 maximum keeps current-period October usage counted after the November 1 UTC
 boundary;
 the real-cap guard refuses until the November 9 reset. Disable routing as
@@ -476,11 +488,13 @@ archive actions. For manual build-for-testing actions it verifies the trusted
 selection pointer and materializes the exact per-action functional plan from
 base-owned Git objects, using isolated system Python; no valid pointer fails the
 action. Build-for-testing does not start a fixture process.
-Selection failures retain a fixed stage name and exception class, plus an HTTP
-status or Git exit code when available. Diagnostics omit input values, URLs,
+Handled selection failures (`ValueError`, `KeyError`, `TypeError`, `OSError` and
+`SubprocessError`) retain a fixed stage name and exception class, plus an HTTP
+status or Git exit code when available. These diagnostics omit input values, URLs,
 paths and subprocess stderr, and every existing refusal still fails the action.
-Git subprocesses preserve only Apple's `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`
-and their lowercase variants in addition to the existing isolated Git environment.
+Git subprocesses preserve Apple's documented `HTTP_PROXY` and `HTTPS_PROXY`,
+plus `NO_PROXY` and lowercase variants required by the validation specification,
+in addition to the existing isolated Git environment.
 For either iOS or tvOS scheme's `test` or `test-without-building` action,
 `ci_pre_xcodebuild.sh` starts fixture set C on loopback port 8765 using isolated
 system Python, and requires readiness within 60 seconds. A failed start fails
@@ -620,9 +634,10 @@ immediately selects GitHub when the archive conclusion is not success, preservin
 the publisher's neutral `archive_blocked_ui` path.
 Apple TV runs the shards admission bound for the run: every manifest shard
 (`default`, `navigation`, `visual-a` through `visual-d`) for historical full
-selections, or the packed functional shards for current app-affecting PRs. Until
-#283 lands, every PR UI run stays on GitHub, so none uses Cloud overflow; nightly
-and main-push scheduling are unaffected. A historical full run skips its TV shards
+selections, or the packed functional shards for current app-affecting PRs.
+Ordinary PR UI runs stay on GitHub while the registry requires `override_only`;
+only the exact-head controlled acceptance overrides below can use Cloud overflow.
+Nightly and main-push scheduling are unaffected. A historical full run skips its TV shards
 when the current selection validates Cloud;
 the publisher repeats the full trust check independently of the producer output.
 
