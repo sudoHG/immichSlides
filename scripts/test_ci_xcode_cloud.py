@@ -10,6 +10,115 @@ import ci_xcode_cloud as cloud
 from ci_summary import ContractError, observation, test_identity
 
 
+class CloudHookDiagnosticsTests(unittest.TestCase):
+    """A failed Cloud bootstrap must be diagnosable without exposing its inputs."""
+
+    def setUp(self):
+        import importlib.util
+        path = Path(__file__).resolve().parent.parent / "ci_scripts/cloud_selection.py"
+        spec = importlib.util.spec_from_file_location("cloud_hook_probe", path)
+        self.bootstrap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.bootstrap)
+        self.environment = {"CI_PRIMARY_REPOSITORY_PATH": "/unused-private-workspace", "CI_XCODE_CLOUD": "TRUE",
+                            "CI_XCODEBUILD_ACTION": "build-for-testing", "CI_START_CONDITION": "manual",
+                            "CI_COMMIT": "a" * 40, "CI_WORKFLOW_ID": cloud.WORKFLOW_ID}
+
+    def failure(self):
+        import contextlib
+        import io
+        import json
+        stream = io.StringIO()
+        with patch.dict(self.bootstrap.os.environ, self.environment, clear=True), contextlib.redirect_stderr(stream):
+            self.assertEqual(self.bootstrap.main(), 1)
+        lines = stream.getvalue().splitlines()
+        self.assertEqual(lines[-1], "Cloud selection unavailable or untrusted; refusing template execution")
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("Cloud selection failure: "))
+        return json.loads(lines[0].removeprefix("Cloud selection failure: "))
+
+    def test_git_preserves_only_documented_apple_proxy_variables(self):
+        from types import SimpleNamespace
+        proxies = {name: "http://proxy.invalid:8080" for name in
+                   ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy")}
+        environment = dict(proxies, ALL_PROXY="not-an-Apple-proxy", GIT_SSL_NO_VERIFY="true",
+                           GIT_CONFIG_COUNT="1", CI_SECRET="private-input-value")
+        with patch.dict(self.bootstrap.os.environ, environment, clear=True), \
+                patch.object(self.bootstrap.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=b"")) as run:
+            self.assertEqual(self.bootstrap.git(Path("/unused"), "fetch", "--no-tags", "https://github.com/owner/repo.git"), "")
+        actual = run.call_args.kwargs["env"]
+        self.assertEqual(actual, dict(proxies, PATH="/usr/bin:/bin:/usr/sbin:/sbin", GIT_CONFIG_NOSYSTEM="1",
+                                      GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0"))
+
+    def test_environment_refusal_keeps_the_guard_and_emits_only_stage_and_class(self):
+        self.environment["CI_START_CONDITION"] = "private-input-value"
+        with patch.object(self.bootstrap, "git") as git:
+            self.assertEqual(self.failure(), {"stage": "environment", "exception_class": "ValueError"})
+        git.assert_not_called()
+
+    def test_http_failure_reports_the_status_without_url_or_exception_text(self):
+        from urllib.error import HTTPError
+        error = HTTPError("https://download.invalid/?signature=private-input-value", 403,
+                          "private-input-value", {}, None)
+        with patch.object(self.bootstrap, "git", return_value="a" * 40), \
+                patch.object(self.bootstrap, "pages", side_effect=error):
+            self.assertEqual(self.failure(), {"stage": "selection-pointer-read", "exception_class": "HTTPError",
+                                              "http_status": 403})
+
+    def test_git_failure_keeps_refusal_and_discards_stdout_stderr_and_paths(self):
+        import subprocess
+        from types import SimpleNamespace
+        result = SimpleNamespace(returncode=128, stdout=b"private-input-value",
+                                 stderr=b"https://download.invalid/?signature=private-input-value /private/workspace")
+        with patch.object(self.bootstrap.subprocess, "run", return_value=result):
+            self.assertEqual(self.failure(), {"stage": "checkout-identity", "exception_class": "ValueError",
+                                              "git_exit_code": 128})
+        error = subprocess.CalledProcessError(128, ["git", "show", "private-input-value"], stderr=result.stderr)
+        with patch.object(self.bootstrap, "git", side_effect=error):
+            self.assertEqual(self.failure(), {"stage": "checkout-identity", "exception_class": "CalledProcessError",
+                                              "git_exit_code": 128})
+
+    def test_post_clone_refuses_missing_repository_without_disclosing_the_path(self):
+        import subprocess
+        import tempfile
+        script = Path(__file__).resolve().parent.parent / "ci_scripts/ci_post_clone.sh"
+        for missing in (True, False):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                environment = {"PATH": "/usr/bin:/bin", "CI_XCODEBUILD_ACTION": "build-for-testing"}
+                if not missing:
+                    environment["CI_PRIMARY_REPOSITORY_PATH"] = str(Path(directory, "private-input-value"))
+                result = subprocess.run(["/bin/sh", str(script)], env=environment, capture_output=True, text=True, timeout=10)
+                baseline = subprocess.run(["/bin/sh", "-c", 'set -eu; cd "${CI_PRIMARY_REPOSITORY_PATH:?required}"'],
+                                          env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, baseline.returncode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr, "Cloud post-clone failure: stage=repository-path\n")
+
+    def test_blob_failure_captures_real_git_stderr_without_exposing_the_path(self):
+        import json
+        import subprocess
+        import sys
+        import tempfile
+        code = '''import importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("cloud_hook", sys.argv[1])
+hook = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hook)
+hook.stage("selection-recomputation")
+try:
+    hook.read_blob(Path(sys.argv[2]) / "private-input-value", "a" * 40, "private-input-value")
+except hook.subprocess.CalledProcessError as error:
+    print(json.dumps(hook.failure_details(error)))
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, "-I", "-B", "-c", code, self.bootstrap.__file__, directory],
+                                    capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(json.loads(result.stdout), {"stage": "selection-recomputation",
+                                                    "exception_class": "CalledProcessError", "git_exit_code": 128})
+
+
 class GroupEvidenceTests(unittest.TestCase):
     """A shared method on two destinations is two independently required results."""
 

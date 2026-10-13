@@ -476,6 +476,11 @@ archive actions. For manual build-for-testing actions it verifies the trusted
 selection pointer and materializes the exact per-action functional plan from
 base-owned Git objects, using isolated system Python; no valid pointer fails the
 action. Build-for-testing does not start a fixture process.
+Selection failures retain a fixed stage name and exception class, plus an HTTP
+status or Git exit code when available. Diagnostics omit input values, URLs,
+paths and subprocess stderr, and every existing refusal still fails the action.
+Git subprocesses preserve only Apple's `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`
+and their lowercase variants in addition to the existing isolated Git environment.
 For either iOS or tvOS scheme's `test` or `test-without-building` action,
 `ci_pre_xcodebuild.sh` starts fixture set C on loopback port 8765 using isolated
 system Python, and requires readiness within 60 seconds. A failed start fails
