@@ -1,5 +1,7 @@
 import SwiftUI
 
+// Validation-only head for the grouped Cloud Apple TV run.
+
 extension SettingsViewTV {
     var aboutSettingsView: some View {
         TVSettingsPageScaffold(
