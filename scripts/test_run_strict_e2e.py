@@ -623,6 +623,108 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_hosted_flow_prefixes_publish_only_the_reviewed_phase_and_class(self):
+        from ci_failure_diagnostics import classify_messages, unknown_diagnostics
+        # Fixed expectations catch missing/misclassified rows; source checks catch stale prefixes.
+        cases = (
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The first-boot page must show the Save Settings button.", "firstboot_setup", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "After a successful save, the app must reach mode selection.", "firstboot_setup", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "A fresh install must reach the normal first-boot page.", "firstboot_setup", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The first-boot page must show the API Key field.", "firstboot_setup", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The first-boot page must show the Test Connection button.", "firstboot_setup", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Save must become enabled after a real connection test succeeds.", "firstboot_setup", "control_state"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "A cold launch with saved settings must not return to the first-boot page.", "cold_relaunch", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "A configured cold launch must go straight to the playback page.", "cold_relaunch", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The mode page must offer ", "mode_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Chose filter but reached the playback page, so the mode card tap did not register.", "mode_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Still on the mode page after Continue; filter mode did not start.", "mode_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Filter mode must reach the filter summary page.", "mode_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Going back from the filter summary must return to mode selection.", "mode_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Random mode must reach the playback page.", "playback_entry", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "The playback page must show the Previous button.", "control_action", "hidden_controls"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "After auto-advance, the playback controls must be revealable.", "control_action", "hidden_controls"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "The playback page must show Play/Pause.", "control_action", "hidden_controls"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "After pausing, the playback controls must still be revealable.", "control_action", "hidden_controls"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "After pausing, the control value must be play.", "control_action", "control_state"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Resuming must continue from the current photo, with the control value back to pause.", "control_action", "control_state"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Previous must be disabled at the history boundary when playback starts.", "history_navigation", "control_state"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "After two Next taps, Previous must be enabled.", "history_navigation", "control_state"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "After a pause of at least 10 seconds, autoplay must not resume on its own.", "paused_hold", "control_state"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "probe_hit=MISS: frame-synchronized probe never saw outgoing translucent and incoming opacity=0 in 7 s.", "pause_window", "timing_window"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "visual_verdict=MISSING_FRAMES: missing a window-detected, after-pause, after-pause-0_3s or play-to-pause keepAlways frame.", "pause_window", "evidence_capture"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.", "pause_window", "probe_readback"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.", "pause_window", "probe_readback"),
+            ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "After late completion the current public mark must stay: no flash back, all black or unreadable: ", "late_image", "scene_identity"),
+            ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Next must be tappable twice right after entering the slideshow, before old image requests finish.", "late_image", "navigation"),
+            ("immichSlidesUITests/ScenePresentationContractUITests.swift", "The fixture must actually deliver a failing image response", "image_recovery", "fixture_response"),
+            ("immichSlidesUITests/ScenePresentationContractUITests.swift", "Fixture image response control timed out", "image_recovery", "fixture_response"),
+            ("immichSlidesUITests/ScenePresentationContractUITests.swift", "Fixture control must acknowledge its response mode", "image_recovery", "fixture_response"),
+            ("immichSlidesUITests/ExifToggleUITests.swift", "After turning EXIF off, the info card in the upper-right area of the public photo must disappear from the screen.", "exif_ownership", "exif_visibility"),
+            ("immichSlidesUITests/ExifToggleUITests.swift", "The required PNG with EXIF off still shows the info card.", "exif_ownership", "exif_visibility"),
+            ("TestSupport/StrictE2EPhotoIdentity.swift", "Can't check EXIF: photo status ", "exif_ownership", "scene_identity"),
+            ("TestSupport/StrictE2EPhotoIdentity.swift", "EXIF does not match the photo: mark=", "exif_ownership", "exif_correspondence"),
+            ("immichSlidesUITests/IOSDriver.swift", "The EXIF toggle must reach the target state through the real settings.", "exif_ownership", "control_state"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Default focus on the mode selection page must land on random playback.", "mode_selection", "focus"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Focus on the mode page must be able to move to filtered playback.", "mode_selection", "focus"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After choosing a mode, focus must be able to move down to the Continue button.", "mode_selection", "focus"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After returning to mode selection, default focus must go back to random playback.", "mode_selection", "focus"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After Continue, the app must reach the playback page and show the control bar.", "playback_entry", "navigation"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Before sending the wake arrow key, the hidden receiver layer must have system focus.", "hidden_controls", "focus"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After the control bar wakes again, focus must land on Play/Pause.", "hidden_controls", "focus"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After pressing Down, the hint and the control bar must hide.", "hidden_controls", "hidden_controls"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "With the control bar hidden, an arrow key must wake it again.", "hidden_controls", "hidden_controls"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Default focus on the filter summary must land on the album filter.", "filter_selection", "focus"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Focus must land on the target album.", "filter_selection", "focus"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Start Playback must be disabled with an empty selection.", "filter_selection", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Start Playback must be disabled with 0 albums / 0 people.", "filter_selection", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Start Playback must be enabled after selecting the target album.", "filter_selection", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Filtered playback must be startable after selecting the target album", "filter_selection", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "The album filter entry must be shown.", "filter_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "The person filter entry must be shown.", "filter_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Opening the album filter must show album cards or a loading state.", "filter_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Back from the people list must return to the filter screen.", "filter_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Back from the album list must return to the filter screen.", "filter_selection", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift", "Focus must land on the target person.", "filter_selection", "focus"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift", "Start Playback must open the playback screen.", "playback_entry", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Clear selection must actually receive remote focus", "filter_edit", "focus"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "The editor's Done must actually receive remote focus", "filter_edit", "focus"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "After Clear, both target and non-target albums must really become unselected; re-tapping each card must not stand in for the clear result", "filter_edit", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "The filter settings editor must offer a Done entry", "filter_edit", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Finishing the edit must return to the real playback settings screen", "filter_edit", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Server B must clear A's album selection", "server_switch", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "After switching servers the UI must not keep server A album/person IDs: ", "server_switch", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "The display mode's selected state must be read back.", "display_policy", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "No two distinct photos seen within four public album candidates; all failing originals are kept.", "display_policy", "scene_identity"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "After the change, a still frame taken mid-transition must not pass", "display_policy", "scene_identity"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "After changing the display mode, playback must still be on screen in the same live process.", "display_policy", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.", "display_policy", "scene_identity"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "After the change it must be a stable single photo from the target album, not a transition or multi-photo", "display_policy", "scene_identity"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "The same live app process must run before and after the display policy change", "display_policy", "process_lifetime"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "After the server switch, single-photo mode must show a stable single photo from B's target album", "server_switch", "scene_identity"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "The same process must run before and after applying single-photo mode after the server switch", "server_switch", "process_lifetime"),
+            ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "SmartFill must expose the complete manifest, stable visible render state and history cursor together", "visible_scene_capture", "probe_readback"),
+            ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "After tapping next, the fully visible SmartFill scene identity did not change in ", "history_navigation", "scene_identity"),
+            ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "Pausing must freeze the current transform progress", "paused_hold", "scene_identity"),
+            ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "The new scene from a manual next while paused must stay still at p=0", "paused_hold", "scene_identity"),
+            ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "The scene from a manual previous while paused must stay still at p=0", "paused_hold", "scene_identity"),
+            ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "Play must make the current still scene start moving from p=0 immediately", "control_action", "scene_identity"),
+            ("immichSlidesUITests/FilterSummaryIOSVisualUITests+Launch.swift", "After starting playback, the playback page should open and show the control bar", "playback_entry", "navigation"),
+        )
+        root = Path(__file__).resolve().parents[1]
+        for source, prefix, phase, kind in cases:
+            with self.subTest(source=source, prefix=prefix):
+                self.assertIn(prefix, (root / source).read_text())
+                expected = {"failure_phase": phase, "failure_class": kind}
+                for wrapper in ("", "XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",
+                                'failed: caught error: "message(\\"'):
+                    message = wrapper + prefix + " PRIVATE_SENTINEL /private/path asset-private"
+                    self.assertEqual(classify_messages([message]), expected)
+                    self.assertEqual(classify_messages([message, message + " other-private-value"]), expected)
+                    for conflicting in ("unreviewed PRIVATE_SENTINEL",
+                                        "The iOS slider must be settable to PRIVATE_SENTINEL"):
+                        self.assertEqual(classify_messages([message, conflicting]), unknown_diagnostics())
+                        self.assertEqual(classify_messages([conflicting, message]), unknown_diagnostics())
+
     def test_shared_export_without_opt_in_preserves_failed_bytes_and_two_export_budget(self):
         import subprocess
         with tempfile.TemporaryDirectory() as raw:

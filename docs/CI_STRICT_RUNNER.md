@@ -297,9 +297,14 @@ Failed method nodes in `official-tests*.json` and the tracer's
 
 - `failure_phase`: `interval_setup`, `hidden_controls`, `visible_scene_capture`,
   `background_return`, `continue_timing`, `paused_hold`, `settings_navigation`,
-  `control_action`, `unknown`.
+  `control_action`, `firstboot_setup`, `cold_relaunch`, `mode_selection`,
+  `playback_entry`, `history_navigation`, `pause_window`, `late_image`,
+  `image_recovery`, `exif_ownership`, `filter_selection`, `filter_edit`,
+  `server_switch`, `display_policy`, `unknown`.
 - `failure_class`: `interval_readback`, `hidden_controls`, `scene_identity`,
-  `process_lifetime`, `timing_window`, `navigation`, `snapshot_query`, `unknown`.
+  `process_lifetime`, `timing_window`, `navigation`, `snapshot_query`,
+  `control_state`, `focus`, `evidence_capture`, `probe_readback`,
+  `fixture_response`, `exif_visibility`, `exif_correspondence`, `unknown`.
 
 The code-defined allowlists and reviewed assertion-prefix table live in
 [`ci_failure_diagnostics.py`](../scripts/ci_failure_diagnostics.py). The lifecycle
@@ -327,6 +332,139 @@ without diagnostics remain valid. The existing sensitive scan additionally
 requires paired string fields from these exact allowlists in JSON records,
 rejecting free text, duplicate diagnostic keys and malformed diagnostic JSON;
 credential scanning, publication checks and bundle quarantine remain in force.
+
+#### Reviewed prefix table
+
+The following additions come only from public Swift assertions in the linked source files.
+Each row fixes both enum values before any suffix is read. Shared prefixes are used only
+when their other public call sites have the same meaning. The existing lifecycle/XCTest
+rows remain in the code-defined table unchanged.
+
+New enum meanings and why the previous vocabulary cannot express them:
+
+| Enum | Meaning and reason |
+|---|---|
+| `firstboot_setup` | Entering, testing and saving the initial configuration; distinct from playback settings navigation. |
+| `cold_relaunch` | Navigation after terminating and relaunching a configured app; distinct from a live background return. |
+| `mode_selection` | Choosing a mode or returning to its page; distinct from playback settings navigation. |
+| `playback_entry` | Reaching playback from mode/filter selection; distinct from acting on controls during playback. |
+| `history_navigation` | Next/Previous retained-history checks; distinct from generic control availability. |
+| `pause_window` | Detecting and capturing the outgoing-only transition pause; distinct from an already paused hold. |
+| `late_image` | Checks while or after superseded image requests complete; distinct from background return or Continue timing. |
+| `image_recovery` | Controlled failing-image response setup/readback; distinct from interval setup or visible-scene capture. |
+| `exif_ownership` | EXIF toggle effects and correspondence with the current photo; distinct from scene identity alone. |
+| `filter_selection` | Album/person selection and its list/summary navigation; distinct from playback settings navigation. |
+| `filter_edit` | Editing/clearing filters through playback settings; distinct from initial selection. |
+| `server_switch` | Clearing old selections and preserving process/scene after changing servers; distinct from cold relaunch. |
+| `display_policy` | Applying and reading back display mode and its visible scene/process contract; distinct from control actions. |
+| `control_state` | Enabled/selected/play-pause state of an existing control; navigation and hidden-controls classes do not express its value. |
+| `focus` | Remote system focus on a named UI control/receiver; presence or navigation alone does not prove focus. |
+| `evidence_capture` | Missing required captured frames; this does not establish the identity of their absent pixels. |
+| `probe_readback` | Missing/inconsistent combined render/manifest/history or synchronized opacity probe evidence; this does not identify a bad photo. |
+| `fixture_response` | Controlled image-response mode, timeout or delivered-failure count; this is fixture evidence, not navigation or image identity. |
+| `exif_visibility` | Visible EXIF card remains after disabling it; photo identity alone cannot express overlay visibility. |
+| `exif_correspondence` | EXIF metadata disagrees with the identified photo; neither navigation nor photo identity alone expresses that mismatch. |
+
+| Fixed source prefix | Phase | Class | Public source |
+|---|---|---|---|
+| `The first-boot page must show the Save Settings button.` | `firstboot_setup` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `After a successful save, the app must reach mode selection.` | `firstboot_setup` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `A fresh install must reach the normal first-boot page.` | `firstboot_setup` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `The first-boot page must show the API Key field.` | `firstboot_setup` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `The first-boot page must show the Test Connection button.` | `firstboot_setup` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `Save must become enabled after a real connection test succeeds.` | `firstboot_setup` | `control_state` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `A cold launch with saved settings must not return to the first-boot page.` | `cold_relaunch` | `navigation` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `A configured cold launch must go straight to the playback page.` | `cold_relaunch` | `navigation` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `The mode page must offer ` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `Chose filter but reached the playback page, so the mode card tap did not register.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `Still on the mode page after Continue; filter mode did not start.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `Filter mode must reach the filter summary page.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `Going back from the filter summary must return to mode selection.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `Random mode must reach the playback page.` | `playback_entry` | `navigation` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `The playback page must show the Previous button.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After auto-advance, the playback controls must be revealable.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `The playback page must show Play/Pause.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After pausing, the playback controls must still be revealable.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After pausing, the control value must be play.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `Resuming must continue from the current photo, with the control value back to pause.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `Previous must be disabled at the history boundary when playback starts.` | `history_navigation` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After two Next taps, Previous must be enabled.` | `history_navigation` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After a pause of at least 10 seconds, autoplay must not resume on its own.` | `paused_hold` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `probe_hit=MISS: frame-synchronized probe never saw outgoing translucent and incoming opacity=0 in 7 s.` | `pause_window` | `timing_window` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `visual_verdict=MISSING_FRAMES: missing a window-detected, after-pause, after-pause-0_3s or play-to-pause keepAlways frame.` | `pause_window` | `evidence_capture` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.` | `pause_window` | `probe_readback` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.` | `pause_window` | `probe_readback` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After late completion the current public mark must stay: no flash back, all black or unreadable: ` | `late_image` | `scene_identity` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
+| `Next must be tappable twice right after entering the slideshow, before old image requests finish.` | `late_image` | `navigation` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
+| `The fixture must actually deliver a failing image response` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |
+| `Fixture image response control timed out` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |
+| `Fixture control must acknowledge its response mode` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |
+| `After turning EXIF off, the info card in the upper-right area of the public photo must disappear from the screen.` | `exif_ownership` | `exif_visibility` | [ExifToggleUITests.swift](../immichSlidesUITests/ExifToggleUITests.swift) |
+| `The required PNG with EXIF off still shows the info card.` | `exif_ownership` | `exif_visibility` | [ExifToggleUITests.swift](../immichSlidesUITests/ExifToggleUITests.swift) |
+| `Can't check EXIF: photo status ` | `exif_ownership` | `scene_identity` | [StrictE2EPhotoIdentity.swift](../TestSupport/StrictE2EPhotoIdentity.swift) |
+| `EXIF does not match the photo: mark=` | `exif_ownership` | `exif_correspondence` | [StrictE2EPhotoIdentity.swift](../TestSupport/StrictE2EPhotoIdentity.swift) |
+| `The EXIF toggle must reach the target state through the real settings.` | `exif_ownership` | `control_state` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift) |
+| `Default focus on the mode selection page must land on random playback.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `Focus on the mode page must be able to move to filtered playback.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `After choosing a mode, focus must be able to move down to the Continue button.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `After returning to mode selection, default focus must go back to random playback.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `After Continue, the app must reach the playback page and show the control bar.` | `playback_entry` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `Before sending the wake arrow key, the hidden receiver layer must have system focus.` | `hidden_controls` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `After the control bar wakes again, focus must land on Play/Pause.` | `hidden_controls` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `After pressing Down, the hint and the control bar must hide.` | `hidden_controls` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `With the control bar hidden, an arrow key must wake it again.` | `hidden_controls` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `Default focus on the filter summary must land on the album filter.` | `filter_selection` | `focus` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Focus must land on the target album.` | `filter_selection` | `focus` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Start Playback must be disabled with an empty selection.` | `filter_selection` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Start Playback must be disabled with 0 albums / 0 people.` | `filter_selection` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Start Playback must be enabled after selecting the target album.` | `filter_selection` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Filtered playback must be startable after selecting the target album` | `filter_selection` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `The album filter entry must be shown.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `The person filter entry must be shown.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Opening the album filter must show album cards or a loading state.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Back from the people list must return to the filter screen.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Back from the album list must return to the filter screen.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Focus must land on the target person.` | `filter_selection` | `focus` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift) |
+| `Start Playback must open the playback screen.` | `playback_entry` | `navigation` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift) |
+| `Clear selection must actually receive remote focus` | `filter_edit` | `focus` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `The editor's Done must actually receive remote focus` | `filter_edit` | `focus` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `After Clear, both target and non-target albums must really become unselected; re-tapping each card must not stand in for the clear result` | `filter_edit` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `The filter settings editor must offer a Done entry` | `filter_edit` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Finishing the edit must return to the real playback settings screen` | `filter_edit` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Server B must clear A's album selection` | `server_switch` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `After switching servers the UI must not keep server A album/person IDs: ` | `server_switch` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `The display mode's selected state must be read back.` | `display_policy` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `No two distinct photos seen within four public album candidates; all failing originals are kept.` | `display_policy` | `scene_identity` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `After the change, a still frame taken mid-transition must not pass` | `display_policy` | `scene_identity` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `After changing the display mode, playback must still be on screen in the same live process.` | `display_policy` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |
+| `After the change it must be a stable single photo from the target album, not a transition or multi-photo` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |
+| `The same live app process must run before and after the display policy change` | `display_policy` | `process_lifetime` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |
+| `After the server switch, single-photo mode must show a stable single photo from B's target album` | `server_switch` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |
+| `The same process must run before and after applying single-photo mode after the server switch` | `server_switch` | `process_lifetime` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |
+| `SmartFill must expose the complete manifest, stable visible render state and history cursor together` | `visible_scene_capture` | `probe_readback` | [PlaybackHistoryIOSUITests+Support.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift) |
+| `After tapping next, the fully visible SmartFill scene identity did not change in ` | `history_navigation` | `scene_identity` | [PlaybackHistoryIOSUITests+Support.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift) |
+| `Pausing must freeze the current transform progress` | `paused_hold` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
+| `The new scene from a manual next while paused must stay still at p=0` | `paused_hold` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
+| `The scene from a manual previous while paused must stay still at p=0` | `paused_hold` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
+| `Play must make the current still scene start moving from p=0 immediately` | `control_action` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
+| `After starting playback, the playback page should open and show the control bar` | `playback_entry` | `navigation` | [FilterSummaryIOSVisualUITests+Launch.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Launch.swift) |
+
+Dynamic leading step names, interpolated album/scene identifiers, bare assertions and
+generic messages whose phase is ambiguous remain `unknown`. In particular, the recovery
+flow's step-name-led photo checks and shared driver messages beginning with a press
+count cannot be classified by this table. The complete-SmartFill-probe prefix diagnoses
+combined evidence readback, without deciding which component is absent. Screenshot-empty
+and Autoplay-setting prefixes retain their previous `unknown` pair. A mixed list containing
+an unmatched message or different phase/class pairs still yields the `unknown` pair,
+even when another message matches a new row. No hosted hit-rate improvement is claimed
+until actual official failure summaries exercise these prefixes.
+
+Adding enum values also requires trusted readers containing the updated allowlists.
+Older readers reject those values; a PR using a base reader from before this change may
+therefore refuse an enriched failed/flaky-passed record until the updated reader is
+trusted. Record fields, scanner implementation, verdicts, populations and budgets do not
+change, and every published value remains code-defined.
 
 The separate simulator creation/preparation steps also publish compact records on
 failure using `--preparation-failed`: each declared case is failed with a `not-run`
