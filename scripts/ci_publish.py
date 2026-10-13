@@ -35,6 +35,17 @@ PRODUCERS = {"ci-pr-gate": ".github/workflows/ci-gate.yml", "ci-ui": ".github/wo
 MAX_JSON_BYTES = 16 * 1024 * 1024
 
 
+class ClosedPullRequest(ContractError):
+    """Only an authenticated, uniquely mapped closed PR permits a no-op."""
+
+
+def check_closed_pr(pr, repository):
+    if pr["state"] == "closed":
+        require(pr["base"]["ref"] == "main" and pr["base"]["repo"]["full_name"] == repository,
+                "closed PR does not target this repository's main")
+        raise ClosedPullRequest(f"PR #{positive(pr['number'])} is closed or merged; nothing to publish")
+
+
 class ArtifactRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, new_url):
         from urllib.parse import urlsplit
@@ -515,7 +526,7 @@ def workflows(api):
     return result
 
 
-def map_pr(api, run, *, current=True):
+def map_pr(api, run, *, current=True, allow_closed=False):
     candidates = run.get("pull_requests", []) or api.repo("commits/" + run["head_sha"] + "/pulls")
     if not candidates:
         candidates = api.pages("pulls", state="open", base="main",
@@ -523,11 +534,17 @@ def map_pr(api, run, *, current=True):
     matches = []
     for candidate in candidates:
         pr = api.repo(f"pulls/{positive(candidate['number'])}")
-        if (pr["state"] == "open" and (not current or pr["head"]["sha"] == run["head_sha"])
+        if allow_closed:
+            require(pr["state"] in {"open", "closed"}, "producer PR state is unknown")
+        if ((pr["state"] == "open" or allow_closed and pr["state"] == "closed")
+                and (allow_closed or not current or pr["head"]["sha"] == run["head_sha"])
                 and pr["head"]["repo"]["full_name"] == run["head_repository"]["full_name"]
                 and pr["base"]["ref"] == "main" and pr["base"]["repo"]["full_name"] == api.repository):
             matches.append(pr)
     require(len(matches) == 1, "producer has no unique current PR mapping")
+    if allow_closed:
+        check_closed_pr(matches[0], api.repository)
+        require(not current or matches[0]["head"]["sha"] == run["head_sha"], "producer has no unique current PR mapping")
     return matches[0]
 
 
@@ -545,7 +562,7 @@ def route(api, event, environment):
     require(workflow is not None, "producer workflow ID is not admitted")
     verify_workflow(run, workflow, api.repository)
     if run["event"] == "pull_request":
-        pr = map_pr(api, run, current=False)["number"]
+        pr = map_pr(api, run, current=False, allow_closed=True)["number"]
         return {"pr": str(pr), "pushed": "", "key": f"pr-{pr}", "run_id": str(run["id"])}
     require(run["head_branch"] == "main", "producer push must target main")
     return {"pr": "0", "pushed": run["head_sha"], "key": "push-" + run["head_sha"], "run_id": str(run["id"])}
@@ -553,11 +570,14 @@ def route(api, event, environment):
 
 def admit(api, event):
     run = api.repo("actions/runs/" + str(event["workflow_run"]["id"]))
-    require(any(w["id"] == run["workflow_id"] and w["path"] == run["path"] for w in workflows(api).values()), "untrusted producer")
+    workflow = next((w for w in workflows(api).values()
+                     if w["id"] == run["workflow_id"] and w["path"] == run["path"]), None)
+    require(workflow is not None, "untrusted producer")
+    verify_workflow(run, workflow, api.repository)
+    pr = map_pr(api, run, allow_closed=True) if run["event"] == "pull_request" else None
     records = trusted_admissions(api, [run["id"]])
     if run["id"] in records:
         return None
-    pr = map_pr(api, run) if run["event"] == "pull_request" else None
     reference_sha = pr["merge_commit_sha"] if pr else api.repo("git/ref/heads/main")["object"]["sha"]
     sha(reference_sha)
     commit_sha = reference_sha if pr else run["head_sha"]
@@ -758,6 +778,8 @@ def approval_requests(api, pr):
 
 def compute(api, pr_number, pushed, login):
     pr = api.repo(f"pulls/{pr_number}") if pr_number else None
+    if pr:
+        check_closed_pr(pr, api.repository)
     require(not pr or (pr["state"] == "open" and pr["base"]["ref"] == "main"), "PR is closed or does not target main")
     head = pr["head"]["sha"] if pr else pushed
     sha(head)
@@ -917,6 +939,8 @@ def compute(api, pr_number, pushed, login):
 def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
     # Serialize display publication per PR and re-read current state. Approval
     # records write independently, then dispatch a fresh publication.
+    if pr_number:
+        check_closed_pr(api.repo(f"pulls/{pr_number}"), api.repository)
     if not dry_run:
         from ci_xcode_cloud_selection import publish_pointers
         try:
@@ -929,7 +953,9 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
         print(json.dumps({"head": head, "statuses": plan, "approval": approval, "writes": False}, indent=2))
         return
     if pr_number:
-        require(api.repo(f"pulls/{pr_number}")["head"]["sha"] == head, "PR head changed before publication")
+        current = api.repo(f"pulls/{pr_number}")
+        check_closed_pr(current, api.repository)
+        require(current["state"] == "open" and current["head"]["sha"] == head, "PR head changed before publication")
     receipt = plan.get("ci-ui", {}).get("reuse_verdict")
     if receipt is not None:
         directory = Path(os.environ["RUNNER_TEMP"], "ci-ui-verdict")
@@ -1094,6 +1120,12 @@ def main():
                     write_publication(api, app, int(environment["CI_PR_NUMBER"]), environment.get("CI_PUSHED_SHA", ""), login)
             finally:
                 app.request("/installation/token", method="DELETE")
+        return 0
+    except ClosedPullRequest as error:
+        print("Trusted publisher no-op: " + str(error))
+        if args.command == "route":
+            with open(environment["GITHUB_OUTPUT"], "a") as handle:
+                handle.write("no_op=true\n")
         return 0
     except (ContractError, KeyError, ValueError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
         detail = str(error) if isinstance(error, ContractError) else type(error).__name__

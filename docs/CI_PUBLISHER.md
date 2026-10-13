@@ -28,6 +28,16 @@ repository, this repository's `main` base, and the current head SHA for admissio
 Stale admission heads, ambiguous matches and pagination failures refuse mapping.
 Workflow names and colliding job names do not establish provenance.
 
+After producer workflow/repository verification, a uniquely associated PR that
+GitHub confirms is closed or merged ends as a successful no-op with an explicit
+log line. The route output skips admission and publication, without statuses,
+approval requests or re-dispatch. Closure between route and admission, during
+evaluation, or before the final publication check also no-ops; an already minted
+installation token is still revoked. Closed mappings must retain the same head
+repository and this repository's `main` base. Missing, ambiguous, malformed or
+mismatched mappings and every refusal for an open PR still fail closed. Shared
+Cloud callers retain the existing open/current mapping requirement.
+
 The reader treats a cancelled first-attempt main gate as **not evaluated** only
 after verifying its workflow ID/path/repository and the complete attempt jobs
 list: unique job IDs must match the API's explicit `total_count`. Every job must

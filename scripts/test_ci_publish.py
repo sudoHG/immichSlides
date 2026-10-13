@@ -293,6 +293,87 @@ def gate_fixture(*, units):
 
 
 class PublisherTests(unittest.TestCase):
+    def test_closed_producers_noop_only_after_unique_authenticated_mapping(self):
+        import ci_publish as publisher
+        from unittest.mock import Mock
+        for merged in (False, True):
+            closed = copy.deepcopy(PR)
+            closed.update(state="closed", merged=merged)
+            closed["head"]["sha"] = "e" * 40
+            for candidates in ([{"number": 7}], [{"number": 7}, {"number": 8}], []):
+                for forged in (False, True, "state", "head-repository", "base"):
+                    with self.subTest(merged=merged, candidates=candidates, forged=forged), tempfile.TemporaryDirectory() as directory:
+                        matched = copy.deepcopy(closed)
+                        if forged == "state":
+                            matched["state"] = "unknown"
+                        elif forged == "head-repository":
+                            matched["head"]["repo"]["full_name"] = "another/photos"
+                        elif forged == "base":
+                            matched["base"]["ref"] = "other"
+                        run = dict(RUN, pull_requests=candidates, path="wrong.yml" if forged is True else RUN["path"])
+                        api = Mock(repository=REPOSITORY)
+                        api.repo.side_effect = lambda path, **kw: run if path.startswith("actions/runs/") else (
+                            candidates if path.startswith("commits/") else dict(matched, number=int(path.split("/")[-1])))
+                        api.pages.return_value = []
+                        event, output = Path(directory, "event.json"), Path(directory, "output")
+                        event.write_text(json.dumps({"workflow_run": {"id": RUN["id"]}}))
+                        environment = {"GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output),
+                                       "GITHUB_EVENT_NAME": "workflow_run"}
+                        with patch("sys.argv", ["ci_publish.py", "route", "--repository", REPOSITORY]), \
+                                patch.object(publisher.os, "environ", environment), patch.object(publisher, "GitHub", return_value=api), \
+                                patch.object(publisher, "workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                                patch.object(publisher, "check_credential_context"), patch("builtins.print") as log:
+                            self.assertEqual(publisher.main(), 0 if len(candidates) == 1 and not forged else 1)
+                        if len(candidates) == 1 and not forged:
+                            self.assertEqual(output.read_text(), "no_op=true\n")
+                            self.assertIn("closed", log.call_args.args[0])
+                        else:
+                            self.assertFalse(output.exists())
+                        api.status.assert_not_called()
+                        api.dispatch.assert_not_called()
+
+    def test_admission_closure_race_noops_before_artifact_or_git_reads(self):
+        import ci_publish as publisher
+        from unittest.mock import Mock
+        api = Mock(repository=REPOSITORY)
+        closed = dict(PR, state="closed")
+        api.repo.side_effect = lambda path, **kw: RUN if path.startswith("actions/runs/") else closed
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory, "event.json")
+            event.write_text(json.dumps({"workflow_run": {"id": RUN["id"]}}))
+            with patch("sys.argv", ["ci_publish.py", "admit", "--repository", REPOSITORY]), \
+                    patch.object(publisher.os, "environ", {"GITHUB_EVENT_PATH": str(event)}), \
+                    patch.object(publisher, "GitHub", return_value=api), \
+                    patch.object(publisher, "workflows", return_value={"ci-pr-gate": WORKFLOW}), \
+                    patch.object(publisher, "check_credential_context"), patch.object(publisher, "trusted_admissions") as read, \
+                    patch.object(publisher, "git") as git, patch("builtins.print"):
+                self.assertEqual(publisher.main(), 0)
+            read.assert_not_called()
+            git.assert_not_called()
+
+    def test_publication_closure_races_never_write_statuses_or_request_approval(self):
+        import ci_publish as publisher
+        from unittest.mock import Mock
+        for stage in ("before-compute", "before-write"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                api, app = Mock(repository=REPOSITORY), Mock()
+                api.repo.side_effect = [dict(PR, state="closed")] if stage == "before-compute" else [PR, dict(PR, state="closed")]
+                plan = {"ci-pr-gate": {"state": "success", "description": "Complete"}}
+                event = Path(directory, "event.json")
+                event.write_text("{}")
+                with patch("sys.argv", ["ci_publish.py", "publish", "--repository", REPOSITORY]), \
+                        patch.object(publisher.os, "environ", {"GITHUB_EVENT_PATH": str(event), "CI_PR_NUMBER": "7"}), \
+                        patch.object(publisher, "GitHub", return_value=api), \
+                        patch.object(publisher, "mint_app", return_value=(app, "generic-app[bot]")), \
+                        patch.object(publisher, "compute", return_value=(HEAD, plan, None)), \
+                        patch("ci_xcode_cloud_selection.publish_pointers") as pointers, patch("builtins.print"):
+                    self.assertEqual(publisher.main(), 0)
+                if stage == "before-compute":
+                    pointers.assert_not_called()
+                app.status.assert_not_called()
+                app.dispatch.assert_not_called()
+                app.request.assert_called_once_with("/installation/token", method="DELETE")
+
     def test_archive_unavailable_neutrality_retains_the_linux_cloud_selection_guard(self):
         from ci_publish import archive_blocked_ui
         api = UnavailableUIAPI()
