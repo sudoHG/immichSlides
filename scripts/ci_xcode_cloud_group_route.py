@@ -18,7 +18,7 @@ from ci_publish import positive, trusted_admissions
 from ci_summary import ContractError, require
 from ci_xcode_cloud import ROUTE_PATH, archive_evidence_run, trusted_artifact, uuid
 from ci_xcode_cloud_route import (SupersededProducer, action_minutes, build_receipt, current_producer,
-                                  refresh_producer, remaining_seconds, timestamp, write_phase)
+                                  refresh_producer, remaining_seconds, routing_control, timestamp, write_phase)
 from ci_xcode_cloud_schedule import MIN_JOB_SECONDS, choose_cloud, cloud_estimate, github_estimate, month_policy
 import ci_xcode_cloud_groups as groups
 import ci_xcode_cloud_state as state
@@ -173,11 +173,13 @@ def account_usage(asc, registration, now, window_start):
     counts = registration["account_action_destinations"]
     require(isinstance(counts, dict) and counts and all(isinstance(name, str) and type(count) is int
             and 0 < count <= 16 for name, count in counts.items()), "Cloud destination accounting is missing")
-    reviewed = registration["account_workflow_attributes_sha256"]
+    raw_reviewed = registration["account_workflow_attributes_sha256"]
+    reviewed = {uuid(identifier).casefold(): digest for identifier, digest in raw_reviewed.items()}
+    require(len(reviewed) == len(raw_reviewed), "duplicate reviewed Cloud account workflow")
     workflows = {}
     for product in products:
         for workflow in asc.pages("/v1/ciProducts/" + product["id"] + "/workflows?limit=200"):
-            identifier = uuid(workflow["id"])
+            identifier = uuid(workflow["id"]).casefold()
             require(identifier not in workflows, "duplicate Cloud account workflow")
             workflows[identifier] = groups.canonical_hash(workflow["attributes"])
     require(workflows and workflows == reviewed, "Cloud account workflow configuration changed")
@@ -352,7 +354,7 @@ def group_started(api, run, group, *, current_uploader=None, history_snapshot=No
 
 
 def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep, monotonic=time.monotonic,
-                  current_uploader=None, prepared=None):
+                  current_uploader=None, prepared=None, override=""):
     require(group in groups.GROUPS and mode in {"auto", "github", "force-start-failure"}, "invalid group routing input")
     current_producer(api, run)
     receipt = {"schema_version": 2, "identity": None, "head_sha": run["head_sha"], "producer_run_id": run["id"],
@@ -368,8 +370,12 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
             require(monotonic() < end, "Cloud group admission did not arrive")
             sleep(15)
         receipt["identity"] = record["identity"]
+        stage = "invalid-routing-control"
+        receipt["control"] = routing_control(mode, run["head_sha"], override)
+        mode = receipt["control"]["mode"]
         registration = (record.get("cloud_v2_inputs") or {}).get("registry") or {}
-        if registration.get("routing_enabled") is not True or mode == "github":
+        if registration.get("routing_enabled") is not True or mode == "github" or (
+                registration.get("override_only") is True and receipt["control"]["source"] != "repository-variable"):
             receipt["reason"] = "routing-inactive"
             return receipt
         stage = "cloud-registry-unavailable"
@@ -410,7 +416,8 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         receipt["capacity"] = queue_snapshot(api, now, selected, group, producer_run_id=run["id"], head_sha=run["head_sha"],
             base_sha=record["identity"]["base_sha"], ui_inputs=record["ui_inputs"]["base"],
             history=prepared["capacity"]["duration_history"] if prepared else None)
-        if not receipt["capacity"]["can_prove_saturation"] or receipt["capacity"]["free_slots"]:
+        forced = mode in {"force-congestion", "force-start-failure"}
+        if not forced and (not receipt["capacity"]["can_prove_saturation"] or receipt["capacity"]["free_slots"]):
             receipt["reason"] = "github-capacity-or-queue-uncertain"
             return receipt
         stage = "cloud-budget-unavailable"
@@ -418,13 +425,19 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
                 "confirmed Cloud allowance and Apple billing anchor are required")
         require("queue_seconds_upper" in registration["groups"][group], "reviewed Cloud queue upper bound is required")
         visibility_delay(registration)
-        policy = month_policy(now, registration["billing_anchor"], cap_minutes=registration["cap_minutes"])
+        policy = month_policy(now, registration["billing_anchor"], cap_minutes=registration["cap_minutes"],
+                              billing_factor=registration["billing_factor"])
         receipt["budget_policy"] = policy
         receipt["cloud_estimate"] = cloud_estimate(descriptor, selected,
             queue_seconds=registration["groups"][group]["queue_seconds_upper"])
+        capacity = receipt["capacity"]
+        if forced:
+            capacity = dict(capacity, free_slots=0, can_prove_saturation=True,
+                            seconds=max(capacity["seconds"], receipt["cloud_estimate"]["seconds"] + policy["margin_seconds"] + 1))
+        receipt["decision_capacity"] = capacity
         # A losing Cloud forecast needs no inventory or historical start reads.
         # Zero usage is optimistic for Cloud and can only refuse a possible start.
-        early = choose_cloud(receipt["capacity"], receipt["cloud_estimate"], 0, policy)
+        early = choose_cloud(capacity, receipt["cloud_estimate"], 0, policy)
         if not early["route"]:
             receipt.update(reason=early["reason"], estimate_decision=early)
             return receipt
@@ -446,7 +459,7 @@ def prepare_group(api, asc_factory, run, group, *, mode="auto", sleep=time.sleep
         if unresolved:
             receipt["reason"] = "unresolved-cloud-post"
             return receipt
-        decision = choose_cloud(receipt["capacity"], receipt["cloud_estimate"], max(row["minutes"] for row in usage), policy)
+        decision = choose_cloud(capacity, receipt["cloud_estimate"], max(row["minutes"] for row in usage), policy)
         receipt["estimate_decision"] = decision
         if not decision["route"]:
             receipt["reason"] = decision["reason"]
@@ -541,7 +554,8 @@ def phase(api, asc, run, event, name, uploader, *, deadline=None):
     require(group in groups.GROUPS, "unknown routing group")
     directory = Path(os.environ["RUNNER_TEMP"], "ci-xcc-route")
     if name == "prepare":
-        value = prepare_group(api, lambda: asc, run, group, mode=event["inputs"].get("mode", "auto"))
+        value = prepare_group(api, lambda: asc, run, group, mode=event["inputs"].get("mode", "auto"),
+                              override=os.environ.get("CI_XCC_ROUTING_OVERRIDE", ""))
         write_phase("prepared", dict(value, **uploader))
     elif name in {"arm", "start"}:
         value = json.loads((directory / "prepared.json").read_text())
@@ -575,10 +589,13 @@ def phase(api, asc, run, event, name, uploader, *, deadline=None):
                 # historical markers between prepare and POST. Refresh only
                 # mutable evidence, preserving the validated history snapshot.
                 fresh = prepare_group(api, lambda: asc, run, group, mode=event["inputs"].get("mode", "auto"), prepared=value,
-                    current_uploader=(uploader["uploader_run_id"], uploader["uploader_attempt"]))
+                    current_uploader=(uploader["uploader_run_id"], uploader["uploader_attempt"]),
+                    override=(run["head_sha"] + ":" + value["control"]["mode"]
+                              if value.get("control", {}).get("source") == "repository-variable" else ""))
                 if fresh["decision"] == "pending":
                     require(all(fresh[key] == value[key] for key in ("identity", "selection_sha256", "pointer_id", "reference_id")),
                             "group changed before POST")
+                    require(fresh.get("control") == value.get("control"), "group routing control changed before POST")
                 value.update(fresh)
                 if value["decision"] == "pending":
                     artifacts = api.pages(f"actions/runs/{uploader['uploader_run_id']}/artifacts", "artifacts")

@@ -154,8 +154,10 @@ def cloud_estimate(descriptor, selection, *, queue_seconds=0):
             "queue_seconds": queue_seconds, "build_seconds": BUILD_SECONDS}
 
 
-def month_policy(now, billing_anchor, *, cap_minutes=CAP_MINUTES):
+def month_policy(now, billing_anchor, *, cap_minutes=CAP_MINUTES, billing_factor=1):
     require(type(cap_minutes) in {int, float} and 0 < cap_minutes <= CAP_MINUTES, "invalid Cloud allowance")
+    require(type(billing_factor) in {int, float} and math.isfinite(billing_factor) and billing_factor >= 1,
+            "invalid measured Cloud billing factor")
     utc_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     utc_end = (utc_start + timedelta(days=calendar.monthrange(now.year, now.month)[1]))
     windows = [(utc_start, utc_end)]
@@ -164,10 +166,14 @@ def month_policy(now, billing_anchor, *, cap_minutes=CAP_MINUTES):
         require(isinstance(billing_anchor, dict) and type(billing_anchor.get("day")) is int
                 and 1 <= billing_anchor["day"] <= 31 and isinstance(billing_anchor.get("time_zone"), str)
                 and 0 < len(billing_anchor["time_zone"]) <= 64, "invalid confirmed Apple billing anchor")
+        hour, minute = billing_anchor.get("hour", 0), billing_anchor.get("minute", 0)
+        require(type(hour) is int and 0 <= hour < 24 and type(minute) is int and 0 <= minute < 60,
+                "invalid confirmed Apple billing reset time")
         zone, day = ZoneInfo(billing_anchor["time_zone"]), billing_anchor["day"]
         local = now.astimezone(zone)
         def boundary(year, month):
-            return datetime(year, month, min(day, calendar.monthrange(year, month)[1]), tzinfo=zone).astimezone(timezone.utc)
+            return datetime(year, month, min(day, calendar.monthrange(year, month)[1]), hour, minute,
+                            tzinfo=zone).astimezone(timezone.utc)
         month = local.year * 12 + local.month - 1
         if now < boundary(local.year, local.month):
             month -= 1
@@ -178,20 +184,23 @@ def month_policy(now, billing_anchor, *, cap_minutes=CAP_MINUTES):
         windows.append((start, end))
         expires = now >= utc_end - timedelta(days=3) and now >= end - timedelta(days=3)
     return {"windows": [(start.isoformat(), end.isoformat()) for start, end in windows],
-            "cap_minutes": cap_minutes, "reserve_minutes": 0 if expires else RESERVE_MINUTES,
+            "cap_minutes": cap_minutes, "billing_factor": billing_factor, "reserve_minutes": 0 if expires else RESERVE_MINUTES,
             "margin_seconds": 0 if expires else 120, "confirmed_expiry_window": expires}
 
 
 def choose_cloud(github, cloud, usage_minutes, policy, *, unresolved_minutes=0):
     require(all(type(value) in {int, float} and math.isfinite(value) and value >= 0
                 for value in (usage_minutes, unresolved_minutes)), "invalid Cloud usage estimate")
+    billed_usage = (usage_minutes + unresolved_minutes) * policy["billing_factor"]
+    billed_reservation = cloud["reservation_minutes"] * policy["billing_factor"]
     reason = "cloud-faster"
     if github["free_slots"] > 0 or not github["can_prove_saturation"]:
         reason = "github-capacity-or-queue-uncertain"
     elif cloud["seconds"] + policy["margin_seconds"] >= github["seconds"]:
         reason = "github-estimated-faster"
-    elif usage_minutes + unresolved_minutes + cloud["reservation_minutes"] + policy["reserve_minutes"] > policy["cap_minutes"]:
+    elif billed_usage + billed_reservation + policy["reserve_minutes"] > policy["cap_minutes"]:
         reason = "monthly-cap-or-reserve"
     return {"route": reason == "cloud-faster", "reason": reason,
             "github_seconds": github["seconds"], "cloud_seconds": cloud["seconds"],
-            "margin_seconds": policy["margin_seconds"], "reserve_minutes": policy["reserve_minutes"]}
+            "margin_seconds": policy["margin_seconds"], "reserve_minutes": policy["reserve_minutes"],
+            "estimated_billed_usage_minutes": billed_usage, "estimated_billed_reservation_minutes": billed_reservation}

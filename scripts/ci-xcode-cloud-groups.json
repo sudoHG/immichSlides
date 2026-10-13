@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "routing_enabled": false,
+  "routing_enabled": true,
+  "override_only": true,
   "scm_repository_id": "894b3bbd-682b-454d-b797-0b7f63a2dd73",
   "account_product_ids": [
     "30df2c69-df90-4773-b243-f58830f73c9f"
@@ -24,8 +25,9 @@
     "E7272E02-75B9-46D5-AA6C-F5638651DFCC": "47c79b4f4698503d13e2fabc8f01231d2d9c8611ed27eba13685bcd6be2c93ad"
   },
   "unknown_active_minutes": 225,
-  "cap_minutes": null,
-  "billing_anchor": null,
+  "billing_factor": 1.8,
+  "cap_minutes": 1755,
+  "billing_anchor": { "day": 9, "hour": 4, "minute": 26, "time_zone": "Etc/UTC" },
   "asc_visibility_delay_seconds": 300,
   "groups": {
     "ios": {

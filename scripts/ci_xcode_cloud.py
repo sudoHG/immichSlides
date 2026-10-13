@@ -25,7 +25,7 @@ DEVICE_NAME = "Apple TV 4K (3rd generation)"
 
 
 def uuid(value):
-    require(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value),
+    require(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value, re.IGNORECASE),
             "invalid Xcode Cloud identifier")
     return value
 
