@@ -5,17 +5,18 @@ fixture methods as the GitHub UI shards. It is test-only, accepts an API or manu
 start on a branch, and uses the `immichSlides-tvOS` scheme with the
 `XcodeCloud-UI-tvOS` plan on Apple TV 4K (3rd generation), tvOS 27.0. Workflow
 configuration belongs to the maintainer. Only the trusted main router and API
-importer described below can replace GitHub's pull-request evidence. New routing
-is inactive until a reviewed main change sets `routing_enabled: true`, after
-the allowance cap and billing anchor are confirmed.
+importer described below can replace GitHub's pull-request evidence. Grouped
+routing requires a reviewed main registry with `routing_enabled: true`, a
+confirmed allowance cap and billing anchor, and a measured billing factor.
 
-## Prepared grouped evidence reader (v2)
+## Grouped evidence reader (v2)
 
-The reader supports a separate, **inactive** v2 protocol for functional PR tests:
+The reader supports a separate v2 protocol for functional PR tests:
 `ios` covers both iPhone and iPad; `tvos` covers Apple TV. The grouped producer,
-router and importer are prepared with an inactive registry; automatic Cloud
-builds remain disabled. Historical v1 Apple TV evidence remains readable. ASC
-configuration and activation require the maintainer's separate rollout.
+router and importer use the trusted-base registry. The registry permits a
+maintainer-approved, one-build Apple TV validation; its temporary cap must return
+to the real allowance after validation. Historical v1 Apple TV evidence remains
+readable. ASC configuration remains maintainer-owned.
 Part of #283 and Part of #83.
 
 Activation requires a later reviewed `scripts/ci-xcode-cloud-groups.json` on the
@@ -252,10 +253,15 @@ Admission uses destination wall-time accounting across every reviewed product
 and workflow, including failed actions and active work; unknown configuration,
 missing inventory or missing timestamps refuses a new start. `R` is the selected
 destination wall estimate multiplied by 1.3, plus five minutes, rounded up to
-five minutes. Normal starts require `usage + R + 120 <= cap`. Both the UTC month
+five minutes. `billing_factor` converts usage (including active reservations)
+and `R` to estimated billed minutes. Normal starts require
+`billing_factor * (usage + R) + 120 <= cap_minutes`; the reserve and cap are billed
+minutes. Missing, non-finite or less-than-one factors refuse Cloud before ASC access.
+Both the UTC month
 and confirmed Apple billing period are checked. `billing_anchor` stores the
-confirmed recurring day of month (1–31) and IANA `time_zone`; boundaries are local
-midnight, clamping the day to the last day of shorter months. Current windows
+confirmed recurring day of month (1–31), IANA `time_zone`, and optional `hour`
+(0–23) / `minute` (0–59), defaulting to local midnight. The day clamps to the last
+day of shorter months. Current windows
 are derived on each decision, so UTC and Apple usage reset automatically at their
 respective boundaries without a monthly registry change. Confirm this model
 matches the actual account renewal; a different renewal rule needs a reviewed
@@ -292,7 +298,7 @@ a reviewed upper reservation, at least `110 * largest destination count + 5`
 minutes, increasing with elapsed time. The API exposes action elapsed time rather
 than billing totals, and cannot bound a stalled service's final charge or cancel
 that build. This guard controls new starts; it cannot guarantee the final bill
-stays below 45 hours. Other app/release usage and API scope must be reconciled
+stays below the actual allowance. Other app/release usage and API scope must be reconciled
 by the coordinator before activation.
 
 To disable grouped routing, delete the registry or set `routing_enabled: false`
@@ -301,14 +307,40 @@ route runs separately. Already started Cloud builds continue to run and bill,
 and their inventory still counts toward usage. GitHub executes the complete
 trusted selection whenever complete Cloud evidence is unavailable.
 
-## Maintainer morning checklist (routing remains inactive)
+## Budget and activation boundaries
 
-The inactive registry records real ASC workflow UUIDs, action/check names and
-device/runtime labels. The cap and billing anchor remain null (PENDING), as does
-confirmation that the runtime key covers every billable product. A 2,400-minute
-cap is proposed below the 2,700-minute strategy ceiling only if the actual monthly
-allowance matches that strategy. Queue and visibility bounds also require review
-before activation.
+The maintainer confirmed a 25-hour (1,500 billed-minute) allowance, with 1,466
+minutes used and 34 remaining on 2026-10-13. Renewal is the 9th at 04:26 UTC:
+`billing_anchor: {day: 9, hour: 4, minute: 26, time_zone: "Etc/UTC"}`.
+The measured billed/raw ratio is approximately 1.8; it is an estimate, not an API
+billing total. Destination multiplication remains a conservative upper estimate.
+
+The temporary validation cap is 1,755 billed minutes. A complete read-only
+inventory measured 873.070750 destination-wall upper minutes in the UTC month
+and 835.200517 since the Apple boundary, with no active builds. Unresolved POST
+markers still refuse admission. For the tvOS-only about/legal selection, `R=35`, so the admission
+threshold is `873.070750 * 1.8 + 35 * 1.8 + 120 = 1754.527350`.
+The 0.472650-minute rounding margin admits the first run; any actual charge above
+0.262584 raw minutes refuses another identical run. This temporary cap exceeds
+the real allowance only for the explicitly approved validation. It cannot extend
+Apple's allowance, and an exhausted allowance may stop the one build.
+
+Validation heads change only a comment in the tvOS-only
+`immichSlides/tvOS/Core/SettingsViewTV+AboutPages.swift`: four Apple TV functional
+methods and one packed shard, with zero iPhone/iPad methods. An empty iOS group
+cannot route, and its minimum reservation also exceeds the temporary room.
+Run forced start rejection first, one real routed build second, and budget
+refusal on a fresh head third; never start a second real build. Then restore
+`cap_minutes: 1500` in a reviewed main change. Disable routing as described above
+if acceptance exposes an unsafe path. Full iOS and mixed-provider acceptance
+remain separate work.
+
+## Maintainer setup and activation checklist
+
+The registry records real ASC workflow UUIDs, action/check names and
+device/runtime labels. The confirmed allowance, anchor and measured factor are
+described above. Runtime visibility of every billable product, queue bounds and
+inventory visibility remain operational assumptions reviewed by the maintainer.
 The maintainer confirmed in the ASC UI on 2026-10-12 that both registered test
 workflows have empty environments: no custom, shared or secret variables.
 Two single-method setup probes, one per platform, observed accepted-start to
@@ -326,9 +358,9 @@ need separate actions and plan templates before activation. These probes used
 29.246 action-wall minutes, with a destination-multiplied upper estimate of
 44.476 minutes; exact billed usage is not exposed by ASC.
 The live account inventory also contains the uppercase UUID of the disabled
-Default workflow, which the current lowercase-only accounting UUID validator
-rejects. Resolve that accounting incompatibility and confirm visibility of all
-billable products before activation.
+Default workflow. Accounting accepts UUID case variants and compares workflow
+identities case-insensitively while preserving the API and registry spelling.
+Confirm visibility of all billable products before expanding activation.
 The optional `XcodeCloud-UI-iOS` template is attached to the iOS scheme without changing its
 default plan; its explicit one-method seed is replaced by a verified pointer
 before every Cloud test build. The existing tvOS template is replaced likewise.
@@ -617,10 +649,9 @@ The historical v1 Apple TV router is disabled with `ROUTING_ENABLED = False`
 in `scripts/ci_xcode_cloud_route.py`; its policy returns a prompt GitHub decision
 before creating an ASC client, including for forced diagnostic modes. The current
 CLI also refuses all new v1 starts. Grouped v2 routing uses the separate
-`routing_enabled` registry flag, which remains false. Both gates stay closed
-pending a separately reviewed grouped activation in the next allowance period;
-the maintainer reported only 145 minutes left before the two setup probes on
-2026-10-12. Use the grouped disable procedure above for future dispatches.
+`routing_enabled` registry flag and the budget boundaries above. The v1 gate
+stays closed; only grouped routing participates in the controlled validation.
+Use the grouped disable procedure above for future dispatches.
 Disabling the GitHub route or import workflow also causes
 an immediate GitHub choice once the Linux selection runs. Disabling the bridge
 leaves no matching started build, so the Linux selection chooses GitHub
@@ -640,6 +671,9 @@ Set the variable **before pushing** that exact ordinary app head, let its
 requested event dispatch the main router, and remove the variable after the
 decision. Other heads use automatic congestion; malformed values fail closed.
 All admission, population, remaining-budget and quota guards still apply.
+The grouped main router uses the same exact-head override parser. It retains the
+measured queue separately from the forced decision forecast, and preserves the
+reviewed control when refreshing all mutable guards immediately before POST.
 For forced fallback, use a fresh app head with the last mode, verify the real
 ASC 400/404/422 rejection in its trusted receipt, then verify all three GitHub
 TV shard populations and the final publisher verdict. The diagnostic cannot

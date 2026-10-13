@@ -467,7 +467,7 @@ class GroupProducerTests(unittest.TestCase):
 
     def setUp(self):
         GroupEvidenceTests.setUp(self)
-        self.registry.update(cap_minutes=2700, billing_anchor={"day": 1, "time_zone": "UTC"},
+        self.registry.update(cap_minutes=2700, billing_factor=1, billing_anchor={"day": 1, "time_zone": "UTC"},
                              asc_visibility_delay_seconds=600)
 
     def test_skipped_ui_history_uses_trusted_base_weights_for_live_device_families(self):
@@ -929,9 +929,33 @@ class GroupProducerTests(unittest.TestCase):
                                 [{"id": cloud.WORKFLOW_ID, "attributes": {"reviewed": False}}]]
         with self.assertRaises(ContractError):
             account_usage(asc, registration, now, "2026-10-01T00:00:00Z")
-        asc.pages.side_effect = [[{"id": "66666666-6666-6666-6666-666666666666"}]]
+        asc.pages.side_effect = [[{"id": "66666666-6666-6666-666666666666"}]]
         with self.assertRaises(ContractError):
             account_usage(asc, registration, now, "2026-10-01T00:00:00Z")
+
+    def test_account_workflow_identifiers_ignore_case_without_changing_api_values(self):
+        from ci_xcode_cloud_group_route import account_usage
+        identifier = "E7272E02-75B9-46D5-AA6C-F5638651DFCC"
+        digest = self.groups.canonical_hash({"reviewed": True})
+        registration = {"account_product_ids": ["33333333-3333-3333-3333-333333333333"],
+                        "account_action_destinations": {"Functional - iOS": 2}, "unknown_active_minutes": 225,
+                        "account_workflow_attributes_sha256": {identifier: digest}}
+        now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+        for api_id in (identifier, identifier.lower(), identifier.swapcase()):
+            with self.subTest(api_id=api_id):
+                asc = Mock()
+                workflow = {"id": api_id, "attributes": {"reviewed": True}}
+                asc.pages.side_effect = [[{"id": registration["account_product_ids"][0]}], [workflow], []]
+                self.assertEqual(account_usage(asc, registration, now, "2026-10-01T00:00:00Z")["minutes"], 0)
+                self.assertEqual(cloud.uuid(api_id), api_id)
+                self.assertEqual(workflow["id"], api_id)
+                self.assertEqual(registration["account_workflow_attributes_sha256"], {identifier: digest})
+        for workflows in ([{"id": identifier, "attributes": {"reviewed": False}}],
+                          [{"id": value, "attributes": {"reviewed": True}} for value in (identifier, identifier.lower())]):
+            with self.subTest(workflows=workflows):
+                asc.pages.side_effect = [[{"id": registration["account_product_ids"][0]}], workflows]
+                with self.assertRaises(ContractError):
+                    account_usage(asc, registration, now, "2026-10-01T00:00:00Z")
 
     def test_ambiguous_post_is_never_replayed_and_failed_cloud_returns_the_group_to_github(self):
         import ci_xcode_cloud_group_route as router
@@ -1279,15 +1303,60 @@ class GroupProducerTests(unittest.TestCase):
                 started.assert_not_called()
                 unresolved.assert_not_called()
 
+    def test_group_override_is_head_bound_and_preserves_budget_population_and_capacity_guards(self):
+        import ci_xcode_cloud_group_route as router
+        self.registry.update(routing_enabled=True, cap_minutes=1500, billing_factor=1.8,
+                             scm_repository_id="33333333-3333-3333-3333-333333333333")
+        self.record["ui_inputs"]["base"]["selection"]["packing"]["estimated_test_seconds"] = {"iphone": 60, "ipad": 120}
+        api, asc = Mock(), Mock()
+        api.pages.return_value = [self.pointer]
+        asc.pages.return_value = [{"id": "branch-ref", "attributes": {"canonicalName": "refs/heads/topic"}}]
+        pr = {"user": self.record["cloud_pr_author"], "base": {"sha": self.identity["base_sha"]}, "head": {"ref": "topic"}}
+        head = self.run["head_sha"]
+        cases = ((head + ":force-congestion", 300, False, False, "pending", "cloud-estimated-faster"),
+                 (head + ":force-start-failure", 300, False, False, "pending", "cloud-estimated-faster"),
+                 (head + ":force-congestion", 820, False, False, "github", "monthly-cap-or-reserve"),
+                 (head + ":force-start-failure", 820, False, False, "github", "monthly-cap-or-reserve"),
+                 (head + ":github", 300, False, False, "github", "routing-inactive"),
+                 ("b" * 40 + ":force-congestion", 300, False, False, "github", "github-capacity-or-queue-uncertain"),
+                 (head + ":force-congestion", 300, True, False, "github", "group-cloud-capacity-in-use"),
+                 (head + ":force-congestion", 300, False, True, "fallback", "cloud-registry-unavailable"),
+                 (head + ":invalid", 300, False, False, "fallback", "invalid-routing-control"),
+                 ("A" * 40 + ":force-congestion", 300, False, False, "fallback", "invalid-routing-control"))
+        for override, usage, active, empty, decision, reason in cases:
+            with self.subTest(override=override, usage=usage, active=active, empty=empty):
+                selected = self.record["ui_inputs"]["base"]["selection"]["shards"]
+                with patch.dict(selected, {"ipad": {}} if empty else {}), \
+                        patch.object(router, "current_producer"), patch.object(router, "trusted_admissions", return_value={123: self.record}), \
+                        patch.object(router, "anchor", return_value="ui-selection"), \
+                        patch.object(router, "archive_evidence_run", return_value=dict(self.run, archive_job={"status": "completed", "conclusion": "success"})), \
+                        patch.object(router, "selection_open", return_value=True), patch.object(router, "remaining_seconds", return_value=100), \
+                        patch.object(router, "refresh_producer", return_value=pr), patch.object(router, "group_started", return_value=False), \
+                        patch.object(router, "queue_snapshot", return_value={"seconds": 600, "free_slots": 1, "can_prove_saturation": False}), \
+                        patch.object(router, "inventories", return_value={"ios": [{"attributes": {"executionProgress": "RUNNING"}}] if active else []}), \
+                        patch.object(router, "account_usage", return_value={"minutes": usage}), \
+                        patch.object(router, "route_history"), patch.object(router, "unknown_starts", return_value=[]):
+                    result = router.prepare_group(api, lambda: asc, self.run, "ios", override=override)
+                self.assertEqual((result["decision"], result["reason"]), (decision, reason))
+                if decision == "pending":
+                    self.assertEqual(result["control"]["source"], "repository-variable")
+                    self.assertEqual(result["capacity"]["free_slots"], 1)
+                    if override.endswith(":force-start-failure"):
+                        asc.request.side_effect = ContractError("ASC POST refused request (HTTP 404)")
+                        self.assertEqual(router.post_group(asc, result)["http_status"], 404)
+                        self.assertEqual(asc.request.call_args.kwargs["payload"]["data"]["relationships"]
+                                         ["sourceBranchOrTag"]["data"]["id"], "invalid-reference")
+                        asc.request.reset_mock()
+
     def test_missing_confirmed_allowance_or_billing_period_refuses_cloud_before_asc(self):
         import ci_xcode_cloud_group_route as router
         self.registry["routing_enabled"] = True
         api = Mock()
         api.pages.return_value = [self.pointer]
         reviewed = dict(self.registry)
-        for field, is_pending in (("cap_minutes", False), ("billing_anchor", False),
+        for field, is_pending in (("cap_minutes", False), ("billing_anchor", False), ("billing_factor", False),
                                   ("asc_visibility_delay_seconds", False), ("cap_minutes", True),
-                                  ("billing_anchor", True)):
+                                  ("billing_anchor", True), ("billing_factor", True)):
             with self.subTest(field=field, is_pending=is_pending):
                 self.registry.clear()
                 self.registry.update(reviewed)
@@ -1426,7 +1495,8 @@ class GroupProducerTests(unittest.TestCase):
         import json
         import tempfile
         import ci_xcode_cloud_group_route as router
-        prepared = dict(self.route, decision="pending", head_sha=self.run["head_sha"], reason="cloud-estimated-faster", reference_id="branch")
+        prepared = dict(self.route, decision="pending", head_sha=self.run["head_sha"], reason="cloud-estimated-faster", reference_id="branch",
+                        control={"source": "repository-variable", "mode": "force-start-failure"})
         uploader = {"uploader_run_id": 900, "uploader_attempt": 1}
         marker = dict(prepared, posted_at="2026-10-10T00:00:00Z", **uploader)
         api, asc = Mock(), Mock()
@@ -1447,6 +1517,7 @@ class GroupProducerTests(unittest.TestCase):
             started = json.loads((folder / "start.json").read_text())
             self.assertGreater(router.timestamp(started["posted_at"]), router.timestamp(marker["posted_at"]))
             self.assertIsNotNone(refresh.call_args.kwargs["prepared"])
+            self.assertEqual(refresh.call_args.kwargs["override"], self.run["head_sha"] + ":force-start-failure")
             row = {"id": "11111111-1111-1111-1111-111111111111", "attributes": {
                 "createdDate": started["posted_at"], "sourceCommit": {"commitSha": self.run["head_sha"]}}}
             api.pages.return_value = []
@@ -1495,6 +1566,40 @@ class GroupProducerTests(unittest.TestCase):
                         {"start": "2026-10-01T00:00:00Z", "end": "2026-11-01T00:00:00Z"}):
             with self.subTest(anchor=invalid), self.assertRaises((ContractError, KeyError, ValueError)):
                 month_policy(datetime(2026, 10, 10, tzinfo=timezone.utc), invalid)
+
+    def test_billing_period_resets_at_the_confirmed_minute_and_clamps_short_months(self):
+        from ci_xcode_cloud_schedule import month_policy
+        anchor = {"day": 9, "hour": 4, "minute": 26, "time_zone": "Etc/UTC"}
+        for now, start, end in ((datetime(2026, 10, 9, 4, 25, 59, tzinfo=timezone.utc),
+                                "2026-09-09T04:26:00+00:00", "2026-10-09T04:26:00+00:00"),
+                               (datetime(2026, 10, 9, 4, 26, tzinfo=timezone.utc),
+                                "2026-10-09T04:26:00+00:00", "2026-11-09T04:26:00+00:00")):
+            with self.subTest(now=now):
+                self.assertEqual(month_policy(now, anchor)["windows"][1], (start, end))
+        shorter = month_policy(datetime(2026, 2, 28, 5, tzinfo=timezone.utc), dict(anchor, day=31))
+        self.assertEqual(shorter["windows"][1][0], "2026-02-28T04:26:00+00:00")
+        for field, value in (("hour", -1), ("hour", 24), ("hour", True), ("minute", -1), ("minute", 60), ("minute", 1.5)):
+            with self.subTest(field=field, value=value), self.assertRaises(ContractError):
+                month_policy(datetime(2026, 10, 13, tzinfo=timezone.utc), dict(anchor, **{field: value}))
+
+    def test_budget_compares_billed_usage_and_reservations_with_the_billed_allowance(self):
+        from ci_xcode_cloud_schedule import choose_cloud, month_policy
+        now = datetime(2026, 10, 13, tzinfo=timezone.utc)
+        busy = {"seconds": 7200, "free_slots": 0, "can_prove_saturation": True}
+        estimate = {"seconds": 1200, "reservation_minutes": 30}
+        policy = month_policy(now, {"day": 9, "hour": 4, "minute": 26, "time_zone": "Etc/UTC"},
+                              cap_minutes=1500, billing_factor=1.8)
+        refused = choose_cloud(busy, estimate, 820, policy)
+        self.assertEqual((refused["route"], refused["reason"]), (False, "monthly-cap-or-reserve"))
+        self.assertEqual(refused["estimated_billed_usage_minutes"], 1476)
+        self.assertEqual(refused["estimated_billed_reservation_minutes"], 54)
+        validation = dict(policy, cap_minutes=1650)
+        self.assertTrue(choose_cloud(busy, estimate, 820, validation)["route"])
+        self.assertFalse(choose_cloud(busy, estimate, 835, validation)["route"])
+        self.assertFalse(choose_cloud(busy, estimate, 820, validation, unresolved_minutes=15)["route"])
+        for factor in (None, True, 0, .9, float("nan"), float("inf")):
+            with self.subTest(factor=factor), self.assertRaises(ContractError):
+                month_policy(now, None, billing_factor=factor)
 
     def test_route_history_is_recent_bounded_and_missing_queue_registration_refuses_cloud(self):
         import ci_xcode_cloud_group_route as router
