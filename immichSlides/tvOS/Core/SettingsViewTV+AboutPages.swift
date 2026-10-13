@@ -1,5 +1,7 @@
 import SwiftUI
 
+// About page focus stays within the tvOS settings module.
+
 extension SettingsViewTV {
     var aboutSettingsView: some View {
         TVSettingsPageScaffold(
