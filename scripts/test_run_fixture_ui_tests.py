@@ -6,6 +6,7 @@ import io
 import json
 import os
 import plistlib
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,38 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
+    def test_inventory_timeouts_use_bounded_readiness_without_retrying_invalid_results(self):
+        import strict_e2e_runner_support as support
+        for state in ("recovered", "timeout", "late", "exit", "invalid"):
+            with self.subTest(state=state):
+                clock, calls, reports = [0.0], [], []
+                def query(command, **kwargs):
+                    calls.append(kwargs["timeout"])
+                    self.assertEqual(command, ["xcrun", "simctl", "list", "devices", "available", "--json"])
+                    if state == "timeout" or state == "recovered" and len(calls) == 1:
+                        clock[0] += kwargs["timeout"]
+                        raise subprocess.TimeoutExpired(["private-input"], kwargs["timeout"], output=b"private-input")
+                    if state == "late":
+                        clock[0] = 301
+                    return subprocess.CompletedProcess(command, 2 if state == "exit" else 0,
+                        "private-input" if state == "invalid" else '{"devices":{}}', "private-input")
+                with patch.object(support.subprocess, "run", side_effect=query), \
+                        patch.object(support.time, "monotonic", side_effect=lambda: clock[0]):
+                    if state == "recovered":
+                        self.assertEqual(support.simulator_inventory(report=reports.append), {"devices": {}})
+                        self.assertEqual(calls, [10, 20])
+                    else:
+                        with self.assertRaises(support.CommandError) as error:
+                            support.simulator_inventory(report=reports.append)
+                        self.assertNotIn("private-input", str(error.exception))
+                        if state == "timeout":
+                            self.assertEqual(clock[0], 300)
+                            self.assertLessEqual(max(calls), 60)
+                            self.assertEqual(error.exception.entry["code"], "simulator-inventory-timeout")
+                        else:
+                            self.assertEqual(len(calls), 1)
+                self.assertNotIn("private-input", "\n".join(reports))
+
     def test_candidate_deselection_changes_cannot_override_base_discovery_eligibility(self):
         import hashlib
         from test_ci_summary import discovery_summary
@@ -141,7 +174,7 @@ class FixtureCoverageTests(unittest.TestCase):
                     self.assertTrue(gate_finished, "simulator inventory must wait for readiness")
                     if "attachments" in command:
                         attachments.append(command)
-                    return SimpleNamespace(stdout=b"{}")
+                    return SimpleNamespace(returncode=0, stdout=b"{}")
                 stderr = io.StringIO()
                 with contextlib.ExitStack() as stack:
                     stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}))

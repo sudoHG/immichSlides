@@ -94,6 +94,28 @@ from run_strict_e2e_test_configuration_cases import StrictE2ERunnerTestsCasesCon
 from run_strict_e2e_test_evidence_cases import StrictE2ERunnerTestsCasesEvidence
 
 class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunnerTestsCasesEvidence, unittest.TestCase):
+    def test_service_timeout_reports_only_bounded_allowlisted_startup_phases(self):
+        import strict_e2e_runner_support as support
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            startup_log = root / "startup.log"
+            safe = "fixture-startup: phase=fixture-build; state=started; elapsed=0.000s; total=0.123s"
+            startup_log.write_text("private-input /private/path\n" + safe + "\n" +
+                safe + " private-input\n" + "x" * 4096 + "\n" +
+                "fixture-startup: phase=ready-write; state=completed; elapsed=0.001s; total=0.124s\n")
+            clock = [0.0]
+            process = mock.Mock(pid=7)
+            process.poll.return_value = None
+            with mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                    mock.patch.object(support.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                    mock.patch("builtins.print") as report, self.assertRaises(CommandError) as error:
+                support.wait_for_service(root / "ready.json", process, startup_log=startup_log)
+            output = "\n".join(call.args[0] for call in report.call_args_list)
+            self.assertEqual(output, safe)
+            self.assertNotIn("private-input", str(error.exception) + output)
+            self.assertIn("startup_phase=fixture-build; startup_state=started", str(error.exception))
+            self.assertGreaterEqual(clock[0], 60)
+
     def test_service_startup_accepts_slow_health_but_preserves_failure_checks(self):
         import strict_e2e_runner_support as support
         from urllib.error import HTTPError

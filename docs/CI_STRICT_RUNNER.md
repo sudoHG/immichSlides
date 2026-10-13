@@ -146,6 +146,14 @@ after simulator preparation succeeded. Sixty seconds provides bounded startup
 headroom; the actual delayed recovery time was not recorded. Test and product
 deadlines are unchanged, and an unhealthy service still fails the run.
 
+The service flushes fixed startup-phase records for import, fixture build, bind
+and ready-file write, with elapsed and total seconds at each boundary. They
+contain no input values, addresses or paths. Strict and iPad pause host runs
+publish these records directly; fixture UI forwards at most eight allowlisted
+records from the first 4 KiB of its private service log. Its timeout also names
+the last observed phase and state when available. No record means the child has
+not reported a phase; it does not prove where startup stalled.
+
 ## Shared simulator reset
 
 Strict, fixture UI, listed-retry and standalone access runners share
@@ -171,6 +179,14 @@ successful preparation state to the fixture runner, which skips the redundant
 Bootstatus, readiness queries and all reset mutations still run. Strict hosted jobs prepare
 the device before cold builds or case runners. Toolchain/pins checks run before
 early boot; only archive downloads overlap boot in the UI workflows.
+
+The fixture UI device-inventory query uses the same timed-out-query retry logic
+and a separate 300-second readiness budget: 10, 20, 40, then at most 60 seconds
+per attempt, clamped to the remaining budget. Nonzero exits, malformed JSON,
+missing/unavailable destinations and mismatched device types fail without a
+retry; even a valid response after the deadline fails. Logs name
+`simulator-inventory`, attempt counts, elapsed time and deadline overrun without
+command arguments or output. This does not change the service's 60-second budget.
 
 Boot and readiness finish before the existing 120-second reset deadline starts;
 termination, uninstall, the post-uninstall container check and state resets share

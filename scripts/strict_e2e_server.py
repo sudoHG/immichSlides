@@ -3,6 +3,13 @@
 
 from __future__ import annotations
 
+import sys
+import time
+
+_IMPORT_STARTED = time.monotonic()
+if __name__ == "__main__":
+    print("fixture-startup: phase=import; state=started; elapsed=0.000s; total=0.000s", flush=True)
+
 import argparse
 import copy
 import functools
@@ -14,14 +21,12 @@ import os
 import socket
 import socketserver
 import struct
-import sys
 import threading
-import time
 import zlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Callable
 from urllib.parse import parse_qs, urlparse
 
 
@@ -342,6 +347,7 @@ class StrictE2EServer(ThreadingHTTPServer):
         scenario: str,
         timeout_seconds: float,
         logger: logging.Logger,
+        startup_report: Callable[[str, str], None] | None = None,
     ) -> None:
         if scenario not in SCENARIOS:
             raise ValueError(f"Unknown scenario: {scenario}")
@@ -352,7 +358,12 @@ class StrictE2EServer(ThreadingHTTPServer):
         self.started_at = time.monotonic()
         self.image_response_lock = threading.Lock()
         self.image_response: dict[str, Any] = {"mode": "normal", "asset_id": None, "failures": 0}
+        if startup_report is not None:
+            startup_report("fixture-build", "completed")
+            startup_report("bind", "started")
         super().__init__(server_address, StrictE2ERequestHandler)
+        if startup_report is not None:
+            startup_report("bind", "completed")
 
 
 class StrictE2ERequestHandler(BaseHTTPRequestHandler):
@@ -719,6 +730,7 @@ def create_server(
     scenario: str,
     timeout_seconds: float = 25,
     log_stream: BinaryIO | None = None,
+    startup_report: Callable[[str, str], None] | None = None,
 ) -> StrictE2EServer:
     logger = logging.getLogger(f"strict-e2e-{id(log_stream)}-{port}")
     logger.handlers.clear()
@@ -737,6 +749,7 @@ def create_server(
         scenario=scenario,
         timeout_seconds=timeout_seconds,
         logger=logger,
+        startup_report=startup_report,
     )
 
 
@@ -756,8 +769,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Invalid server arguments: {argument_error}.", file=sys.stderr)
         return 2
 
+    startup_started = _IMPORT_STARTED if __name__ == "__main__" else time.monotonic()
+    phase_started = startup_started
+    def report(phase: str, state: str) -> None:
+        nonlocal phase_started
+        now = time.monotonic()
+        if state == "started":
+            phase_started = now
+        print(f"fixture-startup: phase={phase}; state={state}; elapsed={now - phase_started:.3f}s; "
+              f"total={now - startup_started:.3f}s", flush=True)
+
     log_handle = None
+    server = None
     try:
+        report("fixture-build", "started")
         manifest = fixture_manifest(arguments.fixture_set)
         if arguments.manifest_out:
             arguments.manifest_out.parent.mkdir(parents=True, exist_ok=True)
@@ -774,23 +799,31 @@ def main(argv: list[str] | None = None) -> int:
             scenario=arguments.scenario,
             timeout_seconds=arguments.timeout_seconds,
             log_stream=log_handle,
+            startup_report=report,
         )
         if arguments.ready_file:
+            report("ready-write", "started")
             arguments.ready_file.parent.mkdir(parents=True, exist_ok=True)
             host, port = server.server_address
             arguments.ready_file.write_text(
                 json.dumps({"host": host, "port": port, "pid": os.getpid()}, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+            report("ready-write", "completed")
         server.serve_forever()
         return 0
     except OSError as error:
-        print(f"Server file I/O failed: {error}", file=sys.stderr)
+        print(f"Server file I/O failed: {type(error).__name__}.", file=sys.stderr)
         return 2
     finally:
+        if server is not None:
+            server.server_close()
         if log_handle is not None:
             log_handle.close()
 
 
 if __name__ == "__main__":
+    _import_elapsed = time.monotonic() - _IMPORT_STARTED
+    print(f"fixture-startup: phase=import; state=completed; elapsed={_import_elapsed:.3f}s; "
+          f"total={_import_elapsed:.3f}s", flush=True)
     raise SystemExit(main())

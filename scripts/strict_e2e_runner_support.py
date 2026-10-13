@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -473,6 +474,30 @@ def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None 
 def wait_for_simulator_app_response(simulator_udid: str, bundle_id: str, *, report: Callable[[str], None],
                                     deadline: float | None = None) -> tuple[str | None, str]:
     """Let timed-out post-boot queries recover before the clean-reset clock starts."""
+    return _wait_for_simulator_response(
+        lambda deadline, timeout: simulator_app_container(simulator_udid, bundle_id, deadline=deadline,
+                                                          timeout_seconds=timeout),
+        "simulator-readiness", report=report, deadline=deadline)
+
+
+def simulator_inventory(*, report: Callable[[str], None] | None = None) -> dict:
+    """Apply the existing readiness retry only to timed-out inventory queries."""
+    def query(deadline, timeout):
+        completed = simulator_command(["xcrun", "simctl", "list", "devices", "available", "--json"],
+                                      "simulator-inventory", deadline=deadline, timeout_seconds=timeout)
+        if completed.returncode:
+            raise CommandError(f"Simulator inventory failed (exit {completed.returncode}).")
+        try:
+            return json.loads(completed.stdout)
+        except (TypeError, ValueError) as error:
+            raise CommandError("Simulator inventory returned invalid JSON.") from error
+    inventory, _ = _wait_for_simulator_response(query, "simulator-inventory",
+        report=report or (lambda line: print(line, flush=True)))
+    return inventory
+
+
+def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], None],
+                                 deadline: float | None = None):
     started = time.monotonic()
     deadline = min(deadline, started + SIMULATOR_READINESS_TIMEOUT_SECONDS) if deadline is not None else started + SIMULATOR_READINESS_TIMEOUT_SECONDS
     budget = max(0, deadline - started)
@@ -484,32 +509,31 @@ def wait_for_simulator_app_response(simulator_udid: str, bundle_id: str, *, repo
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise InfrastructureTimeout("simulator-readiness", budget)
+                raise InfrastructureTimeout(phase, budget)
             attempts += 1
             query_budget = min(query_timeout, remaining)
             query_started = time.monotonic()
             try:
-                container = simulator_app_container(simulator_udid, bundle_id, deadline=deadline,
-                    timeout_seconds=query_budget)
+                response = query(deadline, query_budget)
             except InfrastructureTimeout:
-                line = (f"simulator-readiness: query timed out; attempt={attempts}; timeout={query_budget:.1f}s; "
+                line = (f"{phase}: query timed out; attempt={attempts}; timeout={query_budget:.1f}s; "
                         f"query_elapsed={time.monotonic() - query_started:.1f}s; elapsed={time.monotonic() - started:.1f}s")
                 lines.append(line)
                 report(line)
                 query_timeout = min(query_timeout * 2, SIMULATOR_COMMAND_TIMEOUT_SECONDS)
                 continue
             if time.monotonic() >= deadline:
-                raise InfrastructureTimeout("simulator-readiness", budget)
+                raise InfrastructureTimeout(phase, budget)
             outcome = "passed"
             break
     finally:
         elapsed = time.monotonic() - started
-        line = (f"simulator-readiness: {outcome}; attempts={attempts}; elapsed={elapsed:.1f}s; "
+        line = (f"{phase}: {outcome}; attempts={attempts}; elapsed={elapsed:.1f}s; "
                 f"total budget={budget:g}s; "
                 f"deadline_overrun={max(0, elapsed - budget):.1f}s")
         lines.append(line)
         report(line)
-    return container, "\n".join(lines) + "\n"
+    return response, "\n".join(lines) + "\n"
 
 
 def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
@@ -617,7 +641,35 @@ def destination_udid(destination: str) -> str:
     raise CommandError("destination must explicitly include a Simulator id.")
 
 
-def wait_for_service(ready_path: Path, process: subprocess.Popen[bytes]) -> tuple[str, int]:
+def wait_for_service(ready_path: Path, process: subprocess.Popen[bytes], *,
+                     startup_log: Path | None = None) -> tuple[str, int]:
+    try:
+        return _wait_for_service(ready_path, process)
+    except CommandError as error:
+        lines = _service_startup_diagnostics(startup_log)
+        if lines:
+            phase, state = re.search(r"phase=([^;]+); state=([^;]+)", lines[-1]).groups()
+            raise CommandError(f"{error} startup_phase={phase}; startup_state={state}.", code=error.code) from error
+        raise
+    finally:
+        for line in _service_startup_diagnostics(startup_log):
+            print(line, flush=True)
+
+
+def _service_startup_diagnostics(path: Path | None) -> list[str]:
+    if path is None:
+        return []
+    try:
+        with path.open("rb") as handle:
+            text = handle.read(4096).decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    pattern = (r"fixture-startup: phase=(import|fixture-build|bind|ready-write); state=(started|completed); "
+               r"elapsed=\d{1,9}\.\d{3}s; total=\d{1,9}\.\d{3}s")
+    return [line for line in text.splitlines() if re.fullmatch(pattern, line)][:8]
+
+
+def _wait_for_service(ready_path: Path, process: subprocess.Popen[bytes]) -> tuple[str, int]:
     started = time.monotonic()
     deadline = started + SERVICE_STARTUP_TIMEOUT_SECONDS
     last_state = "ready-file-missing"

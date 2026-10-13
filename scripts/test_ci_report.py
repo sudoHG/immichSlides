@@ -186,7 +186,7 @@ class ReporterTests(unittest.TestCase):
                                         patch.object(fixture, "registry_revision", return_value="HEAD"),
                                         patch.object(fixture, "load_registry", return_value=(registry, hashlib.sha256(
                                             blobs["scripts/ci-known-flaky.json"]).hexdigest())),
-                                        patch.object(fixture.subprocess, "run", return_value=Mock(stdout=b"{}")),
+                                        patch.object(fixture.subprocess, "run", return_value=Mock(returncode=0, stdout=b"{}")),
                                         patch.object(fixture, "verify_simulator_device", side_effect=simulator_preflight),
                                         patch.object(fixture, "date", Mock(today=Mock(side_effect=lambda: execution_day[0]))),
                                         patch.object(fixture, "prepare_fixture_result_bundle", return_value=bundle),

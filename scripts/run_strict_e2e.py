@@ -807,7 +807,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     str(service_log_path),
                 ],
                 cwd=REPO_ROOT,
-                stdout=subprocess.DEVNULL,
+                stdout=None,
                 stderr=subprocess.DEVNULL,
             )
             host, port = wait_for_service(ready_path, service_process)
@@ -833,7 +833,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         str(service_log_b_path),
                     ],
                     cwd=REPO_ROOT,
-                    stdout=subprocess.DEVNULL,
+                    stdout=None,
                     stderr=subprocess.DEVNULL,
                 )
                 host_b, port_b = wait_for_service(ready_b, service_process_b)
