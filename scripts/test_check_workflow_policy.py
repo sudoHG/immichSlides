@@ -284,6 +284,24 @@ final class LocaleUITests: XCTestCase {
             with self.subTest(mutation=mutation):
                 self.assertIn("xcc-start-record", self.rules(document, path))
 
+    def test_cloud_prepare_receipt_survives_fallback_and_is_uploaded_before_arm(self):
+        path = policy.XCC_ROUTE_WORKFLOW
+        for mutation in ("removed", "post-only", "after-arm", "wide-path"):
+            document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+            steps = document["jobs"]["start"]["steps"]
+            receipt = next(index for index, step in enumerate(steps)
+                           if step.get("with", {}).get("name", "").startswith("ci-xcc-prepare-"))
+            if mutation == "removed":
+                del steps[receipt]
+            elif mutation == "post-only":
+                steps[receipt]["if"] = "success() && steps.prepare.outputs.post == 'true'"
+            elif mutation == "wide-path":
+                steps[receipt]["with"]["path"] = "${{ runner.temp }}/ci-xcc-route/*"
+            else:
+                steps[receipt], steps[receipt + 1] = steps[receipt + 1], steps[receipt]
+            with self.subTest(mutation=mutation):
+                self.assertIn("xcc-prepare-record", self.rules(document, path))
+
     def test_failed_ios_reruns_cannot_repeat_successful_tv_through_dependencies(self):
         path = ".github/workflows/ci-ui.yml"
         document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)

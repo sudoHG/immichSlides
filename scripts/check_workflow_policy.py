@@ -669,6 +669,12 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
                            and step.get("with", {}).get("name") == "ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}"]
                 arm = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "arm"]
                 prepare = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "prepare"]
+                decision = [index for index, step in enumerate(steps) if isinstance(step, dict)
+                            and step.get("with", {}).get("name") == "ci-xcc-prepare-${{ github.run_id }}-${{ github.run_attempt }}"]
+                if not (len(decision) == len(prepare) == len(arm) == 1 and prepare[0] < decision[0] < arm[0]
+                        and steps[decision[0]].get("if") == "always() && steps.prepare.outputs.recorded == 'true'"
+                        and steps[decision[0]].get("with", {}).get("path") == "${{ runner.temp }}/ci-xcc-route/prepare.json"):
+                    flag(location, "xcc-prepare-record", "Upload the bounded prepare decision before arm, including fallbacks")
                 if not (len(prepare) == len(post) == len(marker) == len(arm) == 1
                         and prepare[0] < arm[0] < marker[0] < post[0]
                         and steps[arm[0]].get("if") == "success() && steps.prepare.outputs.post == 'true'"
@@ -833,6 +839,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
                                           "path": "${{ runner.temp }}/ci-xcc-route/" + member + ".json",
                                           "if-no-files-found": "error", "retention-days": 90}
                               and item.get("if") == guard for stage, member, guard in (
+                                  ("prepare", "prepare", "always() && steps.prepare.outputs.recorded == 'true'"),
                                   ("post", "post", "success() && steps.arm.outputs.post == 'true'"),
                                   ("start", "start", "always() && steps.arm.outputs.post == 'true'")))
         report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"

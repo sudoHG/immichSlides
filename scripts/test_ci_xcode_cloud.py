@@ -594,6 +594,51 @@ class GroupProducerTests(unittest.TestCase):
         self.registry.update(cap_minutes=2700, billing_factor=1, billing_anchor={"day": 1, "time_zone": "UTC"},
                              asc_visibility_delay_seconds=600)
 
+    def test_prepare_fallbacks_persist_bounded_decisions_without_private_inputs(self):
+        import json
+        import tempfile
+        import ci_xcode_cloud_group_route as router
+        uploader = {"uploader_run_id": 900, "uploader_attempt": 1}
+        for decision, reason in (("github", "routing-inactive"), ("github", "monthly-cap-or-reserve"),
+                                 ("github", "linux-selection-failed"), ("fallback", "cloud-registry-unavailable")):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as directory:
+                value = dict(self.route, decision=decision, reason=reason, head_sha=self.run["head_sha"],
+                             selection={"private": "not-for-publication"},
+                             estimate_decision={"estimated_billed_usage_minutes": 820},
+                             budget_policy={"cap_minutes": 1500})
+                output = Path(directory, "output")
+                asc = Mock()
+                with patch.dict(router.os.environ, {"RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(output)}), \
+                        patch.object(router, "prepare_group", return_value=value):
+                    self.assertEqual(router.phase(Mock(), asc, self.run, {"inputs": {"group": "ios"}},
+                                                  "prepare", uploader), 0)
+                receipt = json.loads(Path(directory, "ci-xcc-route/prepare.json").read_text())
+                self.assertEqual((receipt["decision"], receipt["reason"]), (decision, reason))
+                for key in ("identity", "head_sha", "producer_run_id", "producer_attempt", "group"):
+                    self.assertEqual(receipt[key], value[key])
+                self.assertEqual(receipt["budget_policy"], {"cap_minutes": 1500})
+                self.assertEqual(receipt["estimate_decision"], {"estimated_billed_usage_minutes": 820})
+                self.assertEqual(receipt["uploader_run_id"], 900)
+                self.assertEqual(receipt["uploader_attempt"], 1)
+                self.assertNotIn("not-for-publication", json.dumps(receipt))
+                self.assertIn("recorded=true", output.read_text())
+                self.assertIn("post=false", output.read_text())
+                asc.request.assert_not_called()
+
+    def test_oversized_prepare_decision_never_exposes_upload_outputs(self):
+        import tempfile
+        import ci_xcode_cloud_group_route as router
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory, "output")
+            with patch.dict(router.os.environ, {"RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(output)}), \
+                    patch.object(router, "MAX_JSON_BYTES", 256, create=True), \
+                    patch.object(router, "prepare_group", return_value=dict(self.route, reason="x" * 512)):
+                with self.assertRaises(ContractError):
+                    router.phase(Mock(), Mock(), self.run, {"inputs": {"group": "ios"}}, "prepare",
+                                 {"uploader_run_id": 900, "uploader_attempt": 1})
+            self.assertFalse(output.exists())
+            self.assertFalse(Path(directory, "ci-xcc-route/prepare.json").exists())
+
     def test_skipped_ui_history_uses_trusted_base_weights_for_live_device_families(self):
         import json
         import ci_xcode_cloud_group_route as router
@@ -2215,13 +2260,17 @@ class CloudEvidenceTests(unittest.TestCase):
                     "status": "completed", "conclusion": "cancelled", "repository": {"full_name": "owner/repo"},
                     "head_repository": {"full_name": "owner/repo"}}
         api.repo.return_value = uploader
-        with patch.object(state, "on_main", return_value=True), patch.object(state, "json_member", return_value={"uploader_run_id": 456, "uploader_attempt": 1}) as read:
-            state.read_state(api, artifact, workflow, prefix=state.POST_PREFIX, member="post.json")
-            read.reset_mock()
-            uploader["head_repository"]["full_name"] = "fork/repo"
-            with self.assertRaises(ContractError):
-                state.read_state(api, artifact, workflow, prefix=state.POST_PREFIX, member="post.json")
-            read.assert_not_called()
+        for prefix, member in ((state.POST_PREFIX, "post.json"), (state.PREPARE_PREFIX, "prepare.json")):
+            with self.subTest(member=member), patch.object(state, "on_main", return_value=True), \
+                    patch.object(state, "json_member", return_value={"uploader_run_id": 456, "uploader_attempt": 1}) as read:
+                artifact["name"] = prefix + "456-1"
+                uploader["head_repository"]["full_name"] = "owner/repo"
+                state.read_state(api, artifact, workflow, prefix=prefix, member=member)
+                read.reset_mock()
+                uploader["head_repository"]["full_name"] = "fork/repo"
+                with self.assertRaises(ContractError):
+                    state.read_state(api, artifact, workflow, prefix=prefix, member=member)
+                read.assert_not_called()
 
     def test_collapsed_tv_matrix_requires_verified_cloud_proof_and_cannot_cover_ios(self):
         from ci_ui_reuse import expand_skipped_ui_matrix

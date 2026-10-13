@@ -14,7 +14,7 @@ from statistics import median
 from urllib.error import URLError
 from urllib.parse import urlencode
 
-from ci_publish import positive, trusted_admissions
+from ci_publish import MAX_JSON_BYTES, positive, trusted_admissions
 from ci_summary import ContractError, require
 from ci_xcode_cloud import ROUTE_PATH, archive_evidence_run, trusted_artifact, uuid
 from ci_xcode_cloud_route import (SupersededProducer, action_minutes, build_receipt, current_producer,
@@ -556,6 +556,14 @@ def phase(api, asc, run, event, name, uploader, *, deadline=None):
     if name == "prepare":
         value = prepare_group(api, lambda: asc, run, group, mode=event["inputs"].get("mode", "auto"),
                               override=os.environ.get("CI_XCC_ROUTING_OVERRIDE", ""))
+        # Publish only decision diagnostics, never the full selection or API inventory.
+        receipt = {key: value[key] for key in ("schema_version", "identity", "head_sha", "producer_run_id",
+                   "producer_attempt", "group", "decision", "reason", "budget_policy", "cloud_estimate",
+                   "estimate_decision") if key in value}
+        receipt.update(uploader)
+        require(len((json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode("utf-8")) <= MAX_JSON_BYTES,
+                "Cloud prepare receipt exceeds limit")
+        write_phase("prepare", receipt)
         write_phase("prepared", dict(value, **uploader))
     elif name in {"arm", "start"}:
         value = json.loads((directory / "prepared.json").read_text())
