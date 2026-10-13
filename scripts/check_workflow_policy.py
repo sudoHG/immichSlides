@@ -193,6 +193,9 @@ STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
 EXPRESSION = re.compile(r"\$\{\{((?:" + STRING_LITERAL.pattern + r"|[^']|')*?)(?:\}\}|\Z)")
 SECRETS_ROOT = r"(?<![\w-])secrets(?![\w-])"
 LIVE_SECRET_REFERENCE = SECRETS_ROOT + r"\s*(?:\.\s*IMMICH_TEST_SERVER_|\[\s*'IMMICH_TEST_SERVER_)"
+WORKFLOW_RUN_NAME_REFERENCE = (r"(?<![\w.-])github\s*(?:\.\s*event|\[\s*'event'\s*\])\s*"
+                               r"(?:\.\s*workflow_run|\[\s*'workflow_run'\s*\])\s*"
+                               r"(?:\.\s*name\b|\[\s*'name'\s*\])")
 
 
 def implicit_expression_locations(jobs):
@@ -354,7 +357,7 @@ def nightly_job_gated(job_id, jobs, visited=frozenset()):
     return any(nightly_job_gated(name, jobs, visited | {job_id}) for name in needs if isinstance(name, str))
 
 
-def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]:
+def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflows=()) -> list[Violation]:
     violations = []
 
     def flag(location, rule, message):
@@ -448,6 +451,14 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
         if step.get('id') == 'live' and step.get('env') == LIVE_BINDINGS for key in LIVE_BINDINGS}
     live_job_locations = []
     implicit_locations = implicit_expression_locations(jobs)
+    configuration = events.get("workflow_run")
+    sources = configuration.get("workflows", []) if isinstance(configuration, dict) else []
+    if isinstance(sources, list) and any(isinstance(name, str) and name in run_named_workflows for name in sources):
+        for location, value in string_scalars(document):
+            for code in expression_code(location, value, implicit_locations, keep_index_literals=True):
+                is_condition = (location in implicit_locations or re.search(r"==|!=|&&|\|\||\b(?:contains|startsWith|endsWith)\s*\(", code, re.I))
+                if is_condition and re.search(WORKFLOW_RUN_NAME_REFERENCE, code, re.I):
+                    flag(location, "workflow-run-name", "Consumers of run-named workflows must select by workflow_run.path, not name")
     for job_id, job in jobs.items():
         if not isinstance(job, dict):
             continue
@@ -684,8 +695,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None) -> list[Violation]
                     or job.get("if") != "github.ref == 'refs/heads/main' && "
                     "(github.event_name != 'workflow_run' || "
                     "(github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && "
-                    "((github.event.workflow_run.name == 'ci-nightly' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
-                    "(contains(fromJSON('[\"ci-gate\",\"ci-ui\"]'), github.event.workflow_run.name) && github.event.workflow_run.event == 'push'))))"
+                    "((github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
+                    "(contains(fromJSON('[\".github/workflows/ci-gate.yml\",\".github/workflows/ci-ui.yml\"]'), github.event.workflow_run.path) && github.event.workflow_run.event == 'push'))))"
                     or job.get("concurrency") != {"group": "ci-report-state", "cancel-in-progress": False}):
                 flag(location, "report-contract", "Reporter is serialized, main-only, excludes branch nightly, is environment-free and has only issue write")
         timeout = job.get("timeout-minutes")
@@ -890,14 +901,24 @@ def main(argv=None):
             ui_shards = list(parse_shard_manifest(raw_manifest)["shards"])
         except (OSError, UnicodeError, ValueError) as error:
             violations.append(Violation(MANIFEST_PATH, "manifest", "ui-shards", str(error)))
+    workflow_sources = {}
+    run_named_workflows = set()
     for path in paths:
         relative = path.relative_to(args.root).as_posix()
         try:
             if path.is_symlink():
                 raise ValueError("Workflow symlinks are unsupported")
-            violations.extend(check_workflow(relative, path.read_text(encoding="utf-8"), ui_shards=ui_shards))
+            source = path.read_text(encoding="utf-8")
+            workflow_sources[relative] = source
+            document = yaml.load(source, Loader=WorkflowLoader)
+            if isinstance(document, dict) and "run-name" in document and isinstance(document.get("name"), str):
+                run_named_workflows.add(document["name"])
+        except (yaml.YAMLError, RecursionError):
+            pass  # The per-workflow checker reports malformed YAML, including duplicate keys and aliases.
         except (OSError, UnicodeError, ValueError):
             violations.append(Violation(relative, "workflow", "workflow-format", "Cannot read a regular UTF-8 workflow"))
+    for relative, source in workflow_sources.items():
+        violations.extend(check_workflow(relative, source, ui_shards=ui_shards, run_named_workflows=run_named_workflows))
     if args.check_ui_shards:
         from ci_ui_selection import AREA_MAP_PATH, check_area_map
         from ci_ui_test_kinds import classify_ui_methods

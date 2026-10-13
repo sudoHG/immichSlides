@@ -817,6 +817,50 @@ final class LocaleUITests: XCTestCase {
         document["on"]["workflow_run"] = {"workflows": ["ci-nightly"], "types": ["completed"]}
         self.assertNotIn("workflow-run", self.rules(document, ".github/workflows/ci-report.yml"))
 
+    def test_run_named_producers_cannot_be_selected_by_workflow_run_name(self):
+        options = {"run_named_workflows": {"ci-ui"}}
+        for condition in ("github.event.workflow_run.name == 'ci-ui'", "'ci-ui' == github.event.workflow_run.name",
+                          "contains(fromJSON('[\"ci-ui\"]'), github.event.workflow_run.name)",
+                          "github.event.workflow_run['name'] == 'ci-ui'",
+                          "github['event']['workflow_run']['name'] == 'ci-ui'"):
+            for location in ("job", "step", "env"):
+                with self.subTest(condition=condition, location=location):
+                    document = self.trusted()
+                    job = document["jobs"]["check"]
+                    if location == "job":
+                        job["if"] = condition
+                    elif location == "step":
+                        job["steps"][0]["if"] = "${{ " + condition + " }}"
+                    else:
+                        document["env"] = {"SELECTED": "${{ " + condition + " }}"}
+                    self.assertIn("workflow-run-name", self.rules(document, TRUSTED, **options))
+        document = self.trusted()
+        document["jobs"]["check"]["if"] = "github.event.workflow_run.path == '.github/workflows/ci-ui.yml'"
+        self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED, **options))
+        document["jobs"]["check"]["if"] = "github.event.workflow_run.name == 'ci-ui'"
+        self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED, run_named_workflows={"unrelated"}))
+        self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED))
+        document["jobs"]["check"]["if"] = "github.event.workflow_run.path == '.github/workflows/ci-ui.yml'"
+        document["jobs"]["check"]["name"] = "${{ github.event.workflow_run.name }}"
+        self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED, **options))
+
+    def test_policy_discovers_run_named_producers_before_checking_consumers(self):
+        # Discover producer run-name across files instead of trusting a fixed producer list.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            producer = workflow()
+            producer.update({"name": "ci-ui", "run-name": "UI run ${{ github.run_id }}"})
+            (workflows / "producer.yaml").write_text(yaml.safe_dump(producer))
+            document = self.trusted()
+            document["jobs"]["check"]["if"] = "github.event.workflow_run.name == 'ci-ui'"
+            (workflows / "ci-publish.yml").write_text(yaml.safe_dump(document))
+            output = io.StringIO()
+            with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(1, policy.main(["--root", str(root)]))
+            self.assertIn("[workflow-run-name]", output.getvalue())
+
     def test_reporter_rejects_write_grants_environments_branch_code_and_unbounded_retention(self):
         document = {"name": "ci-report", "on": {"schedule": [{"cron": "30 8 * * *"}],
                     "workflow_dispatch": {"inputs": {"reset_history": {
@@ -826,8 +870,8 @@ final class LocaleUITests: XCTestCase {
                     "permissions": {}, "jobs": {"report": {"if": "github.ref == 'refs/heads/main' && "
                     "(github.event_name != 'workflow_run' || "
                     "(github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && "
-                    "((github.event.workflow_run.name == 'ci-nightly' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
-                    "(contains(fromJSON('[\"ci-gate\",\"ci-ui\"]'), github.event.workflow_run.name) && github.event.workflow_run.event == 'push'))))",
+                    "((github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
+                    "(contains(fromJSON('[\".github/workflows/ci-gate.yml\",\".github/workflows/ci-ui.yml\"]'), github.event.workflow_run.path) && github.event.workflow_run.event == 'push'))))",
                     "runs-on": "ubuntu-24.04", "timeout-minutes": 30,
                     "permissions": {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"},
                     "concurrency": {"group": "ci-report-state", "cancel-in-progress": False},
@@ -851,6 +895,7 @@ final class LocaleUITests: XCTestCase {
         for mutate in (lambda job: job["permissions"].update(actions="write"),
                        lambda job: job.update(environment="ci-publisher"),
                        lambda job: job.update({"if": "github.ref == 'refs/heads/main'"}),
+                       lambda job: job.update({"if": job["if"].replace("workflow_run.path == '.github/workflows/ci-nightly.yml'", "workflow_run.name == 'ci-nightly'")}),
                        lambda job: job.update({"if": job["if"].replace("head_repository.full_name == github.repository", "head_repository.full_name != github.repository")}),
                        lambda job: job.update({"if": job["if"].replace("event == 'push'", "event == 'pull_request'")}),
                        lambda job: job["steps"][2].update({"if": "always()"}),

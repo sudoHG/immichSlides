@@ -1,12 +1,12 @@
 name: ci-nightly
 run-name: >-
-  ci-nightly ${{ github.event_name == 'workflow_dispatch' && (inputs.shard != '' || inputs.live_only || inputs.ui_only || inputs.strict_only || inputs.probe_environment_refusal) && 'diagnostic' || 'full' }}
+  ci-nightly ${{ github.event_name == 'workflow_dispatch' && ((inputs.shard != '' || inputs.live_only || inputs.ui_only || inputs.strict_only || inputs.probe_environment_refusal) && 'diagnostic' || 'full') || github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || 'scheduled' }}
 
 on:
   schedule:
-    # Primary: 14:00 UTC / 22:00 Beijing; backup: 19:00 UTC / 03:00 Beijing the next day.
-    - cron: '0 14 * * *'
-    - cron: '0 19 * * *'
+    # Primary: 14:07 UTC / 22:07 Beijing; backup: 19:07 UTC / 03:07 Beijing the next day.
+    - cron: '7 14 * * *'
+    - cron: '7 19 * * *'
   workflow_dispatch:
     inputs:
       shard:
