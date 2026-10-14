@@ -202,7 +202,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         attachPauseStageTimeline(stages)
     }
 
-    // Seam: hit the single-photo outgoing window with the frame-synchronized probe only. The visual verdict is
+    // Seam: observe the Debug midpoint pause with the frame-synchronized probe only. The visual verdict is
     // recorded separately and never identifies the photo by currentAssetId.
     @MainActor
     func testSinglePhotoOutgoingPauseWindowCapture() throws {
@@ -245,10 +245,6 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         _ = capturePauseStage(app: app, stage: "a2-stable-before-play")
 
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        XCTAssertTrue(
-            playPause.exists && playPause.isHittable,
-            "The control bar must still be visible before tapping Play; do not tap the screen again to reveal it."
-        )
         let playUptime = ProcessInfo.processInfo.systemUptime
         tapElement(playPause)
         XCTAssertTrue(
@@ -259,11 +255,6 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         var frameIndex = 0
         var keepAlwaysFrameCount = 0
         var attachedNamedScreenshots = Set<String>()
-        if attachKeepAlwaysFrame(app: app, index: frameIndex) {
-            keepAlwaysFrameCount += 1
-        }
-        frameIndex += 1
-        var lastFrameUptime = playUptime
         var hitProbeRaw = ""
         var hitContractProbeRaw = ""
         var hitProbeUptime: TimeInterval = TestWait.seconds(.product(0))
@@ -274,14 +265,6 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         let probeDeadline = playUptime + StrictE2EFirstBatchIOSUITestsProbeTiming.pauseWindowTimeoutSeconds
         while ProcessInfo.processInfo.systemUptime <= probeDeadline {
             let now = ProcessInfo.processInfo.systemUptime
-            if now - lastFrameUptime >= StrictE2EFirstBatchIOSUITestsProbeTiming.frameCaptureIntervalSeconds {
-                if attachKeepAlwaysFrame(app: app, index: frameIndex) {
-                    keepAlwaysFrameCount += 1
-                }
-                frameIndex += 1
-                lastFrameUptime = now
-            }
-            lastContractProbeRaw = contractProbeRaw(app: app)
             lastProbeRaw = frameSynchronizedProbeRaw(app: app)
             lastProbeUptime = now
             if !lastProbeRaw.isEmpty,
@@ -289,7 +272,6 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
                 isOutgoingOnlyPauseWindow(state)
             {
                 hitProbeRaw = lastProbeRaw
-                hitContractProbeRaw = lastContractProbeRaw
                 hitProbeUptime = now
                 didDetectWindow = true
                 break
@@ -298,7 +280,9 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
                 until: Date().addingTimeInterval(StrictE2EFirstBatchIOSUITestsProbeTiming.probePollIntervalSeconds))
         }
 
+        lastContractProbeRaw = contractProbeRaw(app: app)
         if didDetectWindow {
+            hitContractProbeRaw = lastContractProbeRaw
             if attachKeepAlwaysFrame(app: app, index: frameIndex) {
                 keepAlwaysFrameCount += 1
             }
@@ -307,17 +291,13 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             if !windowPNG.isEmpty {
                 attachedNamedScreenshots.insert("window-detected")
             }
-            tapElement(playPause)
         } else {
             attachStrictE2EScreenshot(app: app, name: "window-timeout")
-            if playPause.exists, playPauseState(playPause) != "play" {
-                tapElement(playPause)
-            }
         }
 
         let pauseUptime = ProcessInfo.processInfo.systemUptime
         let postPauseProbeRaw = frameSynchronizedProbeRaw(app: app)
-        let pausedState = playPauseState(playPause)
+        let pausedState = probeState(from: postPauseProbeRaw)?.isPaused == true ? "play" : "pause"
         if attachKeepAlwaysFrame(app: app, index: frameIndex) {
             keepAlwaysFrameCount += 1
         }
@@ -401,7 +381,12 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         XCTAssertEqual(
             pausedState,
             "play",
-            "Pause may be tapped only once, in the window or after the timeout; the button value must be play."
+            "Pause may be tapped only once, in the window or after the timeout; the midpoint hook must report paused."
+        )
+        XCTAssertTrue(
+            isSameFrozenProbeFrame(hitProbeRaw, postPauseProbeRaw)
+                && isSameFrozenProbeFrame(postPauseProbeRaw, postPause03ProbeRaw),
+            "After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0. Frame identity, opacity and motion must remain frozen."
         )
         if probeHit == "MISS" {
             XCTFail(

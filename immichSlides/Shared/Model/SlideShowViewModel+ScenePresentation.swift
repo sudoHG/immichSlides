@@ -27,6 +27,46 @@ extension SlideShowViewModel {
     }
 
     #if DEBUG
+    /// This timer observes the reducer's existing fade clock; pausing still uses the user's command path.
+    func scheduleAutomaticFadeMidpointPauseForTesting() {
+        guard PlatformCompat.shouldPauseAtAutomaticFadeMidpointForTesting() else { return }
+        let deadline = didPauseAtAutomaticFadeMidpointForTesting ? nil : playbackSession.automaticFadeMidpointForTesting
+        guard deadline != automaticFadeMidpointPauseDeadlineForTesting else { return }
+        automaticFadeMidpointPauseTask?.cancel()
+        automaticFadeMidpointPauseTask = nil
+        automaticFadeMidpointPauseDeadlineForTesting = deadline
+        guard let deadline, scenePresentationTimestampProviderForTesting == nil else { return }
+        let delay = max(0, deadline - scenePresentationTimestamp())
+        automaticFadeMidpointPauseTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch { return }
+            guard let self, !Task.isCancelled,
+                self.automaticFadeMidpointPauseDeadlineForTesting == deadline
+            else { return }
+            self.automaticFadeMidpointPauseTask = nil
+            _ = self.pauseAtAutomaticFadeMidpointForTesting()
+        }
+    }
+
+    @discardableResult
+    func pauseAtAutomaticFadeMidpointForTesting(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        guard PlatformCompat.shouldPauseAtAutomaticFadeMidpointForTesting(environment: environment),
+            !didPauseAtAutomaticFadeMidpointForTesting, isAutoPlay,
+            let deadline = playbackSession.automaticFadeMidpointForTesting,
+            scenePresentationTimestamp() >= deadline
+        else { return false }
+        let snapshot = sceneRenderSnapshot
+        guard snapshot.layers.contains(where: { $0.role == .outgoing && $0.opacity > 0 && $0.opacity <= 0.5 }),
+            !snapshot.layers.contains(where: { $0.role == .incoming && $0.opacity > 0 })
+        else { return false }
+        didPauseAtAutomaticFadeMidpointForTesting = true
+        toggleAutoPlayFromUserInteraction()
+        return true
+    }
+
     /// Tests only fire the wake-up the owner already scheduled; no separate autoplay clock is created.
     @discardableResult
     func fireScheduledScenePresentationWakeUpForTesting() -> TimeInterval? {

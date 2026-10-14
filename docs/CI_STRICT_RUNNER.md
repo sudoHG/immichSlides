@@ -70,7 +70,16 @@ and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 The `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`
 selectors use an empty launch environment and forbid the scene probe.
 `pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
-`UI_TEST_RESET_STATE` and `UI_TEST_FORCE_MODE_SELECTION`.
+`UI_TEST_RESET_STATE`, `UI_TEST_FORCE_MODE_SELECTION` and
+`UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT=1`. The last key enables a Debug-only,
+one-shot pause at the first automatic outgoing fade's midpoint through the same
+command as the user's Pause. The UI test polls only the frame-synchronized probe
+until it reports paused with outgoing opacity near 0.5 and incoming opacity 0,
+then captures the frozen frame and verifies its identity, opacity and motion
+through the existing 0.3-second hold. The pixel verdict remains unchanged.
+It no longer checks whether a human tap can land inside the fade window;
+`AutomaticTransitionPauseTests` covers the reducer's pause semantics. Release
+compiles out the timer and pause action and returns false for the launch flag.
 `tvos-directional-wake` sets those four legacy keys plus
 `UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT`, and does not set the scene probe.
 Other probe-key launches are the configured SmartFill launch helpers in

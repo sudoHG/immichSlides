@@ -3,8 +3,7 @@ import XCTest
 #if os(iOS)
 extension StrictE2EFirstBatchIOSUITests {
     // launchStrictE2EApp clears launchEnvironment and rejects leftover UI_TEST_* keys. This pause-window
-    // run needs exactly these five: server URL/key so first-boot is skipped, reset plus mode-selection to
-    // reach a clean mode page, and the scene-presentation probe the outgoing-translucent check reads.
+    // run declares its fixture setup, frame probe and one-shot automatic fade midpoint pause explicitly.
     @MainActor
     func launchOutgoingPauseWindowApp() throws -> XCUIApplication {
         let input = try requireStrictE2EInput()
@@ -14,7 +13,8 @@ extension StrictE2EFirstBatchIOSUITests {
             "UI_TEST_API_KEY": input.publicKey,
             "UI_TEST_RESET_STATE": "1",
             "UI_TEST_FORCE_MODE_SELECTION": "1",
-            "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"
+            "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1",
+            "UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT": "1"
         ]
         let audit = try JSONSerialization.data(
             withJSONObject: ["launch_environment_keys": app.launchEnvironment.keys.sorted()],
@@ -252,13 +252,13 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func probeRaw(app: XCUIApplication, identifier: String) -> String {
-        let probe = app.descendants(matching: .any)[identifier]
-        guard probe.exists else { return "" }
-        return probe.label
+        guard let snapshot = try? app.snapshot() else { return "" }
+        return snapshot.descendants.first { $0.identifier == identifier }?.label ?? ""
     }
 
     struct PauseWindowProbeState {
         let phase: String
+        let isPaused: Bool
         let layerRoles: [String]
         let layerOpacities: [Double]
     }
@@ -274,7 +274,8 @@ extension StrictE2EFirstBatchIOSUITests {
         }
         let roles = list(fields["layerRoles"])
         let opacities = list(fields["layerOpacities"]).compactMap(Double.init)
-        return PauseWindowProbeState(phase: phase, layerRoles: roles, layerOpacities: opacities)
+        return PauseWindowProbeState(
+            phase: phase, isPaused: fields["playbackPaused"] == "true", layerRoles: roles, layerOpacities: opacities)
     }
 
     func probeFields(from label: String) -> [String: String] {
@@ -295,12 +296,12 @@ extension StrictE2EFirstBatchIOSUITests {
     }
 
     func isOutgoingOnlyPauseWindow(_ state: PauseWindowProbeState) -> Bool {
-        guard state.phase == "transition" else { return false }
+        guard state.phase == "transition", state.isPaused else { return false }
         guard state.layerRoles.count == state.layerOpacities.count else { return false }
         var isOutgoingFading = false
         var isIncomingHidden = false
         for (role, opacity) in zip(state.layerRoles, state.layerOpacities) {
-            if role == "outgoing", opacity > 0, opacity < 1 {
+            if role == "outgoing", abs(opacity - 0.5) <= 0.1 {
                 isOutgoingFading = true
             }
             if role == "incoming", opacity == 0 {
@@ -321,12 +322,22 @@ extension StrictE2EFirstBatchIOSUITests {
     // Positive condition after freezing: outgoing is still visible and incoming is still fully invisible.
     func isPostPauseProbePositive(_ raw: String) -> Bool {
         guard let state = probeState(from: raw),
+            state.isPaused,
             let outgoing = layerOpacity(in: state, role: "outgoing"), outgoing > 0,
             let incoming = layerOpacity(in: state, role: "incoming"), incoming == 0
         else {
             return false
         }
         return true
+    }
+
+    func isSameFrozenProbeFrame(_ first: String, _ second: String) -> Bool {
+        let firstFields = probeFields(from: first)
+        let secondFields = probeFields(from: second)
+        return isPostPauseProbePositive(first) && isPostPauseProbePositive(second)
+            && ["phase", "layerIDs", "layerRoles", "layerOpacities", "motionRawProgress"].allSatisfy {
+                firstFields[$0] != nil && firstFields[$0] == secondFields[$0]
+            }
     }
 
     // Missing probe or outgoing at 0 means black/blank; 'no Fixture 3' alone must not count as a pass.

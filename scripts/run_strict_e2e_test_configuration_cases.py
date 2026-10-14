@@ -445,6 +445,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
             "ios-lifecycle-first-wake": {probe: "1"}, "ios-lifecycle-settings": {},
             "ios-lifecycle-pause": {}, "ios-lifecycle-background": {},
             "pause-window": {probe: "1", "UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
+                             "UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT": "1",
                              "UI_TEST_SERVER_URL": None, "UI_TEST_API_KEY": "immichslides-public-e2e-key"},
             "tvos-directional-wake": {"UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
                                       "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT": "1", "UI_TEST_SERVER_URL": None,

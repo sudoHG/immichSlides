@@ -362,6 +362,10 @@ final class PlaybackSessionOwner {
     }
 
     #if DEBUG
+    var automaticFadeMidpointForTesting: TimeInterval? {
+        engine.scenePresentationState.automaticFadeMidpointForTesting
+    }
+
     struct HistorySnapshot {
         let entryCount: Int
         let cursor: Int?

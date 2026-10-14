@@ -30,6 +30,7 @@ enum PlatformCompat {
         environment["XCTestConfigurationFilePath"] != nil
             || environment.keys.contains {
                 $0.hasPrefix("UI_TEST_") && $0 != "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"
+                    && $0 != "UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT"
             }
     }
 
@@ -74,6 +75,16 @@ enum PlatformCompat {
     static var shouldDisablePlaybackEntryHintForTesting: Bool {
         #if DEBUG
         return ProcessInfo.processInfo.environment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] == "1"
+        #else
+        return false
+        #endif
+    }
+
+    static func shouldPauseAtAutomaticFadeMidpointForTesting(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        #if DEBUG
+        return environment["UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT"] == "1"
         #else
         return false
         #endif
