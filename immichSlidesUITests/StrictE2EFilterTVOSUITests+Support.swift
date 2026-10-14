@@ -132,6 +132,7 @@ extension StrictE2EFilterTVOSUITests {
             ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
             try writeScreenshotPNG(app: app, name: name, attachmentName: name)
             if index + 1 < names.count {
+                ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
                 moveFocus(.right, to: nextButton, maximumPresses: 3, message: "Focus must be able to move to Next.")
                 XCUIRemote.shared.press(.select)
                 RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
@@ -275,7 +276,7 @@ extension StrictE2EFilterTVOSUITests {
             "After submitting text, focus must return to the original field.")
     }
 
-    // Direction-key settle is shorter than polling: proves system focus only, never treats @FocusState as truth.
+    // Observe system focus within the existing settle budget before sending another direction key.
     @MainActor
     func moveFocus(
         _ direction: XCUIRemote.Button,
@@ -285,8 +286,7 @@ extension StrictE2EFilterTVOSUITests {
     ) {
         for _ in 0..<maximumPresses {
             if element.exists && element.hasFocus { return }
-            XCUIRemote.shared.press(direction)
-            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
+            pressAndWaitForFocusMovement(direction, to: element)
         }
         XCTAssertTrue(waitForFocus(on: element, timeout: TestWait.seconds(.product(4))), message)
     }
@@ -297,11 +297,34 @@ extension StrictE2EFilterTVOSUITests {
         for direction in directions {
             for _ in 0..<4 {
                 if element.exists && element.hasFocus { return }
-                XCUIRemote.shared.press(direction)
-                RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
+                pressAndWaitForFocusMovement(direction, to: element)
             }
         }
         XCTAssertTrue(waitForFocus(on: element, timeout: TestWait.seconds(.product(4))), message)
+    }
+
+    @MainActor
+    private func pressAndWaitForFocusMovement(_ direction: XCUIRemote.Button, to target: XCUIElement) {
+        let app = XCUIApplication()
+        let focused = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "hasFocus == %@", NSNumber(value: true))).firstMatch
+        let identifier = (try? focused.snapshot())?.identifier ?? ""
+        let previous =
+            identifier.isEmpty ? nil : app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        XCUIRemote.shared.press(direction)
+        guard let previous else {
+            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
+            return
+        }
+        let deadline = Date().addingTimeInterval(Timing.focusMovementSettleSeconds)
+        while Date() < deadline {
+            if (target.exists && target.hasFocus) || !previous.exists || !previous.hasFocus { return }
+            let focusPollSeconds = min(
+                Timing.focusPollingSeconds, max(TestWait.seconds(.product(0)), deadline.timeIntervalSinceNow))
+            RunLoop.current.run(
+                until: Date().addingTimeInterval(focusPollSeconds)
+            )
+        }
     }
 
     @MainActor
@@ -316,12 +339,36 @@ extension StrictE2EFilterTVOSUITests {
 
     @MainActor
     func ensureControlBarVisible(app: XCUIApplication, playPauseButton: XCUIElement) {
-        if !playPauseButton.exists {
-            XCUIRemote.shared.press(.up)
-        }
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            revealControlBar(app: app, playPauseButton: playPauseButton, timeout: TestWait.seconds(.product(5))),
             "A direction key must bring up the playback control bar.")
+    }
+
+    @MainActor
+    private func revealControlBar(app: XCUIApplication, playPauseButton: XCUIElement, timeout: TimeInterval) -> Bool {
+        let receiver = app.descendants(matching: .any).matching(identifier: "slideshow.hiddenWakeReceiver").firstMatch
+        let deadline = Date().addingTimeInterval(timeout)
+        let maximumWakePresses = 2
+        for _ in 0..<maximumWakePresses {
+            if playPauseButton.exists { return true }
+            let remainingWakeSeconds = max(TestWait.seconds(.product(0)), deadline.timeIntervalSinceNow)
+            guard
+                waitUntil(
+                    timeout: remainingWakeSeconds,
+                    condition: {
+                        playPauseButton.exists || (receiver.exists && receiver.hasFocus)
+                    })
+            else { break }
+            if playPauseButton.exists { return true }
+            XCUIRemote.shared.press(.up)
+            let controlAppearanceSeconds = min(
+                timeout / Double(maximumWakePresses),
+                max(TestWait.seconds(.product(0)), deadline.timeIntervalSinceNow))
+            if playPauseButton.waitForExistence(timeout: controlAppearanceSeconds) {
+                return true
+            }
+        }
+        return playPauseButton.exists
     }
 
     @MainActor
@@ -453,7 +500,7 @@ extension StrictE2EFilterTVOSUITests {
     @MainActor
     func openPlaybackSettingsFromSlideshow(app: XCUIApplication) throws {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
-        if playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(8))) {
+        if revealControlBar(app: app, playPauseButton: playPauseButton, timeout: TestWait.seconds(.product(8))) {
             ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
             let settingsButton = app.buttons["slideshow.control.settings.button"]
             moveFocus(
