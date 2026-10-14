@@ -442,8 +442,8 @@ class StrictE2ERunnerTestsCasesConfiguration:
         probe = "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"
         cases = {
             "journey-b": {probe: "1"}, "tvos-flow": {probe: "1"},
-            "ios-lifecycle-first-wake": {probe: "1"}, "ios-lifecycle-settings": {probe: "1"},
-            "ios-lifecycle-pause": {probe: "1"}, "ios-lifecycle-background": {probe: "1"},
+            "ios-lifecycle-first-wake": {probe: "1"}, "ios-lifecycle-settings": {},
+            "ios-lifecycle-pause": {}, "ios-lifecycle-background": {},
             "pause-window": {probe: "1", "UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
                              "UI_TEST_SERVER_URL": None, "UI_TEST_API_KEY": "immichslides-public-e2e-key"},
             "tvos-directional-wake": {"UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
@@ -469,7 +469,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
                     with self.assertRaises(CommandError):
                         validate_app_launch_environment({**actual, key: "invalid"}, suite=suite)
                 if probe not in expected:
-                    with self.assertRaises(CommandError):
+                    with self.assertRaisesRegex(CommandError, "^Forbidden keys found in the App launchEnvironment: " + probe + "$"):
                         validate_app_launch_environment({**actual, probe: "1"}, suite=suite)
 
 

@@ -719,16 +719,20 @@ class PositiveIdentityTests(unittest.TestCase):
     def test_tv_publication_rejects_no_advance_pause_republication_and_unreadable_signals(self) -> None:
         names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
         marks = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")
-        cases = (("history-first-next", "1", "1.001"), ("history-second-next", "2", "2.001"),
-                 ("resumed", "6", "6.001"), ("pause-after-10s", "8", "8.001"),
-                 ("resumed", "nan", "nan"), ("resumed", "7", "6"),
-                 ("resumed", None, None), ("resumed", "7", None))
+        advance_error = "Scene advance pixels and index sequence disagree: scene publication did not advance"
+        resume_error = "Scene resume pixels and index sequence disagree: scene publication did not advance"
+        pause_error = "Scene round-trip pixels and index sequence disagree: pause publication changed"
+        unreadable_error = "resumed: missing or unreadable scene publication evidence"
+        cases = (("history-first-next", "1", "1.001", advance_error), ("history-second-next", "2", "2.001", advance_error),
+                 ("resumed", "6", "6.001", resume_error), ("pause-after-10s", "8", "8.001", pause_error),
+                 ("resumed", "nan", "nan", unreadable_error), ("resumed", "7", "6", unreadable_error),
+                 ("resumed", None, None, unreadable_error), ("resumed", "7", None, unreadable_error))
         with tempfile.TemporaryDirectory() as raw:
             evidence = Path(raw)
             for name, mark in zip(names, marks):
                 (evidence / f"{name}.png").write_bytes(_fixture_png(mark))
             for saturated in (False, True):
-                for name, action, published in cases:
+                for name, action, published, error_message in cases:
                     with self.subTest(saturated=saturated, frame=name, action=action, published=published):
                         _write_scene_sequence(evidence, list(zip(names, [(mark,) for mark in marks])))
                         for frame in names:
@@ -746,7 +750,39 @@ class PositiveIdentityTests(unittest.TestCase):
                                             fields[key] = value
                                     payload[point]["manifest"] = ";".join(f"{key}={value}" for key, value in fields.items())
                             path.write_text(json.dumps(payload))
-                        with self.assertRaises(IdentityAssertionError):
+                        with self.assertRaisesRegex(IdentityAssertionError, "^" + error_message + "$"):
+                            evaluate_visual_identity(evidence, "tvos-flow")
+
+    def test_initial_publication_exemption_rejects_next_pause_and_resume(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
+        marks = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")
+        cases = (
+            ("history-first-next", "Scene advance pixels and index sequence disagree: scene publication did not advance"),
+            ("pause-immediate", "Scene round-trip pixels and index sequence disagree: pause publication changed"),
+            ("resumed", "Scene resume pixels and index sequence disagree: scene publication did not advance"),
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            for name, mark in zip(names, marks):
+                (evidence / f"{name}.png").write_bytes(_fixture_png(mark))
+            for saturated in (False, True):
+                for name, error_message in cases:
+                    with self.subTest(saturated=saturated, frame=name):
+                        _write_scene_sequence(evidence, list(zip(names, [(mark,) for mark in marks])))
+                        for frame in names:
+                            path = evidence / f"{frame}.scene.json"
+                            payload = json.loads(path.read_text())
+                            for point in ("before", "after"):
+                                if saturated:
+                                    payload[point]["index"] = "5/5"
+                                if frame == name:
+                                    fields = dict(item.split("=", 1) for item in payload[point]["manifest"].split(";"))
+                                    fields.pop("actionTimestamp")
+                                    fields.pop("scenePublishTimestamp")
+                                    fields["publishReason"] = "initial"
+                                    payload[point]["manifest"] = ";".join(f"{key}={value}" for key, value in fields.items())
+                            path.write_text(json.dumps(payload))
+                        with self.assertRaisesRegex(IdentityAssertionError, "^" + error_message + "$"):
                             evaluate_visual_identity(evidence, "tvos-flow")
 
     def test_tvos_backward_history_does_not_rewind_the_forward_pool_cursor(self) -> None:

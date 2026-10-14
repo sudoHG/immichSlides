@@ -65,9 +65,10 @@ missing pixel identity. A5 and A1+A5 have different signatures.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
 Probe-only launches are `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
-the other `ios-lifecycle-*` selectors, and
-`AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
+and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
+The `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`
+selectors use an empty launch environment and forbid the scene probe.
 `pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
 `UI_TEST_RESET_STATE` and `UI_TEST_FORCE_MODE_SELECTION`.
 `tvos-directional-wake` sets those four legacy keys plus
