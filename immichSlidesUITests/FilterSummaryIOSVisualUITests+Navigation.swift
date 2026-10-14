@@ -442,7 +442,8 @@ extension FilterSummaryIOSVisualUITests {
         while Date() < deadline {
             // Snapshots have no hittability attribute; the SDK wait returns a non-asserting observation.
             if let snapshot = try? button.snapshot(), snapshot.isEnabled, !snapshot.frame.isEmpty,
-                Date() < deadline, button.wait(for: \.isHittable, toEqual: true, timeout: 0)
+                Date() < deadline,
+                button.wait(for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))
             {
                 return true
             }

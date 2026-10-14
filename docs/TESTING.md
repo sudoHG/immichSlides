@@ -165,7 +165,7 @@ when the true branch starts with a call, including calls nested inside it; passi
 a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
 For functional control readiness, use a fallible snapshot for enabled state and frame,
-then the SDK's non-asserting `wait(for: \.isHittable, toEqual: true, timeout: 0)` within
+then the SDK's non-asserting `wait(for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))` within
 the original deadline. Return that observation without another live read or an
 existence-only success on timeout. The current-asset poll retains its successful
 snapshot value and records snapshot failures separately from an absent probe; timeout
