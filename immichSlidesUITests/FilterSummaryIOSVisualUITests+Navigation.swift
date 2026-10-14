@@ -440,14 +440,19 @@ extension FilterSummaryIOSVisualUITests {
         let button = app.buttons["slideshow.control.settings.button"]
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if button.exists && button.isHittable {
+            // Snapshots have no hittability attribute; the SDK wait returns a non-asserting observation.
+            if let snapshot = try? button.snapshot(), snapshot.isEnabled, !snapshot.frame.isEmpty,
+                Date() < deadline, button.wait(for: \.isHittable, toEqual: true, timeout: 0)
+            {
                 return true
             }
+            guard Date() < deadline else { break }
             app.tap()
             RunLoop.current.run(
-                until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds))
+                until: min(
+                    deadline, Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds)))
         }
-        return button.exists
+        return false
     }
 
     func waitForElementToBecomeHittable(

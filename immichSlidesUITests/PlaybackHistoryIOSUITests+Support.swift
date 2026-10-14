@@ -460,13 +460,30 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func waitForCurrentAssetID(app: XCUIApplication, timeout: TimeInterval) throws -> String {
-        guard waitUntil(timeout: timeout, condition: { self.currentAssetID(app: app) != nil }) else {
+        var observedAssetID: String?
+        var snapshotFailureCount = 0
+        var lastSnapshotFailure: String?
+        guard
+            waitUntil(
+                timeout: timeout,
+                condition: {
+                    observedAssetID = self.currentAssetID(
+                        app: app,
+                        onSnapshotFailure: { error in
+                            snapshotFailureCount += 1
+                            lastSnapshotFailure = error.localizedDescription
+                        })
+                    return observedAssetID != nil
+                })
+        else {
             let hierarchy = app.debugDescription
-            let candidate = app.descendants(matching: .any)["slideshow.currentAssetId.flag"]
+            let candidate = try? app.descendants(matching: .any)["slideshow.currentAssetId.flag"].snapshot()
             let diagnostic = [
-                "currentAssetProbe.exists=\(candidate.exists)",
-                "currentAssetProbe.identifier=\(candidate.identifier)",
-                "currentAssetProbe.label=\(candidate.label)",
+                "currentAssetProbe.snapshotFailures=\(snapshotFailureCount)",
+                "currentAssetProbe.lastSnapshotFailure=\(lastSnapshotFailure ?? "none")",
+                "currentAssetProbe.exists=\(candidate != nil)",
+                "currentAssetProbe.identifier=\(candidate?.identifier ?? "unavailable")",
+                "currentAssetProbe.label=\(candidate?.label ?? "unavailable")",
                 "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_BEGIN",
                 hierarchy,
                 "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_END"
@@ -488,7 +505,7 @@ extension PlaybackHistoryIOSUITests {
             )
         }
 
-        guard let assetID = currentAssetID(app: app) else {
+        guard let assetID = observedAssetID else {
             XCTFail("The slideshow asset ID probe disappeared; cannot read the current photo.")
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
@@ -519,8 +536,14 @@ extension PlaybackHistoryIOSUITests {
         return try waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.product(2)))
     }
 
-    func currentAssetID(app: XCUIApplication, snapshots: [String: XCUIElementSnapshot]? = nil) -> String? {
-        guard let probe = (snapshots ?? app.evidenceSnapshotsByIdentifier())["slideshow.currentAssetId.flag"]
+    func currentAssetID(
+        app: XCUIApplication,
+        snapshots: [String: XCUIElementSnapshot]? = nil,
+        onSnapshotFailure: ((Error) -> Void)? = nil
+    ) -> String? {
+        guard
+            let probe = (snapshots ?? app.evidenceSnapshotsByIdentifier(onSnapshotFailure: onSnapshotFailure))[
+                "slideshow.currentAssetId.flag"]
         else { return nil }
         let label = probe.label.trimmingCharacters(in: .whitespacesAndNewlines)
         return label.isEmpty || label == "no-asset" ? nil : label

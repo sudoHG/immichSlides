@@ -634,8 +634,7 @@ extension FilterSummaryIOSVisualUITests {
         XCTAssertTrue(
             waitForSlideshowSettingsButton(
                 app: app,
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.playbackControlTimeoutSeconds)
-                && app.buttons["slideshow.control.settings.button"].isHittable,
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.playbackControlTimeoutSeconds),
             "After starting playback, the playback page should open and show the control bar")
 
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
