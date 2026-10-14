@@ -371,7 +371,8 @@ only endpoints use a thumb-start drag past the track end. The settings-persisten
 flow requires a displayed interval different from its initial value and preserves
 that same value across restart, without requiring an exact interior target.
 Pause/background flows request 12 seconds and require displayed T in the inclusive
-10–15 second window. T/2 is therefore at least 5 seconds and T−2 at least 8 seconds,
+10–15 second window, enabled explicitly at the timing-contract call. Other callers
+retain exact requested values. T/2 is therefore at least 5 seconds and T−2 at least 8 seconds,
 while the upper bound limits run time. Every timing assertion uses that displayed T;
 T±2 tolerances, capture deadlines relative to T, hidden-control and visible-scene
 checks stay unchanged. First-wake requires exactly 30 seconds, and `IOSDriver`

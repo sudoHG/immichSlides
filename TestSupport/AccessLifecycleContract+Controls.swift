@@ -133,9 +133,11 @@ extension AccessLifecycleContract {
         }
     }
 
-    // Real-UI readback must be exact at endpoints; timing cases use displayed T in the fixed 10-15 s window.
-    static func assertIOSIntervalReachedRequested(observed: Int, target: Int = requestedIntervalSeconds) throws {
-        let isTimingTarget = target == requestedIntervalSeconds
+    // Explicit timing cases use displayed T in 10-15 s; endpoints and all other callers remain exact.
+    static func assertIOSIntervalReachedRequested(
+        observed: Int, target: Int = requestedIntervalSeconds, shouldUseTimingWindow: Bool = false
+    ) throws {
+        let isTimingTarget = shouldUseTimingWindow && target == requestedIntervalSeconds
         if isTimingTarget ? !iosTimingIntervalSeconds.contains(observed) : observed != target {
             let requirement =
                 isTimingTarget ? "\(target) seconds within the 10-15 second timing window" : "\(target) seconds"

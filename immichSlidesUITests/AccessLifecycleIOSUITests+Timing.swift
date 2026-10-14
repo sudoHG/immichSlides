@@ -220,7 +220,7 @@ extension AccessLifecycleIOSUITests {
             targetSeconds: AccessLifecycleContract.requestedIntervalSeconds,
             accepting: { AccessLifecycleContract.iosTimingIntervalSeconds.contains($0) }
         )
-        try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: interval)
+        try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: interval, shouldUseTimingWindow: true)
         requests.append("settings.save.interval")
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(

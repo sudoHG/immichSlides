@@ -394,12 +394,14 @@ final class SettingsResumeContractTests: XCTestCase {
     func testIOSSliderReadbackRequiresTimingWindowOrExactEndpoint() {
         for observed in [10, 11, 12, 13, 14, 15] {
             XCTAssertNoThrow(
-                try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: observed)
+                try AccessLifecycleContract.assertIOSIntervalReachedRequested(
+                    observed: observed, shouldUseTimingWindow: true)
             )
         }
         for observed in [-1, 5, 9, 16, 30] {
             XCTAssertThrowsError(
-                try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: observed)
+                try AccessLifecycleContract.assertIOSIntervalReachedRequested(
+                    observed: observed, shouldUseTimingWindow: true)
             )
         }
         for endpoint in [5, 30] {
@@ -412,6 +414,13 @@ final class SettingsResumeContractTests: XCTestCase {
                 )
             }
         }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: 14)
+        )
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIOSIntervalReachedRequested(
+                observed: 14, target: 30, shouldUseTimingWindow: true)
+        )
     }
 
     func testTVOSIntervalSearchRequiresPlaybackSettingsPage() {
