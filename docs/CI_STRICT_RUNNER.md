@@ -339,7 +339,9 @@ The following additions come only from public Swift assertions in the linked sou
 Each row fixes both enum values before any suffix is read. Shared prefixes receive a
 specific phase only when their public call sites establish the same phase. The shared
 EXIF helper also runs in the pause-window flow, so its two prefixes retain an `unknown`
-phase and only identify the class. The existing lifecycle/XCTest rows remain unchanged.
+phase and only identify the class. The shared driver's EXIF toggle also runs in image
+failure recovery, so that prefix retains an `unknown` phase and `control_state` class.
+The existing lifecycle/XCTest rows remain unchanged.
 
 New enum meanings and why the previous vocabulary cannot express them:
 
@@ -403,7 +405,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The required PNG with EXIF off still shows the info card.` | `exif_ownership` | `exif_visibility` | [ExifToggleUITests.swift](../immichSlidesUITests/ExifToggleUITests.swift) |
 | `Can't check EXIF: photo status ` | `unknown` | `scene_identity` | [StrictE2EPhotoIdentity.swift](../TestSupport/StrictE2EPhotoIdentity.swift) |
 | `EXIF does not match the photo: mark=` | `unknown` | `exif_correspondence` | [StrictE2EPhotoIdentity.swift](../TestSupport/StrictE2EPhotoIdentity.swift) |
-| `The EXIF toggle must reach the target state through the real settings.` | `exif_ownership` | `control_state` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift) |
+| `The EXIF toggle must reach the target state through the real settings.` | `unknown` | `control_state` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift) |
 | `Default focus on the mode selection page must land on random playback.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
 | `Focus on the mode page must be able to move to filtered playback.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
 | `After choosing a mode, focus must be able to move down to the Continue button.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |

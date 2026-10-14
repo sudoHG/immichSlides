@@ -666,7 +666,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/ExifToggleUITests.swift", "The required PNG with EXIF off still shows the info card.", "exif_ownership", "exif_visibility"),
             ("TestSupport/StrictE2EPhotoIdentity.swift", "Can't check EXIF: photo status ", "unknown", "scene_identity"),
             ("TestSupport/StrictE2EPhotoIdentity.swift", "EXIF does not match the photo: mark=", "unknown", "exif_correspondence"),
-            ("immichSlidesUITests/IOSDriver.swift", "The EXIF toggle must reach the target state through the real settings.", "exif_ownership", "control_state"),
+            ("immichSlidesUITests/IOSDriver.swift", "The EXIF toggle must reach the target state through the real settings.", "unknown", "control_state"),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Default focus on the mode selection page must land on random playback.", "mode_selection", "focus"),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Focus on the mode page must be able to move to filtered playback.", "mode_selection", "focus"),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After choosing a mode, focus must be able to move down to the Continue button.", "mode_selection", "focus"),
@@ -839,8 +839,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
         for prefix, phase, kind in PREFIX_RULES:
             with self.subTest(prefix=prefix):
                 expected = {"failure_phase": phase, "failure_class": kind}
-                # Wrapper coverage above follows the public call sites; this checks raw prefix matching.
-                for message in (prefix + " private-value", prefix + " another-private-value"):
+                # Exercise wrapper stripping; the test above uses the public call-site forms.
+                for message in (prefix + " private-value", "XCTAssertTrue failed - " + prefix + " private-value",
+                                'failed: caught error: "message(\\"' + prefix + '\\")"',
+                                'failed - message("' + prefix + '")'):
                     self.assertEqual(classify_messages([message]), expected)
         for messages in ([], ["unreviewed private text"], ["interval_setup"], [None],
                          ["The iOS slider must be settable to 30 seconds.", "unreviewed private text"],
@@ -853,6 +855,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
                          {"failure_phase": "unknown", "failure_class": "snapshot_query"})
         self.assertEqual(classify_messages(["XCTAssertEqual failed: (PRIVATE_SENTINEL) - After pausing, the rendered transform/frame of every SmartFill slot must stay frozen"]),
                          {"failure_phase": "paused_hold", "failure_class": "scene_identity"})
+        self.assertEqual(
+            classify_messages(['failed - message("System pause analog must not rebuild the process")']),
+            {"failure_phase": "background_return", "failure_class": "process_lifetime"},
+        )
 
     def test_private_export_and_tracer_publish_only_enums_without_changing_failure(self):
         import subprocess

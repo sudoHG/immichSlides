@@ -17,7 +17,8 @@ DIAGNOSTIC_FIELDS = frozenset({"failure_phase", "failure_class"})
 # Reviewed prefixes from AccessLifecycleContract (+Controls/+TransitionTiming),
 # AccessLifecycleIOSUITests (+Settings/+Navigation), PlaybackHistoryIOSUITests
 # (+Support), strict first-batch/filter/late-image/tvOS flows, EXIF ownership,
-# ScenePresentationContractUITests, their public drivers and XCTest.
+# ScenePresentationContractUITests, FilterSummaryIOSVisualUITests+Exif,
+# FilterSummaryIOSVisualUITests+Launch, their public drivers and XCTest.
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
@@ -80,7 +81,7 @@ PREFIX_RULES = (
     ("The required PNG with EXIF off still shows the info card.", "exif_ownership", "exif_visibility"),
     ("Can't check EXIF: photo status ", "unknown", "scene_identity"),
     ("EXIF does not match the photo: mark=", "unknown", "exif_correspondence"),
-    ("The EXIF toggle must reach the target state through the real settings.", "exif_ownership", "control_state"),
+    ("The EXIF toggle must reach the target state through the real settings.", "unknown", "control_state"),
     ("Default focus on the mode selection page must land on random playback.", "mode_selection", "focus"),
     ("Focus on the mode page must be able to move to filtered playback.", "mode_selection", "focus"),
     ("After choosing a mode, focus must be able to move down to the Continue button.", "mode_selection", "focus"),
