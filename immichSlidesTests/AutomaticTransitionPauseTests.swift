@@ -17,14 +17,17 @@ struct AutomaticTransitionPauseTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let store = PlaybackSettingsStore(key: suiteName, defaults: defaults)
         let vm = SlideShowViewModel(settingsStore: store, observeSettingsChanges: false)
-        var now = 6.49
+        var now = 0.0
         vm.scenePresentationTimestampProviderForTesting = { now }
+        vm.toggleAutoPlayFromUserInteraction()
+        vm.toggleAutoPlayFromUserInteraction()
         let first = makeTarget(sceneID: "first")
         let second = makeTarget(sceneID: "second")
         vm.playbackSession.reduceScenePresentation(.start(target: first, readiness: .ready), at: 0)
         vm.playbackSession.reduceScenePresentation(.transitionCompleted, at: 1)
         vm.playbackSession.reduceScenePresentation(.stableDeadlineReached(target: second, readiness: .ready), at: 6)
 
+        now = 6.49
         #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
         #expect(vm.isAutoPlay)
         now = 6.5
@@ -51,6 +54,36 @@ struct AutomaticTransitionPauseTests {
             #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
             #expect(vm.isAutoPlay)
         }
+    }
+
+    @Test
+    func `an automatic fade before the first user play does not consume the midpoint hook`() throws {
+        let suiteName = "AutomaticTransitionPauseTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = PlaybackSettingsStore(key: suiteName, defaults: defaults)
+        let vm = SlideShowViewModel(settingsStore: store, observeSettingsChanges: false)
+        var now = 6.5
+        vm.scenePresentationTimestampProviderForTesting = { now }
+        let environment = ["UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT": "1"]
+        let first = makeTarget(sceneID: "first")
+        let second = makeTarget(sceneID: "second")
+        let third = makeTarget(sceneID: "third")
+        vm.playbackSession.reduceScenePresentation(.start(target: first, readiness: .ready), at: 0)
+        vm.playbackSession.reduceScenePresentation(.transitionCompleted, at: 1)
+        vm.playbackSession.reduceScenePresentation(.stableDeadlineReached(target: second, readiness: .ready), at: 6)
+
+        #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
+        #expect(vm.isAutoPlay)
+        vm.playbackSession.reduceScenePresentation(.transitionCompleted, at: 8.025)
+        now = 9
+        vm.toggleAutoPlayFromUserInteraction()
+        vm.toggleAutoPlayFromUserInteraction()
+        vm.playbackSession.reduceScenePresentation(.stableDeadlineReached(target: third, readiness: .ready), at: 14)
+        now = 14.5
+        #expect(vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
+        #expect(!vm.isAutoPlay)
+        #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
     }
     #endif
 

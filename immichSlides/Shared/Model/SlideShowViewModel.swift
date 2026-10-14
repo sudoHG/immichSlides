@@ -103,6 +103,7 @@ class SlideShowViewModel: ObservableObject {
     #if DEBUG
     var automaticFadeMidpointPauseTask: Task<Void, Never>?
     var automaticFadeMidpointPauseDeadlineForTesting: TimeInterval?
+    var didReceiveFirstUserPlayForTesting = false
     var didPauseAtAutomaticFadeMidpointForTesting = false
     private(set) var smartFillCandidateSummaryBuildCountForTestingStorage: Int = 0
     private(set) var smartFillMainActorPlannerCallCountsForTesting: [SmartFillMainActorPlannerCallSite: Int] = [:]
@@ -1470,6 +1471,9 @@ extension SlideShowViewModel {
     }
 
     func toggleAutoPlayFromUserInteraction() {
+        #if DEBUG
+        if !isAutoPlay { didReceiveFirstUserPlayForTesting = true }
+        #endif
         updateAutoPlayEnabled(!isAutoPlay, persistPreference: true)
     }
 

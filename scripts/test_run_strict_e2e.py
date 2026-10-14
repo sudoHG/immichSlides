@@ -658,6 +658,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "visual_verdict=MISSING_FRAMES: missing a window-detected, after-pause, after-pause-0_3s or play-to-pause keepAlways frame.", "pause_window", "evidence_capture"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.", "pause_window", "probe_readback"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.", "pause_window", "probe_readback"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "The paused pause-window probe identity must not change.", "pause_window", "scene_identity"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Paused pause-window frames must be pixel-identical.", "pause_window", "scene_identity"),
             ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "After late completion the current public mark must stay: no flash back, all black or unreadable: ", "late_image", "scene_identity"),
             ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Next must be tappable twice right after entering the slideshow, before old image requests finish.", "late_image", "navigation"),
             ("immichSlidesUITests/ScenePresentationContractUITests.swift", "The fixture must actually deliver a failing image response", "image_recovery", "fixture_response"),

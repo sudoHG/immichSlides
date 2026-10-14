@@ -73,6 +73,8 @@ PREFIX_RULES = (
     ("visual_verdict=MISSING_FRAMES: missing a window-detected, after-pause, after-pause-0_3s or play-to-pause keepAlways frame.", "pause_window", "evidence_capture"),
     ("visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.", "pause_window", "probe_readback"),
     ("After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.", "pause_window", "probe_readback"),
+    ("The paused pause-window probe identity must not change.", "pause_window", "scene_identity"),
+    ("Paused pause-window frames must be pixel-identical.", "pause_window", "scene_identity"),
     ("After late completion the current public mark must stay: no flash back, all black or unreadable: ", "late_image", "scene_identity"),
     ("Next must be tappable twice right after entering the slideshow, before old image requests finish.", "late_image", "navigation"),
     ("The fixture must actually deliver a failing image response", "image_recovery", "fixture_response"),

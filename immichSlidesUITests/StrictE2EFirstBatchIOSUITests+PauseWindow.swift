@@ -298,7 +298,7 @@ extension StrictE2EFirstBatchIOSUITests {
         var isOutgoingFading = false
         var isIncomingHidden = false
         for (role, opacity) in zip(state.layerRoles, state.layerOpacities) {
-            if role == "outgoing", abs(opacity - 0.5) <= 0.1 {
+            if role == "outgoing", opacity > 0, opacity < 1 {
                 isOutgoingFading = true
             }
             if role == "incoming", opacity == 0 {

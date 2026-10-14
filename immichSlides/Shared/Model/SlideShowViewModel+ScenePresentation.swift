@@ -29,7 +29,9 @@ extension SlideShowViewModel {
     #if DEBUG
     /// This timer observes the reducer's existing fade clock; pausing still uses the user's command path.
     func scheduleAutomaticFadeMidpointPauseForTesting() {
-        guard PlatformCompat.shouldPauseAtAutomaticFadeMidpointForTesting() else { return }
+        guard PlatformCompat.shouldPauseAtAutomaticFadeMidpointForTesting(), didReceiveFirstUserPlayForTesting else {
+            return
+        }
         let deadline = didPauseAtAutomaticFadeMidpointForTesting ? nil : playbackSession.automaticFadeMidpointForTesting
         guard deadline != automaticFadeMidpointPauseDeadlineForTesting else { return }
         automaticFadeMidpointPauseTask?.cancel()
@@ -54,7 +56,7 @@ extension SlideShowViewModel {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
         guard PlatformCompat.shouldPauseAtAutomaticFadeMidpointForTesting(environment: environment),
-            !didPauseAtAutomaticFadeMidpointForTesting, isAutoPlay,
+            didReceiveFirstUserPlayForTesting, !didPauseAtAutomaticFadeMidpointForTesting, isAutoPlay,
             let deadline = playbackSession.automaticFadeMidpointForTesting,
             scenePresentationTimestamp() >= deadline
         else { return false }

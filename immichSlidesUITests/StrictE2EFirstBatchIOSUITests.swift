@@ -301,7 +301,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
 
         let pauseUptime = ProcessInfo.processInfo.systemUptime
         let postPauseProbeRaw = frameSynchronizedProbeRaw(app: app)
-        let pausedState = probeState(from: postPauseProbeRaw)?.isPaused == true ? "play" : "pause"
+        let isPausedAfterHook = probeState(from: postPauseProbeRaw)?.isPaused == true
         if attachKeepAlwaysFrame(app: app, index: frameIndex) {
             keepAlwaysFrameCount += 1
         }
@@ -362,6 +362,9 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             "window_detected": didDetectWindow,
             "hit_probe_identifier": "slideshow.scenePresentation.frameSynchronized.summary",
             "probe_raw_at_hit": hitProbeRaw,
+            "outgoing_opacity_at_hit": probeState(from: hitProbeRaw).flatMap {
+                layerOpacity(in: $0, role: "outgoing")
+            } as Any? ?? NSNull(),
             "probe_raw_last": lastProbeRaw,
             "post_pause_probe_raw": postPauseProbeRaw,
             "post_pause_0_3s_probe_raw": postPause03ProbeRaw,
@@ -378,16 +381,15 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             "visible_mark": visibleMark,
             "sees_fixture_3": seesFixture3,
             "sees_complete_a3": seesCompleteA3,
-            "play_pause_after": pausedState,
+            "probe_paused_after_hook": isPausedAfterHook,
             "frame_count": keepAlwaysFrameCount,
             "after_pause_identity": StrictE2EPhotoIdentity.payload(afterPauseIdentity),
             "after_pause_0_3s_identity": StrictE2EPhotoIdentity.payload(afterPause03Identity)
         ])
 
-        XCTAssertEqual(
-            pausedState,
-            "play",
-            "Pause may be tapped only once, in the window or after the timeout; the midpoint hook must report paused."
+        XCTAssertTrue(
+            isPausedAfterHook,
+            "The midpoint hook must leave the frame-synchronized probe paused."
         )
         if probeHit == "MISS" {
             XCTFail(
@@ -407,7 +409,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         XCTAssertTrue(
             isSameFrozenProbeFrame(hitProbeRaw, postPauseProbeRaw)
                 && isSameFrozenProbeFrame(postPauseProbeRaw, postPause03ProbeRaw),
-            "After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0. Frame identity, opacity and motion must remain frozen."
+            "The paused pause-window probe identity must not change. Opacity and motion must remain frozen."
         )
         var pixelComparisons = [
             PlaybackHistoryIOSUITests.comparePausedPhotoPixels(afterPause03Sample, against: afterPauseSample)
@@ -421,7 +423,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
                 && pixelComparisons.allSatisfy {
                     $0.failureReason == nil && $0.differingPixelCount == 0
                 },
-            "After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0. Photo pixels must remain frozen: \(pixelComparisons.map(\.summary).joined(separator: "; "))"
+            "Paused pause-window frames must be pixel-identical. \(pixelComparisons.map(\.summary).joined(separator: "; "))"
         )
         do {
             try StrictE2EPhotoIdentity.assertRequiredFrames(
