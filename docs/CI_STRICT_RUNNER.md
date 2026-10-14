@@ -336,9 +336,10 @@ credential scanning, publication checks and bundle quarantine remain in force.
 #### Reviewed prefix table
 
 The following additions come only from public Swift assertions in the linked source files.
-Each row fixes both enum values before any suffix is read. Shared prefixes are used only
-when their other public call sites have the same meaning. The existing lifecycle/XCTest
-rows remain in the code-defined table unchanged.
+Each row fixes both enum values before any suffix is read. Shared prefixes receive a
+specific phase only when their public call sites establish the same phase. The shared
+EXIF helper also runs in the pause-window flow, so its two prefixes retain an `unknown`
+phase and only identify the class. The existing lifecycle/XCTest rows remain unchanged.
 
 New enum meanings and why the previous vocabulary cannot express them:
 
@@ -352,7 +353,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `pause_window` | Detecting and capturing the outgoing-only transition pause; distinct from an already paused hold. |
 | `late_image` | Checks while or after superseded image requests complete; distinct from background return or Continue timing. |
 | `image_recovery` | Controlled failing-image response setup/readback; distinct from interval setup or visible-scene capture. |
-| `exif_ownership` | EXIF toggle effects and correspondence with the current photo; distinct from scene identity alone. |
+| `exif_ownership` | EXIF toggle state and visible-card effects in the ownership flow; distinct from scene identity alone. |
 | `filter_selection` | Album/person selection and its list/summary navigation; distinct from playback settings navigation. |
 | `filter_edit` | Editing/clearing filters through playback settings; distinct from initial selection. |
 | `server_switch` | Clearing old selections and preserving process/scene after changing servers; distinct from cold relaunch. |
@@ -361,7 +362,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `focus` | Remote system focus on a named UI control/receiver; presence or navigation alone does not prove focus. |
 | `evidence_capture` | Missing required captured frames; this does not establish the identity of their absent pixels. |
 | `probe_readback` | Missing/inconsistent combined render/manifest/history or synchronized opacity probe evidence; this does not identify a bad photo. |
-| `fixture_response` | Controlled image-response mode, timeout or delivered-failure count; this is fixture evidence, not navigation or image identity. |
+| `fixture_response` | Controlled image-response mode or delivered-failure count; this is fixture evidence, not navigation or image identity. |
 | `exif_visibility` | Visible EXIF card remains after disabling it; photo identity alone cannot express overlay visibility. |
 | `exif_correspondence` | EXIF metadata disagrees with the identified photo; neither navigation nor photo identity alone expresses that mismatch. |
 
@@ -397,12 +398,11 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `After late completion the current public mark must stay: no flash back, all black or unreadable: ` | `late_image` | `scene_identity` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
 | `Next must be tappable twice right after entering the slideshow, before old image requests finish.` | `late_image` | `navigation` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
 | `The fixture must actually deliver a failing image response` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |
-| `Fixture image response control timed out` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |
 | `Fixture control must acknowledge its response mode` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |
 | `After turning EXIF off, the info card in the upper-right area of the public photo must disappear from the screen.` | `exif_ownership` | `exif_visibility` | [ExifToggleUITests.swift](../immichSlidesUITests/ExifToggleUITests.swift) |
 | `The required PNG with EXIF off still shows the info card.` | `exif_ownership` | `exif_visibility` | [ExifToggleUITests.swift](../immichSlidesUITests/ExifToggleUITests.swift) |
-| `Can't check EXIF: photo status ` | `exif_ownership` | `scene_identity` | [StrictE2EPhotoIdentity.swift](../TestSupport/StrictE2EPhotoIdentity.swift) |
-| `EXIF does not match the photo: mark=` | `exif_ownership` | `exif_correspondence` | [StrictE2EPhotoIdentity.swift](../TestSupport/StrictE2EPhotoIdentity.swift) |
+| `Can't check EXIF: photo status ` | `unknown` | `scene_identity` | [StrictE2EPhotoIdentity.swift](../TestSupport/StrictE2EPhotoIdentity.swift) |
+| `EXIF does not match the photo: mark=` | `unknown` | `exif_correspondence` | [StrictE2EPhotoIdentity.swift](../TestSupport/StrictE2EPhotoIdentity.swift) |
 | `The EXIF toggle must reach the target state through the real settings.` | `exif_ownership` | `control_state` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift) |
 | `Default focus on the mode selection page must land on random playback.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
 | `Focus on the mode page must be able to move to filtered playback.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
@@ -460,10 +460,24 @@ an unmatched message or different phase/class pairs still yields the `unknown` p
 even when another message matches a new row. No hosted hit-rate improvement is claimed
 until actual official failure summaries exercise these prefixes.
 
+Still unknown on the throwing path:
+
+- `Fixture image response control timed out` throws the `Failure` struct, whose
+  `Failure(message:)` or direct caught-error wrapper is unsupported; it has no table row.
+- `Can't check EXIF: photo status ` is recognized with the real `failed - ` wrapper
+  from the pause-window's `XCTFail(error.localizedDescription)` path. Its throwing
+  `AssertionError.message` form with the apostrophe escaped as `Can\'t` remains
+  `unknown` for both fields. The EXIF mismatch's `failed - ` wrapper likewise keeps
+  an unknown phase while identifying `exif_correspondence`.
+
 Adding enum values also requires trusted readers containing the updated allowlists.
 Older readers reject those values; a PR using a base reader from before this change may
 therefore refuse an enriched failed/flaky-passed record until the updated reader is
-trusted. Record fields, scanner implementation, verdicts, populations and budgets do not
+trusted. Branch acceptance must run the report script (`ci_report.py --dry-run
+--diagnostic-nightly`) from the PR head, or validate on the first `main` nightly after
+merge; the installed older trusted report script rejects the new enum values and can
+discard the whole attempt as unavailable evidence. Record fields, scanner
+implementation, verdicts, populations and budgets do not
 change, and every published value remains code-defined.
 
 The separate simulator creation/preparation steps also publish compact records on

@@ -624,7 +624,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 class FailureDiagnosticsTests(unittest.TestCase):
     def test_hosted_flow_prefixes_publish_only_the_reviewed_phase_and_class(self):
-        from ci_failure_diagnostics import classify_messages, unknown_diagnostics
+        from ci_failure_diagnostics import (
+            FAILURE_CLASSES, FAILURE_PHASES, PREFIX_RULES, classify_messages, unknown_diagnostics,
+        )
+        self.assertEqual(FAILURE_PHASES, {phase for _, phase, _ in PREFIX_RULES})
+        self.assertEqual(FAILURE_CLASSES, {kind for _, _, kind in PREFIX_RULES})
         # Fixed expectations catch missing/misclassified rows; source checks catch stale prefixes.
         cases = (
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The first-boot page must show the Save Settings button.", "firstboot_setup", "navigation"),
@@ -657,12 +661,11 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "After late completion the current public mark must stay: no flash back, all black or unreadable: ", "late_image", "scene_identity"),
             ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Next must be tappable twice right after entering the slideshow, before old image requests finish.", "late_image", "navigation"),
             ("immichSlidesUITests/ScenePresentationContractUITests.swift", "The fixture must actually deliver a failing image response", "image_recovery", "fixture_response"),
-            ("immichSlidesUITests/ScenePresentationContractUITests.swift", "Fixture image response control timed out", "image_recovery", "fixture_response"),
             ("immichSlidesUITests/ScenePresentationContractUITests.swift", "Fixture control must acknowledge its response mode", "image_recovery", "fixture_response"),
             ("immichSlidesUITests/ExifToggleUITests.swift", "After turning EXIF off, the info card in the upper-right area of the public photo must disappear from the screen.", "exif_ownership", "exif_visibility"),
             ("immichSlidesUITests/ExifToggleUITests.swift", "The required PNG with EXIF off still shows the info card.", "exif_ownership", "exif_visibility"),
-            ("TestSupport/StrictE2EPhotoIdentity.swift", "Can't check EXIF: photo status ", "exif_ownership", "scene_identity"),
-            ("TestSupport/StrictE2EPhotoIdentity.swift", "EXIF does not match the photo: mark=", "exif_ownership", "exif_correspondence"),
+            ("TestSupport/StrictE2EPhotoIdentity.swift", "Can't check EXIF: photo status ", "unknown", "scene_identity"),
+            ("TestSupport/StrictE2EPhotoIdentity.swift", "EXIF does not match the photo: mark=", "unknown", "exif_correspondence"),
             ("immichSlidesUITests/IOSDriver.swift", "The EXIF toggle must reach the target state through the real settings.", "exif_ownership", "control_state"),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Default focus on the mode selection page must land on random playback.", "mode_selection", "focus"),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Focus on the mode page must be able to move to filtered playback.", "mode_selection", "focus"),
@@ -710,20 +713,84 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "Play must make the current still scene start moving from p=0 immediately", "control_action", "scene_identity"),
             ("immichSlidesUITests/FilterSummaryIOSVisualUITests+Launch.swift", "After starting playback, the playback page should open and show the control bar", "playback_entry", "navigation"),
         )
+        failure_prefixes = {
+            "A fresh install must reach the normal first-boot page.",
+            "Chose filter but reached the playback page, so the mode card tap did not register.",
+            "Still on the mode page after Continue; filter mode did not start.",
+            "Filter mode must reach the filter summary page.",
+            "Going back from the filter summary must return to mode selection.",
+            "probe_hit=MISS: frame-synchronized probe never saw outgoing translucent and incoming opacity=0 in 7 s.",
+            "visual_verdict=MISSING_FRAMES: missing a window-detected, after-pause, after-pause-0_3s or play-to-pause keepAlways frame.",
+            "visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.",
+            "After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.",
+            "After late completion the current public mark must stay: no flash back, all black or unreadable: ",
+            "Can't check EXIF: photo status ",
+            "EXIF does not match the photo: mark=",
+            "SmartFill must expose the complete manifest, stable visible render state and history cursor together",
+            "After tapping next, the fully visible SmartFill scene identity did not change in ",
+        }
+        false_prefixes = {
+            "A cold launch with saved settings must not return to the first-boot page.",
+            "Previous must be disabled at the history boundary when playback starts.",
+            "Start Playback must be disabled with an empty selection.",
+            "Start Playback must be disabled with 0 albums / 0 people.",
+            "After switching servers the UI must not keep server A album/person IDs: ",
+        }
+        equal_prefixes = {
+            "After a pause of at least 10 seconds, autoplay must not resume on its own.",
+            "Fixture control must acknowledge its response mode",
+            "The same live app process must run before and after the display policy change",
+            "The same process must run before and after applying single-photo mode after the server switch",
+            "Pausing must freeze the current transform progress",
+        }
+        caught_prefixes = {
+            "No two distinct photos seen within four public album candidates; all failing originals are kept.",
+            "No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.",
+        }
         root = Path(__file__).resolve().parents[1]
         for source, prefix, phase, kind in cases:
             with self.subTest(source=source, prefix=prefix):
-                self.assertIn(prefix, (root / source).read_text())
+                self.assertIn('"' + prefix, (root / source).read_text())
                 expected = {"failure_phase": phase, "failure_class": kind}
-                for wrapper in ("", "XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",
-                                'failed: caught error: "message(\\"'):
+                # Match each wrapper to its public call site.
+                if prefix in failure_prefixes:
+                    wrappers = ("failed - ",)
+                elif prefix in false_prefixes:
+                    wrappers = ("XCTAssertFalse failed - ",)
+                elif prefix in equal_prefixes:
+                    wrappers = ("XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",)
+                elif prefix in caught_prefixes:
+                    wrappers = ('failed: caught error: "message(\\"',)
+                elif prefix == "The fixture must actually deliver a failing image response":
+                    wrappers = ("XCTAssertGreaterThan failed: (PRIVATE_SENTINEL) - ",)
+                elif prefix == "After the change, a still frame taken mid-transition must not pass":
+                    wrappers = ("XCTAssertNotEqual failed: (PRIVATE_SENTINEL) - ",)
+                else:
+                    wrappers = ("XCTAssertTrue failed - ",)
+                if prefix == "EXIF does not match the photo: mark=":
+                    wrappers += ('failed: caught error: "message(\\"',)
+                for wrapper in wrappers:
                     message = wrapper + prefix + " PRIVATE_SENTINEL /private/path asset-private"
+                    if prefix in caught_prefixes or wrapper.startswith('failed: caught error:'):
+                        message += '\\")"'
                     self.assertEqual(classify_messages([message]), expected)
                     self.assertEqual(classify_messages([message, message + " other-private-value"]), expected)
                     for conflicting in ("unreviewed PRIVATE_SENTINEL",
                                         "The iOS slider must be settable to PRIVATE_SENTINEL"):
                         self.assertEqual(classify_messages([message, conflicting]), unknown_diagnostics())
                         self.assertEqual(classify_messages([conflicting, message]), unknown_diagnostics())
+        self.assertEqual(
+            classify_messages(["failed - EXIF does not match the photo: mark=PRIVATE_SENTINEL"]),
+            {"failure_phase": "unknown", "failure_class": "exif_correspondence"},
+        )
+        for message in (
+            'Failure(message: "Fixture image response control timed out")',
+            'failed: caught error: "Failure(message: \\"Fixture image response control timed out\\")"',
+            'failed: caught error: "Fixture image response control timed out"',
+            'failed: caught error: "message(\\"' + "Can\\'t check EXIF: photo status PRIVATE_SENTINEL" + '\\")"',
+        ):
+            with self.subTest(message=message):
+                self.assertEqual(classify_messages([message]), unknown_diagnostics())
 
     def test_shared_export_without_opt_in_preserves_failed_bytes_and_two_export_budget(self):
         import subprocess
@@ -772,9 +839,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
         for prefix, phase, kind in PREFIX_RULES:
             with self.subTest(prefix=prefix):
                 expected = {"failure_phase": phase, "failure_class": kind}
-                for message in (prefix + " private-value", "XCTAssertTrue failed - " + prefix + " private-value",
-                                'failed: caught error: "message(\\"' + prefix + '\\")"',
-                                'failed - message("' + prefix + '")'):
+                # Wrapper coverage above follows the public call sites; this checks raw prefix matching.
+                for message in (prefix + " private-value", prefix + " another-private-value"):
                     self.assertEqual(classify_messages([message]), expected)
         for messages in ([], ["unreviewed private text"], ["interval_setup"], [None],
                          ["The iOS slider must be settable to 30 seconds.", "unreviewed private text"],
