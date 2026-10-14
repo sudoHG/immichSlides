@@ -555,6 +555,31 @@ extension FilterSummaryIOSVisualUITests {
         return title.frame
     }
 
+    func assertTitleAlignsWithContentColumn(
+        _ frame: CGRect,
+        content: XCUIElement,
+        pageName: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(
+            content.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            "Should be able to read the page content column position: \(content.identifier)",
+            file: file,
+            line: line
+        )
+        let contentFrame = content.frame
+        XCTAssertGreaterThan(contentFrame.width, 0, file: file, line: line)
+        XCTAssertGreaterThan(contentFrame.height, 0, file: file, line: line)
+        XCTAssertLessThanOrEqual(
+            abs(frame.minX - contentFrame.minX),
+            4,
+            "\(pageName) main title left edge should match step 1's rule: align with its own content column",
+            file: file,
+            line: line
+        )
+    }
+
     func assertTitleFrame(
         _ frame: CGRect,
         alignsWith baseline: CGRect,
@@ -562,13 +587,6 @@ extension FilterSummaryIOSVisualUITests {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        XCTAssertLessThanOrEqual(
-            abs(frame.minX - baseline.minX),
-            4,
-            "\(pageName) main title left edge should match step 1",
-            file: file,
-            line: line
-        )
         XCTAssertLessThanOrEqual(
             abs(frame.minY - baseline.minY),
             FilterSummaryIOSVisualUITestsCalibration.titlePositionTolerancePoints,

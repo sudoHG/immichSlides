@@ -426,6 +426,11 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             app: firstBootApp,
             identifier: "firstboot.page.title"
         )
+        assertTitleAlignsWithContentColumn(
+            firstBootTitleFrame,
+            content: firstBootApp.buttons["firstboot.testConnection.button"],
+            pageName: "First boot page"
+        )
         firstBootApp.terminate()
 
         let modeSelectionApp = try launchIntoOnboardingModeSelection(colorScheme: "dark")
@@ -433,12 +438,22 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             app: modeSelectionApp,
             identifier: "mode.page.title"
         )
+        assertTitleAlignsWithContentColumn(
+            modeTitleFrame,
+            content: modeSelectionApp.buttons["mode.random.button"],
+            pageName: "Mode selection page"
+        )
         modeSelectionApp.terminate()
 
         let filterSummaryApp = try launchIntoOnboardingFilterSummary(colorScheme: "dark")
         let filterTitleFrame = titleFrame(
             app: filterSummaryApp,
             identifier: "filterSummary.page.title"
+        )
+        assertTitleAlignsWithContentColumn(
+            filterTitleFrame,
+            content: filterSummaryApp.buttons["filterSummary.album.button"],
+            pageName: "Filter summary page"
         )
         filterSummaryApp.terminate()
 
