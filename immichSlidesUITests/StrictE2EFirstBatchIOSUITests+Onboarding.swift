@@ -310,8 +310,8 @@ extension StrictE2EFirstBatchIOSUITests {
     }
 
     @MainActor
-    func captureNamedPNG(app: XCUIApplication, name: String) -> Data {
-        let png = app.screenshot().pngRepresentation
+    func captureNamedPNG(app: XCUIApplication, name: String, capturedPNG: Data? = nil) -> Data {
+        let png = capturedPNG ?? app.screenshot().pngRepresentation
         if !png.isEmpty {
             let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
             attachment.name = name

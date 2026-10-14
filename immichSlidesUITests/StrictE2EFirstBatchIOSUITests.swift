@@ -244,8 +244,9 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         _ = capturePauseStage(app: app, stage: "a2-stable-before-play")
 
         let playPause = app.buttons["slideshow.control.playPause.button"]
+        revealPlaybackControlsWithoutWaitHelper(app: app, shouldRefreshAutoHideTimer: true)
         let playUptime = ProcessInfo.processInfo.systemUptime
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
+        playPause.tap()
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseState(playPause) == "pause" },
             "After tapping Play, the button value must become pause."
@@ -281,13 +282,16 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         }
 
         lastContractProbeRaw = contractProbeRaw(app: app)
+        var windowSample: PausedWindowSample?
         if didDetectWindow {
             hitContractProbeRaw = lastContractProbeRaw
             if attachKeepAlwaysFrame(app: app, index: frameIndex) {
                 keepAlwaysFrameCount += 1
             }
             frameIndex += 1
-            let windowPNG = captureNamedPNG(app: app, name: "window-detected")
+            let sample = PlaybackHistoryIOSUITests.capturePausedWindowSample(app: app)
+            windowSample = sample
+            let windowPNG = captureNamedPNG(app: app, name: "window-detected", capturedPNG: sample.png)
             if !windowPNG.isEmpty {
                 attachedNamedScreenshots.insert("window-detected")
             }
@@ -302,7 +306,8 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             keepAlwaysFrameCount += 1
         }
         frameIndex += 1
-        let afterPausePNG = captureNamedPNG(app: app, name: "after-pause")
+        let afterPauseSample = PlaybackHistoryIOSUITests.capturePausedWindowSample(app: app)
+        let afterPausePNG = captureNamedPNG(app: app, name: "after-pause", capturedPNG: afterPauseSample.png)
         if !afterPausePNG.isEmpty {
             attachedNamedScreenshots.insert("after-pause")
         }
@@ -312,7 +317,8 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         if attachKeepAlwaysFrame(app: app, index: frameIndex) {
             keepAlwaysFrameCount += 1
         }
-        let afterPause03PNG = captureNamedPNG(app: app, name: "after-pause-0_3s")
+        let afterPause03Sample = PlaybackHistoryIOSUITests.capturePausedWindowSample(app: app)
+        let afterPause03PNG = captureNamedPNG(app: app, name: "after-pause-0_3s", capturedPNG: afterPause03Sample.png)
         if !afterPause03PNG.isEmpty {
             attachedNamedScreenshots.insert("after-pause-0_3s")
         }
@@ -383,11 +389,6 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
             "play",
             "Pause may be tapped only once, in the window or after the timeout; the midpoint hook must report paused."
         )
-        XCTAssertTrue(
-            isSameFrozenProbeFrame(hitProbeRaw, postPauseProbeRaw)
-                && isSameFrozenProbeFrame(postPauseProbeRaw, postPause03ProbeRaw),
-            "After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0. Frame identity, opacity and motion must remain frozen."
-        )
         if probeHit == "MISS" {
             XCTFail(
                 "probe_hit=MISS: frame-synchronized probe never saw outgoing translucent and incoming opacity=0 in 7 s."
@@ -403,6 +404,25 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         } else if visualVerdict != "NEEDS_HUMAN_REVIEW" {
             XCTFail("After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.")
         }
+        XCTAssertTrue(
+            isSameFrozenProbeFrame(hitProbeRaw, postPauseProbeRaw)
+                && isSameFrozenProbeFrame(postPauseProbeRaw, postPause03ProbeRaw),
+            "After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0. Frame identity, opacity and motion must remain frozen."
+        )
+        var pixelComparisons = [
+            PlaybackHistoryIOSUITests.comparePausedPhotoPixels(afterPause03Sample, against: afterPauseSample)
+        ]
+        if let windowSample {
+            pixelComparisons.append(
+                PlaybackHistoryIOSUITests.comparePausedPhotoPixels(afterPauseSample, against: windowSample))
+        }
+        XCTAssertTrue(
+            windowSample != nil
+                && pixelComparisons.allSatisfy {
+                    $0.failureReason == nil && $0.differingPixelCount == 0
+                },
+            "After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0. Photo pixels must remain frozen: \(pixelComparisons.map(\.summary).joined(separator: "; "))"
+        )
         do {
             try StrictE2EPhotoIdentity.assertRequiredFrames(
                 [

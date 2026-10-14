@@ -76,9 +76,12 @@ one-shot pause at the first automatic outgoing fade's midpoint through the same
 command as the user's Pause. The UI test polls only the frame-synchronized probe
 until it reports paused with outgoing opacity near 0.5 and incoming opacity 0,
 then captures the frozen frame and verifies its identity, opacity and motion
-through the existing 0.3-second hold. The pixel verdict remains unchanged.
-Preparation uses the existing control-bar tap helper immediately before Next,
-Previous and Play, so evidence reads cannot consume the bar's visibility window.
+through the existing 0.3-second hold. Exact screenshot pixel comparison reuses
+the paused-photo comparator's existing chrome exclusions and minimum compared
+area; the Python identity verdict remains unchanged. Preparation uses the
+existing control-bar tap helper before Next and Previous, and reveals the bar
+before starting Play's existing 7-second clock, so evidence reads cannot consume
+the bar's visibility window.
 It no longer checks whether a human tap can land inside the fade window;
 `AutomaticTransitionPauseTests` covers the reducer's pause semantics. Release
 compiles out the timer and pause action and returns false for the launch flag.
