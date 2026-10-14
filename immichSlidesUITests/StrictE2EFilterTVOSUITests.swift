@@ -645,6 +645,10 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             try writeScreenshotPNG(app: app, name: evidenceName, attachmentName: evidenceName)
             return
         }
+        let loading = app.descendants(matching: .any)["playback.loading.indicator"]
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.product(30))) { !loading.exists },
+            "Start Playback must finish loading before person evidence is captured.")
         if app.staticTexts["slideshow.emptyState.message"].exists {
             try writeScreenshotPNG(app: app, name: evidenceName, attachmentName: evidenceName)
         } else {
@@ -687,21 +691,6 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             app.buttons["filterSummary.album.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
             "Filtered mode must open the filter summary screen."
         )
-    }
-
-    @MainActor
-    func returnToFilterSummary(app: XCUIApplication) throws {
-        if app.buttons["filterSummary.album.button"].exists { return }
-        for _ in 0..<8 {
-            if app.buttons["filterSummary.album.button"].exists { return }
-            if app.buttons["mode.filtered.button"].exists || app.buttons["mode.random.button"].exists {
-                try enterFilteredSummary(app: app)
-                return
-            }
-            XCUIRemote.shared.press(.menu)
-            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.6))))
-        }
-        XCTFail("Cannot return to the filter summary screen.")
     }
 
     @MainActor

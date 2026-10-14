@@ -114,10 +114,17 @@ extension StrictE2EFilterTVOSUITests {
                 .right, to: playPauseButton, maximumPresses: 3, message: "Focus must be able to move to Play/Pause.")
         }
         let playingValue = String(describing: playPauseButton.value ?? "")
-        XCUIRemote.shared.press(.select)
-        _ = waitUntil(timeout: TestWait.seconds(.product(4))) {
-            String(describing: playPauseButton.value ?? "") != playingValue
+        if playingValue.contains("暂停") || playingValue.lowercased().contains("pause") {
+            moveFocusTo(
+                playPauseButton, directions: [.left, .right],
+                message: "Focus must be able to move to Play/Pause.")
+            XCUIRemote.shared.press(.select)
         }
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.product(4))) {
+                let current = String(describing: playPauseButton.value ?? "")
+                return current.contains("播放") || current.lowercased() == "play"
+            }, "Playback must be paused before sampling candidates.")
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
 
         let nextButton = app.buttons["slideshow.control.next.button"]
