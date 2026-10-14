@@ -252,8 +252,7 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func probeRaw(app: XCUIApplication, identifier: String) -> String {
-        guard let snapshot = try? app.snapshot() else { return "" }
-        return snapshot.descendants.first { $0.identifier == identifier }?.label ?? ""
+        app.evidenceSnapshotsByIdentifier()[identifier]?.label ?? ""
     }
 
     struct PauseWindowProbeState {
