@@ -547,17 +547,13 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             waitForFocus(on: playPauseButton, timeout: TestWait.seconds(.product(6))),
             "After autoplay resumes, focus on wake must return to Play/Pause."
         )
-        let indexAfterResume = try waitForIndexChange(
-            indexProbe,
-            from: indexAfterAutoPlay,
-            app: app,
-            playPauseButton: playPauseButton,
-            timeout: TestWait.seconds(.product(3)),
-            requiresStableCaptureWindow: true
-        )
-        XCTAssertNotEqual(
-            indexAfterResume,
-            indexAfterAutoPlay,
+        XCTAssertTrue(
+            waitForResumedSceneAdvance(
+                app: app,
+                fromIndex: indexAfterAutoPlay,
+                pausedCapture: pauseHeld,
+                timeout: TestWait.seconds(.product(3))
+            ),
             "After resuming, playback must advance to another photo."
         )
         let resumed = captureVisualIdentity(
@@ -745,45 +741,70 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         from oldValue: String,
         app: XCUIApplication,
         playPauseButton: XCUIElement,
-        timeout: TimeInterval,
-        requiresStableCaptureWindow: Bool = false
+        timeout: TimeInterval
     ) throws -> String {
         let deadline = Date().addingTimeInterval(timeout)
-        var previousObservation: [String: String] = [:]
-        var lastObservation: [String: String] = [:]
         while Date() < deadline {
-            if requiresStableCaptureWindow {
-                previousObservation = lastObservation
-                lastObservation = strictSceneFrameObservation(app: app)
-            }
             if !indexProbe.exists {
                 ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
             }
             if indexProbe.exists {
                 let value = String(describing: indexProbe.value ?? "")
-                if !value.isEmpty && value != oldValue
-                    && (!requiresStableCaptureWindow
-                        || (StrictE2ESceneCapture.isStableWindow(lastObservation) && Date() < deadline))
-                {
-                    if requiresStableCaptureWindow {
-                        attachStrictSceneObservation(
-                            before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window")
-                    }
+                if !value.isEmpty && value != oldValue {
                     return value
                 }
             }
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
         }
-        if requiresStableCaptureWindow {
-            attachStrictSceneObservation(
-                before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window-timeout")
-            XCTFail(
-                "The index probe must change after a playback action. \(strictSceneCaptureDiagnostic(before: previousObservation, after: lastObservation, stable: StrictE2ESceneCapture.isStableWindow(lastObservation)))"
-            )
-        } else {
-            XCTFail("The index probe must change after a playback action.")
-        }
+        XCTFail("The index probe must change after a playback action.")
         return try requireIndexValue(indexProbe)
+    }
+
+    @MainActor
+    private func waitForResumedSceneAdvance(
+        app: XCUIApplication,
+        fromIndex oldIndex: String,
+        pausedCapture: [String: Any],
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        let pausedObservation = pausedCapture["after"] as? [String: String] ?? [:]
+        let pausedRefs = SharedSceneEvidenceManifest.parseKeyValueFields(pausedObservation["manifest"] ?? "")
+        ["ledgerSceneAssets"]
+        var advanceObservation: [String: String] = [:]
+        var previousObservation: [String: String] = [:]
+        var lastObservation: [String: String] = [:]
+        var didObserveAdvance = false
+        while Date() < deadline {
+            previousObservation = lastObservation
+            lastObservation = strictSceneFrameObservation(app: app)
+            let index = lastObservation["index"] ?? ""
+            let refs = SharedSceneEvidenceManifest.parseKeyValueFields(lastObservation["manifest"] ?? "")
+            ["ledgerSceneAssets"]
+            // The index disappears with the bar; ledger and render probes remain independently readable.
+            let didAdvanceIndex = !index.isEmpty && index != oldIndex
+            let didAdvanceLedger = pausedRefs?.isEmpty == false && refs?.isEmpty == false && refs != pausedRefs
+            if !didObserveAdvance && (didAdvanceIndex || didAdvanceLedger) {
+                didObserveAdvance = true
+                advanceObservation = lastObservation
+            }
+            if didObserveAdvance && StrictE2ESceneCapture.isStableWindow(lastObservation) && Date() < deadline {
+                attachStrictSceneObservation(
+                    before: pausedObservation, after: advanceObservation, name: "tvos-resume-advance-observation")
+                attachStrictSceneObservation(
+                    before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window")
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
+        }
+        attachStrictSceneObservation(
+            before: pausedObservation, after: advanceObservation, name: "tvos-resume-advance-observation")
+        attachStrictSceneObservation(
+            before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window-timeout")
+        XCTFail(
+            "The index probe must change after a playback action. advanceObserved=\(didObserveAdvance) \(strictSceneCaptureDiagnostic(before: previousObservation, after: lastObservation, stable: StrictE2ESceneCapture.isStableWindow(lastObservation)))"
+        )
+        return false
     }
 
     @MainActor
