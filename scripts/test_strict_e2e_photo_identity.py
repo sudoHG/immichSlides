@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -208,6 +209,39 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_palette_interpolation_is_unique_and_confined_to_eight_raw_edge_pixels(self) -> None:
+        from strict_e2e_photo_identity import _public_palette_edge_assignment, _public_frame_slots
+        self.assertEqual(_public_palette_edge_assignment((77, 74, 72)), "A1")
+        for color in ((0, 0, 0), (255, 255, 255), (56, 140, 28)):
+            with self.subTest(color=color):
+                self.assertIsNone(_public_palette_edge_assignment(color))
+        with patch("strict_e2e_photo_identity._public_photo_palettes", return_value={
+            "A1": ((0, 50, 100), (100, 50, 0)), "A2": ((0, 50, 0), (100, 50, 100)),
+        }):
+            self.assertIsNone(_public_palette_edge_assignment((50, 50, 50)))
+        for horizontal in (False, True):
+            with self.subTest(horizontal=horizontal):
+                frame = Image.open(io.BytesIO(_fixture_png("A1"))).convert("RGB")
+                draw = ImageDraw.Draw(frame)
+                box = (frame.width - 8, 0, frame.width - 1, frame.height - 1) if horizontal else (0, frame.height - 8, frame.width - 1, frame.height - 1)
+                draw.rectangle(box, fill=(77, 74, 72))
+                self.assertEqual(len(_public_frame_slots(frame, edge_band_pixels=(8, 8))[0]), 1)
+                for color in ((0, 0, 0), (255, 255, 255), (56, 140, 28)):
+                    draw.rectangle(box, fill=color)
+                    with self.assertRaises(IdentityAssertionError):
+                        _public_frame_slots(frame, edge_band_pixels=(8, 8))
+                draw.rectangle(box, fill=(77, 74, 72))
+                interior = Image.blend(frame, Image.open(io.BytesIO(_fixture_png("A2"))).convert("RGB").resize(frame.size), 0.5)
+                with self.assertRaises(IdentityAssertionError):
+                    _public_frame_slots(interior, edge_band_pixels=(8, 8))
+                ImageDraw.Draw(interior).rectangle(box, fill=(77, 74, 72))
+                with self.assertRaises(IdentityAssertionError):
+                    _public_frame_slots(interior, edge_band_pixels=(8, 8))
+                wider = (frame.width - 9, 0, frame.width - 1, frame.height - 1) if horizontal else (0, frame.height - 9, frame.width - 1, frame.height - 1)
+                draw.rectangle(wider, fill=(77, 74, 72))
+                with self.assertRaises(IdentityAssertionError):
+                    _public_frame_slots(frame, edge_band_pixels=(8, 8))
+
     def test_overlay_fragments_are_joined_before_the_full_glyph_height_gate(self) -> None:
         source = Image.open(io.BytesIO(_fixture_png("A4"))).convert("RGB")
         # A measured overlay cuts a full-size glyph, leaving a tail shorter than ten sampled rows.

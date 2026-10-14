@@ -224,6 +224,7 @@ FRAME_GLYPH_MINIMUM_WHITE_CELLS = 5
 FRAME_GLYPH_MAXIMUM_BLANK_ROWS = 4
 FRAME_GLYPH_MINIMUM_BAND_HEIGHT = 10
 FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS = 2
+FRAME_PALETTE_EDGE_BAND_RAW_PIXELS = 8
 
 # Scanner-approved captures; TV has no home indicator. Its entry hint and
 # control bar share this bounded rectangle, which cannot hide a full-span slot.
@@ -250,7 +251,8 @@ def public_scene_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto
     with _pil_image().open(io.BytesIO(foreground)) as image:
         color_box, glyph_box = PUBLIC_SCENE_GEOMETRIES.get(image.size, (None, None))
         rgb = _public_frame_sample(image)
-        slots, patterns = _public_frame_slots(rgb, _public_frame_sample_box(color_box, image.size, rgb.size))
+        slots, patterns = _public_frame_slots(rgb, _public_frame_sample_box(color_box, image.size, rgb.size),
+                                              edge_band_pixels=_public_frame_edge_band(image.size, rgb.size))
     # Preserve #381's one-photo boundary uniformly across capture geometries.
     # Segmentation still precedes this path, so mixed/unreadable layouts cannot fall back.
     if len(slots) == 1:
@@ -340,17 +342,36 @@ def _public_palette_assignment(color: tuple[int, int, int]) -> tuple[str, int] |
     return matches[0] if len(matches) == 1 else None
 
 
+def _public_palette_edge_assignment(color: tuple[int, int, int]) -> str | None:
+    """Only segmentation may use a unique same-photo interpolation at an edge."""
+    matches = []
+    for mark, (first, second) in _public_photo_palettes().items():
+        delta = tuple(b - a for a, b in zip(first, second))
+        fraction = sum((c - a) * d for c, a, d in zip(color, first, delta)) / sum(d * d for d in delta)
+        if (0 < fraction < 1
+                and max(abs(c - (a + fraction * d)) for c, a, d in zip(color, first, delta)) <= FRAME_PALETTE_CHANNEL_TOLERANCE):
+            matches.append(mark)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _public_frame_edge_band(original_size: tuple[int, int], sample_size: tuple[int, int]) -> tuple[int, int]:
+    return tuple(FRAME_PALETTE_EDGE_BAND_RAW_PIXELS * sample // original
+                 for original, sample in zip(original_size, sample_size))
+
+
 def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, int] | None,
-                       *, horizontal: bool) -> list[tuple[str, tuple[int, int, int, int]]]:
+                       *, horizontal: bool, edge_band_pixels: int = 0) -> list[tuple[str, tuple[int, int, int, int]]]:
     """A clean axis must identify one palette along every full-span line."""
     palettes = _public_photo_palettes()
     slots: list[tuple[str, int, int]] = []
     row_marks: list[str | None] = []
+    exact_row_marks: list[str | None] = []
     pixels = rgb.load()
     span = rgb.height if horizontal else rgb.width
     extent = rgb.width if horizontal else rgb.height
     for line in range(extent):
         counts = {mark: [0, 0] for mark in palettes}
+        exact_counts = {mark: 0 for mark in palettes}
         for offset in range(span):
             x, y = (line, offset) if horizontal else (offset, line)
             if color_exclusion_box is not None:
@@ -362,7 +383,14 @@ def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, in
             if assignment is not None:
                 mark, index = assignment
                 counts[mark][index] += 1
+                exact_counts[mark] += 1
+            elif line < edge_band_pixels or line >= extent - edge_band_pixels:
+                mark = _public_palette_edge_assignment(color)
+                if mark is not None:
+                    counts[mark][0] += 1
         marks = [mark for mark, count in counts.items() if sum(count) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+        exact_row_marks.append(next((mark for mark, count in exact_counts.items()
+                                     if count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT), None))
         if len(marks) > 1:
             raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed")
         if not marks:
@@ -372,8 +400,8 @@ def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, in
         row_marks.append(mark)
     for y, mark in enumerate(row_marks):
         if mark is None:
-            following = next((item for item in row_marks[y + 1:] if item is not None), None)
-            preceding = slots[-1][0] if slots else None
+            following = next((item for item in exact_row_marks[y + 1:] if item is not None), None)
+            preceding = next((item for item in reversed(exact_row_marks[:y]) if item is not None), None)
             # Bilinear texture edges and overlay ink can obscure a row. Keep it in the
             # same slot only when both surrounding rows independently identify that photo.
             if preceding is None or preceding != following:
@@ -436,12 +464,14 @@ def _relative_box(box: tuple[int, int, int, int] | None,
     return (box[0] - slot[0], box[1] - slot[1], box[2] - slot[0], box[3] - slot[1]) if box else None
 
 
-def _public_frame_slots(rgb: object, color_exclusion_box: tuple[int, int, int, int] | None = None
+def _public_frame_slots(rgb: object, color_exclusion_box: tuple[int, int, int, int] | None = None, *,
+                        edge_band_pixels: tuple[int, int] = (0, 0)
                         ) -> tuple[list[tuple[str, tuple[int, int, int, int]]], dict[str, str]]:
     candidates = []
     for horizontal in (False, True):
         try:
-            candidates.append(_public_axis_slots(rgb, color_exclusion_box, horizontal=horizontal))
+            candidates.append(_public_axis_slots(rgb, color_exclusion_box, horizontal=horizontal,
+                                                  edge_band_pixels=edge_band_pixels[0 if horizontal else 1]))
         except IdentityAssertionError:
             continue
     # One axis alone cannot justify a single photo: it could overlook a full-width
@@ -581,7 +611,8 @@ def public_frame_slot_count_from_bytes(image_bytes: bytes, *,
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
             rgb = _public_frame_sample(image)
-            slots, _ = _public_frame_slots(rgb, _public_frame_sample_box(color_exclusion_box, image.size, rgb.size))
+            slots, _ = _public_frame_slots(rgb, _public_frame_sample_box(color_exclusion_box, image.size, rgb.size),
+                                           edge_band_pixels=_public_frame_edge_band(image.size, rgb.size))
             return len(slots)
     except IdentityAssertionError:
         raise
@@ -600,7 +631,8 @@ def public_frame_photos_from_bytes(image_bytes: bytes, *,
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
             rgb = _public_frame_sample(image)
-            slots, patterns = _public_frame_slots(rgb, _public_frame_sample_box(color_exclusion_box, image.size, rgb.size))
+            slots, patterns = _public_frame_slots(rgb, _public_frame_sample_box(color_exclusion_box, image.size, rgb.size),
+                                                  edge_band_pixels=_public_frame_edge_band(image.size, rgb.size))
             overlay = _public_frame_sample_box(glyph_overlay_box, image.size, rgb.size)
             photos = []
             for mark, box in slots:

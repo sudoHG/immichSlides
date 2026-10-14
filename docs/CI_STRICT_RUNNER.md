@@ -85,6 +85,15 @@ rejects a same-number foreign stripe beside a checker photo. Narrow edge crops
 are not classified as stripes by themselves; the complete photo row supplies
 the texture evidence. These rules apply identically to both slot orientations.
 
+Within eight raw pixels of a screen edge, segmentation alone may recognize a
+unique interpolation between the two colors of the same public photo. Interior
+palette, glyph and texture evidence keeps the original tolerance of 12; the
+edge interpolation never supplies texture or glyph evidence. Black, white,
+ambiguous palette interpolations and blended interiors remain unreadable.
+The accepted calibration risk is a foreign sliver at most eight pixels wide
+at an edge: interior identity cannot distinguish that sliver from antialiasing.
+The measured A1 edge sample (77,74,72) motivates this bounded rule.
+
 The pinned Apple TV 4K (3rd generation), tvOS 27.0, produces **3840x2160** PNGs.
 Scanner-approved frames measured the A2/A3 seam at x=1382 and the A5/A3 seam at
 x=1536. The entry hint and playback controls fit inside (1256,1436)-(2580,1925),
