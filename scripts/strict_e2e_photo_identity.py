@@ -6,6 +6,7 @@ from __future__ import annotations
 import functools
 import io
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -277,6 +278,20 @@ def _scene_fields(raw: str) -> dict[str, str]:
     return dict(part.strip().split("=", 1) for part in raw.split(";") if "=" in part)
 
 
+def _scene_publication(observation: Mapping[str, str], name: str) -> tuple[float, float] | None:
+    fields = _scene_fields(observation["manifest"])
+    if "actionTimestamp" not in fields and "scenePublishTimestamp" not in fields and fields.get("publishReason") == "initial":
+        return None
+    try:
+        action = float(fields["actionTimestamp"])
+        published = float(fields["scenePublishTimestamp"])
+    except (KeyError, ValueError) as error:
+        raise IdentityAssertionError(f"{name}: missing or unreadable scene publication evidence") from error
+    if not math.isfinite(action) or not math.isfinite(published) or not 0 < action <= published:
+        raise IdentityAssertionError(f"{name}: missing or unreadable scene publication evidence")
+    return action, published
+
+
 def _named_scene_signature(evidence_dir: Path, name: str, fixture_set: str, *, tvos: bool) -> tuple[str, ...]:
     path = evidence_dir / f"{name}.png"
     if not path.is_file():
@@ -311,6 +326,8 @@ def _named_scene_signature(evidence_dir: Path, name: str, fixture_set: str, *, t
             cursor, count = map(int, index.split("/"))
             if not 1 <= cursor <= count or observations[1]["index"] != index:
                 raise IdentityAssertionError(f"{name}: index changed during pixel capture")
+            if _scene_publication(observations[0], name) != _scene_publication(observations[1], name):
+                raise IdentityAssertionError(f"{name}: scene publication changed during pixel capture")
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise IdentityAssertionError(f"{name}: missing or unreadable scene sequence evidence") from error
     return tuple(f"{photo.letter}{photo.mark[-1]}" for photo in photos)
@@ -938,17 +955,20 @@ def evaluate_visual_identity(evidence_dir: Path, suite: str) -> dict[str, object
                 raise IdentityAssertionError("Photo changed after pausing over 10 seconds")
             if steps[TVOS_FLOW_STEPS[1]] == steps[TVOS_FLOW_STEPS[2]]:
                 raise IdentityAssertionError("Still the same photo after resuming playback; it did not advance")
-            indexes = {name: json.loads((evidence_dir / f"{name}.scene.json").read_text())["before"]["index"] for name in names}
-            # This probe is the forward pool cursor, which history Previous does not rewind.
-            # Backward identity is proven by the complete pixel signature and ledger refs above.
+            publications = {name: _scene_publication(json.loads((evidence_dir / f"{name}.scene.json").read_text())["before"], name) for name in names}
+            # The displayed index saturates at the asset count; navigation publications do not.
+            # Initial presentation has no action timing. Every subsequent advance must have it.
             for left, right in (TVOS_FLOW_STEPS[:2],):
-                if indexes[left] != indexes[right]:
-                    raise IdentityAssertionError("Scene round-trip pixels and index sequence disagree")
-            for left, right in zip(JOURNEY_B_STEPS[:2], JOURNEY_B_STEPS[1:3]):
-                if indexes[left] == indexes[right]:
-                    raise IdentityAssertionError("Scene advance pixels and index sequence disagree")
-            if indexes[TVOS_FLOW_STEPS[1]] == indexes[TVOS_FLOW_STEPS[2]]:
-                raise IdentityAssertionError("Scene resume pixels and index sequence disagree")
+                if publications[left] is None or publications[left] != publications[right]:
+                    raise IdentityAssertionError("Scene round-trip pixels and index sequence disagree: pause publication changed")
+            for left, right, prefix in (
+                (JOURNEY_B_STEPS[0], JOURNEY_B_STEPS[1], "Scene advance pixels and index sequence disagree"),
+                (JOURNEY_B_STEPS[1], JOURNEY_B_STEPS[2], "Scene advance pixels and index sequence disagree"),
+                (TVOS_FLOW_STEPS[1], TVOS_FLOW_STEPS[2], "Scene resume pixels and index sequence disagree"),
+            ):
+                previous, current = publications[left], publications[right]
+                if current is None or (previous is not None and not all(after > before for before, after in zip(previous, current))):
+                    raise IdentityAssertionError(prefix + ": scene publication did not advance")
         return {"verdict": "PASS", "suite": suite, "steps": {name: {"signature": list(signature)} for name, signature in steps.items()}}
 
     # The target window must show an allowed public mark; at that moment EXIF may differ from the photo

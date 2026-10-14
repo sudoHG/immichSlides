@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
@@ -343,23 +344,44 @@ def _is_forbidden_key(key: str) -> bool:
     return key.startswith("UI_TEST_") or key in FORBIDDEN_EXACT_KEYS
 
 
-def strict_app_launch_environment(suite: str | None) -> dict[str, str]:
-    return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"} if suite in {"journey-b", "tvos-flow"} else {}
+def strict_app_launch_environment(suite: str | None) -> dict[str, str | None]:
+    """Declare Swift launch keys; None is the runner-provided loopback server URL."""
+    if suite in {"journey-b", "tvos-flow", "first-wake"}:
+        return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"}
+    if suite in {"pause-window", "tvos-directional-wake"}:
+        environment = {"UI_TEST_SERVER_URL": None, "UI_TEST_API_KEY": PUBLIC_API_KEY,
+                       "UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1"}
+        key = "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE" if suite == "pause-window" else "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"
+        return {**environment, key: "1"}
+    return {}
 
 
 def validate_app_launch_environment(environment: Mapping[str, str], *, suite: str | None = None) -> None:
     allowed = strict_app_launch_environment(suite)
+    def is_declared_value(key: str) -> bool:
+        if key not in allowed:
+            return False
+        if allowed[key] is not None:
+            return environment[key] == allowed[key]
+        try:
+            url = urllib.parse.urlsplit(environment[key])
+            return (key == "UI_TEST_SERVER_URL" and url.scheme == "http"
+                    and url.hostname in {"127.0.0.1", "localhost"} and url.path == "/api"
+                    and url.username is None and url.password is None
+                    and not url.query and not url.fragment and url.port is not None and url.port > 0)
+        except ValueError:
+            return False
     forbidden = sorted(key for key in environment if _is_forbidden_key(key)
-                       and not (key in allowed and environment[key] == allowed[key]))
+                       and not is_declared_value(key))
     if forbidden:
         raise CommandError("Forbidden keys found in the App launchEnvironment: " + ", ".join(forbidden))
 
 
 def write_app_launch_environment_audit(evidence_dir: Path, suite: str) -> None:
     environment = strict_app_launch_environment(suite)
-    validate_app_launch_environment(environment, suite=suite)
     (evidence_dir / "app-launch-environment-audit.json").write_text(
-        json.dumps({"forbidden_keys_present": [], "launch_environment_keys": sorted(environment)}, indent=2) + "\n",
+        json.dumps({"declaration_kind": "static_swift_launch_keys", "forbidden_keys_present": [],
+                    "launch_environment_keys": sorted(environment)}, indent=2) + "\n",
         encoding="utf-8",
     )
 

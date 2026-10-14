@@ -154,7 +154,10 @@ def _write_scene_sequence(evidence: Path, names_and_marks: list[tuple[str, tuple
     write_member_manifest(evidence / "member-manifest.json", fixture_set)
     for name, marks in names_and_marks:
         refs = ",".join(public_asset_reference(f"asset-{fixture_set}-{mark[-1]}") for mark in marks)
-        observation = {"manifest": f"ledgerSceneAssets={refs};slotCount={len(marks)};slotReadiness={','.join(['ready'] * len(marks))};gapPixelCount=0;overlapPixelCount=0;canvasCoverage=1;emptyCanvasRatio=0",
+        publication = {"history-start": 1, "history-first-next": 2, "history-second-next": 3,
+                       "history-first-previous": 4, "history-second-previous": 5,
+                       "pause-immediate": 6, "pause-after-10s": 6, "resumed": 7}[name]
+        observation = {"manifest": f"ledgerSceneAssets={refs};slotCount={len(marks)};slotReadiness={','.join(['ready'] * len(marks))};gapPixelCount=0;overlapPixelCount=0;canvasCoverage=1;emptyCanvasRatio=0;actionTimestamp={publication};scenePublishTimestamp={publication + 0.001};publishReason=next",
                        "render": "phase=stablePhoto;layerRoles=stable;loadingVisible=false",
                        "index": f"{marks[0][-1]}/5"}
         (evidence / f"{name}.scene.json").write_text(json.dumps({"before": observation, "after": observation}))
@@ -687,6 +690,65 @@ class NegativeIdentityTests(unittest.TestCase):
 
 
 class PositiveIdentityTests(unittest.TestCase):
+    def test_saturated_tv_index_uses_publications_for_next_pause_and_resume(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
+        marks = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            for name, mark in zip(names, marks):
+                (evidence / f"{name}.png").write_bytes(_fixture_png(mark))
+            _write_scene_sequence(evidence, list(zip(names, [(mark,) for mark in marks])))
+            for name in names:
+                path = evidence / f"{name}.scene.json"
+                payload = json.loads(path.read_text())
+                for point in ("before", "after"):
+                    payload[point]["index"] = "5/5"
+                path.write_text(json.dumps(payload))
+            self.assertEqual(evaluate_visual_identity(evidence, "tvos-flow")["verdict"], "PASS")
+            path = evidence / "history-start.scene.json"
+            payload = json.loads(path.read_text())
+            for point in ("before", "after"):
+                fields = dict(item.split("=", 1) for item in payload[point]["manifest"].split(";"))
+                fields.pop("actionTimestamp")
+                fields.pop("scenePublishTimestamp")
+                fields["publishReason"] = "initial"
+                payload[point]["manifest"] = ";".join(f"{key}={value}" for key, value in fields.items())
+            path.write_text(json.dumps(payload))
+            self.assertEqual(evaluate_visual_identity(evidence, "tvos-flow")["verdict"], "PASS")
+
+    def test_tv_publication_rejects_no_advance_pause_republication_and_unreadable_signals(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
+        marks = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")
+        cases = (("history-first-next", "1", "1.001"), ("history-second-next", "2", "2.001"),
+                 ("resumed", "6", "6.001"), ("pause-after-10s", "8", "8.001"),
+                 ("resumed", "nan", "nan"), ("resumed", "7", "6"),
+                 ("resumed", None, None), ("resumed", "7", None))
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            for name, mark in zip(names, marks):
+                (evidence / f"{name}.png").write_bytes(_fixture_png(mark))
+            for saturated in (False, True):
+                for name, action, published in cases:
+                    with self.subTest(saturated=saturated, frame=name, action=action, published=published):
+                        _write_scene_sequence(evidence, list(zip(names, [(mark,) for mark in marks])))
+                        for frame in names:
+                            path = evidence / f"{frame}.scene.json"
+                            payload = json.loads(path.read_text())
+                            for point in ("before", "after"):
+                                if saturated:
+                                    payload[point]["index"] = "5/5"
+                                if frame == name:
+                                    fields = dict(item.split("=", 1) for item in payload[point]["manifest"].split(";"))
+                                    for key, value in (("actionTimestamp", action), ("scenePublishTimestamp", published)):
+                                        if value is None:
+                                            fields.pop(key)
+                                        else:
+                                            fields[key] = value
+                                    payload[point]["manifest"] = ";".join(f"{key}={value}" for key, value in fields.items())
+                            path.write_text(json.dumps(payload))
+                        with self.assertRaises(IdentityAssertionError):
+                            evaluate_visual_identity(evidence, "tvos-flow")
+
     def test_tvos_backward_history_does_not_rewind_the_forward_pool_cursor(self) -> None:
         names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
         labels = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")

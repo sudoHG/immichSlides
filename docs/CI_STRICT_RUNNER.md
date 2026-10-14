@@ -52,31 +52,54 @@ blank, incomplete or mid-transition frames
 and records manifest/render probes immediately before and after the PNG, without
 adding a wait or retry. Python independently reads every pixel slot, matches its
 public identity to `ledgerSceneAssets` using the fixture's hashed references, and
-checks stable rendering and slot readiness. tvOS additionally cross-checks the
-recorded `indexProbe` forward advances, pause and resume sequence. Previous does
-not rewind this forward pool cursor; backward history identity uses the complete
-pixel signature and ledger references. Probes cannot supply a
+checks stable rendering and slot readiness. tvOS additionally cross-checks
+`actionTimestamp` and `scenePublishTimestamp`: Next and Resume require newer
+publications, and Pause requires the same publication. The invisible index probe
+clamps the scene cursor to the asset count, so it can remain `5/5` across advances;
+it must remain readable and consistent during capture but cannot prove progress.
+Initial presentation (`publishReason=initial`) has no action timing until the
+first navigation; the next publication must still provide valid finite timing.
+Backward history identity uses the complete pixel signature and ledger references.
+Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Only `journey-b` and `tvos-flow` set it in strict App launch environments, and
-their launch audits list the key; all other `UI_TEST_*` keys remain forbidden.
+Probe-only launches are `journey-b`, `tvos-flow`, `first-wake`, and
+`AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
+`run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
+`pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
+`UI_TEST_RESET_STATE` and `UI_TEST_FORCE_MODE_SELECTION`.
+`tvos-directional-wake` sets those four legacy keys plus
+`UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT`, and does not set the scene probe.
+The runner's launch audit is a **static declaration of Swift launch keys**,
+labelled `declaration_kind=static_swift_launch_keys`; it is not read from the app.
+The policy helper validates supplied maps against those declarations, exact
+constant values and a public loopback URL. The runner does not yet compare this
+declaration against Swift's xcresult launch-key attachment; that comparison is a
+follow-up under #434. An empty `forbidden_keys_present` is not runtime evidence.
 This exact key is excluded from `isRunningXCTest`: a probe-only launch keeps
 the real Keychain path, never enables `immichApiKey.xctestFallback`, and preserves
 the ordinary Info.plist debug-server read. Other XCTest keys retain their existing
 effect. The flag does not request a reset or bypass onboarding; Release exposes
-neither probe. New pure environment tests in the existing `UnitTestHostTests`
+neither probe. For `first-wake` and iOS access-lifecycle, which already used the
+probe-only key on main, this is a change from the UserDefaults API-key fallback
+to the real Keychain path, including ordinary Info.plist behavior; it is not a
+restoration relative to main. Their additional manifest/motion probe exposure
+also needs device verification. New pure environment tests in the existing `UnitTestHostTests`
 file guard probe visibility and isolation from XCTest mode. Capture
 sidecars are written before an assertion can stop XCTest, preserving failed
 probe observations for diagnosis.
 The iOS resume-state wait also requires a complete opaque stable frame before
-the second Pause that starts history. The tvOS resumed index-change wait requires
+the second Pause that starts history. The tvOS resumed publication-change wait requires
 the same stable capture window, with motion progress in its normalized 0...1
 range. This excludes the late-motion interval that can cross into a fade while
 capturing. Their existing 4-second and 3-second deadlines and failure prefixes
 remain unchanged; unmet conditions fail within those windows. Pause still freezes
 mid-fade by design, which the dedicated pause-window suite covers. These history
 and resumed identity captures require a stable frame and add no retry or extra wait.
+The tvOS wait latches a newer action/publication pair from one app snapshot, then
+checks the stable window within the same deadline. Index, render and manifest
+come from that snapshot; it neither wakes the bar nor queries its missing probe.
 
 These scene contracts, `tvos-edit-switch`, the A frame of server-switch, and
 `tvos-person`/`tvos-album` use the same reader. Uniformly across geometries, a
