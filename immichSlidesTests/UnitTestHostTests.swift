@@ -3,8 +3,7 @@ import Testing
 
 @Suite
 struct UnitTestHostTests {
-    @Test("The read-only scene probe exposes diagnostics without requesting a state reset")
-    func `the read only scene probe exposes diagnostics without requesting a state reset`() {
+    @Test func `the read only scene probe exposes diagnostics without requesting a state reset`() {
         #expect(
             PlatformCompat.shouldExposeUITestProbes(environment: ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"]))
         #expect(
