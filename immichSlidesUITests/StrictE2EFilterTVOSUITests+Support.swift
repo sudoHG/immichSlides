@@ -276,7 +276,7 @@ extension StrictE2EFilterTVOSUITests {
             "After submitting text, focus must return to the original field.")
     }
 
-    // Observe system focus within the existing settle budget before sending another direction key.
+    // Observe identifiable system focus before sending another direction key.
     @MainActor
     func moveFocus(
         _ direction: XCUIRemote.Button,
@@ -285,46 +285,52 @@ extension StrictE2EFilterTVOSUITests {
         message: String
     ) {
         for _ in 0..<maximumPresses {
-            if element.exists && element.hasFocus { return }
-            pressAndWaitForFocusMovement(direction, to: element)
+            if (try? element.snapshot())?.hasFocus == true { return }
+            _ = pressAndWaitForFocusMovement(direction, to: element)
         }
         XCTAssertTrue(waitForFocus(on: element, timeout: TestWait.seconds(.product(4))), message)
     }
 
     @MainActor
     func moveFocusTo(_ element: XCUIElement, directions: [XCUIRemote.Button], message: String) {
-        if element.exists && element.hasFocus { return }
+        if (try? element.snapshot())?.hasFocus == true { return }
         for direction in directions {
             for _ in 0..<4 {
-                if element.exists && element.hasFocus { return }
-                pressAndWaitForFocusMovement(direction, to: element)
+                if (try? element.snapshot())?.hasFocus == true { return }
+                if pressAndWaitForFocusMovement(direction, to: element) == false { break }
             }
         }
         XCTAssertTrue(waitForFocus(on: element, timeout: TestWait.seconds(.product(4))), message)
     }
 
     @MainActor
-    private func pressAndWaitForFocusMovement(_ direction: XCUIRemote.Button, to target: XCUIElement) {
+    private func pressAndWaitForFocusMovement(_ direction: XCUIRemote.Button, to target: XCUIElement) -> Bool? {
         let app = XCUIApplication()
         let focused = app.descendants(matching: .any)
             .matching(NSPredicate(format: "hasFocus == %@", NSNumber(value: true))).firstMatch
-        let identifier = (try? focused.snapshot())?.identifier ?? ""
-        let previous =
-            identifier.isEmpty ? nil : app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        let previous = try? focused.snapshot()
         XCUIRemote.shared.press(direction)
-        guard let previous else {
+        guard let previous, !previous.identifier.isEmpty else {
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
-            return
+            // Unidentifiable focus retains the legacy cadence without declaring a directional edge.
+            return nil
         }
-        let deadline = Date().addingTimeInterval(Timing.focusMovementSettleSeconds)
+        let deadline = Date().addingTimeInterval(Timing.focusObservationWindowSeconds)
         while Date() < deadline {
-            if (target.exists && target.hasFocus) || !previous.exists || !previous.hasFocus { return }
+            let current = try? focused.snapshot()
+            if (try? target.snapshot())?.hasFocus == true { return true }
+            if let current, !current.identifier.isEmpty,
+                current.identifier != previous.identifier || current.elementType != previous.elementType
+            {
+                return true
+            }
             let focusPollSeconds = min(
                 Timing.focusPollingSeconds, max(TestWait.seconds(.product(0)), deadline.timeIntervalSinceNow))
             RunLoop.current.run(
                 until: Date().addingTimeInterval(focusPollSeconds)
             )
         }
+        return false
     }
 
     @MainActor
