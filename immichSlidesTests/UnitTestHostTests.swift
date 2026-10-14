@@ -3,6 +3,17 @@ import Testing
 
 @Suite
 struct UnitTestHostTests {
+    @Test("The read-only scene probe exposes diagnostics without requesting a state reset")
+    func `the read only scene probe exposes diagnostics without requesting a state reset`() {
+        #expect(
+            PlatformCompat.shouldExposeUITestProbes(environment: ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"]))
+        #expect(
+            !PlatformCompat.shouldExposeUITestProbes(environment: ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "0"]))
+        #expect(!PlatformCompat.shouldExposeUITestProbes(environment: [:]))
+        #expect(PlatformCompat.shouldExposeUITestProbes(environment: ["UI_TEST_RESET_STATE": "1"]))
+        #expect(PlatformCompat.shouldExposeUITestProbes(environment: ["XCTestConfigurationFilePath": "test-host"]))
+    }
+
     @Test func `the app detects that it is hosting unit tests so its UI stays idle`() {
         #expect(PlatformCompat.isHostingUnitTests)
     }

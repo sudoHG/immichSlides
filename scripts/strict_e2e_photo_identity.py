@@ -223,6 +223,7 @@ FRAME_GLYPH_MINIMUM_OBSERVED_CELLS = 14
 FRAME_GLYPH_MINIMUM_WHITE_CELLS = 5
 FRAME_GLYPH_MAXIMUM_BLANK_ROWS = 4
 FRAME_GLYPH_MINIMUM_BAND_HEIGHT = 10
+FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS = 2
 
 # Scanner-approved captures; TV has no home indicator. Its entry hint and
 # control bar share this bounded rectangle, which cannot hide a full-span slot.
@@ -255,9 +256,7 @@ def public_scene_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto
     if len(slots) == 1:
         identity = classify_screenshot(image_bytes)
         pattern = patterns.get(slots[0][0])
-        left_pattern, right_pattern = _edge_spatials(rgb)
-        if (identity.status != "MATCH" or identity.mark != slots[0][0] or pattern not in {"A", "B"}
-                or (left_pattern is not None and right_pattern is not None and left_pattern != right_pattern)):
+        if identity.status != "MATCH" or identity.mark != slots[0][0] or pattern not in {"A", "B"}:
             raise IdentityAssertionError("unreadable public glyph slot: single photo color or public texture is missing")
         return (PublicFramePhoto(pattern, identity.mark),)
     return public_frame_photos_from_bytes(foreground, color_exclusion_box=color_box, glyph_overlay_box=glyph_box)
@@ -395,6 +394,10 @@ def _public_slot_pattern(rgb: object, mark: str, exclusion: tuple[int, int, int,
     for y in range(rgb.height):
         count = [0, 0]
         has_white = False
+        transitions = []
+        previous = None
+        previous_x = 0
+        unknown_run = maximum_unknown_run = 0
         for x in range(rgb.width):
             if exclusion and exclusion[0] <= x < exclusion[2] and exclusion[1] <= y < exclusion[3]:
                 continue
@@ -403,8 +406,25 @@ def _public_slot_pattern(rgb: object, mark: str, exclusion: tuple[int, int, int,
             assignment = _public_palette_assignment(color)
             if assignment is not None and assignment[0] == mark:
                 count[assignment[1]] += 1
+                if previous is not None and assignment[1] != previous:
+                    transitions.append((previous_x + x) / 2)
+                previous, previous_x = assignment[1], x
+                unknown_run = 0
+            else:
+                unknown_run += 1
+                maximum_unknown_run = max(maximum_unknown_run, unknown_run)
         if not has_white and sum(count) >= rgb.width * IDENTITY_OBSERVED_WIDTH_FRACTION:
             observed = "A" if min(count) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT else "B"
+            # Checker cells are periodic in each unobstructed row. A foreign stripe
+            # beside the same photo number must not borrow the checker half's glyph.
+            if (observed == "A" and len(transitions) >= 2
+                    and maximum_unknown_run <= FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS
+                    and not (exclusion and exclusion[1] <= y < exclusion[3])):
+                widths = [right - left for left, right in zip(transitions, transitions[1:])]
+                period = min(widths)
+                if (max(widths) - period > FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS
+                        or max(transitions[0], rgb.width - 1 - transitions[-1]) > period + FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS):
+                    raise IdentityAssertionError("unreadable public glyph slot: conflicting public background patterns")
             if pattern is not None and pattern != observed:
                 raise IdentityAssertionError("unreadable public glyph slot: conflicting public background patterns")
             pattern = observed

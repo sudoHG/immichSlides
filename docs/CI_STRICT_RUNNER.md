@@ -54,6 +54,12 @@ checks stable rendering and slot readiness. tvOS additionally cross-checks the
 recorded `indexProbe` history, pause and resume sequence. Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
+The existing read-only scene-probe flag also enables the Debug manifest probes;
+it does not request a state reset or bypass onboarding. Release exposes neither
+probe. The pure environment check is covered by `UnitTestHostTests`. Capture
+sidecars are written before an assertion can stop XCTest, preserving failed
+probe observations for diagnosis.
+
 These scene contracts, `tvos-edit-switch`, the A frame of server-switch, and
 `tvos-person`/`tvos-album` use the same reader. Uniformly across geometries, a
 segmentable single-photo frame retains #381's whole-frame color and visible
@@ -61,6 +67,11 @@ public-texture judgement, including clipped glyphs. Collages require the strict
 glyph, texture and membership rules for every slot. An unsegmentable frame never
 falls back to color classification. The surround reader still requires both the
 matched public original and its blurred background.
+Unobstructed checker rows must have consistent cell spacing, within two sampled
+pixels of raster rounding, with edge cells no wider than interior cells. This
+rejects a same-number foreign stripe beside a checker photo. Narrow edge crops
+are not classified as stripes by themselves; the complete photo row supplies
+the texture evidence. These rules apply identically to both slot orientations.
 
 The pinned Apple TV 4K (3rd generation), tvOS 27.0, produces **3840x2160** PNGs.
 Scanner-approved frames measured the A2/A3 seam at x=1382 and the A5/A3 seam at

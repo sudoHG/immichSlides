@@ -191,13 +191,13 @@ extension XCTestCase {
         }
         let refsBefore = SharedSceneEvidenceManifest.parseKeyValueFields(before["manifest"] ?? "")["ledgerSceneAssets"]
         let refsAfter = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")["ledgerSceneAssets"]
+        let payload: [String: Any] = ["before": before, "after": after]
+        StrictE2EVisualEvidence.writeJSON(payload, name: "\(name).scene.json")
         XCTAssertTrue(
             !png.isEmpty && identity.status != .black && identity.status != .blank
                 && stable && refsBefore != nil && refsBefore == refsAfter,
             "Visual ID failed \(name): \(identity.status.rawValue) \(identity.notes.joined(separator: " "))"
         )
-        let payload: [String: Any] = ["before": before, "after": after]
-        StrictE2EVisualEvidence.writeJSON(payload, name: "\(name).scene.json")
         return payload
     }
 
