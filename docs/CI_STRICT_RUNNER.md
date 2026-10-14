@@ -53,7 +53,9 @@ and records manifest/render probes immediately before and after the PNG, without
 adding a wait or retry. Python independently reads every pixel slot, matches its
 public identity to `ledgerSceneAssets` using the fixture's hashed references, and
 checks stable rendering and slot readiness. tvOS additionally cross-checks the
-recorded `indexProbe` history, pause and resume sequence. Probes cannot supply a
+recorded `indexProbe` forward advances, pause and resume sequence. Previous does
+not rewind this forward pool cursor; backward history identity uses the complete
+pixel signature and ledger references. Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
 The existing read-only scene-probe flag also enables the Debug manifest probes;
@@ -92,6 +94,9 @@ cannot hide a full-height or full-width slot. Overlay ink cannot create bitmap
 bands or supply observed cells; letters and digits must still agree with every
 remaining cell and meet the unchanged evidence minima. The device-pin guard
 requires a measured geometry for all three pinned strict devices.
+When a measured overlay splits a glyph, ink fragments are joined only across a
+gap wholly inside that overlay and within one palette slot. The ten-pixel band
+minimum is applied after joining; short unjoined fragments remain excluded.
 
 The iOS `album-empty` and `filter-album` contracts select their path by the raw
 capture size. Unmeasured sizes retain the original whole-frame classifier and

@@ -632,7 +632,10 @@ def _read_public_slot(rgb: object, mark: str, glyph_overlay_box: tuple[int, int,
     white_rows = [[is_observed(x, y) and min(pixels[x, y]) >= 240 for x in range(width)] for y in range(height)]
     photos: list[PublicFramePhoto] = []
     bands: list[tuple[int, int]] = []
-    for top, bottom in _public_bitmap_bands(white_rows):
+    # Short fragments can belong to a full-size glyph cut by the measured overlay.
+    # The ten-pixel gate applies to the joined candidate, never to a lone fragment.
+    minimum_fragment_height = 1 if glyph_overlay_box is not None else FRAME_GLYPH_MINIMUM_BAND_HEIGHT
+    for top, bottom in _public_bitmap_bands(white_rows, minimum_height=minimum_fragment_height):
         # Only a gap wholly inside the measured control-bar rows can join ink.
         # This operates on one color slot; a merged candidate must prove one glyph.
         if bands and glyph_overlay_box is not None and glyph_overlay_box[1] <= bands[-1][1] <= top <= glyph_overlay_box[3]:
@@ -640,6 +643,8 @@ def _read_public_slot(rgb: object, mark: str, glyph_overlay_box: tuple[int, int,
         else:
             bands.append((top, bottom))
     for top, bottom in bands:
+        if bottom - top < FRAME_GLYPH_MINIMUM_BAND_HEIGHT:
+            continue
         cell = (bottom - top) / 7
         band_photos = []
         origins: set[float] = set()
@@ -677,7 +682,8 @@ def _read_public_slot(rgb: object, mark: str, glyph_overlay_box: tuple[int, int,
     return list(dict.fromkeys(photos))
 
 
-def _public_bitmap_bands(white_rows: Sequence[Sequence[bool]]) -> list[tuple[int, int]]:
+def _public_bitmap_bands(white_rows: Sequence[Sequence[bool]], *,
+                         minimum_height: int = FRAME_GLYPH_MINIMUM_BAND_HEIGHT) -> list[tuple[int, int]]:
     bands: list[list[int]] = []
     for y, row in enumerate(white_rows):
         if any(row):
@@ -685,7 +691,7 @@ def _public_bitmap_bands(white_rows: Sequence[Sequence[bool]]) -> list[tuple[int
                 bands.append([y, y + 1])
             else:
                 bands[-1][1] = y + 1
-    return [(top, bottom) for top, bottom in bands if bottom - top >= FRAME_GLYPH_MINIMUM_BAND_HEIGHT]
+    return [(top, bottom) for top, bottom in bands if bottom - top >= minimum_height]
 
 
 def _public_letters_for_cells(observed: Sequence[tuple[int, int, bool]]) -> list[str]:
@@ -897,7 +903,9 @@ def evaluate_visual_identity(evidence_dir: Path, suite: str) -> dict[str, object
             if steps[TVOS_FLOW_STEPS[1]] == steps[TVOS_FLOW_STEPS[2]]:
                 raise IdentityAssertionError("Still the same photo after resuming playback; it did not advance")
             indexes = {name: json.loads((evidence_dir / f"{name}.scene.json").read_text())["before"]["index"] for name in names}
-            for left, right in (("history-start", "history-second-previous"), ("history-first-next", "history-first-previous"), TVOS_FLOW_STEPS[:2]):
+            # This probe is the forward pool cursor, which history Previous does not rewind.
+            # Backward identity is proven by the complete pixel signature and ledger refs above.
+            for left, right in (TVOS_FLOW_STEPS[:2],):
                 if indexes[left] != indexes[right]:
                     raise IdentityAssertionError("Scene round-trip pixels and index sequence disagree")
             for left, right in zip(JOURNEY_B_STEPS[:2], JOURNEY_B_STEPS[1:3]):

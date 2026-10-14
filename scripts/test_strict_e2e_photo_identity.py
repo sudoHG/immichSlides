@@ -208,6 +208,15 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_overlay_fragments_are_joined_before_the_full_glyph_height_gate(self) -> None:
+        source = Image.open(io.BytesIO(_fixture_png("A4"))).convert("RGB")
+        # A measured overlay cuts a full-size glyph, leaving a tail shorter than ten sampled rows.
+        frame = source.resize((900, 600), Image.Resampling.NEAREST)
+        box = (0, 360, 900, 466)
+        ImageDraw.Draw(frame).rectangle((0, 360, 899, 465), fill=(40, 40, 40))
+        self.assertEqual([p.mark for p in public_frame_photos_from_bytes(_png(frame), glyph_overlay_box=box)], ["A4"])
+        self.assertEqual(_public_bitmap_bands([[True]] * 2), [])
+
     def test_measured_tv_overlay_cannot_supply_a_missing_slot_glyph(self) -> None:
         from strict_e2e_photo_identity import public_scene_photos_from_bytes
         for fixture_set in ("a", "b"):
@@ -629,6 +638,22 @@ class NegativeIdentityTests(unittest.TestCase):
 
 
 class PositiveIdentityTests(unittest.TestCase):
+    def test_tvos_backward_history_does_not_rewind_the_forward_pool_cursor(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
+        labels = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            for name, label in zip(names, labels):
+                (evidence / f"{name}.png").write_bytes(_fixture_png(label))
+            _write_scene_sequence(evidence, list(zip(names, [(label,) for label in labels])))
+            for name in names[3:5]:
+                path = evidence / f"{name}.scene.json"
+                data = json.loads(path.read_text())
+                for point in ("before", "after"):
+                    data[point]["index"] = "3/5"
+                path.write_text(json.dumps(data))
+            self.assertEqual(evaluate_visual_identity(evidence, "tvos-flow")["verdict"], "PASS")
+
     def test_vertical_photo_pair_requires_the_same_public_source(self) -> None:
         for first, second, expected in [("a", "a", "a"), ("b", "b", "b"),
                                          ("a", "b", None), ("b", "a", None)]:
