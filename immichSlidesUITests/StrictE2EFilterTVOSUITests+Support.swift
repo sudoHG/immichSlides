@@ -79,9 +79,10 @@ extension StrictE2EFilterTVOSUITests {
         isolatePersonSelection(app: app, keeping: personID)
         moveFocusTo(button, directions: [.down, .right, .left], message: "Focus must land on the target person.")
         attachScreenshot(app: app, name: "tvos-filter-person-\(personID)-focused")
-        let neighborIDs = ["person-a-normal", "person-a-solo", "person-a-other", "person-a-no-faces"].filter {
-            $0 != personID
-        }
+        let fixturePrefix = personID.split(separator: "-").prefix(2).joined(separator: "-")
+        let neighborIDs = ["normal", "solo", "other", "no-faces"]
+            .map { "\(fixturePrefix)-\($0)" }
+            .filter { $0 != personID }
         if let neighborID = neighborIDs.first {
             assertNoFocusCollision(
                 focused: button,

@@ -255,6 +255,19 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             XCTFail("The tvOS filter flow must run on a tvOS Simulator.")
             return
         }
+        guard let evidenceDirectory = StrictE2EVisualEvidence.directory() else {
+            throw StrictE2EVisualEvidence.WriteError.missingDirectory
+        }
+        let manifest = try StrictE2EFilterContract.loadMemberManifest(from: evidenceDirectory)
+        guard
+            let personCases = manifest["person_cases"] as? [String: [String: Any]],
+            let normalPersonID = personCases["normal_match"]?["person_id"] as? String,
+            let soloPersonID = personCases["solo_only_qualified"]?["person_id"] as? String,
+            let noFacesPersonID = personCases["no_faces"]?["person_id"] as? String
+        else {
+            throw StrictE2EFilterContract.AssertionError.message(
+                "member manifest is missing the person case IDs")
+        }
 
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
@@ -273,25 +286,25 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
 
         try runPersonPlayback(
             app: app,
-            personID: "person-a-normal",
+            personID: normalPersonID,
             isSoloOnly: false,
             evidenceName: "person-normal"
         )
         try runPersonPlayback(
             app: app,
-            personID: "person-a-solo",
+            personID: soloPersonID,
             isSoloOnly: false,
             evidenceName: "person-conflict-normal"
         )
         try runPersonPlayback(
             app: app,
-            personID: "person-a-solo",
+            personID: soloPersonID,
             isSoloOnly: true,
             evidenceName: "person-conflict-solo"
         )
         try runPersonPlayback(
             app: app,
-            personID: "person-a-no-faces",
+            personID: noFacesPersonID,
             isSoloOnly: false,
             evidenceName: "person-no-faces"
         )
@@ -634,13 +647,13 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         }
         if app.staticTexts["slideshow.emptyState.message"].exists {
             try writeScreenshotPNG(app: app, name: evidenceName, attachmentName: evidenceName)
-            return
+        } else {
+            var names = [evidenceName]
+            if evidenceName == "person-conflict-normal" {
+                names.append(contentsOf: ["person-conflict-normal-2", "person-conflict-normal-3"])
+            }
+            try capturePausedPlaybackPNGs(app: app, names: names)
         }
-        var names = [evidenceName]
-        if evidenceName == "person-conflict-normal" {
-            names.append(contentsOf: ["person-conflict-normal-2", "person-conflict-normal-3"])
-        }
-        try capturePausedPlaybackPNGs(app: app, names: names)
         if evidenceName == "person-conflict-solo" {
             try writeScreenshotPNG(app: app, name: "person-solo", attachmentName: "person-solo")
         }
