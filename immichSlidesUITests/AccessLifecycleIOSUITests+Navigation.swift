@@ -3,6 +3,95 @@ import XCTest
 
 #if os(iOS)
 extension AccessLifecycleIOSUITests {
+    struct SceneCapture {
+        let mark: String
+        let png: Data
+        let references: [String]
+        let observation: [String: String]
+    }
+
+    @MainActor
+    func sceneCaptureObservation(app: XCUIApplication) -> [String: String] {
+        let snapshots = app.evidenceSnapshotsByIdentifier()
+        return [
+            "render": snapshots["slideshow.scenePresentation.frameSynchronized.summary"]?.label ?? "",
+            "manifest": snapshots["slideshow.smartfill.currentManifest.flag"]?.label ?? "",
+            "asset": snapshots["slideshow.currentAssetId.flag"]?.label ?? ""
+        ]
+    }
+
+    func stableSceneReferences(
+        in observation: [String: String], requiresSmartFillManifest: Bool, expectedPaused: Bool?
+    ) -> [String]? {
+        let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+        guard render["phase"] == "stablePhoto", render["layerRoles"] == "stable",
+            let opacity = Double(render["layerOpacities"] ?? ""), opacity == 1,
+            render["partialSlotVisible"] == "false",
+            render["loadingVisible"] == "false",
+            let progress = Double(render["motionRawProgress"] ?? ""), (0...1).contains(progress),
+            let paused = render["playbackPaused"], ["true", "false"].contains(paused),
+            expectedPaused.map({ paused == String($0) }) ?? true
+        else { return nil }
+        if requiresSmartFillManifest {
+            guard StrictE2ESceneCapture.isStableWindow(observation) else { return nil }
+            let fields = SharedSceneEvidenceManifest.parseKeyValueFields(observation["manifest"] ?? "")
+            let references = (fields["ledgerSceneAssets"] ?? "").split(separator: ",").map(String.init)
+            let readiness = (fields["slotReadiness"] ?? "").split(separator: ",").map(String.init)
+            guard let slotCount = Int(fields["slotCount"] ?? ""), references.count == slotCount,
+                references.allSatisfy({ !$0.isEmpty && $0 != "none" }),
+                readiness.count == slotCount, readiness.allSatisfy({ $0 == "ready" }),
+                fields["slotRefs"] == fields["ledgerSceneAssets"]
+            else { return nil }
+            return references
+        }
+        guard let asset = observation["asset"], !asset.isEmpty, asset != "no-asset" else { return nil }
+        return [asset]
+    }
+
+    @MainActor
+    func captureStableScene(
+        app: XCUIApplication, name: String, deadline: Date,
+        requiresSmartFillManifest: Bool = true, expectedPaused: Bool? = nil, shouldPersist: Bool = true
+    ) throws -> SceneCapture? {
+        var pending: (png: Data, references: [String], observation: [String: String])?
+        while Date() < deadline {
+            // One fallible snapshot per poll; consecutive polls bracket the screenshot with the drawn-frame probe.
+            let observation = sceneCaptureObservation(app: app)
+            let references = stableSceneReferences(
+                in: observation, requiresSmartFillManifest: requiresSmartFillManifest, expectedPaused: expectedPaused)
+            if let candidate = pending, let references, references == candidate.references {
+                let before = SharedSceneEvidenceManifest.parseKeyValueFields(candidate.observation["manifest"] ?? "")
+                let after = SharedSceneEvidenceManifest.parseKeyValueFields(observation["manifest"] ?? "")
+                let beforeRender = SharedSceneEvidenceManifest.parseKeyValueFields(
+                    candidate.observation["render"] ?? "")
+                let afterRender = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+                if beforeRender["layerIDs"] == afterRender["layerIDs"],
+                    before["actionTimestamp"] == after["actionTimestamp"],
+                    before["scenePublishTimestamp"] == after["scenePublishTimestamp"]
+                {
+                    let identity = StrictE2EPhotoIdentity.captureIdentity(png: candidate.png)
+                    if identity.status == .match, let mark = identity.mark, !mark.isEmpty, Date() < deadline {
+                        if shouldPersist {
+                            try persistRequiredPNG(candidate.png, name: name)
+                            try StrictE2EVisualEvidence.writeRequiredJSON(
+                                ["before": candidate.observation, "after": observation], name: "\(name).scene.json")
+                        }
+                        return SceneCapture(
+                            mark: mark, png: candidate.png, references: references, observation: observation)
+                    }
+                }
+            }
+            pending = nil
+            if let references {
+                pending = (app.screenshot().pngRepresentation, references, observation)
+            } else {
+                RunLoop.current.run(
+                    until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.4)))))
+            }
+        }
+        return nil
+    }
+
     @MainActor
     func launchApp() throws -> XCUIApplication {
         let app = XCUIApplication()
@@ -81,26 +170,20 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func captureRequiredMark(app: XCUIApplication, name: String) throws -> (mark: String, png: Data) {
+    func captureRequiredMark(
+        app: XCUIApplication, name: String, requiresSmartFillManifest: Bool = true, expectedPaused: Bool? = nil
+    ) throws -> SceneCapture {
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
-        var png = Data()
-        var identity = StrictE2EPhotoIdentity.classify(png: Data())
-        var mark = ""
         let deadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
-        while Date() < deadline {
-            png = try captureRequiredPNG(app: app, name: name)
-            identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
-            mark = contractMark(identity)
-            if identity.status == .match, !mark.isEmpty {
-                return (mark, png)
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.4))))
+        guard
+            let capture = try captureStableScene(
+                app: app, name: name, deadline: deadline, requiresSmartFillManifest: requiresSmartFillManifest,
+                expectedPaused: expectedPaused)
+        else {
+            throw AccessLifecycleContract.AssertionError.message(
+                "Screenshot \(name) cannot be used as identity: no complete stable capture window")
         }
-        if mark == "BLACK" || mark == "BLANK" || mark == "UNRECOGNIZABLE" || mark.isEmpty {
-            XCTFail(
-                "Screenshot \(name) cannot be used as identity: \(identity.status.rawValue)/\(identity.mark ?? "nil")")
-        }
-        return (mark, png)
+        return capture
     }
 
     @MainActor
@@ -109,6 +192,9 @@ extension AccessLifecycleIOSUITests {
         name: String,
         timeout: TimeInterval
     ) throws -> (mark: String, png: Data) {
+        if shouldRequireStableSceneCaptures {
+            return try captureNewStableSceneMark(app: app, name: name, timeout: timeout)
+        }
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
         let initialPNG = app.screenshot().pngRepresentation
         let initialMark = contractMark(StrictE2EPhotoIdentity.captureIdentity(png: initialPNG))
@@ -145,6 +231,68 @@ extension AccessLifecycleIOSUITests {
                     meanLuma: stableIdentity.meanLuma
                 ) {
                     try persistRequiredPNG(stablePNG, name: name)
+                    return (stableMark, stablePNG)
+                }
+            }
+        }
+        throw AccessLifecycleContract.AssertionError.message(
+            "No new stable frame appeared before going to the background")
+    }
+
+    @MainActor
+    private func captureNewStableSceneMark(
+        app: XCUIApplication, name: String, timeout: TimeInterval
+    ) throws -> (mark: String, png: Data) {
+        try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
+        let deadline = Date().addingTimeInterval(timeout)
+        guard
+            let initial = try captureStableScene(
+                app: app, name: name, deadline: deadline, shouldPersist: false)
+        else {
+            throw AccessLifecycleContract.AssertionError.message(
+                "No new stable frame appeared before going to the background")
+        }
+        let initialMark = initial.mark
+        while true {
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 {
+                break
+            }
+            RunLoop.current.run(
+                until: Date().addingTimeInterval(AccessLifecycleContract.pollWait(remaining: remaining))
+            )
+            guard
+                let candidate = try captureStableScene(
+                    app: app, name: name, deadline: deadline, shouldPersist: false)
+            else { break }
+            let mark = candidate.mark
+            if mark != initialMark, candidate.references != initial.references {
+                let remainingForConfirm = deadline.timeIntervalSinceNow
+                if remainingForConfirm <= 0 {
+                    break
+                }
+                RunLoop.current.run(
+                    until: Date().addingTimeInterval(
+                        AccessLifecycleContract.confirmWait(remaining: remainingForConfirm)
+                    )
+                )
+                guard
+                    let confirmed = try captureStableScene(
+                        app: app, name: name, deadline: deadline, shouldPersist: false)
+                else { break }
+                let stablePNG = confirmed.png
+                let stableIdentity = StrictE2EPhotoIdentity.captureIdentity(png: stablePNG)
+                let stableMark = confirmed.mark
+                if AccessLifecycleContract.isConfirmedNewStableMark(
+                    status: stableIdentity.status.rawValue,
+                    mark: stableMark,
+                    candidateMark: mark,
+                    initialMark: initialMark,
+                    meanLuma: stableIdentity.meanLuma
+                ), confirmed.references == candidate.references {
+                    try persistRequiredPNG(stablePNG, name: name)
+                    try StrictE2EVisualEvidence.writeRequiredJSON(
+                        ["before": candidate.observation, "after": confirmed.observation], name: "\(name).scene.json")
                     return (stableMark, stablePNG)
                 }
             }

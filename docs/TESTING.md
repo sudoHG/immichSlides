@@ -540,6 +540,16 @@ These flows use the same bundle export/disposal mechanism and check both fixture
 PINs. Their `--print-command` mode previews a private-path placeholder without allocating a bundle.
 They remain separate from the strict suite table.
 
+The combined iOS access-lifecycle flow brackets photo-identity screenshots with the
+frame-synchronized scene probe, using one fallible application snapshot per poll within
+the existing capture deadline. Both observations must show an opaque stable scene,
+complete slot readiness and unchanged scene references/publication; paused Next also
+requires the user pause. SmartFill Next/Play comparisons use every ordered ledger scene
+reference together with recognizable stable pixels, rather than a dominant photo mark
+alone. The Python access-lifecycle pixel contract independently checks the saved images.
+Single-photo display captures use the stable layer and current-asset probe. Settings and
+PIN screenshots do not require a playback scene.
+
 The offline unit runner and `check_all.sh --with-unit-tests` retain their explicitly requested
 local bundles for inspection; they are excluded from the strict evidence/upload path. They do not
 produce scanner-approved public evidence and their raw bundles must not be uploaded. The album/server
