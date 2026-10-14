@@ -142,6 +142,8 @@
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow",
         "PlaybackHistoryIOSUITests",
         "PlaybackSettingsTVOSUITests",
+        "ScenePresentationContractUITests/testIPhoneSinglePhotoSharedScenePresentationContract",
+        "ScenePresentationContractUITests/testIPhoneSmartFillSharedScenePresentationContract",
         "ServerConfigFormIOSUITests",
         "immichSlidesUITests/testCacheClearShowsSuccessMessageAfterConfirm",
         "immichSlidesUITests/testCacheManagementClearDiskCacheEntryWorks",

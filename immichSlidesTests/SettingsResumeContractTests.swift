@@ -391,14 +391,35 @@ final class SettingsResumeContractTests: XCTestCase {
         )
     }
 
-    func testIOSSliderReadbackSixteenIsNotTwelve() {
-        XCTAssertThrowsError(
-            try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: 16)
-        ) { error in
-            XCTAssertTrue(String(describing: error).contains("12"))
+    func testIOSSliderReadbackRequiresTimingWindowOrExactEndpoint() {
+        for observed in [10, 11, 12, 13, 14, 15] {
+            XCTAssertNoThrow(
+                try AccessLifecycleContract.assertIOSIntervalReachedRequested(
+                    observed: observed, shouldUseTimingWindow: true)
+            )
         }
-        XCTAssertNoThrow(
-            try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: 12)
+        for observed in [-1, 5, 9, 16, 30] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertIOSIntervalReachedRequested(
+                    observed: observed, shouldUseTimingWindow: true)
+            )
+        }
+        for endpoint in [5, 30] {
+            XCTAssertNoThrow(
+                try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: endpoint, target: endpoint)
+            )
+            for observed in [endpoint - 1, endpoint + 1, 12] {
+                XCTAssertThrowsError(
+                    try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: observed, target: endpoint)
+                )
+            }
+        }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: 14)
+        )
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIOSIntervalReachedRequested(
+                observed: 14, target: 30, shouldUseTimingWindow: true)
         )
     }
 
