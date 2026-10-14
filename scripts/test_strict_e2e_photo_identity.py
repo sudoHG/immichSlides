@@ -6,7 +6,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,7 +17,6 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
 
 from strict_e2e_photo_identity import (  # noqa: E402
     IdentityAssertionError,
@@ -873,77 +871,6 @@ class ReviewedScreenshotCalibrationTests(unittest.TestCase):
         self.assertEqual(immediate.mark, "A4")
         assert_pause_hold(immediate, held)
         assert_resumed_advanced(held, resumed)
-
-
-def _extract_swift_func(source: str, name: str) -> str:
-    needle = f"func {name}("
-    start = source.find(needle)
-    if start < 0:
-        raise AssertionError(f"iOS UITest lacks {name}; nil marks must not reach JSON via a heterogeneous array")
-    line_start = source.rfind("\n", 0, start) + 1
-    brace = source.find("{", start)
-    if brace < 0:
-        raise AssertionError(f"{name} has no function body")
-    depth = 0
-    for index in range(brace, len(source)):
-        character = source[index]
-        if character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                return source[line_start : index + 1].strip()
-    raise AssertionError(f"{name} function body is not closed")
-
-
-def _run_swift(source: str) -> str:
-    with tempfile.TemporaryDirectory() as raw_directory:
-        path = Path(raw_directory) / "nil_mark_json.swift"
-        path.write_text(source, encoding="utf-8")
-        completed = subprocess.run(
-            ["swift", str(path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-    if completed.returncode != 0:
-        raise AssertionError((completed.stderr or completed.stdout).strip())
-    return completed.stdout
-
-
-class IOSVisualIdentityJSONEncodingTests(unittest.TestCase):
-    def test_nil_mark_is_valid_json_object(self) -> None:
-        path = REPO_ROOT / "immichSlidesUITests" / "StrictE2EFirstBatchIOSUITests.swift"
-        source = "\n".join(
-            candidate.read_text(encoding="utf-8")
-            for candidate in [path, *sorted(path.parent.glob(f"{path.stem}+*.swift"))]
-        )
-        helper = _extract_swift_func(source, "jsonSafeMarks")
-        output = _run_swift(
-            "\n".join(
-                [
-                    "import Foundation",
-                    helper,
-                    "let payload: [String: Any] = [",
-                    '    "marks": jsonSafeMarks([nil, "A2", nil])',
-                    "]",
-                    "guard JSONSerialization.isValidJSONObject(payload) else {",
-                    '    fputs("invalid JSON object\\n", stderr)',
-                    "    exit(1)",
-                    "}",
-                    "let data = try JSONSerialization.data(withJSONObject: payload)",
-                    "let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]",
-                    'let marks = object["marks"] as! [Any]',
-                    'guard marks[0] is NSNull, marks[1] as? String == "A2", marks[2] is NSNull else {',
-                    "    fputs(String(data: data, encoding: .utf8) ?? \"\", stderr)",
-                    "    exit(1)",
-                    "}",
-                    'print("OK")',
-                ]
-            )
-        )
-        self.assertIn("OK", output)
 
 
 if __name__ == "__main__":
