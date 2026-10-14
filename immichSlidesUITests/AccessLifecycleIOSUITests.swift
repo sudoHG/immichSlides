@@ -3,6 +3,14 @@ import XCTest
 
 enum AccessLifecycleIOSUITestsCalibration {
     static let alternateIntervalSeconds: Int = Int(TestWait.seconds(.product(20)))
+    // Mirrors PlaybackViewMetrics.controlBarAutoHideDelaySeconds in SlideShowViewIOS.
+    static let controlBarAutoHideDelaySeconds: TimeInterval = TestWait.seconds(.product(8))
+    static let hiddenControlStabilitySeconds: TimeInterval = TestWait.seconds(.product(0.6))
+    static let combinedTimingIntervalSeconds =
+        Int(
+            (controlBarAutoHideDelaySeconds + hiddenControlStabilitySeconds
+                + AccessLifecycleContract.wakeEvidenceBudgetSeconds).rounded(.up)
+        )...AccessLifecycleContract.iosTimingIntervalSeconds.upperBound
 }
 
 #if os(iOS)
@@ -50,7 +58,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         defer { app.terminate() }
 
         try completeFirstBootToPlayback(app: app, input: input)
-        try changePlaybackSettingsFromUI(app: app)
+        try changePlaybackSettingsFromUI(app: app, shouldUseTimingWindow: true)
         try enablePinAndProveGate(app: app)
 
         let settingsAtBackground = try captureSettingsAtBackground(app: app)

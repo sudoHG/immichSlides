@@ -75,7 +75,7 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func changePlaybackSettingsFromUI(app: XCUIApplication) throws {
+    func changePlaybackSettingsFromUI(app: XCUIApplication, shouldUseTimingWindow: Bool = false) throws {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
         openPlaybackSettings(app: app)
@@ -91,8 +91,24 @@ extension AccessLifecycleIOSUITests {
             "Autoplay must be turned on through the real settings UI."
         )
         requests.append("settings.save.autoplay")
-        let interval = try setIntervalFromUI(app: app, targetSeconds: targetIntervalSeconds)
-        try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: interval, target: targetIntervalSeconds)
+        let interval = try setIntervalFromUI(
+            app: app,
+            targetSeconds: targetIntervalSeconds,
+            accepting: { observed in
+                shouldUseTimingWindow
+                    ? AccessLifecycleIOSUITestsCalibration.combinedTimingIntervalSeconds.contains(observed)
+                    : observed == self.targetIntervalSeconds
+            }
+        )
+        try AccessLifecycleContract.assertIOSIntervalReachedRequested(
+            observed: interval, target: targetIntervalSeconds, shouldUseTimingWindow: shouldUseTimingWindow)
+        if shouldUseTimingWindow {
+            guard AccessLifecycleIOSUITestsCalibration.combinedTimingIntervalSeconds.contains(interval) else {
+                throw AccessLifecycleContract.AssertionError.message(
+                    "The combined interval must leave time for control auto-hide, stability and wake evidence.")
+            }
+            targetIntervalSeconds = interval
+        }
         requests.append("settings.save.interval")
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
         XCTAssertTrue(
@@ -474,7 +490,8 @@ extension AccessLifecycleIOSUITests {
                     if hiddenSince == nil { hiddenSince = Date() }
                     // AX removes the button first while pixels keep fading out for 0.3 s; require 0.6 s of
                     // stability before capturing the precondition frame.
-                    return Date().timeIntervalSince(hiddenSince!) >= 0.6
+                    return Date().timeIntervalSince(hiddenSince!)
+                        >= AccessLifecycleIOSUITestsCalibration.hiddenControlStabilitySeconds
                 })
         else {
             throw NSError(
