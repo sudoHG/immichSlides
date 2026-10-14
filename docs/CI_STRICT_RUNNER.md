@@ -336,11 +336,14 @@ credential scanning, publication checks and bundle quarantine remain in force.
 #### Reviewed prefix table
 
 The following additions come only from public Swift assertions in the linked source files.
+Identical text in other files has also been checked and establishes the same phase.
 Each row fixes both enum values before any suffix is read. Shared prefixes receive a
 specific phase only when their public call sites establish the same phase. The shared
 EXIF helper also runs in the pause-window flow, so its two prefixes retain an `unknown`
 phase and only identify the class. The shared driver's EXIF toggle also runs in image
 failure recovery, so that prefix retains an `unknown` phase and `control_state` class.
+The shared tvOS album/person helpers and paused-capture helper also run in the playback
+settings editor and server-switch flows, so their prefixes retain an `unknown` phase.
 The existing lifecycle/XCTest rows remain unchanged.
 
 New enum meanings and why the previous vocabulary cannot express them:
@@ -416,18 +419,18 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `After pressing Down, the hint and the control bar must hide.` | `hidden_controls` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
 | `With the control bar hidden, an arrow key must wake it again.` | `hidden_controls` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
 | `Default focus on the filter summary must land on the album filter.` | `filter_selection` | `focus` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
-| `Focus must land on the target album.` | `filter_selection` | `focus` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Focus must land on the target album.` | `unknown` | `focus` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `Start Playback must be disabled with an empty selection.` | `filter_selection` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `Start Playback must be disabled with 0 albums / 0 people.` | `filter_selection` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `Start Playback must be enabled after selecting the target album.` | `filter_selection` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `Filtered playback must be startable after selecting the target album` | `filter_selection` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
-| `The album filter entry must be shown.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
-| `The person filter entry must be shown.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
-| `Opening the album filter must show album cards or a loading state.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `The album filter entry must be shown.` | `unknown` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `The person filter entry must be shown.` | `unknown` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Opening the album filter must show album cards or a loading state.` | `unknown` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `Back from the people list must return to the filter screen.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
-| `Back from the album list must return to the filter screen.` | `filter_selection` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Back from the album list must return to the filter screen.` | `unknown` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `Focus must land on the target person.` | `filter_selection` | `focus` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift) |
-| `Start Playback must open the playback screen.` | `playback_entry` | `navigation` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift) |
+| `Start Playback must open the playback screen.` | `unknown` | `navigation` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift) |
 | `Clear selection must actually receive remote focus` | `filter_edit` | `focus` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `The editor's Done must actually receive remote focus` | `filter_edit` | `focus` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `After Clear, both target and non-target albums must really become unselected; re-tapping each card must not stand in for the clear result` | `filter_edit` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
