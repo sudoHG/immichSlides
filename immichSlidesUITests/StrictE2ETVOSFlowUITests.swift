@@ -769,8 +769,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         let pausedObservation = pausedCapture["after"] as? [String: String] ?? [:]
-        let pausedRefs = SharedSceneEvidenceManifest.parseKeyValueFields(pausedObservation["manifest"] ?? "")
-        ["ledgerSceneAssets"]
+        let pausedFields = SharedSceneEvidenceManifest.parseKeyValueFields(pausedObservation["manifest"] ?? "")
+        let pausedRefs = pausedFields["ledgerSceneAssets"]
         var advanceObservation: [String: String] = [:]
         var previousObservation: [String: String] = [:]
         var lastObservation: [String: String] = [:]
@@ -779,8 +779,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             previousObservation = lastObservation
             lastObservation = strictSceneFrameObservation(app: app)
             let index = lastObservation["index"] ?? ""
-            let refs = SharedSceneEvidenceManifest.parseKeyValueFields(lastObservation["manifest"] ?? "")
-            ["ledgerSceneAssets"]
+            let fields = SharedSceneEvidenceManifest.parseKeyValueFields(lastObservation["manifest"] ?? "")
+            let refs = fields["ledgerSceneAssets"]
             // The index disappears with the bar; ledger and render probes remain independently readable.
             let didAdvanceIndex = !index.isEmpty && index != oldIndex
             let didAdvanceLedger = pausedRefs?.isEmpty == false && refs?.isEmpty == false && refs != pausedRefs
