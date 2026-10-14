@@ -738,12 +738,45 @@ def check_ui_label_lookups(path: str, source: str) -> list[Violation]:
 
 def check_ui_exists_then_reads(path: str, source: str) -> list[Violation]:
     """Reject live element reads that race an earlier existence query."""
-    if not path.startswith("immichSlidesUITests/") or not path.endswith(".swift"):
+    if not path.startswith(("immichSlidesUITests/", "TestSupport/")) or not path.endswith(".swift"):
         return []
     code = mask_comments(source)
     structural_code = mask_comments(source, mask_strings=True)
     receiver = r'\b[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*|\s*\[[^\]\n]*\]|\s*\([^();{}\n]*\))*'
     read_pattern = re.compile(rf'\s*\(*\s*(?P<read>{receiver})\s*\.\s*(?P<property>value|isEnabled|isHittable)\b')
+    call_pattern = re.compile(r'\b[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*\s*\(')
+
+    def normalized(expression: str) -> tuple[str, tuple[str, ...]]:
+        # Ignore formatting, but keep string keys distinct (including whitespace in them).
+        return (re.sub(r"\s+", "", mask_comments(expression, mask_strings=True)),
+                tuple(content for _, _, content in iter_string_literals(expression)))
+
+    def helper_receives_receiver(start: int, expected: str) -> bool:
+        # Only inspect a call that starts the true branch, and calls nested inside it.
+        # A complete argument must be the guarded receiver, not a property or snapshot of it.
+        beginning = re.match(r'\s*\(*\s*', structural_code[start:])
+        call = call_pattern.match(structural_code, start + beginning.end())
+        if call is None:
+            return False
+        end = find_matching(structural_code, call.end() - 1, "(", ")")
+        if end == -1:
+            return False
+        for nested in call_pattern.finditer(structural_code, call.start(), end):
+            closing = find_matching(structural_code, nested.end() - 1, "(", ")")
+            if closing == -1 or closing > end:
+                continue
+            for arg_start, arg_end in swift_call_argument_spans(structural_code, nested.end(), closing):
+                label = re.match(r'\s*[A-Za-z_]\w*\s*:', structural_code[arg_start:arg_end])
+                if label:
+                    arg_start += label.end()
+                argument = code[arg_start:arg_end].strip()
+                while argument.startswith("(") and find_matching(
+                    mask_comments(argument, mask_strings=True), 0, "(", ")"
+                ) == len(argument) - 1:
+                    argument = argument[1:-1].strip()
+                if normalized(argument) == normalized(expected):
+                    return True
+        return False
 
     def receiver_start(end: int) -> int:
         while end:
@@ -777,14 +810,15 @@ def check_ui_exists_then_reads(path: str, source: str) -> list[Violation]:
     for match in re.finditer(r"\.\s*exists\s*\?", structural_code):
         start = receiver_start(match.start())
         read = read_pattern.match(code, match.end())
-        if read is None:
+        expected = code[start:match.start()]
+        direct_read = read is not None and normalized(expected) == normalized(read["read"])
+        if not direct_read and not helper_receives_receiver(match.end(), expected):
             continue
-        if re.sub(r"\s+", "", code[start:match.start()]) != re.sub(r"\s+", "", read["read"]):
-            continue
+        read_kind = f"live {read['property']} read" if direct_read else "helper call receiving the same element"
         line = line_of(source, start)
         violations.append(Violation(
             path, line, "ui-exists-then-read", f"{enclosing_function_name(structural_code, start)}:{line}",
-            f"exists followed by a live {read['property']} read can fail after the element disappears; "
+            f"exists followed by a {read_kind} can fail after the element disappears; "
             "read evidence from one snapshot and record notVisible when absent"
         ))
     return violations

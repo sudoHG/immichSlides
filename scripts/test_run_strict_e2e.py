@@ -707,6 +707,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "The same process must run before and after applying single-photo mode after the server switch", "server_switch", "process_lifetime"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "SmartFill must expose the complete manifest, stable visible render state and history cursor together", "visible_scene_capture", "probe_readback"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "After tapping next, the fully visible SmartFill scene identity did not change in ", "history_navigation", "scene_identity"),
+            ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "scene identity did not change", "history_navigation", "scene_identity"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "Pausing must freeze the current transform progress", "paused_hold", "scene_identity"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "The new scene from a manual next while paused must stay still at p=0", "paused_hold", "scene_identity"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "The scene from a manual previous while paused must stay still at p=0", "paused_hold", "scene_identity"),
@@ -728,6 +729,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             "EXIF does not match the photo: mark=",
             "SmartFill must expose the complete manifest, stable visible render state and history cursor together",
             "After tapping next, the fully visible SmartFill scene identity did not change in ",
+            "scene identity did not change",
         }
         false_prefixes = {
             "A cold launch with saved settings must not return to the first-boot page.",

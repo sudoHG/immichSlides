@@ -310,19 +310,22 @@ extension StrictE2EFilterTVOSUITests {
             .matching(NSPredicate(format: "hasFocus == %@", NSNumber(value: true))).firstMatch
         let previous = try? focused.snapshot()
         XCUIRemote.shared.press(direction)
-        guard let previous, !previous.identifier.isEmpty else {
+        guard let previous, previous.hasFocus, !previous.identifier.isEmpty else {
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
             // Unidentifiable focus retains the legacy cadence without declaring a directional edge.
             return nil
         }
         let deadline = Date().addingTimeInterval(Timing.focusObservationWindowSeconds)
+        var hasConfirmedUnchangedFocus = false
         while Date() < deadline {
             let current = try? focused.snapshot()
             if (try? target.snapshot())?.hasFocus == true { return true }
-            if let current, !current.identifier.isEmpty,
-                current.identifier != previous.identifier || current.elementType != previous.elementType
-            {
-                return true
+            hasConfirmedUnchangedFocus = false
+            if let current, current.hasFocus, !current.identifier.isEmpty {
+                if current.identifier != previous.identifier || current.elementType != previous.elementType {
+                    return true
+                }
+                hasConfirmedUnchangedFocus = true
             }
             let focusPollSeconds = min(
                 Timing.focusPollingSeconds, max(TestWait.seconds(.product(0)), deadline.timeIntervalSinceNow))
@@ -330,17 +333,18 @@ extension StrictE2EFilterTVOSUITests {
                 until: Date().addingTimeInterval(focusPollSeconds)
             )
         }
-        return false
+        // Only the last identifiable, unchanged observation confirms an edge; a lost read is unknown.
+        return hasConfirmedUnchangedFocus ? false : nil
     }
 
     @MainActor
     func waitForFocus(on element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if element.exists && element.hasFocus { return true }
+            if (try? element.snapshot())?.hasFocus == true { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
         }
-        return element.exists && element.hasFocus
+        return (try? element.snapshot())?.hasFocus == true
     }
 
     @MainActor
@@ -362,7 +366,7 @@ extension StrictE2EFilterTVOSUITests {
                 waitUntil(
                     timeout: remainingWakeSeconds,
                     condition: {
-                        playPauseButton.exists || (receiver.exists && receiver.hasFocus)
+                        playPauseButton.exists || (try? receiver.snapshot())?.hasFocus == true
                     })
             else { break }
             if playPauseButton.exists { return true }

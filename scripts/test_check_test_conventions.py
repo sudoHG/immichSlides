@@ -650,8 +650,23 @@ class UIExistsThenReadTests(unittest.TestCase):
             ('button.exists\n    ? ((button.value as? String) ?? "") : "notVisible"', True),
             ('app.buttons["play"].exists ? app.buttons["play"].value : "notVisible"', True),
             ('button.exists /* can disappear here */ ? button.isEnabled : false', True),
+            ('button.exists ? playPauseState(button) : "notVisible"', True),
+            ('button.exists ? self.accessibilityValueString(for: button) : ""', True),
+            ('button.exists\n ? format(prefix: "state:", value: playPauseState(button)) : ""', True),
+            ('app.buttons["play"].exists ? state(of: app.buttons["play"]) : ""', True),
+            ('button.exists ? state(of: (button), fallback: "") : ""', True),
             ('button.exists ? other.value : "notVisible"', False),
             ('app.buttons["play"].exists ? app.buttons["pause"].value : "notVisible"', False),
+            ('button.exists ? playPauseState(other) : "notVisible"', False),
+            ('app.buttons["play"].exists ? state(of: app.buttons["pause"]) : ""', False),
+            ('app.buttons["play pause"].exists ? state(of: app.buttons["playpause"]) : ""', False),
+            ('button.exists ? state(of: button.identifier) : ""', False),
+            ('button.exists ? state(of: try? button.snapshot()) : ""', False),
+            ('button.exists ? (try? button.snapshot())?.value : nil', False),
+            ('button.exists ? "visible" : playPauseState(button)', False),
+            ('button.exists ? "visible" : "missing"; record(button)', False),
+            ('button.exists ? format("playPauseState(button)") : ""', False),
+            ('button.exists ? state(other) /* playPauseState(button) */ : ""', False),
             ('snapshot?.value as? String ?? "notVisible"', False),
             ('// button.exists ? button.isEnabled : false', False),
             ('let example = "button.exists ? button.isHittable : false"', False),
@@ -665,6 +680,12 @@ class UIExistsThenReadTests(unittest.TestCase):
                 if rejected:
                     self.assertEqual(2, violations[0].line)
                     self.assertIn("snapshot", violations[0].detail)
+
+    def test_helper_read_in_test_support_is_rejected_but_unit_sources_are_ignored(self):
+        source = 'func evidence() { let state = button.exists ? playPauseState(button) : "" }'
+        self.assertEqual(["ui-exists-then-read"], rules(conv.check_ui_exists_then_reads(
+            "TestSupport/Evidence.swift", source)))
+        self.assertEqual([], conv.check_ui_exists_then_reads("immichSlidesTests/Example.swift", source))
 
 
 class UnboundedWaitTests(unittest.TestCase):

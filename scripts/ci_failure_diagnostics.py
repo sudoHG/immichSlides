@@ -122,6 +122,7 @@ PREFIX_RULES = (
     ("The same process must run before and after applying single-photo mode after the server switch", "server_switch", "process_lifetime"),
     ("SmartFill must expose the complete manifest, stable visible render state and history cursor together", "visible_scene_capture", "probe_readback"),
     ("After tapping next, the fully visible SmartFill scene identity did not change in ", "history_navigation", "scene_identity"),
+    ("scene identity did not change", "history_navigation", "scene_identity"),
     ("Pausing must freeze the current transform progress", "paused_hold", "scene_identity"),
     ("The new scene from a manual next while paused must stay still at p=0", "paused_hold", "scene_identity"),
     ("The scene from a manual previous while paused must stay still at p=0", "paused_hold", "scene_identity"),
