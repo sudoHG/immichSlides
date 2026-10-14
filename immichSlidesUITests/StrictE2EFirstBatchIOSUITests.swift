@@ -263,9 +263,10 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         var didDetectWindow = false
         let probeDeadline = playUptime + StrictE2EFirstBatchIOSUITestsProbeTiming.pauseWindowTimeoutSeconds
         while ProcessInfo.processInfo.systemUptime <= probeDeadline {
-            let now = ProcessInfo.processInfo.systemUptime
             lastProbeRaw = frameSynchronizedProbeRaw(app: app)
+            let now = ProcessInfo.processInfo.systemUptime
             lastProbeUptime = now
+            guard now <= probeDeadline else { break }
             if !lastProbeRaw.isEmpty,
                 let state = probeState(from: lastProbeRaw),
                 isOutgoingOnlyPauseWindow(state)
