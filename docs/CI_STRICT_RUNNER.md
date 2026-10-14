@@ -64,7 +64,8 @@ Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `journey-b`, `tvos-flow`, `first-wake`, and
+Probe-only launches are `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
+the other `ios-lifecycle-*` selectors, and
 `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
 `pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
@@ -85,10 +86,13 @@ This exact key is excluded from `isRunningXCTest`: a probe-only launch keeps
 the real Keychain path, never enables `immichApiKey.xctestFallback`, and preserves
 the ordinary Info.plist debug-server read. Other XCTest keys retain their existing
 effect. The flag does not request a reset or bypass onboarding; Release exposes
-neither probe. For `first-wake` and iOS access-lifecycle, which already used the
+neither probe. For Debug first-wake and iOS access-lifecycle, which already used the
 probe-only key on main, this is a change from the UserDefaults API-key fallback
 to the real Keychain path, including ordinary Info.plist behavior; it is not a
-restoration relative to main. Their additional manifest/motion probe exposure
+restoration relative to main. The strict `ios-lifecycle-first-wake` runner uses
+the Release settings-resume scheme; Release already disables XCTest mode and
+the fallback on main, so that run does not prove the Debug mode change.
+Their additional Debug manifest/motion probe exposure
 also needs device verification. New pure environment tests in the existing `UnitTestHostTests`
 file guard probe visibility and isolation from XCTest mode. Capture
 sidecars are written before an assertion can stop XCTest, preserving failed

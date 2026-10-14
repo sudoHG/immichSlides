@@ -441,7 +441,9 @@ class StrictE2ERunnerTestsCasesConfiguration:
         from strict_e2e_runner_support import strict_app_launch_environment, write_app_launch_environment_audit
         probe = "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"
         cases = {
-            "journey-b": {probe: "1"}, "tvos-flow": {probe: "1"}, "first-wake": {probe: "1"},
+            "journey-b": {probe: "1"}, "tvos-flow": {probe: "1"},
+            "ios-lifecycle-first-wake": {probe: "1"}, "ios-lifecycle-settings": {probe: "1"},
+            "ios-lifecycle-pause": {probe: "1"}, "ios-lifecycle-background": {probe: "1"},
             "pause-window": {probe: "1", "UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
                              "UI_TEST_SERVER_URL": None, "UI_TEST_API_KEY": "immichslides-public-e2e-key"},
             "tvos-directional-wake": {"UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
