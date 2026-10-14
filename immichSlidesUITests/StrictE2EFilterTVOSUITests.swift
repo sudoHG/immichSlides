@@ -8,6 +8,8 @@ enum StrictE2EFilterTVOSUITestsCalibration {
 final class StrictE2EFilterTVOSUITests: XCTestCase {
     enum Timing {
         static let focusMovementSettleSeconds: TimeInterval = TestWait.seconds(.product(0.15))
+        // Fixed test cadence for observing a remote press, not a user-visible product deadline.
+        static let focusObservationWindowSeconds: TimeInterval = TestWait.seconds(.product(1))
         static let focusPollingSeconds: TimeInterval = TestWait.seconds(.product(0.1))
         static let playbackSceneSettleSeconds: TimeInterval = TestWait.seconds(.product(3.5))
     }
