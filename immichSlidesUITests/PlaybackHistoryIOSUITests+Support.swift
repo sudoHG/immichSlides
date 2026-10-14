@@ -16,11 +16,14 @@ extension PlaybackHistoryIOSUITests {
         add(attachment)
     }
 
-    func currentSceneIdentity(app: XCUIApplication, mode: ManualLifecycleMode) -> String? {
+    func currentSceneIdentity(
+        app: XCUIApplication, mode: ManualLifecycleMode, snapshots: [String: XCUIElementSnapshot]? = nil
+    ) -> String? {
+        let snapshots = snapshots ?? app.evidenceSnapshotsByIdentifier()
         if mode == .smartFill {
-            return currentCompleteVisibleSmartFillScene(app: app)?.sceneIdentity
+            return currentCompleteVisibleSmartFillScene(app: app, snapshots: snapshots)?.sceneIdentity
         }
-        return currentAssetID(app: app)
+        return currentAssetID(app: app, snapshots: snapshots)
     }
 
     func announceManualLifecycleCaptureWindowIfRequested(mode: ManualLifecycleMode, kind: String) {
@@ -377,18 +380,24 @@ extension PlaybackHistoryIOSUITests {
     func waitForSceneIdentityChange(app: XCUIApplication, mode: ManualLifecycleMode, from oldValue: String) throws
         -> String
     {
+        var changedIdentity: String?
         guard
             waitUntil(
                 timeout: TestWait.seconds(.product(20)),
                 condition: {
-                    (try? self.sceneIdentity(app: app, mode: mode)).map { $0 != oldValue } ?? false
-                })
+                    guard let identity = self.currentSceneIdentity(app: app, mode: mode), identity != oldValue
+                    else { return false }
+                    changedIdentity = identity
+                    return true
+                }), let changedIdentity
         else {
+            attachSmartFillProbeLabels(app: app, name: "manual-lifecycle-scene-identity-unchanged-probe")
+            XCTFail("scene identity did not change")
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests", code: 6,
                 userInfo: [NSLocalizedDescriptionKey: "scene identity did not change"])
         }
-        return try sceneIdentity(app: app, mode: mode)
+        return changedIdentity
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
@@ -510,9 +519,9 @@ extension PlaybackHistoryIOSUITests {
         return try waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.product(2)))
     }
 
-    func currentAssetID(app: XCUIApplication) -> String? {
-        let probe = app.descendants(matching: .any)["slideshow.currentAssetId.flag"]
-        guard probe.exists else { return nil }
+    func currentAssetID(app: XCUIApplication, snapshots: [String: XCUIElementSnapshot]? = nil) -> String? {
+        guard let probe = (snapshots ?? app.evidenceSnapshotsByIdentifier())["slideshow.currentAssetId.flag"]
+        else { return nil }
         let label = probe.label.trimmingCharacters(in: .whitespacesAndNewlines)
         return label.isEmpty || label == "no-asset" ? nil : label
     }
@@ -521,12 +530,14 @@ extension PlaybackHistoryIOSUITests {
         app: XCUIApplication,
         timeout: TimeInterval
     ) throws -> CompleteVisibleSmartFillScene {
+        var observedScene: CompleteVisibleSmartFillScene?
         guard
             waitUntil(
                 timeout: timeout,
                 condition: {
-                    self.currentCompleteVisibleSmartFillScene(app: app) != nil
-                }), let scene = currentCompleteVisibleSmartFillScene(app: app)
+                    observedScene = self.currentCompleteVisibleSmartFillScene(app: app)
+                    return observedScene != nil
+                }), let scene = observedScene
         else {
             attachSmartFillProbeLabels(app: app, name: "smartfill-history-missing-complete-visible-probe")
             XCTFail(
@@ -545,13 +556,16 @@ extension PlaybackHistoryIOSUITests {
         from previousIdentity: String,
         timeout: TimeInterval
     ) throws -> CompleteVisibleSmartFillScene {
+        var changedScene: CompleteVisibleSmartFillScene?
         guard
             waitUntil(
                 timeout: timeout,
                 condition: {
                     guard let scene = self.currentCompleteVisibleSmartFillScene(app: app) else { return false }
-                    return scene.sceneIdentity != previousIdentity
-                })
+                    guard scene.sceneIdentity != previousIdentity else { return false }
+                    changedScene = scene
+                    return true
+                }), let changedScene
         else {
             attachSmartFillProbeLabels(app: app, name: "smartfill-history-next-identity-unchanged-probe")
             XCTFail(
@@ -562,16 +576,16 @@ extension PlaybackHistoryIOSUITests {
                 userInfo: [NSLocalizedDescriptionKey: "complete visible SmartFill scene did not change"]
             )
         }
-        return try waitForCompleteVisibleSmartFillScene(app: app, timeout: TestWait.seconds(.product(2)))
+        return changedScene
     }
 
-    func currentCompleteVisibleSmartFillScene(app: XCUIApplication) -> CompleteVisibleSmartFillScene? {
-        let manifestProbe = app.descendants(matching: .any)["slideshow.smartfill.currentManifest.flag"]
-        let contractProbe = app.descendants(matching: .any)["slideshow.scenePresentation.contract.summary"]
-        let historyProbe = app.descendants(matching: .any)["slideshow.historyLedger.summary.flag"]
-        guard manifestProbe.exists,
-            contractProbe.exists,
-            historyProbe.exists
+    func currentCompleteVisibleSmartFillScene(
+        app: XCUIApplication, snapshots: [String: XCUIElementSnapshot]? = nil
+    ) -> CompleteVisibleSmartFillScene? {
+        let snapshots = snapshots ?? app.evidenceSnapshotsByIdentifier()
+        guard let manifestProbe = snapshots["slideshow.smartfill.currentManifest.flag"],
+            let contractProbe = snapshots["slideshow.scenePresentation.contract.summary"],
+            let historyProbe = snapshots["slideshow.historyLedger.summary.flag"]
         else {
             return nil
         }
@@ -597,13 +611,15 @@ extension PlaybackHistoryIOSUITests {
 
     func attachSmartFillProbeLabels(app: XCUIApplication, name: String) {
         let identifiers = [
+            "slideshow.currentAssetId.flag",
             "slideshow.smartfill.currentManifest.flag",
             "slideshow.scenePresentation.contract.summary",
             "slideshow.historyLedger.summary.flag"
         ]
+        let snapshots = app.evidenceSnapshotsByIdentifier()
         let labels = identifiers.map { identifier in
-            let probe = app.descendants(matching: .any)[identifier]
-            return "[\(identifier)] exists=\(probe.exists)\n\(probe.label)"
+            let probe = snapshots[identifier]
+            return "[\(identifier)] exists=\(probe != nil)\n\(probe?.label ?? "notVisible")"
         }.joined(separator: "\n\n")
         let attachment = XCTAttachment(data: Data(labels.utf8), uniformTypeIdentifier: "public.plain-text")
         attachment.name = name

@@ -72,11 +72,11 @@ final class RotationUITests: XCTestCase {
             )
         }
         try captureStable("rotation-start-portrait", orientation: .portrait, driver: driver, evidence: evidence)
-        let playPause = app.buttons["slideshow.control.playPause.button"]
         var playPauseValue = ""
         let isPlaying = Wait.until(timeout: Timing.multiPhotoWait) {
             _ = driver.revealUsableControls()
-            playPauseValue = playPause.exists ? ((playPause.value as? String) ?? "").lowercased() : ""
+            let playPause = app.evidenceSnapshotsByIdentifier()["slideshow.control.playPause.button"]
+            playPauseValue = playPause.map { (($0.value as? String) ?? "").lowercased() } ?? "notVisible"
             return playPauseValue == "pause"
         }
         guard isPlaying else {

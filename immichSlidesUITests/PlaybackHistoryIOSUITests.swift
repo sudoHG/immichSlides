@@ -482,15 +482,16 @@ extension PlaybackHistoryIOSUITests {
         probe: ScenePresentationProbe,
         identity: String? = nil
     ) {
-        let identity = identity ?? currentSceneIdentity(app: app, mode: mode)
+        let snapshots = app.evidenceSnapshotsByIdentifier()
+        let identity = identity ?? currentSceneIdentity(app: app, mode: mode, snapshots: snapshots)
+        let playPause = snapshots["slideshow.control.playPause.button"]
         let record: [String: Any] = [
             "event": event,
             "mode": mode == .smartFill ? "smartFill" : "singlePhoto",
             "phase": probe.phase,
             "motionRawProgress": probe.rawProgress,
             "sceneIdentity": identity ?? "unavailable",
-            "playPauseControlState": app.buttons["slideshow.control.playPause.button"].exists
-                ? playPauseState(app.buttons["slideshow.control.playPause.button"]) : "notVisible",
+            "playPauseControlState": playPause.map { (($0.value as? String) ?? "").lowercased() } ?? "notVisible",
             "capturedAt": ISO8601DateFormatter().string(from: Date())
         ]
         manualLifecycleRuntimeEvidenceRows.append(record)

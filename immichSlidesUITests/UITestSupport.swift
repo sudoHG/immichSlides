@@ -2,6 +2,22 @@ import ImageIO
 import UIKit
 import XCTest
 
+extension XCUIApplication {
+    // Keep evidence reads in one tree so auto-hidden controls cannot disappear between queries.
+    func evidenceSnapshotsByIdentifier() -> [String: XCUIElementSnapshot] {
+        guard let root = try? snapshot() else { return [:] }
+        var snapshots: [String: XCUIElementSnapshot] = [:]
+        var pending: [XCUIElementSnapshot] = [root]
+        while let node = pending.popLast() {
+            if !node.identifier.isEmpty, snapshots[node.identifier] == nil {
+                snapshots[node.identifier] = node
+            }
+            pending.append(contentsOf: node.children)
+        }
+        return snapshots
+    }
+}
+
 #if os(iOS)
 extension XCUIApplication {
     // Use only for functional checks, never to verify control-bar visibility or auto-hide timing.

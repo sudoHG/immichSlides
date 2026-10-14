@@ -736,6 +736,60 @@ def check_ui_label_lookups(path: str, source: str) -> list[Violation]:
     return violations
 
 
+def check_ui_exists_then_reads(path: str, source: str) -> list[Violation]:
+    """Reject live element reads that race an earlier existence query."""
+    if not path.startswith("immichSlidesUITests/") or not path.endswith(".swift"):
+        return []
+    code = mask_comments(source)
+    structural_code = mask_comments(source, mask_strings=True)
+    receiver = r'\b[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*|\s*\[[^\]\n]*\]|\s*\([^();{}\n]*\))*'
+    read_pattern = re.compile(rf'\s*\(*\s*(?P<read>{receiver})\s*\.\s*(?P<property>value|isEnabled|isHittable)\b')
+
+    def receiver_start(end: int) -> int:
+        while end:
+            while end and structural_code[end - 1].isspace():
+                end -= 1
+            if end and structural_code[end - 1] in ")]":
+                closing = structural_code[end - 1]
+                opening = {")": "(", "]": "["}[closing]
+                depth = 1
+                end -= 1
+                while end and depth:
+                    end -= 1
+                    if structural_code[end] == closing:
+                        depth += 1
+                    elif structural_code[end] == opening:
+                        depth -= 1
+                continue
+            start = end
+            while start and (structural_code[start - 1].isalnum() or structural_code[start - 1] == "_"):
+                start -= 1
+            before = start
+            while before and structural_code[before - 1].isspace():
+                before -= 1
+            if before and structural_code[before - 1] == ".":
+                end = before - 1
+            else:
+                return start
+        return end
+
+    violations = []
+    for match in re.finditer(r"\.\s*exists\s*\?", structural_code):
+        start = receiver_start(match.start())
+        read = read_pattern.match(code, match.end())
+        if read is None:
+            continue
+        if re.sub(r"\s+", "", code[start:match.start()]) != re.sub(r"\s+", "", read["read"]):
+            continue
+        line = line_of(source, start)
+        violations.append(Violation(
+            path, line, "ui-exists-then-read", f"{enclosing_function_name(structural_code, start)}:{line}",
+            f"exists followed by a live {read['property']} read can fail after the element disappears; "
+            "read evidence from one snapshot and record notVisible when absent"
+        ))
+    return violations
+
+
 def find_top_level_brace(code: str, start: int) -> int:
     """Find the `{` that opens the loop body, skipping over any `(...)` condition."""
     depth = 0
@@ -900,7 +954,7 @@ def check_product_wait_factor(path: str, source: str) -> list[Violation]:
             for match in re.finditer(r"\bTestWait\b|IMMICHSLIDES_TEST_WAIT_FACTOR", code)]
 
 CHECKS = (check_forbidden_names, check_display_names, check_swift_testing_names, check_source_text,
-          check_unbounded_waits, check_ui_label_lookups)
+          check_unbounded_waits, check_ui_label_lookups, check_ui_exists_then_reads)
 
 
 def iter_target_files(root: Path):
