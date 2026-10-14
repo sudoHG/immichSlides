@@ -102,6 +102,7 @@ from strict_e2e_runner_support import (
     cleanup_task_xcconfig,
     _is_forbidden_key,
     validate_app_launch_environment,
+    write_app_launch_environment_audit,
     prepare_evidence_directory,
     scenario_settings,
     validate_suite_scenario,
@@ -777,11 +778,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         (arguments.evidence_dir / "xcconfig-audit.json").write_text(
             json.dumps(xcconfig_audit, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
-        validate_app_launch_environment({})
-        (arguments.evidence_dir / "app-launch-environment-audit.json").write_text(
-            json.dumps({"forbidden_keys_present": [], "launch_environment_keys": []}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        write_app_launch_environment_audit(arguments.evidence_dir, arguments.suite)
 
         preparation_lines = []
         preparation_log = None

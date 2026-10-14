@@ -46,7 +46,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
     @MainActor
     func testRandomModeReachesPlaybackWithCorrectControlState() throws {
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminate() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "journey-b")
@@ -108,9 +108,21 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         recordControlTimeline(app: app, event: "journey-b-after-pause")
 
         tapElement(playPause)
+        let resumeCaptureDeadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
+        var previousResumeObservation: [String: String] = [:]
+        var lastResumeObservation: [String: String] = [:]
+        let resumedInStableWindow = waitUntil(timeout: TestWait.seconds(.product(4))) {
+            previousResumeObservation = lastResumeObservation
+            lastResumeObservation = self.strictSceneFrameObservation(app: app)
+            return self.playPauseState(playPause) == "pause"
+                && StrictE2ESceneCapture.isStableWindow(lastResumeObservation)
+                && Date() < resumeCaptureDeadline
+        }
+        attachStrictSceneObservation(
+            before: previousResumeObservation, after: lastResumeObservation, name: "journey-b-resume-capture-window")
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "pause" },
-            "Resuming must continue from the current photo, with the control value back to pause."
+            resumedInStableWindow,
+            "Resuming must continue from the current photo, with the control value back to pause. \(strictSceneCaptureDiagnostic(before: previousResumeObservation, after: lastResumeObservation, stable: StrictE2ESceneCapture.isStableWindow(lastResumeObservation)))"
         )
         tapElement(playPause)
         XCTAssertTrue(
@@ -129,29 +141,11 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         tapElement(previous)
         let secondPrevious = captureHistoryIdentity(app: app, step: "history-second-previous")
         recordControlTimeline(app: app, event: "journey-b-history-complete")
-        do {
-            try StrictE2EPhotoIdentity.assertRoundTrip(
-                [historyStart, firstNext, secondNext, firstPrevious, secondPrevious]
-            )
-        } catch {
-            XCTFail(error.localizedDescription)
-        }
         let visualIdentity: [String: Any] = [
             "suite": "journey-b",
             "device": currentDeviceTag(),
-            "marks": jsonSafeMarks([
-                historyStart.mark,
-                firstNext.mark,
-                secondNext.mark,
-                firstPrevious.mark,
-                secondPrevious.mark
-            ]),
             "steps": [
-                StrictE2EPhotoIdentity.payload(historyStart),
-                StrictE2EPhotoIdentity.payload(firstNext),
-                StrictE2EPhotoIdentity.payload(secondNext),
-                StrictE2EPhotoIdentity.payload(firstPrevious),
-                StrictE2EPhotoIdentity.payload(secondPrevious)
+                historyStart, firstNext, secondNext, firstPrevious, secondPrevious
             ]
         ]
         XCTAssertTrue(

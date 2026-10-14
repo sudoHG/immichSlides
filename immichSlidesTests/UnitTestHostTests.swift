@@ -3,6 +3,29 @@ import Testing
 
 @Suite
 struct UnitTestHostTests {
+    @Test func `the read only scene probe does not activate XCTest mode`() {
+        let probe = ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"]
+        #expect(!PlatformCompat.isRunningXCTest(environment: probe))
+        #expect(!PlatformCompat.isRunningXCTest(environment: [:]))
+        #expect(
+            PlatformCompat.isRunningXCTest(
+                environment: probe.merging(["XCTestConfigurationFilePath": "host"]) { _, value in value }))
+        #expect(
+            PlatformCompat.isRunningXCTest(
+                environment: probe.merging(["UI_TEST_RESET_STATE": "1"]) { _, value in value }))
+        #expect(PlatformCompat.isRunningXCTest(environment: ["UI_TEST_ANY_FUTURE_KEY": "0"]))
+    }
+
+    @Test func `the read only scene probe exposes diagnostics only when enabled`() {
+        #expect(
+            PlatformCompat.shouldExposeUITestProbes(environment: ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"]))
+        #expect(
+            !PlatformCompat.shouldExposeUITestProbes(environment: ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "0"]))
+        #expect(!PlatformCompat.shouldExposeUITestProbes(environment: [:]))
+        #expect(PlatformCompat.shouldExposeUITestProbes(environment: ["UI_TEST_RESET_STATE": "1"]))
+        #expect(PlatformCompat.shouldExposeUITestProbes(environment: ["XCTestConfigurationFilePath": "test-host"]))
+    }
+
     @Test func `the app detects that it is hosting unit tests so its UI stays idle`() {
         #expect(PlatformCompat.isHostingUnitTests)
     }

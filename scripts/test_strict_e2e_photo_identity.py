@@ -4,19 +4,19 @@
 from __future__ import annotations
 
 import io
+import json
 import os
-import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from collections.abc import Mapping
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
 
 from strict_e2e_photo_identity import (  # noqa: E402
     IdentityAssertionError,
@@ -30,8 +30,11 @@ from strict_e2e_photo_identity import (  # noqa: E402
     evaluate_visual_identity,
     overlay_model_from_text,
     public_frame_letter_from_bytes,
+    public_frame_photos_from_bytes,
     _public_bitmap_bands,
     _public_letters_for_cells,
+    public_asset_reference,
+    PUBLIC_SCENE_GEOMETRIES,
 )
 from strict_e2e_server import GLYPHS, _fixture_data, _png as fixture_png  # noqa: E402
 from test_album_server_narrow_contract import IPHONE_SCREEN  # noqa: E402
@@ -146,6 +149,20 @@ def _fixture_png(label: str) -> bytes:
     return _fixture_data("a")["images"][f"asset-a-{label[-1]}"]
 
 
+def _write_scene_sequence(evidence: Path, names_and_marks: list[tuple[str, tuple[str, ...]]], fixture_set: str = "a") -> None:
+    from strict_e2e_filter_contract import write_member_manifest
+    write_member_manifest(evidence / "member-manifest.json", fixture_set)
+    for name, marks in names_and_marks:
+        refs = ",".join(public_asset_reference(f"asset-{fixture_set}-{mark[-1]}") for mark in marks)
+        publication = {"history-start": 1, "history-first-next": 2, "history-second-next": 3,
+                       "history-first-previous": 4, "history-second-previous": 5,
+                       "pause-immediate": 6, "pause-after-10s": 6, "resumed": 7}[name]
+        observation = {"manifest": f"ledgerSceneAssets={refs};slotCount={len(marks)};slotReadiness={','.join(['ready'] * len(marks))};gapPixelCount=0;overlapPixelCount=0;canvasCoverage=1;emptyCanvasRatio=0;actionTimestamp={publication};scenePublishTimestamp={publication + 0.001};publishReason=next",
+                       "render": "phase=stablePhoto;layerRoles=stable;loadingVisible=false",
+                       "index": f"{marks[0][-1]}/5"}
+        (evidence / f"{name}.scene.json").write_text(json.dumps({"before": observation, "after": observation}))
+
+
 def _darken(png: bytes, factor: float) -> bytes:
     with Image.open(io.BytesIO(png)) as image:
         darkened = ImageEnhance.Brightness(image.convert("RGB")).enhance(factor)
@@ -193,6 +210,199 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_scene_judgement_converts_a_second_clear_background_photo_to_identity_failure(self) -> None:
+        photo = Image.open(io.BytesIO(_fixture_png("A1"))).convert("RGB")
+        scene = ImageOps.fit(photo, (320, 696)).filter(ImageFilter.GaussianBlur(40))
+        scene.paste(photo, (0, 258))
+        foreign = Image.open(io.BytesIO(_fixture_png("A2"))).convert("RGB")
+        scene.paste(ImageOps.fit(foreign, (112, 112)), (8, 100))
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous")
+        for suite in ("journey-b", "tvos-flow"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                for name in names:
+                    (evidence / f"{name}.png").write_bytes(_fixture_png("A1"))
+                (evidence / "history-start.png").write_bytes(_png(scene))
+                _write_scene_sequence(evidence, [(name, ("A1",)) for name in names])
+                with self.assertRaisesRegex(IdentityAssertionError, "single-photo surround still"):
+                    evaluate_visual_identity(evidence, suite)
+
+    def test_palette_interpolation_is_unique_and_confined_to_eight_raw_edge_pixels(self) -> None:
+        from strict_e2e_photo_identity import _public_palette_edge_assignment, _public_frame_slots
+        self.assertEqual(_public_palette_edge_assignment((77, 74, 72)), "A1")
+        for color in ((0, 0, 0), (255, 255, 255), (56, 140, 28)):
+            with self.subTest(color=color):
+                self.assertIsNone(_public_palette_edge_assignment(color))
+        with patch("strict_e2e_photo_identity._public_photo_palettes", return_value={
+            "A1": ((0, 50, 100), (100, 50, 0)), "A2": ((0, 50, 0), (100, 50, 100)),
+        }):
+            self.assertIsNone(_public_palette_edge_assignment((50, 50, 50)))
+        for horizontal in (False, True):
+            with self.subTest(horizontal=horizontal):
+                frame = Image.open(io.BytesIO(_fixture_png("A1"))).convert("RGB")
+                draw = ImageDraw.Draw(frame)
+                box = (frame.width - 8, 0, frame.width - 1, frame.height - 1) if horizontal else (0, frame.height - 8, frame.width - 1, frame.height - 1)
+                draw.rectangle(box, fill=(77, 74, 72))
+                self.assertEqual(len(_public_frame_slots(frame, edge_band_pixels=(8, 8))[0]), 1)
+                for color in ((0, 0, 0), (255, 255, 255), (56, 140, 28)):
+                    draw.rectangle(box, fill=color)
+                    with self.assertRaises(IdentityAssertionError):
+                        _public_frame_slots(frame, edge_band_pixels=(8, 8))
+                draw.rectangle(box, fill=(77, 74, 72))
+                interior = Image.blend(frame, Image.open(io.BytesIO(_fixture_png("A2"))).convert("RGB").resize(frame.size), 0.5)
+                with self.assertRaises(IdentityAssertionError):
+                    _public_frame_slots(interior, edge_band_pixels=(8, 8))
+                ImageDraw.Draw(interior).rectangle(box, fill=(77, 74, 72))
+                with self.assertRaises(IdentityAssertionError):
+                    _public_frame_slots(interior, edge_band_pixels=(8, 8))
+                wider = (frame.width - 9, 0, frame.width - 1, frame.height - 1) if horizontal else (0, frame.height - 9, frame.width - 1, frame.height - 1)
+                draw.rectangle(wider, fill=(77, 74, 72))
+                with self.assertRaises(IdentityAssertionError):
+                    _public_frame_slots(frame, edge_band_pixels=(8, 8))
+
+    def test_overlay_fragments_are_joined_before_the_full_glyph_height_gate(self) -> None:
+        source = Image.open(io.BytesIO(_fixture_png("A4"))).convert("RGB")
+        # A measured overlay cuts a full-size glyph, leaving a tail shorter than ten sampled rows.
+        frame = source.resize((900, 600), Image.Resampling.NEAREST)
+        box = (0, 360, 900, 466)
+        ImageDraw.Draw(frame).rectangle((0, 360, 899, 465), fill=(40, 40, 40))
+        self.assertEqual([p.mark for p in public_frame_photos_from_bytes(_png(frame), glyph_overlay_box=box)], ["A4"])
+        self.assertEqual(_public_bitmap_bands([[True]] * 2), [])
+
+    def test_measured_tv_overlay_cannot_supply_a_missing_slot_glyph(self) -> None:
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
+        for fixture_set in ("a", "b"):
+            for unreadable in (False, True):
+                with self.subTest(fixture=fixture_set, unreadable=unreadable):
+                    frame = Image.open(io.BytesIO(self._pair(fixture_set, 2, 3, horizontal=True, seam=1382, unreadable=unreadable))).convert("RGB")
+                    draw = ImageDraw.Draw(frame)
+                    # Measured hint and control rectangles, bounded by the registered four-pixel margin.
+                    draw.rectangle((1330, 1440, 2086, 1650), fill="white")
+                    draw.rectangle((1260, 1717, 2576, 1920), fill="white")
+                    if unreadable:
+                        with self.assertRaises(IdentityAssertionError):
+                            public_scene_photos_from_bytes(_png(frame))
+                    else:
+                        self.assertEqual([p.mark for p in public_scene_photos_from_bytes(_png(frame))], ["A2", "A3"])
+
+    def test_single_slot_clipped_glyph_uses_color_and_texture_on_every_geometry(self) -> None:
+        from test_album_server_narrow_contract import _full_screen
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
+        for fixture_set in ("a", "b"):
+            for size in ((1170, 2532), (1640, 2360), (3840, 2160)):
+                with self.subTest(fixture=fixture_set, size=size):
+                    frame = _full_screen("A1", size, fixture_set)
+                    self.assertEqual(public_scene_photos_from_bytes(frame)[0].letter, fixture_set.upper())
+                    self.assertEqual(public_scene_photos_from_bytes(frame)[0].mark, "A1")
+                    for bad in (_solid((0, 0, 0), size), _solid((255, 255, 255), size)):
+                        with self.assertRaises(IdentityAssertionError):
+                            public_scene_photos_from_bytes(bad)
+
+    def test_history_compares_all_slots_and_cross_checks_scene_probes(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous")
+        marks = [("A5",), ("A1", "A5"), ("A4",), ("A1", "A5"), ("A5",)]
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture=fixture_set), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                single = _fixture_data(fixture_set)["images"][f"asset-{fixture_set}-5"]
+                pair = self._pair(fixture_set, 1, 5, horizontal=False)
+                second = _fixture_data(fixture_set)["images"][f"asset-{fixture_set}-4"]
+                for name, png in zip(names, (single, pair, second, pair, single)):
+                    (evidence / f"{name}.png").write_bytes(png)
+                _write_scene_sequence(evidence, list(zip(names, marks)), fixture_set)
+                report = evaluate_visual_identity(evidence, "journey-b")
+                self.assertEqual(report["steps"][names[0]]["signature"], [f"{fixture_set.upper()}5"])
+                self.assertEqual(report["steps"][names[1]]["signature"], [f"{fixture_set.upper()}1", f"{fixture_set.upper()}5"])
+                swapped = self._pair(fixture_set, 5, 1, horizontal=False)
+                (evidence / f"{names[3]}.png").write_bytes(swapped)
+                _write_scene_sequence(evidence, [(names[3], ("A5", "A1"))], fixture_set)
+                with self.assertRaisesRegex(IdentityAssertionError, "first back step"):
+                    evaluate_visual_identity(evidence, "journey-b")
+                (evidence / f"{names[3]}.png").write_bytes(single)
+                _write_scene_sequence(evidence, [(names[3], ("A5",))], fixture_set)
+                with self.assertRaisesRegex(IdentityAssertionError, "first back step"):
+                    evaluate_visual_identity(evidence, "journey-b")
+                (evidence / f"{names[3]}.png").write_bytes(pair)
+                _write_scene_sequence(evidence, [(names[3], ("A1", "A5"))], fixture_set)
+                sidecar = evidence / f"{names[0]}.scene.json"
+                original = sidecar.read_text()
+                for field, value in (("manifest", "ledgerSceneAssets=foreign;slotCount=1;slotReadiness=ready"),
+                                     ("render", "phase=transition;layerRoles=outgoing|incoming;loadingVisible=false")):
+                    payload = json.loads(original)
+                    payload["after"][field] = value
+                    sidecar.write_text(json.dumps(payload))
+                    with self.assertRaises(IdentityAssertionError):
+                        evaluate_visual_identity(evidence, "journey-b")
+                sidecar.unlink()
+                with self.assertRaisesRegex(IdentityAssertionError, "scene sequence evidence"):
+                    evaluate_visual_identity(evidence, "journey-b")
+
+    def test_pinned_devices_have_measured_scene_geometries(self) -> None:
+        pins = json.loads((SCRIPT_DIR / "ci-pins.json").read_text())
+        sizes = {"iPhone 17e": (1170, 2532), "iPad Air 11-inch (M4)": (1640, 2360),
+                 "Apple TV 4K (3rd generation)": (3840, 2160)}
+        for device in pins["device_types"].values():
+            self.assertIn(device, sizes, "A newly pinned device needs real scene-frame measurements")
+            self.assertIn(sizes[device], PUBLIC_SCENE_GEOMETRIES)
+
+    def test_real_tv_horizontal_slots_use_the_same_reader_as_vertical_slots(self) -> None:
+        # Measured tvOS 27.0 captures: 3840x2160, A2/A3 seam x=1382,
+        # A5/A3 seam x=1536. Reconstruct the public photos at those sizes.
+        for fixture_set in ("a", "b"):
+            for first, seam in ((2, 1382), (5, 1536)):
+                with self.subTest(fixture=fixture_set, first=first):
+                    frame = self._pair(fixture_set, first, 3, horizontal=True, seam=seam)
+                    self.assertEqual(Image.open(io.BytesIO(frame)).size, (3840, 2160))
+                    self.assertEqual([(p.letter, p.mark) for p in public_frame_photos_from_bytes(frame)],
+                                     [(fixture_set.upper(), f"A{first}"), (fixture_set.upper(), "A3")])
+
+    @staticmethod
+    def _pair(fixture_set: str, first: int, second: int, *, horizontal: bool,
+              seam: int | None = None, second_fixture: str | None = None,
+              unreadable: bool = False) -> bytes:
+        size = (3840, 2160) if horizontal else (1640, 2360)
+        boundary = seam or (size[0] // 2 if horizontal else size[1] // 2)
+        boxes = ((0, 0, boundary, size[1]), (boundary, 0, size[0], size[1])) if horizontal else (
+            (0, 0, size[0], boundary), (0, boundary, size[0], size[1]))
+        frame = Image.new("RGB", size)
+        for index, source, box in zip((first, second), (fixture_set, second_fixture or fixture_set), boxes):
+            photo = Image.open(io.BytesIO(_fixture_data(source)["images"][f"asset-{source}-{index}"]))
+            if unreadable and box == boxes[0]:
+                photo = Image.open(io.BytesIO(fixture_png(*photo.size, index, "", striped=source == "b")))
+            frame.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]), method=Image.Resampling.BILINEAR), box)
+        return _png(frame)
+
+    def test_both_slot_orientations_reject_mixed_and_unreadable_fixtures(self) -> None:
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
+        for horizontal in (False, True):
+            for fixture_set in ("a", "b"):
+                other = "b" if fixture_set == "a" else "a"
+                for name, options in (("mixed", {"second_fixture": other}),
+                                      ("unreadable", {"unreadable": True}),
+                                      ("foreign unreadable", {"second_fixture": other, "unreadable": True})):
+                    with self.subTest(horizontal=horizontal, fixture=fixture_set, case=name):
+                        with self.assertRaises(IdentityAssertionError):
+                            public_frame_photos_from_bytes(self._pair(fixture_set, 5, 3, horizontal=horizontal, **options))
+                with self.subTest(horizontal=horizontal, fixture=fixture_set, case="same photo number with unreadable foreign fixture"):
+                    with self.assertRaises(IdentityAssertionError):
+                        public_scene_photos_from_bytes(self._pair(fixture_set, 5, 5, horizontal=horizontal,
+                                                                 second_fixture=other, unreadable=True))
+
+    def test_two_dimensional_grid_and_blended_slots_fail_unreadable(self) -> None:
+        grid = Image.new("RGB", (3840, 2160))
+        for index, box in enumerate(((0, 0, 1920, 1080), (1920, 0, 3840, 1080),
+                                     (0, 1080, 1920, 2160), (1920, 1080, 3840, 2160)), 1):
+            photo = Image.open(io.BytesIO(_fixture_png(f"A{index}")))
+            grid.paste(photo.resize((1920, 1080)), box)
+        with self.assertRaisesRegex(IdentityAssertionError, "unreadable public glyph slot"):
+            public_frame_photos_from_bytes(_png(grid))
+        for horizontal in (False, True):
+            frame = self._pair("a", 5, 3, horizontal=horizontal)
+            with Image.open(io.BytesIO(frame)) as image:
+                mixed = Image.blend(image, Image.new("RGB", image.size, (20, 20, 20)), 0.5)
+                with self.assertRaises(IdentityAssertionError):
+                    public_frame_photos_from_bytes(_png(mixed))
+
     def test_real_size_crop_requires_two_letter_columns_and_never_accepts_only_the_digit(self) -> None:
         for fixture_set in ("a", "b"):
             source = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-4"])).convert("RGB")
@@ -376,6 +586,7 @@ class NegativeIdentityTests(unittest.TestCase):
             pngs = [_fixture_png(label) for label in ("A2", "A3", "A4", "A3", "A5")]
             for name, payload in zip(names, pngs):
                 (evidence / f"{name}.png").write_bytes(payload)
+            _write_scene_sequence(evidence, list(zip(names, [(mark,) for mark in ("A2", "A3", "A4", "A3", "A5")])))
             (evidence / "history-start.png").write_bytes(_solid((0, 0, 0)))
             with self.assertRaises(IdentityAssertionError):
                 evaluate_visual_identity(evidence, "journey-b")
@@ -454,6 +665,7 @@ class NegativeIdentityTests(unittest.TestCase):
             labels,
         ):
             (evidence / f"{name}.png").write_bytes(_fixture_png(label))
+        _write_scene_sequence(evidence, list(zip(("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous"), [(mark,) for mark in labels])))
 
     def test_evaluate_tvos_flow_rejects_changed_pause_frame(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
@@ -462,6 +674,7 @@ class NegativeIdentityTests(unittest.TestCase):
             (evidence / "pause-immediate.png").write_bytes(_fixture_png("A4"))
             (evidence / "pause-after-10s.png").write_bytes(_fixture_png("A5"))
             (evidence / "resumed.png").write_bytes(_fixture_png("A5"))
+            _write_scene_sequence(evidence, [("pause-immediate", ("A4",)), ("pause-after-10s", ("A5",)), ("resumed", ("A5",))])
             with self.assertRaises(IdentityAssertionError):
                 evaluate_visual_identity(evidence, "tvos-flow")
 
@@ -477,6 +690,117 @@ class NegativeIdentityTests(unittest.TestCase):
 
 
 class PositiveIdentityTests(unittest.TestCase):
+    def test_saturated_tv_index_uses_publications_for_next_pause_and_resume(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
+        marks = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            for name, mark in zip(names, marks):
+                (evidence / f"{name}.png").write_bytes(_fixture_png(mark))
+            _write_scene_sequence(evidence, list(zip(names, [(mark,) for mark in marks])))
+            for name in names:
+                path = evidence / f"{name}.scene.json"
+                payload = json.loads(path.read_text())
+                for point in ("before", "after"):
+                    payload[point]["index"] = "5/5"
+                path.write_text(json.dumps(payload))
+            self.assertEqual(evaluate_visual_identity(evidence, "tvos-flow")["verdict"], "PASS")
+            path = evidence / "history-start.scene.json"
+            payload = json.loads(path.read_text())
+            for point in ("before", "after"):
+                fields = dict(item.split("=", 1) for item in payload[point]["manifest"].split(";"))
+                fields.pop("actionTimestamp")
+                fields.pop("scenePublishTimestamp")
+                fields["publishReason"] = "initial"
+                payload[point]["manifest"] = ";".join(f"{key}={value}" for key, value in fields.items())
+            path.write_text(json.dumps(payload))
+            self.assertEqual(evaluate_visual_identity(evidence, "tvos-flow")["verdict"], "PASS")
+
+    def test_tv_publication_rejects_no_advance_pause_republication_and_unreadable_signals(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
+        marks = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")
+        advance_error = "Scene advance pixels and index sequence disagree: scene publication did not advance"
+        resume_error = "Scene resume pixels and index sequence disagree: scene publication did not advance"
+        pause_error = "Scene round-trip pixels and index sequence disagree: pause publication changed"
+        unreadable_error = "resumed: missing or unreadable scene publication evidence"
+        cases = (("history-first-next", "1", "1.001", advance_error), ("history-second-next", "2", "2.001", advance_error),
+                 ("resumed", "6", "6.001", resume_error), ("pause-after-10s", "8", "8.001", pause_error),
+                 ("resumed", "nan", "nan", unreadable_error), ("resumed", "7", "6", unreadable_error),
+                 ("resumed", None, None, unreadable_error), ("resumed", "7", None, unreadable_error))
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            for name, mark in zip(names, marks):
+                (evidence / f"{name}.png").write_bytes(_fixture_png(mark))
+            for saturated in (False, True):
+                for name, action, published, error_message in cases:
+                    with self.subTest(saturated=saturated, frame=name, action=action, published=published):
+                        _write_scene_sequence(evidence, list(zip(names, [(mark,) for mark in marks])))
+                        for frame in names:
+                            path = evidence / f"{frame}.scene.json"
+                            payload = json.loads(path.read_text())
+                            for point in ("before", "after"):
+                                if saturated:
+                                    payload[point]["index"] = "5/5"
+                                if frame == name:
+                                    fields = dict(item.split("=", 1) for item in payload[point]["manifest"].split(";"))
+                                    for key, value in (("actionTimestamp", action), ("scenePublishTimestamp", published)):
+                                        if value is None:
+                                            fields.pop(key)
+                                        else:
+                                            fields[key] = value
+                                    payload[point]["manifest"] = ";".join(f"{key}={value}" for key, value in fields.items())
+                            path.write_text(json.dumps(payload))
+                        with self.assertRaisesRegex(IdentityAssertionError, "^" + error_message + "$"):
+                            evaluate_visual_identity(evidence, "tvos-flow")
+
+    def test_initial_publication_exemption_rejects_next_pause_and_resume(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
+        marks = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")
+        cases = (
+            ("history-first-next", "Scene advance pixels and index sequence disagree: scene publication did not advance"),
+            ("pause-immediate", "Scene round-trip pixels and index sequence disagree: pause publication changed"),
+            ("resumed", "Scene resume pixels and index sequence disagree: scene publication did not advance"),
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            for name, mark in zip(names, marks):
+                (evidence / f"{name}.png").write_bytes(_fixture_png(mark))
+            for saturated in (False, True):
+                for name, error_message in cases:
+                    with self.subTest(saturated=saturated, frame=name):
+                        _write_scene_sequence(evidence, list(zip(names, [(mark,) for mark in marks])))
+                        for frame in names:
+                            path = evidence / f"{frame}.scene.json"
+                            payload = json.loads(path.read_text())
+                            for point in ("before", "after"):
+                                if saturated:
+                                    payload[point]["index"] = "5/5"
+                                if frame == name:
+                                    fields = dict(item.split("=", 1) for item in payload[point]["manifest"].split(";"))
+                                    fields.pop("actionTimestamp")
+                                    fields.pop("scenePublishTimestamp")
+                                    fields["publishReason"] = "initial"
+                                    payload[point]["manifest"] = ";".join(f"{key}={value}" for key, value in fields.items())
+                            path.write_text(json.dumps(payload))
+                        with self.assertRaisesRegex(IdentityAssertionError, "^" + error_message + "$"):
+                            evaluate_visual_identity(evidence, "tvos-flow")
+
+    def test_tvos_backward_history_does_not_rewind_the_forward_pool_cursor(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
+        labels = ("A1", "A2", "A3", "A2", "A1", "A4", "A4", "A5")
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            for name, label in zip(names, labels):
+                (evidence / f"{name}.png").write_bytes(_fixture_png(label))
+            _write_scene_sequence(evidence, list(zip(names, [(label,) for label in labels])))
+            for name in names[3:5]:
+                path = evidence / f"{name}.scene.json"
+                data = json.loads(path.read_text())
+                for point in ("before", "after"):
+                    data[point]["index"] = "3/5"
+                path.write_text(json.dumps(data))
+            self.assertEqual(evaluate_visual_identity(evidence, "tvos-flow")["verdict"], "PASS")
+
     def test_vertical_photo_pair_requires_the_same_public_source(self) -> None:
         for first, second, expected in [("a", "a", "a"), ("b", "b", "b"),
                                          ("a", "b", None), ("b", "a", None)]:
@@ -555,9 +879,10 @@ class PositiveIdentityTests(unittest.TestCase):
                 ("A2", "A4", "A5", "A4", "A2"),
             ):
                 (evidence / f"{name}.png").write_bytes(_fixture_png(label))
+            _write_scene_sequence(evidence, list(zip(("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous"), [(mark,) for mark in ("A2", "A4", "A5", "A4", "A2")])))
             report = evaluate_visual_identity(evidence, "journey-b")
             self.assertEqual(report["verdict"], "PASS")
-            self.assertEqual(report["steps"]["history-first-next"]["mark"], "A4")
+            self.assertEqual(report["steps"]["history-first-next"]["signature"], ["A4"])
 
             pause = Path(raw_directory) / "pause"
             pause.mkdir()
@@ -580,8 +905,9 @@ class PositiveIdentityTests(unittest.TestCase):
             ):
                 (tvos / f"{name}.png").write_bytes(_fixture_png(label))
             (tvos / "pause-immediate.png").write_bytes(_fixture_png("A4"))
-            (tvos / "pause-after-10s.png").write_bytes(_darken(_fixture_png("A4"), 0.4))
+            (tvos / "pause-after-10s.png").write_bytes(_fixture_png("A4"))
             (tvos / "resumed.png").write_bytes(_fixture_png("A5"))
+            _write_scene_sequence(tvos, list(zip(("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed"), [(mark,) for mark in ("A4", "A5", "A1", "A5", "A4", "A4", "A4", "A5")])))
             self.assertEqual(evaluate_visual_identity(tvos, "tvos-flow")["verdict"], "PASS")
 
     def test_exif_card_composite_does_not_change_a2_identity(self) -> None:
@@ -643,77 +969,6 @@ class ReviewedScreenshotCalibrationTests(unittest.TestCase):
         self.assertEqual(immediate.mark, "A4")
         assert_pause_hold(immediate, held)
         assert_resumed_advanced(held, resumed)
-
-
-def _extract_swift_func(source: str, name: str) -> str:
-    needle = f"func {name}("
-    start = source.find(needle)
-    if start < 0:
-        raise AssertionError(f"iOS UITest lacks {name}; nil marks must not reach JSON via a heterogeneous array")
-    line_start = source.rfind("\n", 0, start) + 1
-    brace = source.find("{", start)
-    if brace < 0:
-        raise AssertionError(f"{name} has no function body")
-    depth = 0
-    for index in range(brace, len(source)):
-        character = source[index]
-        if character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                return source[line_start : index + 1].strip()
-    raise AssertionError(f"{name} function body is not closed")
-
-
-def _run_swift(source: str) -> str:
-    with tempfile.TemporaryDirectory() as raw_directory:
-        path = Path(raw_directory) / "nil_mark_json.swift"
-        path.write_text(source, encoding="utf-8")
-        completed = subprocess.run(
-            ["swift", str(path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-    if completed.returncode != 0:
-        raise AssertionError((completed.stderr or completed.stdout).strip())
-    return completed.stdout
-
-
-class IOSVisualIdentityJSONEncodingTests(unittest.TestCase):
-    def test_nil_mark_is_valid_json_object(self) -> None:
-        path = REPO_ROOT / "immichSlidesUITests" / "StrictE2EFirstBatchIOSUITests.swift"
-        source = "\n".join(
-            candidate.read_text(encoding="utf-8")
-            for candidate in [path, *sorted(path.parent.glob(f"{path.stem}+*.swift"))]
-        )
-        helper = _extract_swift_func(source, "jsonSafeMarks")
-        output = _run_swift(
-            "\n".join(
-                [
-                    "import Foundation",
-                    helper,
-                    "let payload: [String: Any] = [",
-                    '    "marks": jsonSafeMarks([nil, "A2", nil])',
-                    "]",
-                    "guard JSONSerialization.isValidJSONObject(payload) else {",
-                    '    fputs("invalid JSON object\\n", stderr)',
-                    "    exit(1)",
-                    "}",
-                    "let data = try JSONSerialization.data(withJSONObject: payload)",
-                    "let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]",
-                    'let marks = object["marks"] as! [Any]',
-                    'guard marks[0] is NSNull, marks[1] as? String == "A2", marks[2] is NSNull else {',
-                    "    fputs(String(data: data, encoding: .utf8) ?? \"\", stderr)",
-                    "    exit(1)",
-                    "}",
-                    'print("OK")',
-                ]
-            )
-        )
-        self.assertIn("OK", output)
 
 
 if __name__ == "__main__":

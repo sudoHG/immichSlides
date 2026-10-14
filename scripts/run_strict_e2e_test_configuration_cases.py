@@ -437,6 +437,42 @@ class StrictE2ERunnerTestsCasesConfiguration:
             with self.subTest(key=key), self.assertRaises(CommandError):
                 validate_app_launch_environment({key: "present"})
 
+    def test_scene_launch_audit_declares_all_known_swift_launch_keys(self) -> None:
+        from strict_e2e_runner_support import strict_app_launch_environment, write_app_launch_environment_audit
+        probe = "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"
+        cases = {
+            "journey-b": {probe: "1"}, "tvos-flow": {probe: "1"},
+            "ios-lifecycle-first-wake": {probe: "1"}, "ios-lifecycle-settings": {},
+            "ios-lifecycle-pause": {}, "ios-lifecycle-background": {},
+            "pause-window": {probe: "1", "UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
+                             "UI_TEST_SERVER_URL": None, "UI_TEST_API_KEY": "immichslides-public-e2e-key"},
+            "tvos-directional-wake": {"UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
+                                      "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT": "1", "UI_TEST_SERVER_URL": None,
+                                      "UI_TEST_API_KEY": "immichslides-public-e2e-key"},
+            "journey-a": {}, "smoke": {},
+        }
+        for suite, expected in cases.items():
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:
+                environment = strict_app_launch_environment(suite)
+                self.assertEqual(environment, expected)
+                actual = {key: value if value is not None else "http://127.0.0.1:12345/api" for key, value in expected.items()}
+                validate_app_launch_environment(actual, suite=suite)
+                write_app_launch_environment_audit(Path(raw), suite)
+                audit = json.loads((Path(raw) / "app-launch-environment-audit.json").read_text())
+                self.assertEqual(audit["launch_environment_keys"], sorted(expected))
+                self.assertEqual(audit["forbidden_keys_present"], [])
+                self.assertEqual(audit["declaration_kind"], "static_swift_launch_keys")
+                for key in ("UI_TEST_ANY_FUTURE_KEY", "TEST_RUNNER_" + probe, "SIMCTL_CHILD_" + probe):
+                    with self.assertRaises(CommandError):
+                        validate_app_launch_environment({**actual, key: "1"}, suite=suite)
+                for key in expected:
+                    with self.assertRaises(CommandError):
+                        validate_app_launch_environment({**actual, key: "invalid"}, suite=suite)
+                if probe not in expected:
+                    with self.assertRaisesRegex(CommandError, "^Forbidden keys found in the App launchEnvironment: " + probe + "$"):
+                        validate_app_launch_environment({**actual, probe: "1"}, suite=suite)
+
+
 
     def test_xcodebuild_command_targets_one_platform_smoke_and_independent_outputs(self) -> None:
         for platform, scheme, test_method in (

@@ -624,6 +624,27 @@ print("\\(candidate != original)|\\(result.status.rawValue)|\\(result.mark ?? "n
 
 
 class AlbumEditSwitchVisualContractTestsCases:
+    def test_tv_switch_requires_every_slot_in_both_orientations_to_match_the_album(self) -> None:
+        from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+        for fixture_set in ("a", "b"):
+            other = "b" if fixture_set == "a" else "a"
+            for horizontal in (False, True):
+                with self.subTest(fixture=fixture_set, horizontal=horizontal), tempfile.TemporaryDirectory() as raw:
+                    evidence = Path(raw)
+                    self._write_valid_evidence(evidence, fixture_set)
+                    positive = FrameGlyphBoundaryTests._pair(fixture_set, 4, 5, horizontal=horizontal)
+                    (evidence / "album-switch-b-play-1.png").write_bytes(positive)
+                    self.assertEqual(evaluate_filter_visual_identity(evidence, "tvos-edit-switch")["verdict"], "PASS")
+                    for case, first, source, options in (("wrong album", 1, fixture_set, {}),
+                                                        ("other fixture", 4, other, {}),
+                                                        ("mixed", 4, fixture_set, {"second_fixture": other}),
+                                                        ("unreadable", 4, fixture_set, {"unreadable": True})):
+                        with self.subTest(case=case):
+                            frame = FrameGlyphBoundaryTests._pair(source, first, 5, horizontal=horizontal, **options)
+                            (evidence / "album-switch-b-play-1.png").write_bytes(frame)
+                            with self.assertRaises(FilterContractError):
+                                evaluate_filter_visual_identity(evidence, "tvos-edit-switch")
+
     def _render_edit_switch_frame(self, fixture_set: str, shape: str, index: int = 4, second_fixture: str | None = None,
                                  unreadable_top: str = "") -> bytes:
         def photo(number: int, source: str = fixture_set):
@@ -745,7 +766,7 @@ class AlbumEditSwitchVisualContractTestsCases:
                     evaluate_filter_visual_identity(evidence, suite)
                 self.assertIn("Missing visual input", str(raised.exception))
 
-    def test_tvos_keeps_the_previous_region_reader_at_real_screen_size(self) -> None:
+    def test_tvos_single_photo_keeps_color_and_public_texture_at_real_screen_size(self) -> None:
         for fixture_set in ("a", "b"):
             with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)

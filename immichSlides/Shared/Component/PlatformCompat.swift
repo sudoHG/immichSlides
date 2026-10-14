@@ -19,15 +19,20 @@ enum PlatformCompat {
     /// XCTest and UI-test launch flags never change Release behavior.
     static var isRunningXCTest: Bool {
         #if DEBUG
-        let environment = ProcessInfo.processInfo.environment
-        return environment["XCTestConfigurationFilePath"] != nil
-            || environment.keys.contains { $0.hasPrefix("UI_TEST_") }
+        return isRunningXCTest(environment: ProcessInfo.processInfo.environment)
         #else
         return false
         #endif
     }
 
     #if DEBUG
+    static func isRunningXCTest(environment: [String: String]) -> Bool {
+        environment["XCTestConfigurationFilePath"] != nil
+            || environment.keys.contains {
+                $0.hasPrefix("UI_TEST_") && $0 != "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"
+            }
+    }
+
     static var shouldResetStateForTesting: Bool {
         ProcessInfo.processInfo.environment["UI_TEST_RESET_STATE"] == "1"
     }
@@ -109,15 +114,21 @@ enum PlatformCompat {
     }
     #endif
 
-    /// UI tests launch the app with UI_TEST_RESET_STATE or an XCTest configuration; release builds never expose probes.
+    /// UI tests can expose read-only diagnostics without resetting state; Release never exposes probes.
     static var shouldExposeUITestProbes: Bool {
         #if DEBUG
-        let environment = ProcessInfo.processInfo.environment
-        return environment["XCTestConfigurationFilePath"] != nil || environment["UI_TEST_RESET_STATE"] == "1"
+        return shouldExposeUITestProbes(environment: ProcessInfo.processInfo.environment)
         #else
         return false
         #endif
     }
+
+    #if DEBUG
+    static func shouldExposeUITestProbes(environment: [String: String]) -> Bool {
+        environment["XCTestConfigurationFilePath"] != nil || environment["UI_TEST_RESET_STATE"] == "1"
+            || environment["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"] == "1"
+    }
+    #endif
 
     /// UI tests set UI_TEST_FORCE_MODE_SELECTION to turn a configured cold launch into an onboarding session; always false in Release.
     static var shouldForceModeSelectionForUITesting: Bool {

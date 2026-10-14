@@ -302,23 +302,11 @@ extension StrictE2EFirstBatchIOSUITests {
         }
     }
 
-    // String? ?? NSNull() has no common type and cannot go into the array; upcast to Any? first to get JSON null.
-    func jsonSafeMarks(_ marks: [String?]) -> [Any] {
-        marks.map { $0 as Any? ?? NSNull() }
-    }
-
     @MainActor
-    func captureHistoryIdentity(app: XCUIApplication, step: String) -> StrictE2EPhotoIdentity.Result {
+    func captureHistoryIdentity(app: XCUIApplication, step: String) -> [String: Any] {
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
         revealPlaybackControlsWithoutWaitHelper(app: app)
-        let png = captureNamedPNG(app: app, name: step)
-        let identity = StrictE2EPhotoIdentity.classify(png: png)
-        XCTAssertEqual(
-            identity.status,
-            .match,
-            "Visual ID failed \(step): \(identity.status.rawValue) \(identity.notes.joined(separator: " "))"
-        )
-        return identity
+        return captureStrictSceneFrame(app: app, name: step, attachmentName: step)
     }
 
     @MainActor

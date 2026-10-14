@@ -1119,6 +1119,25 @@ class ABMixTests(unittest.TestCase):
         self.assertEqual(report["verdict"], "PASS")
         self.assertEqual(report["b_pattern"], "b")
 
+    def test_server_switch_a_frame_checks_every_slot_for_both_orientations(self) -> None:
+        from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+        for horizontal in (False, True):
+            with self.subTest(horizontal=horizontal), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_server_switch_pass(directory)
+                positive = FrameGlyphBoundaryTests._pair("a", 2, 3, horizontal=horizontal, seam=1382 if horizontal else None)
+                (directory / "server-switch-a-play-1.png").write_bytes(positive)
+                self.assertEqual(evaluate_server_switch_evidence(directory)["verdict"], "PASS")
+                for case, first, source, options in (("wrong album", 4, "a", {}),
+                                                    ("other fixture", 2, "b", {}),
+                                                    ("mixed", 2, "a", {"second_fixture": "b"}),
+                                                    ("unreadable", 2, "a", {"unreadable": True})):
+                    with self.subTest(case=case):
+                        frame = FrameGlyphBoundaryTests._pair(source, first, 3, horizontal=horizontal, **options)
+                        (directory / "server-switch-a-play-1.png").write_bytes(frame)
+                        with self.assertRaises((AlbumServerContractError, FilterContractError)):
+                            evaluate_server_switch_evidence(directory)
+
     def test_synthetic_tvos_server_switch_frames_are_pattern_b(self) -> None:
         for next_button_focused in (False, True):
             frame = _tvos_b_pair_screen(next_button_focused)

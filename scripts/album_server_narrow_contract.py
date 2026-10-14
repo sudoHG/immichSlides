@@ -27,6 +27,8 @@ from strict_e2e_photo_identity import (
     classify_public_pattern,
     classify_screenshot,
     public_letter_from_bytes,
+    public_scene_photos_from_bytes,
+    IdentityAssertionError,
 )
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 
@@ -374,8 +376,13 @@ def evaluate_server_switch_evidence(evidence_dir: Path) -> dict[str, Any]:
     manifest_b = load_member_manifest(evidence_dir / "member-manifest-b.json")
     if not (evidence_dir / "server-switch-a-play-1.png").is_file():
         raise AlbumServerContractError("Missing screenshot of A's selected scope and photo")
-    _classified_mark(evidence_dir, "server-switch-a-play-1")
-    _require_public_pattern(evidence_dir, "server-switch-a-play-1", "a")
+    try:
+        a_photos = public_scene_photos_from_bytes((evidence_dir / "server-switch-a-play-1.png").read_bytes())
+    except IdentityAssertionError as error:
+        raise AlbumServerContractError(str(error)) from error
+    if any(photo.letter != "A" for photo in a_photos):
+        raise AlbumServerContractError("server-switch-a-play-1: every slot must show the public pattern a")
+    assert_playback_marks_in_target([photo.mark for photo in a_photos], "a")
     b_names = [name for name in ("switch-b-play-1", "switch-b-play-2") if (evidence_dir / f"{name}.png").is_file()]
     if not b_names:
         raise AlbumServerContractError("After switching servers there must be a screenshot of B's public pattern")

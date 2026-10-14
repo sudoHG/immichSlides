@@ -29,9 +29,13 @@ product inventory and signing inspection. No competing archive producer or artif
 selection mechanism is introduced.
 
 `filter-edit-switch` checks both the original whole-frame color identity and each
-vertical photo slot against the non-target album's A1–A5 classifier labels. Public
-background colors locate slots independently of glyphs; obscured rows remain in a
-slot only when the surrounding rows identify the same photo. Each slot requires
+full-span photo slot against the non-target album's A1–A5 classifier labels. Public
+background colors locate slots independently of glyphs along both rows and columns.
+Only a clean partition into vertical stacks or horizontal neighbors is supported;
+two-dimensional grids, conflicting axes and mixed palettes fail unreadable. Obscured
+lines remain in a slot only when the surrounding lines identify the same photo.
+A one-slot partition requires agreement from both axes, so a blank band or foreign
+footer cannot borrow the other axis's dominant photo. Each collage slot requires
 the active fixture's sharp A/B bitmap, with at least 14 observed cells, five white
 cells and agreement with every observed cell. A visible digit must also agree
 with the slot's color identity. Unobstructed public texture rows cross-check the
@@ -41,8 +45,114 @@ failure reasons. White bands shorter than ten sampled pixels are excluded; up to
 four blank rows join adjacent bitmap ink. Wider EXIF text bands may remain
 unrecognized, but cannot supply a missing slot's identity.
 
-`tvos-edit-switch` retains the previous centered region reader and whole-frame
-album membership check. The reader used for single-photo surrounds is unchanged.
+`journey-b` and `tvos-flow` compare complete per-slot signatures in spatial order
+(top to bottom or left to right) for history, pause and resume. Swapping two slots
+changes the signature even when the photo set is unchanged. Swift rejects black,
+blank, incomplete or mid-transition frames
+and records manifest/render probes immediately before and after the PNG, without
+adding a wait or retry. Python independently reads every pixel slot, matches its
+public identity to `ledgerSceneAssets` using the fixture's hashed references, and
+checks stable rendering and slot readiness. tvOS additionally cross-checks
+`actionTimestamp` and `scenePublishTimestamp`: Next and Resume require newer
+publications, and Pause requires the same publication. The invisible index probe
+clamps the scene cursor to the asset count, so it can remain `5/5` across advances;
+it must remain readable and consistent during capture but cannot prove progress.
+Initial presentation (`publishReason=initial`) has no action timing until the
+first navigation; the next publication must still provide valid finite timing.
+Backward history identity uses the complete pixel signature and ledger references.
+Probes cannot supply a
+missing pixel identity. A5 and A1+A5 have different signatures.
+
+`UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
+Probe-only launches are `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
+and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
+`run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
+The `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`
+selectors use an empty launch environment and forbid the scene probe.
+`pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
+`UI_TEST_RESET_STATE` and `UI_TEST_FORCE_MODE_SELECTION`.
+`tvos-directional-wake` sets those four legacy keys plus
+`UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT`, and does not set the scene probe.
+Other probe-key launches are the configured SmartFill launch helpers in
+`PlaybackHistoryIOSUITests`, `ScenePresentationContractUITests`, and
+`FilterSummaryTVOSVisualUITests.testTVOSSlideShowControlBarButtonsCanActivateOnSelect`.
+They also set other `UI_TEST_*` keys, so their XCTest mode remains enabled.
+The runner's launch audit is a **static declaration of Swift launch keys**,
+labelled `declaration_kind=static_swift_launch_keys`; it is not read from the app.
+The policy helper validates supplied maps against those declarations, exact
+constant values and a public loopback URL. The runner does not yet compare this
+declaration against Swift's xcresult launch-key attachment; that comparison is a
+follow-up under #434. An empty `forbidden_keys_present` is not runtime evidence.
+This exact key is excluded from `isRunningXCTest`: a probe-only launch keeps
+the real Keychain path, never enables `immichApiKey.xctestFallback`, and preserves
+the ordinary Info.plist debug-server read. Other XCTest keys retain their existing
+effect. The flag does not request a reset or bypass onboarding; Release exposes
+neither probe. For Debug first-wake and iOS access-lifecycle, which already used the
+probe-only key on main, this is a change from the UserDefaults API-key fallback
+to the real Keychain path, including ordinary Info.plist behavior; it is not a
+restoration relative to main. The strict `ios-lifecycle-first-wake` runner uses
+the Release settings-resume scheme; Release already disables XCTest mode and
+the fallback on main, so that run does not prove the Debug mode change.
+Their additional Debug manifest/motion probe exposure
+also needs device verification. New pure environment tests in the existing `UnitTestHostTests`
+file guard probe visibility and isolation from XCTest mode. Capture
+sidecars are written before an assertion can stop XCTest, preserving failed
+probe observations for diagnosis.
+The iOS resume-state wait also requires a complete opaque stable frame before
+the second Pause that starts history. The tvOS resumed publication-change wait requires
+the same stable capture window, with motion progress in its normalized 0...1
+range. This excludes the late-motion interval that can cross into a fade while
+capturing. Their existing 4-second and 3-second deadlines and failure prefixes
+remain unchanged; unmet conditions fail within those windows. Pause still freezes
+mid-fade by design, which the dedicated pause-window suite covers. These history
+and resumed identity captures require a stable frame and add no retry or extra wait.
+The tvOS wait latches a newer action/publication pair from one app snapshot, then
+checks the stable window within the same deadline. Index, render and manifest
+come from that snapshot; it neither wakes the bar nor queries its missing probe.
+
+These scene contracts, `tvos-edit-switch`, the A frame of server-switch, and
+`tvos-person`/`tvos-album` use the same reader. Uniformly across geometries, a
+segmentable single-photo frame retains #381's whole-frame color and visible
+public-texture judgement, including clipped glyphs. Collages require the strict
+glyph, texture and membership rules for every slot. An unsegmentable frame never
+falls back to color classification. The surround reader still requires both the
+matched public original and its blurred background.
+The palette splitter requires only 18 matching samples per line; it does not
+prove full pixel coverage inside a slot. Black bars, blank bands or blurred
+padding inside a slot can escape this identity reader, and planner-reported
+coverage is geometry rather than rendered-pixel evidence. Adjacent slots of
+the same photo can also merge; scene contracts check slot counts and references,
+while filter contracts have no corresponding probe check. Pixel coverage needs
+separate validation; this reader's thresholds remain unchanged.
+Unobstructed checker rows must have consistent cell spacing, within two sampled
+pixels of raster rounding, with edge cells no wider than interior cells. This
+rejects a same-number foreign stripe beside a checker photo. Narrow edge crops
+are not classified as stripes by themselves; the complete photo row supplies
+the texture evidence. These rules apply identically to both slot orientations.
+
+Within eight raw pixels of a screen edge, segmentation alone may recognize a
+unique interpolation between the two colors of the same public photo. Interior
+palette, glyph and texture evidence keeps the original tolerance of 12; the
+edge interpolation never supplies texture or glyph evidence. Black, white,
+ambiguous palette interpolations and blended interiors remain unreadable.
+Exact palette matches take precedence. The residual interpolation risk is a
+non-palette color near a same-photo color segment on the outermost one to three
+sample lines. Nearest-neighbour sampling also misses features narrower than
+one sample step anywhere: TV 8 pixels, iPad about 3.4, iPhone about 2.4.
+The measured A1 edge sample (77,74,72) motivates this bounded rule.
+
+The pinned Apple TV 4K (3rd generation), tvOS 27.0, produces **3840x2160** PNGs.
+Scanner-approved frames measured the A2/A3 seam at x=1382 and the A5/A3 seam at
+x=1536. The entry hint and playback controls fit inside (1256,1436)-(2580,1925),
+including a four-pixel margin; tvOS has no home indicator. Only measured scene
+captures exclude that bounded rectangle from palette and glyph evidence. It
+cannot hide a full-height or full-width slot. Overlay ink cannot create bitmap
+bands or supply observed cells; letters and digits must still agree with every
+remaining cell and meet the unchanged evidence minima. The device-pin guard
+requires a measured geometry for all three pinned strict devices.
+When a measured overlay splits a glyph, ink fragments are joined only across a
+gap wholly inside that overlay and within one palette slot. The ten-pixel band
+minimum is applied after joining; short unjoined fragments remain excluded.
 
 The iOS `album-empty` and `filter-album` contracts select their path by the raw
 capture size. Unmeasured sizes retain the original whole-frame classifier and

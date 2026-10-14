@@ -170,7 +170,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         }
 
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminate() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
@@ -314,7 +314,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             indexProbe.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "The playback page must expose the read-only index probe."
         )
-        let indexAtA = try requireIndexValue(indexProbe)
+        _ = try requireIndexValue(indexProbe)
         XCTAssertTrue(
             previousButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "The start of the history chain must show the previous button."
@@ -333,14 +333,12 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             message: "Focus must be able to move from Play/Pause to Next."
         )
         XCUIRemote.shared.press(.select)
-        let indexAfterFirstNext = try waitForIndexChange(
-            indexProbe,
-            from: indexAtA,
-            app: app,
-            playPauseButton: playPauseButton,
-            timeout: TestWait.seconds(.product(10))
+        XCTAssertTrue(
+            waitForScenePublicationAdvance(
+                app: app, baseline: historyStart["after"] as? [String: String] ?? [:],
+                timeout: TestWait.seconds(.product(10))),
+            "The first next must advance the playback cursor."
         )
-        XCTAssertNotEqual(indexAfterFirstNext, indexAtA, "The first next must advance the playback cursor.")
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         let firstNext = captureVisualIdentity(
@@ -356,16 +354,10 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             message: "After the first next settles, focus must be able to move to Next again."
         )
         XCUIRemote.shared.press(.select)
-        let indexAfterSecondNext = try waitForIndexChange(
-            indexProbe,
-            from: indexAfterFirstNext,
-            app: app,
-            playPauseButton: playPauseButton,
-            timeout: TestWait.seconds(.product(10))
-        )
-        XCTAssertNotEqual(
-            indexAfterSecondNext,
-            indexAfterFirstNext,
+        XCTAssertTrue(
+            waitForScenePublicationAdvance(
+                app: app, baseline: firstNext["after"] as? [String: String] ?? [:],
+                timeout: TestWait.seconds(.product(10))),
             "The second next must advance the playback cursor further."
         )
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
@@ -425,13 +417,6 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             evidenceName: "history-second-previous",
             attachmentName: "tvos-playback-09-history-return-step-2"
         )
-        do {
-            try StrictE2EPhotoIdentity.assertRoundTrip(
-                [historyStart, firstNext, secondNext, firstPrevious, secondPrevious]
-            )
-        } catch {
-            XCTFail(error.localizedDescription)
-        }
 
         moveFocus(
             .right,
@@ -468,20 +453,20 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             },
             "Pressing Select again after pausing must resume autoplay."
         )
-        let indexBeforeAutoPlay = try requireIndexValue(indexProbe)
+        let autoPlayBaseline = strictSceneFrameObservation(app: app)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.autoPlayObservationSeconds))
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         XCTAssertTrue(
             waitForFocus(on: playPauseButton, timeout: TestWait.seconds(.product(6))),
             "After auto-advance, focus on wake must return to Play/Pause."
         )
-        let indexAfterAutoPlay = try waitForIndexChange(
-            indexProbe,
-            from: indexBeforeAutoPlay,
-            app: app,
-            playPauseButton: playPauseButton,
-            timeout: TestWait.seconds(.product(3))
+        XCTAssertTrue(
+            waitForScenePublicationAdvance(
+                app: app, baseline: autoPlayBaseline, timeout: TestWait.seconds(.product(3))),
+            "The index probe must change after a playback action."
         )
+        let publicationAfterAutoPlay = scenePublication(in: strictSceneFrameObservation(app: app))
+        XCTAssertNotNil(publicationAfterAutoPlay, "The index probe must change after a playback action.")
         attachScreenshot(app: app, name: "tvos-playback-10-auto-advanced-visible-frame")
 
         let resumedValue = String(describing: playPauseButton.value ?? "")
@@ -495,8 +480,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         let pauseStartedAt = Date()
         let pausedControlValue = String(describing: playPauseButton.value ?? "")
         XCTAssertEqual(
-            try requireIndexValue(indexProbe),
-            indexAfterAutoPlay,
+            scenePublication(in: strictSceneFrameObservation(app: app)),
+            publicationAfterAutoPlay,
             "Pausing must not advance an extra photo."
         )
         let pauseImmediate = captureVisualIdentity(
@@ -514,8 +499,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             "The paused-frame comparison must span at least 10 seconds."
         )
         XCTAssertEqual(
-            try requireIndexValue(indexProbe),
-            indexAfterAutoPlay,
+            scenePublication(in: strictSceneFrameObservation(app: app)),
+            publicationAfterAutoPlay,
             "During a pause of at least 10 seconds, autoplay must not catch up."
         )
         XCTAssertTrue(
@@ -527,11 +512,6 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             evidenceName: "pause-after-10s",
             attachmentName: "tvos-playback-12-pause-after-10-seconds-visible-frame"
         )
-        do {
-            try StrictE2EPhotoIdentity.assertPauseHold(pauseImmediate, pauseHeld)
-        } catch {
-            XCTFail(error.localizedDescription)
-        }
         let pauseEvidence = XCTAttachment(
             string: """
                 pauseStartedAtUnixSeconds=\(pauseStartedAt.timeIntervalSince1970)
@@ -559,16 +539,13 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             waitForFocus(on: playPauseButton, timeout: TestWait.seconds(.product(6))),
             "After autoplay resumes, focus on wake must return to Play/Pause."
         )
-        let indexAfterResume = try waitForIndexChange(
-            indexProbe,
-            from: indexAfterAutoPlay,
-            app: app,
-            playPauseButton: playPauseButton,
-            timeout: TestWait.seconds(.product(3))
-        )
-        XCTAssertNotEqual(
-            indexAfterResume,
-            indexAfterAutoPlay,
+        XCTAssertTrue(
+            waitForScenePublicationAdvance(
+                app: app,
+                baseline: pauseHeld["after"] as? [String: String] ?? [:],
+                timeout: TestWait.seconds(.product(3)),
+                requiresStableCaptureWindow: true
+            ),
             "After resuming, playback must advance to another photo."
         )
         let resumed = captureVisualIdentity(
@@ -576,24 +553,15 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             evidenceName: "resumed",
             attachmentName: "tvos-playback-13-resumed-advanced-visible-frame"
         )
-        do {
-            try StrictE2EPhotoIdentity.assertResumedAdvanced(pauseHeld, resumed)
-        } catch {
-            XCTFail(error.localizedDescription)
-        }
         StrictE2EVisualEvidence.writeJSON(
             [
                 "suite": "tvos-flow",
                 "history": [
-                    StrictE2EPhotoIdentity.payload(historyStart),
-                    StrictE2EPhotoIdentity.payload(firstNext),
-                    StrictE2EPhotoIdentity.payload(secondNext),
-                    StrictE2EPhotoIdentity.payload(firstPrevious),
-                    StrictE2EPhotoIdentity.payload(secondPrevious)
+                    historyStart, firstNext, secondNext, firstPrevious, secondPrevious
                 ],
-                "pause_immediate": StrictE2EPhotoIdentity.payload(pauseImmediate),
-                "pause_after_10s": StrictE2EPhotoIdentity.payload(pauseHeld),
-                "resumed": StrictE2EPhotoIdentity.payload(resumed)
+                "pause_immediate": pauseImmediate,
+                "pause_after_10s": pauseHeld,
+                "resumed": resumed
             ],
             name: "visual-identity.json"
         )
@@ -759,27 +727,73 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         )
     }
 
+    private struct ScenePublication: Equatable {
+        let actionTimestamp: TimeInterval
+        let publishedTimestamp: TimeInterval
+    }
+
+    private func scenePublication(in observation: [String: String]) -> ScenePublication? {
+        let fields = SharedSceneEvidenceManifest.parseKeyValueFields(observation["manifest"] ?? "")
+        guard let action = Double(fields["actionTimestamp"] ?? ""),
+            let published = Double(fields["scenePublishTimestamp"] ?? ""),
+            action.isFinite, published.isFinite, action > 0, published >= action
+        else { return nil }
+        return ScenePublication(actionTimestamp: action, publishedTimestamp: published)
+    }
+
     @MainActor
-    private func waitForIndexChange(
-        _ indexProbe: XCUIElement,
-        from oldValue: String,
+    private func waitForScenePublicationAdvance(
         app: XCUIApplication,
-        playPauseButton: XCUIElement,
-        timeout: TimeInterval
-    ) throws -> String {
+        baseline: [String: String],
+        timeout: TimeInterval,
+        requiresStableCaptureWindow: Bool = false
+    ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
+        let baselinePublication = scenePublication(in: baseline)
+        let baselineFields = SharedSceneEvidenceManifest.parseKeyValueFields(baseline["manifest"] ?? "")
+        let isInitialPublication =
+            baselineFields["publishReason"] == "initial"
+            && baselineFields["actionTimestamp"] == nil && baselineFields["scenePublishTimestamp"] == nil
+        var advanceObservation: [String: String] = [:]
+        var previousObservation: [String: String] = [:]
+        var lastObservation: [String: String] = [:]
+        var didObserveAdvance = false
         while Date() < deadline {
-            if !indexProbe.exists {
-                ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+            previousObservation = lastObservation
+            lastObservation = strictSceneFrameObservation(app: app)
+            // The displayed index saturates at the pool size; repeated photos still publish new timing.
+            let publication = scenePublication(in: lastObservation)
+            let didPublish =
+                publication.map { current in
+                    baselinePublication.map { previous in
+                        current.actionTimestamp > previous.actionTimestamp
+                            && current.publishedTimestamp > previous.publishedTimestamp
+                    } ?? isInitialPublication
+                } ?? false
+            if !didObserveAdvance && didPublish {
+                didObserveAdvance = true
+                advanceObservation = lastObservation
             }
-            if indexProbe.exists {
-                let value = String(describing: indexProbe.value ?? "")
-                if !value.isEmpty && value != oldValue { return value }
+            if didObserveAdvance
+                && (!requiresStableCaptureWindow || StrictE2ESceneCapture.isStableWindow(lastObservation))
+                && Date() < deadline
+            {
+                attachStrictSceneObservation(
+                    before: baseline, after: advanceObservation, name: "tvos-scene-publication-advance")
+                attachStrictSceneObservation(
+                    before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window")
+                return true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
         }
-        XCTFail("The index probe must change after a playback action.")
-        return try requireIndexValue(indexProbe)
+        attachStrictSceneObservation(
+            before: baseline, after: advanceObservation, name: "tvos-scene-publication-advance")
+        attachStrictSceneObservation(
+            before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window-timeout")
+        XCTFail(
+            "The index probe must change after a playback action. advanceObserved=\(didObserveAdvance) \(strictSceneCaptureDiagnostic(before: previousObservation, after: lastObservation, stable: StrictE2ESceneCapture.isStableWindow(lastObservation)))"
+        )
+        return false
     }
 
     @MainActor
@@ -804,20 +818,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         app: XCUIApplication,
         evidenceName: String,
         attachmentName: String
-    ) -> StrictE2EPhotoIdentity.Result {
-        let png = app.screenshot().pngRepresentation
-        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-        attachment.name = attachmentName
-        attachment.lifetime = .keepAlways
-        add(attachment)
-        StrictE2EVisualEvidence.writePNG(png, name: evidenceName)
-        let identity = StrictE2EPhotoIdentity.classify(png: png)
-        XCTAssertEqual(
-            identity.status,
-            .match,
-            "Visual ID failed \(evidenceName): \(identity.status.rawValue) \(identity.notes.joined(separator: " "))"
-        )
-        return identity
+    ) -> [String: Any] {
+        captureStrictSceneFrame(app: app, name: evidenceName, attachmentName: attachmentName)
     }
 
     private func attachFocusAudit(app: XCUIApplication, name: String) {
