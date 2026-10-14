@@ -224,10 +224,100 @@ FRAME_GLYPH_MINIMUM_WHITE_CELLS = 5
 FRAME_GLYPH_MAXIMUM_BLANK_ROWS = 4
 FRAME_GLYPH_MINIMUM_BAND_HEIGHT = 10
 
+# Scanner-approved captures; TV has no home indicator. Its entry hint and
+# control bar share this bounded rectangle, which cannot hide a full-span slot.
+PUBLIC_SCENE_GEOMETRIES = {
+    (1170, 2532): ((373, 2489, 798, 2512), (68, 2126, 1102, 2314)),
+    (1640, 2360): ((543, 2330, 1097, 2349), None),
+    (3840, 2160): ((1256, 1436, 2580, 1925), (1256, 1436, 2580, 1925)),
+}
+
 @dataclass(frozen=True)
 class PublicFramePhoto:
     letter: str
     mark: str
+
+
+def public_scene_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto, ...]:
+    from strict_e2e_filter_contract import _display_foreground_png
+
+    # The existing foreground reader verifies both the original and blurred surround.
+    try:
+        foreground = _display_foreground_png(image_bytes)
+    except (OSError, ValueError) as error:
+        raise IdentityAssertionError("Unrecognizable input: unreadable public glyph slot: screenshot cannot be decoded") from error
+    with _pil_image().open(io.BytesIO(foreground)) as image:
+        color_box, glyph_box = PUBLIC_SCENE_GEOMETRIES.get(image.size, (None, None))
+        rgb = _public_frame_sample(image)
+        slots, patterns = _public_frame_slots(rgb, _public_frame_sample_box(color_box, image.size, rgb.size))
+    # Preserve #381's one-photo boundary uniformly across capture geometries.
+    # Segmentation still precedes this path, so mixed/unreadable layouts cannot fall back.
+    if len(slots) == 1:
+        identity = classify_screenshot(foreground)
+        pattern = patterns.get(slots[0][0])
+        left_pattern, right_pattern = _edge_spatials(rgb)
+        if (identity.status != "MATCH" or identity.mark != slots[0][0] or pattern not in {"A", "B"}
+                or (left_pattern is not None and right_pattern is not None and left_pattern != right_pattern)):
+            raise IdentityAssertionError("unreadable public glyph slot: single photo color or public texture is missing")
+        return (PublicFramePhoto(pattern, identity.mark),)
+    return public_frame_photos_from_bytes(foreground, color_exclusion_box=color_box, glyph_overlay_box=glyph_box)
+
+
+def public_asset_reference(asset_id: str) -> str:
+    value = 14_695_981_039_346_656_037
+    for byte in asset_id.encode("utf-8"):
+        value = ((value ^ byte) * 1_099_511_628_211) & ((1 << 64) - 1)
+    return f"asset-{value:016x}"
+
+
+def _scene_fields(raw: str) -> dict[str, str]:
+    if not isinstance(raw, str):
+        raise ValueError("Scene probe fields must be text")
+    return dict(part.strip().split("=", 1) for part in raw.split(";") if "=" in part)
+
+
+def _named_scene_signature(evidence_dir: Path, name: str, fixture_set: str, *, tvos: bool) -> tuple[str, ...]:
+    path = evidence_dir / f"{name}.png"
+    if not path.is_file():
+        raise IdentityAssertionError(f"Missing identification input {name}.png")
+    photos = public_scene_photos_from_bytes(path.read_bytes())
+    if any(photo.letter != fixture_set.upper() for photo in photos):
+        raise IdentityAssertionError(f"{name}: frame must show only fixture {fixture_set.upper()} in every slot")
+    sidecar = evidence_dir / f"{name}.scene.json"
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        observations = [payload[key] for key in ("before", "after")]
+        expected_refs = {public_asset_reference(f"asset-{fixture_set}-{photo.mark[-1]}") for photo in photos}
+        for observation in observations:
+            manifest = _scene_fields(observation["manifest"])
+            render = _scene_fields(observation["render"])
+            refs = manifest["ledgerSceneAssets"].split(",")
+            if (set(refs) != expected_refs or len(refs) != len(photos)
+                    or int(manifest["slotCount"]) != len(photos)
+                    or manifest["slotReadiness"].split(",") != ["ready"] * len(photos)
+                    or int(manifest["gapPixelCount"]) != 0 or int(manifest["overlapPixelCount"]) != 0
+                    or not float(manifest["canvasCoverage"]) >= 0.999_999
+                    or not float(manifest["emptyCanvasRatio"]) <= 0.000_001
+                    or render["phase"] != "stablePhoto" or render["layerRoles"] != "stable"
+                    or render["loadingVisible"] != "false"):
+                raise IdentityAssertionError(f"{name}: pixels and complete stable scene probes disagree")
+        if observations[0]["manifest"] != observations[1]["manifest"]:
+            # Motion/readback metadata can change; the photo references must remain the same.
+            if _scene_fields(observations[0]["manifest"])["ledgerSceneAssets"] != _scene_fields(observations[1]["manifest"])["ledgerSceneAssets"]:
+                raise IdentityAssertionError(f"{name}: scene changed during pixel capture")
+        if tvos:
+            index = observations[0]["index"]
+            cursor, count = map(int, index.split("/"))
+            if not 1 <= cursor <= count or observations[1]["index"] != index:
+                raise IdentityAssertionError(f"{name}: index changed during pixel capture")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise IdentityAssertionError(f"{name}: missing or unreadable scene sequence evidence") from error
+    return tuple(sorted(f"{photo.letter}{photo.mark[-1]}" for photo in photos))
+
+
+def _scene_fixture(evidence_dir: Path) -> str:
+    from strict_e2e_filter_contract import load_member_manifest
+    return str(load_member_manifest(evidence_dir / "member-manifest.json")["fixture_set"])
 
 
 @functools.lru_cache(maxsize=1)
@@ -243,30 +333,33 @@ def _public_photo_palettes() -> dict[str, tuple[tuple[int, int, int], ...]]:
     return palettes
 
 
-def _public_frame_slots(rgb: object, color_exclusion_box: tuple[int, int, int, int] | None = None) -> tuple[list[tuple[str, int, int]], dict[str, str]]:
-    """Locate vertical photo slots by their public background pixels, independently of white glyphs."""
+@functools.lru_cache(maxsize=4096)
+def _public_palette_assignment(color: tuple[int, int, int]) -> tuple[str, int] | None:
+    matches = [(mark, index) for mark, palette in _public_photo_palettes().items()
+               for index, reference in enumerate(palette)
+               if max(abs(a - b) for a, b in zip(color, reference)) <= FRAME_PALETTE_CHANNEL_TOLERANCE]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, int] | None,
+                       *, horizontal: bool) -> list[tuple[str, tuple[int, int, int, int]]]:
+    """A clean axis must identify one palette along every full-span line."""
     palettes = _public_photo_palettes()
-    colors = [(mark, index, color) for mark, palette in palettes.items() for index, color in enumerate(palette)]
-    assignments: dict[tuple[int, int, int], tuple[str, int] | None] = {}
     slots: list[tuple[str, int, int]] = []
-    patterns: dict[str, str] = {}
     row_marks: list[str | None] = []
     pixels = rgb.load()
-    for y in range(rgb.height):
+    span = rgb.height if horizontal else rgb.width
+    extent = rgb.width if horizontal else rgb.height
+    for line in range(extent):
         counts = {mark: [0, 0] for mark in palettes}
-        has_white = False
-        for x in range(rgb.width):
+        for offset in range(span):
+            x, y = (line, offset) if horizontal else (offset, line)
             if color_exclusion_box is not None:
                 left, top, right, bottom = color_exclusion_box
                 if left <= x < right and top <= y < bottom:
                     continue
             color = pixels[x, y]
-            has_white |= min(color) >= 240
-            if color not in assignments:
-                matches = [(mark, index) for mark, index, reference in colors
-                           if max(abs(actual - expected) for actual, expected in zip(color, reference)) <= FRAME_PALETTE_CHANNEL_TOLERANCE]
-                assignments[color] = matches[0] if len(matches) == 1 else None
-            assignment = assignments[color]
+            assignment = _public_palette_assignment(color)
             if assignment is not None:
                 mark, index = assignment
                 counts[mark][index] += 1
@@ -278,16 +371,6 @@ def _public_frame_slots(rgb: object, color_exclusion_box: tuple[int, int, int, i
             continue
         mark = marks[0]
         row_marks.append(mark)
-        # Only unobstructed rows vote on texture: controls and white glyphs must not
-        # turn checkerboard into stripes. Each such row must agree, including a foreign
-        # slot whose glyph is unreadable and whose photo number matches its neighbor.
-        count = counts[mark]
-        if not has_white and sum(count) >= rgb.width * IDENTITY_OBSERVED_WIDTH_FRACTION:
-            pattern = "A" if min(count) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT else "B"
-            previous_pattern = patterns.get(mark)
-            if previous_pattern is not None and previous_pattern != pattern:
-                raise IdentityAssertionError("unreadable public glyph slot: conflicting public background patterns")
-            patterns[mark] = pattern
     for y, mark in enumerate(row_marks):
         if mark is None:
             following = next((item for item in row_marks[y + 1:] if item is not None), None)
@@ -301,6 +384,59 @@ def _public_frame_slots(rgb: object, color_exclusion_box: tuple[int, int, int, i
             slots[-1] = (mark, slots[-1][1], y + 1)
         else:
             slots.append((mark, y, y + 1))
+    return [(mark, (top, 0, bottom, rgb.height) if horizontal else (0, top, rgb.width, bottom))
+            for mark, top, bottom in slots]
+
+
+def _public_slot_pattern(rgb: object, mark: str, exclusion: tuple[int, int, int, int] | None) -> str | None:
+    # Texture always uses photo rows: fixture B's stripes do not rotate with the slot axis.
+    pixels = rgb.load()
+    pattern = None
+    for y in range(rgb.height):
+        count = [0, 0]
+        has_white = False
+        for x in range(rgb.width):
+            if exclusion and exclusion[0] <= x < exclusion[2] and exclusion[1] <= y < exclusion[3]:
+                continue
+            color = pixels[x, y]
+            has_white |= min(color) >= 240
+            assignment = _public_palette_assignment(color)
+            if assignment is not None and assignment[0] == mark:
+                count[assignment[1]] += 1
+        if not has_white and sum(count) >= rgb.width * IDENTITY_OBSERVED_WIDTH_FRACTION:
+            observed = "A" if min(count) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT else "B"
+            if pattern is not None and pattern != observed:
+                raise IdentityAssertionError("unreadable public glyph slot: conflicting public background patterns")
+            pattern = observed
+    return pattern
+
+
+def _relative_box(box: tuple[int, int, int, int] | None,
+                  slot: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+    return (box[0] - slot[0], box[1] - slot[1], box[2] - slot[0], box[3] - slot[1]) if box else None
+
+
+def _public_frame_slots(rgb: object, color_exclusion_box: tuple[int, int, int, int] | None = None
+                        ) -> tuple[list[tuple[str, tuple[int, int, int, int]]], dict[str, str]]:
+    candidates = []
+    for horizontal in (False, True):
+        try:
+            candidates.append(_public_axis_slots(rgb, color_exclusion_box, horizontal=horizontal))
+        except IdentityAssertionError:
+            continue
+    # One axis alone cannot justify a single photo: it could overlook a full-width
+    # blank band or foreign footer. Both axes must agree for a one-slot frame.
+    if (not candidates or (len(candidates) == 1 and len(candidates[0]) == 1)
+            or any(candidate != candidates[0] for candidate in candidates[1:])):
+        raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed")
+    slots = candidates[0]
+    patterns = {}
+    for mark, box in slots:
+        pattern = _public_slot_pattern(rgb.crop(box), mark, _relative_box(color_exclusion_box, box))
+        if pattern is not None:
+            if mark in patterns and patterns[mark] != pattern:
+                raise IdentityAssertionError("unreadable public glyph slot: conflicting public background patterns")
+            patterns[mark] = pattern
     return slots, patterns
 
 
@@ -447,9 +583,8 @@ def public_frame_photos_from_bytes(image_bytes: bytes, *,
             slots, patterns = _public_frame_slots(rgb, _public_frame_sample_box(color_exclusion_box, image.size, rgb.size))
             overlay = _public_frame_sample_box(glyph_overlay_box, image.size, rgb.size)
             photos = []
-            for mark, top, bottom in slots:
-                slot_overlay = (overlay[0], overlay[1] - top, overlay[2], overlay[3] - top) if overlay else None
-                slot_photos = _read_public_slot(rgb.crop((0, top, rgb.width, bottom)), mark, slot_overlay)
+            for mark, box in slots:
+                slot_photos = _read_public_slot(rgb.crop(box), mark, _relative_box(overlay, box))
                 if not slot_photos:
                     raise IdentityAssertionError("no public glyph" if len(slots) == 1 else "unreadable public glyph slot")
                 photos.extend(slot_photos)
@@ -469,22 +604,22 @@ def _read_public_slot(rgb: object, mark: str, glyph_overlay_box: tuple[int, int,
 
     width, height = rgb.size
     pixels = rgb.load()
-    white_rows = [[min(pixels[x, y]) >= 240 for x in range(width)] for y in range(height)]
+    def is_observed(x: int, y: int) -> bool:
+        return not (glyph_overlay_box is not None
+                    and glyph_overlay_box[0] <= x < glyph_overlay_box[2]
+                    and glyph_overlay_box[1] <= y < glyph_overlay_box[3])
+
+    white_rows = [[is_observed(x, y) and min(pixels[x, y]) >= 240 for x in range(width)] for y in range(height)]
     photos: list[PublicFramePhoto] = []
-    bands: list[tuple[int, int, bool]] = []
+    bands: list[tuple[int, int]] = []
     for top, bottom in _public_bitmap_bands(white_rows):
         # Only a gap wholly inside the measured control-bar rows can join ink.
         # This operates on one color slot; a merged candidate must prove one glyph.
         if bands and glyph_overlay_box is not None and glyph_overlay_box[1] <= bands[-1][1] <= top <= glyph_overlay_box[3]:
-            bands[-1] = (bands[-1][0], bottom, True)
+            bands[-1] = (bands[-1][0], bottom)
         else:
-            bands.append((top, bottom, False))
-    for top, bottom, merged in bands:
-        def is_observed(x: int, y: int) -> bool:
-            return not (merged and glyph_overlay_box is not None
-                        and glyph_overlay_box[0] <= x < glyph_overlay_box[2]
-                        and glyph_overlay_box[1] <= y < glyph_overlay_box[3])
-
+            bands.append((top, bottom))
+    for top, bottom in bands:
         cell = (bottom - top) / 7
         band_photos = []
         origins: set[float] = set()
@@ -719,19 +854,38 @@ def evaluate_visual_identity(evidence_dir: Path, suite: str) -> dict[str, object
             return evaluate_filter_visual_identity(evidence_dir, suite)
         except FilterContractError as error:
             raise IdentityAssertionError(str(error)) from error
-    if suite == "journey-b":
-        identities = [_classify_named(evidence_dir, name) for name in JOURNEY_B_STEPS]
-        assert_round_trip(identities)
-        return _report(suite, dict(zip(JOURNEY_B_STEPS, identities)))
-    if suite == "tvos-flow":
-        history = [_classify_named(evidence_dir, name) for name in JOURNEY_B_STEPS]
-        assert_round_trip(history)
-        identities = [_classify_named(evidence_dir, name) for name in TVOS_FLOW_STEPS]
-        assert_pause_hold(identities[0], identities[1])
-        assert_resumed_advanced(identities[1], identities[2])
-        steps = dict(zip(JOURNEY_B_STEPS, history))
-        steps.update(dict(zip(TVOS_FLOW_STEPS, identities)))
-        return _report(suite, steps)
+    if suite in {"journey-b", "tvos-flow"}:
+        # Missing screenshots keep their original diagnostic before sidecar checks.
+        for name in JOURNEY_B_STEPS:
+            if not (evidence_dir / f"{name}.png").is_file():
+                raise IdentityAssertionError(f"Missing identification input {name}.png")
+        fixture_set = _scene_fixture(evidence_dir)
+        names = JOURNEY_B_STEPS + (TVOS_FLOW_STEPS if suite == "tvos-flow" else ())
+        steps = {name: _named_scene_signature(evidence_dir, name, fixture_set, tvos=suite == "tvos-flow") for name in names}
+        start, first, second, back_first, back_start = [steps[name] for name in JOURNEY_B_STEPS]
+        if first == start:
+            raise IdentityAssertionError("Still the original photo after the first forward step")
+        if second == first:
+            raise IdentityAssertionError("Still the same photo after the second forward step")
+        if back_first != first:
+            raise IdentityAssertionError("The first back step must return to the first forward photo")
+        if back_start != start:
+            raise IdentityAssertionError(f"Second previous step must return to the original photo {start}, got {back_start}")
+        if suite == "tvos-flow":
+            if steps[TVOS_FLOW_STEPS[0]] != steps[TVOS_FLOW_STEPS[1]]:
+                raise IdentityAssertionError("Photo changed after pausing over 10 seconds")
+            if steps[TVOS_FLOW_STEPS[1]] == steps[TVOS_FLOW_STEPS[2]]:
+                raise IdentityAssertionError("Still the same photo after resuming playback; it did not advance")
+            indexes = {name: json.loads((evidence_dir / f"{name}.scene.json").read_text())["before"]["index"] for name in names}
+            for left, right in (("history-start", "history-second-previous"), ("history-first-next", "history-first-previous"), TVOS_FLOW_STEPS[:2]):
+                if indexes[left] != indexes[right]:
+                    raise IdentityAssertionError("Scene round-trip pixels and index sequence disagree")
+            for left, right in zip(JOURNEY_B_STEPS[:2], JOURNEY_B_STEPS[1:3]):
+                if indexes[left] == indexes[right]:
+                    raise IdentityAssertionError("Scene advance pixels and index sequence disagree")
+            if indexes[TVOS_FLOW_STEPS[1]] == indexes[TVOS_FLOW_STEPS[2]]:
+                raise IdentityAssertionError("Scene resume pixels and index sequence disagree")
+        return {"verdict": "PASS", "suite": suite, "steps": {name: {"signature": list(signature)} for name, signature in steps.items()}}
 
     # The target window must show an allowed public mark; at that moment EXIF may differ from the photo
     # (A2+Fixture 3 transition boundary).

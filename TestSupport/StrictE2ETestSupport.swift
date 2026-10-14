@@ -114,9 +114,9 @@ extension XCTestCase {
     }
 
     @MainActor
-    func launchStrictE2EApp() throws -> XCUIApplication {
+    func launchStrictE2EApp(recordSceneSequence: Bool = false) throws -> XCUIApplication {
         let app = XCUIApplication()
-        try prepareStrictE2ELaunch(app)
+        try prepareStrictE2ELaunch(app, recordSceneSequence: recordSceneSequence)
         app.launch()
         return app
     }
@@ -138,8 +138,12 @@ extension XCTestCase {
     }
 
     @MainActor
-    private func prepareStrictE2ELaunch(_ app: XCUIApplication) throws {
+    private func prepareStrictE2ELaunch(_ app: XCUIApplication, recordSceneSequence: Bool = false) throws {
         app.launchEnvironment = [:]
+        if recordSceneSequence {
+            // Read-only probes expose the rendered scene; onboarding still uses the real UI.
+            app.launchEnvironment["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"] = "1"
+        }
 
         let audit = try JSONSerialization.data(
             withJSONObject: ["launch_environment_keys": app.launchEnvironment.keys.sorted()],
@@ -149,6 +153,52 @@ extension XCTestCase {
         attachment.name = "strict-e2e-app-launch-environment-audit"
         attachment.lifetime = XCTAttachment.Lifetime.keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    func captureStrictSceneFrame(app: XCUIApplication, name: String, attachmentName: String) -> [String: Any] {
+        func observation() -> [String: String] {
+            var values = ["manifest": "", "render": "", "index": ""]
+            let identifiers = [
+                "slideshow.smartfill.currentManifest.flag": "manifest",
+                "slideshow.scenePresentation.contract.summary": "render",
+                "slideshow.control.indexProbe": "index"
+            ]
+            func visit(_ node: XCUIElementSnapshot) {
+                if let key = identifiers[node.identifier] {
+                    values[key] = key == "index" ? String(describing: node.value ?? "") : node.label
+                }
+                node.children.forEach(visit)
+            }
+            if let snapshot = try? app.snapshot() { visit(snapshot) }
+            return values
+        }
+        let before = observation()
+        let png = app.screenshot().pngRepresentation
+        let after = observation()
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = attachmentName
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        StrictE2EVisualEvidence.writePNG(png, name: name)
+        let identity = StrictE2EPhotoIdentity.classify(png: png)
+        let stable = [before, after].allSatisfy { observation in
+            let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+            return render["phase"] == "stablePhoto" && render["layerRoles"] == "stable"
+                && render["loadingVisible"] == "false"
+                && SharedSceneEvidenceManifest.manifestObservation(from: observation["manifest"] ?? "")?
+                    .isCompleteVisibleScene == true
+        }
+        let refsBefore = SharedSceneEvidenceManifest.parseKeyValueFields(before["manifest"] ?? "")["ledgerSceneAssets"]
+        let refsAfter = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")["ledgerSceneAssets"]
+        XCTAssertTrue(
+            !png.isEmpty && identity.status != .black && identity.status != .blank
+                && stable && refsBefore != nil && refsBefore == refsAfter,
+            "Visual ID failed \(name): \(identity.status.rawValue) \(identity.notes.joined(separator: " "))"
+        )
+        let payload: [String: Any] = ["before": before, "after": after]
+        StrictE2EVisualEvidence.writeJSON(payload, name: "\(name).scene.json")
+        return payload
     }
 
     private func firstEnvironmentValue(

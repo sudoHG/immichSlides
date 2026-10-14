@@ -29,9 +29,13 @@ product inventory and signing inspection. No competing archive producer or artif
 selection mechanism is introduced.
 
 `filter-edit-switch` checks both the original whole-frame color identity and each
-vertical photo slot against the non-target album's A1–A5 classifier labels. Public
-background colors locate slots independently of glyphs; obscured rows remain in a
-slot only when the surrounding rows identify the same photo. Each slot requires
+full-span photo slot against the non-target album's A1–A5 classifier labels. Public
+background colors locate slots independently of glyphs along both rows and columns.
+Only a clean partition into vertical stacks or horizontal neighbors is supported;
+two-dimensional grids, conflicting axes and mixed palettes fail unreadable. Obscured
+lines remain in a slot only when the surrounding lines identify the same photo.
+A one-slot partition requires agreement from both axes, so a blank band or foreign
+footer cannot borrow the other axis's dominant photo. Each collage slot requires
 the active fixture's sharp A/B bitmap, with at least 14 observed cells, five white
 cells and agreement with every observed cell. A visible digit must also agree
 with the slot's color identity. Unobstructed public texture rows cross-check the
@@ -41,8 +45,32 @@ failure reasons. White bands shorter than ten sampled pixels are excluded; up to
 four blank rows join adjacent bitmap ink. Wider EXIF text bands may remain
 unrecognized, but cannot supply a missing slot's identity.
 
-`tvos-edit-switch` retains the previous centered region reader and whole-frame
-album membership check. The reader used for single-photo surrounds is unchanged.
+`journey-b` and `tvos-flow` compare complete per-slot signatures for history,
+pause and resume. Swift rejects black, blank, incomplete or mid-transition frames
+and records manifest/render probes immediately before and after the PNG, without
+adding a wait or retry. Python independently reads every pixel slot, matches its
+public identity to `ledgerSceneAssets` using the fixture's hashed references, and
+checks stable rendering and slot readiness. tvOS additionally cross-checks the
+recorded `indexProbe` history, pause and resume sequence. Probes cannot supply a
+missing pixel identity. A5 and A1+A5 have different signatures.
+
+These scene contracts, `tvos-edit-switch`, the A frame of server-switch, and
+`tvos-person`/`tvos-album` use the same reader. Uniformly across geometries, a
+segmentable single-photo frame retains #381's whole-frame color and visible
+public-texture judgement, including clipped glyphs. Collages require the strict
+glyph, texture and membership rules for every slot. An unsegmentable frame never
+falls back to color classification. The surround reader still requires both the
+matched public original and its blurred background.
+
+The pinned Apple TV 4K (3rd generation), tvOS 27.0, produces **3840x2160** PNGs.
+Scanner-approved frames measured the A2/A3 seam at x=1382 and the A5/A3 seam at
+x=1536. The entry hint and playback controls fit inside (1256,1436)-(2580,1925),
+including a four-pixel margin; tvOS has no home indicator. Only measured scene
+captures exclude that bounded rectangle from palette and glyph evidence. It
+cannot hide a full-height or full-width slot. Overlay ink cannot create bitmap
+bands or supply observed cells; letters and digits must still agree with every
+remaining cell and meet the unchanged evidence minima. The device-pin guard
+requires a measured geometry for all three pinned strict devices.
 
 The iOS `album-empty` and `filter-album` contracts select their path by the raw
 capture size. Unmeasured sizes retain the original whole-frame classifier and

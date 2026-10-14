@@ -170,7 +170,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         }
 
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminate() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
@@ -425,13 +425,6 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             evidenceName: "history-second-previous",
             attachmentName: "tvos-playback-09-history-return-step-2"
         )
-        do {
-            try StrictE2EPhotoIdentity.assertRoundTrip(
-                [historyStart, firstNext, secondNext, firstPrevious, secondPrevious]
-            )
-        } catch {
-            XCTFail(error.localizedDescription)
-        }
 
         moveFocus(
             .right,
@@ -527,11 +520,6 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             evidenceName: "pause-after-10s",
             attachmentName: "tvos-playback-12-pause-after-10-seconds-visible-frame"
         )
-        do {
-            try StrictE2EPhotoIdentity.assertPauseHold(pauseImmediate, pauseHeld)
-        } catch {
-            XCTFail(error.localizedDescription)
-        }
         let pauseEvidence = XCTAttachment(
             string: """
                 pauseStartedAtUnixSeconds=\(pauseStartedAt.timeIntervalSince1970)
@@ -576,24 +564,15 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             evidenceName: "resumed",
             attachmentName: "tvos-playback-13-resumed-advanced-visible-frame"
         )
-        do {
-            try StrictE2EPhotoIdentity.assertResumedAdvanced(pauseHeld, resumed)
-        } catch {
-            XCTFail(error.localizedDescription)
-        }
         StrictE2EVisualEvidence.writeJSON(
             [
                 "suite": "tvos-flow",
                 "history": [
-                    StrictE2EPhotoIdentity.payload(historyStart),
-                    StrictE2EPhotoIdentity.payload(firstNext),
-                    StrictE2EPhotoIdentity.payload(secondNext),
-                    StrictE2EPhotoIdentity.payload(firstPrevious),
-                    StrictE2EPhotoIdentity.payload(secondPrevious)
+                    historyStart, firstNext, secondNext, firstPrevious, secondPrevious
                 ],
-                "pause_immediate": StrictE2EPhotoIdentity.payload(pauseImmediate),
-                "pause_after_10s": StrictE2EPhotoIdentity.payload(pauseHeld),
-                "resumed": StrictE2EPhotoIdentity.payload(resumed)
+                "pause_immediate": pauseImmediate,
+                "pause_after_10s": pauseHeld,
+                "resumed": resumed
             ],
             name: "visual-identity.json"
         )
@@ -804,20 +783,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         app: XCUIApplication,
         evidenceName: String,
         attachmentName: String
-    ) -> StrictE2EPhotoIdentity.Result {
-        let png = app.screenshot().pngRepresentation
-        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-        attachment.name = attachmentName
-        attachment.lifetime = .keepAlways
-        add(attachment)
-        StrictE2EVisualEvidence.writePNG(png, name: evidenceName)
-        let identity = StrictE2EPhotoIdentity.classify(png: png)
-        XCTAssertEqual(
-            identity.status,
-            .match,
-            "Visual ID failed \(evidenceName): \(identity.status.rawValue) \(identity.notes.joined(separator: " "))"
-        )
-        return identity
+    ) -> [String: Any] {
+        captureStrictSceneFrame(app: app, name: evidenceName, attachmentName: attachmentName)
     }
 
     private func attachFocusAudit(app: XCUIApplication, name: String) {

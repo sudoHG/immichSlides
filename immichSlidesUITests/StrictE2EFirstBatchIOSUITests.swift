@@ -46,7 +46,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
     @MainActor
     func testRandomModeReachesPlaybackWithCorrectControlState() throws {
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminate() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "journey-b")
@@ -129,29 +129,11 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         tapElement(previous)
         let secondPrevious = captureHistoryIdentity(app: app, step: "history-second-previous")
         recordControlTimeline(app: app, event: "journey-b-history-complete")
-        do {
-            try StrictE2EPhotoIdentity.assertRoundTrip(
-                [historyStart, firstNext, secondNext, firstPrevious, secondPrevious]
-            )
-        } catch {
-            XCTFail(error.localizedDescription)
-        }
         let visualIdentity: [String: Any] = [
             "suite": "journey-b",
             "device": currentDeviceTag(),
-            "marks": jsonSafeMarks([
-                historyStart.mark,
-                firstNext.mark,
-                secondNext.mark,
-                firstPrevious.mark,
-                secondPrevious.mark
-            ]),
             "steps": [
-                StrictE2EPhotoIdentity.payload(historyStart),
-                StrictE2EPhotoIdentity.payload(firstNext),
-                StrictE2EPhotoIdentity.payload(secondNext),
-                StrictE2EPhotoIdentity.payload(firstPrevious),
-                StrictE2EPhotoIdentity.payload(secondPrevious)
+                historyStart, firstNext, secondNext, firstPrevious, secondPrevious
             ]
         ]
         XCTAssertTrue(
