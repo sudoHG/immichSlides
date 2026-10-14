@@ -370,20 +370,24 @@ Interior adjustments correct the last requested normalized position by
 only endpoints use a thumb-start drag past the track end. The settings-persistence
 flow requires a displayed interval different from its initial value and preserves
 that same value across restart, without requiring an exact interior target.
-Pause/background and combined access-protection lifecycle flows request 12 seconds and require displayed T in the inclusive
-10–15 second window, enabled explicitly at the timing-contract call. Other callers
-retain exact requested values. T/2 is therefore at least 5 seconds and T−2 at least 8 seconds,
-while the upper bound limits run time. Every timing assertion uses that displayed T;
-T±2 tolerances, capture deadlines relative to T, hidden-control and visible-scene
-checks stay unchanged. First-wake requires exactly 30 seconds, and `IOSDriver`
-continues to require its exact 15/30 second settings. Unreadable values and values
-outside the timing window fail.
+Pause/background lifecycle flows request 12 seconds and require displayed T in
+the inclusive 10–15 second window, enabled explicitly at the timing-contract call.
+Other callers retain exact requested values. T/2 is therefore at least 5 seconds
+and T−2 at least 8 seconds, while the upper bound limits run time. Every timing
+assertion uses that displayed T; T±2 tolerances, capture deadlines relative to T,
+hidden-control and visible-scene checks stay unchanged. First-wake requires exactly
+30 seconds, and `IOSDriver` continues to require its exact 15/30 second settings.
+Unreadable values and values outside the timing window fail.
 
-The combined flow also saves the validated displayed T as its wake interval. Its
-9-second control-hide wait remains capped by the remaining interval minus the
-2.5-second wake-evidence budget; a boundary too close for that budget still
-requires waiting for autoplay first. Background, PIN, pause/Next/Play, hidden-control
-and visible-scene assertions are unchanged.
+The combined access-protection flow requests 12 seconds and narrows its window to
+12–15 seconds. Its lower bound is rounded up from the product's 8-second control
+auto-hide delay, the existing 0.6-second hidden-control stability requirement and
+the 2.5-second wake-evidence budget. Slider adjustment and validation use that same
+window, and the validated displayed T becomes the wake interval. Its 9-second
+control-hide wait remains capped by the remaining interval minus the evidence
+budget; autoplay checks before hiding and before the wake frame remain unchanged.
+Background, PIN, pause/Next/Play, hidden-control and visible-scene assertions are
+unchanged. The combined runner uses Debug, where the measured-progress probes exist.
 
 `image-failure-recovery` runs only `ScenePresentationContractUITests/testIOSImageFailureRecovery` on iOS in single-photo mode with a 30-second interval, using fixture A and case ID `image-failure-recovery`. Through normal app controls and the fixture-only `/api/test/image-response` endpoint, every fullsize thumbnail request for the startup photo returns HTTP 503 until the mode is reset. The flow turns on the EXIF overlay and fails if that photo's `Fixture 1` caption is visible while it waits for the first stable photo or within 5 seconds after it; the caption identifies the photo because the pixel classifier reads its letterboxed portrait frame as A2. Otherwise the flow verifies the visible replacement, Previous/Redo history and continued playback. The endpoint does not change metadata, other assets, preview responses or the frozen fixture. Result bundles use the existing private export/disposal path. This flow requires the strict runner and is excluded from the default and Evidence plans.
 
