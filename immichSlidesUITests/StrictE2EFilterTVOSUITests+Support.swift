@@ -79,9 +79,10 @@ extension StrictE2EFilterTVOSUITests {
         isolatePersonSelection(app: app, keeping: personID)
         moveFocusTo(button, directions: [.down, .right, .left], message: "Focus must land on the target person.")
         attachScreenshot(app: app, name: "tvos-filter-person-\(personID)-focused")
-        let neighborIDs = ["person-a-normal", "person-a-solo", "person-a-other", "person-a-no-faces"].filter {
-            $0 != personID
-        }
+        let fixturePrefix = personID.split(separator: "-").prefix(2).joined(separator: "-")
+        let neighborIDs = ["normal", "solo", "other", "no-faces"]
+            .map { "\(fixturePrefix)-\($0)" }
+            .filter { $0 != personID }
         if let neighborID = neighborIDs.first {
             assertNoFocusCollision(
                 focused: button,
@@ -113,10 +114,17 @@ extension StrictE2EFilterTVOSUITests {
                 .right, to: playPauseButton, maximumPresses: 3, message: "Focus must be able to move to Play/Pause.")
         }
         let playingValue = String(describing: playPauseButton.value ?? "")
-        XCUIRemote.shared.press(.select)
-        _ = waitUntil(timeout: TestWait.seconds(.product(4))) {
-            String(describing: playPauseButton.value ?? "") != playingValue
+        if playingValue.contains("暂停") || playingValue.lowercased().contains("pause") {
+            moveFocusTo(
+                playPauseButton, directions: [.left, .right],
+                message: "Focus must be able to move to Play/Pause.")
+            XCUIRemote.shared.press(.select)
         }
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.product(4))) {
+                let current = String(describing: playPauseButton.value ?? "")
+                return current.contains("播放") || current.lowercased() == "play"
+            }, "Playback must be paused before sampling candidates.")
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
 
         let nextButton = app.buttons["slideshow.control.next.button"]

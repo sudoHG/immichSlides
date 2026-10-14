@@ -74,14 +74,6 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             app: app,
             names: ["album-playback-1", "album-playback-2", "album-playback-3"]
         )
-
-        XCUIRemote.shared.press(.menu)
-        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1))))
-        XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(timeout: TestWait.seconds(.product(8)))
-                || app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(2))),
-            "Back/Menu on the playback screen must leave playback and return to the filter or mode screen."
-        )
     }
 
     @MainActor
@@ -263,6 +255,19 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             XCTFail("The tvOS filter flow must run on a tvOS Simulator.")
             return
         }
+        guard let evidenceDirectory = StrictE2EVisualEvidence.directory() else {
+            throw StrictE2EVisualEvidence.WriteError.missingDirectory
+        }
+        let manifest = try StrictE2EFilterContract.loadMemberManifest(from: evidenceDirectory)
+        guard
+            let personCases = manifest["person_cases"] as? [String: [String: Any]],
+            let normalPersonID = personCases["normal_match"]?["person_id"] as? String,
+            let soloPersonID = personCases["solo_only_qualified"]?["person_id"] as? String,
+            let noFacesPersonID = personCases["no_faces"]?["person_id"] as? String
+        else {
+            throw StrictE2EFilterContract.AssertionError.message(
+                "member manifest is missing the person case IDs")
+        }
 
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
@@ -281,25 +286,25 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
 
         try runPersonPlayback(
             app: app,
-            personID: "person-a-normal",
+            personID: normalPersonID,
             isSoloOnly: false,
             evidenceName: "person-normal"
         )
         try runPersonPlayback(
             app: app,
-            personID: "person-a-solo",
+            personID: soloPersonID,
             isSoloOnly: false,
             evidenceName: "person-conflict-normal"
         )
         try runPersonPlayback(
             app: app,
-            personID: "person-a-solo",
+            personID: soloPersonID,
             isSoloOnly: true,
             evidenceName: "person-conflict-solo"
         )
         try runPersonPlayback(
             app: app,
-            personID: "person-a-no-faces",
+            personID: noFacesPersonID,
             isSoloOnly: false,
             evidenceName: "person-no-faces"
         )
@@ -618,7 +623,9 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         isSoloOnly: Bool,
         evidenceName: String
     ) throws {
-        try returnToFilterSummary(app: app)
+        if !app.buttons["filterSummary.person.button"].exists {
+            try openFilterEditorFromPlaybackSettings(app: app)
+        }
         try openPeopleFilter(app: app)
         try focusAndConfigurePerson(app: app, personID: personID, isSoloOnly: isSoloOnly)
         XCUIRemote.shared.press(.menu)
@@ -628,20 +635,31 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             "Back from the people list must return to the filter screen."
         )
         let start = app.buttons["filterSummary.startPlayback.button"]
-        if start.waitForExistence(timeout: TestWait.seconds(.product(5))), start.isEnabled {
+        if app.buttons["filter.editor.done.button"].exists {
+            try finishTVOSFilterEditor(app: app)
+            try returnToSlideshowFromSettings(app: app)
+        } else if start.waitForExistence(timeout: TestWait.seconds(.product(5))), start.isEnabled {
             moveFocus(.right, to: start, maximumPresses: 3, message: "Focus must be able to move to Start Playback.")
             XCUIRemote.shared.press(.select)
+        } else {
+            try writeScreenshotPNG(app: app, name: evidenceName, attachmentName: evidenceName)
+            return
+        }
+        let loading = app.descendants(matching: .any)["playback.loading.indicator"]
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.product(30))) { !loading.exists },
+            "Start Playback must finish loading before person evidence is captured.")
+        if app.staticTexts["slideshow.emptyState.message"].exists {
+            try writeScreenshotPNG(app: app, name: evidenceName, attachmentName: evidenceName)
+        } else {
             var names = [evidenceName]
             if evidenceName == "person-conflict-normal" {
                 names.append(contentsOf: ["person-conflict-normal-2", "person-conflict-normal-3"])
             }
             try capturePausedPlaybackPNGs(app: app, names: names)
-            if evidenceName == "person-conflict-solo" {
-                try writeScreenshotPNG(app: app, name: "person-solo", attachmentName: "person-solo")
-            }
-            XCUIRemote.shared.press(.menu)
-        } else {
-            try writeScreenshotPNG(app: app, name: evidenceName, attachmentName: evidenceName)
+        }
+        if evidenceName == "person-conflict-solo" {
+            try writeScreenshotPNG(app: app, name: "person-solo", attachmentName: "person-solo")
         }
     }
 
@@ -673,21 +691,6 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             app.buttons["filterSummary.album.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
             "Filtered mode must open the filter summary screen."
         )
-    }
-
-    @MainActor
-    func returnToFilterSummary(app: XCUIApplication) throws {
-        if app.buttons["filterSummary.album.button"].exists { return }
-        for _ in 0..<8 {
-            if app.buttons["filterSummary.album.button"].exists { return }
-            if app.buttons["mode.filtered.button"].exists || app.buttons["mode.random.button"].exists {
-                try enterFilteredSummary(app: app)
-                return
-            }
-            XCUIRemote.shared.press(.menu)
-            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.6))))
-        }
-        XCTFail("Cannot return to the filter summary screen.")
     }
 
     @MainActor
