@@ -108,8 +108,13 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
         recordControlTimeline(app: app, event: "journey-b-after-pause")
 
         tapElement(playPause)
+        let resumeCaptureDeadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "pause" },
+            waitUntil(timeout: TestWait.seconds(.product(4))) {
+                self.playPauseState(playPause) == "pause"
+                    && self.hasStableStrictSceneCaptureWindow(app: app)
+                    && Date() < resumeCaptureDeadline
+            },
             "Resuming must continue from the current photo, with the control value back to pause."
         )
         tapElement(playPause)

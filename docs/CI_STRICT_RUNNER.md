@@ -61,6 +61,14 @@ it does not request a state reset or bypass onboarding. Release exposes neither
 probe. The pure environment check is covered by `UnitTestHostTests`. Capture
 sidecars are written before an assertion can stop XCTest, preserving failed
 probe observations for diagnosis.
+The iOS resume-state wait also requires a complete opaque stable frame before
+the second Pause that starts history. The tvOS resumed index-change wait requires
+the same stable capture window, with motion progress in its normalized 0...1
+range. This excludes the late-motion interval that can cross into a fade while
+capturing. Their existing 4-second and 3-second deadlines and failure prefixes
+remain unchanged; unmet conditions fail within those windows. Pause still freezes
+mid-fade by design, which the dedicated pause-window suite covers. These history
+and resumed identity captures require a stable frame and add no retry or extra wait.
 
 These scene contracts, `tvos-edit-switch`, the A frame of server-switch, and
 `tvos-person`/`tvos-album` use the same reader. Uniformly across geometries, a

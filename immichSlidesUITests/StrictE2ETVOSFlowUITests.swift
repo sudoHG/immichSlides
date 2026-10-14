@@ -552,7 +552,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             from: indexAfterAutoPlay,
             app: app,
             playPauseButton: playPauseButton,
-            timeout: TestWait.seconds(.product(3))
+            timeout: TestWait.seconds(.product(3)),
+            requiresStableCaptureWindow: true
         )
         XCTAssertNotEqual(
             indexAfterResume,
@@ -744,7 +745,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         from oldValue: String,
         app: XCUIApplication,
         playPauseButton: XCUIElement,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        requiresStableCaptureWindow: Bool = false
     ) throws -> String {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -753,7 +755,12 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             }
             if indexProbe.exists {
                 let value = String(describing: indexProbe.value ?? "")
-                if !value.isEmpty && value != oldValue { return value }
+                if !value.isEmpty && value != oldValue
+                    && (!requiresStableCaptureWindow
+                        || (hasStableStrictSceneCaptureWindow(app: app) && Date() < deadline))
+                {
+                    return value
+                }
             }
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
         }

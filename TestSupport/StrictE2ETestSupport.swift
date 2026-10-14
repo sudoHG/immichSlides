@@ -1,6 +1,19 @@
 import Foundation
 import XCTest
 
+enum StrictE2ESceneCapture {
+    static func isStableWindow(_ observation: [String: String]) -> Bool {
+        let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+        guard render["phase"] == "stablePhoto", render["layerRoles"] == "stable",
+            render["loadingVisible"] == "false",
+            let opacity = Double(render["layerOpacities"] ?? ""), opacity == 1,
+            let progress = Double(render["motionRawProgress"] ?? ""), (0...1).contains(progress)
+        else { return false }
+        return SharedSceneEvidenceManifest.manifestObservation(from: observation["manifest"] ?? "")?
+            .isCompleteVisibleScene == true
+    }
+}
+
 struct StrictE2EInput {
     let serverURL: String
     let publicKey: String
@@ -156,26 +169,33 @@ extension XCTestCase {
     }
 
     @MainActor
-    func captureStrictSceneFrame(app: XCUIApplication, name: String, attachmentName: String) -> [String: Any] {
-        func observation() -> [String: String] {
-            var values = ["manifest": "", "render": "", "index": ""]
-            let identifiers = [
-                "slideshow.smartfill.currentManifest.flag": "manifest",
-                "slideshow.scenePresentation.contract.summary": "render",
-                "slideshow.control.indexProbe": "index"
-            ]
-            func visit(_ node: XCUIElementSnapshot) {
-                if let key = identifiers[node.identifier] {
-                    values[key] = key == "index" ? String(describing: node.value ?? "") : node.label
-                }
-                node.children.forEach(visit)
+    func strictSceneFrameObservation(app: XCUIApplication) -> [String: String] {
+        var values = ["manifest": "", "render": "", "index": ""]
+        let identifiers = [
+            "slideshow.smartfill.currentManifest.flag": "manifest",
+            "slideshow.scenePresentation.contract.summary": "render",
+            "slideshow.control.indexProbe": "index"
+        ]
+        func visit(_ node: XCUIElementSnapshot) {
+            if let key = identifiers[node.identifier] {
+                values[key] = key == "index" ? String(describing: node.value ?? "") : node.label
             }
-            if let snapshot = try? app.snapshot() { visit(snapshot) }
-            return values
+            node.children.forEach(visit)
         }
-        let before = observation()
+        if let snapshot = try? app.snapshot() { visit(snapshot) }
+        return values
+    }
+
+    @MainActor
+    func hasStableStrictSceneCaptureWindow(app: XCUIApplication) -> Bool {
+        StrictE2ESceneCapture.isStableWindow(strictSceneFrameObservation(app: app))
+    }
+
+    @MainActor
+    func captureStrictSceneFrame(app: XCUIApplication, name: String, attachmentName: String) -> [String: Any] {
+        let before = strictSceneFrameObservation(app: app)
         let png = app.screenshot().pngRepresentation
-        let after = observation()
+        let after = strictSceneFrameObservation(app: app)
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = attachmentName
         attachment.lifetime = .keepAlways
