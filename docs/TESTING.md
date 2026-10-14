@@ -545,10 +545,14 @@ frame-synchronized scene probe, using one fallible application snapshot per poll
 the existing capture deadline. Before Pause, the flow requires a playing stable scene
 within the existing pause deadline. Both capture observations must show an opaque stable scene,
 complete slot readiness and unchanged scene references/publication; paused Next also
-requires the user pause. SmartFill Next/Play comparisons use every ordered ledger scene
-reference together with recognizable stable pixels, rather than a dominant photo mark
-alone; equal Next/Play references also require matching stable pixel marks. The Python
-access-lifecycle pixel contract independently checks the saved images. Before-wake and
+requires the user pause. Swift SmartFill Next/Play identity decisions use every ordered
+ledger scene reference; the captures must still contain recognizable stable pixels.
+The Swift dominant pixel mark is not scene identity: the [stable-scene repro](https://github.com/sudoHG/immichSlides/pull/438)
+shows the same A4+A5 scene classified as A4+A5 while paused at progress 0 and A5 after
+motion starts at progress 0.11. Python independently reads pause, Next and Play PNGs
+through `scene_mark_from_png`, combining detected slot marks from fixed stack/side
+regions. It rejects unchanged Next and a Play mark different from Next or equal to pause;
+this region sampling is not an exhaustive audit of the manifest's slots. Before-wake and
 after-wake captures share one wake-evidence deadline, including the intervening tap;
 the budget is not restarted. Stable-capture failures stop XCTest immediately and retain
 the last observation and screenshot only as diagnostic evidence.

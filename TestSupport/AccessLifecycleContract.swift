@@ -209,6 +209,7 @@ enum AccessLifecycleContract {
         let isNextUnchanged: Bool
         let didPlayChangeScene: Bool
         if let sceneReferences {
+            // Motion can change a collage's dominant pixel mark without changing its scene.
             for references in [sceneReferences.pause, sceneReferences.afterNext, sceneReferences.afterPlay] {
                 guard !references.isEmpty, references.allSatisfy({ !$0.isEmpty }) else {
                     throw AssertionError.message("Missing scene references must not count as a pass")
@@ -218,7 +219,6 @@ enum AccessLifecycleContract {
             didPlayChangeScene =
                 sceneReferences.afterPlay == sceneReferences.pause
                 || sceneReferences.afterPlay != sceneReferences.afterNext
-                || afterPlay != afterNext
         } else {
             isNextUnchanged = afterNext == pause
             didPlayChangeScene = afterPlay == pause || afterPlay != afterNext
