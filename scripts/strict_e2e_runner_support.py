@@ -343,10 +343,25 @@ def _is_forbidden_key(key: str) -> bool:
     return key.startswith("UI_TEST_") or key in FORBIDDEN_EXACT_KEYS
 
 
-def validate_app_launch_environment(environment: Mapping[str, str]) -> None:
-    forbidden = sorted(key for key in environment if _is_forbidden_key(key))
+def strict_app_launch_environment(suite: str | None) -> dict[str, str]:
+    return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"} if suite in {"journey-b", "tvos-flow"} else {}
+
+
+def validate_app_launch_environment(environment: Mapping[str, str], *, suite: str | None = None) -> None:
+    allowed = strict_app_launch_environment(suite)
+    forbidden = sorted(key for key in environment if _is_forbidden_key(key)
+                       and not (key in allowed and environment[key] == allowed[key]))
     if forbidden:
         raise CommandError("Forbidden keys found in the App launchEnvironment: " + ", ".join(forbidden))
+
+
+def write_app_launch_environment_audit(evidence_dir: Path, suite: str) -> None:
+    environment = strict_app_launch_environment(suite)
+    validate_app_launch_environment(environment, suite=suite)
+    (evidence_dir / "app-launch-environment-audit.json").write_text(
+        json.dumps({"forbidden_keys_present": [], "launch_environment_keys": sorted(environment)}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def prepare_evidence_directory(evidence_dir: Path) -> None:

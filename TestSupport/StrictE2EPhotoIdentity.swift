@@ -308,36 +308,10 @@ enum StrictE2EPhotoIdentity {
         }
     }
 
-    static func assertRoundTrip(_ identities: [Result]) throws {
-        guard identities.count == 5 else {
-            throw AssertionError.message("Round trip must have five steps, got \(identities.count)")
-        }
-        let marks = try requireMarks(identities, context: "Round trip")
-        if marks[1] == marks[0] {
-            throw AssertionError.message("Still the original photo after the first forward step")
-        }
-        if marks[2] == marks[1] {
-            throw AssertionError.message("Still the same photo after the second forward step")
-        }
-        if marks[3] != marks[1] {
-            throw AssertionError.message("The first back step must return to the first forward photo")
-        }
-        if marks[4] != marks[0] {
-            throw AssertionError.message("Second back step must return to original photo \(marks[0]), got \(marks[4])")
-        }
-    }
-
     static func assertPauseHold(_ immediate: Result, _ after: Result) throws {
         let marks = try requireMarks([immediate, after], context: "Pause hold")
         if marks[0] != marks[1] {
             throw AssertionError.message("Photo changed after pausing over 10 seconds: \(marks[0]) → \(marks[1])")
-        }
-    }
-
-    static func assertResumedAdvanced(_ paused: Result, _ resumed: Result) throws {
-        let marks = try requireMarks([paused, resumed], context: "Resume advance")
-        if marks[0] == marks[1] {
-            throw AssertionError.message("Still \(marks[0]) after resuming playback; it did not advance")
         }
     }
 

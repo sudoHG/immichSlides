@@ -917,9 +917,13 @@ def evaluate_visual_identity(evidence_dir: Path, suite: str) -> dict[str, object
         for name in JOURNEY_B_STEPS:
             if not (evidence_dir / f"{name}.png").is_file():
                 raise IdentityAssertionError(f"Missing identification input {name}.png")
-        fixture_set = _scene_fixture(evidence_dir)
-        names = JOURNEY_B_STEPS + (TVOS_FLOW_STEPS if suite == "tvos-flow" else ())
-        steps = {name: _named_scene_signature(evidence_dir, name, fixture_set, tvos=suite == "tvos-flow") for name in names}
+        from strict_e2e_filter_contract import FilterContractError
+        try:
+            fixture_set = _scene_fixture(evidence_dir)
+            names = JOURNEY_B_STEPS + (TVOS_FLOW_STEPS if suite == "tvos-flow" else ())
+            steps = {name: _named_scene_signature(evidence_dir, name, fixture_set, tvos=suite == "tvos-flow") for name in names}
+        except FilterContractError as error:
+            raise IdentityAssertionError(str(error)) from error
         start, first, second, back_first, back_start = [steps[name] for name in JOURNEY_B_STEPS]
         if first == start:
             raise IdentityAssertionError("Still the original photo after the first forward step")

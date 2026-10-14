@@ -749,7 +749,13 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         requiresStableCaptureWindow: Bool = false
     ) throws -> String {
         let deadline = Date().addingTimeInterval(timeout)
+        var previousObservation: [String: String] = [:]
+        var lastObservation: [String: String] = [:]
         while Date() < deadline {
+            if requiresStableCaptureWindow {
+                previousObservation = lastObservation
+                lastObservation = strictSceneFrameObservation(app: app)
+            }
             if !indexProbe.exists {
                 ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
             }
@@ -757,14 +763,26 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
                 let value = String(describing: indexProbe.value ?? "")
                 if !value.isEmpty && value != oldValue
                     && (!requiresStableCaptureWindow
-                        || (hasStableStrictSceneCaptureWindow(app: app) && Date() < deadline))
+                        || (StrictE2ESceneCapture.isStableWindow(lastObservation) && Date() < deadline))
                 {
+                    if requiresStableCaptureWindow {
+                        attachStrictSceneObservation(
+                            before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window")
+                    }
                     return value
                 }
             }
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
         }
-        XCTFail("The index probe must change after a playback action.")
+        if requiresStableCaptureWindow {
+            attachStrictSceneObservation(
+                before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window-timeout")
+            XCTFail(
+                "The index probe must change after a playback action. \(strictSceneCaptureDiagnostic(before: previousObservation, after: lastObservation, stable: StrictE2ESceneCapture.isStableWindow(lastObservation)))"
+            )
+        } else {
+            XCTFail("The index probe must change after a playback action.")
+        }
         return try requireIndexValue(indexProbe)
     }
 

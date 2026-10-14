@@ -58,9 +58,15 @@ not rewind this forward pool cursor; backward history identity uses the complete
 pixel signature and ledger references. Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
-The existing read-only scene-probe flag also enables the Debug manifest probes;
-it does not request a state reset or bypass onboarding. Release exposes neither
-probe. The pure environment check is covered by `UnitTestHostTests`. Capture
+`UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
+Only `journey-b` and `tvos-flow` set it in strict App launch environments, and
+their launch audits list the key; all other `UI_TEST_*` keys remain forbidden.
+This exact key is excluded from `isRunningXCTest`: a probe-only launch keeps
+the real Keychain path, never enables `immichApiKey.xctestFallback`, and preserves
+the ordinary Info.plist debug-server read. Other XCTest keys retain their existing
+effect. The flag does not request a reset or bypass onboarding; Release exposes
+neither probe. New pure environment tests in the existing `UnitTestHostTests`
+file guard probe visibility and isolation from XCTest mode. Capture
 sidecars are written before an assertion can stop XCTest, preserving failed
 probe observations for diagnosis.
 The iOS resume-state wait also requires a complete opaque stable frame before
@@ -79,6 +85,13 @@ public-texture judgement, including clipped glyphs. Collages require the strict
 glyph, texture and membership rules for every slot. An unsegmentable frame never
 falls back to color classification. The surround reader still requires both the
 matched public original and its blurred background.
+The palette splitter requires only 18 matching samples per line; it does not
+prove full pixel coverage inside a slot. Black bars, blank bands or blurred
+padding inside a slot can escape this identity reader, and planner-reported
+coverage is geometry rather than rendered-pixel evidence. Adjacent slots of
+the same photo can also merge; scene contracts check slot counts and references,
+while filter contracts have no corresponding probe check. Pixel coverage needs
+separate validation; this reader's thresholds remain unchanged.
 Unobstructed checker rows must have consistent cell spacing, within two sampled
 pixels of raster rounding, with edge cells no wider than interior cells. This
 rejects a same-number foreign stripe beside a checker photo. Narrow edge crops
@@ -90,8 +103,10 @@ unique interpolation between the two colors of the same public photo. Interior
 palette, glyph and texture evidence keeps the original tolerance of 12; the
 edge interpolation never supplies texture or glyph evidence. Black, white,
 ambiguous palette interpolations and blended interiors remain unreadable.
-The accepted calibration risk is a foreign sliver at most eight pixels wide
-at an edge: interior identity cannot distinguish that sliver from antialiasing.
+Exact palette matches take precedence. The residual interpolation risk is a
+non-palette color near a same-photo color segment on the outermost one to three
+sample lines. Nearest-neighbour sampling also misses features narrower than
+one sample step anywhere: TV 8 pixels, iPad about 3.4, iPhone about 2.4.
 The measured A1 edge sample (77,74,72) motivates this bounded rule.
 
 The pinned Apple TV 4K (3rd generation), tvOS 27.0, produces **3840x2160** PNGs.

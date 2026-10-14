@@ -209,6 +209,23 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_scene_judgement_converts_a_second_clear_background_photo_to_identity_failure(self) -> None:
+        photo = Image.open(io.BytesIO(_fixture_png("A1"))).convert("RGB")
+        scene = ImageOps.fit(photo, (320, 696)).filter(ImageFilter.GaussianBlur(40))
+        scene.paste(photo, (0, 258))
+        foreign = Image.open(io.BytesIO(_fixture_png("A2"))).convert("RGB")
+        scene.paste(ImageOps.fit(foreign, (112, 112)), (8, 100))
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous")
+        for suite in ("journey-b", "tvos-flow"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                for name in names:
+                    (evidence / f"{name}.png").write_bytes(_fixture_png("A1"))
+                (evidence / "history-start.png").write_bytes(_png(scene))
+                _write_scene_sequence(evidence, [(name, ("A1",)) for name in names])
+                with self.assertRaisesRegex(IdentityAssertionError, "single-photo surround still"):
+                    evaluate_visual_identity(evidence, suite)
+
     def test_palette_interpolation_is_unique_and_confined_to_eight_raw_edge_pixels(self) -> None:
         from strict_e2e_photo_identity import _public_palette_edge_assignment, _public_frame_slots
         self.assertEqual(_public_palette_edge_assignment((77, 74, 72)), "A1")
@@ -282,13 +299,13 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
 
     def test_history_compares_all_slots_and_cross_checks_scene_probes(self) -> None:
         names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous")
-        marks = [("A5",), ("A1", "A5"), ("A2", "A3"), ("A1", "A5"), ("A5",)]
+        marks = [("A5",), ("A1", "A5"), ("A4",), ("A1", "A5"), ("A5",)]
         for fixture_set in ("a", "b"):
             with self.subTest(fixture=fixture_set), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)
                 single = _fixture_data(fixture_set)["images"][f"asset-{fixture_set}-5"]
                 pair = self._pair(fixture_set, 1, 5, horizontal=False)
-                second = self._pair(fixture_set, 2, 3, horizontal=True, seam=1382)
+                second = _fixture_data(fixture_set)["images"][f"asset-{fixture_set}-4"]
                 for name, png in zip(names, (single, pair, second, pair, single)):
                     (evidence / f"{name}.png").write_bytes(png)
                 _write_scene_sequence(evidence, list(zip(names, marks)), fixture_set)

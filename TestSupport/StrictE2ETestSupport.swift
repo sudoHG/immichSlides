@@ -186,9 +186,21 @@ extension XCTestCase {
         return values
     }
 
-    @MainActor
-    func hasStableStrictSceneCaptureWindow(app: XCUIApplication) -> Bool {
-        StrictE2ESceneCapture.isStableWindow(strictSceneFrameObservation(app: app))
+    func strictSceneCaptureDiagnostic(before: [String: String], after: [String: String], stable: Bool) -> String {
+        let beforeRefs = SharedSceneEvidenceManifest.parseKeyValueFields(before["manifest"] ?? "")["ledgerSceneAssets"]
+        let afterRefs = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")["ledgerSceneAssets"]
+        return "stable=\(stable) referencesMatch=\(beforeRefs != nil && beforeRefs == afterRefs)"
+    }
+
+    func attachStrictSceneObservation(before: [String: String], after: [String: String], name: String) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: ["before": before, "after": after], options: [.sortedKeys])
+        else { return }
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     @MainActor
@@ -216,7 +228,7 @@ extension XCTestCase {
         XCTAssertTrue(
             !png.isEmpty && identity.status != .black && identity.status != .blank
                 && stable && refsBefore != nil && refsBefore == refsAfter,
-            "Visual ID failed \(name): \(identity.status.rawValue) \(identity.notes.joined(separator: " "))"
+            "Visual ID failed \(name): \(identity.status.rawValue) \(identity.notes.joined(separator: " ")) \(strictSceneCaptureDiagnostic(before: before, after: after, stable: stable))"
         )
         return payload
     }

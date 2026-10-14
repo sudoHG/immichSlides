@@ -437,6 +437,29 @@ class StrictE2ERunnerTestsCasesConfiguration:
             with self.subTest(key=key), self.assertRaises(CommandError):
                 validate_app_launch_environment({key: "present"})
 
+    def test_scene_probe_launch_audit_allows_only_the_exact_key_for_scene_suites(self) -> None:
+        from strict_e2e_runner_support import strict_app_launch_environment, write_app_launch_environment_audit
+        probe = "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"
+        for suite in ("journey-b", "tvos-flow", "journey-a", "smoke"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:
+                environment = strict_app_launch_environment(suite)
+                expected = {probe: "1"} if suite in {"journey-b", "tvos-flow"} else {}
+                self.assertEqual(environment, expected)
+                write_app_launch_environment_audit(Path(raw), suite)
+                audit = json.loads((Path(raw) / "app-launch-environment-audit.json").read_text())
+                self.assertEqual(audit["launch_environment_keys"], sorted(expected))
+                self.assertEqual(audit["forbidden_keys_present"], [])
+                for key in ("UI_TEST_RESET_STATE", "UI_TEST_ANY_FUTURE_KEY", "TEST_RUNNER_" + probe, "SIMCTL_CHILD_" + probe):
+                    with self.assertRaises(CommandError):
+                        validate_app_launch_environment({**environment, key: "1"}, suite=suite)
+                if expected:
+                    with self.assertRaises(CommandError):
+                        validate_app_launch_environment({probe: "0"}, suite=suite)
+                else:
+                    with self.assertRaises(CommandError):
+                        validate_app_launch_environment({probe: "1"}, suite=suite)
+
+
 
     def test_xcodebuild_command_targets_one_platform_smoke_and_independent_outputs(self) -> None:
         for platform, scheme, test_method in (

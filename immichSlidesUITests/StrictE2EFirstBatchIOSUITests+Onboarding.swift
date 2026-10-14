@@ -302,11 +302,6 @@ extension StrictE2EFirstBatchIOSUITests {
         }
     }
 
-    // String? ?? NSNull() has no common type and cannot go into the array; upcast to Any? first to get JSON null.
-    func jsonSafeMarks(_ marks: [String?]) -> [Any] {
-        marks.map { $0 as Any? ?? NSNull() }
-    }
-
     @MainActor
     func captureHistoryIdentity(app: XCUIApplication, step: String) -> [String: Any] {
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))

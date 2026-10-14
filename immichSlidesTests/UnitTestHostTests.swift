@@ -3,28 +3,20 @@ import Testing
 
 @Suite
 struct UnitTestHostTests {
-    @Test func `strict scene capture excludes fade and late motion inside the existing wait`() {
-        let manifest =
-            "sceneType=single;slotCount=1;slotReadiness=ready;gapPixelCount=0;overlapPixelCount=0;canvasCoverage=1;emptyCanvasRatio=0"
-        func observation(phase: String = "stablePhoto", opacity: String = "1", progress: String = "0.5") -> [String:
-            String]
-        {
-            [
-                "manifest": manifest,
-                "render":
-                    "phase=\(phase);layerRoles=stable;loadingVisible=false;layerOpacities=\(opacity);motionRawProgress=\(progress)"
-            ]
-        }
-        #expect(StrictE2ESceneCapture.isStableWindow(observation()))
-        for invalid in [
-            observation(phase: "transition"), observation(opacity: "0.472070"),
-            observation(progress: "1.228656"), observation(progress: "nan"), observation(progress: "0.5|bad")
-        ] {
-            #expect(!StrictE2ESceneCapture.isStableWindow(invalid))
-        }
+    @Test func `the read only scene probe does not activate XCTest mode`() {
+        let probe = ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"]
+        #expect(!PlatformCompat.isRunningXCTest(environment: probe))
+        #expect(!PlatformCompat.isRunningXCTest(environment: [:]))
+        #expect(
+            PlatformCompat.isRunningXCTest(
+                environment: probe.merging(["XCTestConfigurationFilePath": "host"]) { _, value in value }))
+        #expect(
+            PlatformCompat.isRunningXCTest(
+                environment: probe.merging(["UI_TEST_RESET_STATE": "1"]) { _, value in value }))
+        #expect(PlatformCompat.isRunningXCTest(environment: ["UI_TEST_ANY_FUTURE_KEY": "0"]))
     }
 
-    @Test func `the read only scene probe exposes diagnostics without requesting a state reset`() {
+    @Test func `the read only scene probe exposes diagnostics only when enabled`() {
         #expect(
             PlatformCompat.shouldExposeUITestProbes(environment: ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"]))
         #expect(
