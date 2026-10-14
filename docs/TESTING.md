@@ -154,6 +154,12 @@ func testSwitchingServerClearsPreviousFilters() { … }
 
 ## 3. Assertions
 
+Polling conditions use non-failing reads and return the observation that satisfied the condition;
+only the outer timeout records a failure. Read evidence-only attributes from one application snapshot
+and record `notVisible` when a control is absent. Do not use `element.exists ? element.value`,
+`isEnabled` or `isHittable`: the control can disappear between those live queries.
+Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
+
 1. **Every test has at least one assertion that can fail.** Screenshots may accompany assertions but never replace them.
 2. **Test rules, not design values.** "Input height is at least 44 pt" and "input text is larger than placeholder text" are good tests. "Height equals 46" is not: a design change should not turn tests red.
 3. **Do not assert on source text.** No reading `.swift` files and no `contains("some code")` checks. Enforce structure with the compiler, access control or a lint script.

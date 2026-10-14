@@ -640,6 +640,33 @@ class UILabelLookupTests(unittest.TestCase):
         self.assertEqual([], conv.check_ui_label_lookups("immichSlidesTests/Example.swift", source))
 
 
+class UIExistsThenReadTests(unittest.TestCase):
+    def test_live_property_read_after_exists_is_rejected_but_snapshot_reads_pass(self):
+        path = "immichSlidesUITests/Example.swift"
+        cases = [
+            ('button.exists ? button.value : "notVisible"', True),
+            ('button.exists ? button.isEnabled : false', True),
+            ('button.exists ? button.isHittable : false', True),
+            ('button.exists\n    ? ((button.value as? String) ?? "") : "notVisible"', True),
+            ('app.buttons["play"].exists ? app.buttons["play"].value : "notVisible"', True),
+            ('button.exists /* can disappear here */ ? button.isEnabled : false', True),
+            ('button.exists ? other.value : "notVisible"', False),
+            ('app.buttons["play"].exists ? app.buttons["pause"].value : "notVisible"', False),
+            ('snapshot?.value as? String ?? "notVisible"', False),
+            ('// button.exists ? button.isEnabled : false', False),
+            ('let example = "button.exists ? button.isHittable : false"', False),
+        ]
+        for expression, rejected in cases:
+            with self.subTest(expression=expression):
+                source = "func recordEvidence() {\n    let observed = " + expression + "\n}\n"
+                violations = [violation for check in conv.CHECKS for violation in check(path, source)
+                              if violation.rule == "ui-exists-then-read"]
+                self.assertEqual(["ui-exists-then-read"] if rejected else [], rules(violations))
+                if rejected:
+                    self.assertEqual(2, violations[0].line)
+                    self.assertIn("snapshot", violations[0].detail)
+
+
 class UnboundedWaitTests(unittest.TestCase):
     path = "immichSlidesTests/Example.swift"
 

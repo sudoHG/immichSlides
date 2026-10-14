@@ -293,8 +293,8 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func waitForPlaybackControls(app: XCUIApplication, timeout: TimeInterval) -> Bool {
         waitUntil(timeout: timeout) {
-            let settings = app.buttons["slideshow.control.settings.button"]
-            if settings.exists && settings.isHittable {
+            let settings = app.evidenceSnapshotsByIdentifier()["slideshow.control.settings.button"]
+            if let settings, settings.isEnabled, !settings.frame.isEmpty {
                 return true
             }
             app.tap()
@@ -336,23 +336,24 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func recordControlTimeline(app: XCUIApplication, event: String) {
-        let playPause = app.buttons["slideshow.control.playPause.button"]
-        let previous = app.buttons["slideshow.control.previous.button"]
+        let snapshots = app.evidenceSnapshotsByIdentifier()
+        let playPause = snapshots["slideshow.control.playPause.button"]
+        let previous = snapshots["slideshow.control.previous.button"]
         // The probes only give an EXIF/asset cross-check; they cannot replace the in-repository visual identity
         // contract.
-        let visibleImageProbe = app.descendants(matching: .any)["slideshow.currentAssetId.flag"]
-        let smartFillProbe = app.descendants(matching: .any)["slideshow.smartfill.currentManifest.flag"]
+        let visibleImageProbe = snapshots["slideshow.currentAssetId.flag"]
+        let smartFillProbe = snapshots["slideshow.smartfill.currentManifest.flag"]
         let payload: [String: Any] = [
             "event": event,
             "device": currentDeviceTag(),
-            "firstboot_visible": app.textFields["firstboot.serverURL.field"].exists,
-            "mode_visible": app.buttons["mode.random.button"].exists,
-            "filter_summary_visible": app.buttons["filterSummary.album.button"].exists,
-            "settings_visible": app.buttons["slideshow.control.settings.button"].exists,
-            "previous_enabled": previous.exists ? previous.isEnabled : false,
-            "play_pause": playPause.exists ? playPauseState(playPause) : "",
-            "visible_image_asset_id": visibleImageProbe.exists ? visibleImageProbe.label : "",
-            "smartfill_manifest": smartFillProbe.exists ? smartFillProbe.label : ""
+            "firstboot_visible": snapshots["firstboot.serverURL.field"] != nil,
+            "mode_visible": snapshots["mode.random.button"] != nil,
+            "filter_summary_visible": snapshots["filterSummary.album.button"] != nil,
+            "settings_visible": snapshots["slideshow.control.settings.button"] != nil,
+            "previous_enabled": previous.map { $0.isEnabled as Any } ?? "notVisible",
+            "play_pause": playPause.map { playPauseState($0) } ?? "notVisible",
+            "visible_image_asset_id": visibleImageProbe?.label ?? "notVisible",
+            "smartfill_manifest": smartFillProbe?.label ?? "notVisible"
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         else {
@@ -367,20 +368,16 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func capturePauseStage(app: XCUIApplication, stage: String) -> [String: Any] {
         let uptime = ProcessInfo.processInfo.systemUptime
-        let playPause = app.buttons["slideshow.control.playPause.button"]
-        let settings = app.buttons["slideshow.control.settings.button"]
-        let previous = app.buttons["slideshow.control.previous.button"]
-        let next = app.buttons["slideshow.control.next.button"]
-        let hasPlayPauseControl = playPause.exists
-        let hasSettingsControl = settings.exists
-        let hasPreviousControl = previous.exists
-        let hasNextControl = next.exists
-        let visibleImageProbe = app.descendants(matching: .any)["slideshow.currentAssetId.flag"]
-        let visibleImageAssetId = visibleImageProbe.exists ? visibleImageProbe.label : ""
+        let snapshots = app.evidenceSnapshotsByIdentifier()
+        let playPause = snapshots["slideshow.control.playPause.button"]
+        let settings = snapshots["slideshow.control.settings.button"]
+        let previous = snapshots["slideshow.control.previous.button"]
+        let next = snapshots["slideshow.control.next.button"]
+        let visibleImageAssetId = snapshots["slideshow.currentAssetId.flag"]?.label ?? "notVisible"
         let originalConditionNote: String
         if visibleImageAssetId == "asset-a-2" {
             originalConditionNote = ""
-        } else if visibleImageAssetId.isEmpty {
+        } else if visibleImageAssetId.isEmpty || visibleImageAssetId == "notVisible" {
             originalConditionNote = "Original condition not covered: probe gave no asset id; identify by screenshot"
         } else {
             originalConditionNote = "Original condition not covered: probe is not A2 (\(visibleImageAssetId))"
@@ -390,15 +387,15 @@ extension StrictE2EFirstBatchIOSUITests {
             "stage": stage,
             "system_uptime": uptime,
             "device": currentDeviceTag(),
-            "play_pause_exists": hasPlayPauseControl,
-            "play_pause_hittable": hasPlayPauseControl && playPause.isHittable,
-            "play_pause": hasPlayPauseControl ? playPauseState(playPause) : "",
-            "settings_exists": hasSettingsControl,
-            "settings_hittable": hasSettingsControl && settings.isHittable,
-            "previous_exists": hasPreviousControl,
-            "previous_hittable": hasPreviousControl && previous.isHittable,
-            "next_exists": hasNextControl,
-            "next_hittable": hasNextControl && next.isHittable,
+            "play_pause_exists": playPause != nil,
+            "play_pause_enabled": playPause.map { $0.isEnabled as Any } ?? "notVisible",
+            "play_pause": playPause.map { playPauseState($0) } ?? "notVisible",
+            "settings_exists": settings != nil,
+            "settings_enabled": settings.map { $0.isEnabled as Any } ?? "notVisible",
+            "previous_exists": previous != nil,
+            "previous_enabled": previous.map { $0.isEnabled as Any } ?? "notVisible",
+            "next_exists": next != nil,
+            "next_enabled": next.map { $0.isEnabled as Any } ?? "notVisible",
             "visible_image_asset_id": visibleImageAssetId,
             "original_a2_condition_note": originalConditionNote
         ]
@@ -428,7 +425,7 @@ extension StrictE2EFirstBatchIOSUITests {
         add(attachment)
     }
 
-    func playPauseState(_ button: XCUIElement) -> String {
+    func playPauseState(_ button: XCUIElementAttributes) -> String {
         ((button.value as? String) ?? "").lowercased()
     }
 
