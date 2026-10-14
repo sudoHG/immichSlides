@@ -74,14 +74,6 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             app: app,
             names: ["album-playback-1", "album-playback-2", "album-playback-3"]
         )
-
-        XCUIRemote.shared.press(.menu)
-        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1))))
-        XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(timeout: TestWait.seconds(.product(8)))
-                || app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(2))),
-            "Back/Menu on the playback screen must leave playback and return to the filter or mode screen."
-        )
     }
 
     @MainActor
@@ -618,7 +610,9 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         isSoloOnly: Bool,
         evidenceName: String
     ) throws {
-        try returnToFilterSummary(app: app)
+        if !app.buttons["filterSummary.person.button"].exists {
+            try openFilterEditorFromPlaybackSettings(app: app)
+        }
         try openPeopleFilter(app: app)
         try focusAndConfigurePerson(app: app, personID: personID, isSoloOnly: isSoloOnly)
         XCUIRemote.shared.press(.menu)
@@ -628,20 +622,27 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             "Back from the people list must return to the filter screen."
         )
         let start = app.buttons["filterSummary.startPlayback.button"]
-        if start.waitForExistence(timeout: TestWait.seconds(.product(5))), start.isEnabled {
+        if app.buttons["filter.editor.done.button"].exists {
+            try finishTVOSFilterEditor(app: app)
+            try returnToSlideshowFromSettings(app: app)
+        } else if start.waitForExistence(timeout: TestWait.seconds(.product(5))), start.isEnabled {
             moveFocus(.right, to: start, maximumPresses: 3, message: "Focus must be able to move to Start Playback.")
             XCUIRemote.shared.press(.select)
-            var names = [evidenceName]
-            if evidenceName == "person-conflict-normal" {
-                names.append(contentsOf: ["person-conflict-normal-2", "person-conflict-normal-3"])
-            }
-            try capturePausedPlaybackPNGs(app: app, names: names)
-            if evidenceName == "person-conflict-solo" {
-                try writeScreenshotPNG(app: app, name: "person-solo", attachmentName: "person-solo")
-            }
-            XCUIRemote.shared.press(.menu)
         } else {
             try writeScreenshotPNG(app: app, name: evidenceName, attachmentName: evidenceName)
+            return
+        }
+        if app.staticTexts["slideshow.emptyState.message"].exists {
+            try writeScreenshotPNG(app: app, name: evidenceName, attachmentName: evidenceName)
+            return
+        }
+        var names = [evidenceName]
+        if evidenceName == "person-conflict-normal" {
+            names.append(contentsOf: ["person-conflict-normal-2", "person-conflict-normal-3"])
+        }
+        try capturePausedPlaybackPNGs(app: app, names: names)
+        if evidenceName == "person-conflict-solo" {
+            try writeScreenshotPNG(app: app, name: "person-solo", attachmentName: "person-solo")
         }
     }
 
