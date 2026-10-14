@@ -253,7 +253,7 @@ def public_scene_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto
     # Preserve #381's one-photo boundary uniformly across capture geometries.
     # Segmentation still precedes this path, so mixed/unreadable layouts cannot fall back.
     if len(slots) == 1:
-        identity = classify_screenshot(foreground)
+        identity = classify_screenshot(image_bytes)
         pattern = patterns.get(slots[0][0])
         left_pattern, right_pattern = _edge_spatials(rgb)
         if (identity.status != "MATCH" or identity.mark != slots[0][0] or pattern not in {"A", "B"}
