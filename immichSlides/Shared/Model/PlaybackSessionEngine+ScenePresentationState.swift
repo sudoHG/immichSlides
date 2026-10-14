@@ -268,6 +268,17 @@ extension PlaybackSessionEngine {
 
         private var manualPendingPresentationRestore: ManualPendingPresentationRestore?
 
+        #if DEBUG
+        var automaticFadeMidpointForTesting: TimeInterval? {
+            guard suspensionReasons.isEmpty, underlyingPhase == .transition,
+                let pendingTarget, attemptLedger.latestSource(for: pendingTarget.identity) == .automatic,
+                let scheduledWakeUp, scheduledWakeUp.purpose == .transitionCompletion
+            else { return nil }
+            let pacing = ScenePresentationPacingPolicy.automatic
+            return scheduledWakeUp.deadline - pacing.completionDuration + pacing.outgoingFadeDuration / 2
+        }
+        #endif
+
         /// If the pause came before a layer was built, the new layer also inherits the freeze; a SmartFill that becomes
         /// Ready later must not run its own clock in the background.
 

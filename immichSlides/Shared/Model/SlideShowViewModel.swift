@@ -101,6 +101,10 @@ class SlideShowViewModel: ObservableObject {
     private(set) var pendingAutomaticScenePlanningRequest: ScenePresentationPlanningRequest?
     @Published private(set) var scenePresentationRevision = UUID()
     #if DEBUG
+    var automaticFadeMidpointPauseTask: Task<Void, Never>?
+    var automaticFadeMidpointPauseDeadlineForTesting: TimeInterval?
+    var didReceiveFirstUserPlayForTesting = false
+    var didPauseAtAutomaticFadeMidpointForTesting = false
     private(set) var smartFillCandidateSummaryBuildCountForTestingStorage: Int = 0
     private(set) var smartFillMainActorPlannerCallCountsForTesting: [SmartFillMainActorPlannerCallSite: Int] = [:]
     #endif
@@ -496,6 +500,9 @@ class SlideShowViewModel: ObservableObject {
     }
 
     deinit {
+        #if DEBUG
+        automaticFadeMidpointPauseTask?.cancel()
+        #endif
         if let playbackSettingsChangeObserver {
             NotificationCenter.default.removeObserver(playbackSettingsChangeObserver)
         }
@@ -1464,6 +1471,9 @@ extension SlideShowViewModel {
     }
 
     func toggleAutoPlayFromUserInteraction() {
+        #if DEBUG
+        if !isAutoPlay { didReceiveFirstUserPlayForTesting = true }
+        #endif
         updateAutoPlayEnabled(!isAutoPlay, persistPreference: true)
     }
 
@@ -1536,6 +1546,9 @@ extension SlideShowViewModel {
         if shouldPublishChanges {
             publishScenePresentationChange()
         }
+        #if DEBUG
+        scheduleAutomaticFadeMidpointPauseForTesting()
+        #endif
     }
 
     private func sceneForPresentationEffect(_ effect: ScenePresentationEffect) -> PlaybackScene? {
@@ -2020,6 +2033,11 @@ extension SlideShowViewModel {
     }
 
     private func resetScenePresentationRuntime() {
+        #if DEBUG
+        automaticFadeMidpointPauseTask?.cancel()
+        automaticFadeMidpointPauseTask = nil
+        automaticFadeMidpointPauseDeadlineForTesting = nil
+        #endif
         scenePresentationWakeUpScheduler.reset()
         scenePresentationEffectExecutor.resetPresentation()
         pendingAutomaticScenePlanningRequest = nil

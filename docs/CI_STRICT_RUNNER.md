@@ -70,7 +70,24 @@ and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 The `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`
 selectors use an empty launch environment and forbid the scene probe.
 `pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
-`UI_TEST_RESET_STATE` and `UI_TEST_FORCE_MODE_SELECTION`.
+`UI_TEST_RESET_STATE`, `UI_TEST_FORCE_MODE_SELECTION` and
+`UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT=1`. The last key enables a Debug-only,
+one-shot pause at the midpoint of the first automatic fade-out after the first
+user Play, through the same command as the user's Pause. Automatic fades before
+the first user Play cannot consume the hook. The UI test polls only the frame-synchronized probe
+until it reports paused with 0 < outgoing opacity < 1 and incoming opacity 0,
+then captures the frozen frame and verifies its identity, opacity and motion
+through the existing 0.3-second hold. The verdict records the actual outgoing
+opacity and the probe-derived paused state; a delayed midpoint callback still
+counts when it freezes a translucent outgoing frame. Exact screenshot pixel comparison reuses
+the paused-photo comparator's existing chrome exclusions and minimum compared
+area; the Python identity verdict remains unchanged. Preparation uses the
+existing control-bar tap helper before Next and Previous, and reveals the bar
+before starting Play's existing 7-second clock, so evidence reads cannot consume
+the bar's visibility window.
+It no longer checks whether a human tap can land inside the fade window;
+`AutomaticTransitionPauseTests` covers the reducer's pause semantics. Release
+compiles out the timer and pause action and returns false for the launch flag.
 `tvos-directional-wake` sets those four legacy keys plus
 `UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT`, and does not set the scene probe.
 Other probe-key launches are the configured SmartFill launch helpers in
@@ -510,6 +527,8 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `visual_verdict=MISSING_FRAMES: missing a window-detected, after-pause, after-pause-0_3s or play-to-pause keepAlways frame.` | `pause_window` | `evidence_capture` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.` | `pause_window` | `probe_readback` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.` | `pause_window` | `probe_readback` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `The paused pause-window probe identity must not change.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `Paused pause-window frames must be pixel-identical.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After late completion the current public mark must stay: no flash back, all black or unreadable: ` | `late_image` | `scene_identity` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
 | `Next must be tappable twice right after entering the slideshow, before old image requests finish.` | `late_image` | `navigation` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
 | `The fixture must actually deliver a failing image response` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |

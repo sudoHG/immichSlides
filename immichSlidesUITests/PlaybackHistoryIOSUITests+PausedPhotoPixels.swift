@@ -41,6 +41,10 @@ extension PlaybackHistoryIOSUITests {
     // Read from one hierarchy dump: querying elements one by one records a test failure when the bar fades out
     // between the query and the frame read, and a hidden bar is normal here.
     func pausedChromeFrames(app: XCUIApplication) -> (frames: [PausedChromeFrame], problem: String?) {
+        Self.pausedChromeFrames(app: app)
+    }
+
+    static func pausedChromeFrames(app: XCUIApplication) -> (frames: [PausedChromeFrame], problem: String?) {
         let framePattern =
             #"\{\{(-?[0-9.]+), (-?[0-9.]+)\}, \{(-?[0-9.]+), (-?[0-9.]+)\}\}, identifier: '(slideshow\.(?:control|entryHint)\.[^']*)'"#
         let anyChromePattern = #"identifier: 'slideshow\.(?:control|entryHint)\."#
@@ -75,6 +79,10 @@ extension PlaybackHistoryIOSUITests {
 
     // The chrome is read before and after the screenshot, so a bar that fades in or out during it is still covered.
     func capturePausedWindowSample(app: XCUIApplication) -> PausedWindowSample {
+        Self.capturePausedWindowSample(app: app)
+    }
+
+    static func capturePausedWindowSample(app: XCUIApplication) -> PausedWindowSample {
         let window = app.windows.firstMatch
         let before = pausedChromeFrames(app: app)
         let png = window.screenshot().pngRepresentation
@@ -85,6 +93,13 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func comparePausedPhotoPixels(
+        _ sample: PausedWindowSample,
+        against baseline: PausedWindowSample
+    ) -> PausedPhotoPixelComparison {
+        Self.comparePausedPhotoPixels(sample, against: baseline)
+    }
+
+    static func comparePausedPhotoPixels(
         _ sample: PausedWindowSample,
         against baseline: PausedWindowSample
     ) -> PausedPhotoPixelComparison {

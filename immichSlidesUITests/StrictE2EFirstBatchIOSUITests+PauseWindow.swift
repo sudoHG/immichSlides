@@ -3,8 +3,7 @@ import XCTest
 #if os(iOS)
 extension StrictE2EFirstBatchIOSUITests {
     // launchStrictE2EApp clears launchEnvironment and rejects leftover UI_TEST_* keys. This pause-window
-    // run needs exactly these five: server URL/key so first-boot is skipped, reset plus mode-selection to
-    // reach a clean mode page, and the scene-presentation probe the outgoing-translucent check reads.
+    // run declares its fixture setup, frame probe and one-shot automatic fade midpoint pause explicitly.
     @MainActor
     func launchOutgoingPauseWindowApp() throws -> XCUIApplication {
         let input = try requireStrictE2EInput()
@@ -14,7 +13,8 @@ extension StrictE2EFirstBatchIOSUITests {
             "UI_TEST_API_KEY": input.publicKey,
             "UI_TEST_RESET_STATE": "1",
             "UI_TEST_FORCE_MODE_SELECTION": "1",
-            "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"
+            "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1",
+            "UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT": "1"
         ]
         let audit = try JSONSerialization.data(
             withJSONObject: ["launch_environment_keys": app.launchEnvironment.keys.sorted()],
@@ -142,8 +142,6 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func locateStableA2WithoutFixture3(app: XCUIApplication) throws {
-        let next = app.buttons["slideshow.control.next.button"]
-        let previous = app.buttons["slideshow.control.previous.button"]
         for step in 0...4 {
             revealPlaybackControlsWithoutWaitHelper(app: app)
             waitForSettledPhoto(app: app)
@@ -153,16 +151,17 @@ extension StrictE2EFirstBatchIOSUITests {
             let hasOddFixture =
                 overlay.contains("Fixture 1") || overlay.contains("Fixture 3") || overlay.contains("Fixture 5")
             if hasOddFixture || mark == "A1" || mark == "A3" || mark == "A5" {
-                tapElement(next)
+                app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
                 continue
             }
             let maybeA2 = mark == "A2" || (mark == "unknown" && !hasOddFixture)
             if maybeA2 {
                 XCTAssertTrue(
-                    next.waitForExistence(timeout: TestWait.seconds(.product(4))),
+                    app.waitForSlideshowControlBarButton(
+                        identifier: "slideshow.control.next.button", timeout: TestWait.seconds(.product(4))),
                     "After identifying A2, Next must be tappable to check its successor."
                 )
-                tapElement(next)
+                app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
                 waitForSettledPhoto(app: app)
                 let successorOverlay = visibleExifOverlayText(app: app)
                 let successor = classifyVisibleFixture(app: app)
@@ -194,8 +193,7 @@ extension StrictE2EFirstBatchIOSUITests {
                     }
                     continue
                 }
-                revealPlaybackControlsWithoutWaitHelper(app: app)
-                tapElement(previous)
+                app.tapSlideshowControlBarButton(identifier: "slideshow.control.previous.button")
                 waitForSettledPhoto(app: app)
                 let restoredOverlay = visibleExifOverlayText(app: app)
                 let restored = classifyVisibleFixture(app: app)
@@ -211,7 +209,7 @@ extension StrictE2EFirstBatchIOSUITests {
                 }
                 return
             }
-            tapElement(next)
+            app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
         }
         attachVerdict([
             "verdict": "PRECONDITION_FAIL",
@@ -252,13 +250,12 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func probeRaw(app: XCUIApplication, identifier: String) -> String {
-        let probe = app.descendants(matching: .any)[identifier]
-        guard probe.exists else { return "" }
-        return probe.label
+        app.evidenceSnapshotsByIdentifier()[identifier]?.label ?? ""
     }
 
     struct PauseWindowProbeState {
         let phase: String
+        let isPaused: Bool
         let layerRoles: [String]
         let layerOpacities: [Double]
     }
@@ -274,7 +271,8 @@ extension StrictE2EFirstBatchIOSUITests {
         }
         let roles = list(fields["layerRoles"])
         let opacities = list(fields["layerOpacities"]).compactMap(Double.init)
-        return PauseWindowProbeState(phase: phase, layerRoles: roles, layerOpacities: opacities)
+        return PauseWindowProbeState(
+            phase: phase, isPaused: fields["playbackPaused"] == "true", layerRoles: roles, layerOpacities: opacities)
     }
 
     func probeFields(from label: String) -> [String: String] {
@@ -295,7 +293,7 @@ extension StrictE2EFirstBatchIOSUITests {
     }
 
     func isOutgoingOnlyPauseWindow(_ state: PauseWindowProbeState) -> Bool {
-        guard state.phase == "transition" else { return false }
+        guard state.phase == "transition", state.isPaused else { return false }
         guard state.layerRoles.count == state.layerOpacities.count else { return false }
         var isOutgoingFading = false
         var isIncomingHidden = false
@@ -321,12 +319,22 @@ extension StrictE2EFirstBatchIOSUITests {
     // Positive condition after freezing: outgoing is still visible and incoming is still fully invisible.
     func isPostPauseProbePositive(_ raw: String) -> Bool {
         guard let state = probeState(from: raw),
+            state.isPaused,
             let outgoing = layerOpacity(in: state, role: "outgoing"), outgoing > 0,
             let incoming = layerOpacity(in: state, role: "incoming"), incoming == 0
         else {
             return false
         }
         return true
+    }
+
+    func isSameFrozenProbeFrame(_ first: String, _ second: String) -> Bool {
+        let firstFields = probeFields(from: first)
+        let secondFields = probeFields(from: second)
+        return isPostPauseProbePositive(first) && isPostPauseProbePositive(second)
+            && ["phase", "layerIDs", "layerRoles", "layerOpacities", "motionRawProgress"].allSatisfy {
+                firstFields[$0] != nil && firstFields[$0] == secondFields[$0]
+            }
     }
 
     // Missing probe or outgoing at 0 means black/blank; 'no Fixture 3' alone must not count as a pass.
