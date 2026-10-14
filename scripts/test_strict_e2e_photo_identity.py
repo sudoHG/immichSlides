@@ -252,6 +252,11 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                 report = evaluate_visual_identity(evidence, "journey-b")
                 self.assertEqual(report["steps"][names[0]]["signature"], [f"{fixture_set.upper()}5"])
                 self.assertEqual(report["steps"][names[1]]["signature"], [f"{fixture_set.upper()}1", f"{fixture_set.upper()}5"])
+                swapped = self._pair(fixture_set, 5, 1, horizontal=False)
+                (evidence / f"{names[3]}.png").write_bytes(swapped)
+                _write_scene_sequence(evidence, [(names[3], ("A5", "A1"))], fixture_set)
+                with self.assertRaisesRegex(IdentityAssertionError, "first back step"):
+                    evaluate_visual_identity(evidence, "journey-b")
                 (evidence / f"{names[3]}.png").write_bytes(single)
                 _write_scene_sequence(evidence, [(names[3], ("A5",))], fixture_set)
                 with self.assertRaisesRegex(IdentityAssertionError, "first back step"):

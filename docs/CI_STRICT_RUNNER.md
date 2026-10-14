@@ -45,8 +45,10 @@ failure reasons. White bands shorter than ten sampled pixels are excluded; up to
 four blank rows join adjacent bitmap ink. Wider EXIF text bands may remain
 unrecognized, but cannot supply a missing slot's identity.
 
-`journey-b` and `tvos-flow` compare complete per-slot signatures for history,
-pause and resume. Swift rejects black, blank, incomplete or mid-transition frames
+`journey-b` and `tvos-flow` compare complete per-slot signatures in spatial order
+(top to bottom or left to right) for history, pause and resume. Swapping two slots
+changes the signature even when the photo set is unchanged. Swift rejects black,
+blank, incomplete or mid-transition frames
 and records manifest/render probes immediately before and after the PNG, without
 adding a wait or retry. Python independently reads every pixel slot, matches its
 public identity to `ledgerSceneAssets` using the fixture's hashed references, and

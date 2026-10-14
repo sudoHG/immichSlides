@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""On-screen identification of public marked fixtures. Uses only pixels and visible EXIF text, never asset IDs."""
+"""Public fixture identity from pixels; rendered-scene probes corroborate pixel signatures."""
 
 from __future__ import annotations
 
@@ -311,7 +311,7 @@ def _named_scene_signature(evidence_dir: Path, name: str, fixture_set: str, *, t
                 raise IdentityAssertionError(f"{name}: index changed during pixel capture")
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise IdentityAssertionError(f"{name}: missing or unreadable scene sequence evidence") from error
-    return tuple(sorted(f"{photo.letter}{photo.mark[-1]}" for photo in photos))
+    return tuple(f"{photo.letter}{photo.mark[-1]}" for photo in photos)
 
 
 def _scene_fixture(evidence_dir: Path) -> str:
