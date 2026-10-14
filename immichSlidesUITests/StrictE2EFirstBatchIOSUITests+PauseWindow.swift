@@ -142,8 +142,6 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func locateStableA2WithoutFixture3(app: XCUIApplication) throws {
-        let next = app.buttons["slideshow.control.next.button"]
-        let previous = app.buttons["slideshow.control.previous.button"]
         for step in 0...4 {
             revealPlaybackControlsWithoutWaitHelper(app: app)
             waitForSettledPhoto(app: app)
@@ -153,16 +151,17 @@ extension StrictE2EFirstBatchIOSUITests {
             let hasOddFixture =
                 overlay.contains("Fixture 1") || overlay.contains("Fixture 3") || overlay.contains("Fixture 5")
             if hasOddFixture || mark == "A1" || mark == "A3" || mark == "A5" {
-                tapElement(next)
+                app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
                 continue
             }
             let maybeA2 = mark == "A2" || (mark == "unknown" && !hasOddFixture)
             if maybeA2 {
                 XCTAssertTrue(
-                    next.waitForExistence(timeout: TestWait.seconds(.product(4))),
+                    app.waitForSlideshowControlBarButton(
+                        identifier: "slideshow.control.next.button", timeout: TestWait.seconds(.product(4))),
                     "After identifying A2, Next must be tappable to check its successor."
                 )
-                tapElement(next)
+                app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
                 waitForSettledPhoto(app: app)
                 let successorOverlay = visibleExifOverlayText(app: app)
                 let successor = classifyVisibleFixture(app: app)
@@ -194,8 +193,7 @@ extension StrictE2EFirstBatchIOSUITests {
                     }
                     continue
                 }
-                revealPlaybackControlsWithoutWaitHelper(app: app)
-                tapElement(previous)
+                app.tapSlideshowControlBarButton(identifier: "slideshow.control.previous.button")
                 waitForSettledPhoto(app: app)
                 let restoredOverlay = visibleExifOverlayText(app: app)
                 let restored = classifyVisibleFixture(app: app)
@@ -211,7 +209,7 @@ extension StrictE2EFirstBatchIOSUITests {
                 }
                 return
             }
-            tapElement(next)
+            app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
         }
         attachVerdict([
             "verdict": "PRECONDITION_FAIL",

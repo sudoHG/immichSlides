@@ -2,7 +2,6 @@ import XCTest
 
 enum StrictE2EFirstBatchIOSUITestsProbeTiming {
     static let pauseWindowTimeoutSeconds: TimeInterval = TestWait.seconds(.product(7.0))
-    static let frameCaptureIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.08))
     static let probePollIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.06))
 }
 
@@ -246,7 +245,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase {
 
         let playPause = app.buttons["slideshow.control.playPause.button"]
         let playUptime = ProcessInfo.processInfo.systemUptime
-        tapElement(playPause)
+        app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseState(playPause) == "pause" },
             "After tapping Play, the button value must become pause."
