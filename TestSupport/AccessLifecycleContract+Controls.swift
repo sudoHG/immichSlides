@@ -5,7 +5,7 @@ extension AccessLifecycleContract {
     // criteria, not the progress probe or control value changes.
     static let requestedIntervalSeconds = Int(TestWait.seconds(.product(12)))
     // T/2 stays at least 5 s and T-2 at least 8 s; bound run time without changing any timing tolerance.
-    static let iosTimingIntervalSeconds = 10...15
+    static let iosTimingIntervalSeconds = Int(TestWait.seconds(.product(10)))...Int(TestWait.seconds(.product(15)))
     static let pauseHoldBeyondIntervalSeconds: TimeInterval = TestWait.seconds(.product(2))
     static let continueCaptureSlackSeconds: TimeInterval = TestWait.seconds(.product(2))
     static let tvOSSelectableIntervals: [Int] = [5, 8, 10, 15, 30]

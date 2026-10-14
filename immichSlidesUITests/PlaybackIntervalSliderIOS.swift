@@ -3,8 +3,8 @@ import XCTest
 #if os(iOS)
 @MainActor
 enum PlaybackIntervalSliderIOS {
-    static let minimumSeconds = 5
-    static let maximumSeconds = 30
+    static let minimumSeconds = Int(TestWait.seconds(.product(5)))
+    static let maximumSeconds = Int(TestWait.seconds(.product(30)))
     private static let adjustmentAttemptLimit = 5
     private static let readbackTimeoutSeconds = TestWait.seconds(.product(0.4))
 
