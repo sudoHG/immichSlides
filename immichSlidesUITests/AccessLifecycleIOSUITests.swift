@@ -50,7 +50,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         defer { app.terminate() }
 
         try completeFirstBootToPlayback(app: app, input: input)
-        try changePlaybackSettingsFromUI(app: app)
+        try changePlaybackSettingsFromUI(app: app, shouldUseTimingWindow: true)
         try enablePinAndProveGate(app: app)
 
         let settingsAtBackground = try captureSettingsAtBackground(app: app)

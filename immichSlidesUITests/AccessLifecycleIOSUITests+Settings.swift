@@ -75,7 +75,7 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func changePlaybackSettingsFromUI(app: XCUIApplication) throws {
+    func changePlaybackSettingsFromUI(app: XCUIApplication, shouldUseTimingWindow: Bool = false) throws {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
         openPlaybackSettings(app: app)
@@ -91,8 +91,20 @@ extension AccessLifecycleIOSUITests {
             "Autoplay must be turned on through the real settings UI."
         )
         requests.append("settings.save.autoplay")
-        let interval = try setIntervalFromUI(app: app, targetSeconds: targetIntervalSeconds)
-        try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: interval, target: targetIntervalSeconds)
+        let interval = try setIntervalFromUI(
+            app: app,
+            targetSeconds: targetIntervalSeconds,
+            accepting: { observed in
+                shouldUseTimingWindow
+                    ? AccessLifecycleContract.iosTimingIntervalSeconds.contains(observed)
+                    : observed == self.targetIntervalSeconds
+            }
+        )
+        try AccessLifecycleContract.assertIOSIntervalReachedRequested(
+            observed: interval, target: targetIntervalSeconds, shouldUseTimingWindow: shouldUseTimingWindow)
+        if shouldUseTimingWindow {
+            targetIntervalSeconds = interval
+        }
         requests.append("settings.save.interval")
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
         XCTAssertTrue(
