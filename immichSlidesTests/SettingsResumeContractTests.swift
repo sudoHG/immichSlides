@@ -17,6 +17,64 @@ final class SettingsResumeContractTests: XCTestCase {
         "displayMode": "singlePhoto"
     ]
 
+    func testPausedNextUsesSceneReferencesWhenCollagesShareTheSamePixelMark() {
+        XCTAssertNoThrow(
+            try AccessLifecycleContract.assertPauseNextPlay(
+                pause: "A5", afterNext: "A5", afterPlay: "A3+A5", progressAfterPlay: 0,
+                sceneReferences: (pause: ["A1", "A5"], afterNext: ["A3", "A5"], afterPlay: ["A3", "A5"])
+            )
+        )
+    }
+
+    func testPausedNextAndPlayRejectOldOrDifferentScenesDespiteMatchingPixels() {
+        let old = ["A1", "A5"]
+        let next = ["A3", "A5"]
+        for (afterNext, afterPlay, message) in [
+            (old, next, "next after pause must switch to a new scene"),
+            (next, old, "Returning to the old scene must not count as a pass"),
+            (next, ["A4", "A5"], "Returning to the old scene must not count as a pass"),
+            (next, next.reversed().map { $0 }, "Returning to the old scene must not count as a pass")
+        ] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertPauseNextPlay(
+                    pause: "A1", afterNext: "A3", afterPlay: "A3", progressAfterPlay: 0,
+                    sceneReferences: (pause: old, afterNext: afterNext, afterPlay: afterPlay)
+                )
+            ) { error in
+                XCTAssertEqual(error.localizedDescription, message)
+            }
+        }
+    }
+
+    func testSceneReferencesCannotReplaceMissingPixelsOrPausedZeroProgress() {
+        let references = (pause: ["A1"], afterNext: ["A3", "A5"], afterPlay: ["A3", "A5"])
+        for mark in ["", "BLACK", "BLANK", "UNRECOGNIZABLE", "TRANSITION"] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertPauseNextPlay(
+                    pause: "A1", afterNext: mark, afterPlay: "A3", progressAfterPlay: 0,
+                    sceneReferences: references
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertPauseNextPlay(
+                pause: "A1", afterNext: "A3", afterPlay: "A3", progressAfterPlay: 0,
+                progressAfterNext: 0.5, progressRawAfterNext: "motionRawProgress=0.5",
+                progressRawAfterPlay: "motionRawProgress=0", sceneReferences: references
+            )
+        ) { error in
+            XCTAssertEqual(error.localizedDescription, "next after pause must keep progress at 0")
+        }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertPauseNextPlay(
+                pause: "A1", afterNext: "A3", afterPlay: "A3", progressAfterPlay: 0,
+                sceneReferences: (pause: ["A1"], afterNext: [], afterPlay: ["A3"])
+            )
+        ) { error in
+            XCTAssertEqual(error.localizedDescription, "Missing scene references must not count as a pass")
+        }
+    }
+
     func testUnchangedDefaultsAreNotPersistSuccess() {
         XCTAssertThrowsError(
             try AccessLifecycleContract.assertSettingsPersisted(

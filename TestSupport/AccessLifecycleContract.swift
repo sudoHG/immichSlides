@@ -199,15 +199,34 @@ enum AccessLifecycleContract {
         progressAfterPlay: Double,
         progressAfterNext: Double? = nil,
         progressRawAfterNext: String = "",
-        progressRawAfterPlay: String = ""
+        progressRawAfterPlay: String = "",
+        sceneReferences: (pause: [String], afterNext: [String], afterPlay: [String])? = nil
     ) throws {
         try assertPresentMark(pause)
         try assertPresentMark(afterNext)
         try assertPresentMark(afterPlay)
-        if afterNext == pause {
+        // A collage's dominant pixel mark can hide a changed secondary slot; stable captures also carry every slot.
+        let isNextUnchanged: Bool
+        let didPlayChangeScene: Bool
+        if let sceneReferences {
+            // Motion can change a collage's dominant pixel mark without changing its scene.
+            for references in [sceneReferences.pause, sceneReferences.afterNext, sceneReferences.afterPlay] {
+                guard !references.isEmpty, references.allSatisfy({ !$0.isEmpty }) else {
+                    throw AssertionError.message("Missing scene references must not count as a pass")
+                }
+            }
+            isNextUnchanged = sceneReferences.afterNext == sceneReferences.pause
+            didPlayChangeScene =
+                sceneReferences.afterPlay == sceneReferences.pause
+                || sceneReferences.afterPlay != sceneReferences.afterNext
+        } else {
+            isNextUnchanged = afterNext == pause
+            didPlayChangeScene = afterPlay == pause || afterPlay != afterNext
+        }
+        if isNextUnchanged {
             throw AssertionError.message("next after pause must switch to a new scene")
         }
-        if afterPlay == pause || afterPlay != afterNext {
+        if didPlayChangeScene {
             throw AssertionError.message("Returning to the old scene must not count as a pass")
         }
         if let progressAfterNext {

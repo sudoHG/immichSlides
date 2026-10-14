@@ -540,6 +540,24 @@ These flows use the same bundle export/disposal mechanism and check both fixture
 PINs. Their `--print-command` mode previews a private-path placeholder without allocating a bundle.
 They remain separate from the strict suite table.
 
+The combined iOS access-lifecycle flow brackets photo-identity screenshots with the
+frame-synchronized scene probe, using one fallible application snapshot per poll within
+the existing capture deadline. Before Pause, the flow requires a playing stable scene
+within the existing pause deadline. Both capture observations must show an opaque stable scene,
+complete slot readiness and unchanged scene references/publication; paused Next also
+requires the user pause. Swift SmartFill Next/Play identity decisions use every ordered
+ledger scene reference; the captures must still contain recognizable stable pixels.
+The Swift dominant pixel mark is not used as Next/Play scene identity in this flow;
+background return and wake still compare it (see #439). Python independently reads pause,
+Next and Play PNGs through `scene_mark_from_png`, combining detected slot marks from fixed stack/side
+regions. It rejects unchanged Next and a Play mark different from Next or equal to pause;
+this region sampling is not an exhaustive audit of the manifest's slots. Before-wake and
+after-wake captures share one wake-evidence deadline, including the intervening tap;
+the budget is not restarted. Stable-capture failures stop XCTest immediately and retain
+the last observation and screenshot only as diagnostic evidence.
+Single-photo display captures use the stable layer and current-asset probe. Settings and
+PIN screenshots do not require a playback scene.
+
 The offline unit runner and `check_all.sh --with-unit-tests` retain their explicitly requested
 local bundles for inspection; they are excluded from the strict evidence/upload path. They do not
 produce scanner-approved public evidence and their raw bundles must not be uploaded. The album/server

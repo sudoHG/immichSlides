@@ -24,9 +24,11 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     let nextImageStabilityBatchSeconds: TimeInterval = TestWait.seconds(.product(2))
     var requests: [String] = []
     var lastPlayAt: Date?
+    var shouldRequireStableSceneCaptures = false
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        shouldRequireStableSceneCaptures = false
         XCUIDevice.shared.orientation = .portrait
     }
 
@@ -53,6 +55,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     // Identity comes only from public fixture screenshots.
     @MainActor
     func testAccessProtectionSettingsAndLifecycle() throws {
+        shouldRequireStableSceneCaptures = true
         let input = try requireStrictE2EInput()
         let app = try launchApp()
         defer { app.terminate() }
