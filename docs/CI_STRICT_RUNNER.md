@@ -71,6 +71,10 @@ Probe-only launches are `journey-b`, `tvos-flow`, `first-wake`, and
 `UI_TEST_RESET_STATE` and `UI_TEST_FORCE_MODE_SELECTION`.
 `tvos-directional-wake` sets those four legacy keys plus
 `UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT`, and does not set the scene probe.
+Other probe-key launches are the configured SmartFill launch helpers in
+`PlaybackHistoryIOSUITests`, `ScenePresentationContractUITests`, and
+`FilterSummaryTVOSVisualUITests.testTVOSSlideShowControlBarButtonsCanActivateOnSelect`.
+They also set other `UI_TEST_*` keys, so their XCTest mode remains enabled.
 The runner's launch audit is a **static declaration of Swift launch keys**,
 labelled `declaration_kind=static_swift_launch_keys`; it is not read from the app.
 The policy helper validates supplied maps against those declarations, exact
