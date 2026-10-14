@@ -33,14 +33,16 @@ extension AccessLifecycleIOSUITests {
             expectedPaused.map({ paused == String($0) }) ?? true
         else { return nil }
         if requiresSmartFillManifest {
-            guard StrictE2ESceneCapture.isStableWindow(observation) else { return nil }
+            guard
+                SharedSceneEvidenceManifest.manifestObservation(from: observation["manifest"] ?? "")?
+                    .isCompleteVisibleScene == true
+            else { return nil }
             let fields = SharedSceneEvidenceManifest.parseKeyValueFields(observation["manifest"] ?? "")
             let references = (fields["ledgerSceneAssets"] ?? "").split(separator: ",").map(String.init)
             let readiness = (fields["slotReadiness"] ?? "").split(separator: ",").map(String.init)
             guard let slotCount = Int(fields["slotCount"] ?? ""), references.count == slotCount,
                 references.allSatisfy({ !$0.isEmpty && $0 != "none" }),
-                readiness.count == slotCount, readiness.allSatisfy({ $0 == "ready" }),
-                fields["slotRefs"] == fields["ledgerSceneAssets"]
+                readiness.count == slotCount, readiness.allSatisfy({ $0 == "ready" })
             else { return nil }
             return references
         }
@@ -54,9 +56,12 @@ extension AccessLifecycleIOSUITests {
         requiresSmartFillManifest: Bool = true, expectedPaused: Bool? = nil, shouldPersist: Bool = true
     ) throws -> SceneCapture? {
         var pending: (png: Data, references: [String], observation: [String: String])?
+        var lastObservation: [String: String] = [:]
+        var lastScreenshot: (png: Data, observation: [String: String])?
         while Date() < deadline {
             // One fallible snapshot per poll; consecutive polls bracket the screenshot with the drawn-frame probe.
             let observation = sceneCaptureObservation(app: app)
+            lastObservation = observation
             let references = stableSceneReferences(
                 in: observation, requiresSmartFillManifest: requiresSmartFillManifest, expectedPaused: expectedPaused)
             if let candidate = pending, let references, references == candidate.references {
@@ -83,13 +88,28 @@ extension AccessLifecycleIOSUITests {
             }
             pending = nil
             if let references {
-                pending = (app.screenshot().pngRepresentation, references, observation)
+                let png = app.screenshot().pngRepresentation
+                pending = (png, references, observation)
+                lastScreenshot = (png, observation)
             } else {
                 RunLoop.current.run(
                     until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.4)))))
             }
         }
+        // Failed windows retain diagnostics only; these files never provide verdict identity.
+        let diagnosticPNG = lastScreenshot?.png ?? app.screenshot().pngRepresentation
+        try? persistRequiredPNG(diagnosticPNG, name: "\(name).diagnostic")
+        try? StrictE2EVisualEvidence.writeRequiredJSON(
+            [
+                "diagnosticOnly": true, "before": lastScreenshot?.observation ?? lastObservation,
+                "after": lastObservation
+            ], name: "\(name).diagnostic.scene.json")
         return nil
+    }
+
+    func failStableSceneCapture(_ message: String) throws -> Never {
+        XCTFail(message)
+        throw AccessLifecycleContract.AssertionError.message(message)
     }
 
     @MainActor
@@ -180,7 +200,7 @@ extension AccessLifecycleIOSUITests {
                 app: app, name: name, deadline: deadline, requiresSmartFillManifest: requiresSmartFillManifest,
                 expectedPaused: expectedPaused)
         else {
-            throw AccessLifecycleContract.AssertionError.message(
+            try failStableSceneCapture(
                 "Screenshot \(name) cannot be used as identity: no complete stable capture window")
         }
         return capture
@@ -249,7 +269,7 @@ extension AccessLifecycleIOSUITests {
             let initial = try captureStableScene(
                 app: app, name: name, deadline: deadline, shouldPersist: false)
         else {
-            throw AccessLifecycleContract.AssertionError.message(
+            try failStableSceneCapture(
                 "No new stable frame appeared before going to the background")
         }
         let initialMark = initial.mark
@@ -297,7 +317,7 @@ extension AccessLifecycleIOSUITests {
                 }
             }
         }
-        throw AccessLifecycleContract.AssertionError.message(
+        try failStableSceneCapture(
             "No new stable frame appeared before going to the background")
     }
 

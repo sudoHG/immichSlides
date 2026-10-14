@@ -211,13 +211,14 @@ enum AccessLifecycleContract {
         if let sceneReferences {
             for references in [sceneReferences.pause, sceneReferences.afterNext, sceneReferences.afterPlay] {
                 guard !references.isEmpty, references.allSatisfy({ !$0.isEmpty }) else {
-                    throw AssertionError.message("A missing image must not count as a pass")
+                    throw AssertionError.message("Missing scene references must not count as a pass")
                 }
             }
             isNextUnchanged = sceneReferences.afterNext == sceneReferences.pause
             didPlayChangeScene =
                 sceneReferences.afterPlay == sceneReferences.pause
                 || sceneReferences.afterPlay != sceneReferences.afterNext
+                || afterPlay != afterNext
         } else {
             isNextUnchanged = afterNext == pause
             didPlayChangeScene = afterPlay == pause || afterPlay != afterNext

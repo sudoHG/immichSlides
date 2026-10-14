@@ -542,11 +542,16 @@ They remain separate from the strict suite table.
 
 The combined iOS access-lifecycle flow brackets photo-identity screenshots with the
 frame-synchronized scene probe, using one fallible application snapshot per poll within
-the existing capture deadline. Both observations must show an opaque stable scene,
+the existing capture deadline. Before Pause, the flow requires a playing stable scene
+within the existing pause deadline. Both capture observations must show an opaque stable scene,
 complete slot readiness and unchanged scene references/publication; paused Next also
 requires the user pause. SmartFill Next/Play comparisons use every ordered ledger scene
 reference together with recognizable stable pixels, rather than a dominant photo mark
-alone. The Python access-lifecycle pixel contract independently checks the saved images.
+alone; equal Next/Play references also require matching stable pixel marks. The Python
+access-lifecycle pixel contract independently checks the saved images. Before-wake and
+after-wake captures share one wake-evidence deadline, including the intervening tap;
+the budget is not restarted. Stable-capture failures stop XCTest immediately and retain
+the last observation and screenshot only as diagnostic evidence.
 Single-photo display captures use the stable layer and current-asset probe. Settings and
 PIN screenshots do not require a playback scene.
 

@@ -20,10 +20,18 @@ final class SettingsResumeContractTests: XCTestCase {
     func testPausedNextUsesSceneReferencesWhenCollagesShareTheSamePixelMark() {
         XCTAssertNoThrow(
             try AccessLifecycleContract.assertPauseNextPlay(
-                pause: "A5", afterNext: "A5", afterPlay: "A3+A5", progressAfterPlay: 0,
+                pause: "A5", afterNext: "A5", afterPlay: "A5", progressAfterPlay: 0,
                 sceneReferences: (pause: ["A1", "A5"], afterNext: ["A3", "A5"], afterPlay: ["A3", "A5"])
             )
         )
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertPauseNextPlay(
+                pause: "A5", afterNext: "A5", afterPlay: "A3+A5", progressAfterPlay: 0,
+                sceneReferences: (pause: ["A1", "A5"], afterNext: ["A3", "A5"], afterPlay: ["A3", "A5"])
+            )
+        ) { error in
+            XCTAssertEqual(error.localizedDescription, "Returning to the old scene must not count as a pass")
+        }
     }
 
     func testPausedNextAndPlayRejectOldOrDifferentScenesDespiteMatchingPixels() {
@@ -71,7 +79,7 @@ final class SettingsResumeContractTests: XCTestCase {
                 sceneReferences: (pause: ["A1"], afterNext: [], afterPlay: ["A3"])
             )
         ) { error in
-            XCTAssertEqual(error.localizedDescription, "A missing image must not count as a pass")
+            XCTAssertEqual(error.localizedDescription, "Missing scene references must not count as a pass")
         }
     }
 

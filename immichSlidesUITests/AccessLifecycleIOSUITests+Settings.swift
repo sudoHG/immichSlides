@@ -393,11 +393,24 @@ extension AccessLifecycleIOSUITests {
         XCTAssertTrue(
             playPause.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "The playback page must have play/pause.")
+        let pauseDeadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
+        let isPlayingStableScene = waitUntil(
+            timeout: TestWait.seconds(.product(max(0, pauseDeadline.timeIntervalSinceNow)))
+        ) {
+            self.stableSceneReferences(
+                in: self.sceneCaptureObservation(app: app), requiresSmartFillManifest: true,
+                expectedPaused: false) != nil
+        }
+        guard isPlayingStableScene else {
+            try failStableSceneCapture("Pause precondition requires a playing stable scene before the deadline")
+        }
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
         }
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "play" },
+            waitUntil(timeout: TestWait.seconds(.product(max(0, pauseDeadline.timeIntervalSinceNow)))) {
+                self.playPauseState(playPause) == "play"
+            },
             "Must pause first.")
         requests.append("playback.pause")
         let pause = try captureRequiredMark(app: app, name: "pause", expectedPaused: true)
@@ -412,7 +425,6 @@ extension AccessLifecycleIOSUITests {
             waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "pause" },
             "Should be playing after Play.")
         let progressAfterPlay = try readSceneProgress(app: app)
-        let afterPlay = try captureRequiredMark(app: app, name: "after-play", expectedPaused: false)
         // Even if the identity assertion fails, pass the progress already read to the outer JSON; never leave it empty.
         progress = [
             "progress_after_next": progressAfterNext.value,
@@ -421,6 +433,7 @@ extension AccessLifecycleIOSUITests {
             "progress_raw_after_next": progressAfterNext.raw,
             "progress_raw_after_play": progressAfterPlay.raw
         ]
+        let afterPlay = try captureRequiredMark(app: app, name: "after-play", expectedPaused: false)
         try AccessLifecycleContract.assertPauseNextPlay(
             pause: pause.mark,
             afterNext: afterNext.mark,
@@ -463,7 +476,8 @@ extension AccessLifecycleIOSUITests {
         )
         try requireHiddenPlaybackControls(app: app, timeout: hide)
         try waitOutAutoplayIfWakeWouldCrossBoundary(app: app, interval: interval)
-        let before = try captureWakeMark(app: app, name: "before-wake")
+        let wakeEvidenceDeadline = Date().addingTimeInterval(AccessLifecycleContract.wakeEvidenceBudgetSeconds)
+        let before = try captureWakeMark(app: app, name: "before-wake", deadline: wakeEvidenceDeadline)
         try requireHiddenPlaybackControls(app: app, timeout: TestWait.seconds(.product(0)))
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
         requests.append("playback.wake_controls")
@@ -472,7 +486,7 @@ extension AccessLifecycleIOSUITests {
                 timeout: TestWait.seconds(.product(4))),
             "The first wake should only bring up the control bar."
         )
-        let after = try captureWakeMark(app: app, name: "after-wake")
+        let after = try captureWakeMark(app: app, name: "after-wake", deadline: wakeEvidenceDeadline)
         try AccessLifecycleContract.assertWakeDidNotSwitch(before: before.mark, after: after.mark)
     }
 
@@ -505,7 +519,7 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func captureWakeMark(app: XCUIApplication, name: String) throws -> (mark: String, png: Data) {
+    func captureWakeMark(app: XCUIApplication, name: String, deadline: Date) throws -> (mark: String, png: Data) {
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
         if !shouldRequireStableSceneCaptures {
             let png = try captureRequiredPNG(app: app, name: name)
@@ -521,9 +535,9 @@ extension AccessLifecycleIOSUITests {
         guard
             let capture = try captureStableScene(
                 app: app, name: name,
-                deadline: Date().addingTimeInterval(AccessLifecycleContract.wakeEvidenceBudgetSeconds))
+                deadline: deadline)
         else {
-            throw AccessLifecycleContract.AssertionError.message(
+            try failStableSceneCapture(
                 "Screenshot \(name) cannot be used as identity: no complete stable capture window")
         }
         return (capture.mark, capture.png)
