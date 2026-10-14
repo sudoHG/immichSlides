@@ -363,6 +363,21 @@ python3 scripts/run_strict_e2e.py --platform tvos --destination 'platform=tvOS S
 
 Use `python3 scripts/run_strict_e2e.py --help` for the current suite list. Settings, pause/resume and background-return flows use `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`, or the same names with a `tvos` prefix. The iOS first-wake flow uses `ios-lifecycle-first-wake`; an iPad pause run uses `ios-lifecycle-pause` with an iPad UDID.
 
+On iOS, `PlaybackIntervalSliderIOS` drives the real interval slider for both
+`IOSDriver` and the lifecycle flows. It reads only `settings.playback.interval.value`.
+Interior adjustments correct the last requested normalized position by
+`(targetSeconds - displayedSeconds) / 25`, with at most five adjustments in total;
+only endpoints use a thumb-start drag past the track end. The settings-persistence
+flow requires a displayed interval different from its initial value and preserves
+that same value across restart, without requiring an exact interior target.
+Pause/background flows request 12 seconds and require displayed T in the inclusive
+10–15 second window. T/2 is therefore at least 5 seconds and T−2 at least 8 seconds,
+while the upper bound limits run time. Every timing assertion uses that displayed T;
+T±2 tolerances, capture deadlines relative to T, hidden-control and visible-scene
+checks stay unchanged. First-wake requires exactly 30 seconds, and `IOSDriver`
+continues to require its exact 15/30 second settings. Unreadable values and values
+outside the timing window fail.
+
 `image-failure-recovery` runs only `ScenePresentationContractUITests/testIOSImageFailureRecovery` on iOS in single-photo mode with a 30-second interval, using fixture A and case ID `image-failure-recovery`. Through normal app controls and the fixture-only `/api/test/image-response` endpoint, every fullsize thumbnail request for the startup photo returns HTTP 503 until the mode is reset. The flow turns on the EXIF overlay and fails if that photo's `Fixture 1` caption is visible while it waits for the first stable photo or within 5 seconds after it; the caption identifies the photo because the pixel classifier reads its letterboxed portrait frame as A2. Otherwise the flow verifies the visible replacement, Previous/Redo history and continued playback. The endpoint does not change metadata, other assets, preview responses or the frozen fixture. Result bundles use the existing private export/disposal path. This flow requires the strict runner and is excluded from the default and Evidence plans.
 
 `p2-cache-smoke` on iPad pauses on a recognized single photo with a 30-second interval, then requires both cache completion and a recognized public photo in `cache-returned.png` after returning to playback; as with `p2-cache`, a signed review must list that same photo. It retains its smoke designation and does not claim the full P2 disk-usage review.

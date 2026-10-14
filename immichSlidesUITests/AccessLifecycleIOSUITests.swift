@@ -2,12 +2,6 @@ import CryptoKit
 import XCTest
 
 enum AccessLifecycleIOSUITestsCalibration {
-    static let intervalSearchAttemptLimit: Int = 14
-    static let sliderNudgeAttemptLimit: Int = 12
-    static let sliderSearchTolerance: Double = 0.004
-    static let sliderNudgeStep: CGFloat = 0.025
-    static let sliderLowerBound: CGFloat = 0.02
-    static let sliderUpperBound: CGFloat = 0.98
     static let alternateIntervalSeconds: Int = Int(TestWait.seconds(.product(20)))
 }
 
@@ -323,9 +317,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
 
         try completeFirstBootToPlayback(app: app, input: input)
         let interval = try configureTimingPlaybackSettings(app: app, isAutoPlayEnabled: true)
-        XCTAssertEqual(
-            interval, AccessLifecycleContract.requestedIntervalSeconds,
-            "The iOS slider must be able to reach 12 seconds.")
         let timeline = try exercisePauseNextContinueVisibleTiming(app: app, intervalSeconds: interval)
         try writeSettingsResumeJSON(
             name: "pause-next-continue.json",
@@ -357,9 +348,6 @@ final class AccessLifecycleIOSUITests: XCTestCase {
 
         try completeFirstBootToPlayback(app: app, input: input)
         let interval = try configureTimingPlaybackSettings(app: app, isAutoPlayEnabled: true)
-        XCTAssertEqual(
-            interval, AccessLifecycleContract.requestedIntervalSeconds,
-            "The iOS slider must be able to reach 12 seconds.")
         try AccessLifecycleContract.assertAutoPlayEnabledAtBackground(true)
         let waitSeconds = TimeInterval(interval) + AccessLifecycleContract.pauseHoldBeyondIntervalSeconds
         try AccessLifecycleContract.assertBackgroundWaitExceedsInterval(

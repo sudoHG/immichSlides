@@ -3,20 +3,8 @@ import UIKit
 import XCTest
 
 #if os(iOS)
-private enum SliderGeometry {
-    // Drag beyond the track to reach the maximum after accessibility adjustment stops short.
-    static let maximumThumbFraction: CGFloat = 0.93
-    static let dragBeyondMaximumFraction: CGFloat = 1.05
-}
-
 @MainActor
 struct IOSDriver: PlaybackDriver {
-    // The interval slider maps 5-30 seconds linearly: (15 - 5) / (30 - 5).
-    private static let interval15SliderPosition = 0.4
-    // The slider steps by 1 second and a drag often lands one step off: try the target first, then nudge to both
-    // sides from near to far.
-    private static let sliderNudgeOffsets = [0, -0.04, 0.04, -0.08, 0.08]
-
     let app: XCUIApplication
 
     func launchToPlayback(input: StrictE2EInput) {
@@ -79,39 +67,16 @@ struct IOSDriver: PlaybackDriver {
         for setting in settings {
             switch setting {
             case .interval30Seconds:
-                let slider = app.sliders["settings.playback.interval.slider"]
-                XCTAssertTrue(
-                    slider.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
-                    "Playback settings must have the interval slider.")
-                XCTAssertTrue(slider.isEnabled, "With auto-play on, the interval slider must be adjustable.")
-                slider.adjust(toNormalizedSliderPosition: 1)
-                let interval30 = app.staticTexts["settings.playback.interval.value"]
-                if UIDevice.current.userInterfaceIdiom == .pad
-                    && !Wait.until(
-                        timeout: UITestSupportWaitTiming.briefElementTimeoutSeconds,
-                        { interval30.exists && interval30.label == "30 秒" })
-                {
-                    let thumb = slider.coordinate(
-                        withNormalizedOffset: CGVector(dx: SliderGeometry.maximumThumbFraction, dy: 0.5))
-                    let beyondRightEnd = slider.coordinate(
-                        withNormalizedOffset: CGVector(dx: SliderGeometry.dragBeyondMaximumFraction, dy: 0.5))
-                    thumb.press(forDuration: TestWait.seconds(.product(0.1)), thenDragTo: beyondRightEnd)
-                }
-                let reached30 = Wait.until(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds) {
-                    interval30.exists && interval30.label == "30 秒"
-                }
+                let observed = PlaybackIntervalSliderIOS.adjust(in: app, targetSeconds: 30, accepting: { $0 == 30 })
+                let reached30 = observed == 30
                 if !reached30 {
                     try? Evidence().reject("interval30-setting", png: app.screenshot().pngRepresentation)
                 }
                 XCTAssertTrue(reached30, "The interval must be set to 30 seconds with the real slider.")
             case .interval15Seconds:
-                let slider = app.sliders["settings.playback.interval.slider"]
-                XCTAssertTrue(
-                    slider.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
-                    "Playback settings must have the interval slider.")
-                XCTAssertTrue(slider.isEnabled, "With auto-play on, the interval slider must be adjustable.")
-                XCTAssertTrue(
-                    adjustInterval(slider, toNormalized: Self.interval15SliderPosition, label: "15 秒"),
+                let observed = PlaybackIntervalSliderIOS.adjust(in: app, targetSeconds: 15, accepting: { $0 == 15 })
+                XCTAssertEqual(
+                    observed, 15,
                     "The interval must be set to 15 seconds with the real slider."
                 )
             case .displayMode(let isSinglePhoto):
@@ -318,20 +283,6 @@ struct IOSDriver: PlaybackDriver {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
         _ = app.buttons["slideshow.control.settings.button"].waitForExistence(
             timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds)
-    }
-
-    private func adjustInterval(_ slider: XCUIElement, toNormalized target: Double, label: String) -> Bool {
-        for offset in Self.sliderNudgeOffsets {
-            slider.adjust(toNormalizedSliderPosition: min(max(target + offset, 0), 1))
-            let interval = app.staticTexts["settings.playback.interval.value"]
-            if Wait.until(
-                timeout: UITestSupportWaitTiming.briefElementTimeoutSeconds,
-                { interval.exists && interval.label == label })
-            {
-                return true
-            }
-        }
-        return false
     }
 
     private func waitForPlaybackControls(timeout: TimeInterval) -> Bool {

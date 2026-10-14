@@ -91,7 +91,8 @@ extension AccessLifecycleIOSUITests {
             "Autoplay must be turned on through the real settings UI."
         )
         requests.append("settings.save.autoplay")
-        _ = try setIntervalFromUI(app: app, targetSeconds: targetIntervalSeconds)
+        let interval = try setIntervalFromUI(app: app, targetSeconds: targetIntervalSeconds)
+        try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: interval, target: targetIntervalSeconds)
         requests.append("settings.save.interval")
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
         XCTAssertTrue(
@@ -684,113 +685,24 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func setIntervalFromUI(app: XCUIApplication, targetSeconds: Int) throws -> Int {
-        let slider = app.sliders["settings.playback.interval.slider"]
-        XCTAssertTrue(
-            slider.waitForExistence(timeout: TestWait.seconds(.product(8))),
-            "Playback settings must provide the interval slider.")
-        XCTAssertTrue(slider.isEnabled, "The interval cannot be changed while autoplay is off.")
-        let targetLabel = "\(targetSeconds) 秒"
-        var low = 0.0
-        var high = 1.0
-        var position =
-            (Double(targetSeconds) - intervalMinimumSeconds)
-            / (intervalMaximumSeconds - intervalMinimumSeconds)
-        slider.adjust(toNormalizedSliderPosition: position)
-        for _ in 0..<AccessLifecycleIOSUITestsCalibration.intervalSearchAttemptLimit {
-            if intervalLabelExists(app: app, label: targetLabel) {
-                try AccessLifecycleContract.assertIOSIntervalReachedRequested(
-                    observed: targetSeconds,
-                    target: targetSeconds
-                )
-                return targetSeconds
-            }
-            guard let current = readIntervalSeconds(app: app) else { break }
-            if current > targetSeconds {
-                high = min(high, position)
-            } else {
-                low = max(low, position)
-            }
-            if high - low < AccessLifecycleIOSUITestsCalibration.sliderSearchTolerance { break }
-            position = (low + high) / 2
-            slider.adjust(toNormalizedSliderPosition: position)
-        }
-        if intervalLabelExists(app: app, label: targetLabel) == false {
-            try nudgeIntervalSliderTowardTarget(slider, app: app, targetSeconds: targetSeconds)
-        }
-        guard intervalLabelExists(app: app, label: targetLabel) else {
-            let observed = readIntervalSeconds(app: app)
-            try AccessLifecycleContract.assertIOSIntervalReachedRequested(
-                observed: observed ?? -1,
-                target: targetSeconds
-            )
+    func setIntervalFromUI(
+        app: XCUIApplication,
+        targetSeconds: Int,
+        accepting accepts: ((Int) -> Bool)? = nil
+    ) throws -> Int {
+        guard
+            let observed = PlaybackIntervalSliderIOS.adjust(
+                in: app, targetSeconds: targetSeconds, accepting: accepts ?? { $0 == targetSeconds })
+        else {
+            try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: -1, target: targetSeconds)
             throw AccessLifecycleContract.AssertionError.message("Missing settings evidence")
         }
-        try AccessLifecycleContract.assertIOSIntervalReachedRequested(
-            observed: targetSeconds,
-            target: targetSeconds
-        )
-        return targetSeconds
-    }
-
-    @MainActor
-    func intervalLabelExists(app: XCUIApplication, label: String) -> Bool {
-        let interval = app.staticTexts["settings.playback.interval.value"]
-        return waitUntil(timeout: TestWait.seconds(.product(0.4))) { interval.exists && interval.label == label }
-    }
-
-    @MainActor
-    func nudgeIntervalSliderTowardTarget(
-        _ slider: XCUIElement,
-        app: XCUIApplication,
-        targetSeconds: Int
-    ) throws {
-        let targetLabel = "\(targetSeconds) 秒"
-        for _ in 0..<AccessLifecycleIOSUITestsCalibration.sliderNudgeAttemptLimit {
-            if intervalLabelExists(app: app, label: targetLabel) { return }
-            guard let current = readIntervalSeconds(app: app) else { return }
-            if current == targetSeconds && intervalLabelExists(app: app, label: targetLabel) { return }
-            if Double(targetSeconds) == intervalMinimumSeconds || Double(targetSeconds) == intervalMaximumSeconds {
-                // Endpoint drags must begin on the thumb and finish beyond the track.
-                let frame = slider.frame
-                let thumbInset = frame.height / 2
-                let trackWidth = max(frame.width - 2 * thumbInset, 0)
-                let thumbOffset = thumbInset + slider.normalizedSliderPosition * trackWidth
-                let origin = slider.coordinate(withNormalizedOffset: .zero)
-                let start = origin.withOffset(CGVector(dx: thumbOffset, dy: frame.height / 2))
-                let endOffset =
-                    Double(targetSeconds) == intervalMinimumSeconds ? -thumbInset : frame.width + thumbInset
-                let end = origin.withOffset(CGVector(dx: endOffset, dy: frame.height / 2))
-                start.press(forDuration: TestWait.seconds(.product(0.05)), thenDragTo: end)
-                continue
-            }
-            let delta: CGFloat =
-                current < targetSeconds
-                ? AccessLifecycleIOSUITestsCalibration.sliderNudgeStep
-                : -AccessLifecycleIOSUITestsCalibration.sliderNudgeStep
-            let start = slider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            let end = slider.coordinate(
-                withNormalizedOffset: CGVector(
-                    dx: min(
-                        max(0.5 + delta, AccessLifecycleIOSUITestsCalibration.sliderLowerBound),
-                        AccessLifecycleIOSUITestsCalibration.sliderUpperBound), dy: 0.5))
-            start.press(forDuration: TestWait.seconds(.product(0.05)), thenDragTo: end)
-        }
+        return observed
     }
 
     @MainActor
     func readIntervalSeconds(app: XCUIApplication) -> Int? {
-        let interval = app.staticTexts["settings.playback.interval.value"]
-        guard
-            waitUntil(
-                timeout: TestWait.seconds(.product(2)),
-                condition: {
-                    interval.exists && interval.label.range(of: #"^[0-9]+ 秒$"#, options: .regularExpression) != nil
-                })
-        else { return nil }
-        let digits = interval.label.split { !$0.isNumber }.first
-        guard let digits, let value = Int(digits) else { return nil }
-        return value
+        PlaybackIntervalSliderIOS.readSeconds(in: app)
     }
 
     @MainActor

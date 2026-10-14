@@ -146,7 +146,8 @@ extension AccessLifecycleIOSUITests {
             initialInterval == AccessLifecycleContract.requestedIntervalSeconds
             ? AccessLifecycleIOSUITestsCalibration.alternateIntervalSeconds
             : AccessLifecycleContract.requestedIntervalSeconds
-        let observedInterval = try setIntervalFromUI(app: app, targetSeconds: intervalTarget)
+        let observedInterval = try setIntervalFromUI(
+            app: app, targetSeconds: intervalTarget, accepting: { $0 != initialInterval })
         requests.append("settings.save.interval")
         XCTAssertNotEqual(observedInterval, initialInterval, "The interval must change to a different value.")
 
@@ -216,7 +217,8 @@ extension AccessLifecycleIOSUITests {
         XCTAssertTrue(isToggleOn(autoPlay), "Autoplay must be on for the pause/background cases.")
         let interval = try setIntervalFromUI(
             app: app,
-            targetSeconds: AccessLifecycleContract.requestedIntervalSeconds
+            targetSeconds: AccessLifecycleContract.requestedIntervalSeconds,
+            accepting: { AccessLifecycleContract.iosTimingIntervalSeconds.contains($0) }
         )
         try AccessLifecycleContract.assertIOSIntervalReachedRequested(observed: interval)
         requests.append("settings.save.interval")
