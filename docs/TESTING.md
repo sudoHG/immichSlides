@@ -547,10 +547,9 @@ within the existing pause deadline. Both capture observations must show an opaqu
 complete slot readiness and unchanged scene references/publication; paused Next also
 requires the user pause. Swift SmartFill Next/Play identity decisions use every ordered
 ledger scene reference; the captures must still contain recognizable stable pixels.
-The Swift dominant pixel mark is not scene identity: the [stable-scene repro](https://github.com/sudoHG/immichSlides/pull/438)
-shows the same A4+A5 scene classified as A4+A5 while paused at progress 0 and A5 after
-motion starts at progress 0.11. Python independently reads pause, Next and Play PNGs
-through `scene_mark_from_png`, combining detected slot marks from fixed stack/side
+The Swift dominant pixel mark is not used as Next/Play scene identity in this flow;
+background return and wake still compare it (see #439). Python independently reads pause,
+Next and Play PNGs through `scene_mark_from_png`, combining detected slot marks from fixed stack/side
 regions. It rejects unchanged Next and a Play mark different from Next or equal to pause;
 this region sampling is not an exhaustive audit of the manifest's slots. Before-wake and
 after-wake captures share one wake-evidence deadline, including the intervening tap;
