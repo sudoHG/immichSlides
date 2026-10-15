@@ -130,7 +130,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         let playPause = app.buttons["slideshow.control.playPause.button"]
         ensureControlBarVisible(app: app, playPauseButton: playPause)
         moveFocus(
-            .left, to: playPause, maximumPresses: 3,
+            .right, to: playPause, maximumPresses: 3,
             message: "Focus must land on Next before the old requests complete.")
         let render = SharedSceneEvidenceManifest.parseKeyValueFields(
             strictSceneFrameObservation(app: app)["render"] ?? "")
