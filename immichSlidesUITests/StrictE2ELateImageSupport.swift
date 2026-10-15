@@ -31,7 +31,7 @@ extension XCTestCase {
         else {
             task.cancel()
             XCTFail(
-                "After late completion the current public mark must stay: no flash back, all black or unreadable: fixture hold failed"
+                "Late image fixture control failed: hold action was not acknowledged"
             )
             throw StrictE2ELateImageError.fixtureControl
         }
@@ -44,7 +44,7 @@ extension XCTestCase {
             held["released"] as? Bool == false
         else {
             XCTFail(
-                "After late completion the current public mark must stay: no flash back, all black or unreadable: no held response"
+                "Late image fixture control failed: no held response"
             )
             throw StrictE2ELateImageError.fixtureControl
         }
@@ -60,7 +60,7 @@ extension XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.05))))
         }
         XCTFail(
-            "After late completion the current public mark must stay: no flash back, all black or unreadable: held response was not delivered"
+            "Late image fixture control failed: held response was not delivered"
         )
         throw StrictE2ELateImageError.fixtureControl
     }

@@ -38,12 +38,12 @@ def _fixture_png(label: str, fixture_set: str = "a") -> bytes:
     return _fixture_data(fixture_set)["images"][f"asset-{fixture_set}-{label[-1]}"]
 
 
-def _stacked_fixture_png(top: str, bottom: str) -> bytes:
+def _stacked_fixture_png(top: str, bottom: str, fixture_set: str = "a") -> bytes:
     from PIL import Image
 
     canvas = Image.new("RGB", (360, 800))
     for label, y in ((top, 0), (bottom, 400)):
-        with Image.open(io.BytesIO(_fixture_png(label))) as source:
+        with Image.open(io.BytesIO(_fixture_png(label, fixture_set))) as source:
             canvas.paste(source.convert("RGB").resize((360, 400)), (0, y))
     output = io.BytesIO()
     canvas.save(output, format="PNG")
@@ -202,13 +202,16 @@ def _write_identity_evidence(
 ) -> None:
     if "late_image_hold " not in log_text:
         # Recorded historical timelines get explicit fixture-control observations at playback entry.
-        state = {"armed": True, "armed_elapsed_ms": 2000, "asset_id": None,
+        state = {"generation": 1, "armed": True, "armed_elapsed_ms": 2000, "asset_id": None,
+                 "hold_started_elapsed_ms": None, "released_elapsed_ms": None,
                  "released": False, "expired": False, "pending": 0, "delivered": 0, "disconnected": 0}
         lines = log_text.splitlines()
         anchor = next(index for index, line in enumerate(lines)
                       if line.startswith("request_started ") and int(line.split("elapsed_ms=")[1].split()[0]) >= 2000)
         lines.insert(anchor, "late_image_hold " + json.dumps(state))
-        state.update(asset_id=f"asset-{fixture_set}-1", released=True, delivered=1)
+        started_ms = int(lines[anchor + 1].split("elapsed_ms=")[1].split()[0])
+        state.update(asset_id=f"asset-{fixture_set}-1", released=True, delivered=1,
+                     hold_started_elapsed_ms=started_ms, released_elapsed_ms=started_ms + 100)
         lines.append("late_image_hold " + json.dumps(state))
         log_text = "\n".join(lines) + "\n"
     (evidence / "ooo-current-scene.png").write_bytes(current)
@@ -294,7 +297,7 @@ class OutOfOrderTimelineTests(unittest.TestCase):
 
     def test_timeline_cannot_be_used_as_photo_identity(self) -> None:
         log_text = _capture_out_of_order_log("fullsize")
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "Unrecognizable") as raised:
             assert_current_scene_holds(
                 classify_screenshot(b""),
                 classify_screenshot(b""),
@@ -319,10 +322,19 @@ class OutOfOrderIdentityTests(unittest.TestCase):
                         server.request("/test/late-image", method="POST", body={"action": "release"})
                         self.assertEqual(old.result(timeout=5)[0], 200)
                 evidence = Path(directory)
-                _write_identity_evidence(evidence, current=_fixture_png("A3", fixture_set),
-                                         after_late=_fixture_png("A3", fixture_set),
+                scene = _stacked_fixture_png("A2", "A3", fixture_set)
+                _write_identity_evidence(evidence, current=scene, after_late=scene,
                                          log_text=log_stream.getvalue(), fixture_set=fixture_set)
                 self.assertEqual(evaluate_out_of_order_identity(evidence)["verdict"], "PASS")
+
+    def test_held_asset_inside_current_scene_cannot_pass(self) -> None:
+        log_text = _capture_out_of_order_log("preview").replace("asset-a-1", "asset-a-4")
+        scene = _stacked_fixture_png("A3", "A4")
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            _write_identity_evidence(evidence, current=scene, after_late=scene, log_text=log_text)
+            with self.assertRaisesRegex(OutOfOrderContractError, "Held photo A4 is still in the current scene"):
+                evaluate_out_of_order_identity(evidence)
 
     def test_public_fixture_marks_at_key_times_must_hold_current_scene(self) -> None:
         current = classify_screenshot(_fixture_png("A3"))
@@ -421,11 +433,15 @@ class OutOfOrderNegativeTests(unittest.TestCase):
         final_index = max(index for index, line in enumerate(lines) if line.startswith("late_image_hold "))
         valid = json.loads(lines[final_index].removeprefix("late_image_hold "))
         cases = {
-            "missing": None, "malformed": "{", "expired": dict(valid, expired=True),
-            "never-delivered": dict(valid, delivered=0), "still-pending": dict(valid, pending=1),
-            "disconnected": dict(valid, disconnected=1), "wrong-first-asset": dict(valid, asset_id="asset-a-5"),
+            "missing": (None, "Missing late image hold record"),
+            "malformed": ("{", "Malformed late image hold record"),
+            "expired": (dict(valid, expired=True), "Late image hold was not armed or expired"),
+            "never-delivered": (dict(valid, delivered=0), "no confirmed release and delivery"),
+            "still-pending": (dict(valid, pending=1), "no confirmed release and delivery"),
+            "disconnected": (dict(valid, disconnected=1), "no confirmed release and delivery"),
+            "changed-selection": (dict(valid, asset_id="asset-a-5"), "changed its request selection"),
         }
-        for name, state in cases.items():
+        for name, (state, message) in cases.items():
             with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
                 evidence = Path(directory)
                 _write_identity_evidence(evidence, current=_fixture_png("A3"), after_late=_fixture_png("A3"), log_text=log_text)
@@ -435,18 +451,80 @@ class OutOfOrderNegativeTests(unittest.TestCase):
                 else:
                     changed[final_index] = "late_image_hold " + (state if isinstance(state, str) else json.dumps(state))
                 (evidence / "redacted-request.log").write_text("\n".join(changed) + "\n")
-                with self.assertRaises(OutOfOrderContractError):
+                with self.assertRaisesRegex(OutOfOrderContractError, message):
                     evaluate_out_of_order_identity(evidence)
+
+    def test_consistent_hold_selection_must_match_actual_first_request(self) -> None:
+        lines = _capture_out_of_order_log("preview").splitlines()
+        for index, line in enumerate(lines):
+            if line.startswith("late_image_hold "):
+                state = json.loads(line.removeprefix("late_image_hold "))
+                if state["asset_id"] is not None:
+                    state["asset_id"] = "asset-a-5"
+                lines[index] = "late_image_hold " + json.dumps(state)
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            _write_identity_evidence(evidence, current=_fixture_png("A3"), after_late=_fixture_png("A3"),
+                                     log_text="\n".join(lines))
+            with self.assertRaisesRegex(OutOfOrderContractError, "Held asset was not the first image requested"):
+                evaluate_out_of_order_identity(evidence)
+
+    def test_hold_must_finish_before_the_app_image_download_timeout(self) -> None:
+        original = _capture_out_of_order_log("preview").splitlines()
+        for duration in (14_999, 15_000, 15_001):
+            with self.subTest(duration=duration), tempfile.TemporaryDirectory() as directory:
+                lines = list(original)
+                for index, line in enumerate(lines):
+                    if line.startswith("late_image_hold "):
+                        state = json.loads(line.removeprefix("late_image_hold "))
+                        if state["released"]:
+                            state["released_elapsed_ms"] = state.get("hold_started_elapsed_ms", 0) + duration
+                            lines[index] = "late_image_hold " + json.dumps(state)
+                evidence = Path(directory)
+                _write_identity_evidence(evidence, current=_fixture_png("A3"), after_late=_fixture_png("A3"),
+                                         log_text="\n".join(lines))
+                if duration < 15_000:
+                    self.assertEqual(evaluate_out_of_order_identity(evidence)["verdict"], "PASS")
+                else:
+                    with self.assertRaisesRegex(OutOfOrderContractError, "15-second image download timeout"):
+                        evaluate_out_of_order_identity(evidence)
+
+    def test_previous_generation_expiry_cannot_poison_current_generation(self) -> None:
+        original = _capture_out_of_order_log("preview")
+        first_start = next(int(line.split("elapsed_ms=")[1].split()[0]) for line in original.splitlines()
+                           if line.startswith("request_started "))
+        previous, current = [], []
+        for line in original.splitlines():
+            if line.startswith("late_image_hold "):
+                state = json.loads(line.removeprefix("late_image_hold "))
+                state["generation"] = 1
+                state["expired"] = True
+                previous.append("late_image_hold " + json.dumps(state))
+                state["generation"] = 2
+                state["expired"] = False
+                line = "late_image_hold " + json.dumps(state)
+            else:
+                previous_line = line
+                if line.startswith("request ") and "fixture_asset_id=asset-a-1" in line:
+                    elapsed = line.split("elapsed_ms=")[1].split()[0]
+                    previous_line = line.replace("elapsed_ms=" + elapsed, "elapsed_ms=" + str(first_start), 1)
+                previous.append(previous_line)
+            current.append(line)
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            _write_identity_evidence(evidence, current=_fixture_png("A3"), after_late=_fixture_png("A3"),
+                                     log_text="\n".join(previous + ["late_image_hold_expired generation=1"] + current))
+            self.assertEqual(evaluate_out_of_order_identity(evidence)["verdict"], "PASS")
 
     def test_unchanged_old_photo_cannot_pass(self) -> None:
         old = classify_screenshot(_fixture_png("A1"))
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "Old photo") as raised:
             assert_current_scene_holds(old, old)
         self.assertIn("Old photo", str(raised.exception))
 
     def test_old_photo_inside_two_photo_scene_cannot_pass(self) -> None:
         old_scene = _stacked_fixture_png("A1", "A3")
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "Old photo") as raised:
             assert_current_scene_holds(
                 capture_identity(old_scene),
                 capture_identity(old_scene),
@@ -454,7 +532,7 @@ class OutOfOrderNegativeTests(unittest.TestCase):
         self.assertIn("Old photo", str(raised.exception))
 
     def test_changed_second_photo_inside_two_photo_scene_cannot_pass(self) -> None:
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "Wrong image") as raised:
             assert_current_scene_holds(
                 capture_identity(_stacked_fixture_png("A3", "A4")),
                 capture_identity(_stacked_fixture_png("A3", "A5")),
@@ -462,7 +540,7 @@ class OutOfOrderNegativeTests(unittest.TestCase):
         self.assertIn("Wrong image", str(raised.exception))
 
     def test_wrong_photo_after_late_request_fails(self) -> None:
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "Wrong image") as raised:
             assert_current_scene_holds(
                 classify_screenshot(_fixture_png("A3")),
                 classify_screenshot(_fixture_png("A1")),
@@ -474,7 +552,7 @@ class OutOfOrderNegativeTests(unittest.TestCase):
 
         buffer = io.BytesIO()
         Image.new("RGB", (320, 180), (0, 0, 0)).save(buffer, format="PNG")
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "All black") as raised:
             assert_current_scene_holds(
                 classify_screenshot(_fixture_png("A3")),
                 classify_screenshot(buffer.getvalue()),
@@ -482,7 +560,7 @@ class OutOfOrderNegativeTests(unittest.TestCase):
         self.assertIn("All black", str(raised.exception))
 
     def test_unrecognizable_frame_cannot_pass(self) -> None:
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "Unrecognizable") as raised:
             assert_current_scene_holds(
                 classify_screenshot(_fixture_png("A3")),
                 classify_screenshot(b"not-a-png"),
@@ -500,12 +578,12 @@ class OutOfOrderNegativeTests(unittest.TestCase):
                 log_text=log_text,
             )
             (evidence / "ooo-after-late.png").unlink()
-            with self.assertRaises(OutOfOrderContractError) as raised:
+            with self.assertRaisesRegex(OutOfOrderContractError, "Missing required timeline screenshots") as raised:
                 evaluate_out_of_order_identity(evidence)
         self.assertIn("Missing required timeline screenshots", str(raised.exception))
 
     def test_unknown_request_fails_the_batch(self) -> None:
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "Unknown request") as raised:
             audit_runner_inputs(
                 fixture_set="a",
                 observed_hash=FROZEN_FIXTURE_SHA256["a"],
@@ -529,7 +607,7 @@ class OutOfOrderNegativeTests(unittest.TestCase):
                         _request_line(500, thumbnail, status=delayed_status, size="preview", asset="asset-a-1"),
                     ]
                 ) + "\n"
-                with self.assertRaises(OutOfOrderContractError) as raised:
+                with self.assertRaisesRegex(OutOfOrderContractError, "must succeed") as raised:
                     assert_out_of_order_timeline(
                         log_text,
                         delayed_asset_id="asset-a-1",
@@ -539,7 +617,7 @@ class OutOfOrderNegativeTests(unittest.TestCase):
                 self.assertIn("must succeed", str(raised.exception))
 
     def test_unknown_started_request_path_fails_the_batch(self) -> None:
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "Unknown request") as raised:
             audit_runner_inputs(
                 fixture_set="a",
                 observed_hash=FROZEN_FIXTURE_SHA256["a"],
@@ -561,7 +639,7 @@ class OutOfOrderNegativeTests(unittest.TestCase):
                 after_late=_fixture_png("A3"),
                 log_text=_playback_window_without_late_overlap_log(),
             )
-            with self.assertRaises(OutOfOrderContractError) as raised:
+            with self.assertRaisesRegex(OutOfOrderContractError, "The old request must complete after the current request") as raised:
                 evaluate_out_of_order_identity(evidence)
         self.assertIn("The old request must complete after the current request", str(raised.exception))
 
@@ -575,16 +653,16 @@ class OutOfOrderNegativeTests(unittest.TestCase):
                 after_late=_fixture_png("A1"),
                 log_text=log_text,
             )
-            with self.assertRaises(OutOfOrderContractError):
+            with self.assertRaisesRegex(OutOfOrderContractError, "Wrong image"):
                 evaluate_out_of_order_identity(evidence)
-            with self.assertRaises(OutOfOrderContractError) as raised:
+            with self.assertRaisesRegex(OutOfOrderContractError, "Wrong image") as raised:
                 evaluate_out_of_order_identity(evidence)
         self.assertIn("Wrong image", str(raised.exception))
 
 
 class RunnerInputAuditTests(unittest.TestCase):
     def test_bad_body_and_hash_mismatch_fail_closed(self) -> None:
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "Request body does not match the contract") as raised:
             audit_runner_inputs(
                 fixture_set="a",
                 observed_hash=FROZEN_FIXTURE_SHA256["a"],
@@ -596,7 +674,7 @@ class RunnerInputAuditTests(unittest.TestCase):
             )
         self.assertIn("Request body does not match the contract", str(raised.exception))
 
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "fixture hash") as raised:
             audit_runner_inputs(
                 fixture_set="a",
                 observed_hash="0" * 64,
@@ -606,7 +684,7 @@ class RunnerInputAuditTests(unittest.TestCase):
         self.assertIn("fixture hash", str(raised.exception))
 
     def test_real_server_fallback_is_rejected(self) -> None:
-        with self.assertRaises(OutOfOrderContractError) as raised:
+        with self.assertRaisesRegex(OutOfOrderContractError, "real server") as raised:
             audit_runner_inputs(
                 fixture_set="a",
                 observed_hash=FROZEN_FIXTURE_SHA256["a"],

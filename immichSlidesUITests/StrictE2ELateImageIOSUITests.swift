@@ -75,7 +75,9 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
         if (try? banner.snapshot()) != nil { tapElement(banner) }
-        XCTAssertTrue(revealLateImageControls(app: app))
+        XCTAssertTrue(
+            revealLateImageControls(app: app),
+            "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         let playPause = app.buttons["slideshow.control.playPause.button"]
         if (try? playPause.snapshot()).map({ playPauseState($0) }) != "play" { tapElement(playPause) }
         var pausedHistoryCount: Int?
@@ -96,7 +98,9 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        XCTAssertTrue(revealLateImageControls(app: app))
+        XCTAssertTrue(
+            revealLateImageControls(app: app),
+            "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         tapElement(next)
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline),

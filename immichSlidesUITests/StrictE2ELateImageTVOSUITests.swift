@@ -3,7 +3,6 @@ import XCTest
 #if os(tvOS)
 final class StrictE2ELateImageTVOSUITests: XCTestCase {
     private enum Timing {
-        static let focusMovementSettleSeconds: TimeInterval = TestWait.seconds(.product(0.08))
         static let focusPollingSeconds: TimeInterval = TestWait.seconds(.product(0.05))
         // Preserve the post-delivery observation window; the fixture now confirms delivery first.
         static let lateRequestWaitSeconds: TimeInterval = TestWait.seconds(.product(2.5))
@@ -69,7 +68,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
             "After the late completion, the default action must stay focusable.")
         let pausedValue = try XCTUnwrap(
             (try? playPauseButton.snapshot()).map { String(describing: $0.value ?? "") },
-            "After the late completion, Select must still toggle Play/Pause.")
+            "Select baseline must be readable")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
