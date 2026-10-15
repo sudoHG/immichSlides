@@ -256,7 +256,7 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                     public_scene_photos_from_bytes(_png(interior))
                 wider = (frame.width - 9, 0, frame.width - 1, frame.height - 1) if horizontal else (0, frame.height - 9, frame.width - 1, frame.height - 1)
                 draw.rectangle(wider, fill=(77, 74, 72))
-                with self.assertRaisesRegex(IdentityAssertionError, "unreadable public glyph slot"):
+                with self.assertRaisesRegex(IdentityAssertionError, "public photo colors are missing or mixed"):
                     public_scene_photos_from_bytes(_png(frame))
 
     def test_overlay_fragments_are_joined_before_the_full_glyph_height_gate(self) -> None:
@@ -273,17 +273,16 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
         for fixture_set in ("a", "b"):
             for unreadable in (False, True):
                 with self.subTest(fixture=fixture_set, unreadable=unreadable):
-                    frame = Image.open(io.BytesIO(self._pair(fixture_set, 2, 3, horizontal=True, seam=1382))).convert("RGB")
-                    if unreadable:
-                        # The right A3 glyph ends near y=1539, inside overlay (1256,1436)-(2580,1925).
-                        photo = Image.open(io.BytesIO(fixture_png(300, 300, 3, "", striped=fixture_set == "b")))
-                        frame.paste(ImageOps.fit(photo, (2458, 2160), method=Image.Resampling.BILINEAR), (1382, 0))
+                    # A3 spans about (1890,621)-(3332,1539), intersecting overlay (1256,1436)-(2580,1925).
+                    frame = Image.open(io.BytesIO(self._pair(
+                        fixture_set, 2, 3, horizontal=True, seam=1382,
+                        unreadable_slot=2 if unreadable else None))).convert("RGB")
                     draw = ImageDraw.Draw(frame)
                     # Measured hint and control rectangles, bounded by the registered four-pixel margin.
                     draw.rectangle((1330, 1440, 2086, 1650), fill="white")
                     draw.rectangle((1260, 1717, 2576, 1920), fill="white")
                     if unreadable:
-                        with self.assertRaisesRegex(IdentityAssertionError, "unreadable public glyph slot"):
+                        with self.assertRaisesRegex(IdentityAssertionError, r"^unreadable public glyph slot; slot 2 \(horizontal\)$"):
                             public_scene_photos_from_bytes(_png(frame))
                     else:
                         self.assertEqual([p.mark for p in public_scene_photos_from_bytes(_png(frame))], ["A2", "A3"])
@@ -388,15 +387,15 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
     @staticmethod
     def _pair(fixture_set: str, first: int, second: int, *, horizontal: bool,
               seam: int | None = None, second_fixture: str | None = None,
-              unreadable: bool = False) -> bytes:
+              unreadable_slot: int | None = None) -> bytes:
         size = (3840, 2160) if horizontal else (1640, 2360)
         boundary = seam or (size[0] // 2 if horizontal else size[1] // 2)
         boxes = ((0, 0, boundary, size[1]), (boundary, 0, size[0], size[1])) if horizontal else (
             (0, 0, size[0], boundary), (0, boundary, size[0], size[1]))
         frame = Image.new("RGB", size)
-        for index, source, box in zip((first, second), (fixture_set, second_fixture or fixture_set), boxes):
+        for slot_number, (index, source, box) in enumerate(zip((first, second), (fixture_set, second_fixture or fixture_set), boxes), start=1):
             photo = Image.open(io.BytesIO(_fixture_data(source)["images"][f"asset-{source}-{index}"]))
-            if unreadable and box == boxes[0]:
+            if slot_number == unreadable_slot:
                 photo = Image.open(io.BytesIO(fixture_png(*photo.size, index, "", striped=source == "b")))
             frame.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]), method=Image.Resampling.BILINEAR), box)
         return _png(frame)
@@ -407,15 +406,15 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
             for fixture_set in ("a", "b"):
                 other = "b" if fixture_set == "a" else "a"
                 for name, options in (("mixed", {"second_fixture": other}),
-                                      ("unreadable", {"unreadable": True}),
-                                      ("foreign unreadable", {"second_fixture": other, "unreadable": True})):
+                                      ("unreadable", {"unreadable_slot": 1}),
+                                      ("foreign unreadable", {"second_fixture": other, "unreadable_slot": 1})):
                     with self.subTest(horizontal=horizontal, fixture=fixture_set, case=name):
                         with self.assertRaises(IdentityAssertionError):
                             public_frame_photos_from_bytes(self._pair(fixture_set, 5, 3, horizontal=horizontal, **options))
                 with self.subTest(horizontal=horizontal, fixture=fixture_set, case="same photo number with unreadable foreign fixture"):
                     with self.assertRaises(IdentityAssertionError):
                         public_scene_photos_from_bytes(self._pair(fixture_set, 5, 5, horizontal=horizontal,
-                                                                 second_fixture=other, unreadable=True))
+                                                                 second_fixture=other, unreadable_slot=1))
 
     def test_scene_reader_preserves_failure_prefix_and_locates_screenshot_slot_and_axis(self) -> None:
         from strict_e2e_photo_identity import public_scene_photos_from_bytes, _named_scene_signature
@@ -425,7 +424,7 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
             with self.subTest(horizontal=horizontal), tempfile.TemporaryDirectory() as raw:
                 name = "person-conflict-normal-2.png"
                 path = Path(raw) / name
-                frame = self._pair("a", 5, 3, horizontal=horizontal, unreadable=True)
+                frame = self._pair("a", 5, 3, horizontal=horizontal, unreadable_slot=1)
                 path.write_bytes(frame)
                 calls = (
                     (IdentityAssertionError, lambda: public_scene_photos_from_bytes(frame, screenshot_name=name)),

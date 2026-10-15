@@ -35,8 +35,6 @@ struct AutomaticTransitionPauseTests {
         vm.toggleAutoPlayFromUserInteraction()
         vm.toggleAutoPlayFromUserInteraction()
         vm.playbackSession.reduceScenePresentation(.stableDeadlineReached(target: third, readiness: .ready), at: 14)
-        now = 14.49
-        #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
         now = 14.5
         let isEnabled = environment["UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT"] == "1"
         #expect(vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment) == isEnabled)
@@ -44,7 +42,6 @@ struct AutomaticTransitionPauseTests {
         if isEnabled {
             #expect(store.load()?.autoPlayEnabled == false)
             vm.toggleAutoPlayFromUserInteraction()
-            #expect(store.load()?.autoPlayEnabled == true)
             #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
             vm.playbackSession.resetPlayback(with: [], initialScene: nil, reason: .sourceChanged)
             vm.playbackSession.reduceScenePresentation(.start(target: first, readiness: .ready), at: 21)

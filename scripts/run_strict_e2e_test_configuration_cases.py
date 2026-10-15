@@ -407,9 +407,12 @@ class StrictE2ERunnerTestsCasesConfiguration:
             "PATH": os.environ.get("PATH", ""),
             "UI_TEST_RESET_STATE": "1",
             "IMMICH_TEST_SERVER_URL": "private",
+            "IMMICH_TEST_URL": "private",
             "IMMICH_TEST_API_KEY": "private",
+            "IMMICH_API_KEY": "private",
             "TEST_RUNNER_UI_TEST_RESET_STATE": "1",
             "TEST_RUNNER_IMMICH_TEST_SERVER_URL": "private",
+            "TEST_RUNNER_IMMICH_TEST_URL": "private",
             "TEST_RUNNER_IMMICH_TEST_API_KEY": "private",
             "SIMCTL_CHILD_IMMICH_SERVER_URL": "private",
         }
@@ -425,6 +428,9 @@ class StrictE2ERunnerTestsCasesConfiguration:
         self.assertFalse(any(key.startswith("UI_TEST_") for key in environment))
         self.assertNotIn("IMMICH_TEST_SERVER_URL", environment)
         self.assertNotIn("IMMICH_TEST_API_KEY", environment)
+        for key in ("IMMICH_TEST_URL", "TEST_RUNNER_IMMICH_TEST_URL", "IMMICH_API_KEY"):
+            with self.subTest(key=key):
+                self.assertNotIn(key, environment)
         self.assertEqual(set(environment), {
             "PATH", "STRICT_E2E_INPUT_SERVER_URL", "STRICT_E2E_INPUT_PUBLIC_KEY", "STRICT_E2E_INPUT_SCENARIO",
         })
