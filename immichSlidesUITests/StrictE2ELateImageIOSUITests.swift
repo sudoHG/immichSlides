@@ -68,7 +68,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 "After selecting random, Continue must be enabled."
             )
         }
-        tapElement(continueButton)
+        continueButton.tap()
         let next = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
             next.waitForExistence(timeout: TestWait.seconds(.product(8))),
