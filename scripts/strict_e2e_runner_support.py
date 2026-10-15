@@ -358,31 +358,11 @@ def strict_app_launch_environment(suite: str | None) -> dict[str, str | None]:
     return {}
 
 
-def validate_app_launch_environment(environment: Mapping[str, str], *, suite: str | None = None) -> None:
-    allowed = strict_app_launch_environment(suite)
-    def is_declared_value(key: str) -> bool:
-        if key not in allowed:
-            return False
-        if allowed[key] is not None:
-            return environment[key] == allowed[key]
-        try:
-            url = urllib.parse.urlsplit(environment[key])
-            return (key == "UI_TEST_SERVER_URL" and url.scheme == "http"
-                    and url.hostname in {"127.0.0.1", "localhost"} and url.path == "/api"
-                    and url.username is None and url.password is None
-                    and not url.query and not url.fragment and url.port is not None and url.port > 0)
-        except ValueError:
-            return False
-    forbidden = sorted(key for key in environment if _is_forbidden_key(key)
-                       and not is_declared_value(key))
-    if forbidden:
-        raise CommandError("Forbidden keys found in the App launchEnvironment: " + ", ".join(forbidden))
-
-
 def write_app_launch_environment_audit(evidence_dir: Path, suite: str) -> None:
+    """Write the static launch declaration, not an observed runtime validation."""
     environment = strict_app_launch_environment(suite)
     (evidence_dir / "app-launch-environment-audit.json").write_text(
-        json.dumps({"declaration_kind": "static_swift_launch_keys", "forbidden_keys_present": [],
+        json.dumps({"declaration_kind": "static_swift_launch_keys",
                     "launch_environment_keys": sorted(environment)}, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -844,8 +824,6 @@ def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str 
         raise CommandError("Visual assertion did not pass; cannot mark SUCCESS.", code=2)
     _write_visual_runner_report(evidence_dir, payload)
     return payload
-
-
 
 
 def _write_visual_runner_report(evidence_dir: Path, payload: Mapping[str, object]) -> None:

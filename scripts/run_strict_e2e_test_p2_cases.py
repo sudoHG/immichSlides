@@ -73,7 +73,6 @@ from run_strict_e2e_test_fixtures import (
     tempfile,
     unittest,
     urllib,
-    validate_app_launch_environment,
     validate_suite_fixture,
     validate_suite_scenario,
     write_case_manifest,

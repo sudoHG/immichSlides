@@ -23,8 +23,6 @@ from strict_e2e_photo_identity import (  # noqa: E402
     assert_exif_correspondence,
     assert_pause_hold,
     assert_required_frames,
-    assert_resumed_advanced,
-    assert_round_trip,
     classify_public_pattern,
     classify_screenshot,
     evaluate_visual_identity,
@@ -228,7 +226,8 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                     evaluate_visual_identity(evidence, suite)
 
     def test_palette_interpolation_is_unique_and_confined_to_eight_raw_edge_pixels(self) -> None:
-        from strict_e2e_photo_identity import _public_palette_edge_assignment, _public_frame_slots
+        from strict_e2e_photo_identity import _public_palette_edge_assignment, public_scene_photos_from_bytes
+        from test_album_server_narrow_contract import _full_screen
         self.assertEqual(_public_palette_edge_assignment((77, 74, 72)), "A1")
         for color in ((0, 0, 0), (255, 255, 255), (56, 140, 28)):
             with self.subTest(color=color):
@@ -239,26 +238,26 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
             self.assertIsNone(_public_palette_edge_assignment((50, 50, 50)))
         for horizontal in (False, True):
             with self.subTest(horizontal=horizontal):
-                frame = Image.open(io.BytesIO(_fixture_png("A1"))).convert("RGB")
+                frame = Image.open(io.BytesIO(_full_screen("A1", (1640, 2360)))).convert("RGB")
                 draw = ImageDraw.Draw(frame)
                 box = (frame.width - 8, 0, frame.width - 1, frame.height - 1) if horizontal else (0, frame.height - 8, frame.width - 1, frame.height - 1)
                 draw.rectangle(box, fill=(77, 74, 72))
-                self.assertEqual(len(_public_frame_slots(frame, edge_band_pixels=(8, 8))[0]), 1)
+                self.assertEqual([p.mark for p in public_scene_photos_from_bytes(_png(frame))], ["A1"])
                 for color in ((0, 0, 0), (255, 255, 255), (56, 140, 28)):
                     draw.rectangle(box, fill=color)
                     with self.assertRaises(IdentityAssertionError):
-                        _public_frame_slots(frame, edge_band_pixels=(8, 8))
+                        public_scene_photos_from_bytes(_png(frame))
                 draw.rectangle(box, fill=(77, 74, 72))
                 interior = Image.blend(frame, Image.open(io.BytesIO(_fixture_png("A2"))).convert("RGB").resize(frame.size), 0.5)
                 with self.assertRaises(IdentityAssertionError):
-                    _public_frame_slots(interior, edge_band_pixels=(8, 8))
+                    public_scene_photos_from_bytes(_png(interior))
                 ImageDraw.Draw(interior).rectangle(box, fill=(77, 74, 72))
                 with self.assertRaises(IdentityAssertionError):
-                    _public_frame_slots(interior, edge_band_pixels=(8, 8))
+                    public_scene_photos_from_bytes(_png(interior))
                 wider = (frame.width - 9, 0, frame.width - 1, frame.height - 1) if horizontal else (0, frame.height - 9, frame.width - 1, frame.height - 1)
                 draw.rectangle(wider, fill=(77, 74, 72))
-                with self.assertRaises(IdentityAssertionError):
-                    _public_frame_slots(frame, edge_band_pixels=(8, 8))
+                with self.assertRaisesRegex(IdentityAssertionError, "unreadable public glyph slot"):
+                    public_scene_photos_from_bytes(_png(frame))
 
     def test_overlay_fragments_are_joined_before_the_full_glyph_height_gate(self) -> None:
         source = Image.open(io.BytesIO(_fixture_png("A4"))).convert("RGB")
@@ -274,13 +273,17 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
         for fixture_set in ("a", "b"):
             for unreadable in (False, True):
                 with self.subTest(fixture=fixture_set, unreadable=unreadable):
-                    frame = Image.open(io.BytesIO(self._pair(fixture_set, 2, 3, horizontal=True, seam=1382, unreadable=unreadable))).convert("RGB")
+                    frame = Image.open(io.BytesIO(self._pair(fixture_set, 2, 3, horizontal=True, seam=1382))).convert("RGB")
+                    if unreadable:
+                        # The right A3 glyph ends near y=1539, inside overlay (1256,1436)-(2580,1925).
+                        photo = Image.open(io.BytesIO(fixture_png(300, 300, 3, "", striped=fixture_set == "b")))
+                        frame.paste(ImageOps.fit(photo, (2458, 2160), method=Image.Resampling.BILINEAR), (1382, 0))
                     draw = ImageDraw.Draw(frame)
                     # Measured hint and control rectangles, bounded by the registered four-pixel margin.
                     draw.rectangle((1330, 1440, 2086, 1650), fill="white")
                     draw.rectangle((1260, 1717, 2576, 1920), fill="white")
                     if unreadable:
-                        with self.assertRaises(IdentityAssertionError):
+                        with self.assertRaisesRegex(IdentityAssertionError, "unreadable public glyph slot"):
                             public_scene_photos_from_bytes(_png(frame))
                     else:
                         self.assertEqual([p.mark for p in public_scene_photos_from_bytes(_png(frame))], ["A2", "A3"])
@@ -326,16 +329,42 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                 _write_scene_sequence(evidence, [(names[3], ("A1", "A5"))], fixture_set)
                 sidecar = evidence / f"{names[0]}.scene.json"
                 original = sidecar.read_text()
-                for field, value in (("manifest", "ledgerSceneAssets=foreign;slotCount=1;slotReadiness=ready"),
-                                     ("render", "phase=transition;layerRoles=outgoing|incoming;loadingVisible=false")):
+                for field, old, new in (("manifest", public_asset_reference(f"asset-{fixture_set}-5"), "foreign"),
+                                        ("render", "phase=stablePhoto", "phase=transition")):
                     payload = json.loads(original)
-                    payload["after"][field] = value
+                    for observation in ("before", "after"):
+                        payload[observation][field] = payload[observation][field].replace(old, new)
                     sidecar.write_text(json.dumps(payload))
-                    with self.assertRaises(IdentityAssertionError):
+                    with self.assertRaisesRegex(IdentityAssertionError, "pixels and complete stable scene probes disagree"):
                         evaluate_visual_identity(evidence, "journey-b")
                 sidecar.unlink()
                 with self.assertRaisesRegex(IdentityAssertionError, "scene sequence evidence"):
                     evaluate_visual_identity(evidence, "journey-b")
+
+    def test_scene_capture_rejects_changed_slot_order_index_and_publication(self) -> None:
+        names = ("history-start", "history-first-next", "history-second-next", "history-first-previous", "history-second-previous", "pause-immediate", "pause-after-10s", "resumed")
+        marks = [("A1", "A5"), ("A2",), ("A3",), ("A2",), ("A1", "A5"), ("A4",), ("A4",), ("A5",)]
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            pair = self._pair("a", 1, 5, horizontal=False)
+            for name, png in zip(names, (pair, _fixture_png("A2"), _fixture_png("A3"), _fixture_png("A2"), pair, _fixture_png("A4"), _fixture_png("A4"), _fixture_png("A5"))):
+                (evidence / f"{name}.png").write_bytes(png)
+            _write_scene_sequence(evidence, list(zip(names, marks)))
+            self.assertEqual(evaluate_visual_identity(evidence, "tvos-flow")["verdict"], "PASS")
+            sidecar = evidence / "history-start.scene.json"
+            original = sidecar.read_text()
+            first, second = (public_asset_reference(f"asset-a-{index}") for index in (1, 5))
+            for field, old, new, message in (
+                ("manifest", f"ledgerSceneAssets={first},{second}", f"ledgerSceneAssets={second},{first}", "scene changed during pixel capture"),
+                ("index", "1/5", "2/5", "index changed during pixel capture"),
+                ("manifest", "scenePublishTimestamp=1.001", "scenePublishTimestamp=1.002", "scene publication changed during pixel capture"),
+            ):
+                with self.subTest(field=field, message=message):
+                    payload = json.loads(original)
+                    payload["after"][field] = payload["after"][field].replace(old, new)
+                    sidecar.write_text(json.dumps(payload))
+                    with self.assertRaisesRegex(IdentityAssertionError, "^history-start: " + message + "$"):
+                        evaluate_visual_identity(evidence, "tvos-flow")
 
     def test_pinned_devices_have_measured_scene_geometries(self) -> None:
         pins = json.loads((SCRIPT_DIR / "ci-pins.json").read_text())
@@ -516,9 +545,6 @@ class NegativeIdentityTests(unittest.TestCase):
         result = classify_screenshot(_solid((0, 0, 0)))
         self.assertEqual(result.status, "BLACK")
         self.assertIsNone(result.mark)
-        with self.assertRaises(IdentityAssertionError) as raised:
-            assert_round_trip([result] * 5)
-        self.assertIn("BLACK", str(raised.exception))
 
     def test_blank_white_is_rejected_not_matched(self) -> None:
         result = classify_screenshot(_solid((255, 255, 255)))
@@ -535,27 +561,6 @@ class NegativeIdentityTests(unittest.TestCase):
         self.assertEqual(result.status, "UNRECOGNIZABLE")
         self.assertIsNone(result.mark)
 
-    def test_wrong_photo_fails_round_trip_return(self) -> None:
-        start = classify_screenshot(_fixture_png("A2"))
-        first = classify_screenshot(_fixture_png("A3"))
-        second = classify_screenshot(_fixture_png("A4"))
-        wrong_return = classify_screenshot(_fixture_png("A5"))
-        with self.assertRaises(IdentityAssertionError) as raised:
-            assert_round_trip([start, first, second, first, wrong_return])
-        self.assertIn("return to the original photo", str(raised.exception))
-
-    def test_unrecognizable_step_cannot_pass_round_trip(self) -> None:
-        start = classify_screenshot(_fixture_png("A2"))
-        with self.assertRaises(IdentityAssertionError):
-            assert_round_trip(
-                [
-                    start,
-                    classify_screenshot(_noise()),
-                    classify_screenshot(_fixture_png("A4")),
-                    classify_screenshot(_noise()),
-                    start,
-                ]
-            )
 
     def test_transition_blend_is_not_a_match(self) -> None:
         result = classify_screenshot(_blend(_fixture_png("A2"), _fixture_png("A3")))
@@ -613,10 +618,6 @@ class NegativeIdentityTests(unittest.TestCase):
                 classify_screenshot(_solid((0, 0, 0))),
             )
 
-    def test_resume_rejects_same_photo(self) -> None:
-        paused = classify_screenshot(_fixture_png("A4"))
-        with self.assertRaises(IdentityAssertionError):
-            assert_resumed_advanced(paused, paused)
 
     def test_missing_required_frames_cannot_succeed(self) -> None:
         with self.assertRaises(IdentityAssertionError) as raised:
@@ -735,9 +736,9 @@ class NegativeIdentityTests(unittest.TestCase):
             self._write_tvos_history(evidence)
             (evidence / "pause-immediate.png").write_bytes(_fixture_png("A4"))
             (evidence / "pause-after-10s.png").write_bytes(_fixture_png("A5"))
-            (evidence / "resumed.png").write_bytes(_fixture_png("A5"))
-            _write_scene_sequence(evidence, [("pause-immediate", ("A4",)), ("pause-after-10s", ("A5",)), ("resumed", ("A5",))])
-            with self.assertRaises(IdentityAssertionError):
+            (evidence / "resumed.png").write_bytes(_fixture_png("A1"))
+            _write_scene_sequence(evidence, [("pause-immediate", ("A4",)), ("pause-after-10s", ("A5",)), ("resumed", ("A1",))])
+            with self.assertRaisesRegex(IdentityAssertionError, "^Photo changed after pausing over 10 seconds$"):
                 evaluate_visual_identity(evidence, "tvos-flow")
 
     def test_evaluate_tvos_flow_rejects_missing_history_frames(self) -> None:
@@ -902,12 +903,6 @@ class PositiveIdentityTests(unittest.TestCase):
                 self.assertEqual(dark.status, "MATCH", dark.notes)
                 self.assertEqual(dark.mark, label)
 
-    def test_round_trip_does_not_assume_iphone_middle_sequence(self) -> None:
-        iphone = [classify_screenshot(_fixture_png(label)) for label in ("A2", "A3", "A4", "A3", "A2")]
-        ipad = [classify_screenshot(_fixture_png(label)) for label in ("A2", "A4", "A5", "A4", "A2")]
-        assert_round_trip(iphone)
-        assert_round_trip(ipad)
-        self.assertNotEqual([item.mark for item in iphone[1:4]], [item.mark for item in ipad[1:4]])
 
     def test_matching_exif_is_accepted(self) -> None:
         assert_exif_correspondence(classify_screenshot(_fixture_png("A2")), "")
@@ -920,12 +915,10 @@ class PositiveIdentityTests(unittest.TestCase):
             "Fixture 5",
         )
 
-    def test_pause_hold_and_resume_on_public_marks(self) -> None:
+    def test_pause_hold_on_public_marks(self) -> None:
         a4 = classify_screenshot(_fixture_png("A4"))
         a4_dark = classify_screenshot(_darken(_fixture_png("A4"), 0.3))
-        a5 = classify_screenshot(_fixture_png("A5"))
         assert_pause_hold(a4, a4_dark)
-        assert_resumed_advanced(a4, a5)
 
     def test_evaluate_visual_identity_accepts_public_fixture_sequences(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
@@ -997,7 +990,6 @@ class ReviewedScreenshotCalibrationTests(unittest.TestCase):
             self._classify_file("iphone-history/06-previous-A2.png"),
         ]
         self.assertEqual([item.mark for item in steps], ["A2", "A3", "A4", "A3", "A2"])
-        assert_round_trip(steps)
 
     def test_ipad_history_round_trip_is_not_iphone_sequence(self) -> None:
         steps = [
@@ -1008,7 +1000,6 @@ class ReviewedScreenshotCalibrationTests(unittest.TestCase):
             self._classify_file("ipad-history/06-previous-A2.png"),
         ]
         self.assertEqual([item.mark for item in steps], ["A2", "A4", "A5", "A4", "A2"])
-        assert_round_trip(steps)
 
     def test_dark_paused_a2_is_still_a2_not_black(self) -> None:
         result = self._classify_file("ipad-pause-window/03-after-pause-A2-no-Fixture3.png")
@@ -1024,13 +1015,11 @@ class ReviewedScreenshotCalibrationTests(unittest.TestCase):
         with self.assertRaises(IdentityAssertionError):
             assert_exif_correspondence(result, "Fixture 3")
 
-    def test_tvos_pause_hold_and_resume(self) -> None:
+    def test_tvos_pause_hold(self) -> None:
         immediate = self._classify_file("tvos-pause/01-pause-immediate-A4.png")
         held = self._classify_file("tvos-pause/02-pause-after-11.860-seconds-A4.png")
-        resumed = self._classify_file("tvos-pause/03-resumed-advanced-A5.png")
         self.assertEqual(immediate.mark, "A4")
         assert_pause_hold(immediate, held)
-        assert_resumed_advanced(held, resumed)
 
 
 if __name__ == "__main__":

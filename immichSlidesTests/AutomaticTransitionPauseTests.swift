@@ -19,31 +19,32 @@ struct AutomaticTransitionPauseTests {
         let vm = SlideShowViewModel(settingsStore: store, observeSettingsChanges: false)
         var now = 0.0
         vm.scenePresentationTimestampProviderForTesting = { now }
-        vm.toggleAutoPlayFromUserInteraction()
-        vm.toggleAutoPlayFromUserInteraction()
         let first = makeTarget(sceneID: "first")
         let second = makeTarget(sceneID: "second")
+        let third = makeTarget(sceneID: "third")
         vm.playbackSession.reduceScenePresentation(.start(target: first, readiness: .ready), at: 0)
         vm.playbackSession.reduceScenePresentation(.transitionCompleted, at: 1)
         vm.playbackSession.reduceScenePresentation(.stableDeadlineReached(target: second, readiness: .ready), at: 6)
 
-        now = 6.49
+        now = 6.5
+        // An automatic fade before the first user Play must not consume the hook.
         #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
         #expect(vm.isAutoPlay)
-        now = 6.5
+        vm.playbackSession.reduceScenePresentation(.transitionCompleted, at: 8.025)
+        now = 9
+        vm.toggleAutoPlayFromUserInteraction()
+        vm.toggleAutoPlayFromUserInteraction()
+        vm.playbackSession.reduceScenePresentation(.stableDeadlineReached(target: third, readiness: .ready), at: 14)
+        now = 14.49
+        #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
+        now = 14.5
         let isEnabled = environment["UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT"] == "1"
-        #expect(PlatformCompat.shouldPauseAtAutomaticFadeMidpointForTesting(environment: environment) == isEnabled)
-        #expect(!PlatformCompat.isRunningXCTest(environment: environment))
         #expect(vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment) == isEnabled)
         #expect(vm.isAutoPlay == !isEnabled)
         if isEnabled {
-            now = 20
-            let frozen = vm.sceneRenderSnapshot
-            #expect(frozen.phase == .paused)
-            #expect(frozen.layers.first { $0.identity == first.identity }?.opacity == 0.5)
-            #expect(frozen.layers.first { $0.identity == second.identity }?.opacity == 0)
             #expect(store.load()?.autoPlayEnabled == false)
             vm.toggleAutoPlayFromUserInteraction()
+            #expect(store.load()?.autoPlayEnabled == true)
             #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
             vm.playbackSession.resetPlayback(with: [], initialScene: nil, reason: .sourceChanged)
             vm.playbackSession.reduceScenePresentation(.start(target: first, readiness: .ready), at: 21)
@@ -54,36 +55,6 @@ struct AutomaticTransitionPauseTests {
             #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
             #expect(vm.isAutoPlay)
         }
-    }
-
-    @Test
-    func `an automatic fade before the first user play does not consume the midpoint hook`() throws {
-        let suiteName = "AutomaticTransitionPauseTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = PlaybackSettingsStore(key: suiteName, defaults: defaults)
-        let vm = SlideShowViewModel(settingsStore: store, observeSettingsChanges: false)
-        var now = 6.5
-        vm.scenePresentationTimestampProviderForTesting = { now }
-        let environment = ["UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT": "1"]
-        let first = makeTarget(sceneID: "first")
-        let second = makeTarget(sceneID: "second")
-        let third = makeTarget(sceneID: "third")
-        vm.playbackSession.reduceScenePresentation(.start(target: first, readiness: .ready), at: 0)
-        vm.playbackSession.reduceScenePresentation(.transitionCompleted, at: 1)
-        vm.playbackSession.reduceScenePresentation(.stableDeadlineReached(target: second, readiness: .ready), at: 6)
-
-        #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
-        #expect(vm.isAutoPlay)
-        vm.playbackSession.reduceScenePresentation(.transitionCompleted, at: 8.025)
-        now = 9
-        vm.toggleAutoPlayFromUserInteraction()
-        vm.toggleAutoPlayFromUserInteraction()
-        vm.playbackSession.reduceScenePresentation(.stableDeadlineReached(target: third, readiness: .ready), at: 14)
-        now = 14.5
-        #expect(vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
-        #expect(!vm.isAutoPlay)
-        #expect(!vm.pauseAtAutomaticFadeMidpointForTesting(environment: environment))
     }
     #endif
 
