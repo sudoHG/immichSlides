@@ -1015,11 +1015,13 @@ class ReviewedScreenshotCalibrationTests(unittest.TestCase):
         with self.assertRaises(IdentityAssertionError):
             assert_exif_correspondence(result, "Fixture 3")
 
-    def test_tvos_pause_hold(self) -> None:
+    def test_tvos_pause_hold_and_resume(self) -> None:
         immediate = self._classify_file("tvos-pause/01-pause-immediate-A4.png")
         held = self._classify_file("tvos-pause/02-pause-after-11.860-seconds-A4.png")
+        resumed = self._classify_file("tvos-pause/03-resumed-advanced-A5.png")
         self.assertEqual(immediate.mark, "A4")
         assert_pause_hold(immediate, held)
+        self.assertEqual(resumed.mark, "A5")
 
 
 if __name__ == "__main__":
