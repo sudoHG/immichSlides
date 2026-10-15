@@ -422,6 +422,24 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
         self.assertIn("horizontal", str(raised.exception))
         self.assertIn("vertical", str(raised.exception))
 
+    def test_scene_reader_locates_foreground_rejections_before_slot_segmentation(self) -> None:
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
+        from strict_e2e_filter_contract import FilterContractError, _scene_slot_marks
+        from test_album_server_narrow_contract import _letterbox
+
+        frame = _letterbox(_fixture_png("A3"), (3840, 2160))
+        with self.assertRaises(FilterContractError) as original:
+            public_scene_photos_from_bytes(frame)
+        for call in (
+            lambda: public_scene_photos_from_bytes(frame, screenshot_name="person-normal.png"),
+            lambda: _scene_slot_marks(frame, "a", screenshot_name="person-normal.png"),
+        ):
+            with self.assertRaises(FilterContractError) as raised:
+                call()
+            self.assertTrue(str(raised.exception).startswith(str(original.exception)))
+            self.assertIn("person-normal.png", str(raised.exception))
+            self.assertIn("slot count and axes unresolved", str(raised.exception))
+
     def test_two_dimensional_grid_and_blended_slots_fail_unreadable(self) -> None:
         grid = Image.new("RGB", (3840, 2160))
         for index, box in enumerate(((0, 0, 1920, 1080), (1920, 0, 3840, 1080),

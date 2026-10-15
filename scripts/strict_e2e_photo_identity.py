@@ -243,12 +243,15 @@ class PublicFramePhoto:
 
 
 def public_scene_photos_from_bytes(image_bytes: bytes, *, screenshot_name: str | None = None) -> tuple[PublicFramePhoto, ...]:
+    from strict_e2e_filter_manifest import FilterContractError
+
     try:
         return _public_scene_photos_from_bytes(image_bytes)
-    except IdentityAssertionError as error:
+    except (IdentityAssertionError, FilterContractError) as error:
         if screenshot_name is None:
             raise
-        raise IdentityAssertionError(f"{error}; screenshot {Path(screenshot_name).name}") from error
+        context = "; slot count and axes unresolved" if isinstance(error, FilterContractError) else ""
+        raise type(error)(f"{error}; screenshot {Path(screenshot_name).name}{context}") from error
 
 
 def _public_scene_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto, ...]:
