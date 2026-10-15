@@ -1,12 +1,9 @@
 import XCTest
 
 #if os(iOS)
-protocol StrictE2EOnboardingIOS: XCTestCase {
-    @MainActor
-    func revealPlaybackControlsWithoutWaitHelper(app: XCUIApplication, shouldRefreshAutoHideTimer: Bool)
-}
+protocol StrictE2EOnboardingIOS: XCTestCase {}
 
-extension StrictE2EOnboardingIOS {
+extension StrictE2EFirstBatchIOSUITests {
     func requireBoundFailureScenario() -> String {
         let scenario = ProcessInfo.processInfo.environment["STRICT_E2E_INPUT_SCENARIO"] ?? ""
         let allowed = ["auth-401", "html-200", "unreachable", "timeout"]
@@ -69,6 +66,9 @@ extension StrictE2EOnboardingIOS {
         }
     }
 
+}
+
+extension StrictE2EOnboardingIOS {
     @MainActor
     func completeFirstBootToModeSelection(
         app: XCUIApplication,
@@ -145,6 +145,9 @@ extension StrictE2EOnboardingIOS {
         tapElement(testConnectionButton)
     }
 
+}
+
+extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func attachOrientationEvidence(app: XCUIApplication, name: String) {
         attachStrictE2EScreenshot(app: app, name: "\(name)-\(currentDeviceTag())")
@@ -310,7 +313,7 @@ extension StrictE2EOnboardingIOS {
     @MainActor
     func captureHistoryIdentity(app: XCUIApplication, step: String) -> [String: Any] {
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
-        revealPlaybackControlsWithoutWaitHelper(app: app, shouldRefreshAutoHideTimer: false)
+        revealPlaybackControlsWithoutWaitHelper(app: app)
         return captureStrictSceneFrame(app: app, name: step, attachmentName: step)
     }
 
@@ -418,6 +421,9 @@ extension StrictE2EOnboardingIOS {
         add(attachment)
     }
 
+}
+
+extension StrictE2EOnboardingIOS {
     func playPauseState(_ button: XCUIElementAttributes) -> String {
         ((button.value as? String) ?? "").lowercased()
     }

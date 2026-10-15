@@ -72,8 +72,9 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         XCTAssertTrue(
             next.waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        dismissPlaybackEntryHintIfNeeded(app: app)
-        XCTAssertTrue(waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(8))))
+        let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
+        if (try? banner.snapshot()) != nil { tapElement(banner) }
+        XCTAssertTrue(revealLateImageControls(app: app))
         let playPause = app.buttons["slideshow.control.playPause.button"]
         if (try? playPause.snapshot()).map({ playPauseState($0) }) != "play" { tapElement(playPause) }
         XCTAssertTrue(
@@ -89,7 +90,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        XCTAssertTrue(waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(8))))
+        XCTAssertTrue(revealLateImageControls(app: app))
         tapElement(next)
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline),
@@ -97,8 +98,14 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     }
 
     @MainActor
-    func revealPlaybackControlsWithoutWaitHelper(app: XCUIApplication, shouldRefreshAutoHideTimer: Bool = false) {
-        XCTAssertTrue(waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(8))))
+    private func revealLateImageControls(app: XCUIApplication) -> Bool {
+        waitUntil(timeout: TestWait.seconds(.product(8))) {
+            if let next = app.evidenceSnapshotsByIdentifier()["slideshow.control.next.button"], next.isEnabled {
+                return true
+            }
+            app.tap()
+            return false
+        }
     }
 
     @MainActor
