@@ -436,8 +436,11 @@ def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, in
             # Bilinear texture edges and overlay ink can obscure a row. Keep it in the
             # same slot only when both surrounding rows independently identify that photo.
             if preceding is None or preceding != following:
+                # The last run still touches the unreadable line and is not closed.
+                completed = max(0, len(slots) - 1)
+                slot_word = "slot" if completed == 1 else "slots"
                 raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed"
-                                             f"; {'horizontal' if horizontal else 'vertical'} axis, {len(slots)} completed slots")
+                                             f"; {'horizontal' if horizontal else 'vertical'} axis, {completed} completed {slot_word}")
             mark = preceding
         if slots and slots[-1][0] == mark:
             slots[-1] = (mark, slots[-1][1], y + 1)
@@ -691,8 +694,9 @@ def public_frame_photos_from_bytes(image_bytes: bytes, *,
             if len({photo.letter for photo in photos}) != 1:
                 raise IdentityAssertionError(f"mixed public glyphs; {len(slots)} slots ({_public_slot_axis(slots[0][1], rgb.size)})")
             if any(pattern != photos[0].letter for pattern in patterns.values()):
+                slot_word = "slot" if len(slots) == 1 else "slots"
                 raise IdentityAssertionError("unreadable public glyph slot: foreign public background pattern"
-                                             f"; {len(slots)} slots ({_public_slot_axis(slots[0][1], rgb.size)})")
+                                             f"; {len(slots)} {slot_word} ({_public_slot_axis(slots[0][1], rgb.size)})")
             return tuple(photos)
     except IdentityAssertionError:
         raise

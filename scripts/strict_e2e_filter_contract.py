@@ -382,13 +382,13 @@ def assert_foreign_id_tokens_absent(texts: Sequence[str], local_fixture_set: str
         raise FilterContractError("Cross-server stale IDs remain: " + ", ".join(found))
 
 
-def evaluate_filter_visual_identity(evidence_dir: Path, suite: str) -> dict[str, Any]:
+def evaluate_filter_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str | None = None) -> dict[str, Any]:
     if suite in {"display-policy", "tvos-display-policy"}:
         return _evaluate_display_policy(evidence_dir, suite)
     if suite == "tvos-album":
         return _evaluate_tvos_album(evidence_dir)
     if suite == "tvos-person":
-        return _evaluate_tvos_person(evidence_dir)
+        return _evaluate_tvos_person(evidence_dir, fixture_set=fixture_set)
     if suite == "tvos-switch":
         return _evaluate_tvos_switch(evidence_dir)
     if suite == "filter-album":
@@ -573,8 +573,10 @@ def _evaluate_tvos_album(evidence_dir: Path) -> dict[str, Any]:
     }
 
 
-def _evaluate_tvos_person(evidence_dir: Path) -> dict[str, Any]:
+def _evaluate_tvos_person(evidence_dir: Path, *, fixture_set: str | None = None) -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
+    if fixture_set is not None and fixture_set != manifest["fixture_set"]:
+        raise FilterContractError("member manifest fixture does not match runner fixture")
     fixture_set = manifest["fixture_set"]
     if manifest != member_manifest(fixture_set):
         raise FilterContractError("member manifest is not the frozen contract")
@@ -678,11 +680,12 @@ def _scene_slot_marks(image_bytes: bytes, fixture_set: str, *, screenshot_name: 
         photos = public_scene_photos_from_bytes(image_bytes, screenshot_name=screenshot_name)
     except IdentityAssertionError as error:
         raise FilterContractError(str(error)) from error
-    for index, photo in enumerate(photos, start=1):
+    for photo in photos:
         if photo.letter != fixture_set.upper():
-            context = f"; {Path(screenshot_name).name}" if screenshot_name else ""
+            context = f"; screenshot {Path(screenshot_name).name}" if screenshot_name else ""
+            slots = "slot" if len(photos) == 1 else "slots"
             raise FilterContractError(f"every slot must show the public glyph of fixture {fixture_set.upper()}"
-                                      f"{context}; slot {index} ({photo.axis}), {len(photos)} slots")
+                                      f"{context}; observed fixture {photo.letter} in all {len(photos)} {slots} ({photo.axis})")
     return tuple(photo.mark for photo in photos)
 
 

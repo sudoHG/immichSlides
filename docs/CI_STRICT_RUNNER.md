@@ -47,12 +47,14 @@ unrecognized, but cannot supply a missing slot's identity.
 
 `tvos-person` loads the active fixture from `member-manifest.json` and requires
 the complete frozen manifest before judging normal, conflict-normal and no-faces
-frames against that fixture's glyphs and membership. Missing or invalid manifests
+frames against that fixture's glyphs and membership. The runner also requires the
+manifest fixture to equal its requested fixture. Missing or invalid manifests
 fail closed. Simulator Vision soloOnly results remain `UNVERIFIED`.
 Shared scene-reader failures retain their original diagnostic prefix and append
 the screenshot basename, slot index and axis when known. Segmentation failures
 identify the rejected axes; an unresolved partition reports no guessed slot index.
-Context contains only public filenames, indices, axes and counts.
+Foreign-fixture frames report the observed public fixture letter and total slot
+count. Context contains only public filenames, fixture letters, indices, axes and counts.
 
 `journey-b` and `tvos-flow` compare complete per-slot signatures in spatial order
 (top to bottom or left to right) for history, pause and resume. Swapping two slots

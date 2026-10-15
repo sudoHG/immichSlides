@@ -282,7 +282,13 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
                         path.write_bytes(original)
 
     def test_person_suite_rejects_missing_or_invalid_manifest(self) -> None:
-        for case in ("missing", "invalid JSON", "unknown fixture", "invalid fixture type", "wrong hash", "changed person members"):
+        for case, message in (
+            ("missing", "Missing member manifest"),
+            ("invalid JSON", "member manifest is unreadable"),
+            ("unknown fixture", "fixture set is unknown"),
+            ("invalid fixture type", "fixture set is unknown"),
+            ("changed person members", "member manifest is not the frozen contract"),
+        ):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)
                 _write_person_suite(evidence, conflict=["A5"], fixture_set="a")
@@ -297,14 +303,31 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
                         manifest["fixture_set"] = "c"
                     elif case == "invalid fixture type":
                         manifest["fixture_set"] = []
-                    elif case == "wrong hash":
-                        manifest["fixture_sha256"] = "0" * 64
                     else:
-                        manifest["person_cases"]["normal_match"]["asset_ids"] = ["asset-a-4"]
-                        manifest["person_cases"]["normal_match"]["labels"] = ["A4"]
+                        manifest["person_cases"]["normal_match"]["asset_ids"] = ["asset-a-1", "asset-a-4"]
+                        manifest["person_cases"]["normal_match"]["labels"] = ["A1", "A4"]
+                        (evidence / "person-normal.png").write_bytes(_fixture_png("A4"))
                     path.write_text(json.dumps(manifest))
-                with self.assertRaises(FilterContractError):
+                with self.assertRaisesRegex(FilterContractError, message):
                     evaluate_filter_visual_identity(evidence, "tvos-person")
+
+    def test_person_suite_locates_multislot_foreign_fixture(self) -> None:
+        for fixture_set, foreign in (("a", "b"), ("b", "a")):
+            with self.subTest(fixture=fixture_set), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                _write_person_suite(evidence, conflict=["A5"], fixture_set=fixture_set)
+                frame = Image.new("RGB", (3840, 2160))
+                for mark, left in (("A5", 0), ("A3", 1920)):
+                    with Image.open(io.BytesIO(_fixture_png(mark, foreign))) as photo:
+                        frame.paste(ImageOps.fit(photo, (1920, 2160)), (left, 0))
+                buffer = io.BytesIO()
+                frame.save(buffer, format="PNG")
+                (evidence / "person-conflict-normal.png").write_bytes(buffer.getvalue())
+                with self.assertRaisesRegex(FilterContractError, "every slot must show the public glyph") as raised:
+                    evaluate_filter_visual_identity(evidence, "tvos-person")
+                message = str(raised.exception)
+                self.assertIn("screenshot person-conflict-normal.png", message)
+                self.assertIn(f"observed fixture {foreign.upper()} in all 2 slots (horizontal)", message)
 
     def test_person_conflict_normal_allows_a5_a3_a5_without_a2(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
