@@ -368,7 +368,7 @@ def load_member_manifest(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict) or payload.get("kind") != MEMBER_MANIFEST_KIND:
         raise FilterContractError("member manifest is not the frozen contract")
     fixture_set = payload.get("fixture_set")
-    if fixture_set not in FROZEN_FIXTURE_SHA256:
+    if not isinstance(fixture_set, str) or fixture_set not in FROZEN_FIXTURE_SHA256:
         raise FilterContractError("member manifest fixture set is unknown")
     expected_hash = fixture_manifest(str(fixture_set))["fixture_sha256"]
     frozen_hash = FROZEN_FIXTURE_SHA256[str(fixture_set)]
