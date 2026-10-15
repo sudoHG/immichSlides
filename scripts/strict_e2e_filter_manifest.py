@@ -197,7 +197,7 @@ def _assert_labels_match_photo_identity(payload: Mapping[str, Any]) -> None:
     # Index names A1–A5 cannot stand in for image identity;
     # both write and read check the public fixture images, fail-closed.
     fixture_set = payload.get("fixture_set")
-    if fixture_set not in FROZEN_FIXTURE_SHA256:
+    if not isinstance(fixture_set, str) or fixture_set not in FROZEN_FIXTURE_SHA256:
         raise FilterContractError("member manifest fixture set is unknown")
     images = _fixture_data(str(fixture_set))["images"]
     pairs = _album_label_pairs(payload, "target_album") + _album_label_pairs(payload, "non_target_album")

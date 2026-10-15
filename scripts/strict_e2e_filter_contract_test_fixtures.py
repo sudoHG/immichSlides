@@ -100,12 +100,14 @@ def _write_person_suite(
     evidence: Path,
     *,
     conflict: list[str],
+    fixture_set: str = "a",
 ) -> None:
-    (evidence / "person-normal.png").write_bytes(_fixture_png("A1"))
+    write_member_manifest(evidence / "member-manifest.json", fixture_set)
+    (evidence / "person-normal.png").write_bytes(_fixture_png("A1", fixture_set))
     for index, label in enumerate(conflict):
         name = "person-conflict-normal.png" if index == 0 else f"person-conflict-normal-{index + 1}.png"
-        (evidence / name).write_bytes(_fixture_png(label))
-    (evidence / "person-no-faces.png").write_bytes(_fixture_png("A4"))
+        (evidence / name).write_bytes(_fixture_png(label, fixture_set))
+    (evidence / "person-no-faces.png").write_bytes(_fixture_png("A4", fixture_set))
     payload = {"environment": "simulator", "vision_available": False}
     (evidence / "vision-environment.json").write_text(json.dumps(payload), encoding="utf-8")
 

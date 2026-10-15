@@ -7,7 +7,7 @@ import functools
 import io
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -239,9 +239,19 @@ PUBLIC_SCENE_GEOMETRIES = {
 class PublicFramePhoto:
     letter: str
     mark: str
+    axis: str = field(default="unresolved axis", compare=False)
 
 
-def public_scene_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto, ...]:
+def public_scene_photos_from_bytes(image_bytes: bytes, *, screenshot_name: str | None = None) -> tuple[PublicFramePhoto, ...]:
+    try:
+        return _public_scene_photos_from_bytes(image_bytes)
+    except IdentityAssertionError as error:
+        if screenshot_name is None:
+            raise
+        raise IdentityAssertionError(f"{error}; screenshot {Path(screenshot_name).name}") from error
+
+
+def _public_scene_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto, ...]:
     from strict_e2e_filter_contract import _display_foreground_png
 
     # The existing foreground reader verifies both the original and blurred surround.
@@ -260,8 +270,8 @@ def public_scene_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhoto
         identity = classify_screenshot(image_bytes)
         pattern = patterns.get(slots[0][0])
         if identity.status != "MATCH" or identity.mark != slots[0][0] or pattern not in {"A", "B"}:
-            raise IdentityAssertionError("unreadable public glyph slot: single photo color or public texture is missing")
-        return (PublicFramePhoto(pattern, identity.mark),)
+            raise IdentityAssertionError("unreadable public glyph slot: single photo color or public texture is missing; slot 1 (both axes)")
+        return (PublicFramePhoto(pattern, identity.mark, "both axes"),)
     return public_frame_photos_from_bytes(foreground, color_exclusion_box=color_box, glyph_overlay_box=glyph_box)
 
 
@@ -296,7 +306,7 @@ def _named_scene_signature(evidence_dir: Path, name: str, fixture_set: str, *, t
     path = evidence_dir / f"{name}.png"
     if not path.is_file():
         raise IdentityAssertionError(f"Missing identification input {name}.png")
-    photos = public_scene_photos_from_bytes(path.read_bytes())
+    photos = public_scene_photos_from_bytes(path.read_bytes(), screenshot_name=path.name)
     if any(photo.letter != fixture_set.upper() for photo in photos):
         raise IdentityAssertionError(f"{name}: frame must show only fixture {fixture_set.upper()} in every slot")
     sidecar = evidence_dir / f"{name}.scene.json"
@@ -409,7 +419,8 @@ def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, in
         exact_row_marks.append(next((mark for mark, count in exact_counts.items()
                                      if count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT), None))
         if len(marks) > 1:
-            raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed")
+            raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed"
+                                         f"; {'horizontal' if horizontal else 'vertical'} axis, slot count unresolved")
         if not marks:
             row_marks.append(None)
             continue
@@ -422,7 +433,8 @@ def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, in
             # Bilinear texture edges and overlay ink can obscure a row. Keep it in the
             # same slot only when both surrounding rows independently identify that photo.
             if preceding is None or preceding != following:
-                raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed")
+                raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed"
+                                             f"; {'horizontal' if horizontal else 'vertical'} axis, {len(slots)} completed slots")
             mark = preceding
         if slots and slots[-1][0] == mark:
             slots[-1] = (mark, slots[-1][1], y + 1)
@@ -485,26 +497,38 @@ def _public_frame_slots(rgb: object, color_exclusion_box: tuple[int, int, int, i
                         edge_band_pixels: tuple[int, int] = (0, 0)
                         ) -> tuple[list[tuple[str, tuple[int, int, int, int]]], dict[str, str]]:
     candidates = []
+    failures = []
     for horizontal in (False, True):
         try:
             candidates.append(_public_axis_slots(rgb, color_exclusion_box, horizontal=horizontal,
                                                   edge_band_pixels=edge_band_pixels[0 if horizontal else 1]))
-        except IdentityAssertionError:
+        except IdentityAssertionError as error:
+            failures.append(str(error).partition("; ")[2])
             continue
     # One axis alone cannot justify a single photo: it could overlook a full-width
     # blank band or foreign footer. Both axes must agree for a one-slot frame.
     if (not candidates or (len(candidates) == 1 and len(candidates[0]) == 1)
             or any(candidate != candidates[0] for candidate in candidates[1:])):
-        raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed")
+        context = "; ".join(failures) if failures else "horizontal and vertical axes disagree"
+        raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed; " + context)
     slots = candidates[0]
     patterns = {}
-    for mark, box in slots:
-        pattern = _public_slot_pattern(rgb.crop(box), mark, _relative_box(color_exclusion_box, box))
-        if pattern is not None:
-            if mark in patterns and patterns[mark] != pattern:
-                raise IdentityAssertionError("unreadable public glyph slot: conflicting public background patterns")
-            patterns[mark] = pattern
+    for index, (mark, box) in enumerate(slots, start=1):
+        try:
+            pattern = _public_slot_pattern(rgb.crop(box), mark, _relative_box(color_exclusion_box, box))
+            if pattern is not None:
+                if mark in patterns and patterns[mark] != pattern:
+                    raise IdentityAssertionError("unreadable public glyph slot: conflicting public background patterns")
+                patterns[mark] = pattern
+        except IdentityAssertionError as error:
+            raise IdentityAssertionError(f"{error}; slot {index} ({_public_slot_axis(box, rgb.size)})") from error
     return slots, patterns
+
+
+def _public_slot_axis(box: tuple[int, int, int, int], size: tuple[int, int]) -> str:
+    if box == (0, 0, *size):
+        return "both axes"
+    return "horizontal" if box[1] == 0 and box[3] == size[1] else "vertical"
 
 
 @functools.lru_cache(maxsize=4096)
@@ -652,15 +676,20 @@ def public_frame_photos_from_bytes(image_bytes: bytes, *,
                                                   edge_band_pixels=_public_frame_edge_band(image.size, rgb.size))
             overlay = _public_frame_sample_box(glyph_overlay_box, image.size, rgb.size)
             photos = []
-            for mark, box in slots:
-                slot_photos = _read_public_slot(rgb.crop(box), mark, _relative_box(overlay, box))
-                if not slot_photos:
-                    raise IdentityAssertionError("no public glyph" if len(slots) == 1 else "unreadable public glyph slot")
-                photos.extend(slot_photos)
+            for index, (mark, box) in enumerate(slots, start=1):
+                try:
+                    slot_photos = _read_public_slot(rgb.crop(box), mark, _relative_box(overlay, box))
+                    if not slot_photos:
+                        raise IdentityAssertionError("no public glyph" if len(slots) == 1 else "unreadable public glyph slot")
+                except IdentityAssertionError as error:
+                    raise IdentityAssertionError(f"{error}; slot {index} ({_public_slot_axis(box, rgb.size)})") from error
+                photos.extend(PublicFramePhoto(photo.letter, photo.mark, _public_slot_axis(box, rgb.size))
+                              for photo in slot_photos)
             if len({photo.letter for photo in photos}) != 1:
-                raise IdentityAssertionError("mixed public glyphs")
+                raise IdentityAssertionError(f"mixed public glyphs; {len(slots)} slots ({_public_slot_axis(slots[0][1], rgb.size)})")
             if any(pattern != photos[0].letter for pattern in patterns.values()):
-                raise IdentityAssertionError("unreadable public glyph slot: foreign public background pattern")
+                raise IdentityAssertionError("unreadable public glyph slot: foreign public background pattern"
+                                             f"; {len(slots)} slots ({_public_slot_axis(slots[0][1], rgb.size)})")
             return tuple(photos)
     except IdentityAssertionError:
         raise

@@ -199,6 +199,7 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
     def test_person_suite_classifies_pngs_and_keeps_simulator_vision_unverified(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
+            write_member_manifest(evidence / "member-manifest.json", "a")
             (evidence / "person-normal.png").write_bytes(_fixture_png("A1"))
             (evidence / "person-conflict-normal.png").write_bytes(_fixture_png("A2"))
             (evidence / "person-no-faces.png").write_bytes(_fixture_png("A4"))
@@ -217,6 +218,7 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
     def test_person_suite_rejects_solo_only_pass_claim_and_wins_field(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
+            write_member_manifest(evidence / "member-manifest.json", "a")
             (evidence / "person-normal.png").write_bytes(_fixture_png("A1"))
             (evidence / "person-conflict-normal.png").write_bytes(_fixture_png("A2"))
             (evidence / "person-no-faces.png").write_bytes(_fixture_png("A4"))
@@ -231,6 +233,7 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
 
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
+            write_member_manifest(evidence / "member-manifest.json", "a")
             (evidence / "person-normal.png").write_bytes(_fixture_png("A1"))
             (evidence / "person-conflict-normal.png").write_bytes(_fixture_png("A2"))
             (evidence / "person-no-faces.png").write_bytes(_fixture_png("A4"))
@@ -244,6 +247,7 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
 
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
+            write_member_manifest(evidence / "member-manifest.json", "a")
             (evidence / "person-normal.png").write_bytes(_fixture_png("A1"))
             (evidence / "person-conflict-normal.png").write_bytes(_fixture_png("A2"))
             (evidence / "person-no-faces.png").write_bytes(b"\x89PNG\r\n\x1a\n")
@@ -255,6 +259,52 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
                 evaluate_filter_visual_identity(evidence, "tvos-person")
             self.assertIn("Unrecognizable input", str(raised.exception))
 
+
+    def test_person_suite_uses_active_manifest_and_rejects_foreign_fixture_at_every_step(self) -> None:
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture=fixture_set), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                _write_person_suite(evidence, conflict=["A5", "A3"], fixture_set=fixture_set)
+                report = evaluate_filter_visual_identity(evidence, "tvos-person")
+                self.assertEqual(report["verdict"], "PARTIAL")
+                self.assertEqual(report["vision"]["verdict"], "UNVERIFIED")
+                self.assertEqual(report["steps"]["person-conflict-normal"]["marks"], ["A5", "A3"])
+                foreign = "b" if fixture_set == "a" else "a"
+                for name, mark in (("person-normal", "A1"), ("person-conflict-normal", "A5"),
+                                   ("person-conflict-normal-2", "A3"), ("person-no-faces", "A4")):
+                    with self.subTest(step=name):
+                        path = evidence / f"{name}.png"
+                        original = path.read_bytes()
+                        path.write_bytes(_fixture_png(mark, foreign))
+                        with self.assertRaisesRegex(FilterContractError, "every slot must show the public glyph") as raised:
+                            evaluate_filter_visual_identity(evidence, "tvos-person")
+                        self.assertIn(path.name, str(raised.exception))
+                        path.write_bytes(original)
+
+    def test_person_suite_rejects_missing_or_invalid_manifest(self) -> None:
+        for case in ("missing", "invalid JSON", "unknown fixture", "invalid fixture type", "wrong hash", "changed person members"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                _write_person_suite(evidence, conflict=["A5"], fixture_set="a")
+                path = evidence / "member-manifest.json"
+                manifest = json.loads(path.read_text())
+                if case == "missing":
+                    path.unlink()
+                elif case == "invalid JSON":
+                    path.write_text("{")
+                else:
+                    if case == "unknown fixture":
+                        manifest["fixture_set"] = "c"
+                    elif case == "invalid fixture type":
+                        manifest["fixture_set"] = []
+                    elif case == "wrong hash":
+                        manifest["fixture_sha256"] = "0" * 64
+                    else:
+                        manifest["person_cases"]["normal_match"]["asset_ids"] = ["asset-a-4"]
+                        manifest["person_cases"]["normal_match"]["labels"] = ["A4"]
+                    path.write_text(json.dumps(manifest))
+                with self.assertRaises(FilterContractError):
+                    evaluate_filter_visual_identity(evidence, "tvos-person")
 
     def test_person_conflict_normal_allows_a5_a3_a5_without_a2(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
