@@ -460,24 +460,54 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func waitForCurrentAssetID(app: XCUIApplication, timeout: TimeInterval) throws -> String {
-        guard waitUntil(timeout: timeout, condition: { self.currentAssetID(app: app) != nil }) else {
+        var observedAssetID: String?
+        var snapshotFailureCount = 0
+        var lastSnapshotFailure: String?
+        var lastSnapshotFailureCode: Int?
+        guard
+            waitUntil(
+                timeout: timeout,
+                condition: {
+                    observedAssetID = self.currentAssetID(
+                        app: app,
+                        onSnapshotFailure: { error in
+                            snapshotFailureCount += 1
+                            lastSnapshotFailure = error.localizedDescription
+                            lastSnapshotFailureCode = (error as NSError).code
+                        })
+                    return observedAssetID != nil
+                })
+        else {
             let hierarchy = app.debugDescription
-            let candidate = app.descendants(matching: .any)["slideshow.currentAssetId.flag"]
-            let diagnostic = [
-                "currentAssetProbe.exists=\(candidate.exists)",
-                "currentAssetProbe.identifier=\(candidate.identifier)",
-                "currentAssetProbe.label=\(candidate.label)",
-                "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_BEGIN",
-                hierarchy,
-                "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_END"
-            ].joined(separator: "\n")
+            let probeDiagnostic: [String]
+            do {
+                let candidate = try app.descendants(matching: .any)["slideshow.currentAssetId.flag"].snapshot()
+                probeDiagnostic = [
+                    "currentAssetProbe.exists=true",
+                    "currentAssetProbe.identifier=\(candidate.identifier)",
+                    "currentAssetProbe.label=\(candidate.label)"
+                ]
+            } catch {
+                probeDiagnostic = ["currentAssetProbe.snapshotError=\(error.localizedDescription)"]
+            }
+            let diagnostic =
+                ([
+                    "currentAssetProbe.snapshotFailures=\(snapshotFailureCount)",
+                    "currentAssetProbe.lastSnapshotFailure=\(lastSnapshotFailure ?? "none")"
+                ] + probeDiagnostic + [
+                    "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_BEGIN",
+                    hierarchy,
+                    "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_END"
+                ]).joined(separator: "\n")
             print(diagnostic)
             let attachment = XCTAttachment(data: Data(diagnostic.utf8), uniformTypeIdentifier: "public.plain-text")
             attachment.name = "manual-lifecycle-current-asset-probe-hierarchy"
             attachment.lifetime = .keepAlways
             add(attachment)
+            // Public failure text carries only the numeric code, never the raw snapshot error.
+            let lastError = lastSnapshotFailureCode.map { "code:\($0)" } ?? "none"
             XCTFail(
-                "The slideshow must reliably expose slideshow.currentAssetId.flag in UI tests, EXIF panel or not."
+                "The slideshow must reliably expose slideshow.currentAssetId.flag in UI tests, EXIF panel or not. (snapshotFailures=\(snapshotFailureCount), lastError=\(lastError))"
             )
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
@@ -488,7 +518,7 @@ extension PlaybackHistoryIOSUITests {
             )
         }
 
-        guard let assetID = currentAssetID(app: app) else {
+        guard let assetID = observedAssetID else {
             XCTFail("The slideshow asset ID probe disappeared; cannot read the current photo.")
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
@@ -519,8 +549,14 @@ extension PlaybackHistoryIOSUITests {
         return try waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.product(2)))
     }
 
-    func currentAssetID(app: XCUIApplication, snapshots: [String: XCUIElementSnapshot]? = nil) -> String? {
-        guard let probe = (snapshots ?? app.evidenceSnapshotsByIdentifier())["slideshow.currentAssetId.flag"]
+    func currentAssetID(
+        app: XCUIApplication,
+        snapshots: [String: XCUIElementSnapshot]? = nil,
+        onSnapshotFailure: ((Error) -> Void)? = nil
+    ) -> String? {
+        guard
+            let probe = (snapshots ?? app.evidenceSnapshotsByIdentifier(onSnapshotFailure: onSnapshotFailure))[
+                "slideshow.currentAssetId.flag"]
         else { return nil }
         let label = probe.label.trimmingCharacters(in: .whitespacesAndNewlines)
         return label.isEmpty || label == "no-asset" ? nil : label

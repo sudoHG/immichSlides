@@ -164,6 +164,19 @@ It matches the same receiver passed as a complete argument (optionally labeled o
 when the true branch starts with a call, including calls nested inside it; passing another element,
 a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
+For functional control readiness, use a fallible snapshot for enabled state and frame,
+then the SDK's Bool-returning `wait(for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))`
+as a single live hittability read within the original deadline. Apple documents that
+a missing element is not hittable. Use this wait only for `isHittable`; read every
+other property from a snapshot. The wait wrapper does not suppress failures from
+arbitrary property queries. Return the observation without another live read or an
+existence-only success on timeout. The current-asset poll retains its successful
+snapshot value and records snapshot failures separately from an absent probe; timeout
+attachments include the failure count and last snapshot error. Its failure-message
+suffix contains only the count and numeric error code. Playback-entry timeout text
+retains the last Settings poll and a timeout-only playback-marker snapshot; unknown
+attributes stay unknown when a snapshot fails. Diagnostic reads never restart the
+deadline or turn a timeout into success.
 
 1. **Every test has at least one assertion that can fail.** Screenshots may accompany assertions but never replace them.
 2. **Test rules, not design values.** "Input height is at least 44 pt" and "input text is larger than placeholder text" are good tests. "Height equals 46" is not: a design change should not turn tests red.

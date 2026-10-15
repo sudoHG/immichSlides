@@ -4,8 +4,14 @@ import XCTest
 
 extension XCUIApplication {
     // Keep evidence reads in one tree so auto-hidden controls cannot disappear between queries.
-    func evidenceSnapshotsByIdentifier() -> [String: XCUIElementSnapshot] {
-        guard let root = try? snapshot() else { return [:] }
+    func evidenceSnapshotsByIdentifier(onSnapshotFailure: ((Error) -> Void)? = nil) -> [String: XCUIElementSnapshot] {
+        let root: XCUIElementSnapshot
+        do {
+            root = try snapshot()
+        } catch {
+            onSnapshotFailure?(error)
+            return [:]
+        }
         var snapshots: [String: XCUIElementSnapshot] = [:]
         var pending: [XCUIElementSnapshot] = [root]
         while let node = pending.popLast() {

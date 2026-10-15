@@ -631,12 +631,13 @@ extension FilterSummaryIOSVisualUITests {
             startPlaybackButton.isEnabled, "The 'Start Playback' button on the filter summary page should be enabled")
         startPlaybackButton.tap()
 
+        var playbackEntryDiagnostic = ""
         XCTAssertTrue(
             waitForSlideshowSettingsButton(
                 app: app,
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.playbackControlTimeoutSeconds)
-                && app.buttons["slideshow.control.settings.button"].isHittable,
-            "After starting playback, the playback page should open and show the control bar")
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.playbackControlTimeoutSeconds,
+                onTimeout: { playbackEntryDiagnostic = " (\($0))" }),
+            "After starting playback, the playback page should open and show the control bar\(playbackEntryDiagnostic)")
 
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
