@@ -8,11 +8,6 @@ extension SlideShowViewIOS {
         #if DEBUG
         if shouldExposeSmartFillMotionFrameProbeForTesting {
             ZStack {
-                Color.clear
-                    .frame(width: 1, height: 1)
-                    .accessibilityElement()
-                    .accessibilityIdentifier("slideshow.smartfill.motionFrame.summary")
-                    .accessibilityLabel(smartFillMotionFrameSummaryLabel())
                 smartFillMotionTraceProbeOverlay()
                 smartFillProductTransitionProbeOverlay()
             }
@@ -329,7 +324,7 @@ extension SlideShowViewIOS {
     }
     #endif
 
-    private func smartFillMotionFrameSummaryLabel() -> String {
+    func smartFillMotionFrameSummaryLabel(rows: [String]) -> String {
         #if DEBUG
         let debugFields = viewModel.smartFillMotionProbeDebugFieldsForTesting
             .sorted { $0.key < $1.key }
@@ -338,11 +333,11 @@ extension SlideShowViewIOS {
         let debugFields: [String] = []
         #endif
         guard !debugFields.isEmpty else {
-            return smartFillMotionFrameProbeRows.joined(separator: "\n")
+            return rows.joined(separator: "\n")
         }
         let suffix = debugFields.joined(separator: ";")
         return
-            smartFillMotionFrameProbeRows
+            rows
             .map { row in "\(row);\(suffix)" }
             .joined(separator: "\n")
     }
