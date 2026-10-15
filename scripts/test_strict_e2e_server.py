@@ -26,7 +26,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 import strict_e2e_server  # noqa: E402
 from strict_e2e_server import (  # noqa: E402
     PUBLIC_API_KEY,
-    TVOS_CONTINUE_TO_SECOND_SELECT_MS,
     create_server,
     fixture_manifest,
     main as server_main,
@@ -629,14 +628,18 @@ class StrictE2EServerContractTests(unittest.TestCase):
     def test_out_of_order_logs_start_and_complete_timeline_without_secrets(self) -> None:
         log_stream = io.StringIO()
         with RunningServer(scenario="out-of-order", log_stream=log_stream) as server:
+            self.assertEqual(server.request("/test/late-image", method="POST", body={"action": "arm"})[0], 200)
             with ThreadPoolExecutor(max_workers=2) as executor:
                 old_request = executor.submit(
                     server.request,
                     "/assets/asset-a-1/thumbnail?size=preview",
                     timeout=4,
                 )
-                time.sleep(0.03)
+                wait_for_request_started(log_stream, asset_id="asset-a-1", size="preview")
                 server.request("/assets/asset-a-2/thumbnail?size=preview")
+                self.assertFalse(old_request.done())
+                time.sleep(0.01)
+                self.assertEqual(server.request("/test/late-image", method="POST", body={"action": "release"})[0], 200)
                 old_request.result(timeout=5)
 
         log = log_stream.getvalue()
@@ -671,10 +674,6 @@ class StrictE2EServerContractTests(unittest.TestCase):
         self.assertEqual(set(completes), {"asset-a-1", "asset-a-2"})
         self.assertLess(starts["asset-a-1"], completes["asset-a-2"])
         self.assertLess(completes["asset-a-2"], completes["asset-a-1"])
-        self.assertGreater(
-            completes["asset-a-1"] - starts["asset-a-1"],
-            TVOS_CONTINUE_TO_SECOND_SELECT_MS,
-        )
 
     def test_normal_scenario_logs_asset_request_start_for_cache_reload_pairing(self) -> None:
         log_stream = io.StringIO()
@@ -696,6 +695,7 @@ class StrictE2EServerContractTests(unittest.TestCase):
     def test_out_of_order_does_not_delay_thumbnail(self) -> None:
         log_stream = io.StringIO()
         with RunningServer(scenario="out-of-order", log_stream=log_stream) as server:
+            server.request("/test/late-image", method="POST", body={"action": "arm"})
             with ThreadPoolExecutor(max_workers=1) as executor:
                 delayed_preview = executor.submit(
                     server.request, "/assets/asset-a-1/thumbnail?size=preview", timeout=10
@@ -706,6 +706,7 @@ class StrictE2EServerContractTests(unittest.TestCase):
                     delayed_preview.done(),
                     "The thumbnail must be served while the delayed preview is still held back.",
                 )
+                server.request("/test/late-image", method="POST", body={"action": "release"})
                 delayed_preview.result(timeout=10)
         self.assertEqual(status, 200)
         self.assertEqual(body[:8], b"\x89PNG\r\n\x1a\n")
@@ -722,7 +723,7 @@ class StrictE2EServerContractTests(unittest.TestCase):
         )
         self.assertLess(thumbnail_done, preview_done)
 
-    def test_out_of_order_delays_preview_and_fullsize_repeatably(self) -> None:
+    def test_out_of_order_holds_actual_first_preview_and_fullsize_repeatably(self) -> None:
         for size in ("preview", "fullsize"):
             with self.subTest(size=size):
                 for _ in range(2):
@@ -731,31 +732,117 @@ class StrictE2EServerContractTests(unittest.TestCase):
     def _assert_out_of_order_completion(self, size: str) -> None:
         log_stream = io.StringIO()
         with RunningServer(scenario="out-of-order", log_stream=log_stream) as server:
+            # Onboarding responses must finish before the test arms the playback hold.
+            self.assertEqual(server.request("/assets/asset-a-1/thumbnail?size=preview")[0], 200)
+            server.request("/test/late-image", method="POST", body={"action": "arm"})
             with ThreadPoolExecutor(max_workers=1) as executor:
                 old_request = executor.submit(
-                    server.request, f"/assets/asset-a-1/thumbnail?size={size}", timeout=10
+                    server.request, f"/assets/asset-a-4/thumbnail?size={size}", timeout=10
                 )
-                wait_for_request_started(log_stream, asset_id="asset-a-1", size=size)
+                wait_for_request_started(log_stream, asset_id="asset-a-4", size=size)
                 new_status, _, _ = server.request(f"/assets/asset-a-2/thumbnail?size={size}")
                 self.assertFalse(
                     old_request.done(),
                     "The newer request must finish while the older one is still held back.",
                 )
+                held = json.loads(server.request("/test/late-image")[2])
+                self.assertEqual(held["asset_id"], "asset-a-4")
+                self.assertEqual(held["pending"], 1)
+                self.assertFalse(held["released"])
+                time.sleep(0.01)
+                server.request("/test/late-image", method="POST", body={"action": "release"})
                 old_status, _, _ = old_request.result(timeout=10)
+                delivered = json.loads(server.request("/test/late-image")[2])
+                self.assertEqual((delivered["delivered"], delivered["pending"], delivered["expired"]), (1, 0, False))
         self.assertEqual((old_status, new_status), (200, 200))
-        events = logged_request_events(log_stream.getvalue(), size=size)
+        events = [event for event in logged_request_events(log_stream.getvalue(), size=size)
+                  if event[1] != "asset-a-1"]
         self.assertEqual(
             [(kind, asset_id) for kind, asset_id, _ in events],
             [
-                ("started", "asset-a-1"),
+                ("started", "asset-a-4"),
                 ("started", "asset-a-2"),
                 ("completed", "asset-a-2"),
-                ("completed", "asset-a-1"),
+                ("completed", "asset-a-4"),
             ],
         )
-        old_started, _, new_completed, old_completed = (elapsed for _, _, elapsed in events)
-        self.assertGreater(old_completed - old_started, TVOS_CONTINUE_TO_SECOND_SELECT_MS)
-        self.assertGreater(old_completed - new_completed, 100)
+        self.assertLess(events[2][2], events[3][2])
+
+    def test_late_image_hold_expiry_stays_failed_in_its_generation(self) -> None:
+        log_stream = io.StringIO()
+        with mock.patch.object(strict_e2e_server, "LATE_IMAGE_MAX_HOLD_SECONDS", 0.05):
+            with RunningServer(scenario="out-of-order", log_stream=log_stream) as server:
+                self.assertEqual(server.request("/test/late-image", method="POST", body={"action": "release"})[0], 409)
+                server.request("/test/late-image", method="POST", body={"action": "arm"})
+                status, _, body = server.request("/assets/asset-a-3/thumbnail?size=preview")
+                self.assertEqual(status, 200)
+                self.assertEqual(body, server.server.fixture["images"]["asset-a-3"])
+                state = json.loads(server.request("/test/late-image")[2])
+                self.assertTrue(state["expired"])
+                self.assertTrue(state["released"])
+                self.assertEqual(state["delivered"], 1)
+                self.assertEqual(server.request("/test/late-image", method="POST", body={"action": "release"})[0], 409)
+                self.assertTrue(json.loads(server.request("/test/late-image")[2])["expired"])
+                next_state = json.loads(server.request("/test/late-image", method="POST", body={"action": "arm"})[2])
+                self.assertEqual(next_state["generation"], state["generation"] + 1)
+                previous = [json.loads(line.removeprefix("late_image_hold ")) for line in log_stream.getvalue().splitlines()
+                            if line.startswith("late_image_hold ")]
+                self.assertTrue([record for record in previous if record["generation"] == state["generation"]][-1]["expired"])
+        self.assertIn("late_image_hold_expired", log_stream.getvalue())
+
+    def test_late_image_control_requires_fixture_auth_loopback_and_out_of_order(self) -> None:
+        with RunningServer(scenario="out-of-order") as server:
+            self.assertEqual(server.request("/test/late-image", api_key="wrong-key")[0], 401)
+            self.assertEqual(server.request("/test/late-image", method="POST", body={"action": "unknown"})[0], 400)
+            with mock.patch.object(strict_e2e_server.StrictE2ERequestHandler, "_is_loopback_control", return_value=False):
+                self.assertEqual(server.request("/test/late-image", method="POST", body={"action": "arm"})[0], 403)
+        with RunningServer() as server:
+            self.assertEqual(server.request("/test/late-image", method="POST", body={"action": "arm"})[0], 409)
+
+    def test_closed_held_peer_is_not_recorded_as_delivered(self) -> None:
+        logs = io.StringIO()
+        with RunningServer(scenario="out-of-order", log_stream=logs) as server:
+            server.request("/test/late-image", method="POST", body={"action": "arm"})
+            connection = socket.create_connection(server.server.server_address, timeout=2)
+            try:
+                connection.sendall(b"GET /api/assets/asset-a-4/thumbnail?size=preview HTTP/1.0\r\n" +
+                                   f"x-api-key: {PUBLIC_API_KEY}\r\n\r\n".encode())
+                wait_for_request_started(logs, asset_id="asset-a-4", size="preview")
+                connection.shutdown(socket.SHUT_WR)
+                server.request("/test/late-image", method="POST", body={"action": "release"})
+                while connection.recv(65536):
+                    pass
+            finally:
+                connection.close()
+            state = json.loads(server.request("/test/late-image")[2])
+            self.assertEqual((state["pending"], state["delivered"], state["disconnected"]), (0, 0, 1))
+
+    def test_retry_reset_drains_the_previous_hold_before_a_new_generation(self) -> None:
+        logs = io.StringIO()
+        with RunningServer(scenario="out-of-order", log_stream=logs) as server:
+            first = json.loads(server.request("/test/late-image", method="POST", body={"action": "arm"})[2])
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                old = executor.submit(server.request, "/assets/asset-a-4/thumbnail?size=preview")
+                wait_for_request_started(logs, asset_id="asset-a-4", size="preview")
+                reset_status = server.request("/test/late-image", method="POST", body={"action": "reset"})[0]
+                if reset_status != 200:
+                    server.request("/test/late-image", method="POST", body={"action": "release"})
+                self.assertEqual(reset_status, 200)
+                self.assertEqual(old.result(timeout=2)[0], 200)
+            second = json.loads(server.request("/test/late-image", method="POST", body={"action": "arm"})[2])
+            self.assertEqual(second["generation"], first["generation"] + 1)
+            self.assertEqual((second["asset_id"], second["pending"], second["delivered"]), (None, 0, 0))
+            self.assertIsNone(second["hold_started_elapsed_ms"])
+            self.assertIsNone(second["released_elapsed_ms"])
+
+    def test_held_http_fault_finalises_pending_response(self) -> None:
+        with RunningServer(scenario="out-of-order") as server:
+            server.request("/test/image-response", method="POST", body={"mode": "http", "asset_id": "asset-a-4"})
+            server.request("/test/late-image", method="POST", body={"action": "arm"})
+            self.assertEqual(server.request("/assets/asset-a-4/thumbnail?size=fullsize")[0], 503)
+            state = json.loads(server.request("/test/late-image")[2])
+            self.assertEqual(state["pending"], 0)
+            self.assertEqual(state["delivered"] + state["disconnected"], 1)
 
 
 if __name__ == "__main__":

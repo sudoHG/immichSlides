@@ -307,6 +307,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         warm: bool = False,
         retry: bool = False,
         timeout_phase: str | None = None,
+        late_image_attempt=None,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -320,12 +321,15 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         retry_registry = registry()
         retry_registry["entries"][0]["scope"]["tier"] = "strict"
         retry_registry["entries"][0]["identity"] = test_identity("strict",
-            FILTER_PERSON_SESSIONS[0]["selector"].split("/", 1)[1], device="iphone", configuration="Debug",
-            suite="filter-person", scenario="normal", fixture="a")
+            (selector if suite == "late-image" else FILTER_PERSON_SESSIONS[0]["selector"]).split("/", 1)[1],
+            device="iphone", configuration="Debug", suite=suite if suite == "late-image" else "filter-person",
+            scenario="out-of-order" if suite == "late-image" else "normal", fixture="a")
 
         def fake_run_command(command: list[str], **kwargs: object) -> int:
             kwargs["log_path"].write_text("test run\n", encoding="utf-8")
             invocations.append(command)
+            if late_image_attempt is not None:
+                late_image_attempt(kwargs["environment"], len(invocations))
             if suite != "filter-person":
                 self.assertEqual([item for item in command if item.startswith("-only-testing:")], [f"-only-testing:{selector}"])
             if suite in P2_CASES:
@@ -411,6 +415,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     str(evidence),
                     "--suite",
                     suite,
+                    *(["--scenario", "out-of-order"] if suite == "late-image" else []),
                     *(["--test-without-building", "--derived-data-path", str(evidence.parent / "derived")] if warm else []),
                     *(["--listed-retry-device", "iphone"] if retry else []),
                 ],
@@ -424,6 +429,53 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "stop": stop,
             "recording_process": recording_process,
         }
+
+    def test_listed_late_image_retry_resets_and_isolates_hold_generations(self):
+        import time
+        import urllib.request
+        from concurrent.futures import ThreadPoolExecutor
+        with tempfile.TemporaryDirectory() as raw, ThreadPoolExecutor(max_workers=1) as executor:
+            evidence = Path(raw) / "evidence"
+            held = []
+            generations = []
+
+            def attempt(environment, number):
+                base = environment["STRICT_E2E_INPUT_SERVER_URL"]
+                def request(path, action=None):
+                    headers = {"x-api-key": strict_runner.PUBLIC_API_KEY}
+                    body = None
+                    if action is not None:
+                        headers["Content-Type"] = "application/json"
+                        body = json.dumps({"action": action}).encode()
+                    with urllib.request.urlopen(urllib.request.Request(base + path, data=body, headers=headers), timeout=5) as response:
+                        return response.read()
+                state = json.loads(request("/test/late-image", "arm"))
+                generations.append(state.get("generation", 1))
+                held.append(executor.submit(request, "/assets/asset-a-4/thumbnail?size=preview"))
+                deadline = time.monotonic() + 5
+                while json.loads(request("/test/late-image"))["pending"] != 1:
+                    if time.monotonic() >= deadline:
+                        self.fail("The listed retry must have an in-flight hold to reset")
+                    time.sleep(.005)
+                request("/assets/asset-a-2/thumbnail?size=preview")
+                if number == 2:
+                    request("/test/late-image", "release")
+                    self.assertTrue(held[-1].result(timeout=5))
+
+            code, _, stderr, _ = self._run_p2_main(evidence, suite="late-image", platform="ios", model="iPhone",
+                                                  warm=True, retry=True, late_image_attempt=attempt)
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual(generations, [1, 2])
+            current = (evidence / "redacted-request.log").read_text()
+            archived = (evidence / "attempt-1/xcodebuild/service.log").read_text()
+            states = lambda text: [json.loads(line.removeprefix("late_image_hold ")) for line in text.splitlines()
+                                   if line.startswith("late_image_hold ")]
+            self.assertEqual({state["generation"] for state in states(current)}, {2})
+            self.assertEqual({state["generation"] for state in states(archived)}, {1})
+            self.assertEqual((states(archived)[-1]["pending"], states(current)[-1]["pending"]), (0, 0))
+            self.assertTrue(all(future.result(timeout=5) for future in held))
+            sessions = json.loads((evidence / "retry-invocations.json").read_text())["sessions"]
+            self.assertEqual(len(sessions["xcodebuild"]["invocations"]), 2)
 
     def test_retry_records_keep_all_person_sessions_and_each_warm_receipt(self):
         with tempfile.TemporaryDirectory() as raw:

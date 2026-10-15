@@ -668,6 +668,9 @@ class StrictE2ERunnerTestsCasesEvidence:
             (evidence / "ooo-current-scene.png").write_bytes(current)
             (evidence / "ooo-after-late.png").write_bytes(current)
             (evidence / "redacted-request.log").write_text(
+                'late_image_hold {"generation":1,"hold_started_elapsed_ms":null,"released_elapsed_ms":null,'
+                '"armed":true,"armed_elapsed_ms":0,"asset_id":null,"released":false,'
+                '"expired":false,"pending":0,"delivered":0,"disconnected":0}\n'
                 "request_started elapsed_ms=10 method=GET path=/api/assets/<fixture-id>/thumbnail "
                 "size=preview range=absent fixture_asset_id=asset-a-1\n"
                 "request_started elapsed_ms=40 method=GET path=/api/assets/<fixture-id>/thumbnail "
@@ -675,7 +678,10 @@ class StrictE2ERunnerTestsCasesEvidence:
                 "request elapsed_ms=45 method=GET path=/api/assets/<fixture-id>/thumbnail "
                 "status=200 range=absent fixture_asset_id=asset-a-2\n"
                 "request elapsed_ms=320 method=GET path=/api/assets/<fixture-id>/thumbnail "
-                "status=200 range=absent fixture_asset_id=asset-a-1\n",
+                "status=200 range=absent fixture_asset_id=asset-a-1\n"
+                'late_image_hold {"generation":1,"hold_started_elapsed_ms":10,"released_elapsed_ms":319,'
+                '"armed":true,"armed_elapsed_ms":0,"asset_id":"asset-a-1","released":true,'
+                '"expired":false,"pending":0,"delivered":1,"disconnected":0}\n',
                 encoding="utf-8",
             )
             write_fixture_artifacts(evidence, "a")

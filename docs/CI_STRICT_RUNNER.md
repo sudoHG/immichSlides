@@ -64,7 +64,7 @@ Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
+Probe-only launches are `journey-b`, `tvos-flow`, `late-image`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
 The `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`
@@ -215,6 +215,65 @@ Unreadable target-album playback screenshots (album-play-*) and empty-result
 screenshots (empty-album-result.png, for both iOS and tvOS album-empty suites)
 produce a FAIL contract report.
 File-read failures remain I/O errors. tvOS reports retain their existing fields.
+
+## Deterministic late-image response ordering
+
+The `late-image` suite arms `/api/test/late-image` after normal first-boot setup.
+Only loopback clients with the existing public fixture key can use this control,
+and only in the `out-of-order` scenario. The server chooses the first preview or
+fullsize request after arming, by serialized request order, and holds responses
+for that asset until the test posts `{"action":"release"}`. Thumbnails and other
+assets remain available. Each `{"action":"arm"}` starts a numbered generation;
+a new generation is allowed only after the previous one is released and has no
+pending responses. Onboarding requests are served normally before arming.
+The frozen manifest's legacy delay metadata stays
+unchanged for hash compatibility and no longer schedules responses.
+
+Both platform tests pause playback before Next, verify two committed history
+advances and a complete stable rendered scene with fallible snapshot probes,
+then capture `ooo-current-scene`. They explicitly release the hold, poll for
+zero pending responses and at least one successful socket write/flush with no
+disconnects, retain the existing 1.5-second iOS / 2.5-second tvOS settling window,
+and capture `ooo-after-late`. Delivery means the fixture finished writing the
+response; it does not claim that the app displayed or decoded the image. Before
+writing a held response, a non-blocking socket peek rejects an already-closed
+peer, including an empty read, and records a disconnect instead of delivery.
+The UI polls retain fixed product budgets. The read-only scene probe is the
+only added app launch key; no private XCTest quiescence API is used.
+
+Each hold records its generation, `hold_started_elapsed_ms` and
+`released_elapsed_ms`. Its effective duration must be less than 15,000 ms:
+[`AssetsDownloadManager.swift`](../immichSlides/Shared/Model/AssetsDownloadManager.swift#L669)
+uses SDWebImage managers without overriding the
+[pinned SDWebImage 5.21.5 default download timeout of 15 seconds](https://github.com/SDWebImage/SDWebImage/blob/36e79ba485e9bb4d3cd4e3318908866dac5e7b51/SDWebImage/Core/SDWebImageDownloaderConfig.m#L25).
+At or beyond that app bound the evaluator rejects the run as invalid, even if a
+socket write succeeds. The independent 90-second server cap remains a hang guard:
+expiry releases the response, leaves an irreversible `expired` state in that
+generation and logs `late_image_hold_expired generation=N`; it cannot produce a
+passing run for that generation.
+
+The evaluator validates only the current generation's hold and request timeline,
+checks that its held asset was the first preview/fullsize request after arming,
+and requires release and confirmed delivery. It separately rejects the held
+asset's public label anywhere in either captured scene signature. This generalizes
+the exclusion to the actually held image under random order; the two existing
+scene and timeline verdict functions, including their original A1 exclusion,
+remain byte-identical. Missing or malformed records, invalid timestamps, expiry,
+pending responses and disconnects fail closed. A held response that hits the
+HTTP fault control still finalizes its pending count; the existing timeline
+verdict continues to reject its unsuccessful HTTP status.
+
+For a registered listed retry, the existing reset path closes the old app, posts
+`{"action":"reset"}` to release and drain the previous hold within five seconds,
+then archives its final records before the second attempt can arm a new
+generation. The flaky registry and retry policy are unchanged. Earlier attempt
+request audits remain mandatory, while its hold/expiry cannot contaminate the
+current generation's verdict.
+Fixture control log lines have their own prefix and never count as app requests
+or public image identity. The iOS late-image suite reuses the existing onboarding
+implementation through `StrictE2EOnboardingIOS` in the UI-test target.
+Swift fixture-control failures use the distinct `Late image fixture control failed:`
+prefix, left unmapped (`unknown`); they cannot be classified as scene flashbacks.
 
 ## Explicit shard warm-up and reuse
 

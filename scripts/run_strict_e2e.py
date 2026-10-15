@@ -552,6 +552,20 @@ def require_p2_evidence(
     return payload
 
 
+def reset_late_image_fixture(server_url: str, public_key: str) -> None:
+    request = urllib.request.Request(
+        server_url + "/test/late-image", data=b'{"action":"reset"}',
+        headers={"x-api-key": public_key, "Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            state = json.loads(response.read())
+            if response.status != 200 or not isinstance(state, dict) or state.get("pending") != 0:
+                raise ValueError("Previous hold is still pending")
+    except (OSError, ValueError) as error:
+        raise CommandError("Late image fixture reset failed before listed retry", code=2) from error
+
+
 class StrictRetryEvidence:
     """Keep each case's prior outputs out of the final visual/timeline validation."""
 
@@ -910,8 +924,13 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 attempt_evidence = StrictRetryEvidence(arguments.evidence_dir, log_path.stem,
                                                         [service_log_path, service_log_b_path])
                 def reset_retry():
-                    attempt_evidence.before_retry()
-                    retry_reset_log = reset_simulator_app(simulator_udid)
+                    if arguments.suite == "late-image":
+                        retry_reset_log = reset_simulator_app(simulator_udid)
+                        reset_late_image_fixture(server_url, input_key)
+                        attempt_evidence.before_retry()
+                    else:
+                        attempt_evidence.before_retry()
+                        retry_reset_log = reset_simulator_app(simulator_udid)
                     (arguments.evidence_dir / (log_path.stem + "-retry-reset.log")).write_text(retry_reset_log, encoding="utf-8")
                     with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
                         log.write(retry_reset_log)

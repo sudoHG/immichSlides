@@ -19,6 +19,8 @@ from access_lifecycle_contract import capture_identity
 OUT_OF_ORDER_STEPS = ("ooo-current-scene", "ooo-after-late")
 OUT_OF_ORDER_VISUAL_SUITES = ("late-image",)
 DELAYED_SIZES = ("preview", "fullsize")
+# AssetsDownloadManager.swift uses SDWebImageManager's default 15-second image download timeout.
+APP_IMAGE_DOWNLOAD_TIMEOUT_MS = 15_000
 REQUEST_STARTED_LINE = re.compile(
     r"^request_started elapsed_ms=(?P<elapsed>\d+) method=(?P<method>GET|POST) "
     r"path=(?P<path>\S+) size=(?P<size>thumbnail|preview|fullsize) "
@@ -48,14 +50,6 @@ class _LogEvent:
     asset_id: str
     size: str | None
     status: int | None
-
-
-def delayed_asset_id(fixture_set: str) -> str:
-    return f"asset-{fixture_set}-1"
-
-
-def immediate_asset_id(fixture_set: str) -> str:
-    return f"asset-{fixture_set}-2"
 
 
 def assert_current_scene_holds(current: PhotoIdentity, after_late: PhotoIdentity) -> str:
@@ -196,15 +190,17 @@ def evaluate_out_of_order_identity(evidence_dir: Path) -> dict[str, Any]:
     log_text = log_path.read_text(encoding="utf-8")
 
     fixture_set, observed_hash = _read_fixture_hash(evidence_dir)
-    delayed = delayed_asset_id(fixture_set)
-    immediate = immediate_asset_id(fixture_set)
-    window_start_ms = _playback_window_start_ms(log_text, delayed, immediate)
+    delayed, immediate, window_start_ms, held_log = _held_request_inputs(log_text, fixture_set=fixture_set)
+    held_label = next(asset["label"] for asset in fixture_manifest(fixture_set)["assets"] if asset["id"] == delayed)
+    for identity, scene in ((current, "current"), (after_late, "after")):
+        if held_label in str(identity.mark).split("+"):
+            raise OutOfOrderContractError(f"Held photo {held_label} is still in the {scene} scene; this run is invalid")
     timeline: dict[str, dict[str, int]] = {}
     last_error: OutOfOrderContractError | None = None
     for size in DELAYED_SIZES:
         try:
             timeline[size] = assert_out_of_order_timeline(
-                log_text,
+                held_log,
                 delayed_asset_id=delayed,
                 immediate_asset_id=immediate,
                 size=size,
@@ -233,33 +229,74 @@ def evaluate_out_of_order_identity(evidence_dir: Path) -> dict[str, Any]:
     }
 
 
-def _playback_window_start_ms(log_text: str, delayed_asset_id: str, immediate_asset_id: str) -> int:
-    # Connection test and save are not part of this scene; a mid-playback random must not push the old
-    # photo's still in-flight preview/fullsize out of the window.
-    random_ms: list[int] = []
-    for line in log_text.splitlines():
-        matched = REQUEST_COMPLETED_LINE.match(line)
-        if matched is not None and matched.group("path") == "/api/search/random":
-            random_ms.append(int(matched.group("elapsed")))
-    if not random_ms:
-        return 0
-    starts, completes = _parse_timeline(log_text)
-    immediate_starts = [item.elapsed_ms for item in starts if item.asset_id == immediate_asset_id]
-    if not immediate_starts:
-        return random_ms[-1]
-    first_immediate = min(immediate_starts)
-    in_flight: list[int] = []
-    for start in starts:
-        if start.asset_id != delayed_asset_id or start.size not in DELAYED_SIZES:
-            continue
-        if start.elapsed_ms > first_immediate:
-            continue
-        finished = _completes_for(completes, delayed_asset_id, start.size, start.elapsed_ms)
-        if not finished or finished[0].elapsed_ms > first_immediate:
-            in_flight.append(start.elapsed_ms)
-    anchor = min([first_immediate, *in_flight])
-    before = [ms for ms in random_ms if ms <= anchor]
-    return before[-1] if before else 0
+def _held_request_inputs(log_text: str, *, fixture_set: str) -> tuple[str, str, int, str]:
+    entries: list[tuple[int, dict[str, Any]]] = []
+    starts: list[_LogEvent] = []
+    expected_keys = {"generation", "armed", "armed_elapsed_ms", "asset_id", "released", "expired",
+                     "hold_started_elapsed_ms", "released_elapsed_ms",
+                     "pending", "delivered", "disconnected"}
+    known_assets = set(fixture_manifest(fixture_set)["asset_ids"])
+    lines = log_text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("late_image_hold "):
+            try:
+                state = json.loads(line.removeprefix("late_image_hold "))
+            except ValueError as error:
+                raise OutOfOrderContractError("Malformed late image hold record") from error
+            if not isinstance(state, dict) or type(state.get("generation")) is not int or state["generation"] < 1:
+                raise OutOfOrderContractError("Malformed late image hold record")
+            entries.append((index, state))
+    if not entries:
+        raise OutOfOrderContractError("Missing late image hold record or held request")
+    generation = max(state["generation"] for _, state in entries)
+    current_entries = [(index, state) for index, state in entries if state["generation"] == generation]
+    records = [state for _, state in current_entries]
+    for position, state in enumerate(records):
+        if set(state) != expected_keys or any(
+            type(state[key]) is not bool for key in ("armed", "released", "expired")
+        ) or any(type(state[key]) is not int or state[key] < 0
+                 for key in ("armed_elapsed_ms", "pending", "delivered", "disconnected")) or any(
+            state[key] is not None and (type(state[key]) is not int or state[key] < 0)
+            for key in ("hold_started_elapsed_ms", "released_elapsed_ms")
+        ) or (state["asset_id"] is not None and (
+            not isinstance(state["asset_id"], str) or state["asset_id"] not in known_assets)
+        ):
+            raise OutOfOrderContractError("Malformed late image hold record")
+        if not state["armed"] or state["expired"]:
+            raise OutOfOrderContractError("Late image hold was not armed or expired")
+        if position and (state["armed_elapsed_ms"] != records[0]["armed_elapsed_ms"] or any(
+            records[position - 1][key] is not None and state[key] != records[position - 1][key]
+            for key in ("asset_id", "hold_started_elapsed_ms", "released_elapsed_ms")
+        )):
+            raise OutOfOrderContractError("Late image hold changed its request selection")
+    if f"late_image_hold_expired generation={generation}" in lines:
+        raise OutOfOrderContractError("Late image hold expired; this batch fails")
+    for line in lines[current_entries[0][0] + 1:]:
+        if (matched := REQUEST_STARTED_LINE.match(line)) is not None and (
+            matched.group("size") in DELAYED_SIZES
+        ):
+            starts.append(_LogEvent(int(matched.group("elapsed")), matched.group("path"),
+                                    matched.group("asset"), matched.group("size"), None))
+    if not starts:
+        raise OutOfOrderContractError("Missing late image hold record or held request")
+    initial, final = records[0], records[-1]
+    if initial["asset_id"] is not None or initial["released"] or initial["pending"] != 0 or (
+        not final["released"] or final["pending"] != 0 or final["delivered"] < 1 or final["disconnected"] != 0
+    ):
+        raise OutOfOrderContractError("Late image hold has no confirmed release and delivery")
+    if starts[0].asset_id != final["asset_id"] or starts[0].elapsed_ms < initial["armed_elapsed_ms"]:
+        raise OutOfOrderContractError("Held asset was not the first image requested after arming")
+    hold_started, released = final["hold_started_elapsed_ms"], final["released_elapsed_ms"]
+    if hold_started is None or released is None:
+        raise OutOfOrderContractError("Missing late image hold timestamps")
+    if hold_started != starts[0].elapsed_ms or released < hold_started:
+        raise OutOfOrderContractError("Invalid late image hold timestamps")
+    if released - hold_started >= APP_IMAGE_DOWNLOAD_TIMEOUT_MS:
+        raise OutOfOrderContractError("Invalid run: late image hold reached the app's 15-second image download timeout")
+    immediate = next((event.asset_id for event in starts if event.asset_id != final["asset_id"]), None)
+    if immediate is None:
+        raise OutOfOrderContractError("Missing newer image request after arming")
+    return final["asset_id"], immediate, initial["armed_elapsed_ms"], "\n".join(lines[current_entries[0][0]:])
 
 
 def _parse_timeline(log_text: str) -> tuple[list[_LogEvent], list[_LogEvent]]:

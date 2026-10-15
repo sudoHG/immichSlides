@@ -1,6 +1,8 @@
 import XCTest
 
 #if os(iOS)
+protocol StrictE2EOnboardingIOS: XCTestCase {}
+
 extension StrictE2EFirstBatchIOSUITests {
     func requireBoundFailureScenario() -> String {
         let scenario = ProcessInfo.processInfo.environment["STRICT_E2E_INPUT_SCENARIO"] ?? ""
@@ -64,6 +66,9 @@ extension StrictE2EFirstBatchIOSUITests {
         }
     }
 
+}
+
+extension StrictE2EOnboardingIOS {
     @MainActor
     func completeFirstBootToModeSelection(
         app: XCUIApplication,
@@ -140,6 +145,9 @@ extension StrictE2EFirstBatchIOSUITests {
         tapElement(testConnectionButton)
     }
 
+}
+
+extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func attachOrientationEvidence(app: XCUIApplication, name: String) {
         attachStrictE2EScreenshot(app: app, name: "\(name)-\(currentDeviceTag())")
@@ -197,6 +205,9 @@ extension StrictE2EFirstBatchIOSUITests {
         }
     }
 
+}
+
+extension StrictE2EOnboardingIOS {
     @MainActor
     func isSavePasswordPromptShown(app: XCUIApplication) -> Bool {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -222,6 +233,9 @@ extension StrictE2EFirstBatchIOSUITests {
         }
     }
 
+}
+
+extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func isOnboardingModeSelected(_ modeButton: XCUIElement) -> Bool {
         modeButton.isSelected || modeButton.images["checkmark.circle.fill"].exists
@@ -413,6 +427,9 @@ extension StrictE2EFirstBatchIOSUITests {
         add(attachment)
     }
 
+}
+
+extension StrictE2EOnboardingIOS {
     func playPauseState(_ button: XCUIElementAttributes) -> String {
         ((button.value as? String) ?? "").lowercased()
     }
