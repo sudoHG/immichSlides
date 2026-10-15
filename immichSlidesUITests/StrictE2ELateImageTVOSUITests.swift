@@ -67,7 +67,9 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         XCTAssertTrue(
             waitForFocus(on: playPauseButton, timeout: TestWait.seconds(.product(4))),
             "After the late completion, the default action must stay focusable.")
-        let pausedValue = (try? playPauseButton.snapshot()).map { String(describing: $0.value ?? "") }
+        let pausedValue = try XCTUnwrap(
+            (try? playPauseButton.snapshot()).map { String(describing: $0.value ?? "") },
+            "After the late completion, Select must still toggle Play/Pause.")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
