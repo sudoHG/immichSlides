@@ -356,9 +356,8 @@ extension PlaybackHistoryIOSUITests {
 
         announceManualLifecycleCaptureWindowIfRequested(mode: mode, kind: "pause-next-previous-resume")
 
-        let playPause = app.buttons["slideshow.control.playPause.button"]
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
-        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(3))) { playPause.value as? String == "play" })
+        XCTAssertTrue(waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))))
         let paused = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "paused", probe: paused)
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
@@ -400,7 +399,7 @@ extension PlaybackHistoryIOSUITests {
         )
 
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
-        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(3))) { playPause.value as? String == "pause" })
+        XCTAssertTrue(waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(3))))
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 self.presentationProbe(app: app)?.rawProgress.contains(where: {

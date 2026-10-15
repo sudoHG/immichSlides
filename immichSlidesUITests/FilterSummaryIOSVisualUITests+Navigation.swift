@@ -463,6 +463,8 @@ extension FilterSummaryIOSVisualUITests {
                     snapshot.map { String(observation.windowFrame.contains($0.frame)) } ?? "unknown"
                 // Hidden or outgoing controls can make the live hittability query fail inside XCTest.
                 if isEnabled, hasFrame, isInsideWindow, Date() < deadline {
+                    if observation.hasPlaybackMarker { app.tap() }
+                    guard Date() < deadline else { break }
                     let isHittable = button.wait(
                         for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))
                     settingsHittable = String(isHittable)

@@ -27,17 +27,20 @@ extension XCUIApplication {
 #if os(iOS)
 extension XCUIApplication {
     func slideshowControlBarButtonObservation(identifier: String) throws -> (
-        button: XCUIElementSnapshot?, windowFrame: CGRect
+        button: XCUIElementSnapshot?, windowFrame: CGRect, hasPlaybackMarker: Bool
     ) {
         let window = try windows.firstMatch.snapshot()
         var pending = window.children
+        var button: XCUIElementSnapshot?
+        var hasPlaybackMarker = false
         while let node = pending.popLast() {
-            if node.identifier == identifier {
-                return (node, window.frame)
+            if node.identifier == identifier, node.elementType == .button {
+                button = node
             }
+            if node.identifier == "slideshow.currentAssetId.flag" { hasPlaybackMarker = true }
             pending.append(contentsOf: node.children)
         }
-        return (nil, window.frame)
+        return (button, window.frame, hasPlaybackMarker)
     }
 
     // Use only for functional checks, never to verify control-bar visibility or auto-hide timing.
@@ -48,25 +51,54 @@ extension XCUIApplication {
         return buttons[identifier].waitForExistence(timeout: timeout)
     }
 
-    func tapSlideshowControlBarButton(identifier: String) {
+    func tapSlideshowControlBarButton(
+        identifier: String, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        // Reset auto-hide even when the bar is visible: it may be about to fade out in place.
+        tap()
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
+        var buttonExistence = "unknown"
+        var buttonEnabled = "unknown"
+        var buttonFrame = "unknown"
+        var buttonInside = "unknown"
+        var buttonHittable = "notRead"
+        var snapshotErrorCount = 0
         while Date() < deadline {
-            if let observation = try? slideshowControlBarButtonObservation(identifier: identifier),
-                let snapshot = observation.button,
-                snapshot.isEnabled, !snapshot.frame.isEmpty,
-                observation.windowFrame.contains(snapshot.frame), Date() < deadline,
-                buttons[identifier].wait(
-                    for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0))), Date() < deadline
-            {
-                buttons[identifier].tap()
-                return
+            buttonHittable = "notRead"
+            do {
+                let observation = try slideshowControlBarButtonObservation(identifier: identifier)
+                let snapshot = observation.button
+                buttonExistence = String(snapshot != nil)
+                buttonEnabled = snapshot.map { String($0.isEnabled) } ?? "unknown"
+                buttonFrame = snapshot.map { String(describing: $0.frame) } ?? "unknown"
+                buttonInside = snapshot.map { String(observation.windowFrame.contains($0.frame)) } ?? "unknown"
+                if let snapshot, !snapshot.frame.isEmpty,
+                    observation.windowFrame.contains(snapshot.frame), Date() < deadline
+                {
+                    let isHittable = buttons[identifier].wait(
+                        for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))
+                    buttonHittable = String(isHittable)
+                    if isHittable, Date() < deadline {
+                        buttons[identifier].tap()
+                        return
+                    }
+                }
+            } catch {
+                snapshotErrorCount += 1
+                buttonExistence = "unknown"
+                buttonEnabled = "unknown"
+                buttonFrame = "unknown"
+                buttonInside = "unknown"
             }
             guard Date() < deadline else { break }
-            tap()
             RunLoop.current.run(
                 until: min(deadline, Date().addingTimeInterval(UITestSupportWaitTiming.identityPollSeconds)))
+            guard Date() < deadline else { break }
+            tap()
         }
-        XCTFail("The slideshow control must be enabled and fully inside the window before tapping: \(identifier)")
+        XCTFail(
+            "The slideshow control must be fully inside the window before tapping: \(identifier) (exists=\(buttonExistence), enabled=\(buttonEnabled), frame=\(buttonFrame), inside=\(buttonInside), hittable=\(buttonHittable), snapshotErrors=\(snapshotErrorCount))",
+            file: file, line: line)
     }
 }
 #endif
