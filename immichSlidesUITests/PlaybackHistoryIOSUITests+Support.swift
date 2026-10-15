@@ -229,16 +229,27 @@ extension PlaybackHistoryIOSUITests {
     func waitForPausedFrameSynchronizedPresentationProbe(
         app: XCUIApplication,
         timeout: TimeInterval
-    ) throws -> (probe: ScenePresentationProbe, snapshots: [String: XCUIElementSnapshot]) {
-        var pausedFrame: (probe: ScenePresentationProbe, snapshots: [String: XCUIElementSnapshot])?
+    ) throws -> (probe: ScenePresentationProbe, snapshots: [XCUIElementSnapshot]) {
+        var pausedFrame: (probe: ScenePresentationProbe, snapshots: [XCUIElementSnapshot])?
         var observed = "missing"
         guard
             waitUntil(
                 timeout: timeout,
                 condition: {
-                    let snapshots = app.evidenceSnapshotsByIdentifier()
+                    guard let root = try? app.snapshot() else {
+                        observed = "missing"
+                        return false
+                    }
+                    var snapshots: [XCUIElementSnapshot] = []
+                    var pending = [root]
+                    while let node = pending.popLast() {
+                        if !node.identifier.isEmpty {
+                            snapshots.append(node)
+                        }
+                        pending.append(contentsOf: node.children)
+                    }
                     let identifier = "slideshow.scenePresentation.frameSynchronized.summary"
-                    observed = snapshots[identifier]?.label ?? "missing"
+                    observed = snapshots.first { $0.identifier == identifier }?.label ?? "missing"
                     guard SharedSceneEvidenceManifest.parseKeyValueFields(observed)["playbackPaused"] == "true",
                         let probe = self.scenePresentationProbe(identifier: identifier, app: app, snapshots: snapshots),
                         ["stablePhoto", "transition"].contains(probe.phase) && !probe.rawProgress.isEmpty
@@ -266,11 +277,11 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func scenePresentationProbe(
-        identifier: String, app: XCUIApplication, snapshots: [String: XCUIElementSnapshot]? = nil
+        identifier: String, app: XCUIApplication, snapshots: [XCUIElementSnapshot]? = nil
     ) -> ScenePresentationProbe? {
         let label: String
         if let snapshots {
-            guard let element = snapshots[identifier] else { return nil }
+            guard let element = snapshots.first(where: { $0.identifier == identifier }) else { return nil }
             label = element.label
         } else {
             let element = app.descendants(matching: .any)[identifier]
@@ -305,7 +316,7 @@ extension PlaybackHistoryIOSUITests {
         "currentPreparedSourceCursor", "lookaheadCachedSourceCursor", "lookaheadCachedSelectedCount"
     ]
 
-    func frozenStateOfSmartFillSlots(snapshots: [String: XCUIElementSnapshot]) -> [String] {
+    func frozenStateOfSmartFillSlots(snapshots: [XCUIElementSnapshot]) -> [String] {
         smartFillRenderedSlotProbeLabels(snapshots: snapshots).map { probe in
             probe.split(separator: ";", omittingEmptySubsequences: false)
                 .filter { field in
@@ -317,8 +328,8 @@ extension PlaybackHistoryIOSUITests {
         }
     }
 
-    func smartFillRenderedSlotProbeLabels(snapshots: [String: XCUIElementSnapshot]) -> [String] {
-        snapshots.values
+    func smartFillRenderedSlotProbeLabels(snapshots: [XCUIElementSnapshot]) -> [String] {
+        snapshots
             .filter { $0.identifier.hasPrefix("slideshow.smartfill.motionFrame.") }
             .map { $0.identifier + "=" + $0.label }
             .sorted()
@@ -332,9 +343,20 @@ extension PlaybackHistoryIOSUITests {
             app: app, timeout: TestWait.seconds(.product(3)))
         let initialProbe = initialFrame.probe
         let initialSlots = frozenStateOfSmartFillSlots(snapshots: initialFrame.snapshots)
-        XCTAssertFalse(
-            initialSlots.isEmpty,
+        let initialSummary = initialFrame.snapshots.first {
+            $0.identifier == "slideshow.smartfill.motionFrame.summary"
+        }
+        XCTAssertNotNil(
+            initialSummary,
             "The pause diagnostic must read the rendered frame/transform probe of every SmartFill slot")
+        let hasAvailableMotionFrame =
+            initialSummary?.label.split(separator: "\n").contains { row in
+                let fields = SharedSceneEvidenceManifest.parseKeyValueFields(String(row))
+                return fields["eventType"] == "motionFrame" && fields["progressFrameStatus"] == "available"
+            } ?? false
+        XCTAssertTrue(
+            hasAvailableMotionFrame,
+            "The pause diagnostic must read an available motionFrame row from the rendered-slot summary")
         let initialSample = capturePausedWindowSample(app: app)
         appendManualLifecycleRuntimeEvidence(
             app: app, mode: .smartFill, event: "\(evidenceEventPrefix)-start", probe: initialProbe)
