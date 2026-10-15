@@ -436,22 +436,57 @@ extension FilterSummaryIOSVisualUITests {
         )
     }
 
-    func waitForSlideshowSettingsButton(app: XCUIApplication, timeout: TimeInterval) -> Bool {
+    func waitForSlideshowSettingsButton(
+        app: XCUIApplication, timeout: TimeInterval, onTimeout: ((String) -> Void)? = nil
+    ) -> Bool {
         let button = app.buttons["slideshow.control.settings.button"]
         let deadline = Date().addingTimeInterval(timeout)
+        var settingsExistence = "unknown"
+        var settingsEnabled = "unknown"
+        var settingsFrameNonEmpty = "unknown"
+        var settingsHittable = "notRead"
+        var snapshotErrorCount = 0
         while Date() < deadline {
-            // Snapshots have no hittability attribute; the SDK wait returns a non-asserting observation.
-            if let snapshot = try? button.snapshot(), snapshot.isEnabled, !snapshot.frame.isEmpty,
-                Date() < deadline,
-                button.wait(for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))
-            {
-                return true
+            settingsHittable = "notRead"
+            do {
+                let snapshot = try button.snapshot()
+                let isEnabled = snapshot.isEnabled
+                let hasFrame = !snapshot.frame.isEmpty
+                settingsExistence = "true"
+                settingsEnabled = String(isEnabled)
+                settingsFrameNonEmpty = String(hasFrame)
+                // Only isHittable uses the SDK's Bool-returning wait as a single live read.
+                // Apple documents missing elements as not hittable; read other attributes from snapshots.
+                if isEnabled, hasFrame, Date() < deadline {
+                    let isHittable = button.wait(
+                        for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))
+                    settingsHittable = String(isHittable)
+                    if isHittable { return true }
+                }
+            } catch {
+                snapshotErrorCount += 1
+                settingsExistence = "unknown"
+                settingsEnabled = "unknown"
+                settingsFrameNonEmpty = "unknown"
             }
             guard Date() < deadline else { break }
             app.tap()
             RunLoop.current.run(
                 until: min(
                     deadline, Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds)))
+        }
+        if let onTimeout {
+            // Read the marker only for timeout diagnostics, without restarting the wait or checking success again.
+            var didReadPlaybackMarker = true
+            let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in
+                didReadPlaybackMarker = false
+                snapshotErrorCount += 1
+            })
+            let playbackMarkerExists =
+                didReadPlaybackMarker ? String(snapshots["slideshow.currentAssetId.flag"] != nil) : "unknown"
+            onTimeout(
+                "playbackMarker.exists=\(playbackMarkerExists), settings.exists=\(settingsExistence), enabled=\(settingsEnabled), frameNonEmpty=\(settingsFrameNonEmpty), hittable=\(settingsHittable), snapshotErrors=\(snapshotErrorCount)"
+            )
         }
         return false
     }

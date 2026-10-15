@@ -463,6 +463,7 @@ extension PlaybackHistoryIOSUITests {
         var observedAssetID: String?
         var snapshotFailureCount = 0
         var lastSnapshotFailure: String?
+        var lastSnapshotFailureCode: Int?
         guard
             waitUntil(
                 timeout: timeout,
@@ -472,29 +473,41 @@ extension PlaybackHistoryIOSUITests {
                         onSnapshotFailure: { error in
                             snapshotFailureCount += 1
                             lastSnapshotFailure = error.localizedDescription
+                            lastSnapshotFailureCode = (error as NSError).code
                         })
                     return observedAssetID != nil
                 })
         else {
             let hierarchy = app.debugDescription
-            let candidate = try? app.descendants(matching: .any)["slideshow.currentAssetId.flag"].snapshot()
-            let diagnostic = [
-                "currentAssetProbe.snapshotFailures=\(snapshotFailureCount)",
-                "currentAssetProbe.lastSnapshotFailure=\(lastSnapshotFailure ?? "none")",
-                "currentAssetProbe.exists=\(candidate != nil)",
-                "currentAssetProbe.identifier=\(candidate?.identifier ?? "unavailable")",
-                "currentAssetProbe.label=\(candidate?.label ?? "unavailable")",
-                "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_BEGIN",
-                hierarchy,
-                "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_END"
-            ].joined(separator: "\n")
+            let probeDiagnostic: [String]
+            do {
+                let candidate = try app.descendants(matching: .any)["slideshow.currentAssetId.flag"].snapshot()
+                probeDiagnostic = [
+                    "currentAssetProbe.exists=true",
+                    "currentAssetProbe.identifier=\(candidate.identifier)",
+                    "currentAssetProbe.label=\(candidate.label)"
+                ]
+            } catch {
+                probeDiagnostic = ["currentAssetProbe.snapshotError=\(error.localizedDescription)"]
+            }
+            let diagnostic =
+                ([
+                    "currentAssetProbe.snapshotFailures=\(snapshotFailureCount)",
+                    "currentAssetProbe.lastSnapshotFailure=\(lastSnapshotFailure ?? "none")"
+                ] + probeDiagnostic + [
+                    "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_BEGIN",
+                    hierarchy,
+                    "MANUAL_LIFECYCLE_CURRENT_ASSET_HIERARCHY_END"
+                ]).joined(separator: "\n")
             print(diagnostic)
             let attachment = XCTAttachment(data: Data(diagnostic.utf8), uniformTypeIdentifier: "public.plain-text")
             attachment.name = "manual-lifecycle-current-asset-probe-hierarchy"
             attachment.lifetime = .keepAlways
             add(attachment)
+            // Public failure text carries only the numeric code, never the raw snapshot error.
+            let lastError = lastSnapshotFailureCode.map { "code:\($0)" } ?? "none"
             XCTFail(
-                "The slideshow must reliably expose slideshow.currentAssetId.flag in UI tests, EXIF panel or not."
+                "The slideshow must reliably expose slideshow.currentAssetId.flag in UI tests, EXIF panel or not. (snapshotFailures=\(snapshotFailureCount), lastError=\(lastError))"
             )
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
