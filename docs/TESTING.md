@@ -164,7 +164,8 @@ It matches the same receiver passed as a complete argument (optionally labeled o
 when the true branch starts with a call, including calls nested inside it; passing another element,
 a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
-For functional control readiness, use a fallible snapshot for enabled state and frame,
+For functional control readiness, use one fallible window snapshot for enabled state and a
+non-empty button frame fully contained in that window,
 then the SDK's Bool-returning `wait(for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))`
 as a single live hittability read within the original deadline. Apple documents that
 a missing element is not hittable. Use this wait only for `isHittable`; read every
@@ -177,6 +178,15 @@ suffix contains only the count and numeric error code. Playback-entry timeout te
 retains the last Settings poll and a timeout-only playback-marker snapshot; unknown
 attributes stay unknown when a snapshot fails. Diagnostic reads never restart the
 deadline or turn a timeout into success.
+The iOS control-bar tap helper first reveals the bar on every attempt to reset its
+in-place opacity fade timer, then applies the geometry gate and Bool hittability wait
+before a real element tap. Its eight-second control-appearance budget starts after the
+first reveal and never restarts. Enabled state is diagnostic only for taps: a disabled
+Previous is tapped without waiting for it to become enabled, so downstream assertions
+still judge navigation. Settings readiness polls reveal immediately before their live
+Bool read when the window snapshot contains the playback marker. Playback History
+Play/Pause polls, including manual lifecycle pause/resume, read the value from one
+fallible application snapshot per poll and reveal an absent control within the original deadline.
 
 1. **Every test has at least one assertion that can fail.** Screenshots may accompany assertions but never replace them.
 2. **Test rules, not design values.** "Input height is at least 44 pt" and "input text is larger than placeholder text" are good tests. "Height equals 46" is not: a design change should not turn tests red.
