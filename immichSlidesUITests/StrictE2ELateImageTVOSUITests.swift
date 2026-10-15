@@ -131,16 +131,22 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         ensureControlBarVisible(app: app, playPauseButton: playPause)
         moveFocus(
             .right, to: playPause, maximumPresses: 3,
-            message: "Focus must land on Next before the old requests complete.")
+            message: "Before advancing, Play/Pause must be focusable.")
         let render = SharedSceneEvidenceManifest.parseKeyValueFields(
             strictSceneFrameObservation(app: app)["render"] ?? "")
         if render["playbackPaused"] != "true" { XCUIRemote.shared.press(.select) }
+        var pausedHistoryCount: Int?
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
-                SharedSceneEvidenceManifest.parseKeyValueFields(
-                    self.strictSceneFrameObservation(app: app)["render"] ?? "")["playbackPaused"] == "true"
+                let observation = self.strictSceneFrameObservation(app: app)
+                let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+                guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
+                    return false
+                }
+                pausedHistoryCount = count
+                return true
             }, "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
-        let initialHistory = try XCTUnwrap(lateImageHistoryCount(app: app))
+        let initialHistory = try XCTUnwrap(pausedHistoryCount)
         moveFocus(
             .right, to: nextButton, maximumPresses: 3,
             message: "Focus must land on Next before the old requests complete.")

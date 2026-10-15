@@ -77,14 +77,19 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         XCTAssertTrue(revealLateImageControls(app: app))
         let playPause = app.buttons["slideshow.control.playPause.button"]
         if (try? playPause.snapshot()).map({ playPauseState($0) }) != "play" { tapElement(playPause) }
+        var pausedHistoryCount: Int?
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(2))) {
                 let observation = self.strictSceneFrameObservation(app: app)
-                return SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")["playbackPaused"]
-                    == "true"
+                let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+                guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
+                    return false
+                }
+                pausedHistoryCount = count
+                return true
             },
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        let initialHistory = try XCTUnwrap(lateImageHistoryCount(app: app))
+        let initialHistory = try XCTUnwrap(pausedHistoryCount)
         let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(8))
         tapElement(next)
         XCTAssertTrue(

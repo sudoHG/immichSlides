@@ -66,13 +66,6 @@ extension XCTestCase {
     }
 
     @MainActor
-    func lateImageHistoryCount(app: XCUIApplication) -> Int? {
-        let observation = strictSceneFrameObservation(app: app)
-        let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
-        return Int(render["historyCount"] ?? "")
-    }
-
-    @MainActor
     func waitForLateImageScene(app: XCUIApplication, historyCount: Int, deadline: TimeInterval) -> Bool {
         while ProcessInfo.processInfo.systemUptime < deadline {
             let observation = strictSceneFrameObservation(app: app)
