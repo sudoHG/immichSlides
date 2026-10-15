@@ -109,9 +109,12 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
     @MainActor
     private func revealLateImageControls(app: XCUIApplication) -> Bool {
-        waitUntil(timeout: TestWait.seconds(.product(8))) {
+        let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(8))
+        return waitUntil(timeout: TestWait.seconds(.product(8))) {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
+            self.dismissSavePasswordPromptIfShown(app: app)
             if let next = app.evidenceSnapshotsByIdentifier()["slideshow.control.next.button"], next.isEnabled {
-                return true
+                return ProcessInfo.processInfo.systemUptime < deadline
             }
             app.tap()
             return false
