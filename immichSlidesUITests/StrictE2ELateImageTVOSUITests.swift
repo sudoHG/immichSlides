@@ -33,13 +33,13 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         let nextButton = app.buttons["slideshow.control.next.button"]
         try enterPlaybackThenAdvanceTwice(app: app, nextButton: nextButton)
         let secondNextAt = Date()
-        try writeRequiredPNG(app: app, name: "ooo-current-scene")
+        try captureLateImageTVOSFrame(app: app, name: "ooo-current-scene")
         attachScreenshot(app: app, name: "tvos-late-image-ooo-current-scene")
 
         try releaseLateImageAndWaitForDelivery(input: input)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.lateRequestWaitSeconds))
         let afterLateAt = Date()
-        try writeRequiredPNG(app: app, name: "ooo-after-late")
+        try captureLateImageTVOSFrame(app: app, name: "ooo-after-late")
         attachScreenshot(app: app, name: "tvos-late-image-ooo-after-late")
 
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
@@ -306,7 +306,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func writeRequiredPNG(app: XCUIApplication, name: String) throws {
+    private func captureLateImageTVOSFrame(app: XCUIApplication, name: String) throws {
         let before = strictSceneFrameObservation(app: app)
         let png = app.screenshot().pngRepresentation
         let after = strictSceneFrameObservation(app: app)
