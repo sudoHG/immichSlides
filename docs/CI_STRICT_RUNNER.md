@@ -107,10 +107,8 @@ Other probe-key launches are the configured SmartFill launch helpers in
 They also set other `UI_TEST_*` keys, so their XCTest mode remains enabled.
 The runner's launch audit is a **static declaration of Swift launch keys**,
 labelled `declaration_kind=static_swift_launch_keys`; it is not read from the app.
-The policy helper validates supplied maps against those declarations, exact
-constant values and a public loopback URL. The runner does not yet compare this
-declaration against Swift's xcresult launch-key attachment; that comparison is a
-follow-up under #434. An empty `forbidden_keys_present` is not runtime evidence.
+This declaration is not compared with any runtime launch keys. Comparing it
+against Swift's xcresult launch-key attachment remains tracked in #434.
 This exact key is excluded from `isRunningXCTest`: a probe-only launch keeps
 the real Keychain path, never enables `immichApiKey.xctestFallback`, and preserves
 the ordinary Info.plist debug-server read. Other XCTest keys retain their existing

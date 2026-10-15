@@ -101,7 +101,6 @@ from strict_e2e_runner_support import (
     prepare_task_xcconfig,
     cleanup_task_xcconfig,
     _is_forbidden_key,
-    validate_app_launch_environment,
     write_app_launch_environment_audit,
     prepare_evidence_directory,
     scenario_settings,

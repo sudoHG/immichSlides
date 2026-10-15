@@ -99,7 +99,6 @@ from run_strict_e2e import (  # noqa: E402
     simulator_app_container,
     start_screen_recording,
     stop_screen_recording,
-    validate_app_launch_environment,
     validate_suite_scenario,
     write_case_manifest,
     write_fixture_artifacts,

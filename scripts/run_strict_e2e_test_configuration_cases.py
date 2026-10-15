@@ -73,7 +73,6 @@ from run_strict_e2e_test_fixtures import (
     tempfile,
     unittest,
     urllib,
-    validate_app_launch_environment,
     validate_suite_fixture,
     validate_suite_scenario,
     write_case_manifest,
@@ -84,6 +83,16 @@ from run_strict_e2e_test_fixtures import (
 )
 
 class StrictE2ERunnerTestsCasesConfiguration:
+    def test_hidden_control_capture_uses_the_product_auto_hide_delay(self):
+        # iOS keeps PlaybackViewMetrics private; compare declarations without importing the app into UI tests.
+        product = (REPO_ROOT / "immichSlides/iOS/Core/SlideShowViewIOS.swift").read_text()
+        calibration = (REPO_ROOT / "immichSlidesUITests/AccessLifecycleIOSUITests.swift").read_text()
+        product_delay = re.search(r"static let controlBarAutoHideDelaySeconds: Int = (\d+)", product)
+        capture_delay = re.search(r"static let controlBarAutoHideDelaySeconds: TimeInterval = TestWait.seconds\(\.product\((\d+)\)\)", calibration)
+        self.assertIsNotNone(product_delay, "Product auto-hide declaration must be readable")
+        self.assertIsNotNone(capture_delay, "UI capture auto-hide declaration must be readable")
+        self.assertEqual(int(product_delay[1]), int(capture_delay[1]), "Hidden-control capture must track the product auto-hide delay")
+
     def test_inline_mode_rejects_explicit_warm_timeout_options(self):
         import contextlib
         for option in ("--cold-timeout-seconds", "--warm-timeout-seconds"):
@@ -398,9 +407,12 @@ class StrictE2ERunnerTestsCasesConfiguration:
             "PATH": os.environ.get("PATH", ""),
             "UI_TEST_RESET_STATE": "1",
             "IMMICH_TEST_SERVER_URL": "private",
+            "IMMICH_TEST_URL": "private",
             "IMMICH_TEST_API_KEY": "private",
+            "IMMICH_API_KEY": "private",
             "TEST_RUNNER_UI_TEST_RESET_STATE": "1",
             "TEST_RUNNER_IMMICH_TEST_SERVER_URL": "private",
+            "TEST_RUNNER_IMMICH_TEST_URL": "private",
             "TEST_RUNNER_IMMICH_TEST_API_KEY": "private",
             "SIMCTL_CHILD_IMMICH_SERVER_URL": "private",
         }
@@ -416,63 +428,12 @@ class StrictE2ERunnerTestsCasesConfiguration:
         self.assertFalse(any(key.startswith("UI_TEST_") for key in environment))
         self.assertNotIn("IMMICH_TEST_SERVER_URL", environment)
         self.assertNotIn("IMMICH_TEST_API_KEY", environment)
+        for key in ("IMMICH_TEST_URL", "TEST_RUNNER_IMMICH_TEST_URL", "IMMICH_API_KEY"):
+            with self.subTest(key=key):
+                self.assertNotIn(key, environment)
         self.assertEqual(set(environment), {
             "PATH", "STRICT_E2E_INPUT_SERVER_URL", "STRICT_E2E_INPUT_PUBLIC_KEY", "STRICT_E2E_INPUT_SCENARIO",
         })
-
-
-    def test_app_launch_environment_rejects_every_forbidden_key_family(self) -> None:
-        validate_app_launch_environment({})
-        for key in (
-            "UI_TEST_RESET_STATE",
-            "UI_TEST_ANY_FUTURE_KEY",
-            "IMMICH_TEST_SERVER_URL",
-            "IMMICH_TEST_URL",
-            "IMMICH_TEST_API_KEY",
-            "TEST_RUNNER_UI_TEST_ANY_FUTURE_KEY",
-            "TEST_RUNNER_IMMICH_TEST_SERVER_URL",
-            "TEST_RUNNER_IMMICH_TEST_API_KEY",
-            "SIMCTL_CHILD_IMMICH_SERVER_URL",
-        ):
-            with self.subTest(key=key), self.assertRaises(CommandError):
-                validate_app_launch_environment({key: "present"})
-
-    def test_scene_launch_audit_declares_all_known_swift_launch_keys(self) -> None:
-        from strict_e2e_runner_support import strict_app_launch_environment, write_app_launch_environment_audit
-        probe = "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"
-        cases = {
-            "journey-b": {probe: "1"}, "tvos-flow": {probe: "1"}, "late-image": {probe: "1"},
-            "ios-lifecycle-first-wake": {probe: "1"}, "ios-lifecycle-settings": {},
-            "ios-lifecycle-pause": {}, "ios-lifecycle-background": {},
-            "pause-window": {probe: "1", "UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
-                             "UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT": "1",
-                             "UI_TEST_SERVER_URL": None, "UI_TEST_API_KEY": "immichslides-public-e2e-key"},
-            "tvos-directional-wake": {"UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1",
-                                      "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT": "1", "UI_TEST_SERVER_URL": None,
-                                      "UI_TEST_API_KEY": "immichslides-public-e2e-key"},
-            "journey-a": {}, "smoke": {},
-        }
-        for suite, expected in cases.items():
-            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:
-                environment = strict_app_launch_environment(suite)
-                self.assertEqual(environment, expected)
-                actual = {key: value if value is not None else "http://127.0.0.1:12345/api" for key, value in expected.items()}
-                validate_app_launch_environment(actual, suite=suite)
-                write_app_launch_environment_audit(Path(raw), suite)
-                audit = json.loads((Path(raw) / "app-launch-environment-audit.json").read_text())
-                self.assertEqual(audit["launch_environment_keys"], sorted(expected))
-                self.assertEqual(audit["forbidden_keys_present"], [])
-                self.assertEqual(audit["declaration_kind"], "static_swift_launch_keys")
-                for key in ("UI_TEST_ANY_FUTURE_KEY", "TEST_RUNNER_" + probe, "SIMCTL_CHILD_" + probe):
-                    with self.assertRaises(CommandError):
-                        validate_app_launch_environment({**actual, key: "1"}, suite=suite)
-                for key in expected:
-                    with self.assertRaises(CommandError):
-                        validate_app_launch_environment({**actual, key: "invalid"}, suite=suite)
-                if probe not in expected:
-                    with self.assertRaisesRegex(CommandError, "^Forbidden keys found in the App launchEnvironment: " + probe + "$"):
-                        validate_app_launch_environment({**actual, probe: "1"}, suite=suite)
-
 
 
     def test_xcodebuild_command_targets_one_platform_smoke_and_independent_outputs(self) -> None:

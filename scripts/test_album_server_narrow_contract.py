@@ -1131,7 +1131,7 @@ class ABMixTests(unittest.TestCase):
                 for case, first, source, options in (("wrong album", 4, "a", {}),
                                                     ("other fixture", 2, "b", {}),
                                                     ("mixed", 2, "a", {"second_fixture": "b"}),
-                                                    ("unreadable", 2, "a", {"unreadable": True})):
+                                                    ("unreadable", 2, "a", {"unreadable_slot": 1})):
                     with self.subTest(case=case):
                         frame = FrameGlyphBoundaryTests._pair(source, first, 3, horizontal=horizontal, **options)
                         (directory / "server-switch-a-play-1.png").write_bytes(frame)

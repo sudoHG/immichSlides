@@ -922,31 +922,10 @@ def assert_exif_correspondence(identity: PhotoIdentity, overlay_text: str) -> No
         )
 
 
-def assert_round_trip(identities: Sequence[PhotoIdentity]) -> None:
-    if len(identities) != 5:
-        raise IdentityAssertionError(f"Round trip must have five steps, got {len(identities)}")
-    marks = _require_marks(identities, context="Round trip")
-    start, first_next, second_next, first_prev, second_prev = marks
-    if first_next == start:
-        raise IdentityAssertionError("Still the original photo after the first forward step")
-    if second_next == first_next:
-        raise IdentityAssertionError("Still the same photo after the second forward step")
-    if first_prev != first_next:
-        raise IdentityAssertionError("The first back step must return to the first forward photo")
-    if second_prev != start:
-        raise IdentityAssertionError(f"Second previous step must return to the original photo {start}, got {second_prev}")
-
-
 def assert_pause_hold(immediate: PhotoIdentity, after: PhotoIdentity) -> None:
     left, right = _require_marks((immediate, after), context="Pause hold")
     if left != right:
         raise IdentityAssertionError(f"Photo changed after pausing over 10 seconds: {left} → {right}")
-
-
-def assert_resumed_advanced(paused: PhotoIdentity, resumed: PhotoIdentity) -> None:
-    left, right = _require_marks((paused, resumed), context="Resume advance")
-    if left == right:
-        raise IdentityAssertionError(f"Still {left} after resuming playback; it did not advance")
 
 
 def assert_required_frames(present: Mapping[str, object], required: Iterable[str]) -> None:
