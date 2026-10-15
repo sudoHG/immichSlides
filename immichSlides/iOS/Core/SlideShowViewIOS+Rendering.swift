@@ -194,6 +194,19 @@ extension SlideShowViewIOS {
             .onChange(of: overlayAsset?.id, initial: true) { _, _ in
                 syncExifOverlayPresentation(overlayAsset)
             }
+            #if DEBUG
+            .overlayPreferenceValue(SmartFillMotionFrameProbePreferenceKey.self) { rows in
+                if shouldExposeSmartFillMotionFrameProbeForTesting {
+                    // Read the leaf render pass directly; onPreferenceChange state can retain a pre-pause frame.
+                    Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement()
+                    .accessibilityIdentifier("slideshow.smartfill.motionFrame.summary")
+                    .accessibilityLabel(smartFillMotionFrameSummaryLabel(rows: rows))
+                    .allowsHitTesting(false)
+                }
+            }
+            #endif
             .onPreferenceChange(SmartFillMotionFrameProbePreferenceKey.self) { rows in
                 smartFillMotionFrameProbeRows = rows
                 #if DEBUG

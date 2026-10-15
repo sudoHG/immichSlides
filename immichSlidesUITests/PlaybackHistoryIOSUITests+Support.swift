@@ -229,25 +229,32 @@ extension PlaybackHistoryIOSUITests {
     func waitForPausedFrameSynchronizedPresentationProbe(
         app: XCUIApplication,
         timeout: TimeInterval
-    ) throws -> ScenePresentationProbe {
+    ) throws -> (probe: ScenePresentationProbe, snapshots: [String: XCUIElementSnapshot]) {
+        var pausedFrame: (probe: ScenePresentationProbe, snapshots: [String: XCUIElementSnapshot])?
+        var observed = "missing"
         guard
             waitUntil(
                 timeout: timeout,
                 condition: {
-                    guard let probe = self.frameSynchronizedPresentationProbe(app: app) else { return false }
-                    return ["stablePhoto", "transition"].contains(probe.phase) && !probe.rawProgress.isEmpty
-                        && probe.opacities.contains { $0 > 0 }
-                }), let probe = frameSynchronizedPresentationProbe(app: app)
+                    let snapshots = app.evidenceSnapshotsByIdentifier()
+                    let identifier = "slideshow.scenePresentation.frameSynchronized.summary"
+                    observed = snapshots[identifier]?.label ?? "missing"
+                    guard SharedSceneEvidenceManifest.parseKeyValueFields(observed)["playbackPaused"] == "true",
+                        let probe = self.scenePresentationProbe(identifier: identifier, app: app, snapshots: snapshots),
+                        ["stablePhoto", "transition"].contains(probe.phase) && !probe.rawProgress.isEmpty
+                            && probe.opacities.contains(where: { $0 > 0 })
+                    else { return false }
+                    pausedFrame = (probe, snapshots)
+                    return true
+                }), let pausedFrame
         else {
-            let label = app.descendants(matching: .any)["slideshow.scenePresentation.frameSynchronized.summary"]
-            let observed = label.exists ? label.label : "missing"
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
                 code: 10,
                 userInfo: [NSLocalizedDescriptionKey: "paused scene is not a visible photo scene: \(observed)"]
             )
         }
-        return probe
+        return pausedFrame
     }
 
     func presentationProbe(app: XCUIApplication) -> ScenePresentationProbe? {
@@ -258,10 +265,19 @@ extension PlaybackHistoryIOSUITests {
         scenePresentationProbe(identifier: "slideshow.scenePresentation.frameSynchronized.summary", app: app)
     }
 
-    func scenePresentationProbe(identifier: String, app: XCUIApplication) -> ScenePresentationProbe? {
-        let element = app.descendants(matching: .any)[identifier]
-        guard element.exists else { return nil }
-        let fields = SharedSceneEvidenceManifest.parseKeyValueFields(element.label)
+    func scenePresentationProbe(
+        identifier: String, app: XCUIApplication, snapshots: [String: XCUIElementSnapshot]? = nil
+    ) -> ScenePresentationProbe? {
+        let label: String
+        if let snapshots {
+            guard let element = snapshots[identifier] else { return nil }
+            label = element.label
+        } else {
+            let element = app.descendants(matching: .any)[identifier]
+            guard element.exists else { return nil }
+            label = element.label
+        }
+        let fields = SharedSceneEvidenceManifest.parseKeyValueFields(label)
         func numbers(_ key: String) -> [Double] {
             (fields[key] ?? "").split(separator: "|").compactMap { Double($0) }
         }
@@ -289,8 +305,8 @@ extension PlaybackHistoryIOSUITests {
         "currentPreparedSourceCursor", "lookaheadCachedSourceCursor", "lookaheadCachedSelectedCount"
     ]
 
-    func frozenStateOfSmartFillSlots(app: XCUIApplication) -> [String] {
-        smartFillRenderedSlotProbeLabels(app: app).map { probe in
+    func frozenStateOfSmartFillSlots(snapshots: [String: XCUIElementSnapshot]) -> [String] {
+        smartFillRenderedSlotProbeLabels(snapshots: snapshots).map { probe in
             probe.split(separator: ";", omittingEmptySubsequences: false)
                 .filter { field in
                     let key = field.split(separator: "=", maxSplits: 1).first.map(String.init) ?? ""
@@ -301,10 +317,9 @@ extension PlaybackHistoryIOSUITests {
         }
     }
 
-    func smartFillRenderedSlotProbeLabels(app: XCUIApplication) -> [String] {
-        app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "slideshow.smartfill.motionFrame."))
-            .allElementsBoundByIndex
+    func smartFillRenderedSlotProbeLabels(snapshots: [String: XCUIElementSnapshot]) -> [String] {
+        snapshots.values
+            .filter { $0.identifier.hasPrefix("slideshow.smartfill.motionFrame.") }
             .map { $0.identifier + "=" + $0.label }
             .sorted()
     }
@@ -313,9 +328,10 @@ extension PlaybackHistoryIOSUITests {
         app: XCUIApplication,
         evidenceEventPrefix: String
     ) throws {
-        let initialProbe = try waitForPausedFrameSynchronizedPresentationProbe(
+        let initialFrame = try waitForPausedFrameSynchronizedPresentationProbe(
             app: app, timeout: TestWait.seconds(.product(3)))
-        let initialSlots = frozenStateOfSmartFillSlots(app: app)
+        let initialProbe = initialFrame.probe
+        let initialSlots = frozenStateOfSmartFillSlots(snapshots: initialFrame.snapshots)
         XCTAssertFalse(
             initialSlots.isEmpty,
             "The pause diagnostic must read the rendered frame/transform probe of every SmartFill slot")
@@ -331,9 +347,10 @@ extension PlaybackHistoryIOSUITests {
             RunLoop.current.run(
                 until: Date().addingTimeInterval(
                     TestWait.seconds(.product(PlaybackHistoryIOSUITestsCalibration.pauseSampleIntervalSeconds))))
-            let probe = try waitForPausedFrameSynchronizedPresentationProbe(
+            let pausedFrame = try waitForPausedFrameSynchronizedPresentationProbe(
                 app: app, timeout: TestWait.seconds(.product(2)))
-            let slots = frozenStateOfSmartFillSlots(app: app)
+            let probe = pausedFrame.probe
+            let slots = frozenStateOfSmartFillSlots(snapshots: pausedFrame.snapshots)
             let sampleWindow = capturePausedWindowSample(app: app)
             let pixels = sampleWindow.png
             let frame = XCTAttachment(data: pixels, uniformTypeIdentifier: "public.png")
