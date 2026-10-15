@@ -638,7 +638,7 @@ class AlbumEditSwitchVisualContractTestsCases:
                     for case, first, source, options in (("wrong album", 1, fixture_set, {}),
                                                         ("other fixture", 4, other, {}),
                                                         ("mixed", 4, fixture_set, {"second_fixture": other}),
-                                                        ("unreadable", 4, fixture_set, {"unreadable": True})):
+                                                        ("unreadable", 4, fixture_set, {"unreadable_slot": 1})):
                         with self.subTest(case=case):
                             frame = FrameGlyphBoundaryTests._pair(source, first, 5, horizontal=horizontal, **options)
                             (evidence / "album-switch-b-play-1.png").write_bytes(frame)
