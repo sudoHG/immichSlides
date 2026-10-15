@@ -388,6 +388,68 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                         public_scene_photos_from_bytes(self._pair(fixture_set, 5, 5, horizontal=horizontal,
                                                                  second_fixture=other, unreadable=True))
 
+    def test_scene_reader_preserves_failure_prefix_and_locates_screenshot_slot_and_axis(self) -> None:
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes, _named_scene_signature
+        from strict_e2e_filter_contract import FilterContractError, _scene_slot_marks
+
+        for horizontal in (False, True):
+            with self.subTest(horizontal=horizontal), tempfile.TemporaryDirectory() as raw:
+                name = "person-conflict-normal-2.png"
+                path = Path(raw) / name
+                frame = self._pair("a", 5, 3, horizontal=horizontal, unreadable=True)
+                path.write_bytes(frame)
+                calls = (
+                    (IdentityAssertionError, lambda: public_scene_photos_from_bytes(frame, screenshot_name=name)),
+                    (FilterContractError, lambda: _scene_slot_marks(frame, "a", screenshot_name=name)),
+                    (IdentityAssertionError, lambda: _named_scene_signature(Path(raw), path.stem, "a", tvos=True)),
+                )
+                for error_type, call in calls:
+                    with self.assertRaises(error_type) as raised:
+                        call()
+                    message = str(raised.exception)
+                    self.assertTrue(message.startswith("unreadable public glyph slot"))
+                    self.assertIn(name, message)
+                    self.assertIn(f"slot 1 ({'horizontal' if horizontal else 'vertical'})", message)
+                    self.assertNotIn(raw, message)
+
+        with self.assertRaises(IdentityAssertionError) as raised:
+            public_scene_photos_from_bytes(_png(Image.new("RGB", (320, 240))), screenshot_name=name)
+        self.assertTrue(str(raised.exception).startswith("unreadable public glyph slot: public photo colors are missing or mixed"))
+        self.assertIn(name, str(raised.exception))
+        self.assertIn("horizontal axis, 0 completed slots", str(raised.exception))
+        self.assertIn("vertical axis, 0 completed slots", str(raised.exception))
+
+    def test_scene_reader_reports_disagreeing_successful_axes(self) -> None:
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
+
+        candidates = [
+            [("A5", (0, 0, 320, 240))],
+            [("A3", (0, 0, 320, 240))],
+        ]
+        with patch("strict_e2e_photo_identity._public_axis_slots", side_effect=candidates) as axes:
+            with self.assertRaisesRegex(IdentityAssertionError, "axes disagree") as raised:
+                public_scene_photos_from_bytes(_fixture_png("A5"), screenshot_name="person-normal.png")
+        self.assertEqual([call.kwargs["horizontal"] for call in axes.call_args_list], [False, True])
+        self.assertIn("screenshot person-normal.png", str(raised.exception))
+
+    def test_scene_reader_locates_foreground_rejections_before_slot_segmentation(self) -> None:
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
+        from strict_e2e_filter_contract import FilterContractError, _scene_slot_marks
+        from test_album_server_narrow_contract import _letterbox
+
+        frame = _letterbox(_fixture_png("A3"), (3840, 2160))
+        with self.assertRaises(FilterContractError) as original:
+            public_scene_photos_from_bytes(frame)
+        for call in (
+            lambda: public_scene_photos_from_bytes(frame, screenshot_name="person-normal.png"),
+            lambda: _scene_slot_marks(frame, "a", screenshot_name="person-normal.png"),
+        ):
+            with self.assertRaises(FilterContractError) as raised:
+                call()
+            self.assertTrue(str(raised.exception).startswith(str(original.exception)))
+            self.assertIn("person-normal.png", str(raised.exception))
+            self.assertIn("slot count and axes unresolved", str(raised.exception))
+
     def test_two_dimensional_grid_and_blended_slots_fail_unreadable(self) -> None:
         grid = Image.new("RGB", (3840, 2160))
         for index, box in enumerate(((0, 0, 1920, 1080), (1920, 0, 3840, 1080),

@@ -377,7 +377,8 @@ def evaluate_server_switch_evidence(evidence_dir: Path) -> dict[str, Any]:
     if not (evidence_dir / "server-switch-a-play-1.png").is_file():
         raise AlbumServerContractError("Missing screenshot of A's selected scope and photo")
     try:
-        a_photos = public_scene_photos_from_bytes((evidence_dir / "server-switch-a-play-1.png").read_bytes())
+        a_photos = public_scene_photos_from_bytes((evidence_dir / "server-switch-a-play-1.png").read_bytes(),
+                                                 screenshot_name="server-switch-a-play-1.png")
     except IdentityAssertionError as error:
         raise AlbumServerContractError(str(error)) from error
     if any(photo.letter != "A" for photo in a_photos):

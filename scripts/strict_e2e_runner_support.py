@@ -810,7 +810,7 @@ def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str 
         return payload
     if suite in FILTER_VISUAL_SUITES:
         try:
-            payload = evaluate_filter_visual_identity(evidence_dir, suite)
+            payload = evaluate_filter_visual_identity(evidence_dir, suite, fixture_set=fixture_set)
         except FilterContractError as error:
             failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
             _write_visual_runner_report(evidence_dir, failed)

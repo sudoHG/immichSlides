@@ -184,20 +184,21 @@ def _person_conflict_normal_paths(evidence_dir: Path) -> list[Path]:
     return [first, *(path for _, path in numbered)]
 
 
-def _classify_person_conflict_normal(evidence_dir: Path) -> tuple[Any, list[str]]:
-    # This suite selects only person-a-solo in normal mode; the allowed set comes from that person's own set,
+def _classify_person_conflict_normal(evidence_dir: Path, manifest: Mapping[str, Any]) -> tuple[Any, list[str]]:
+    # This suite selects only the fixture's solo person in normal mode; use that person's own set,
     # so a missing A2 must not fail it.
-    person_id = member_manifest("a")["person_cases"]["normal_plus_solo_conflict"]["person_id"]
+    fixture_set = manifest["fixture_set"]
+    person_id = manifest["person_cases"]["normal_plus_solo_conflict"]["person_id"]
     paths = _person_conflict_normal_paths(evidence_dir)
     identities = []
     marks: list[str] = []
     for path in paths:
         identity = _classify_named_png(evidence_dir, path.stem)
-        marks.extend(_scene_slot_marks(path.read_bytes(), "a"))
+        marks.extend(_scene_slot_marks(path.read_bytes(), fixture_set, screenshot_name=path.name))
         identities.append(identity)
     assert_playback_marks_in_union(
         marks,
-        "a",
+        fixture_set,
         [],
         [{"person_id": person_id, "mode": "normal"}],
         allow_repeats=True,
@@ -381,13 +382,13 @@ def assert_foreign_id_tokens_absent(texts: Sequence[str], local_fixture_set: str
         raise FilterContractError("Cross-server stale IDs remain: " + ", ".join(found))
 
 
-def evaluate_filter_visual_identity(evidence_dir: Path, suite: str) -> dict[str, Any]:
+def evaluate_filter_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str | None = None) -> dict[str, Any]:
     if suite in {"display-policy", "tvos-display-policy"}:
         return _evaluate_display_policy(evidence_dir, suite)
     if suite == "tvos-album":
         return _evaluate_tvos_album(evidence_dir)
     if suite == "tvos-person":
-        return _evaluate_tvos_person(evidence_dir)
+        return _evaluate_tvos_person(evidence_dir, fixture_set=fixture_set)
     if suite == "tvos-switch":
         return _evaluate_tvos_switch(evidence_dir)
     if suite == "filter-album":
@@ -547,7 +548,7 @@ def _step_payload(name: str, identity: Any) -> dict[str, Any]:
 def _evaluate_tvos_album(evidence_dir: Path) -> dict[str, Any]:
     identities = [_classify_named_png(evidence_dir, name) for name in ALBUM_PLAYBACK_STEPS]
     marks = [mark for name in ALBUM_PLAYBACK_STEPS
-             for mark in _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), "a")]
+             for mark in _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), "a", screenshot_name=f"{name}.png")]
     assert_playback_marks_in_target(marks, "a")
     selection = _read_json_object(evidence_dir / "empty-selection.json", "empty-selection.json")
     if selection.get("identity_source") not in (None, "public_fixture_photo_mark"):
@@ -572,17 +573,25 @@ def _evaluate_tvos_album(evidence_dir: Path) -> dict[str, Any]:
     }
 
 
-def _evaluate_tvos_person(evidence_dir: Path) -> dict[str, Any]:
-    cases = member_manifest("a")["person_cases"]
+def _evaluate_tvos_person(evidence_dir: Path, *, fixture_set: str | None = None) -> dict[str, Any]:
+    manifest = load_member_manifest(evidence_dir / "member-manifest.json")
+    if fixture_set is not None and fixture_set != manifest["fixture_set"]:
+        raise FilterContractError("member manifest fixture does not match runner fixture")
+    fixture_set = manifest["fixture_set"]
+    if manifest != member_manifest(fixture_set):
+        raise FilterContractError("member manifest is not the frozen contract")
+    cases = manifest["person_cases"]
     normal = _classify_named_png(evidence_dir, "person-normal")
-    normal_marks = _scene_slot_marks((evidence_dir / "person-normal.png").read_bytes(), "a")
+    normal_marks = _scene_slot_marks((evidence_dir / "person-normal.png").read_bytes(), fixture_set,
+                                     screenshot_name="person-normal.png")
     if not set(normal_marks).issubset(cases["normal_match"]["labels"]):
         raise FilterContractError(f"wrong member cannot count as a pass: {normal_marks}")
 
-    conflict_normal, conflict_marks = _classify_person_conflict_normal(evidence_dir)
+    conflict_normal, conflict_marks = _classify_person_conflict_normal(evidence_dir, manifest)
 
     no_faces = _classify_named_png(evidence_dir, "person-no-faces")
-    no_faces_marks = _scene_slot_marks((evidence_dir / "person-no-faces.png").read_bytes(), "a")
+    no_faces_marks = _scene_slot_marks((evidence_dir / "person-no-faces.png").read_bytes(), fixture_set,
+                                       screenshot_name="person-no-faces.png")
     if not set(no_faces_marks).issubset(cases["no_faces"]["labels"]):
         raise FilterContractError(f"wrong member cannot count as a pass: {no_faces_marks}")
 
@@ -666,13 +675,17 @@ def _classified_mark_from_png(evidence_dir: Path, name: str) -> str:
     return require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
 
 
-def _scene_slot_marks(image_bytes: bytes, fixture_set: str) -> tuple[str, ...]:
+def _scene_slot_marks(image_bytes: bytes, fixture_set: str, *, screenshot_name: str | None = None) -> tuple[str, ...]:
     try:
-        photos = public_scene_photos_from_bytes(image_bytes)
+        photos = public_scene_photos_from_bytes(image_bytes, screenshot_name=screenshot_name)
     except IdentityAssertionError as error:
         raise FilterContractError(str(error)) from error
-    if any(photo.letter != fixture_set.upper() for photo in photos):
-        raise FilterContractError(f"every slot must show the public glyph of fixture {fixture_set.upper()}")
+    for photo in photos:
+        if photo.letter != fixture_set.upper():
+            context = f"; screenshot {Path(screenshot_name).name}" if screenshot_name else ""
+            slots = "slot" if len(photos) == 1 else "slots"
+            raise FilterContractError(f"every slot must show the public glyph of fixture {fixture_set.upper()}"
+                                      f"{context}; observed fixture {photo.letter} in all {len(photos)} {slots} ({photo.axis})")
     return tuple(photo.mark for photo in photos)
 
 
@@ -771,7 +784,7 @@ def _evaluate_filter_edit_switch(evidence_dir: Path, suite: str) -> dict[str, An
     marks = ([_classified_mark_from_png(evidence_dir, name) for name in FILTER_EDIT_SWITCH_STEPS]
              if suite != "tvos-edit-switch" else
              [mark for name in FILTER_EDIT_SWITCH_STEPS
-              for mark in _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set)])
+              for mark in _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set, screenshot_name=f"{name}.png")])
     allowed = set(manifest["non_target_album"]["labels"])
     if not allowed or not set(marks).issubset(allowed):
         raise FilterContractError(f"frames after the album switch must belong to non-target album {expected_album_id}: {marks}")

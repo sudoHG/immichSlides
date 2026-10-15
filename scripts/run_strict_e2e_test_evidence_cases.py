@@ -699,6 +699,17 @@ class StrictE2ERunnerTestsCasesEvidence:
             self.assertEqual(flashback_report["verdict"], "FAIL")
 
 
+    def test_person_visual_identity_binds_runner_fixture_to_manifest(self) -> None:
+        from strict_e2e_filter_contract_test_fixtures import _write_person_suite
+
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            _write_person_suite(evidence, conflict=["A5"], fixture_set="a")
+            self.assertEqual(require_visual_identity(evidence, "tvos-person", fixture_set="a")["verdict"], "PARTIAL")
+            # Change only the runner's fixture; all evidence stays valid for A.
+            with self.assertRaisesRegex(CommandError, "member manifest fixture does not match runner fixture"):
+                require_visual_identity(evidence, "tvos-person", fixture_set="b")
+
     def test_visual_identity_blocks_success_when_screenshots_are_missing_or_wrong(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)

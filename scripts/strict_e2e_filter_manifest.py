@@ -197,7 +197,7 @@ def _assert_labels_match_photo_identity(payload: Mapping[str, Any]) -> None:
     # Index names A1–A5 cannot stand in for image identity;
     # both write and read check the public fixture images, fail-closed.
     fixture_set = payload.get("fixture_set")
-    if fixture_set not in FROZEN_FIXTURE_SHA256:
+    if not isinstance(fixture_set, str) or fixture_set not in FROZEN_FIXTURE_SHA256:
         raise FilterContractError("member manifest fixture set is unknown")
     images = _fixture_data(str(fixture_set))["images"]
     pairs = _album_label_pairs(payload, "target_album") + _album_label_pairs(payload, "non_target_album")
@@ -368,7 +368,7 @@ def load_member_manifest(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict) or payload.get("kind") != MEMBER_MANIFEST_KIND:
         raise FilterContractError("member manifest is not the frozen contract")
     fixture_set = payload.get("fixture_set")
-    if fixture_set not in FROZEN_FIXTURE_SHA256:
+    if not isinstance(fixture_set, str) or fixture_set not in FROZEN_FIXTURE_SHA256:
         raise FilterContractError("member manifest fixture set is unknown")
     expected_hash = fixture_manifest(str(fixture_set))["fixture_sha256"]
     frozen_hash = FROZEN_FIXTURE_SHA256[str(fixture_set)]
