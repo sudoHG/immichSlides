@@ -26,6 +26,20 @@ extension XCUIApplication {
 
 #if os(iOS)
 extension XCUIApplication {
+    func slideshowControlBarButtonObservation(identifier: String) throws -> (
+        button: XCUIElementSnapshot?, windowFrame: CGRect
+    ) {
+        let window = try windows.firstMatch.snapshot()
+        var pending = window.children
+        while let node = pending.popLast() {
+            if node.identifier == identifier {
+                return (node, window.frame)
+            }
+            pending.append(contentsOf: node.children)
+        }
+        return (nil, window.frame)
+    }
+
     // Use only for functional checks, never to verify control-bar visibility or auto-hide timing.
     func waitForSlideshowControlBarButton(identifier: String, timeout: TimeInterval) -> Bool {
         if descendants(matching: .any)["slideshow.currentAssetId.flag"].exists {
@@ -35,12 +49,24 @@ extension XCUIApplication {
     }
 
     func tapSlideshowControlBarButton(identifier: String) {
-        // This playback leaf remains present when the control bar auto-hides.
-        if descendants(matching: .any)["slideshow.currentAssetId.flag"].exists {
+        let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
+        while Date() < deadline {
+            if let observation = try? slideshowControlBarButtonObservation(identifier: identifier),
+                let snapshot = observation.button,
+                snapshot.isEnabled, !snapshot.frame.isEmpty,
+                observation.windowFrame.contains(snapshot.frame), Date() < deadline,
+                buttons[identifier].wait(
+                    for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0))), Date() < deadline
+            {
+                buttons[identifier].tap()
+                return
+            }
+            guard Date() < deadline else { break }
             tap()
+            RunLoop.current.run(
+                until: min(deadline, Date().addingTimeInterval(UITestSupportWaitTiming.identityPollSeconds)))
         }
-        // Resolve and act immediately after revealing, before another snapshot can outlast the timer.
-        buttons[identifier].tap()
+        XCTFail("The slideshow control must be enabled and fully inside the window before tapping: \(identifier)")
     }
 }
 #endif

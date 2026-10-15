@@ -444,30 +444,36 @@ extension FilterSummaryIOSVisualUITests {
         var settingsExistence = "unknown"
         var settingsEnabled = "unknown"
         var settingsFrameNonEmpty = "unknown"
+        var settingsFrameContained = "unknown"
         var settingsHittable = "notRead"
         var snapshotErrorCount = 0
         while Date() < deadline {
             settingsHittable = "notRead"
             do {
-                let snapshot = try button.snapshot()
-                let isEnabled = snapshot.isEnabled
-                let hasFrame = !snapshot.frame.isEmpty
-                settingsExistence = "true"
-                settingsEnabled = String(isEnabled)
-                settingsFrameNonEmpty = String(hasFrame)
-                // Only isHittable uses the SDK's Bool-returning wait as a single live read.
-                // Apple documents missing elements as not hittable; read other attributes from snapshots.
-                if isEnabled, hasFrame, Date() < deadline {
+                let observation = try app.slideshowControlBarButtonObservation(
+                    identifier: "slideshow.control.settings.button")
+                let snapshot = observation.button
+                let isEnabled = snapshot?.isEnabled ?? false
+                let hasFrame = snapshot.map { !$0.frame.isEmpty } ?? false
+                let isInsideWindow = snapshot.map { observation.windowFrame.contains($0.frame) } ?? false
+                settingsExistence = String(snapshot != nil)
+                settingsEnabled = snapshot.map { String($0.isEnabled) } ?? "unknown"
+                settingsFrameNonEmpty = snapshot.map { String(!$0.frame.isEmpty) } ?? "unknown"
+                settingsFrameContained =
+                    snapshot.map { String(observation.windowFrame.contains($0.frame)) } ?? "unknown"
+                // Hidden or outgoing controls can make the live hittability query fail inside XCTest.
+                if isEnabled, hasFrame, isInsideWindow, Date() < deadline {
                     let isHittable = button.wait(
                         for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))
                     settingsHittable = String(isHittable)
-                    if isHittable { return true }
+                    if isHittable, Date() < deadline { return true }
                 }
             } catch {
                 snapshotErrorCount += 1
                 settingsExistence = "unknown"
                 settingsEnabled = "unknown"
                 settingsFrameNonEmpty = "unknown"
+                settingsFrameContained = "unknown"
             }
             guard Date() < deadline else { break }
             app.tap()
@@ -485,7 +491,7 @@ extension FilterSummaryIOSVisualUITests {
             let playbackMarkerExists =
                 didReadPlaybackMarker ? String(snapshots["slideshow.currentAssetId.flag"] != nil) : "unknown"
             onTimeout(
-                "playbackMarker.exists=\(playbackMarkerExists), settings.exists=\(settingsExistence), enabled=\(settingsEnabled), frameNonEmpty=\(settingsFrameNonEmpty), hittable=\(settingsHittable), snapshotErrors=\(snapshotErrorCount)"
+                "playbackMarker.exists=\(playbackMarkerExists), settings.exists=\(settingsExistence), enabled=\(settingsEnabled), frameNonEmpty=\(settingsFrameNonEmpty), hittable=\(settingsHittable), snapshotErrors=\(snapshotErrorCount), frameInsideWindow=\(settingsFrameContained)"
             )
         }
         return false

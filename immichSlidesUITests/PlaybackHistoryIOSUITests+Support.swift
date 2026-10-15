@@ -143,8 +143,22 @@ extension PlaybackHistoryIOSUITests {
         )
     }
 
-    func playPauseState(_ button: XCUIElement) -> String {
-        ((button.value as? String) ?? "").lowercased()
+    func waitForPlayPauseState(app: XCUIApplication, expected: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            var didReadSnapshot = true
+            let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didReadSnapshot = false })
+            let button = snapshots["slideshow.control.playPause.button"]
+            if let button, ((button.value as? String) ?? "").lowercased() == expected, Date() < deadline {
+                return true
+            }
+            guard Date() < deadline else { break }
+            if didReadSnapshot, button == nil {
+                app.tap()
+            }
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.2)))))
+        }
+        return false
     }
 
     func isToggleOn(_ toggle: XCUIElement) -> Bool {

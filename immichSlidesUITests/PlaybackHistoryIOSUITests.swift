@@ -120,16 +120,15 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         startFilteredPlaybackFromModeSelection(app: app)
         _ = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
 
-        let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
             app.waitForSlideshowControlBarButton(
                 identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.infrastructure(8))),
             "The slideshow must show the Play/Pause control")
-        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "pause" })
+        XCTAssertTrue(waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))))
 
         // Pausing from the control bar must write the same autoPlayEnabled that the settings page uses.
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
-        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(3))) { self.playPauseState(playPause) == "play" })
+        XCTAssertTrue(waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))))
         openPlaybackSettingsFromSlideshow(app: app)
         let autoPlayToggle = try requireAutoPlayToggle(app: app)
         XCTAssertTrue(
@@ -145,12 +144,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         attachScreenshot(app: app, name: "manual-lifecycle-settings-after-slider-play")
         returnToSlideshowFromPlaybackSettings(app: app)
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) {
-                (playPause.exists
-                    || app.waitForSlideshowControlBarButton(
-                        identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0))))
-                    && self.playPauseState(playPause) == "pause"
-            },
+            waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))),
             "After Autoplay is turned on in settings, the control bar must show Pause immediately")
         attachScreenshot(app: app, name: "manual-lifecycle-control-after-slider-play")
     }
@@ -175,16 +169,10 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         startFilteredPlaybackFromModeSelection(app: app)
         _ = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
 
-        let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) {
-                (playPause.exists
-                    || app.waitForSlideshowControlBarButton(
-                        identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0))))
-                    && self.playPauseState(playPause) == "pause"
-            })
+            waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))))
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
-        XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(3))) { self.playPauseState(playPause) == "play" })
+        XCTAssertTrue(waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))))
 
         try assertSmartFillPauseOnlyFrameFreeze(app: app, evidenceEventPrefix: "ipad-pause-only")
     }
@@ -208,14 +196,8 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
             "Turning off Autoplay in settings must take effect immediately")
         returnToSlideshowFromPlaybackSettings(app: app)
 
-        let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(3))) {
-                (playPause.exists
-                    || app.waitForSlideshowControlBarButton(
-                        identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0))))
-                    && self.playPauseState(playPause) == "play"
-            },
+            waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))),
             "Pausing in settings must sync to the control bar immediately")
         try assertSmartFillPauseOnlyFrameFreeze(app: app, evidenceEventPrefix: "ipad-settings-pause-only")
     }
@@ -232,14 +214,8 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         }
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(8))) {
-                (playPause.exists
-                    || app.waitForSlideshowControlBarButton(
-                        identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(0))))
-                    && self.playPauseState(playPause) == "play"
-            },
+            waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(8))),
             "With Autoplay turned off at launch, the first SmartFill scene must stay paused"
         )
         try assertSmartFillPauseOnlyFrameFreeze(app: app, evidenceEventPrefix: "ipad-initially-paused")
