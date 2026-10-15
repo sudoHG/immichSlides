@@ -35,10 +35,9 @@ FIXTURE_SETS = ("a", "b", "c")
 SCENARIOS = ("normal", "html-200", "timeout", "out-of-order")
 MAX_REQUEST_BODY_BYTES = 64 * 1024
 REQUEST_BODY_TIMEOUT_SECONDS = 5
-# An earlier timing run measured Continue→second Select at 1100ms; 1600ms leaves tvOS a 500ms margin for two nexts.
-TVOS_CONTINUE_TO_SECOND_SELECT_MS = 1100
-OUT_OF_ORDER_DELAY_MARGIN_MS = 500
-OUT_OF_ORDER_DELAYED_ASSET_MS = TVOS_CONTINUE_TO_SECOND_SELECT_MS + OUT_OF_ORDER_DELAY_MARGIN_MS
+LATE_IMAGE_MAX_HOLD_SECONDS = 90
+# Preserve the frozen fixture manifest; response scheduling no longer uses this metadata.
+LEGACY_FIXTURE_DELAY_MS = 1600
 REQUIRED_SEARCH_VALUES = {
     "isOffline": False,
     "visibility": "timeline",
@@ -144,7 +143,7 @@ def _cached_fixture_data(name: str) -> dict[str, Any]:
     # originals.
     png_dimensions = [(320, 180), (180, 320), (300, 300), (360, 240), (240, 360)]
     original_dimension_scale = 12
-    delays = [OUT_OF_ORDER_DELAYED_ASSET_MS, 0, 0, 0, 0]
+    delays = [LEGACY_FIXTURE_DELAY_MS, 0, 0, 0, 0]
     people = [
         {
             "id": f"person-{name}-normal",
@@ -358,12 +357,22 @@ class StrictE2EServer(ThreadingHTTPServer):
         self.started_at = time.monotonic()
         self.image_response_lock = threading.Lock()
         self.image_response: dict[str, Any] = {"mode": "normal", "asset_id": None, "failures": 0}
+        self.late_image_condition = threading.Condition()
+        self.late_image_deadline: float | None = None
+        self.late_image: dict[str, Any] = {
+            "armed": False, "armed_elapsed_ms": None, "asset_id": None,
+            "released": False, "expired": False, "pending": 0, "delivered": 0, "disconnected": 0,
+        }
         if startup_report is not None:
             startup_report("fixture-build", "completed")
             startup_report("bind", "started")
         super().__init__(server_address, StrictE2ERequestHandler)
         if startup_report is not None:
             startup_report("bind", "completed")
+
+    def log_late_image_state(self) -> None:
+        # Only public fixture state is recorded; controls never masquerade as app image requests.
+        self.contract_logger.info("late_image_hold %s", json.dumps(self.late_image, sort_keys=True))
 
 
 class StrictE2ERequestHandler(BaseHTTPRequestHandler):
@@ -375,6 +384,14 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, {"status": "ok", "fixture_set": self.server.fixture["name"]})
             return
         if not self._is_authorized():
+            return
+
+        if parsed.path == "/api/test/late-image":
+            if not self._allow_late_image_control():
+                return
+            with self.server.late_image_condition:
+                state = dict(self.server.late_image)
+            self._json(HTTPStatus.OK, state)
             return
 
         if parsed.path == "/api/test/image-response":
@@ -444,7 +461,10 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
             if size not in {"thumbnail", "preview", "fullsize"}:
                 self._error(HTTPStatus.BAD_REQUEST, "size does not match the contract")
                 return
-            self._log_request_started(size=size, fixture_asset_id=asset["id"])
+            # Selection and request-start logging share a lock, so concurrent requests cannot reorder the hold.
+            with self.server.late_image_condition:
+                self._log_request_started(size=size, fixture_asset_id=asset["id"])
+                held = self._begin_late_image_hold(asset["id"], size)
             with self.server.image_response_lock:
                 control = self.server.image_response
                 should_fail = control["mode"] == "http" and control["asset_id"] == asset["id"] and size == "fullsize"
@@ -456,13 +476,18 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
                     fixture_asset_id=asset["id"], size=size,
                 )
                 return
-            if self.server.scenario == "out-of-order" and size in {"preview", "fullsize"}:
-                time.sleep(asset["fullsize_delay_ms"] / 1000)
-            self._image(
+            if held:
+                self._wait_for_late_image_release()
+            delivered = self._image(
                 self.server.fixture["images"][asset["id"]],
                 fixture_asset_id=asset["id"],
                 size=size,
             )
+            if held:
+                with self.server.late_image_condition:
+                    self.server.late_image["pending"] -= 1
+                    self.server.late_image["delivered" if delivered else "disconnected"] += 1
+                    self.server.log_late_image_state()
             return
 
         self._error(HTTPStatus.NOT_FOUND, "Unknown route")
@@ -470,6 +495,33 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if not self._is_authorized():
+            return
+        if parsed.path == "/api/test/late-image":
+            if not self._allow_late_image_control():
+                return
+            body = self._json_body()
+            if body is None:
+                return
+            action = body.get("action")
+            if not isinstance(action, str) or action not in {"arm", "release"}:
+                self._error(HTTPStatus.BAD_REQUEST, "Invalid late image action")
+                return
+            with self.server.late_image_condition:
+                state = self.server.late_image
+                if state["expired"] or (action == "arm" and state["armed"]) or (
+                    action == "release" and (state["asset_id"] is None or state["released"])
+                ):
+                    self._error(HTTPStatus.CONFLICT, "Late image hold cannot accept this action")
+                    return
+                if action == "arm":
+                    state["armed"] = True
+                    state["armed_elapsed_ms"] = int((time.monotonic() - self.server.started_at) * 1000)
+                else:
+                    state["released"] = True
+                    self.server.late_image_condition.notify_all()
+                self.server.log_late_image_state()
+                response = dict(state)
+            self._json(HTTPStatus.OK, response)
             return
         if parsed.path == "/api/test/image-response":
             body = self._json_body()
@@ -599,6 +651,47 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
             return None
         return body
 
+    def _is_loopback_control(self) -> bool:
+        return self.client_address[0] in {"127.0.0.1", "::1"}
+
+    def _allow_late_image_control(self) -> bool:
+        if not self._is_loopback_control():
+            self._error(HTTPStatus.FORBIDDEN, "Fixture control requires loopback")
+            return False
+        if self.server.scenario != "out-of-order":
+            self._error(HTTPStatus.CONFLICT, "Late image control requires out-of-order")
+            return False
+        return True
+
+    def _begin_late_image_hold(self, asset_id: str, size: str) -> bool:
+        state = self.server.late_image
+        if self.server.scenario != "out-of-order" or size not in {"preview", "fullsize"} or (
+            not state["armed"] or state["released"]
+        ):
+            return False
+        if state["asset_id"] is None:
+            state["asset_id"] = asset_id
+            self.server.late_image_deadline = time.monotonic() + LATE_IMAGE_MAX_HOLD_SECONDS
+        if state["asset_id"] != asset_id:
+            return False
+        state["pending"] += 1
+        self.server.log_late_image_state()
+        return True
+
+    def _wait_for_late_image_release(self) -> None:
+        with self.server.late_image_condition:
+            state = self.server.late_image
+            while not state["released"]:
+                remaining = self.server.late_image_deadline - time.monotonic()
+                if remaining <= 0:
+                    state["expired"] = True
+                    state["released"] = True
+                    self.server.contract_logger.error("late_image_hold_expired")
+                    self.server.log_late_image_state()
+                    self.server.late_image_condition.notify_all()
+                    break
+                self.server.late_image_condition.wait(timeout=remaining)
+
     def _asset(self, asset_id: str) -> dict[str, Any] | None:
         for asset in self.server.fixture["assets"]:
             if asset["id"] == asset_id:
@@ -632,10 +725,10 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
             fixture_asset_id,
         )
 
-    def _image(self, image: bytes, *, fixture_asset_id: str, size: str | None = None) -> None:
+    def _image(self, image: bytes, *, fixture_asset_id: str, size: str | None = None) -> bool:
         range_header = self.headers.get("Range")
         if range_header is None:
-            self._send(
+            return self._send(
                 HTTPStatus.OK,
                 image,
                 "image/png",
@@ -643,22 +736,21 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
                 fixture_asset_id=fixture_asset_id,
                 size=size,
             )
-            return
         if not range_header.startswith("bytes=") or "," in range_header:
             self._error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Range does not match the contract")
-            return
+            return False
         try:
             start_text, end_text = range_header.removeprefix("bytes=").split("-", maxsplit=1)
             start = int(start_text)
             end = min(int(end_text) if end_text else len(image) - 1, len(image) - 1)
         except ValueError:
             self._error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Range does not match the contract")
-            return
+            return False
         if start < 0 or start > end or start >= len(image):
             self._error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Range exceeds the image")
-            return
+            return False
         payload = image[start : end + 1]
-        self._send(
+        return self._send(
             HTTPStatus.PARTIAL_CONTENT,
             payload,
             "image/png",
@@ -689,7 +781,7 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
         extra_headers: dict[str, str] | None = None,
         fixture_asset_id: str | None = None,
         size: str | None = None,
-    ) -> None:
+    ) -> bool:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
@@ -698,17 +790,22 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
                 self.send_header(key, value)
         self.end_headers()
         logged_path = self._redacted_path()
+        delivered = True
         try:
             self.wfile.write(payload)
+            self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
+            delivered = False
             self.server.contract_logger.info(
                 "client_disconnected method=%s path=%s", self.command, logged_path
             )
         # fixture_asset_id can only come from public synthetic data generated by this server; any ID from the
         # request input is already redacted in path.
         size_suffix = f" size={size}" if size else ""
+        prefix = "fixture_control" if logged_path == "/api/test/late-image" else "request"
         self.server.contract_logger.info(
-            "request elapsed_ms=%d method=%s path=%s status=%d range=%s fixture_asset_id=%s%s",
+            "%s elapsed_ms=%d method=%s path=%s status=%d range=%s fixture_asset_id=%s%s",
+            prefix,
             int((time.monotonic() - self.server.started_at) * 1000),
             self.command,
             logged_path,
@@ -717,6 +814,7 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
             fixture_asset_id or "none",
             size_suffix,
         )
+        return delivered
 
     def log_message(self, _format: str, *_args: object) -> None:
         return

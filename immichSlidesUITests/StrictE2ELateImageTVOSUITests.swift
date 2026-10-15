@@ -5,9 +5,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     private enum Timing {
         static let focusMovementSettleSeconds: TimeInterval = TestWait.seconds(.product(0.08))
         static let focusPollingSeconds: TimeInterval = TestWait.seconds(.product(0.05))
-        // The right-move settle must be far shorter than the 1600ms delay so both nexts land inside the window.
-        static let immediateFocusSettleSeconds: TimeInterval = TestWait.seconds(.product(0.04))
-        // Preview and fullsize for asset-*-1 are each delayed 1600ms; 2.5s covers the late completion.
+        // Preserve the post-delivery observation window; the fixture now confirms delivery first.
         static let lateRequestWaitSeconds: TimeInterval = TestWait.seconds(.product(2.5))
     }
 
@@ -23,21 +21,22 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         }
 
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminate() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
+        _ = try lateImageControl(input: input, action: "arm")
         try enterRandomPlayback(app: app)
 
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         let nextButton = app.buttons["slideshow.control.next.button"]
-        // Press next twice first: running the focus/Select checks earlier would wait out the old requests.
-        enterPlaybackThenAdvanceTwice(nextButton: nextButton)
+        try enterPlaybackThenAdvanceTwice(app: app, nextButton: nextButton)
         let secondNextAt = Date()
         try writeRequiredPNG(app: app, name: "ooo-current-scene")
         attachScreenshot(app: app, name: "tvos-late-image-ooo-current-scene")
 
+        try releaseLateImageAndWaitForDelivery(input: input)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.lateRequestWaitSeconds))
         let afterLateAt = Date()
         try writeRequiredPNG(app: app, name: "ooo-after-late")
@@ -68,11 +67,12 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         XCTAssertTrue(
             waitForFocus(on: playPauseButton, timeout: TestWait.seconds(.product(4))),
             "After the late completion, the default action must stay focusable.")
-        let pausedValue = String(describing: playPauseButton.value ?? "")
+        let pausedValue = (try? playPauseButton.snapshot()).map { String(describing: $0.value ?? "") }
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
-                String(describing: playPauseButton.value ?? "") != pausedValue
+                guard let snapshot = try? playPauseButton.snapshot() else { return false }
+                return String(describing: snapshot.value ?? "") != pausedValue
             },
             "After the late completion, Select must still toggle Play/Pause."
         )
@@ -122,29 +122,41 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func enterPlaybackThenAdvanceTwice(nextButton: XCUIElement) {
+    private func enterPlaybackThenAdvanceTwice(app: XCUIApplication, nextButton: XCUIElement) throws {
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(30))) { nextButton.exists },
+            waitUntil(timeout: TestWait.seconds(.product(30))) { (try? nextButton.snapshot())?.isEnabled == true },
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests."
         )
-        // Default focus is on Settings: only move right to Next and press it twice, without the 4s focus polling.
-        focusImmediately(on: nextButton, direction: .right, maximumPresses: 3)
+        let playPause = app.buttons["slideshow.control.playPause.button"]
+        ensureControlBarVisible(app: app, playPauseButton: playPause)
+        moveFocus(
+            .left, to: playPause, maximumPresses: 3,
+            message: "Focus must land on Next before the old requests complete.")
+        let render = SharedSceneEvidenceManifest.parseKeyValueFields(
+            strictSceneFrameObservation(app: app)["render"] ?? "")
+        if render["playbackPaused"] != "true" { XCUIRemote.shared.press(.select) }
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.product(4))) {
+                SharedSceneEvidenceManifest.parseKeyValueFields(
+                    self.strictSceneFrameObservation(app: app)["render"] ?? "")["playbackPaused"] == "true"
+            }, "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
+        let initialHistory = try XCTUnwrap(lateImageHistoryCount(app: app))
+        moveFocus(
+            .right, to: nextButton, maximumPresses: 3,
+            message: "Focus must land on Next before the old requests complete.")
+        let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(30))
         XCUIRemote.shared.press(.select)
+        XCTAssertTrue(
+            waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline),
+            "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
+        ensureControlBarVisible(app: app, playPauseButton: playPause)
+        moveFocus(
+            .right, to: nextButton, maximumPresses: 3,
+            message: "Focus must land on Next before the old requests complete.")
         XCUIRemote.shared.press(.select)
-    }
-
-    @MainActor
-    private func focusImmediately(
-        on element: XCUIElement,
-        direction: XCUIRemote.Button,
-        maximumPresses: Int
-    ) {
-        for _ in 0..<maximumPresses {
-            if element.exists && element.hasFocus { return }
-            XCUIRemote.shared.press(direction)
-            RunLoop.current.run(until: Date().addingTimeInterval(Timing.immediateFocusSettleSeconds))
-        }
-        XCTAssertTrue(element.exists && element.hasFocus, "Focus must land on Next before the old requests complete.")
+        XCTAssertTrue(
+            waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline),
+            "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
     }
 
     @MainActor
@@ -221,7 +233,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
             "After submitting text, focus must return to the original field.")
     }
 
-    // Arrow-key settle is shorter than polling: it only proves system focus and does not trust @FocusState.
+    // Each direction observes system focus before the next direction; missing snapshots cannot fail a poll.
     @MainActor
     private func moveFocus(
         _ direction: XCUIRemote.Button,
@@ -229,31 +241,51 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         maximumPresses: Int,
         message: String
     ) {
-        for _ in 0..<maximumPresses {
-            if element.exists && element.hasFocus { return }
+        let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(4))
+        let focused = XCUIApplication().descendants(matching: .any)
+            .matching(NSPredicate(format: "hasFocus == %@", NSNumber(value: true))).firstMatch
+        for _ in 0..<maximumPresses where ProcessInfo.processInfo.systemUptime < deadline {
+            if (try? element.snapshot())?.hasFocus == true { return }
+            let previous = (try? focused.snapshot())?.identifier
             XCUIRemote.shared.press(direction)
-            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                if (try? element.snapshot())?.hasFocus == true { return }
+                if let current = try? focused.snapshot(), current.hasFocus,
+                    !current.identifier.isEmpty, current.identifier != previous
+                {
+                    break
+                }
+                RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
+            }
         }
-        XCTAssertTrue(waitForFocus(on: element, timeout: TestWait.seconds(.product(4))), message)
+        XCTAssertTrue((try? element.snapshot())?.hasFocus == true, message)
     }
 
     @MainActor
     private func waitForFocus(on element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if element.exists && element.hasFocus { return true }
+            if (try? element.snapshot())?.hasFocus == true { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
         }
-        return element.exists && element.hasFocus
+        return (try? element.snapshot())?.hasFocus == true
     }
 
     @MainActor
     private func ensureControlBarVisible(app: XCUIApplication, playPauseButton: XCUIElement) {
-        if !playPauseButton.exists {
+        let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(5))
+        let receiver = app.descendants(matching: .any)["slideshow.hiddenWakeReceiver"]
+        for _ in 0..<2 {
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                if (try? playPauseButton.snapshot()) != nil { return }
+                if (try? receiver.snapshot())?.hasFocus == true { break }
+                RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
+            }
+            if ProcessInfo.processInfo.systemUptime >= deadline { break }
             XCUIRemote.shared.press(.up)
         }
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            (try? playPauseButton.snapshot()) != nil,
             "An arrow key must be able to wake the playback control bar.")
     }
 
@@ -269,12 +301,19 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
 
     @MainActor
     private func writeRequiredPNG(app: XCUIApplication, name: String) throws {
+        let before = strictSceneFrameObservation(app: app)
         let png = app.screenshot().pngRepresentation
+        let after = strictSceneFrameObservation(app: app)
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
         try StrictE2EVisualEvidence.writeRequiredPNG(png, name: name)
+        attachStrictSceneObservation(before: before, after: after, name: "\(name)-scene")
+        XCTAssertTrue(
+            [before, after].allSatisfy(StrictE2ESceneCapture.isStableWindow),
+            "After late completion the current public mark must stay: no flash back, all black or unreadable: unstable capture"
+        )
     }
 
     private func attachScreenshot(app: XCUIApplication, name: String) {

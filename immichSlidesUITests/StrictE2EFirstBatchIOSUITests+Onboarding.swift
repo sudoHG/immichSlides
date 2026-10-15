@@ -1,7 +1,12 @@
 import XCTest
 
 #if os(iOS)
-extension StrictE2EFirstBatchIOSUITests {
+protocol StrictE2EOnboardingIOS: XCTestCase {
+    @MainActor
+    func revealPlaybackControlsWithoutWaitHelper(app: XCUIApplication, shouldRefreshAutoHideTimer: Bool)
+}
+
+extension StrictE2EOnboardingIOS {
     func requireBoundFailureScenario() -> String {
         let scenario = ProcessInfo.processInfo.environment["STRICT_E2E_INPUT_SCENARIO"] ?? ""
         let allowed = ["auth-401", "html-200", "unreachable", "timeout"]
@@ -305,7 +310,7 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func captureHistoryIdentity(app: XCUIApplication, step: String) -> [String: Any] {
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
-        revealPlaybackControlsWithoutWaitHelper(app: app)
+        revealPlaybackControlsWithoutWaitHelper(app: app, shouldRefreshAutoHideTimer: false)
         return captureStrictSceneFrame(app: app, name: step, attachmentName: step)
     }
 

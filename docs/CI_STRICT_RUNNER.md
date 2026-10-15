@@ -64,7 +64,7 @@ Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
+Probe-only launches are `journey-b`, `tvos-flow`, `late-image`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
 The `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`
@@ -215,6 +215,39 @@ Unreadable target-album playback screenshots (album-play-*) and empty-result
 screenshots (empty-album-result.png, for both iOS and tvOS album-empty suites)
 produce a FAIL contract report.
 File-read failures remain I/O errors. tvOS reports retain their existing fields.
+
+## Deterministic late-image response ordering
+
+The `late-image` suite arms `/api/test/late-image` after normal first-boot setup.
+Only loopback clients with the existing public fixture key can use this control,
+and only in the `out-of-order` scenario. The server chooses the first preview or
+fullsize request after arming, by serialized request order, and holds responses
+for that asset until the test posts `{"action":"release"}`. Thumbnails and other
+assets remain available. `{"action":"arm"}` is one-shot; onboarding requests are
+served normally before arming. The frozen manifest's legacy delay metadata stays
+unchanged for hash compatibility and no longer schedules responses.
+
+Both platform tests pause playback before Next, verify two committed history
+advances and a complete stable rendered scene with fallible snapshot probes,
+then capture `ooo-current-scene`. They explicitly release the hold, poll for
+zero pending responses and at least one successful socket write/flush with no
+disconnects, retain the existing 1.5-second iOS / 2.5-second tvOS settling window,
+and capture `ooo-after-late`. Delivery means the fixture finished writing the
+response; it does not claim that the app displayed or decoded the image.
+The UI polls retain fixed product budgets. The read-only scene probe is the
+only added app launch key; no private XCTest quiescence API is used.
+
+Each hold has a 90-second maximum from the first held request. Expiry releases
+the response, leaves an irreversible `expired` state and logs
+`late_image_hold_expired`; it cannot produce a passing run. The evaluator requires
+valid server hold records, checks that the held asset was the first image request
+after arming, and requires explicit release and confirmed delivery. It obtains
+the delayed/current request pair from these records, preserving all existing
+scene and request-timeline verdicts, including the A1 exclusion. Missing or
+malformed records, expiry, pending responses and disconnects fail closed.
+Fixture control log lines have their own prefix and never count as app requests
+or public image identity. The iOS late-image suite reuses the existing onboarding
+implementation through `StrictE2EOnboardingIOS` in the UI-test target.
 
 ## Explicit shard warm-up and reuse
 

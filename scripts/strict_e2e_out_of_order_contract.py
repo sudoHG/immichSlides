@@ -196,9 +196,7 @@ def evaluate_out_of_order_identity(evidence_dir: Path) -> dict[str, Any]:
     log_text = log_path.read_text(encoding="utf-8")
 
     fixture_set, observed_hash = _read_fixture_hash(evidence_dir)
-    delayed = delayed_asset_id(fixture_set)
-    immediate = immediate_asset_id(fixture_set)
-    window_start_ms = _playback_window_start_ms(log_text, delayed, immediate)
+    delayed, immediate, window_start_ms = _held_request_inputs(log_text, fixture_set=fixture_set)
     timeline: dict[str, dict[str, int]] = {}
     last_error: OutOfOrderContractError | None = None
     for size in DELAYED_SIZES:
@@ -231,6 +229,55 @@ def evaluate_out_of_order_identity(evidence_dir: Path) -> dict[str, Any]:
         "timeline": timeline,
         "audit": audit,
     }
+
+
+def _held_request_inputs(log_text: str, *, fixture_set: str) -> tuple[str, str, int]:
+    records: list[dict[str, Any]] = []
+    starts: list[_LogEvent] = []
+    expected_keys = {"armed", "armed_elapsed_ms", "asset_id", "released", "expired",
+                     "pending", "delivered", "disconnected"}
+    known_assets = set(fixture_manifest(fixture_set)["asset_ids"])
+    for line in log_text.splitlines():
+        if line == "late_image_hold_expired":
+            raise OutOfOrderContractError("Late image hold expired; this batch fails")
+        if line.startswith("late_image_hold "):
+            try:
+                state = json.loads(line.removeprefix("late_image_hold "))
+            except ValueError as error:
+                raise OutOfOrderContractError("Malformed late image hold record") from error
+            if not isinstance(state, dict) or set(state) != expected_keys or any(
+                type(state[key]) is not bool for key in ("armed", "released", "expired")
+            ) or any(type(state[key]) is not int or state[key] < 0
+                     for key in ("armed_elapsed_ms", "pending", "delivered", "disconnected")) or (
+                state["asset_id"] is not None and (
+                    not isinstance(state["asset_id"], str) or state["asset_id"] not in known_assets)
+            ):
+                raise OutOfOrderContractError("Malformed late image hold record")
+            if not state["armed"] or state["expired"]:
+                raise OutOfOrderContractError("Late image hold was not armed or expired")
+            if records and (state["armed_elapsed_ms"] != records[0]["armed_elapsed_ms"] or (
+                records[-1]["asset_id"] is not None and state["asset_id"] != records[-1]["asset_id"]
+            )):
+                raise OutOfOrderContractError("Late image hold changed its request selection")
+            records.append(state)
+        elif records and (matched := REQUEST_STARTED_LINE.match(line)) is not None and (
+            matched.group("size") in DELAYED_SIZES
+        ):
+            starts.append(_LogEvent(int(matched.group("elapsed")), matched.group("path"),
+                                    matched.group("asset"), matched.group("size"), None))
+    if not records or not starts:
+        raise OutOfOrderContractError("Missing late image hold record or held request")
+    initial, final = records[0], records[-1]
+    if initial["asset_id"] is not None or initial["released"] or initial["pending"] != 0 or (
+        not final["released"] or final["pending"] != 0 or final["delivered"] < 1 or final["disconnected"] != 0
+    ):
+        raise OutOfOrderContractError("Late image hold has no confirmed release and delivery")
+    if starts[0].asset_id != final["asset_id"] or starts[0].elapsed_ms < initial["armed_elapsed_ms"]:
+        raise OutOfOrderContractError("Held asset was not the first image requested after arming")
+    immediate = next((event.asset_id for event in starts if event.asset_id != final["asset_id"]), None)
+    if immediate is None:
+        raise OutOfOrderContractError("Missing newer image request after arming")
+    return final["asset_id"], immediate, initial["armed_elapsed_ms"]
 
 
 def _playback_window_start_ms(log_text: str, delayed_asset_id: str, immediate_asset_id: str) -> int:

@@ -6,7 +6,7 @@ enum StrictE2EFirstBatchIOSUITestsProbeTiming {
 }
 
 #if os(iOS)
-final class StrictE2EFirstBatchIOSUITests: XCTestCase {
+final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     let autoplayObservationSeconds: TimeInterval = TestWait.seconds(.product(6.5))
     let pauseHoldObservationSeconds: TimeInterval = TestWait.seconds(.product(10.5))
 
