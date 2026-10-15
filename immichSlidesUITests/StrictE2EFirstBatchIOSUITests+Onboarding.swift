@@ -205,6 +205,9 @@ extension StrictE2EFirstBatchIOSUITests {
         }
     }
 
+}
+
+extension StrictE2EOnboardingIOS {
     @MainActor
     func isSavePasswordPromptShown(app: XCUIApplication) -> Bool {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -230,6 +233,9 @@ extension StrictE2EFirstBatchIOSUITests {
         }
     }
 
+}
+
+extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func isOnboardingModeSelected(_ modeButton: XCUIElement) -> Bool {
         modeButton.isSelected || modeButton.images["checkmark.circle.fill"].exists

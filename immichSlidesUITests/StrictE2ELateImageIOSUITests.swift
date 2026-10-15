@@ -17,6 +17,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         defer { app.terminate() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "late-image")
+        dismissSavePasswordPromptIfShown(app: app)
         _ = try lateImageControl(input: input, action: "arm")
         try enterPlaybackThenAdvanceTwice(app: app)
 
@@ -115,6 +116,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
     @MainActor
     private func captureRequiredIdentity(app: XCUIApplication, name: String) throws -> StrictE2EPhotoIdentity.Result {
+        dismissSavePasswordPromptIfShown(app: app)
         let before = strictSceneFrameObservation(app: app)
         let png = app.screenshot().pngRepresentation
         let after = strictSceneFrameObservation(app: app)
