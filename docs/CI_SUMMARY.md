@@ -222,6 +222,8 @@ It latches that signal and marks truncation after every subsequent checkpoint
 load, including when the child could not load or persist its own receipt.
 Fixture writes run on a single daemon outside the ready path; each write has a
 10 ms CPU allowance and no synchronous ready-path IO wait.
+Ready-path reports acquire the shared accounting lock without waiting; if a
+writer holds it, that event is dropped and collection is marked truncated.
 Server drain waits are capped at 10 ms after service exit or failure is
 decided; sealing the writer before health serving never waits. After the health
 decision the parent allows up to 10 ms for the completion line inside its capped

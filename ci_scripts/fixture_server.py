@@ -143,8 +143,14 @@ class StartupDiagnostics:
                 self.truncated = True
 
     def report(self, phase, state, digest=None):
-        with self.cost_lock:
+        # A descheduled diagnostic writer must never delay fixture readiness.
+        if not self.cost_lock.acquire(blocking=False):
+            self.truncated = True
+            return
+        try:
             self._report(phase, state, digest)
+        finally:
+            self.cost_lock.release()
 
     def _report(self, phase, state, digest=None):
         if not self.budget:

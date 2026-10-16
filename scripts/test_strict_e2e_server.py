@@ -8,6 +8,7 @@ import http.client
 import io
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -321,6 +322,84 @@ class StrictE2EServerContractTests(unittest.TestCase):
             support.wait_for_service(Path("unused"), mock.Mock(), diagnostics_path=harvest_path)
             self.assertEqual(previous, recorder.receipt()["collection_seconds"]["fixture"])
             self.assertTrue(recorder.truncated)
+
+    def test_fixture_health_does_not_wait_for_a_diagnostic_writer_holding_the_cost_lock(self):
+        child = '''
+import importlib.util
+from pathlib import Path
+import sys
+import threading
+spec = importlib.util.spec_from_file_location("fixture_service", sys.argv[1])
+service = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(service)
+# Keep PNG generation outside the controlled diagnostic-lock pause.
+service.fixture_manifest("c")
+held = threading.Event()
+original_init = service.StartupDiagnostics.__init__
+original_write = service.StartupDiagnostics._write
+def write(reporter):
+    with reporter.cost_lock:
+        Path(sys.argv[2]).touch()
+        held.set()
+        sys.stdin.buffer.read(1)
+    original_write(reporter)
+def initialize(reporter, *args, **kwargs):
+    original_init(reporter, *args, **kwargs)
+    assert held.wait(10)
+service.StartupDiagnostics._write = write
+service.StartupDiagnostics.__init__ = initialize
+raise SystemExit(service.main(["--host", "127.0.0.1", "--port", "0", "--fixture-set", "c",
+                               "--ready-file", sys.argv[3]]))
+'''
+        sources = (Path(strict_e2e_server.__file__).resolve(), SCRIPT_DIR.parent / "ci_scripts/fixture_server.py")
+        for source in sources:
+            with self.subTest(source=source.name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                held, ready = root / "held", root / "ready.json"
+                env = dict(os.environ, IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS="0.2",
+                           IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE=str(root / "diagnostic.log"))
+                process = subprocess.Popen([sys.executable, "-B", "-c", child, str(source), str(held), str(ready)],
+                                           env=env, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                try:
+                    deadline = time.monotonic() + 30
+                    while not held.exists() and process.poll() is None and time.monotonic() < deadline:
+                        threading.Event().wait(0.01)
+                    self.assertTrue(held.exists(), "the real diagnostic writer must hold its lock before the health check")
+                    deadline = time.monotonic() + 10
+                    while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                        threading.Event().wait(0.01)
+                    self.assertTrue(ready.exists(), "fixture readiness waited for the paused diagnostic writer")
+                    port = json.loads(ready.read_text())["port"]
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as response:
+                        self.assertEqual(200, response.status)
+                    self.assertIsNone(process.poll())
+                    process.stdin.write(b"x")
+                    process.stdin.flush()
+                    diagnostic = root / "diagnostic.log"
+                    deadline = time.monotonic() + 10
+                    text = ""
+                    while time.monotonic() < deadline:
+                        text = diagnostic.read_text() if diagnostic.exists() else ""
+                        if "fixture-collection-completed: true\n" in text:
+                            break
+                        threading.Event().wait(0.01)
+                    self.assertIn("fixture-collection-completed: true\n", text)
+                    self.assertIn("fixture-collection-truncated: true\n", text)
+                finally:
+                    if process.poll() is None:
+                        try:
+                            process.stdin.write(b"x")
+                            process.stdin.flush()
+                        except OSError:
+                            pass
+                        process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
+                    process.stdin.close()
+                    process.stderr.close()
 
     def test_insufficient_fixture_allowance_disables_import_and_marks_missing_completion(self):
         import ci_execution_diagnostics as diagnostics
