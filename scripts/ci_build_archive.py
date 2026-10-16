@@ -259,30 +259,36 @@ def pack_products(products, path):
         handle.add(products, arcname="Products")
 
 
-def extract_products(path, destination, manifest):
+def validated_tar_members(handle, manifest):
+    """Share the pre-extraction inventory checks with the download integrity gate."""
     validate_links(manifest["files"])
+    expected = {entry["path"]: entry for entry in manifest["files"]}
+    members = handle.getmembers()
+    require(len(members) == len(expected), "archive member count mismatch")
+    seen = set()
+    for member in members:
+        safe_path(member.name)
+        require(member.name in expected and member.name not in seen, "unlisted or duplicate archive member")
+        seen.add(member.name)
+        entry = expected[member.name]
+        kind = "directory" if member.isdir() else "file" if member.isfile() else "symlink" if member.issym() else None
+        require(kind == entry["kind"] and member.mode == entry["mode"], "archive type or mode mismatch")
+        if member.issym():
+            require(member.linkname == entry["target"], "archive symlink mismatch")
+            safe_link(member.name, member.linkname)
+        elif member.isfile():
+            require(member.size == entry["size"], "archive size mismatch")
+        for parent in PurePosixPath(member.name).parents:
+            if str(parent) != ".":
+                require(expected.get(str(parent), {}).get("kind") == "directory", "archive parent is not a directory")
+    return members
+
+
+def extract_products(path, destination, manifest):
     require(file_hash(path) == manifest["archive_sha256"], "archive hash mismatch")
     require(not os.path.lexists(destination), "extraction path must be fresh")
-    expected = {entry["path"]: entry for entry in manifest["files"]}
     with tarfile.open(path, "r:gz") as handle:
-        members = handle.getmembers()
-        require(len(members) == len(expected), "archive member count mismatch")
-        seen = set()
-        for member in members:
-            safe_path(member.name)
-            require(member.name in expected and member.name not in seen, "unlisted or duplicate archive member")
-            seen.add(member.name)
-            entry = expected[member.name]
-            kind = "directory" if member.isdir() else "file" if member.isfile() else "symlink" if member.issym() else None
-            require(kind == entry["kind"] and member.mode == entry["mode"], "archive type or mode mismatch")
-            if member.issym():
-                require(member.linkname == entry["target"], "archive symlink mismatch")
-                safe_link(member.name, member.linkname)
-            elif member.isfile():
-                require(member.size == entry["size"], "archive size mismatch")
-            for parent in PurePosixPath(member.name).parents:
-                if str(parent) != ".":
-                    require(expected.get(str(parent), {}).get("kind") == "directory", "archive parent is not a directory")
+        members = validated_tar_members(handle, manifest)
         destination.mkdir(parents=True)
         # All members, link chains and ancestors are checked; hard links/devices are forbidden.
         for member in sorted(members, key=lambda item: (not item.isdir(), len(PurePosixPath(item.name).parts))):

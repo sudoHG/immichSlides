@@ -375,11 +375,14 @@ def render_markdown(payload):
         receipt = payload["archive_download"]
         matches = {key: "unknown" if value is None else "yes" if value else "no"
                    for key, value in {**receipt["digests_matched"], "size": receipt["size_matched"]}.items()}
-        sizes = "; ".join(f"{key}={value}" for key, value in receipt["member_bytes"].items())
+        measurements = {key: "unavailable" if value is None else str(value)
+                        for key, value in {**receipt["member_bytes"], "transfer_extract_seconds": receipt["transfer_extract_seconds"],
+                                           "gate_seconds": receipt["gate_seconds"], "free_disk_bytes": receipt["free_disk_bytes"]}.items()}
+        sizes = "; ".join(f"{key}={measurements[key]}" for key in receipt["member_bytes"])
         lines.append(f"\nArchive download: action={receipt['action_outcome']}; {sizes}; "
                      f"manifest digest={matches['manifest']}; tar digest={matches['tar']}; size={matches['size']}; "
-                     f"transfer/extract={receipt['transfer_extract_seconds']} s; gate={receipt['gate_seconds']} s; "
-                     f"free disk={receipt['free_disk_bytes']} bytes; failure={receipt['failure_reason'] or 'none'}.")
+                     f"transfer/extract={measurements['transfer_extract_seconds']} s; gate={measurements['gate_seconds']} s; "
+                     f"free disk={measurements['free_disk_bytes']} bytes; failure={receipt['failure_reason'] or 'none'}.")
     return "\n".join(lines) + "\n"
 
 

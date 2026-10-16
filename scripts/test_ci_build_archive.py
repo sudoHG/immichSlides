@@ -25,6 +25,155 @@ from ci_summary import ContractError
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_nightly_gate_publishes_before_simulator_and_records_single_defect_refusals(self):
+        from ci_summary import parse_summary
+        from ci_publish import GitHub
+        from test_ci_summary import archive_download_summary
+        import ci_simulator
+        import yaml
+        steps = yaml.safe_load((ui.ROOT / ui.NIGHTLY_WORKFLOW).read_text())["jobs"]["ui-shards"]["steps"]
+        download_index = next(index for index, step in enumerate(steps) if step.get("id") == "download")
+        gate_index = next(index for index, step in enumerate(steps) if "gate-archive" in step.get("run", ""))
+        run_index = next(index for index, step in enumerate(steps) if "ci_ui_tests.py run " in step.get("run", ""))
+        self.assertLess(download_index, gate_index)
+        self.assertLess(gate_index, run_index)
+        self.assertIn("--create-simulator", steps[gate_index]["run"])
+        self.assertFalse(any("ci_simulator.py" in step.get("run", "") for step in steps[:gate_index]))
+        inputs = archive_download_summary()
+        inputs["population"].update(compiled=[], observed=[])
+        inputs["hashes"]["manifests"]["ui-shards"] = "c" * 64
+        identity = {"schema_version": 1, "event": "schedule", "repository": "owner/repo",
+                    "ref": "refs/heads/main", "commit_sha": "a" * 40, "tree_sha": "b" * 40}
+        ctx = {"identity": identity, "source": {"repository": "owner/repo", "event": "schedule",
+               "workflow_path": ui.NIGHTLY_WORKFLOW, "fork_originated": False, "ci_changing": None},
+               "run": {"id": "123", "attempt": 1, "tier": "ui-infrastructure", "job": "ui-archive", "shard": None}}
+        metadata = {"id": 456, "expired": False, "name": "build-ios-123-1",
+                    "workflow_run": {"id": 123, "head_sha": "a" * 40}}
+        pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
+        defects = {"success": None, "missing-member": "archive-member-missing", "extra-member": "archive-member-extra",
+                   "truncated-tar": "archive-download-incomplete", "hash-mismatch": "archive-hash-mismatch",
+                   "wrong-attempt": "archive-identity-mismatch", "wrong-artifact": "archive-identity-mismatch",
+                   "toolchain": "archive-toolchain-mismatch", "invalid-manifest": "archive-manifest-invalid",
+                   "manifest-hash": "archive-hash-mismatch", "size": "archive-size-mismatch",
+                   "action-failure": "archive-download-incomplete", "timeout": "archive-gate-timeout",
+                   "publish": "archive-publish-failed", "unowned-stage": "archive-identity-mismatch",
+                   "oversized": "archive-size-mismatch", "metadata-unavailable": "archive-download-incomplete",
+                   "nonregular-member": "archive-download-incomplete", "existing-publish": "archive-publish-failed"}
+        for defect, reason in defects.items():
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                with patch.object(ui, "context", return_value=copy.deepcopy(ctx)), patch.dict(os.environ, {"RUNNER_TEMP": temporary}), \
+                        patch("run_fixture_ui_tests.fixture_inputs", return_value=inputs), \
+                        patch.object(ui, "output") as exported:
+                    self.assertEqual(ui.main(["stage-download"]), 0)
+                    values = dict(call.args for call in exported.call_args_list)
+                    staging = Path(values["staging_path"])
+                    packed = staging / "build.tar.gz"
+                    archive.pack_products(self.products, packed)
+                    manifest = archive.make_manifest(self.products, identity=identity, run_id="123", attempt=1,
+                        platform="ios", architecture=[platform.machine()], xcode_build=pins["xcode"]["build"],
+                        source_path=self.root / "source", archive_sha=archive.file_hash(packed),
+                        pins_sha=archive.file_hash(ui.ROOT / "scripts/ci-pins.json"), signing_mode="adhoc")
+                    if defect == "wrong-attempt":
+                        manifest["producer"]["attempt"] = 2
+                    if defect == "toolchain":
+                        manifest["xcode_build"] = "wrong"
+                    if defect == "invalid-manifest":
+                        manifest["schema_version"] = 2
+                    if defect == "size":
+                        next(entry for entry in manifest["files"] if entry["kind"] == "file")["size"] += 1
+                    ui.write_json(staging / "manifest.json", manifest)
+                    selection = {"identity": identity, "platform": "ios", "producer_run_id": "123", "producer_attempt": 1,
+                                 "artifact_id": 456, "build_manifest_sha256": archive.file_hash(staging / "manifest.json")}
+                    if defect == "manifest-hash":
+                        selection["build_manifest_sha256"] = "0" * 64
+                    ui.write_json(root / "selection.json", selection)
+                    if defect == "missing-member":
+                        (staging / "manifest.json").unlink()
+                    if defect == "extra-member":
+                        (staging / "extra").write_text("unexpected")
+                    if defect == "nonregular-member":
+                        packed.unlink()
+                        packed.symlink_to(self.plist)
+                    if defect == "truncated-tar":
+                        packed.write_bytes(packed.read_bytes()[:-8])
+                    if defect == "hash-mismatch":
+                        changed = bytearray(packed.read_bytes())
+                        changed[4] ^= 1  # Valid gzip mtime change; payload and sizes remain intact.
+                        packed.write_bytes(changed)
+                    if defect == "unowned-stage":
+                        staging = staging.rename(root / "unowned")
+                    api_metadata = dict(metadata, id=457) if defect == "wrong-artifact" else metadata
+                    receipt_path, published, records = root / "receipt.json", root / "verified", root / "records"
+                    if defect == "existing-publish":
+                        published.write_text("preserve")
+                    def simulator(*unused):
+                        self.assertTrue(published.is_dir())
+                        self.assertFalse(staging.exists())
+                        self.assertIsNone(json.loads(receipt_path.read_text())["failure_reason"])
+                    def delayed_metadata(*unused, **options):
+                        time.sleep(0.2)
+                        return api_metadata
+                    with patch.object(GitHub, "repo", return_value=api_metadata,
+                                      side_effect=OSError("private transport detail") if defect == "metadata-unavailable"
+                                      else delayed_metadata if defect == "timeout" else None) as metadata_read, \
+                            patch.object(ci_simulator, "create_and_boot_simulator", side_effect=simulator) as create, \
+                            patch.object(ui, "ARCHIVE_GATE_SECONDS", 0.02 if defect == "timeout" else ui.ARCHIVE_GATE_SECONDS), \
+                            patch.object(ui, "MAX_ARCHIVE_BYTES", 1 if defect == "oversized" else ui.MAX_ARCHIVE_BYTES), \
+                            patch.object(Path, "rename", side_effect=OSError("private disk detail")) if defect == "publish" else contextlib.nullcontext(), \
+                            redirect_stderr(io.StringIO()) as errors:
+                        code = ui.main(["gate-archive", "--device", "ipad", "--shard", "navigation", "--staging-dir", str(staging),
+                            "--archive-dir", str(published), "--selection-path", str(root / "selection.json"),
+                            "--artifact-id", "456", "--action-outcome", "failure" if defect == "action-failure" else "success",
+                            "--transfer-started", values["transfer_started"], "--download-receipt-path", str(receipt_path),
+                            "--output-dir", str(records), "--create-simulator"])
+                    receipt = json.loads(receipt_path.read_text())
+                    self.assertLessEqual(metadata_read.call_count, 1)
+                    self.assertEqual(receipt["failure_reason"], reason)
+                    self.assertEqual(code, int(reason is not None))
+                    if reason:
+                        create.assert_not_called()
+                        if defect == "existing-publish":
+                            self.assertEqual(published.read_text(), "preserve")
+                        else:
+                            self.assertFalse(published.exists())
+                        summary = parse_summary((records / "summary.json").read_text())
+                        self.assertEqual(summary["archive_download"], receipt)
+                        self.assertEqual(summary["infrastructure"], [{"code": reason, "message": reason}])
+                        self.assertFalse(summary["population"]["compiled"])
+                        self.assertFalse(summary["population"]["observed"])
+                        self.assertNotIn("private", errors.getvalue())
+                    else:
+                        create.assert_called_once_with("ipad", "navigation")
+                        summary = archive_download_summary()
+                        summary["archive_download"] = receipt
+                        self.assertEqual(parse_summary(summary)["archive_download"], receipt)
+                        from types import SimpleNamespace
+                        from ci_summary import write_summary
+                        executed = root / "executed-records"
+                        def fixture(*unused, **options):
+                            ordinary = archive_download_summary()
+                            del ordinary["archive_download"]
+                            write_summary(ordinary, executed)
+                            return 0
+                        with patch.object(ui, "workspace_preflight"), \
+                                patch("strict_e2e_runner_support.prepare_simulator"), \
+                                patch("run_fixture_ui_tests.declared_tests", return_value=inputs["population"]["declared"]), \
+                                patch.object(ui, "selected_shard", return_value=inputs["population"]["declared"]), \
+                                patch("run_fixture_ui_tests.main", side_effect=fixture):
+                            self.assertEqual(ui.run_shard(SimpleNamespace(output_dir=executed, device="ipad", shard="navigation",
+                                destination="platform=iOS Simulator,id=fixture-device", manifest_revision=None,
+                                selection_path=None, archive_dir=None, xctestrun=self.plist, download_receipt_path=receipt_path,
+                                timeout_minutes=65, total_timeout_minutes=85, result_export_timeout_seconds=180,
+                                wait_factor=1, min_free_gib=80, max_parallel=2)), 0)
+                        self.assertEqual(parse_summary((executed / "summary.json").read_text())["archive_download"], receipt)
+                        # Later preflight failures must retain a successful download receipt too.
+                        args = type("Args", (), {"output_dir": records, "device": "ipad", "shard": "navigation",
+                            "manifest_revision": None, "selection_path": root / "selection.json",
+                            "download_receipt_path": receipt_path})()
+                        ui.failed_shard(args, ContractError("later preflight failure"))
+                        self.assertEqual(parse_summary((records / "summary.json").read_text())["archive_download"], receipt)
+
     def test_packed_reproduction_refuses_another_tested_tree_before_building(self):
         from types import SimpleNamespace
         selection = self.root / 'ui-selection.json'

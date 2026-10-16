@@ -253,17 +253,31 @@ job with an exact workflow/ref binding; other branch registry consumers are refu
 This branch evidence remains self-reported and diagnostic. Live admission and
 credential-bearing jobs retain their independent main-only boundary.
 
-The reader accepts an optional [archive download receipt](CI_SUMMARY.md#prepared-archive-download-receipt)
-on nightly UI summaries and retains its closed-set failure reason in reporting.
-This reader preparation does not enable a consumer gate or change download,
-simulator ordering, retries, budgets or producer output. A separate producer change
-must follow after the reader reaches main; until then incomplete downloads retain
-the existing preflight behavior.
+Each nightly UI consumer downloads to a fresh directory owned by its run/attempt.
+Before creating or preparing a simulator, a 30-second integrity gate makes one
+artifact metadata read, verifies the selected ID/run/attempt and identity, requires
+exactly `manifest.json` and `build.tar.gz`, and reuses the manifest and tar inventory
+validators. It reads through the gzip trailer before checking the compressed SHA256,
+then checks every declared member size and atomically renames the verified directory
+to the run step's archive path. No manifest or selection schema changes are needed.
+
+The [download receipt](CI_SUMMARY.md#prepared-archive-download-receipt) records the
+action outcome, bounded member sizes, digest/size matches, combined transfer/extract
+elapsed time (including step scheduling), gate seconds and available disk. Its
+closed-set failure reason reaches the job summary and issue table; raw action/API
+errors and paths are not copied into it. A gate refusal is infrastructure failure
+with no compiled or executed cases; those cases remain `NOT_RUN`. Missing diagnostics
+are null and render as `unavailable`. The gate adds no retry or budget change.
+
+Simulator creation now follows successful publication, so boot no longer overlaps
+archive downloads. The gate does not prove simulator readiness, app behavior or
+runner survival; later relocation, signing, extraction and UI checks remain required.
 
 The UI matrix waits for the strict matrix to settle, then runs with `max-parallel: 2`
 and `fail-fast: false`. Minimum waves round the actual shard count up after division
-by two: the current nine shards require five start-order waves, without
-reserved runner slots. Existing invocation, export and job timeouts remain bounded.
+by two: the current six shards on each of three devices require 18 jobs and nine
+start-order waves, without reserved runner slots. Existing invocation, export and
+job timeouts remain bounded.
 Each shard publishes timing and its bound summary even after a test failure when
 the sensitive scan succeeds. When the workflow has not been cancelled, the UI
 aggregate checks each shard verdict, compiled population and executed/default-plan
