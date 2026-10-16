@@ -61,10 +61,12 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func openPlaybackSettingsFromSlideshow(app: XCUIApplication) {
+        var diagnostic = ""
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.infrastructure(8))) {
-                self.slideshowSettingsButtonIsHittable(app: app)
-            })
+            app.waitForSlideshowSettingsSnapshot(
+                timeout: TestWait.seconds(.infrastructure(8)), pollSeconds: TestWait.seconds(.product(0.2)),
+                onTimeout: { diagnostic = " (\($0))" }),
+            "The slideshow Settings button must be ready before opening playback settings.\(diagnostic)")
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
 
         let playbackEntry: XCUIElement
@@ -102,7 +104,7 @@ extension PlaybackHistoryIOSUITests {
 
     func returnToSlideshowFromPlaybackSettings(app: XCUIApplication) {
         for _ in 0..<6 {
-            if slideshowSettingsButtonIsHittable(app: app) {
+            if slideshowSettingsButtonIsReady(app: app) {
                 return
             }
 
@@ -125,25 +127,20 @@ extension PlaybackHistoryIOSUITests {
             }
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
         }
+        var diagnostic = ""
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.infrastructure(6))) {
-                self.slideshowSettingsButtonIsHittable(app: app)
-            },
-            "Could not return from the playback settings page to the slideshow"
+            app.waitForSlideshowSettingsSnapshot(
+                timeout: TestWait.seconds(.infrastructure(6)), pollSeconds: TestWait.seconds(.product(0.2)),
+                onTimeout: { diagnostic = " (\($0))" }),
+            "Could not return from the playback settings page to the slideshow\(diagnostic)"
         )
     }
 
-    func slideshowSettingsButtonIsHittable(app: XCUIApplication) -> Bool {
-        guard
-            let observation = try? app.slideshowControlBarButtonObservation(
-                identifier: "slideshow.control.settings.button")
-        else { return false }
-        if observation.hasPlaybackMarker { app.tap() }
-        guard let button = observation.button, button.isEnabled, !button.frame.isEmpty,
-            observation.windowFrame.contains(button.frame)
-        else { return false }
-        return app.buttons["slideshow.control.settings.button"].wait(
-            for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))
+    func slideshowSettingsButtonIsReady(app: XCUIApplication) -> Bool {
+        var timing = SlideshowControlBarTiming()
+        let observation = timing.observe(app: app, identifier: "slideshow.control.settings.button")
+        if observation == nil { print("Slideshow return observation: \(timing.diagnostic)") }
+        return observation?.isReady == true
     }
 
     func waitForPlayPauseState(app: XCUIApplication, expected: String, timeout: TimeInterval) -> Bool {

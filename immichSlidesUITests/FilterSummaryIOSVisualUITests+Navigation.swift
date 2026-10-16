@@ -5,10 +5,12 @@ import XCTest
 extension FilterSummaryIOSVisualUITests {
     @MainActor
     func openSettingsFromSlideShow(app: XCUIApplication) {
+        var diagnostic = ""
         XCTAssertTrue(
             waitForSlideshowSettingsButton(
-                app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
-            "Playback page should show the settings button")
+                app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds,
+                onTimeout: { diagnostic = " (\($0))" }),
+            "Playback page should show the settings button\(diagnostic)")
 
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
 
@@ -437,66 +439,11 @@ extension FilterSummaryIOSVisualUITests {
     }
 
     func waitForSlideshowSettingsButton(
-        app: XCUIApplication, timeout: TimeInterval, onTimeout: ((String) -> Void)? = nil
+        app: XCUIApplication, timeout: TimeInterval, onTimeout: (String) -> Void
     ) -> Bool {
-        let button = app.buttons["slideshow.control.settings.button"]
-        let deadline = Date().addingTimeInterval(timeout)
-        var settingsExistence = "unknown"
-        var settingsEnabled = "unknown"
-        var settingsFrameNonEmpty = "unknown"
-        var settingsFrameContained = "unknown"
-        var settingsHittable = "notRead"
-        var snapshotErrorCount = 0
-        while Date() < deadline {
-            settingsHittable = "notRead"
-            do {
-                let observation = try app.slideshowControlBarButtonObservation(
-                    identifier: "slideshow.control.settings.button")
-                let snapshot = observation.button
-                let isEnabled = snapshot?.isEnabled ?? false
-                let hasFrame = snapshot.map { !$0.frame.isEmpty } ?? false
-                let isInsideWindow = snapshot.map { observation.windowFrame.contains($0.frame) } ?? false
-                settingsExistence = String(snapshot != nil)
-                settingsEnabled = snapshot.map { String($0.isEnabled) } ?? "unknown"
-                settingsFrameNonEmpty = snapshot.map { String(!$0.frame.isEmpty) } ?? "unknown"
-                settingsFrameContained =
-                    snapshot.map { String(observation.windowFrame.contains($0.frame)) } ?? "unknown"
-                // Hidden or outgoing controls can make the live hittability query fail inside XCTest.
-                if isEnabled, hasFrame, isInsideWindow, Date() < deadline {
-                    if observation.hasPlaybackMarker { app.tap() }
-                    guard Date() < deadline else { break }
-                    let isHittable = button.wait(
-                        for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))
-                    settingsHittable = String(isHittable)
-                    if isHittable, Date() < deadline { return true }
-                }
-            } catch {
-                snapshotErrorCount += 1
-                settingsExistence = "unknown"
-                settingsEnabled = "unknown"
-                settingsFrameNonEmpty = "unknown"
-                settingsFrameContained = "unknown"
-            }
-            guard Date() < deadline else { break }
-            app.tap()
-            RunLoop.current.run(
-                until: min(
-                    deadline, Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds)))
-        }
-        if let onTimeout {
-            // Read the marker only for timeout diagnostics, without restarting the wait or checking success again.
-            var didReadPlaybackMarker = true
-            let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in
-                didReadPlaybackMarker = false
-                snapshotErrorCount += 1
-            })
-            let playbackMarkerExists =
-                didReadPlaybackMarker ? String(snapshots["slideshow.currentAssetId.flag"] != nil) : "unknown"
-            onTimeout(
-                "playbackMarker.exists=\(playbackMarkerExists), settings.exists=\(settingsExistence), enabled=\(settingsEnabled), frameNonEmpty=\(settingsFrameNonEmpty), hittable=\(settingsHittable), snapshotErrors=\(snapshotErrorCount), frameInsideWindow=\(settingsFrameContained)"
-            )
-        }
-        return false
+        app.waitForSlideshowSettingsSnapshot(
+            timeout: timeout, pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
+            onTimeout: onTimeout)
     }
 
     func waitForElementToBecomeHittable(
@@ -647,9 +594,12 @@ extension FilterSummaryIOSVisualUITests {
             modeContinueButton.isEnabled, "After choosing random playback, the continue button should be enabled")
         tapElement(modeContinueButton)
 
+        var diagnostic = ""
         XCTAssertTrue(
-            waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.infrastructure(25))),
-            "After entering the playback page, the settings button should be visible"
+            waitForSlideshowSettingsButton(
+                app: app, timeout: TestWait.seconds(.infrastructure(25)),
+                onTimeout: { diagnostic = " (\($0))" }),
+            "After entering the playback page, the settings button should be visible\(diagnostic)"
         )
     }
 

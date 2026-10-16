@@ -164,27 +164,42 @@ It matches the same receiver passed as a complete argument (optionally labeled o
 when the true branch starts with a call, including calls nested inside it; passing another element,
 a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
-For functional control readiness, use one fallible window snapshot for enabled state and a
-non-empty button frame fully contained in that window,
-then the SDK's Bool-returning `wait(for: \.isHittable, toEqual: true, timeout: TestWait.seconds(.product(0)))`
-as a single live hittability read within the original deadline. Apple documents that
-a missing element is not hittable. Use this wait only for `isHittable`; read every
-other property from a snapshot. The wait wrapper does not suppress failures from
-arbitrary property queries. Return the observation without another live read or an
-existence-only success on timeout. The current-asset poll retains its successful
+For iOS slideshow Settings readiness, use one fallible window snapshot for enabled
+state and a non-empty button frame fully contained in that window. This is a snapshot
+readiness gate, not a claim of live hittability: the shared tap verifies the resulting
+page or state. Do not query the transient button again to read hittability or tap it.
+Return false at the deadline without a final condition call. The current-asset poll retains its successful
 snapshot value and records snapshot failures separately from an absent probe; timeout
 attachments include the failure count and last snapshot error. Its failure-message
 suffix contains only the count and numeric error code. Playback-entry timeout text
-retains the last Settings poll and a timeout-only playback-marker snapshot; unknown
-attributes stay unknown when a snapshot fails. Diagnostic reads never restart the
+retains the last successful Settings poll and its playback-marker observation. A failed
+snapshot leaves that observation intact and sets `lastSnapshotSucceeded=false`;
+attributes are unknown only until a snapshot first succeeds. Diagnostic reads never restart the
 deadline or turn a timeout into success.
-The iOS control-bar tap helper first reveals the bar on every attempt to reset its
-in-place opacity fade timer, then applies the geometry gate and Bool hittability wait
-before a real element tap. Its eight-second control-appearance budget starts after the
-first reveal and never restarts. Enabled state is diagnostic only for taps: a disabled
-Previous is tapped without waiting for it to become enabled, so downstream assertions
-still judge navigation. Settings readiness polls reveal immediately before their live
-Bool read when the window snapshot contains the playback marker. Playback History
+The iOS control-bar tap helper reveals before each tap attempt, then takes a window
+snapshot and performs a real coordinate tap at that frame's centre, relative to the
+stable window. The playback-area tap only shows the bar and restarts auto-hide; it
+does not hide an already visible bar. The existing eight-second appearance budget
+starts after the first reveal and never restarts. Next/Previous/Play-Pause receive
+one real tap and return immediately; their callers retain their scene-change,
+Play/Pause and EXIF retry budgets. The shared helper does not compare their values.
+Only Settings verifies an outcome: a Settings entry or the playback toggle. Before
+another Settings attempt, its snapshot must still show playback and contain neither
+`global.back.button` nor any `settings.*` identifier. Observing either navigation
+signal permanently suppresses further taps while the helper waits for its outcome.
+Each retry reveals and takes a fresh snapshot. A late Settings outcome never passes.
+Wait-only Settings callers refresh auto-hide once immediately before success and
+check the original deadline again afterward. A hidden streak permits one initial
+reveal and one further reveal if it lasts longer than one second; polls do not
+reveal on every visible iteration. Settings readiness failures are classified from
+the caller's assertion prefix, including the `hidden_controls` class; the waiter's
+text stays in the private suffix. Shared tap prefixes distinguish no tap and no
+Settings outcome. Private suffixes include the last sanitized observation,
+error count/code, iteration/tap counts, boolean
+Settings outcome/navigation fields and aggregate snapshot/reveal/tap/verify durations.
+Verify time includes its snapshot time; no extra diagnostic snapshot runs after
+timeout. Playback History Settings uses the same bounded snapshot waiter, without
+the generic waiter's final condition call. Playback History
 Play/Pause polls, including manual lifecycle pause/resume, read the value from one
 fallible application snapshot per poll and reveal an absent control within the original deadline.
 
