@@ -589,9 +589,11 @@ credential scanning, publication checks and bundle quarantine remain in force.
 #### Reviewed prefix table
 
 The following additions come only from public Swift assertions in the linked source files.
-Identical text in other files has also been checked and establishes the same phase.
+Identical text in other files has also been checked for phase consistency.
 Each row fixes both enum values before any suffix is read. Shared prefixes receive a
-specific phase only when their public call sites establish the same phase. The shared
+specific phase only when their public call sites establish the same phase.
+`Playback page should show the settings button` also serves tvOS control-bar and
+history checks, so it retains an `unknown` phase and `hidden_controls` class. The shared
 EXIF helper also runs in the pause-window flow, so its two prefixes retain an `unknown`
 phase and only identify the class. The shared driver's EXIF toggle also runs in image
 failure recovery, so that prefix retains an `unknown` phase and `control_state` class.
@@ -716,7 +718,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The slideshow control never became tappable before the deadline.` | `control_action` | `hidden_controls` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift), shared playback control-bar tap callers |
 | `The slideshow Settings tap had no observed outcome before the deadline.` | `settings_navigation` | `navigation` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift) |
 | `The slideshow Settings button must be ready before opening playback settings.` | `settings_navigation` | `hidden_controls` | [PlaybackHistoryIOSUITests+Support.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift) |
-| `Playback page should show the settings button` | `settings_navigation` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Navigation.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Navigation.swift) |
+| `Playback page should show the settings button` | `unknown` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Navigation.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Navigation.swift), [FilterSummaryTVOSVisualUITests+Playback.swift](../immichSlidesUITests/FilterSummaryTVOSVisualUITests+Playback.swift) |
 | `After entering the playback page, the settings button should be visible` | `playback_entry` | `navigation` | [FilterSummaryIOSVisualUITests+Navigation.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Navigation.swift) |
 | `Before each screenshot, the playback control bar should wake up reliably` | `visible_scene_capture` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Exif.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Exif.swift) |
 | `The control bar may have auto-hidden while waiting for the sampling overlay; it should wake up again before tapping next` | `visible_scene_capture` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Exif.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Exif.swift) |

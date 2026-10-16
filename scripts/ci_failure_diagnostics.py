@@ -335,7 +335,7 @@ PREFIX_RULES = (
     ("The slideshow control never became tappable before the deadline.", "control_action", "hidden_controls"),
     ("The slideshow Settings tap had no observed outcome before the deadline.", "settings_navigation", "navigation"),
     ("The slideshow Settings button must be ready before opening playback settings.", "settings_navigation", "hidden_controls"),
-    ("Playback page should show the settings button", "settings_navigation", "hidden_controls"),
+    ("Playback page should show the settings button", "unknown", "hidden_controls"),
     ("After entering the playback page, the settings button should be visible", "playback_entry", "navigation"),
     ("Before each screenshot, the playback control bar should wake up reliably", "visible_scene_capture", "hidden_controls"),
     ("The control bar may have auto-hidden while waiting for the sampling overlay; it should wake up again before tapping next", "visible_scene_capture", "hidden_controls"),
