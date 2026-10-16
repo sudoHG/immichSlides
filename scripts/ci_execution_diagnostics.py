@@ -61,10 +61,10 @@ def report_truncation(reason):
         return
     def report():
         try:
-            print(TRUNCATION_PREFIX + reason, file=sys.stderr, flush=True)
+            os.write(2, (TRUNCATION_PREFIX + reason + "\n").encode("ascii"))
         except (OSError, ValueError):
             pass
-    # A blocked stderr must not extend the job or acquire another budget.
+    # Bypass buffered stderr's shutdown lock; a full pipe blocks only this daemon.
     try:
         threading.Thread(target=report, daemon=True).start()
     except (OSError, RuntimeError):

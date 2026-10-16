@@ -1245,7 +1245,7 @@ class StrictCITracerTests(unittest.TestCase):
             self.assertEqual([], list(output.iterdir()))
 
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
-                                   receipt_suite="tvos-server-switch-display", nightly=False):
+                                   receipt_suite="tvos-server-switch-display", nightly=False, child_load_timeout=False):
         import run_strict_ci_tracer as tracer
         case = {"platform": "tvos", "device": "tv", "configuration": "Debug",
                 "suite": "tvos-server-switch-display", "scenario": "normal", "fixture": "a"}
@@ -1265,6 +1265,7 @@ class StrictCITracerTests(unittest.TestCase):
             identity = {"schema_version": 1, "event": "schedule", "repository": "sudoHG/immichSlides",
                         "ref": "refs/heads/main", "commit_sha": "0" * 40, "tree_sha": "0" * 40}
 
+        real_runner = tracer.run_runner
         def runner(command, *_args, **_kwargs):
             derived = Path(command[command.index("--derived-data-path") + 1])
             evidence = Path(command[command.index("--evidence-dir") + 1])
@@ -1272,6 +1273,26 @@ class StrictCITracerTests(unittest.TestCase):
                 derived.mkdir(parents=True)
                 (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
                 return 0
+            if child_load_timeout:
+                receipt = command[command.index("--diagnostics-receipt") + 1]
+                child = '''
+import sys
+from pathlib import Path
+from unittest import mock
+import ci_execution_diagnostics as diagnostics
+path = Path(sys.argv[1])
+before = path.read_bytes()
+with mock.patch.object(diagnostics.threading.Thread, "start"), \\
+        mock.patch.object(diagnostics.threading, "Event", return_value=mock.Mock(wait=mock.Mock(return_value=False))), \\
+        mock.patch.object(diagnostics, "report_truncation", side_effect=lambda reason: print(
+            diagnostics.TRUNCATION_PREFIX + reason, file=sys.stderr, flush=True)):
+    with diagnostics.session(path, reuse=True) as recorder:
+        assert recorder.truncated
+assert path.read_bytes() == before
+raise SystemExit(65)
+'''
+                self.assertEqual(65, real_runner([sys.executable, "-B", "-c", child, receipt],
+                    SCRIPT_DIR, directory / "child.log", **_kwargs))
             evidence.mkdir(parents=True)
             (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": []}))
             if receipt_suite is not None:
@@ -1327,6 +1348,25 @@ class StrictCITracerTests(unittest.TestCase):
                         self.assertNotIn(value, path.read_text())
                 for value in private_values:
                     self.assertNotIn(value, json.dumps(aggregate))
+
+    def test_tracer_checkpoints_retain_a_child_load_timeout_that_persisted_nothing(self):
+        import run_strict_ci_tracer as tracer
+        checkpoints = []
+        write_summary = tracer.write_summary
+        def capture(summary, records):
+            checkpoints.append(json.loads(json.dumps(summary)))
+            return write_summary(summary, records)
+        with tempfile.TemporaryDirectory() as raw, mock.patch.object(tracer, "write_summary", side_effect=capture):
+            code, records, trace, summary = self._produce_validator_records(Path(raw), None,
+                receipt_suite=None, runner_exit=65, child_load_timeout=True)
+            self.assertEqual((1, "failed", 65), (code, summary["status"], trace["warm"][0]["exit_code"]))
+            self.assertEqual("failed", summary["population"]["observed"][0]["outcome"])
+            self.assertTrue(summary.get("bounded_diagnostics", {}).get("truncated"))
+            ledger = json.loads((records.parent / "bounded-diagnostics.json").read_text())
+            self.assertTrue(ledger["receipt"]["truncated"])
+            after_child = [entry for entry in checkpoints if entry["population"]["observed"][0]["outcome"] == "failed"]
+            self.assertGreater(len(after_child), 1)
+            self.assertTrue(all(entry.get("bounded_diagnostics", {}).get("truncated") for entry in after_child))
 
     def test_real_validator_failure_reaches_nightly_aggregation_and_report(self):
         from html import unescape
@@ -1641,9 +1681,12 @@ class StrictCITracerTests(unittest.TestCase):
         done = mock.Mock(wait=mock.Mock(side_effect=stalled))
         with mock.patch.object(diagnostics.threading, "Event", return_value=done), \
                 mock.patch.object(diagnostics.threading.Thread, "start") as start, \
+                mock.patch.object(diagnostics, "_TRUNCATION_REPORTED", False), \
+                mock.patch.object(diagnostics, "report_truncation") as report, \
                 mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
             self.assertIsNone(recorder.ledger_io(lambda: True))
             done.wait.assert_called_once_with(0.015)
+            report.assert_called_once_with("io-timeout")
             start.reset_mock()
             self.assertIsNone(recorder.ledger_io(lambda: True))
             start.assert_not_called()
@@ -1676,18 +1719,59 @@ class StrictCITracerTests(unittest.TestCase):
         for reason in sorted(reasons):
             with self.subTest(reason=reason), mock.patch.object(diagnostics, "_TRUNCATION_REPORTED", False), \
                     mock.patch.object(diagnostics.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target)), \
-                    mock.patch.object(diagnostics.sys, "stderr", io.StringIO()) as stderr:
+                    mock.patch.object(diagnostics.os, "write") as write:
                 first, second = diagnostics.Recorder(), diagnostics.Recorder()
                 diagnostics.report_truncation("private-input /private/path")
-                self.assertEqual("", stderr.getvalue())
+                write.assert_not_called()
                 first.truncate("private-input /private/path")
-                self.assertEqual("", stderr.getvalue())
+                write.assert_not_called()
                 first.truncate(reason)
                 second.truncate("inherited")
                 first.truncate(reason)
-                self.assertEqual("bounded-diagnostics truncated: " + reason + "\n", stderr.getvalue())
+                write.assert_called_once_with(2, ("bounded-diagnostics truncated: " + reason + "\n").encode("ascii"))
                 self.assertTrue(first.truncated)
                 self.assertTrue(second.truncated)
+
+    def test_blocked_truncation_stderr_preserves_the_child_exit_code(self):
+        import ci_execution_diagnostics as diagnostics
+        child = '''
+import importlib.util
+import os
+import sys
+import threading
+spec = importlib.util.spec_from_file_location("diagnostics", sys.argv[1])
+diagnostics = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(diagnostics)
+os.set_blocking(2, False)
+try:
+    while True:
+        os.write(2, b"x" * 4096)
+except BlockingIOError:
+    pass
+os.set_blocking(2, True)
+started = threading.Event()
+original_thread = threading.Thread
+def thread(*, target, daemon):
+    def work():
+        started.set()
+        target()
+    return original_thread(target=work, daemon=daemon)
+diagnostics.threading.Thread = thread
+# The worker keeps the GIL from its signal until the full pipe blocks its write.
+sys.setswitchinterval(60)
+diagnostics.report_truncation("io-timeout")
+assert started.wait(2)
+raise SystemExit(65)
+'''
+        process = subprocess.Popen([sys.executable, "-B", "-c", child, str(Path(diagnostics.__file__).resolve())],
+                                   cwd=SCRIPT_DIR, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            self.assertEqual(65, process.wait(timeout=10))
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            process.stderr.close()
 
     def test_runner_forwards_only_one_closed_truncation_line_from_its_child_log(self):
         import run_strict_ci_tracer as tracer
@@ -1701,14 +1785,13 @@ class StrictCITracerTests(unittest.TestCase):
                     kwargs["stdout"].write(rejected + "\n" + line + "\nbounded-diagnostics truncated: event-cap\n")
                     kwargs["stdout"].flush()
                     return SimpleNamespace(pid=42, wait=lambda **kwargs: 65)
-                stderr = io.StringIO()
                 with mock.patch.object(tracer.subprocess, "Popen", side_effect=spawn), \
                         mock.patch.object(tracer, "stop_group"), \
                         mock.patch.object(tracer, "group_has_live_members", return_value=False), \
                         mock.patch.object(diagnostics.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target)), \
-                        mock.patch.object(tracer.sys, "stderr", stderr):
+                        mock.patch.object(diagnostics.os, "write") as write:
                     self.assertEqual(65, tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2))
-                self.assertEqual(line + "\n", stderr.getvalue())
+                write.assert_called_once_with(2, (line + "\n").encode("ascii"))
 
     def test_failed_child_reservation_preserves_the_previous_ledger(self):
         import ci_execution_diagnostics as diagnostics

@@ -122,7 +122,7 @@ class RunnerGroupCleanupError(RuntimeError):
     """Build paths must be retained if runner descendants cannot be stopped."""
 
 
-def run_runner(command, repo_root, log_path, *, timeout_seconds):
+def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None):
     with log_path.open("a+") as log:
         offset = log.tell()
         process = subprocess.Popen(command, cwd=repo_root, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -143,6 +143,8 @@ def run_runner(command, repo_root, log_path, *, timeout_seconds):
             truncation = next((line for line in lines if line.startswith(TRUNCATION_PREFIX)
                                and line.removeprefix(TRUNCATION_PREFIX) in TRUNCATION_REASONS), None)
             if truncation is not None:
+                if truncation_seen is not None:
+                    truncation_seen.set()
                 report_truncation(truncation.removeprefix(TRUNCATION_PREFIX))
             errors = [line for line in lines if line.startswith(("CommandError: ", "OfflineCommandError: ", "InfrastructureTimeout: "))]
             if errors:
@@ -238,6 +240,7 @@ def main(argv=None):
         return 1
     free_samples = [shutil.disk_usage("/System/Volumes/Data").free]
     stopped = threading.Event()
+    child_truncated = threading.Event()
 
     def sample_disk():
         while not stopped.wait(1):
@@ -255,6 +258,8 @@ def main(argv=None):
 
     def checkpoint():
         diagnostics.load(diagnostics_path)
+        if child_truncated.is_set():
+            diagnostics.truncate("inherited")
         diagnostics.save(diagnostics_path)
         free_samples.append(shutil.disk_usage("/System/Volumes/Data").free)
         samples = list(free_samples)
@@ -284,6 +289,7 @@ def main(argv=None):
         try:
             invocations = len(FILTER_PERSON_SESSIONS) if warm and case["suite"] == "filter-person" else 1
             phase["exit_code"] = run_runner(command, ROOT, output / "runner.log",
+                truncation_seen=child_truncated,
                 timeout_seconds=((args.warm_timeout_seconds + SIMULATOR_READINESS_TIMEOUT_SECONDS) * invocations
                                  if warm else args.cold_timeout_seconds) + 240)
             return phase
