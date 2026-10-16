@@ -191,9 +191,11 @@ Each retry reveals and takes a fresh snapshot. A late Settings outcome never pas
 Wait-only Settings callers refresh auto-hide once immediately before success and
 check the original deadline again afterward. A hidden streak permits one initial
 reveal and one further reveal if it lasts longer than one second; polls do not
-reveal on every visible iteration. Fixed timeout prefixes distinguish readiness,
-no tap and no Settings outcome in the public failure mapper. Private suffixes include
-the last sanitized observation, error count/code, iteration/tap counts, boolean
+reveal on every visible iteration. Settings readiness failures are classified from
+the caller's assertion prefix, including the `hidden_controls` class; the waiter's
+text stays in the private suffix. Shared tap prefixes distinguish no tap and no
+Settings outcome. Private suffixes include the last sanitized observation,
+error count/code, iteration/tap counts, boolean
 Settings outcome/navigation fields and aggregate snapshot/reveal/tap/verify durations.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
 timeout. Playback History Settings uses the same bounded snapshot waiter, without

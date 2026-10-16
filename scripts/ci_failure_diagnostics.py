@@ -334,7 +334,6 @@ PREFIX_RULES = (
     ("After starting playback, the playback page should open and show the control bar", "playback_entry", "navigation"),
     ("The slideshow control never became tappable before the deadline.", "control_action", "hidden_controls"),
     ("The slideshow Settings tap had no observed outcome before the deadline.", "settings_navigation", "navigation"),
-    ("The slideshow Settings waiter did not become ready before the deadline.", "settings_navigation", "hidden_controls"),
     ("The slideshow Settings button must be ready before opening playback settings.", "settings_navigation", "hidden_controls"),
     ("Playback page should show the settings button", "settings_navigation", "hidden_controls"),
     ("After entering the playback page, the settings button should be visible", "playback_entry", "navigation"),

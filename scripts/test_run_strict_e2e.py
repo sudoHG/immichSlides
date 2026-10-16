@@ -768,7 +768,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/FilterSummaryIOSVisualUITests+Launch.swift", "After starting playback, the playback page should open and show the control bar", "playback_entry", "navigation"),
             ("immichSlidesUITests/UITestSupport.swift", "The slideshow control never became tappable before the deadline.", "control_action", "hidden_controls"),
             ("immichSlidesUITests/UITestSupport.swift", "The slideshow Settings tap had no observed outcome before the deadline.", "settings_navigation", "navigation"),
-            ("immichSlidesUITests/UITestSupport.swift", "The slideshow Settings waiter did not become ready before the deadline.", "settings_navigation", "hidden_controls"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "The slideshow Settings button must be ready before opening playback settings.", "settings_navigation", "hidden_controls"),
             ("immichSlidesUITests/FilterSummaryIOSVisualUITests+Navigation.swift", "Playback page should show the settings button", "settings_navigation", "hidden_controls"),
             ("immichSlidesUITests/FilterSummaryIOSVisualUITests+Navigation.swift", "After entering the playback page, the settings button should be visible", "playback_entry", "navigation"),

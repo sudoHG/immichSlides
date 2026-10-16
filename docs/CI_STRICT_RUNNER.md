@@ -597,6 +597,9 @@ phase and only identify the class. The shared driver's EXIF toggle also runs in 
 failure recovery, so that prefix retains an `unknown` phase and `control_state` class.
 The shared tvOS album/person helpers and paused-capture helper also run in the playback
 settings editor and server-switch flows, so their prefixes retain an `unknown` phase.
+The shared slideshow "never became tappable" prefix uses `control_action`: every
+caller acts on the playback control bar during playback, including Settings opening,
+retained-history navigation, Play/Pause, EXIF advance and pause-window A2 search.
 The existing lifecycle/XCTest rows remain unchanged.
 
 New enum meanings and why the previous vocabulary cannot express them:
@@ -710,6 +713,15 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The scene from a manual previous while paused must stay still at p=0` | `paused_hold` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
 | `Play must make the current still scene start moving from p=0 immediately` | `control_action` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
 | `After starting playback, the playback page should open and show the control bar` | `playback_entry` | `navigation` | [FilterSummaryIOSVisualUITests+Launch.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Launch.swift) |
+| `The slideshow control never became tappable before the deadline.` | `control_action` | `hidden_controls` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift), shared playback control-bar tap callers |
+| `The slideshow Settings tap had no observed outcome before the deadline.` | `settings_navigation` | `navigation` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift) |
+| `The slideshow Settings button must be ready before opening playback settings.` | `settings_navigation` | `hidden_controls` | [PlaybackHistoryIOSUITests+Support.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift) |
+| `Playback page should show the settings button` | `settings_navigation` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Navigation.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Navigation.swift) |
+| `After entering the playback page, the settings button should be visible` | `playback_entry` | `navigation` | [FilterSummaryIOSVisualUITests+Navigation.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Navigation.swift) |
+| `Before each screenshot, the playback control bar should wake up reliably` | `visible_scene_capture` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Exif.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Exif.swift) |
+| `The control bar may have auto-hidden while waiting for the sampling overlay; it should wake up again before tapping next` | `visible_scene_capture` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Exif.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Exif.swift) |
+| `Before retrying next, the playback control bar should wake up again` | `control_action` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Exif.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Exif.swift) |
+| `Could not return from the playback settings page to the slideshow` | `settings_navigation` | `navigation` | [PlaybackHistoryIOSUITests+Support.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift) |
 
 Dynamic leading step names, interpolated album/scene identifiers, bare assertions and
 generic messages whose phase is ambiguous remain `unknown`. In particular, the recovery
