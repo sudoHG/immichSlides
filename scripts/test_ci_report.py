@@ -40,6 +40,7 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 class ReporterTests(unittest.TestCase):
     def test_early_identity_receipts_and_runner_annotations_only_explain_current_missing_cases(self):
         from ci_nightly import aggregate_nightly, case_identity, shards
+        from ci_publish import json_member
         from run_strict_e2e import FILTER_PERSON_SESSIONS, resolve_suite_selector
         from strict_e2e_p2_contract import P2_CASES
         matrix_path = Path(__file__).with_name("nightly-matrix.json")
@@ -59,8 +60,6 @@ class ReporterTests(unittest.TestCase):
                 "source": {**source, "approval_based": False}, "hashes": hashes, "shards": planned}
         summaries, members, intervals = [], {}, []
         for shard in planned:
-            if shard == target:
-                continue
             declared = [case_identity(case) for case in shard["cases"]]
             summary = valid_summary()
             summary.update(identity=identity, source=source, hashes=hashes,
@@ -69,7 +68,6 @@ class ReporterTests(unittest.TestCase):
                         for case in declared]
             summary["population"].update(declared=declared, compiled=declared, observed=observed)
             summary["status"] = "unverified" if any(item["outcome"] == "needs-human-review" for item in observed) else "passed"
-            summaries.append(summary)
             warm = []
             for case in declared:
                 suite = case["dimensions"]["suite"]
@@ -78,10 +76,33 @@ class ReporterTests(unittest.TestCase):
                 warm.append({"identity": case, "exit_code": 0, "build_operations": 0, "products_unchanged": True,
                     "log_present": True, "official_methods": [{"identifier": item.split("/", 1)[1], "result": "Passed"} for item in selected],
                     "official_summary": {"totalTestCount": len(selected), "passedTests": len(selected), "failedTests": 0, "skippedTests": 0}})
+            if shard == target:
+                target_summary, target_trace = summary, {"cold": [], "warm": warm}
+                continue
+            summaries.append(summary)
             artifact = "nightly-strict-" + shard["id"] + "-10-1"
             members[(artifact, "summary.json")] = summary
             members[(artifact, "trace.json")] = {"cold": [], "warm": warm}
             intervals.append({"shard": shard["id"]})
+        failed_summary = next(item for item in summaries if item["population"]["declared"][0]["dimensions"]["suite"]
+                              not in {*P2_CASES, "filter-vision"})
+        failed_case = failed_summary["population"]["declared"][0]
+        failed_summary["population"]["observed"][0] = observation(failed_case, "failed", 1, exit_code=65)
+        failed_summary["status"] = "failed"
+        failed_phase = members[("nightly-strict-" + failed_summary["run"]["shard"] + "-10-1", "trace.json")]["warm"][0]
+        failed_phase["official_methods"][0]["result"] = "Failed"
+        failed_phase["official_summary"]["passedTests"] -= 1
+        failed_phase["official_summary"]["failedTests"] += 1
+        failed_method = test_identity("strict", failed_phase["official_methods"][0]["identifier"], **failed_case["dimensions"])
+        baseline_keys = {ci_report.identity_key(item) for summary in summaries for item in summary["population"]["declared"]
+                         if item["dimensions"]["suite"] != "filter-vision"}
+        baseline_keys.update(ci_report.identity_key(test_identity("strict", method["identifier"], **phase["identity"]["dimensions"]))
+            for (name, member), trace in members.items() if member == "trace.json" for phase in trace["warm"]
+            if phase["identity"]["dimensions"]["suite"] != "filter-vision" for method in phase["official_methods"])
+        baseline_keys.discard(ci_report.identity_key(failed_case))
+        stopped_missing = [{"identity": test_identity("strict", method["identifier"], **phase["identity"]["dimensions"]),
+                            "reason": "official-method-not-observed"}
+                           for phase in target_trace["warm"] for method in sorted(phase["official_methods"], key=lambda item: item["identifier"])]
         aggregate = aggregate_nightly([case_identity(case) for case in json.loads(matrix)["cases"]], summaries,
                                       live_in_scope=False, informational=["filter-vision"])
         aggregate.update(identity=identity, hashes=hashes, run=plan["run"], source=plan["source"],
@@ -93,8 +114,9 @@ class ReporterTests(unittest.TestCase):
                    "reason": "identity-collection-failed", "declared": cases}
         receipt_name = "nightly-identity-" + target["id"] + "-10-1"
         variants = {"identity": "identity-collection-failed", "runner": "hosted-runner-disconnected",
-            **{name: None for name in ("receipt-run", "receipt-attempt", "receipt-job", "receipt-shard", "receipt-version",
+            **{name: None for name in ("receipt-run", "receipt-attempt", "receipt-attempt-bool", "receipt-job", "receipt-shard", "receipt-version",
                 "receipt-phase", "receipt-reason", "receipt-cases", "receipt-extra", "receipt-expired", "receipt-duplicate", "receipt-executed",
+                "matrix-empty", "summary-not-run", "receipt-summary-not-run", "receipt-summary-failed", "receipt-record-present", "receipt-corrupt",
                 "previous-attempt", "plan-run", "plan-hashes", "annotation-level", "annotation-message",
                 "plan-identity", "plan-source", "plan-version", "plan-shards", "plan-tree", "matrix-source", "plan-expired", "plan-duplicate", "plan-absent",
                 "job-attempt", "job-status", "job-conclusion", "job-name", "check-url", "annotations-unavailable")},
@@ -115,11 +137,30 @@ class ReporterTests(unittest.TestCase):
                         supplied["run"]["id"] = "11"
                     if variant == "receipt-attempt":
                         supplied["run"]["attempt"] = 2
+                    if variant == "receipt-attempt-bool":
+                        supplied["run"]["attempt"] = True
                 if variant == "receipt-executed":
                     supplied["shard"] = planned[0]["id"]
                     supplied["declared"] = [case_identity(case) for case in planned[0]["cases"]]
                     active_receipt_name = "nightly-identity-" + planned[0]["id"] + "-10-1"
                 saved[(active_receipt_name, "identity-failure.json")] = supplied
+                if variant == "matrix-empty":
+                    saved[("nightly-aggregate-10-1", "nightly.json")]["matrix"] = {}
+                stopped = variant in {"summary-not-run", "receipt-summary-not-run", "receipt-summary-failed"}
+                if stopped or variant == "receipt-record-present":
+                    summary = copy.deepcopy(target_summary)
+                    summary["population"].update(compiled=[], observed=[observation(case, "not-run", 0,
+                        exit_code=None, reason="strict-tracer-failed") for case in cases])
+                    summary["status"] = "failed"
+                    if variant == "receipt-summary-failed":
+                        for item in summary["population"]["observed"]:
+                            item["outcome"] = "failed"
+                    saved[("nightly-strict-" + target["id"] + "-10-1", "summary.json")] = summary
+                    saved[("nightly-strict-" + target["id"] + "-10-1", "trace.json")] = {"cold": [], "warm": []}
+                    if stopped:
+                        raw = saved[("nightly-aggregate-10-1", "nightly.json")]
+                        raw["capacity"]["shard_intervals"].append({"shard": target["id"]})
+                        raw["observed"].extend(summary["population"]["observed"])
                 if variant == "plan-run":
                     saved[("nightly-plan-10-1", "plan.json")]["run"]["attempt"] = 2
                 if variant == "plan-hashes":
@@ -180,6 +221,8 @@ class ReporterTests(unittest.TestCase):
                                 from ci_publish import GitHubRequestError
                                 raise GitHubRequestError("private-transient-error", http_status=503, retry_delay=1)
                             return annotations
+                        if variant == "receipt-corrupt" and path.endswith("/zip"):
+                            return b"not a ZIP archive"
                         raise AssertionError(path)
                 api = API()
                 if use_receipt:
@@ -188,32 +231,53 @@ class ReporterTests(unittest.TestCase):
                     if command[1] == "rev-parse":
                         return (b"d" if variant == "plan-tree" else b"b") * 40 + b"\n"
                     return matrix + (b" " if variant == "matrix-source" else b"")
-                with patch("ci_publish.json_member", side_effect=lambda api, artifact, member: saved[(artifact["name"], member)]), \
+                def read_member(api, artifact, member):
+                    if artifact["expired"] or variant == "receipt-corrupt" and member == "identity-failure.json":
+                        return json_member(api, artifact, member)
+                    return saved[(artifact["name"], member)]
+                with patch("ci_publish.json_member", side_effect=read_member), \
                         patch("ci_report.on_main", return_value=True), patch("subprocess.check_output", side_effect=git_output), \
                         patch("ci_publish.GitHub._request", side_effect=api.respond), \
                         patch("ci_publish.time.sleep"):
                     report = read_run(api, run, {})
                 self.assertEqual("failed", report["status"])
-                self.assertEqual(6, len(report["diagnostics"]["missing"]))
-                self.assertEqual(129, report["diagnostics"]["counts"]["executed_cases"])
-                self.assertCountEqual(cases, [item["identity"] for item in report["diagnostics"]["missing"]])
+                self.assertIn(failed_method, [item["identity"] for item in report["observed"] if item["outcome"] == "failed"])
+                self.assertEqual(0 if variant == "matrix-empty" else 129, report["diagnostics"]["counts"]["executed_cases"])
+                if variant == "matrix-empty":
+                    self.assertEqual([], report["diagnostics"]["missing"])
+                elif stopped:
+                    expected = stopped_missing + ([{"identity": case, "reason": "strict-case-infrastructure-or-unverified-failure"}
+                        for case in cases] if variant == "receipt-summary-failed" else [])
+                    self.assertCountEqual(expected, report["diagnostics"]["missing"])
+                    self.assertEqual(len(baseline_keys | {ci_report.identity_key(item["identity"]) for item in expected}),
+                                     report["diagnostics"]["counts"]["declared"])
+                else:
+                    self.assertEqual(6, len(report["diagnostics"]["missing"]))
+                    self.assertCountEqual(cases, [item["identity"] for item in report["diagnostics"]["missing"]])
                 self.assertTrue(report["observed"], "other shards' verified results must survive")
                 self.assertTrue(all(item["outcome"] != "not-run" for item in report["observed"]))
-                self.assertTrue(all(item["reason"] == (reason or "missing or invalid shard evidence")
-                                    for item in report["diagnostics"]["missing"]))
+                if not stopped:
+                    self.assertTrue(all(item["reason"] == (reason or "missing or invalid shard evidence")
+                                        for item in report["diagnostics"]["missing"]))
                 if reason:
                     self.assertIn(reason, report["diagnostics"]["infrastructure"])
                     state = issue_decision(None, NIGHTLY_INFRASTRUCTURE, [report], registry_referenced=False)["state"]
-                    self.assertIn(reason, ci_report.issue_body(None, state, api.repository))
+                    visible = ci_report.issue_body(None, state, api.repository).split(ci_report.MARKER)[0]
+                    self.assertIn("| UTC night | Run | Outcome | Archive gate reason | Early infrastructure reason |", visible)
+                    self.assertIn("| --- | --- | --- | --- | --- |", visible)
+                    self.assertIn("| failed | — | " + reason + " |", visible)
                     edited = copy.deepcopy(state)
                     edited["nights"][report["day"]]["10"]["early_failure_reasons"] = ["private-manual-reason"]
                     self.assertNotIn("private", ci_report.issue_body(None, edited, api.repository).split(ci_report.MARKER)[0])
-                    self.assertEqual([], state["explicit_pass_nights"])
-                    for day in ("2026-10-02", "2026-10-03", "2026-10-04"):
-                        report["day"] = day
-                        decision = issue_decision(state, NIGHTLY_INFRASTRUCTURE, [report], registry_referenced=False)
-                        self.assertNotEqual("close", decision["action"])
-                        self.assertEqual([], decision["state"]["explicit_pass_nights"])
+                    later = copy.deepcopy(report)
+                    later.pop("attempt_history")
+                    later["run"]["attempt"] = 2
+                    later["status"] = "passed"
+                    later["diagnostics"]["infrastructure"] = []
+                    later_state = issue_decision(state, NIGHTLY_INFRASTRUCTURE, [later], registry_referenced=False)["state"]
+                    later_visible = ci_report.issue_body(None, later_state, api.repository).split(ci_report.MARKER)[0]
+                    self.assertIn("Run 10, attempt 2", later_visible)
+                    self.assertIn("| failed | — | " + reason + " |", later_visible)
                 else:
                     self.assertFalse({"identity-collection-failed", "hosted-runner-disconnected"}
                                      & set(report["diagnostics"]["infrastructure"]))
@@ -484,7 +548,7 @@ class ReporterTests(unittest.TestCase):
                     raw = json.loads((aggregate_dir / "nightly.json").read_text())
                     members[("nightly-aggregate-10-1", "nightly.json")] = raw
                     artifacts = [{"name": name, "expired": False} for name in sorted({name for name, _ in members})]
-                    with patch("ci_publish.json_member", side_effect=lambda api, artifact, member: members[(artifact["name"], member)]), \
+                    with patch("ci_publish.json_member", side_effect=lambda api, artifact, member: members[(artifact["name"], member)]) as member_reader, \
                             patch("subprocess.check_output", side_effect=git_output):
                         report = ci_report.nightly_attempt(api, run, 1, artifacts)
                     self.assertEqual(plan["diagnostic_shard"], report["diagnostic_shard"])
@@ -503,6 +567,10 @@ class ReporterTests(unittest.TestCase):
                         else:
                             self.assertEqual(2 * len(cases), len(report["observed"]))
                             self.assertTrue(all(item["outcome"] == "passed" for item in report["observed"]))
+                            if mode == "single-shard":
+                                self.assertEqual([], report["diagnostics"]["missing"])
+                                self.assertEqual(2 * len(cases), report["diagnostics"]["counts"]["declared"])
+                                self.assertFalse(any(call.args[2] == "plan.json" for call in member_reader.call_args_list))
 
     def test_nightly_ui_reader_rejects_missing_samples_and_foreign_shards(self):
         from ci_nightly_ui import judge_ui, parse_ui_plan, validate_ui_record

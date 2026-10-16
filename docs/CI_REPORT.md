@@ -94,6 +94,12 @@ from this run survive. The reporter has `checks: read` for the
 with no additional write grant. Neither reason changes the failed verdict or
 borrows execution evidence from another attempt.
 
+Strict C1 receipts and strict F1 job association depend on scheduling-plan validation
+against the reporter checkout's current `contract_population()`, including the tested
+matrix and shard assignments. If that population changes or any plan binding fails,
+these strict diagnostics fail closed to the generic missing reason; verified results
+from other shards remain available.
+
 The nightly infrastructure issue retains these two closed codes in an optional
 `early_failure_reasons` array per run row and an `Early infrastructure reason`
 column. Historical rows remain readable, unknown manually edited values are

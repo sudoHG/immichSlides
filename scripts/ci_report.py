@@ -10,6 +10,7 @@ import json
 import os
 import re
 import time
+import zipfile
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -636,7 +637,8 @@ def nightly_failure_reasons(api, run, attempt, artifacts, raw, missing):
     for shard in raw.get("ui", {}).get("plan", {}).get("shards", []):
         jobs[f"ui-{shard['device']}-{shard['shard']}"] = {identity_key(item) for item in shard["declared"]}
     plans = [item for item in artifacts if item["name"] == f"nightly-plan-{run['id']}-{attempt}"]
-    if raw["matrix"]["missing"] and len(plans) == 1 and not plans[0]["expired"]:
+    summary_shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
+    if raw.get("diagnostic_shard") in {None, "strict-only"} and raw["matrix"].get("missing", []) and len(plans) == 1 and not plans[0]["expired"]:
         try:
             plan = json_member(api, plans[0], "plan.json")
             require(type(plan["schema_version"]) is int and plan["schema_version"] == 1
@@ -653,12 +655,14 @@ def nightly_failure_reasons(api, run, attempt, artifacts, raw, missing):
                 keys = {identity_key(item) for item in declared}
                 jobs["nightly-strict-" + shard["id"]] = keys
                 matches = [item for item in artifacts if item["name"] == f"nightly-identity-{shard['id']}-{run['id']}-{attempt}"]
-                if keys <= absent and len(matches) == 1 and not matches[0]["expired"]:
+                has_records = shard["id"] in summary_shards or any(
+                    item["name"] == f"nightly-strict-{shard['id']}-{run['id']}-{attempt}" for item in artifacts)
+                if not has_records and keys <= absent and len(matches) == 1 and not matches[0]["expired"]:
                     try:
                         receipt = parse_identity_failure(json_member(api, matches[0], "identity-failure.json"),
                             {"id": str(run["id"]), "attempt": attempt}, shard["id"], declared)
                         reasons.update({key: receipt["reason"] for key in keys})
-                    except (ContractError, KeyError, TypeError, ValueError):
+                    except (ContractError, KeyError, TypeError, ValueError, zipfile.BadZipFile):
                         pass  # Invalid untrusted diagnostics never replace missing evidence.
         except (ContractError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
             pass
@@ -713,6 +717,7 @@ def nightly_attempt(api, run, attempt, artifacts):
     case_keys = {identity_key(item["identity"]) for item in raw["observed"]}
     informational = {identity_key(item["identity"]) for item in raw["informational"]}
     shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
+    summary_cases = set()
     for shard in sorted(shards):
         name = f"nightly-strict-{shard}-{run['id']}-{attempt}"
         matches = [item for item in artifacts if item["name"] == name]
@@ -726,6 +731,7 @@ def nightly_attempt(api, run, attempt, artifacts):
                 "nightly shard provenance mismatch")
         declared = summary["population"]["declared"]
         require(all(identity_key(item) in case_keys for item in declared), "shard cases differ from aggregate")
+        summary_cases.update(identity_key(item) for item in declared)
         summary["population"]["declared"] = [item for item in declared if identity_key(item) not in informational]
         trace = json_member(api, matches[0], "trace.json")
         methods, absent = method_observations(summary, trace)
@@ -735,9 +741,10 @@ def nightly_attempt(api, run, attempt, artifacts):
     if ui is not None:
         observed.extend(ui["observed"])
         missing.extend({"identity": item, "reason": "nightly-ui-sample-missing"} for item in ui["matrix"]["missing"])
-    represented = {identity_key(item["identity"]) for item in observed + missing}
-    if raw.get("diagnostic_shard") != "ui-only":
-        for case in raw["matrix"]["missing"]:
+    # Valid interval summaries already own their method-level not-run accounting.
+    represented = {identity_key(item["identity"]) for item in observed + missing} | summary_cases
+    if raw.get("diagnostic_shard") in {None, "strict-only"}:
+        for case in raw["matrix"].get("missing", []):
             validate_test_identity(case)
             if identity_key(case) not in represented:
                 missing.append({"identity": case, "reason": "missing or invalid shard evidence"})

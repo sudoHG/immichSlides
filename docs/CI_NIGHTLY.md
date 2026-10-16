@@ -57,11 +57,16 @@ equality fail. This run cannot substitute for a complete nightly, and does not r
 ## Early failure diagnostics
 
 The reporter retains scheduled strict cases as missing when a shard has no valid
-summary. It can read a separate, untrusted
+summary in `capacity.shard_intervals`. Valid summaries keep their existing method
+missing list and declared count, including compile failures, timeouts and interrupts.
+Single-shard diagnostics skip this synthesis so undispatched shards do not become
+missing report cases. It can read a separate, untrusted
 [identity failure receipt](CI_SUMMARY.md#prepared-strict-identity-failure-receipt)
 and associate it with the current run/attempt's verified scheduling record. Such
 a receipt changes only the public missing reason to `identity-collection-failed`;
-it supplies no source identity, compilation or execution evidence. The tracer
+it supplies no source identity, compilation or execution evidence. A shard with a
+valid interval summary or any corresponding records artifact cannot use this receipt.
+The identity-failure producer path will upload only the standalone receipt. The tracer
 producer must be activated separately after reader support reaches main.
 
 For missing strict or UI cases, the reporter can also associate the current
