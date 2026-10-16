@@ -39,6 +39,7 @@ class BuildArchiveTests(unittest.TestCase):
         pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
         defects = {"success": None, "missing-member": "archive-member-missing", "extra-member": "archive-member-extra",
                    "truncated-tar": "archive-download-incomplete", "hash-mismatch": "archive-hash-mismatch",
+                   "selection-attempt": "archive-identity-mismatch", "selection-artifact": "archive-identity-mismatch",
                    "wrong-attempt": "archive-identity-mismatch", "build-identity": "archive-identity-mismatch",
                    "build-platform": "archive-identity-mismatch", "architecture": "archive-toolchain-mismatch",
                    "toolchain": "archive-toolchain-mismatch", "invalid-manifest": "archive-manifest-invalid",
@@ -84,6 +85,10 @@ class BuildArchiveTests(unittest.TestCase):
                             handle.write(" " * (4 * 1024 * 1024))
                     selection = {"identity": identity, "platform": "ios", "producer_run_id": "123", "producer_attempt": 1,
                                  "artifact_id": 456, "build_manifest_sha256": archive.file_hash(staging / "manifest.json")}
+                    if defect == "selection-attempt":
+                        selection["producer_attempt"] = 2
+                    if defect == "selection-artifact":
+                        selection["artifact_id"] = 457
                     if defect == "manifest-hash":
                         selection["build_manifest_sha256"] = "0" * 64
                     ui.write_json(root / "selection.json", selection)
@@ -149,6 +154,8 @@ class BuildArchiveTests(unittest.TestCase):
                                       "missing-selection": "FileNotFoundError", "unexpected-error": "RuntimeError"}.get(defect, "ContractError")
                         self.assertIn(error_type, errors.getvalue().splitlines())
                         self.assertNotIn("private", errors.getvalue())
+                        if defect == "nonregular-member":
+                            self.assertIsNone(receipt["member_bytes"]["build.tar.gz"])
                         if defect in {"missing-member", "action-failure"}:
                             self.assertEqual(receipt["member_bytes"], {"build.tar.gz": packed.stat().st_size,
                                 "manifest.json": None if defect == "missing-member" else (staging / "manifest.json").stat().st_size})

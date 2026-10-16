@@ -80,7 +80,7 @@ def gate_archive(args):
         staging = args.staging_dir
         for name in receipt["member_bytes"]:
             path = staging / name
-            if path.is_file():
+            if path.is_file() and not path.is_symlink():
                 size = path.stat().st_size
                 if 0 <= size <= MAX_ARCHIVE_BYTES:
                     receipt["member_bytes"][name] = size

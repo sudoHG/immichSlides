@@ -1444,6 +1444,8 @@ class PublisherTests(unittest.TestCase):
                 consumer = next(i for i, step in enumerate(steps) if "scripts/ci_ui_tests.py run --device" in step.get("run", ""))
                 if nightly:
                     self.assertEqual(gate[0] + 1, consumer)
+                    self.assertTrue(all(step.get("uses", "").startswith("actions/download-artifact@")
+                                        or step.get("id") == "staging" for step in steps[boot[0] + 1:gate[0]]))
                 else:
                     self.assertTrue(all(step.get("uses", "").startswith("actions/download-artifact@")
                                         for step in steps[boot[0] + 1:consumer]))

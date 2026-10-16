@@ -277,10 +277,9 @@ A gate refusal is infrastructure failure with no compiled or executed cases; tho
 cases remain `NOT_RUN`. Missing diagnostics are null and render as `unavailable`
 without a unit. The gate adds no retry or budget change.
 
-The standalone simulator creation/boot step remains before the archive downloads,
-as on main. A gate refusal skips the run step and never reaches XCTest; it does not
-prevent that earlier boot. Reordering boot (option B3) remains a separate later
-decision, and the existing readiness budgets are unchanged.
+The standalone simulator creation/boot step runs before the archive downloads.
+A gate refusal skips the run step and never reaches XCTest; it does not prevent
+that earlier boot. The existing readiness budgets are unchanged.
 The gate does not prove simulator readiness, app behavior or runner survival; later
 relocation, signing, extraction and UI checks remain required.
 
