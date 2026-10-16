@@ -152,7 +152,7 @@ VALIDATOR_IDENTITY_STATUSES = ("UNRECOGNIZABLE", "BLACK", "BLANK", "TRANSITION",
 VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", None)
 
 # No arbitrary filename, exception suffix or pixel values.
-# See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the staged contract.
+# See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the public receipt contract.
 _VALIDATOR_SCREENSHOT_STEM = (
     r"(?:person-normal|person-no-faces|person-conflict-normal(?:-[1-9][0-9]?)?|"
     r"album-playback-[123]|album-switch-b-play-[12]|server-switch-a-play-1|switch-b-play-[12]|"

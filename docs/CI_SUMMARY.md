@@ -178,8 +178,9 @@ use `unknown` for unavailable or ambiguous diagnostics, and retain the first
 failure's labels on an observation after a listed retry passes. The enums do not
 participate in outcome, population, retry or verdict evaluation.
 
-The separate `validator_failure_message` field is reader-only preparation: current
-strict producers do not emit it. Readers accept at most 512 characters from the
+The strict tracer emits the optional `validator_failure_message` field for failed
+cases with an explicit failing validator receipt, on both the observation and attempt.
+Readers accept at most 512 characters from the
 reviewed public validator grammar, or the fixed `unresolved` / `[redacted validator failure]`
 markers. It is independent of the XCTest diagnostic pair. Historical field-free
 records remain valid. Refused values are never echoed in validation errors;
@@ -190,7 +191,7 @@ output to trace and summary, never raw errors. An invalid summary value invalida
 the whole shard. The reporter has one optional-trace trust boundary; its redaction
 retains the failed case and exit code but cannot protect an already uploaded artifact.
 The [strict receipt contract](CI_STRICT_RUNNER.md#public-validator-failure-receipts)
-defines the mandatory PR 2 producer-injection test and the optional upload-scan follow-up.
+defines the producer privacy regression and the optional upload-scan follow-up.
 
 Outcomes are `passed`, `failed`, `skipped`, `crashed`, `timed-out`, `not-run`,
 `needs-human-review`, or aggregate `flaky-passed`. A skip requires a reason.

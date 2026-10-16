@@ -97,8 +97,8 @@ Retained strict/UI observations and attempts preserve the optional paired
 historical records without them remain supported.
 Failed strict case observations and their attempts can additionally retain the
 optional [public validator receipt](CI_STRICT_RUNNER.md#public-validator-failure-receipts)
-through aggregation and compact attempt history. This is reader-only preparation;
-current strict producers still omit `validator_failure_message`.
+through aggregation and compact attempt history. The strict tracer emits
+`validator_failure_message` after scanning the explicit validator failure receipt.
 
 The repository's `GITHUB_TOKEN` quota is shared with its other workflows. The reporter
 uses `X-RateLimit-Limit` and `X-RateLimit-Remaining`, stops before a request would leave
@@ -170,8 +170,9 @@ nightly remains not release eligible, and unbuilt/informational tiers open no te
 A failed strict case creates a case-identity failure with `strict-case-contract-failed`
 only when `automated_contract_failed` records an explicit `FAIL` from the runner's
 contract receipt and every selected official method passed with valid warm-build evidence.
-The tracer currently exports that boolean without the contract's raw error text.
-The prepared reader accepts `validator_failure_message` only on the existing
+The tracer additionally exports the helper-scanned `validator_failure_message`,
+with a fixed redaction marker for unsafe text or `unresolved` for missing context.
+The reader accepts `validator_failure_message` only on the existing
 case-contract failure path with outcome `failed`, scans it once against the fixed
 public grammar and 512-character bound, and copies it to the case observation and attempt. Unsafe optional trace text
 becomes `[redacted validator failure]`; a supplied null becomes `unresolved`.
@@ -179,8 +180,8 @@ The failing-identity table has a `Validator failure` column, with a dash for any
 without a receipt, including official-method failures, UI failures and historical rows.
 No raw runner message is substituted. `records/` is uploaded unscanned; the producer
 must write only the public helper's output, because an invalid summary value invalidates
-the shard and report-side redaction cannot protect an uploaded artifact. Producer
-activation must follow the reader's merge to main; see
+the shard and report-side redaction cannot protect an uploaded artifact. The accepting
+reader merged first in PR #459; see
 [reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
 Timeouts, export
 failures, missing official methods and unexplained runner failures instead enter
