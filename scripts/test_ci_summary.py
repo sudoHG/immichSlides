@@ -68,6 +68,42 @@ def refresh_discovery_hash(summary):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_strict_validator_receipts_are_optional_bounded_and_fail_only(self):
+        summary = valid_summary()
+        case = ci_summary.test_identity("strict", "tvos-person", device="tv", configuration="Debug",
+                                        suite="tvos-person", scenario="normal", fixture="a")
+        failed = ci_summary.observation(case, "failed", 1, exit_code=2)
+        summary["population"].update(declared=[case], compiled=[case], observed=[failed])
+        summary["status"] = "failed"
+        self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
+        message = "unreadable public glyph slot; slot 1 (horizontal); screenshot person-normal.png"
+        boundary = ("no public glyph; screenshot person-normal.png" + "; context unresolved" * 16
+                    + "; slot 1 (horizontal)" * 7)
+        self.assertEqual(512, len(boundary))
+        for value in (message, "unresolved", "[redacted validator failure]", boundary):
+            failed["validator_failure_message"] = failed["attempts"][0]["validator_failure_message"] = value
+            self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
+        for value, prefix in ((None, "validator failure message"), ("", "validator failure message"),
+                              (boundary.replace("slot 1 (", "slot 10 (", 1), "validator failure message exceeds"),
+                              (message.replace("person-normal.png", "private-name.png"), "validator failure message is not public")):
+            with self.subTest(value=value):
+                broken = copy.deepcopy(summary)
+                broken["population"]["observed"][0]["validator_failure_message"] = value
+                with self.assertRaisesRegex(ci_summary.ContractError, prefix):
+                    ci_summary.parse_summary(json.dumps(broken))
+        for target in ("observation kind", "observation outcome", "attempt"):
+            with self.subTest(target=target):
+                broken = copy.deepcopy(summary)
+                item = broken["population"]["observed"][0]
+                if target == "observation kind":
+                    item["identity"] = ci_summary.test_identity("host", "format")
+                elif target == "observation outcome":
+                    item["outcome"] = "passed"
+                else:
+                    item["attempts"][0].update(outcome="passed", exit_code=0)
+                with self.assertRaisesRegex(ci_summary.ContractError, "validator failure message requires a failed strict"):
+                    ci_summary.parse_summary(broken)
+
     def test_partitioned_python_execution_preserves_exact_discovery_and_runs_only_its_members(self):
         calls = []
         class Sample(unittest.TestCase):

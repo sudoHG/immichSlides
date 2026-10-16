@@ -13,6 +13,57 @@ FAILURE_CLASSES = frozenset({"interval_readback", "hidden_controls", "scene_iden
                              "evidence_capture", "probe_readback", "fixture_response", "exif_visibility",
                              "exif_correspondence"})
 DIAGNOSTIC_FIELDS = frozenset({"failure_phase", "failure_class"})
+VALIDATOR_FAILURE_FIELD = "validator_failure_message"
+VALIDATOR_FAILURE_MAX_LENGTH = 512
+VALIDATOR_FAILURE_REDACTED = "[redacted validator failure]"
+
+# Public scene-reader text only; no arbitrary filename, exception suffix or pixel values.
+# See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the staged contract.
+_VALIDATOR_PREFIX = (
+    r"(?:Unrecognizable input: )?(?:no public glyph|mixed public glyphs|"
+    r"unreadable public glyph slot(?:: (?:single photo color or public texture is missing|"
+    r"public photo colors are missing or mixed|conflicting public background patterns|"
+    r"foreign public background pattern|screenshot cannot be decoded))?|"
+    r"every slot must show the public glyph of fixture [AB])"
+)
+_VALIDATOR_SCREENSHOT = (
+    r"(?:person-normal|person-no-faces|person-conflict-normal(?:-[1-9][0-9]?)?|"
+    r"album-playback-[123]|album-play-[123]|album-switch-b-play-[12]|switch-b-play-[12]|"
+    r"history-(?:start|first-next|second-next|first-previous|second-previous)|"
+    r"pause-immediate|pause-after-10s|resumed|display-before(?:-candidate-[1234])?|"
+    r"display-after|switch-b-single-after)\.png"
+)
+_VALIDATOR_COUNT = r"(?:0|[1-9][0-9]{0,2})"
+_VALIDATOR_AXIS = r"(?:horizontal|vertical|both axes)"
+_VALIDATOR_CONTEXT = (
+    rf"(?:screenshot {_VALIDATOR_SCREENSHOT}|slot {_VALIDATOR_COUNT} \({_VALIDATOR_AXIS}\)|"
+    rf"{_VALIDATOR_COUNT} slots? \({_VALIDATOR_AXIS}\)|"
+    rf"(?:horizontal|vertical) axis, (?:slot count unresolved|{_VALIDATOR_COUNT} completed slots?)|"
+    rf"observed fixture [AB] in all {_VALIDATOR_COUNT} slots? \({_VALIDATOR_AXIS}\)|"
+    r"horizontal and vertical axes disagree|slot count and axes unresolved|context unresolved)"
+)
+_VALIDATOR_MESSAGE = re.compile(rf"{_VALIDATOR_PREFIX}(?:; {_VALIDATOR_CONTEXT}){{1,32}}")
+
+
+def validate_validator_failure_message(value):
+    """Validate public text without echoing refused candidate values."""
+    if not isinstance(value, str) or not value:
+        raise ValueError("validator failure message must be nonempty text")
+    if len(value) > VALIDATOR_FAILURE_MAX_LENGTH:
+        raise ValueError("validator failure message exceeds length bound")
+    if value not in {"unresolved", VALIDATOR_FAILURE_REDACTED} and _VALIDATOR_MESSAGE.fullmatch(value) is None:
+        raise ValueError("validator failure message is not public context")
+
+
+def public_validator_failure_message(value):
+    """Keep a failed record when its optional candidate receipt is unsafe."""
+    if value is None:
+        return "unresolved"
+    try:
+        scan_diagnostic_json(json.dumps({VALIDATOR_FAILURE_FIELD: value}).encode())
+    except (ValueError, TypeError):
+        return VALIDATOR_FAILURE_REDACTED
+    return value
 
 # Reviewed prefixes from AccessLifecycleContract (+Controls/+TransitionTiming),
 # AccessLifecycleIOSUITests (+Settings/+Navigation), PlaybackHistoryIOSUITests
@@ -206,6 +257,8 @@ def test_node_diagnostics(payload):
 def validate_diagnostic_fields(value):
     """Reject free text, unpaired fields and non-string values, without echoing them."""
     if isinstance(value, dict):
+        if VALIDATOR_FAILURE_FIELD in value:
+            validate_validator_failure_message(value[VALIDATOR_FAILURE_FIELD])
         if DIAGNOSTIC_FIELDS & value.keys():
             if not DIAGNOSTIC_FIELDS <= value.keys():
                 raise ValueError("failure diagnostics require both enum fields")
@@ -223,7 +276,7 @@ def scan_diagnostic_json(data):
     def object_pairs(pairs):
         value = {}
         for key, child in pairs:
-            if key in DIAGNOSTIC_FIELDS and key in value:
+            if key in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD} and key in value:
                 raise ValueError("duplicate failure diagnostic field")
             value[key] = child
         validate_diagnostic_fields(value)
@@ -231,5 +284,5 @@ def scan_diagnostic_json(data):
     try:
         json.loads(data, object_pairs_hook=object_pairs)
     except (json.JSONDecodeError, UnicodeDecodeError):
-        if any(('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS):
+        if any(('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}):
             raise ValueError("invalid failure diagnostic JSON")

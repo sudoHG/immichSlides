@@ -964,6 +964,27 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     with self.assertRaises(CommandError):
                         strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
 
+    def test_scanner_checks_validator_receipts_including_duplicate_and_malformed_json(self):
+        message = "unreadable public glyph slot; slot 1 (horizontal); screenshot person-normal.png"
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            path = evidence / "record.json"
+            for value in (message, "unresolved", "[redacted validator failure]"):
+                path.write_text(json.dumps({"validator_failure_message": value}))
+                strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+                self.assertEqual("PASS", json.loads((evidence / "sensitive-scan.json").read_text())["result"])
+            for raw_json in (json.dumps({"validator_failure_message": message + "; PRIVATE_SENTINEL"}),
+                             json.dumps({"validator_failure_message": message + "; server 192.0.2.1"}),
+                             json.dumps({"validator_failure_message": message + "; pixels (0, 0, 0)"}),
+                             json.dumps({"validator_failure_message": message + " " * 512}),
+                             '{"validator_failure_message":"unresolved","validator_failure_message":"unresolved"}',
+                             '{"validator_failure_message":"unresolved"'):
+                with self.subTest(raw_json=raw_json):
+                    path.write_text(raw_json)
+                    with self.assertRaisesRegex(CommandError, "redaction scan found"):
+                        strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+                    self.assertEqual("FAIL", json.loads((evidence / "sensitive-scan.json").read_text())["result"])
+
     def test_diagnostic_read_failure_retains_official_failure_and_unknown_enums(self):
         import subprocess
         from ci_failure_diagnostics import unknown_diagnostics

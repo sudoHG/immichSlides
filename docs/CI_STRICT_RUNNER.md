@@ -485,6 +485,32 @@ nonzero exits remain failures. Filter-person combines its three session exports
 and requires all three passes. Exit 0 means all automated tracer checks completed,
 not release eligibility.
 
+### Public validator failure receipts
+
+Reader-only preparation accepts an optional `validator_failure_message` on a warm
+trace and on failed strict summary observations/attempts. The strict tracer still
+emits only `automated_contract_failed`; producer activation is a separate PR after
+this reader is on main, following [reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
+XCTest diagnostics below remain separate from post-test validator failures.
+
+The value is at most 512 characters. The reviewed grammar in
+[`ci_failure_diagnostics.py`](../scripts/ci_failure_diagnostics.py) preserves existing
+public scene-reader prefixes plus screenshot basenames from its fixed public list,
+slot indices, horizontal/vertical/both-axis labels, fixture A/B letters and counts.
+Unavailable context can be `unresolved` or a prefix followed by `; context unresolved`.
+Unrecognized prefixes, filenames and suffixes are refused rather than treated as public
+text. The grammar accepts no URLs, keys, server addresses, directory paths, private
+xcresult text or pixel arrays. It does not decode images or change a visual check.
+
+The existing sensitive-output scan validates the new field in JSON recursively,
+including its length and duplicate/malformed fields; existing sensitive-value
+scanning remains mandatory. The report reader applies the same grammar to optional
+trace receipts and retains `[redacted validator failure]` when scanning fails,
+without dropping or reclassifying the failed case. Summary readers reject unsafe
+field values. Valid messages survive aggregation and compact history and appear in
+the [nightly failure table](CI_REPORT.md#method-identities-and-reruns).
+Historical traces and summaries without the field remain valid and gain no new claim.
+
 ### Public failure diagnostics
 
 Failed method nodes in `official-tests*.json` and the tracer's

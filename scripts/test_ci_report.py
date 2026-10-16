@@ -38,6 +38,47 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_validator_receipt_survives_case_aggregation_compaction_and_report(self):
+        from html import unescape
+        from ci_nightly import aggregate_nightly
+        case = test_identity("strict", "smoke", **IDENTITY["dimensions"])
+        message = "unreadable public glyph slot; slot 1 (horizontal); screenshot person-normal.png"
+        shard = valid_summary()
+        shard["population"].update(declared=[case], compiled=[case], observed=[observation(case, "failed", 1, exit_code=2)])
+        shard["status"] = "failed"
+        phase = {"identity": case, "exit_code": 2, "automated_contract_failed": True,
+                 "build_operations": 0, "products_unchanged": True, "log_present": True,
+                 "official_methods": [{"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": "Passed"}],
+                 "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
+        historical, _ = ci_report.method_observations(shard, {"warm": [phase]})
+        self.assertTrue(all("validator_failure_message" not in item for item in historical))
+        cases = ((message, message), (None, "unresolved"),
+                 (message + "; https://private.invalid/api", "[redacted validator failure]"),
+                 (message.replace("person-normal.png", "/private/person-normal.png"), "[redacted validator failure]"),
+                 (message + " " * 512, "[redacted validator failure]"))
+        for supplied, expected in cases:
+            with self.subTest(supplied=supplied):
+                warm = dict(phase)
+                warm["validator_failure_message"] = supplied
+                observed, missing = ci_report.method_observations(shard, {"warm": [warm]})
+                self.assertEqual([], missing)
+                failed = next(item for item in observed if item["identity"] == case)
+                self.assertEqual(expected, failed["validator_failure_message"])
+                self.assertEqual(expected, failed["attempts"][0]["validator_failure_message"])
+                self.assertEqual(("failed", 2, "strict-case-contract-failed"),
+                    (failed["outcome"], failed["attempts"][0]["exit_code"], failed["attempts"][0]["reason"]))
+                shard["population"]["observed"] = [failed]
+                aggregate = aggregate_nightly([case], [shard], live_in_scope=False)
+                self.assertEqual(expected, aggregate["observed"][0]["validator_failure_message"])
+                report = entry()
+                report["observed"] = observed
+                report["diagnostics"] = summary_diagnostics([shard])
+                compact = ci_report.compact_entry(report, set())
+                self.assertEqual(expected, compact["observed"][-1]["validator_failure_message"])
+                self.assertIn("| Validator failure |", render_entry(compact))
+                self.assertIn(expected, unescape(render_entry(compact)))
+                self.assertNotIn("private.invalid", json.dumps(compact))
+
     def test_nightly_preparation_failure_tracks_missing_cases_under_one_infrastructure_issue(self):
         from ci_nightly import aggregate_nightly
         api = type("API", (), {"repository": "sudoHG/immichSlides"})()

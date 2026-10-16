@@ -195,7 +195,7 @@ def write_sensitive_scan(evidence_dir: Path, sensitive_values: list[str], *, out
     except OSError as error:
         raise CommandError(f"Could not write the redaction scan results: {error}") from error
     if matched_files:
-        raise CommandError("The evidence redaction scan found API Key values or invalid failure enums: " + ", ".join(matched_files))
+        raise CommandError("The evidence redaction scan found API Key values or invalid public failure diagnostics: " + ", ".join(matched_files))
 
 
 def prepare_private_result_bundle_path(suite: str) -> Path:
