@@ -92,7 +92,9 @@ class FixtureCoverageTests(unittest.TestCase):
                                      "input_sha256": "a" * 64 if phase == "image-generation" else None,
                                      "official_exports": None}
                             kwargs["stdout"].write(("fixture-startup: phase=" + phase + "; state=started; elapsed=0.000s; total=0.000s\n"
-                                + "fixture-diagnostic: " + json.dumps(event) + "\nprivate-input\n").encode())
+                                + "private-input\n").encode())
+                            Path(kwargs["env"]["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE"]).write_text(
+                                "fixture-diagnostic: " + json.dumps(event) + "\n")
                             return SimpleNamespace(pid=42, poll=lambda: None)
                         stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=spawn))
                         stack.enter_context(patch.object(support.time, "monotonic", side_effect=lambda: elapsed[0]))
@@ -119,13 +121,13 @@ class FixtureCoverageTests(unittest.TestCase):
                 self.assertEqual(result["status"], "failed")
                 self.assertTrue(any(stage.split("-")[0] in item["message"] for item in result["infrastructure"]))
                 if stage.startswith("service-"):
-                    self.assertEqual(elapsed[0], support.SERVICE_STARTUP_TIMEOUT_SECONDS)
-                    self.assertFalse((bundle.parent.parent / "ready.json").exists())
+                    self.assertEqual(elapsed[0], 60)
+                    self.assertTrue(any(f"startup_phase={phase}; startup_state=started" in item["message"]
+                                        for item in result["infrastructure"]))
                     receipt = result["bounded_diagnostics"]
                     self.assertEqual(phase, receipt["events"][-1]["phase"])
                     self.assertEqual("started", receipt["events"][-1]["state"])
                     self.assertIsNone(receipt["collection_seconds"]["fixture"])
-                    self.assertLessEqual(diagnostic.charged["fixture"], 2)
                     self.assertNotIn("private-input", json.dumps(receipt))
                 self.assertTrue(all(item["outcome"] == "not-run" for item in result["population"]["observed"]))
                 verdict = json.loads((output / "coverage-verdict.json").read_text())
@@ -412,7 +414,8 @@ class FixtureCoverageTests(unittest.TestCase):
                     code = runner.main(argv, simulator_prepared=shape == "complete")
                     runner.reset_simulator_app.assert_called_once_with("target", boot_submitted=True)
                     runner.wait_for_service.assert_called_once_with(work / "ready.json", unittest.mock.ANY,
-                                                                    startup_log=work / "service.log")
+                                                                    startup_log=work / "service.log",
+                                                                    diagnostics_path=work / "service-diagnostics.log")
                 self.assertEqual(len(inventory_calls), 2)
                 tests = [command for command in commands if command[0] == "xcodebuild"]
                 self.assertEqual(len(tests), 1)

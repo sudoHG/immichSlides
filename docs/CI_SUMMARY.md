@@ -146,8 +146,18 @@ collection costs, event count, truncation and the last retained phase per scope;
 measurements stay in the summary JSON. Trusted report failure/missing counts and
 issue decisions do not consume the measurements.
 
-Preparation records spawn, communicate, timeout, kill and reap boundaries, with
-start and anomaly statistics. The nightly preparation step hands the same compact
+Successful phases retain only started/completed events. At 512 events the oldest
+success is evicted first; incoming anomalies replace older anomalies only when
+no successes remain. Thus the latest timeout and export observations survive a
+full receipt. A truncated receipt is attached even when it contains no events.
+Preparation uses the same `subprocess.run` as ordinary execution: its internal
+spawn/communicate/kill boundaries are unobserved, and timeout/reap observations
+are taken after the call has killed, waited and closed its pipes. Start samples
+run before the preparation deadline starts; anomaly samples run after failure
+is decided, with no sampling inside the readiness retry loop. Successful runs
+discard their buffered start sample. Preparation `cpu_seconds` measures the
+runner's own process time, including diagnostic threads, not simctl CPU time.
+The nightly preparation step hands the same compact
 receipt to the tracer even with `--preparation-failed`. Serial strict children
 share the job ledger: each reserves its remaining collection allowance before
 starting, then returns unused allowance after completion. Missing or invalid
@@ -157,20 +167,33 @@ allowances are distinct from observed `collection_seconds`. A lost child's
 collection measurements remain null rather than treating its reservation as an
 observation. Only the validated public receipt is attached to summaries.
 Fixture children receive a reserved emission allowance of at most 0.2 s; the
-parent harvests only validated fixture events from at most 512 KiB of startup
-output. Import is visible before the other service imports run. PNG and fixture
+parent harvests only validated fixture events from a separate file of at most
+512 KiB, passed through the child's environment. Emission defaults to disabled
+when no reader grants an allowance. The original `fixture-startup:` stdout and
+its 4096-byte reader window are unchanged. Import is visible before other service
+imports run. PNG and cache-miss fixture
 generation carry hashes of public generation arguments; these input digests are
 distinct from `hashes.manifests.fixture-c`, the generated manifest digest, and
-are not independently bound to that manifest by the reader.
+are not independently bound to that manifest by the reader. Cached deepcopies
+and nested fixture-set generation do not create duplicate generation envelopes.
 
 Every process sample has a 0.25 s cap, with 0.08 s subprocess deadlines; receipt
 IO and public Xcode progress reads have 0.1 s caps, and fixture log reads have a
 0.25 s cap. Capped daemon workers prevent a stuck diagnostic from blocking the
 runner. Retention and cumulative collection budgets stop additional work and
-mark truncation. Out-of-range measurements become null (or zero for a required
+mark truncation. Fixture writes run on a single daemon outside the ready path;
+each write has a 10 ms CPU allowance and no synchronous ready-path IO wait.
+The only drain wait is capped at 10 ms after ready is written or failure is
+decided. A blocked file writer cannot hold up ready or process exit. Fixture
+collection accounting includes emitter bookkeeping/IO CPU time and conservatively
+reserves the final write allowance and drain wait before reporting its footer;
+overlapped scheduler waits are not added job latency. Enqueueing and public input
+hashing leave small CPU bookkeeping costs on the existing startup path; the
+0.2 s child allowance is charged in full before spawn. Out-of-range measurements become null (or zero for a required
 elapsed offset), and receipts are validated before attachment; invalid receipts
-are dropped without changing the verdict. Xcode timeout samples surround the
-existing kill/reap path and retain only allowlisted process statistics, the last
+are dropped without changing the verdict. Xcode timeout observations follow
+stdlib cleanup; they do not claim a pre-kill sample. They retain allowlisted
+process statistics, the last
 recognized public phase, and official-export existence booleans. Existing bundle
 export, retention and privacy rules still apply. Ready is written at the existing
 point after generation and bind; health and the 60 s deadline remain authoritative.
@@ -184,6 +207,16 @@ minutes/night and 2.74 minutes wall time at two jobs per matrix (13 strict waves
 and nine UI waves, conservatively summed). These are ceilings and ideal parallel
 estimates, not hosted measurements or billing. Existing readiness, Xcode and
 service deadlines remain unchanged.
+
+PR CI uses the same ceilings. For a six-shard functional `ci-ui` selection,
+6 × (5 + 2) s = 0.70 machine minutes/push; two `ci-strict-tracer` jobs add
+2 × (5 + 2) s = 0.234 machine minutes, plus 0.167 per failed strict job.
+With one failure the combined ceiling is 1.10 machine minutes/push. Two serial
+UI shards per device add at most 14 s wall time; the parallel strict jobs add
+at most 17 s with one failure, or 0.284 minutes of combined critical-path
+overhead when the tiers overlap. Selection/Cloud waits run no producers. Actual
+packing, runner queues and approval waits determine the full workflow wall time;
+these figures describe diagnostic overhead, not total CI duration.
 
 ### Prepared strict identity failure receipt
 

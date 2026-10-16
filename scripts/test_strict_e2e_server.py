@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import http.client
 import io
+import os
 import socket
 import sys
 import tempfile
@@ -172,7 +173,17 @@ class StrictE2EServerContractTests(unittest.TestCase):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
                 output, errors = io.StringIO(), io.StringIO()
                 ready = Path(directory) / "private-input" / "ready.json"
+                diagnostic_path = Path(directory) / "diagnostics.log"
+                reporters = []
+                original_reporter = strict_e2e_server.StartupDiagnostics
+                def reporter(*args, **kwargs):
+                    instance = original_reporter(*args, **kwargs)
+                    reporters.append(instance)
+                    return instance
                 with mock.patch.object(strict_e2e_server.StrictE2EServer, "serve_forever"), \
+                        mock.patch.object(strict_e2e_server, "StartupDiagnostics", side_effect=reporter), \
+                        mock.patch.dict(os.environ, {"IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE": str(diagnostic_path),
+                                                    "IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS": "0.2"}), \
                         redirect_stdout(output), redirect_stderr(errors):
                     if phase == "fixture-build":
                         failure = mock.patch.object(strict_e2e_server, "fixture_manifest", side_effect=OSError("private-input"))
@@ -185,19 +196,22 @@ class StrictE2EServerContractTests(unittest.TestCase):
                         failure = mock.patch.object(strict_e2e_server.time, "monotonic", wraps=time.monotonic)
                     with failure:
                         code = server_main(["--port", "0", "--fixture-set", "c", "--ready-file", str(ready)])
+                self.assertTrue(reporters[0].done.wait(10), "fixture diagnostic daemon must settle before test cleanup")
                 self.assertEqual(code, 0 if phase == "success" else 2)
                 self.assertNotIn("private-input", output.getvalue() + errors.getvalue())
                 all_lines = output.getvalue().splitlines()
-                events = [json.loads(line.removeprefix("fixture-diagnostic: ")) for line in all_lines
+                self.assertNotIn("fixture-diagnostic:", output.getvalue())
+                diagnostic_lines = diagnostic_path.read_text().splitlines()
+                events = [json.loads(line.removeprefix("fixture-diagnostic: ")) for line in diagnostic_lines
                           if line.startswith("fixture-diagnostic: ")]
                 validate_receipt({"schema_version": 1, "collection_seconds": {"preparation": 0, "xcode": 0, "fixture": 0},
                                   "truncated": False, "events": events})
                 self.assertTrue(events)
                 self.assertTrue(all(event["cpu_seconds"] is not None for event in events))
                 lines = [line for line in all_lines if line.startswith("fixture-startup: ")]
-                self.assertTrue(any(line.startswith("fixture-collection-seconds: ") for line in all_lines))
+                self.assertTrue(any(line.startswith("fixture-collection-seconds: ") for line in diagnostic_lines))
                 for line in lines:
-                    self.assertRegex(line, r"^fixture-startup: phase=(fixture-build|manifest|bind|ready-write); state=(started|completed); elapsed=\d+\.\d{3}s; total=\d+\.\d{3}s$")
+                    self.assertRegex(line, r"^fixture-startup: phase=(fixture-build|bind|ready-write); state=(started|completed); elapsed=\d+\.\d{3}s; total=\d+\.\d{3}s$")
                 if phase == "success":
                     self.assertTrue(ready.is_file())
                     self.assertIn("phase=ready-write; state=completed", lines[-1])
@@ -205,39 +219,73 @@ class StrictE2EServerContractTests(unittest.TestCase):
                         generated = [event for event in events if event["phase"] == generation]
                         self.assertEqual({"started", "completed"}, {event["state"] for event in generated})
                         self.assertTrue(all(event["input_sha256"] is not None for event in generated))
+                    self.assertEqual(2, len([event for event in events if event["phase"] == "fixture-generation"]))
                 else:
-                    self.assertIn(f"phase={'manifest' if phase == 'fixture-build' else phase}; state=started", lines[-1])
+                    self.assertIn(f"phase={phase}; state=started", lines[-1])
                     self.assertFalse(ready.exists())
+                from strict_e2e_runner_support import _service_startup_diagnostics
+                legacy = Path(directory) / "stdout.log"
+                legacy.write_text(output.getvalue())
+                self.assertEqual(lines, _service_startup_diagnostics(legacy))
+
+    def test_fixture_budget_handoff_disables_exhausted_services_and_bounds_file_waits(self):
+        import ci_execution_diagnostics as diagnostics
+        for mode in ("available", "exhausted", "default"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, \
+                    diagnostics.session() as recorder, redirect_stdout(io.StringIO()), \
+                    mock.patch.object(strict_e2e_server.StrictE2EServer, "serve_forever", side_effect=lambda:
+                        strict_e2e_server._STARTUP_DIAGNOSTICS.done.wait(10)
+                        if strict_e2e_server._STARTUP_DIAGNOSTICS.budget else None):
+                path = Path(directory) / "diagnostics.log"
+                if mode == "exhausted":
+                    recorder.charged["fixture"] = 2
+                env = diagnostics.fixture_environment({}, path) if mode != "default" else {
+                    strict_e2e_server.DIAGNOSTIC_FILE_ENV: str(path)}
+                with mock.patch.dict(os.environ, env, clear=True), \
+                        mock.patch.object(strict_e2e_server.time, "perf_counter", return_value=0), \
+                        mock.patch.object(strict_e2e_server.time, "thread_time", return_value=0):
+                    self.assertEqual(0, server_main(["--port", "0", "--fixture-set", "a"]))
+                self.assertEqual(mode == "available", path.exists())
+                if mode == "available":
+                    measurements = [float(line.removeprefix("fixture-collection-seconds: "))
+                                    for line in path.read_text().splitlines() if line.startswith("fixture-collection-seconds: ")]
+                    self.assertAlmostEqual(0.02, measurements[-1], msg="include the final write and drain reservations")
+                    self.assertEqual(0.2, float(env["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
+                    # A second service must share the first service's charge, not reset it.
+                    recorder.charged["fixture"] = 1.6
+                    following = diagnostics.fixture_environment({}, Path(directory) / "next.log")
+                    self.assertAlmostEqual(0.1, float(following["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
+                elif mode == "exhausted":
+                    self.assertEqual(0, float(env["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
+        # Inject the blocking primitive; no host-load-dependent wall-clock assertion.
+        reporter = strict_e2e_server.StartupDiagnostics(0)
+        reporter.budget = 0.2
+        reporter.done = mock.Mock()
+        reporter.done.wait.return_value = False
+        reporter.finish()
+        reporter.done.wait.assert_called_once_with(0.01)
+        self.assertTrue(reporter.truncated)
         gate = threading.Event()
-        durations, reporters = [], []
-        original = strict_e2e_server.StartupDiagnostics
-        original_print = print
-        class MeasuredEmitter(original):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                reporters.append(self)
-            def report(self, *args, **kwargs):
-                started = time.perf_counter()
-                super().report(*args, **kwargs)
-                durations.append(time.perf_counter() - started)
-        def stalled_output(line, *args, **kwargs):
-            if line.startswith("fixture-diagnostic: "):
-                gate.wait(30)
-            else:
-                original_print(line, *args, **kwargs)
-        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()), \
-                mock.patch.object(strict_e2e_server, "StartupDiagnostics", MeasuredEmitter), \
-                mock.patch.object(strict_e2e_server.StrictE2EServer, "serve_forever"), \
-                mock.patch("builtins.print", side_effect=stalled_output):
+        original_finish = strict_e2e_server.StartupDiagnostics.finish
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
             ready = Path(directory) / "ready.json"
-            try:
-                self.assertEqual(0, server_main(["--port", "0", "--fixture-set", "a", "--ready-file", str(ready)]))
-                self.assertTrue(ready.is_file())
-                self.assertLess(max(durations), 0.1)
-                self.assertLess(reporters[0].cost, 0.25)
-                self.assertTrue(reporters[0].truncated)
-            finally:
-                gate.set()
+            reporters = []
+            def finish(instance):
+                reporters.append(instance)
+                self.assertTrue(ready.is_file(), "diagnostic drain must follow the unchanged ready write")
+                original_finish(instance)
+            with mock.patch.dict(os.environ, {
+                    strict_e2e_server.DIAGNOSTIC_FILE_ENV: str(Path(directory) / "blocked.log"),
+                    strict_e2e_server.DIAGNOSTIC_BUDGET_ENV: "0.2"}), \
+                    mock.patch.object(strict_e2e_server, "_append_diagnostics", side_effect=lambda *args: gate.wait(30)), \
+                    mock.patch.object(strict_e2e_server.StartupDiagnostics, "finish", finish), \
+                    mock.patch.object(strict_e2e_server.StrictE2EServer, "serve_forever"):
+                try:
+                    self.assertEqual(0, server_main(["--port", "0", "--fixture-set", "a", "--ready-file", str(ready)]))
+                finally:
+                    gate.set()
+                    for reporter in reporters:
+                        self.assertTrue(reporter.done.wait(10), "release the injected IO stall before test cleanup")
 
     def test_binding_serves_health_without_reverse_dns(self) -> None:
         with mock.patch.object(socket, "getfqdn", side_effect=AssertionError("Bind must not resolve reverse DNS")) as lookup:

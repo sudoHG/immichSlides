@@ -20,7 +20,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
 
-from ci_execution_diagnostics import active, diagnostic_session, fixture_environment, official_exports
+from ci_execution_diagnostics import IO_CAP_SECONDS, active, diagnostic_session, fixture_environment, official_exports
 
 from run_offline_unit_tests import (
     CommandError as OfflineCommandError,
@@ -624,26 +624,12 @@ class StrictRetryEvidence:
 def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str], log_path: Path,
                 timeout_seconds: int = XCODEBUILD_TIMEOUT_SECONDS) -> int:
     with log_path.open("w", encoding="utf-8") as log_file:
+        recorder = active()
+        started = time.monotonic()
+        sequence = recorder.next_sequence() if recorder else 0
+        if recorder:
+            recorder.event("xcode", "xcodebuild", "started", sequence)
         try:
-            if active() is not None:
-                recorder = active()
-                started = time.monotonic()
-                sequence = recorder.next_sequence()
-                bundles = [Path(command[command.index("-resultBundlePath") + 1])] if "-resultBundlePath" in command else []
-                process = subprocess.Popen(command, cwd=cwd, env=dict(environment), stdout=log_file,
-                                           stderr=subprocess.STDOUT)
-                try:
-                    return process.wait(timeout=timeout_seconds)
-                except subprocess.TimeoutExpired:
-                    recorder.xcode_snapshot("before-kill", started, sequence, log_path, bundles)
-                    process.kill()
-                    process.wait()
-                    recorder.xcode_snapshot("after-reap", started, sequence, log_path, bundles)
-                    raise
-                except BaseException:
-                    process.kill()
-                    process.wait()
-                    raise
             completed = subprocess.run(
                 command,
                 cwd=cwd,
@@ -654,7 +640,13 @@ def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str]
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as error:
+            if recorder:
+                recorder.event("xcode", "xcodebuild", "timeout", sequence, elapsed=time.monotonic() - started)
+                bundles = [Path(command[command.index("-resultBundlePath") + 1])] if "-resultBundlePath" in command else []
+                recorder.xcode_snapshot("after-reap", started, sequence, log_path, bundles)
             raise CommandError(f"xcodebuild timed out after {timeout_seconds:.1f}s.") from error
+        if recorder and completed.returncode == 0:
+            recorder.event("xcode", "xcodebuild", "completed", sequence, elapsed=time.monotonic() - started)
     return completed.returncode
 
 
@@ -857,6 +849,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         service_scenario, input_key, starts_service = scenario_settings(arguments.scenario)
         if starts_service:
             service_startup_path = arguments.evidence_dir / "service-startup.log"
+            service_diagnostics_path = arguments.evidence_dir / "service-diagnostics.log"
             with open(service_startup_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
                 service_process = subprocess.Popen(
                     [
@@ -876,16 +869,18 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         str(service_log_path),
                     ],
                     cwd=REPO_ROOT,
-                    env=fixture_environment(os.environ),
+                    env=fixture_environment(os.environ, service_diagnostics_path),
                     stdout=log,
                     stderr=subprocess.DEVNULL,
                 )
-            host, port = wait_for_service(ready_path, service_process, startup_log=service_startup_path)
+            host, port = wait_for_service(ready_path, service_process, startup_log=service_startup_path,
+                                          diagnostics_path=service_diagnostics_path)
             server_url = f"http://{host}:{port}/api"
             if arguments.suite in DUAL_SERVER_SUITES:
                 ready_b = arguments.evidence_dir / "service-b-ready.json"
                 service_log_b_path = arguments.evidence_dir / "service-b.log"
                 service_startup_b_path = arguments.evidence_dir / "service-b-startup.log"
+                service_diagnostics_b_path = arguments.evidence_dir / "service-b-diagnostics.log"
                 with open(service_startup_b_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
                     service_process_b = subprocess.Popen(
                         [
@@ -905,11 +900,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                             str(service_log_b_path),
                         ],
                         cwd=REPO_ROOT,
-                        env=fixture_environment(os.environ),
+                        env=fixture_environment(os.environ, service_diagnostics_b_path),
                         stdout=log,
                         stderr=subprocess.DEVNULL,
                     )
-                host_b, port_b = wait_for_service(ready_b, service_process_b, startup_log=service_startup_b_path)
+                host_b, port_b = wait_for_service(ready_b, service_process_b, startup_log=service_startup_b_path,
+                                                  diagnostics_path=service_diagnostics_b_path)
                 server_url_b = f"http://{host_b}:{port_b}/api"
         else:
             server_url, unreachable_reservation = reserve_unreachable_server_url()
@@ -1308,7 +1304,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         recorder = active()
         if recorder is not None and recorder.xcode_timed_out:
             exports = recorder.collect("xcode", lambda: official_exports(arguments.evidence_dir,
-                [bundle for bundle, _suffix in private_bundles]), cap=0.1)
+                [bundle for bundle, _suffix in private_bundles]), cap=IO_CAP_SECONDS)
             recorder.event("xcode", "official-export", "completed", recorder.next_sequence(), exports=exports)
 
         if owns_evidence_directory:

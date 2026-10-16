@@ -536,8 +536,9 @@ def main(argv=None, *, simulator_prepared=False):
             service = subprocess.Popen([sys.executable, str(ROOT / "scripts/strict_e2e_server.py"), "--fixture-set", "c",
                                         "--host", "127.0.0.1", "--port", "0", "--ready-file", str(work / "ready.json"),
                                         "--log-file", str(work / "service-requests.log")],
-                                       env=fixture_environment(env), stdout=log, stderr=subprocess.STDOUT)
-        host, port = wait_for_service(work / "ready.json", service, startup_log=work / "service.log")
+                                       env=fixture_environment(env, work / "service-diagnostics.log"), stdout=log, stderr=subprocess.STDOUT)
+        host, port = wait_for_service(work / "ready.json", service, startup_log=work / "service.log",
+                                      diagnostics_path=work / "service-diagnostics.log")
         print(f"Fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
         timeout = args.timeout_minutes * 60
         def execute(command, name):

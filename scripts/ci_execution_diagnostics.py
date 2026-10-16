@@ -21,7 +21,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ci_bounded_diagnostics import (COLLECTION_BUDGET_SECONDS, MAX_DIAGNOSTIC_SECONDS, MAX_EVENTS,
-                                    PROCESS_NAMES, validate_receipt)
+    MAX_CPU_SECONDS, MAX_MEMORY_BYTES, MAX_PROCESS_CPU_PERCENT, MAX_LOAD_AVERAGE, MAX_CPU_PERCENT,
+    MAX_PROCESSES, MAX_PROCESS_COUNT, PROCESS_NAMES, validate_receipt)
 from ci_summary import BOUNDED_DIAGNOSTICS_FIELD
 
 SAMPLE_CAP_SECONDS = 0.25
@@ -29,6 +30,14 @@ IO_CAP_SECONDS = 0.1
 FIXTURE_READ_CAP_SECONDS = 0.25
 FIXTURE_PREFIX = "fixture-diagnostic: "
 MAX_RECEIPT_BYTES = 512 * 1024
+BOOKKEEPING_RESERVE_SECONDS = 0.01
+SAVE_RESERVE_SECONDS = 0.02
+SYSTEM_COMMAND_CAP_SECONDS = 0.08
+FIXTURE_EMISSION_CAP_SECONDS = 0.2
+FIXTURE_HARVEST_RESERVE_SECONDS = 0.3
+MAX_PROGRESS_BYTES = 64 * 1024
+EXECUTABLE_NAMES = {name: name for name in PROCESS_NAMES} | {
+    "com.apple.CoreSimulator.CoreSimulatorService": "CoreSimulatorService"}
 _ACTIVE = contextvars.ContextVar("execution_diagnostics", default=None)
 
 
@@ -42,7 +51,7 @@ def system_sample():
     """Read fixed ps columns; discard paths and every non-allowlisted process."""
     groups, total_cpu = {}, 0.0
     completed = subprocess.run(["/bin/ps", "-A", "-o", "%cpu=,rss=,stat=,comm="],
-                               capture_output=True, text=True, timeout=0.08, check=False)
+                               capture_output=True, text=True, timeout=SYSTEM_COMMAND_CAP_SECONDS, check=False)
     for line in completed.stdout.splitlines():
         parts = line.split(None, 3)
         if len(parts) != 4:
@@ -52,8 +61,8 @@ def system_sample():
             total_cpu += float(cpu)
         except ValueError:
             continue
-        name = executable.rsplit("/", 1)[-1]
-        if name not in PROCESS_NAMES:
+        name = EXECUTABLE_NAMES.get(executable.rsplit("/", 1)[-1])
+        if name is None:
             continue
         state = {"R": "running", "S": "sleeping", "I": "sleeping", "U": "uninterruptible",
                  "D": "uninterruptible", "T": "stopped", "Z": "zombie"}.get(raw_state[:1], "unknown")
@@ -64,27 +73,27 @@ def system_sample():
             row[2] += int(rss) * 1024
         except ValueError:
             continue
-    processes = [{"name": name, "state": state, "count": min(values[0], 65536),
-                  "cpu_percent": finite(values[1], 10**6), "rss_bytes": finite(values[2], 2**50, integral=True)}
-                 for (name, state), values in sorted(groups.items())][:64]
+    processes = [{"name": name, "state": state, "count": min(values[0], MAX_PROCESS_COUNT),
+                  "cpu_percent": finite(values[1], MAX_PROCESS_CPU_PERCENT), "rss_bytes": finite(values[2], MAX_MEMORY_BYTES, integral=True)}
+                 for (name, state), values in sorted(groups.items())][:MAX_PROCESSES]
     memory = None
     try:
-        stats = subprocess.run(["/usr/bin/vm_stat"], capture_output=True, text=True, timeout=0.08, check=False).stdout
+        stats = subprocess.run(["/usr/bin/vm_stat"], capture_output=True, text=True, timeout=SYSTEM_COMMAND_CAP_SECONDS, check=False).stdout
         page = re.search(r"page size of (\d+) bytes", stats)
         free = re.search(r"Pages free:\s+(\d+)", stats)
         if page and free:
-            memory = finite(int(page[1]) * int(free[1]), 2**50, integral=True)
+            memory = finite(int(page[1]) * int(free[1]), MAX_MEMORY_BYTES, integral=True)
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
     try:
-        load = [finite(value, 10**6) for value in os.getloadavg()]
+        load = [finite(value, MAX_LOAD_AVERAGE) for value in os.getloadavg()]
         if any(value is None for value in load):
             load = None
     except OSError:
         load = None
     image = os.environ.get("ImageVersion", "")
     version = [int(value) for value in image.split(".")] if re.fullmatch(r"\d{1,9}\.\d{1,9}\.\d{1,9}", image) else None
-    cpu_percent = finite(total_cpu / (os.cpu_count() or 1), 100)
+    cpu_percent = finite(total_cpu / (os.cpu_count() or 1), MAX_CPU_PERCENT)
     return {"cpu_percent": cpu_percent, "memory_free_bytes": memory, "load_average": load,
             "runner_hosted": {"github-hosted": True, "self-hosted": False}.get(os.environ.get("RUNNER_ENVIRONMENT")),
             "image_version": version, "processes": processes}
@@ -103,7 +112,7 @@ class Recorder:
     def collect(self, scope, operation, *, cap):
         remaining = COLLECTION_BUDGET_SECONDS[scope] - self.charged[scope]
         # Leave room for bookkeeping and do not start work after a scope is spent.
-        limit = min(cap, remaining - 0.01)
+        limit = min(cap, remaining - BOOKKEEPING_RESERVE_SECONDS)
         if limit <= 0:
             self.truncated = True
             return None
@@ -130,16 +139,31 @@ class Recorder:
 
     def event(self, scope, phase, state, sequence, *, elapsed=0, cpu=None, sample=None, digest=None, exports=None):
         started = time.perf_counter()
-        if len(self.events) >= MAX_EVENTS or self.charged[scope] >= COLLECTION_BUDGET_SECONDS[scope] - 0.01:
+        if self.charged[scope] >= COLLECTION_BUDGET_SECONDS[scope] - BOOKKEEPING_RESERVE_SECONDS:
             self.truncated = True
             return
-        self.events.append({"scope": scope, "phase": phase, "state": state, "sequence": sequence,
+        event = {"scope": scope, "phase": phase, "state": state, "sequence": sequence,
                             "elapsed_seconds": finite(elapsed, MAX_DIAGNOSTIC_SECONDS, default=0),
-                            "cpu_seconds": finite(cpu, 10**12), "sample": sample,
-                            "input_sha256": digest, "official_exports": exports})
+                            "cpu_seconds": finite(cpu, MAX_CPU_SECONDS), "sample": sample,
+                            "input_sha256": digest, "official_exports": exports}
+        self.retain(event)
         elapsed = time.perf_counter() - started
         self.cost[scope] += elapsed
         self.charged[scope] += elapsed
+        return event
+
+    @staticmethod
+    def is_anomaly(event):
+        return event["state"] not in ("started", "completed") or event["sample"] is not None or event["phase"] == "official-export"
+
+    def retain(self, event):
+        if len(self.events) >= MAX_EVENTS:
+            self.truncated = True
+            oldest_success = next((index for index, previous in enumerate(self.events) if not self.is_anomaly(previous)), None)
+            if oldest_success is None and not self.is_anomaly(event):
+                return
+            self.events.pop(oldest_success if oldest_success is not None else 0)
+        self.events.append(event)
 
     def next_sequence(self):
         self.sequence += 1
@@ -162,7 +186,7 @@ class Recorder:
     def attach(self, summary):
         summary.pop(BOUNDED_DIAGNOSTICS_FIELD, None)
         receipt = self.receipt()
-        if receipt is not None and receipt["events"]:
+        if receipt is not None and (receipt["events"] or receipt["truncated"]):
             summary[BOUNDED_DIAGNOSTICS_FIELD] = receipt
 
     def load(self, path):
@@ -202,7 +226,7 @@ class Recorder:
             return
         # Reserve the whole IO cap before writing, so even a lost writer cannot
         # cause the next process to reuse its budget. Late writes never commit.
-        cap = min(IO_CAP_SECONDS, COLLECTION_BUDGET_SECONDS["preparation"] - self.charged["preparation"] - 0.02)
+        cap = min(IO_CAP_SECONDS, COLLECTION_BUDGET_SECONDS["preparation"] - self.charged["preparation"] - SAVE_RESERVE_SECONDS)
         if cap <= 0:
             self.truncated = True
             return
@@ -251,12 +275,12 @@ class Recorder:
         mapping = {}
         emission_seconds = None
         for line in text.splitlines():
-            if self.charged["fixture"] >= COLLECTION_BUDGET_SECONDS["fixture"] - 0.01:
+            if self.charged["fixture"] >= COLLECTION_BUDGET_SECONDS["fixture"] - BOOKKEEPING_RESERVE_SECONDS:
                 self.truncated = True
                 break
             if line.startswith("fixture-collection-seconds: "):
                 try:
-                    emission_seconds = finite(float(line.removeprefix("fixture-collection-seconds: ")), 0.2)
+                    emission_seconds = finite(float(line.removeprefix("fixture-collection-seconds: ")), FIXTURE_EMISSION_CAP_SECONDS)
                 except ValueError:
                     pass
             if line == "fixture-collection-truncated: true":
@@ -274,10 +298,7 @@ class Recorder:
                 if original not in mapping:
                     mapping[original] = self.next_sequence()
                 event["sequence"] = mapping[original]
-                if len(self.events) < MAX_EVENTS:
-                    self.events.append(event)
-                else:
-                    self.truncated = True
+                self.retain(event)
             except (ValueError, TypeError, KeyError):
                 continue
             finally:
@@ -293,8 +314,8 @@ class Recorder:
         def progress():
             with log_path.open("rb") as stream:
                 stream.seek(0, 2)
-                stream.seek(max(0, stream.tell() - 65536))
-                lines = stream.read(65536).decode("utf-8", errors="replace").splitlines()
+                stream.seek(max(0, stream.tell() - MAX_PROGRESS_BYTES))
+                lines = stream.read(MAX_PROGRESS_BYTES).decode("utf-8", errors="replace").splitlines()
             phase = "xcodebuild"
             for line in lines:
                 if line.startswith(("SwiftCompile ", "CompileC ", "Ld ", "Build description signature:")):
@@ -321,15 +342,16 @@ def active():
     return _ACTIVE.get()
 
 
-def fixture_environment(environment):
+def fixture_environment(environment, path):
     """Reserve child emission time before spawn; repeated services share one budget."""
     environment = dict(environment)
     recorder = active()
-    allowance = max(0, min(0.2, COLLECTION_BUDGET_SECONDS["fixture"] - recorder.charged["fixture"] - 0.3)) if recorder else 0
+    allowance = max(0, min(FIXTURE_EMISSION_CAP_SECONDS, COLLECTION_BUDGET_SECONDS["fixture"] - recorder.charged["fixture"] - FIXTURE_HARVEST_RESERVE_SECONDS)) if recorder else 0
     if recorder:
         recorder.charged["fixture"] += allowance
         recorder.truncated |= allowance == 0
     environment["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"] = str(allowance)
+    environment["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE"] = str(path)
     return environment
 
 

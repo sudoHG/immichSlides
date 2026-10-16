@@ -6,14 +6,52 @@ from __future__ import annotations
 import sys
 import time
 import os
+import _thread
+
+DIAGNOSTIC_EMISSION_CAP_SECONDS = 0.2
+DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS = 0.01
+DIAGNOSTIC_FINISH_CAP_SECONDS = 0.01
+DIAGNOSTIC_MIN_ALLOWANCE_SECONDS = DIAGNOSTIC_FINISH_CAP_SECONDS + DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
+DIAGNOSTIC_MAX_EVENTS = 512
+DIAGNOSTIC_MAX_ELAPSED_SECONDS = 86400
+DIAGNOSTIC_MAX_CPU_SECONDS = 10**12
+DIAGNOSTIC_FILE_ENV = "IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE"
+DIAGNOSTIC_BUDGET_ENV = "IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"
+
+
+def _append_diagnostics(path, payload):
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK, 0o600)
+    try:
+        os.write(descriptor, payload)
+    finally:
+        os.close(descriptor)
+
+
+def _start_import_diagnostic():
+    # Imports may stall before threading/json are available. This daemon never delays readiness.
+    try:
+        budget = float(os.environ.get(DIAGNOSTIC_BUDGET_ENV, "0"))
+        path = os.environ.get(DIAGNOSTIC_FILE_ENV)
+        if not path or not DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS <= budget <= DIAGNOSTIC_EMISSION_CAP_SECONDS:
+            return False
+        def write():
+            try:
+                _append_diagnostics(path, (
+                    'fixture-diagnostic: {"scope":"fixture","phase":"import","state":"started","sequence":0,'
+                    '"elapsed_seconds":0,"cpu_seconds":0,"sample":null,"input_sha256":null,"official_exports":null}\n'
+                    f'fixture-collection-seconds: {DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS}\n').encode())
+            except OSError:
+                pass
+        _thread.start_new_thread(write, ())
+        return True
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 _IMPORT_STARTED = time.monotonic()
 _IMPORT_CPU_STARTED = time.process_time()
 if __name__ == "__main__":
     print("fixture-startup: phase=import; state=started; elapsed=0.000s; total=0.000s", flush=True)
-    if os.environ.get("IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS", "0.2") != "0":
-        print('fixture-diagnostic: {"scope":"fixture","phase":"import","state":"started","sequence":0,'
-              '"elapsed_seconds":0,"cpu_seconds":0,"sample":null,"input_sha256":null,"official_exports":null}', flush=True)
+_IMPORT_DIAGNOSTIC_STARTED = _start_import_diagnostic() if __name__ == "__main__" else False
 
 import argparse
 import copy
@@ -22,6 +60,7 @@ import hashlib
 import json
 import logging
 import math
+import queue
 import socket
 import socketserver
 import struct
@@ -38,38 +77,69 @@ _STARTUP_DIAGNOSTICS = None
 
 class StartupDiagnostics:
     """Keep this emitter standalone for the source-free Cloud fixture copy."""
-    def __init__(self, budget, *, origin=None, cpu_origin=None):
-        self.budget = min(0.2, max(0, budget)) if math.isfinite(budget) else 0
+    def __init__(self, budget, *, path=None, origin=None, cpu_origin=None):
+        self.budget = min(DIAGNOSTIC_EMISSION_CAP_SECONDS, max(0, budget)) if math.isfinite(budget) and path else 0
+        if self.budget < DIAGNOSTIC_MIN_ALLOWANCE_SECONDS:
+            self.budget = 0
+        self.path = path
         self.origin = time.monotonic() if origin is None else origin
         self.cpu_origin = time.process_time() if cpu_origin is None else cpu_origin
-        self.cost, self.sequence = 0.0, 0
+        self.cost = min(self.budget, DIAGNOSTIC_FINISH_CAP_SECONDS) if self.budget else 0.0
+        self.cost += DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS if self.budget else 0.0
+        self.cost += DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS if _IMPORT_DIAGNOSTIC_STARTED else 0.0
+        self.sequence, self.event_count = 0, 0
         self.phases = {}
         self.truncated = False
-
-    def emit(self, line):
-        cap = min(0.01, self.budget - self.cost - 0.001)
-        if cap <= 0:
-            return
-        started = time.perf_counter()
-        done = threading.Event()
-        def write():
+        self.pending, self.done = queue.SimpleQueue(), threading.Event()
+        self.generation_depth = 0
+        self.is_finishing = False
+        if self.budget:
             try:
-                print(line, flush=True)
-            finally:
-                done.set()
+                threading.Thread(target=self._write, daemon=True).start()
+            except (OSError, RuntimeError):
+                self.budget = 0
+
+    def _write(self):
         try:
-            threading.Thread(target=write, daemon=True).start()
-            if not done.wait(max(0, cap - (time.perf_counter() - started))):
-                self.truncated = True
+            while (line := self.pending.get()) is not None:
+                if self.cost + DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS > self.budget:
+                    self.truncated = True
+                    break
+                started = time.thread_time()
+                self.cost += DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
+                payload = (line + "\nfixture-collection-seconds: " + str(self.cost) + "\n").encode()
+                # A blocked write owns only this daemon; ready never waits for it.
+                _append_diagnostics(self.path, payload)
+                elapsed = time.thread_time() - started
+                self.cost += elapsed - DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
+                if elapsed > DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS:
+                    self.truncated = True
+                    break
         except (OSError, RuntimeError):
             self.truncated = True
-        self.cost += time.perf_counter() - started
+        finally:
+            if self.event_count:
+                try:
+                    # The final-write allowance is already reserved in cost.
+                    _append_diagnostics(self.path, ("fixture-collection-seconds: " + str(self.cost) + "\n"
+                        + ("fixture-collection-truncated: true\n" if self.truncated else "")).encode())
+                except OSError:
+                    pass
+            self.done.set()
+
+    def finish(self):
+        if self.budget and not self.is_finishing:
+            self.is_finishing = True
+            self.pending.put(None)
+            # Called only after ready is written, or after failure has been decided.
+            if not self.done.wait(DIAGNOSTIC_FINISH_CAP_SECONDS):
+                self.truncated = True
 
     def report(self, phase, state, digest=None):
-        if self.cost >= self.budget - 0.002 or self.sequence >= 512:
-            if not self.truncated:
-                self.truncated = True
-                self.emit("fixture-collection-truncated: true")
+        if not self.budget:
+            return
+        if self.cost >= self.budget - DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS or self.event_count >= DIAGNOSTIC_MAX_EVENTS:
+            self.truncated = True
             return
         started = time.perf_counter()
         if state == "started":
@@ -81,15 +151,13 @@ class StartupDiagnostics:
             sequences.pop()
         elapsed, cpu = time.monotonic() - self.origin, time.process_time() - self.cpu_origin
         event = {"scope": "fixture", "phase": phase, "state": state, "sequence": sequence,
-                 "elapsed_seconds": elapsed if math.isfinite(elapsed) and 0 <= elapsed <= 86400 else 0,
-                 "cpu_seconds": cpu if math.isfinite(cpu) and 0 <= cpu <= 10**12 else None,
+                 "elapsed_seconds": elapsed if math.isfinite(elapsed) and 0 <= elapsed <= DIAGNOSTIC_MAX_ELAPSED_SECONDS else 0,
+                 "cpu_seconds": cpu if math.isfinite(cpu) and 0 <= cpu <= DIAGNOSTIC_MAX_CPU_SECONDS else None,
                  "sample": None, "input_sha256": digest, "official_exports": None}
         line = "fixture-diagnostic: " + json.dumps(event, separators=(",", ":"))
+        self.event_count += 1
         self.cost += time.perf_counter() - started
-        self.emit(line)
-        self.emit("fixture-collection-seconds: " + str(self.cost))
-        if self.truncated:
-            self.emit("fixture-collection-truncated: true")
+        self.pending.put(line)
 
 
 def public_input_digest(values):
@@ -101,11 +169,19 @@ def generation_phase(phase):
         @functools.wraps(function)
         def wrapped(*args, **kwargs):
             reporter = _STARTUP_DIAGNOSTICS
-            if reporter is None:
+            if reporter is None or not reporter.budget:
+                return function(*args, **kwargs)
+            if phase == "fixture-generation" and reporter.generation_depth:
                 return function(*args, **kwargs)
             digest = public_input_digest([args, kwargs])
             reporter.report(phase, "started", digest)
-            result = function(*args, **kwargs)
+            if phase == "fixture-generation":
+                reporter.generation_depth += 1
+            try:
+                result = function(*args, **kwargs)
+            finally:
+                if phase == "fixture-generation":
+                    reporter.generation_depth -= 1
             reporter.report(phase, "completed", digest)
             return result
         return wrapped
@@ -210,7 +286,6 @@ def _png(width: int, height: int, seed: int, label: str, *, striped: bool = Fals
     ) + chunk(b"IEND", b"")
 
 
-@generation_phase("fixture-generation")
 def _fixture_data(name: str) -> dict[str, Any]:
     # Callers get a copy so no caller can corrupt the shared cache; PNG bytes are immutable and are not duplicated.
     return copy.deepcopy(_cached_fixture_data(name))
@@ -218,6 +293,7 @@ def _fixture_data(name: str) -> dict[str, Any]:
 
 # Building a fixture set draws every PNG pixel by pixel and is deterministic, so build each set once.
 @functools.lru_cache(maxsize=None)
+@generation_phase("fixture-generation")
 def _cached_fixture_data(name: str) -> dict[str, Any]:
     if name not in FIXTURE_SETS:
         raise ValueError(f"Unknown fixture set: {name}")
@@ -997,10 +1073,10 @@ def main(argv: list[str] | None = None) -> int:
 
     startup_started = _IMPORT_STARTED if __name__ == "__main__" else time.monotonic()
     try:
-        diagnostic_budget = float(os.environ.get("IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS", "0.2"))
+        diagnostic_budget = float(os.environ.get(DIAGNOSTIC_BUDGET_ENV, "0"))
     except ValueError:
         diagnostic_budget = 0
-    _STARTUP_DIAGNOSTICS = StartupDiagnostics(diagnostic_budget, origin=startup_started,
+    _STARTUP_DIAGNOSTICS = StartupDiagnostics(diagnostic_budget, path=os.environ.get(DIAGNOSTIC_FILE_ENV), origin=startup_started,
         cpu_origin=_IMPORT_CPU_STARTED if __name__ == "__main__" else None)
     if __name__ == "__main__":
         _STARTUP_DIAGNOSTICS.report("import", "completed")
@@ -1018,7 +1094,7 @@ def main(argv: list[str] | None = None) -> int:
     server = None
     try:
         report("fixture-build", "started")
-        report("manifest", "started")
+        _STARTUP_DIAGNOSTICS.report("manifest", "started")
         manifest = fixture_manifest(arguments.fixture_set)
         if arguments.manifest_out:
             arguments.manifest_out.parent.mkdir(parents=True, exist_ok=True)
@@ -1026,7 +1102,7 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-        report("manifest", "completed")
+        _STARTUP_DIAGNOSTICS.report("manifest", "completed")
 
         log_handle = arguments.log_file.open("a", encoding="utf-8") if arguments.log_file else None
         server = create_server(
@@ -1047,12 +1123,15 @@ def main(argv: list[str] | None = None) -> int:
                 encoding="utf-8",
             )
             report("ready-write", "completed")
+        _STARTUP_DIAGNOSTICS.finish()
         server.serve_forever()
         return 0
     except OSError as error:
         print(f"Server file I/O failed: {type(error).__name__}.", file=sys.stderr)
         return 2
     finally:
+        if not _STARTUP_DIAGNOSTICS.done.is_set():
+            _STARTUP_DIAGNOSTICS.finish()
         _STARTUP_DIAGNOSTICS = None
         if server is not None:
             server.server_close()

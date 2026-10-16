@@ -338,6 +338,10 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertEqual(bundle.parent.parent, evidence.parent / "private")
                 bundle.mkdir()
                 (bundle / "raw.bin").write_bytes(b"raw diagnostics")
+            if timeout_phase == "xcodebuild":
+                from ci_execution_diagnostics import active
+                active().xcode_timed_out = True
+                raise CommandError("xcodebuild timed out after 600.0s.")
             if failure_session is not None and kwargs["log_path"].name != f"xcodebuild-{failure_session}.log":
                 return 0
             if retry:
@@ -535,6 +539,17 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             self.assertNotIsInstance(raised.exception, strict_runner.InfrastructureTimeout)
             self.assertNotIn("private-test-input", str(raised.exception))
             self.assertNotEqual(raised.exception.code, 0)
+        import ci_execution_diagnostics as diagnostics
+        with tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
+            evidence = Path(raw) / "evidence"
+            code, _, stderr, _ = self._run_p2_main(evidence, suite="smoke", platform="ios", model="iPhone",
+                                                  warm=True, timeout_phase="xcodebuild")
+            self.assertEqual(2, code, stderr)
+            self.assertIn("xcodebuild timed out after 600.0s.", stderr)
+            self.assertEqual("FAILED", json.loads((evidence / "case-manifest.json").read_text())["result"])
+            exported = [event for event in recorder.events if event["phase"] == "official-export"]
+            self.assertEqual(1, len(exported))
+            self.assertEqual({"bundle": True, "summary": True, "tests": True}, exported[0]["official_exports"])
 
     def test_simulator_and_summary_timeouts_name_the_hung_phase_without_command_output(self):
         commands = {
@@ -1381,20 +1396,15 @@ class StrictCITracerTests(unittest.TestCase):
             output = Path(raw) / "trace"
             receipt_path = Path(raw) / "preparation.json"
             clock = [0.0]
-            process = mock.Mock(returncode=0)
-            def communicate(**kwargs):
-                clock[0] = 301.5
-                if kwargs.get("timeout") is not None:
-                    raise subprocess.TimeoutExpired(["private-input"], kwargs["timeout"], output="private-input")
-                return ("", "")
-            process.communicate.side_effect = communicate
             def stats(command, **kwargs):
+                if command[0] == "xcrun":
+                    clock[0] = 301.5
+                    raise subprocess.TimeoutExpired(["private-input"], kwargs["timeout"], output="private-input")
                 return subprocess.CompletedProcess(command, 0,
-                    "12 10 R /private-input/xcodebuild\n9 20 S /private-input/unknown-name\n" if command[0] == "/bin/ps"
+                    "12 10 R /private-input/xcodebuild\n4 30 S /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/bin/com.apple.CoreSimulator.CoreSimulatorService\n9 20 S /private-input/unknown-name\n" if command[0] == "/bin/ps"
                     else "Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free: 10.\n", "")
             with diagnostics.session(receipt_path) as recorder, \
                     mock.patch.object(support, "boot_simulator", return_value=""), \
-                    mock.patch.object(support.subprocess, "Popen", return_value=process), \
                     mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
                     mock.patch.object(diagnostics.subprocess, "run", side_effect=stats), \
                     mock.patch.dict(os.environ, {"ImageVersion": "20261016.1.2"}):
@@ -1414,17 +1424,17 @@ class StrictCITracerTests(unittest.TestCase):
             events = summary["bounded_diagnostics"]["events"]
             self.assertTrue(any(event["phase"] == "simulator-readiness" and event["state"] == "timeout"
                                 and event["elapsed_seconds"] == 301.5 for event in events))
-            self.assertEqual(["spawn-started", "spawn-completed", "communicate-started", "timeout",
-                              "kill-started", "kill-completed", "reap-started", "reap-completed"],
+            self.assertEqual(["started", "timeout", "reap-completed"],
                              [event["state"] for event in events if event["phase"] == "simulator-container"])
             self.assertNotIn("private-input", json.dumps(summary["bounded_diagnostics"]))
             samples = [event["sample"] for event in events if event["sample"] is not None]
-            self.assertEqual(3, len(samples))
+            self.assertEqual(2, len(samples))
             self.assertEqual([20261016, 1, 2], samples[0]["image_version"])
             self.assertEqual(40960, samples[0]["memory_free_bytes"])
-            self.assertEqual([{"name": "xcodebuild", "state": "running", "count": 1,
+            self.assertEqual([{"name": "CoreSimulatorService", "state": "sleeping", "count": 1,
+                              "cpu_percent": 4.0, "rss_bytes": 30720},
+                             {"name": "xcodebuild", "state": "running", "count": 1,
                               "cpu_percent": 12.0, "rss_bytes": 10240}], samples[0]["processes"])
-            self.assertLessEqual(summary["bounded_diagnostics"]["collection_seconds"]["preparation"], 5)
             for entry in summary["population"]["observed"]:
                 self.assertEqual("failed", entry["outcome"])
                 self.assertEqual("not-run", entry["attempts"][0]["outcome"])
@@ -1438,14 +1448,30 @@ class StrictCITracerTests(unittest.TestCase):
             self.assertEqual(0, export_shard(output, Path(raw) / "packages"))
             self.assertEqual([], json.loads((output / "records/p2-review-bindings.json").read_text())["review_packages"])
 
+    def test_preparation_sampling_precedes_deadline_and_non_timeout_failure_has_no_end_state(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_runner_support as support
+        clock = [0.0]
+        def sample():
+            clock[0] += 0.2
+            return None
+        def boot(*args, **kwargs):
+            self.assertEqual(600.2, kwargs["deadline"])
+            raise CommandError("Simulator boot failed (exit 65).")
+        with diagnostics.session() as recorder, mock.patch.object(diagnostics, "system_sample", side_effect=sample), \
+                mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(support, "boot_simulator", side_effect=boot):
+            with self.assertRaisesRegex(CommandError, r"^Simulator boot failed \(exit 65\)\.$"):
+                support.prepare_simulator("unused", report=lambda line: None)
+            self.assertEqual(["started"], [event["state"] for event in recorder.events])
+
     def test_xcode_timeout_retains_bounded_public_progress_without_changing_failure(self):
         import ci_execution_diagnostics as diagnostics
         import run_strict_e2e as runner
         from ci_bounded_diagnostics import validate_receipt
-        process = mock.Mock()
         clock = [0.0]
         with tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder, \
-                mock.patch.object(runner.subprocess, "Popen", return_value=process), \
+                mock.patch.object(runner.subprocess, "run") as run, \
                 mock.patch.object(runner.time, "monotonic", side_effect=lambda: clock[0]), \
                 mock.patch.object(diagnostics, "system_sample", return_value=None):
             log = Path(raw) / "xcode.log"
@@ -1455,7 +1481,9 @@ class StrictCITracerTests(unittest.TestCase):
                 clock[0] = 600
                 log.write_text("private-input\nTest Suite 'All tests' started\n")
                 raise subprocess.TimeoutExpired(["private-input"], 600)
-            process.wait.side_effect = lambda **kwargs: timeout() if kwargs else 0
+            run.side_effect = timeout
+            for index in range(diagnostics.MAX_EVENTS):
+                recorder.event("preparation", "simulator-container", "completed", index)
             with self.assertRaisesRegex(CommandError, "xcodebuild timed out after 600.0s") as failure:
                 runner.run_command(["xcodebuild", "-resultBundlePath", str(bundle)], cwd=Path(raw), environment={},
                                    log_path=log, timeout_seconds=600)
@@ -1464,32 +1492,47 @@ class StrictCITracerTests(unittest.TestCase):
             receipt = recorder.receipt()
             validate_receipt(receipt)
             events = receipt["events"]
-            self.assertEqual(["before-kill", "after-reap"], [event["state"] for event in events])
-            self.assertEqual("test-execution", events[0]["phase"])
-            self.assertEqual(600, events[0]["elapsed_seconds"])
-            self.assertEqual({"bundle": True, "summary": False, "tests": False}, events[0]["official_exports"])
+            self.assertEqual(["timeout", "after-reap"], [event["state"] for event in events[-2:]])
+            self.assertEqual("test-execution", events[-1]["phase"])
+            self.assertEqual(600, events[-1]["elapsed_seconds"])
+            self.assertEqual({"bundle": True, "summary": False, "tests": False}, events[-1]["official_exports"])
+            self.assertEqual(diagnostics.MAX_EVENTS, len(events))
+            self.assertTrue(receipt["truncated"])
+            from ci_bounded_diagnostics import render_receipt
+            self.assertIn("xcode: test-execution/after-reap at 600 s", render_receipt(receipt))
             self.assertNotIn("private-input", json.dumps(receipt))
-            self.assertLessEqual(receipt["collection_seconds"]["xcode"], 10)
         with tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder, \
-                mock.patch.object(runner.subprocess, "Popen", return_value=mock.Mock(wait=mock.Mock(return_value=0))):
-            self.assertEqual(0, runner.run_command(["xcodebuild"], cwd=Path(raw), environment={},
+                mock.patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 65)):
+            self.assertEqual(65, runner.run_command(["xcodebuild"], cwd=Path(raw), environment={},
                                                   log_path=Path(raw) / "passed.log", timeout_seconds=600))
-            self.assertEqual([], recorder.receipt()["events"])
+            self.assertNotIn("completed", [event["state"] for event in recorder.events])
 
     def test_hung_diagnostic_is_capped_and_invalid_measurements_cannot_break_a_summary(self):
         import ci_execution_diagnostics as diagnostics
-        import threading
-        import time as real_time
         from ci_summary import parse_summary
         from test_ci_summary import valid_summary
-        gate = threading.Event()
+        for scope, budget in {"preparation": 5, "xcode": 10, "fixture": 2}.items():
+            with self.subTest(scope=scope):
+                recorder = diagnostics.Recorder()
+                recorder.charged[scope] = budget - 0.04
+                clock = [0.0]
+                def wait(seconds):
+                    clock[0] += seconds
+                    return False
+                done = mock.Mock(wait=mock.Mock(side_effect=wait))
+                with mock.patch.object(diagnostics.threading, "Event", return_value=done), \
+                        mock.patch.object(diagnostics.threading.Thread, "start"), \
+                        mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
+                    self.assertIsNone(recorder.collect(scope, lambda: 1, cap=0.5))
+                self.assertAlmostEqual(0.03, done.wait.call_args.args[0])
+                self.assertAlmostEqual(budget - 0.01, recorder.charged[scope])
         with diagnostics.session() as recorder:
-            started = real_time.perf_counter()
-            try:
-                self.assertIsNone(recorder.collect("preparation", lambda: gate.wait(30), cap=0.02))
-                self.assertLess(real_time.perf_counter() - started, 0.5)
-            finally:
-                gate.set()
+            done = mock.Mock(wait=mock.Mock(return_value=False))
+            with mock.patch.object(diagnostics.threading, "Event", return_value=done), \
+                    mock.patch.object(diagnostics.threading.Thread, "start"), \
+                    mock.patch.object(diagnostics.time, "perf_counter", return_value=0):
+                self.assertIsNone(recorder.collect("preparation", lambda: 1, cap=0.02))
+                done.wait.assert_called_once_with(0.02)
             with mock.patch.object(diagnostics.threading.Thread, "start", side_effect=RuntimeError("private-input")):
                 self.assertIsNone(recorder.collect("preparation", lambda: 1, cap=0.02))
             recorder.event("preparation", "simulator-preparation", "timeout", 0, elapsed=float("inf"), cpu=float("nan"))
@@ -1525,6 +1568,20 @@ class StrictCITracerTests(unittest.TestCase):
             operation = mock.Mock()
             self.assertIsNone(successor.collect("xcode", operation, cap=0.01))
             operation.assert_not_called()
+            from test_ci_summary import valid_summary
+            summary = valid_summary()
+            successor.attach(summary)
+            self.assertEqual([], summary["bounded_diagnostics"]["events"])
+            self.assertTrue(summary["bounded_diagnostics"]["truncated"])
+            mixed = Path(raw) / "fixture.log"
+            seed = diagnostics.Recorder()
+            seed.event("preparation", "simulator-preparation", "started", 1)
+            seed.event("fixture", "image-generation", "started", 2)
+            mixed.write_text("".join(diagnostics.FIXTURE_PREFIX + json.dumps(event) + "\n" for event in seed.events)
+                             + "fixture-collection-seconds: 0.01\n")
+            collected = diagnostics.Recorder()
+            collected.fixture_log(mixed)
+            self.assertEqual(["fixture"], [event["scope"] for event in collected.events])
 
     def test_failed_runner_keeps_official_counts_and_compilation_without_becoming_passed(self):
         import run_strict_ci_tracer as tracer
@@ -1564,6 +1621,10 @@ class StrictCITracerTests(unittest.TestCase):
                         "nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [{
                             "nodeType": "Test Case", "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()",
                             "result": official_result}]}]}))
+                    import ci_execution_diagnostics as diagnostics
+                    receipt_path = Path(command[command.index("--diagnostics-receipt") + 1])
+                    with diagnostics.session(receipt_path, reuse=True) as child:
+                        child.event("xcode", "test-execution", "timeout", child.next_sequence(), elapsed=600)
                     return 124 if infrastructure else 65
 
                 with mock.patch.object(tracer, "run_runner", side_effect=runner), mock.patch.object(tracer, "workspace_preflight"), \
@@ -1574,6 +1635,8 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual(tracer.main(["--platform", "ios", "--destination", "unused", "--manifest", str(manifest),
                                                   "--output-dir", str(output)]), 1)
                 summary = json.loads((output / "records/summary.json").read_text())
+                self.assertEqual("timeout", summary["bounded_diagnostics"]["events"][-1]["state"])
+                self.assertEqual("xcode", summary["bounded_diagnostics"]["events"][-1]["scope"])
                 trace = json.loads((output / "records/trace.json").read_text())
                 self.assertEqual(summary["population"]["compiled"], summary["population"]["declared"])
                 self.assertEqual(summary["population"]["observed"][0]["outcome"], "failed")
