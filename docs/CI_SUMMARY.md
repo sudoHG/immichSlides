@@ -154,6 +154,32 @@ parallel estimates, not hosted measurements or billing. The producers must keep
 the existing readiness, Xcode and service deadlines, and must not write ready
 early or delay its definition.
 
+### Prepared strict identity failure receipt
+
+The reader accepts `identity-failure.json` in a separate artifact named
+`nightly-identity-<shard>-<run>-<attempt>`. It is an untrusted failure diagnostic,
+not a summary or source identity. Its exact version 1 fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | Integer `1` |
+| `run` | Exactly string `id` and integer `attempt`, matching the current attempt |
+| `job` | Literal `nightly-strict` |
+| `shard` | The scheduled strict shard ID |
+| `phase` | Literal `identity-collection` |
+| `reason` | Literal `identity-collection-failed` |
+| `declared` | Exactly the scheduling record's ordered strict case identities |
+
+Unknown fields, paths, environment SHAs and command output are not accepted.
+The reporter independently binds the scheduling artifact to the GitHub run,
+aggregate identity, tested tree, matrix digest and exact scheduled shards. Only
+cases still missing from that attempt receive the reason; the receipt never
+contributes compiled or executed evidence, and cannot establish an explicit pass
+or close an issue. Invalid, duplicate, expired or foreign-attempt receipts leave
+the ordinary missing-evidence failure intact. Reader installation does not enable
+tracer emission; activation requires a separate producer change after this reader
+has reached main.
+
 ### Prepared archive download receipt
 
 The optional top-level `archive_download` object is accepted only on version 1

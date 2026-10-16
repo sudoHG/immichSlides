@@ -232,6 +232,20 @@ def validate_shard(raw, identity, run, hashes, expected):
     return summary
 
 
+def parse_identity_failure(raw, run, shard, declared):
+    """An untrusted early receipt explains missing cases; it proves no source or execution."""
+    receipt = decode(raw)
+    fields(receipt, {"schema_version", "run", "job", "shard", "phase", "reason", "declared"}, "identity failure receipt")
+    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1,
+            "unsupported identity failure receipt")
+    require(receipt["run"] == run and type(receipt["run"]["attempt"]) is int
+            and receipt["job"] == "nightly-strict" and receipt["shard"] == shard, "identity failure coordinates differ")
+    require(receipt["phase"] == "identity-collection" and receipt["reason"] == "identity-collection-failed",
+            "unsupported identity failure phase or reason")
+    require(receipt["declared"] == declared, "identity failure cases differ from scheduling record")
+    return receipt
+
+
 def read_policy():
     policy = decode(POLICY.read_text())
     fields(policy, {"schema_version", "live_tier_in_scope", "built_tiers"}, "nightly policy")

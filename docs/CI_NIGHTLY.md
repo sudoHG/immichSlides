@@ -54,6 +54,24 @@ The optional dispatch `shard` input diagnoses one known shard exactly once. It r
 the complete scheduling record; missing shards and the diagnostic marker make aggregate
 equality fail. This run cannot substitute for a complete nightly, and does not retry cases.
 
+## Early failure diagnostics
+
+The reporter retains scheduled strict cases as missing when a shard has no valid
+summary. It can read a separate, untrusted
+[identity failure receipt](CI_SUMMARY.md#prepared-strict-identity-failure-receipt)
+and associate it with the current run/attempt's verified scheduling record. Such
+a receipt changes only the public missing reason to `identity-collection-failed`;
+it supplies no source identity, compilation or execution evidence. The tracer
+producer must be activated separately after reader support reaches main.
+
+For missing strict or UI cases, the reporter can also associate the current
+attempt's GitHub job with its check-run annotations. A failure annotation with the
+hosted-runner communication-loss marker becomes `hosted-runner-disconnected`.
+Annotation text is never published. Missing methods remain NOT_RUN, verified
+results from other shards survive, and no previous attempt's successful artifacts
+are borrowed. Unavailable annotation facts retain the ordinary failure reason.
+No retry of jobs or tests, timeout, budget or simulator ordering changes are involved.
+
 ## Skipping an unchanged night
 
 The scheduled nightly first runs a Linux `change` job that uses only the scheduled main
