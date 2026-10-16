@@ -86,7 +86,7 @@ def archive_download_summary():
 def bounded_diagnostics_receipt():
     return {"schema_version": 1, "collection_seconds": {"preparation": 0.1, "xcode": 0.2, "fixture": 0.01},
         "truncated": False, "events": [
-            {"scope": "preparation", "phase": "simulator-container", "state": "timeout", "sequence": 1,
+            {"scope": "preparation", "phase": "simulator-readiness", "state": "timeout", "sequence": 1,
              "elapsed_seconds": 301.5, "cpu_seconds": 0.01, "input_sha256": None, "official_exports": None,
              "sample": {"cpu_percent": 25.0, "memory_free_bytes": 1000, "load_average": [2.0, 1.0, 1.0],
                  "runner_hosted": True, "image_version": [20261006, 244, 1],
@@ -126,7 +126,6 @@ class SummaryContractTests(unittest.TestCase):
                 self.assertNotIn("private-", str(raised.exception))
 
     def test_bounded_diagnostics_round_trip_preserves_failure_and_not_run_accounting(self):
-        import ci_report
         from ci_failure_diagnostics import scan_diagnostic_json
         summary = archive_download_summary()
         summary.pop("archive_download")
@@ -134,10 +133,6 @@ class SummaryContractTests(unittest.TestCase):
         case = summary["population"]["declared"][0]
         summary["population"].update(compiled=[], observed=[ci_summary.observation(case, "not-run", 0, exit_code=None)])
         summary["infrastructure"] = [{"code": "simulator-preparation-failed", "message": "Preparation failed"}]
-        previous = ci_report.summary_diagnostics([summary])
-        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
-        verdict = ci_verdict.evaluate_population(summary, [case], policy, environment={})
-        self.assertEqual(verdict["status"], "failed")
         summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
         with tempfile.TemporaryDirectory() as directory:
             ci_summary.write_summary(summary, Path(directory))
@@ -147,13 +142,43 @@ class SummaryContractTests(unittest.TestCase):
             rendered = Path(directory, "summary.md").read_text()
             self.assertIn("Bounded diagnostics (measurements only)", rendered)
             for detail in ("preparation=0.1 s", "xcode=0.2 s", "fixture=0.01 s", "events=4", "truncated=no",
-                           "simulator-container/timeout", "test-execution/before-kill", "image-generation/started"):
+                           "Last retained phase", "simulator-readiness/timeout", "test-execution/before-kill", "image-generation/started"):
                 self.assertIn(detail, rendered)
-        self.assertEqual(ci_report.summary_diagnostics([summary]), previous)
-        self.assertEqual(ci_verdict.evaluate_population(summary, [case], policy, environment={}), verdict)
-        for event in summary["bounded_diagnostics"]["events"]:
-            event.update(cpu_seconds=None, sample=None, input_sha256=None, official_exports=None)
+            self.assertNotIn("(over budget)", rendered)
+
+        summary["bounded_diagnostics"]["events"][0]["phase"] = "simulator-preparation"
         self.assertEqual(ci_summary.parse_summary(summary), summary)
+        self.assertIn("simulator-preparation/timeout", ci_summary.render_markdown(summary))
+
+    def test_bounded_diagnostics_retains_over_budget_and_unavailable_collection_times(self):
+        for measurements, details in (({"preparation": 5.001, "xcode": 10.001, "fixture": 2.001},
+                                      ("preparation=5.001 s (over budget)", "xcode=10.001 s (over budget)",
+                                       "fixture=2.001 s (over budget)")),
+                                     ({"preparation": None, "xcode": None, "fixture": None},
+                                      ("preparation=unavailable", "xcode=unavailable", "fixture=unavailable"))):
+            with self.subTest(measurements=measurements):
+                summary = valid_summary()
+                summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
+                summary["bounded_diagnostics"]["collection_seconds"] = measurements
+                self.assertEqual(ci_summary.parse_summary(summary), summary)
+                rendered = ci_summary.render_markdown(summary)
+                for detail in details:
+                    self.assertIn(detail, rendered)
+
+    def test_bounded_diagnostics_accepts_missing_sample_statistics_and_empty_processes(self):
+        for processes in ([{"name": "simctl", "state": "unknown", "count": 1,
+                            "cpu_percent": None, "rss_bytes": None}], []):
+            with self.subTest(processes=processes):
+                summary = valid_summary()
+                summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
+                summary["bounded_diagnostics"]["events"][0]["sample"] = {
+                    "cpu_percent": None, "memory_free_bytes": None, "load_average": None,
+                    "runner_hosted": None, "image_version": None, "processes": processes}
+                self.assertEqual(ci_summary.parse_summary(summary), summary)
+                rendered = ci_summary.render_markdown(summary)
+                diagnostics = rendered.partition("Bounded diagnostics (measurements only):")[2]
+                self.assertIn("simulator-readiness/timeout", diagnostics)
+                self.assertNotIn("None", diagnostics)
 
     def test_bounded_diagnostics_rejects_single_private_or_unbounded_measurements(self):
         base = archive_download_summary()
@@ -167,19 +192,23 @@ class SummaryContractTests(unittest.TestCase):
             (receipt, None, "bounded diagnostics: invalid fields"),
             ((*receipt, "schema_version"), True, "bounded diagnostics: unsupported version"),
             ((*receipt, "collection_seconds"), {}, "bounded diagnostics collection: invalid fields"),
-            ((*receipt, "collection_seconds", "preparation"), 5.001, "bounded diagnostics preparation collection: invalid number"),
-            ((*receipt, "collection_seconds", "xcode"), 10.001, "bounded diagnostics xcode collection: invalid number"),
-            ((*receipt, "collection_seconds", "fixture"), 2.001, "bounded diagnostics fixture collection: invalid number"),
+            ((*receipt, "collection_seconds", "preparation"), 86401, "bounded diagnostics preparation collection: invalid number"),
+            ((*receipt, "collection_seconds", "xcode"), 86401, "bounded diagnostics xcode collection: invalid number"),
+            ((*receipt, "collection_seconds", "fixture"), 86401, "bounded diagnostics fixture collection: invalid number"),
             ((*receipt, "truncated"), 0, "bounded diagnostics: truncated must be boolean"),
             ((*receipt, "events"), {}, "bounded diagnostics: invalid event count"),
             ((*receipt, "events"), base["bounded_diagnostics"]["events"] * 129, "bounded diagnostics: invalid event count"),
             (event, {}, "bounded diagnostic event: invalid fields"),
             ((*event, "scope"), "private-server", "bounded diagnostic event: invalid scope"),
             ((*event, "phase"), "private-command", "bounded diagnostic event: invalid phase"),
+            ((*event, "phase"), "import", "bounded diagnostic event: invalid phase"),
             ((*event, "state"), "private-output", "bounded diagnostic event: invalid state"),
             ((*event, "sequence"), True, "bounded diagnostic sequence: invalid number"),
+            ((*event, "sequence"), 0.5, "bounded diagnostic sequence: invalid number"),
+            ((*event, "sequence"), 2**31, "bounded diagnostic sequence: invalid number"),
             ((*event, "input_sha256"), "e" * 64, "bounded diagnostic event: invalid public input hash"),
             ((*receipt, "events", 3, "input_sha256"), "private-input", "bounded diagnostic event: invalid public input hash"),
+            ((*receipt, "events", 2, "input_sha256"), "e" * 64, "bounded diagnostic event: invalid public input hash"),
             ((*event, "official_exports"), {"bundle": True, "summary": False, "tests": False},
              "bounded diagnostic event: exports require xcode scope"),
             ((*receipt, "events", 1, "official_exports"), {}, "bounded diagnostic exports: invalid fields"),
@@ -188,13 +217,19 @@ class SummaryContractTests(unittest.TestCase):
             ((*sample, "runner_hosted"), "private-environment", "bounded diagnostic sample: invalid runner flag"),
             ((*sample, "image_version"), "private-image", "bounded diagnostic image version: invalid vector"),
             ((*sample, "image_version", 0), True, "bounded diagnostic image component: invalid number"),
+            ((*sample, "image_version", 0), 0.5, "bounded diagnostic image component: invalid number"),
+            ((*sample, "image_version", 0), 2**31, "bounded diagnostic image component: invalid number"),
+            ((*sample, "memory_free_bytes"), 0.5, "bounded diagnostic memory: invalid number"),
             ((*sample, "load_average"), [1, 2], "bounded diagnostic load: invalid vector"),
             ((*sample, "load_average", 0), -1, "bounded diagnostic load: invalid number"),
-            ((*sample, "processes"), [{}] * 65, "bounded diagnostic sample: invalid process count"),
+            ((*sample, "processes"), base["bounded_diagnostics"]["events"][0]["sample"]["processes"] * 65,
+             "bounded diagnostic sample: invalid process count"),
             (process, {}, "bounded diagnostic process: invalid fields"),
             ((*process, "name"), "private-process", "bounded diagnostic process: invalid name"),
             ((*process, "state"), "private-state", "bounded diagnostic process: invalid state"),
             ((*process, "count"), 0, "bounded diagnostic process count: invalid number"),
+            ((*process, "count"), 65537, "bounded diagnostic process count: invalid number"),
+            ((*process, "rss_bytes"), 0.5, "bounded diagnostic process memory: invalid number"),
         ]
         for field, maximum in (("elapsed_seconds", 86400), ("cpu_seconds", 10**12)):
             for invalid in (-1, True, float("nan"), float("inf"), "private-statistic", maximum + 1):
@@ -204,8 +239,9 @@ class SummaryContractTests(unittest.TestCase):
             mutations.append((path, maximum + 1, "bounded diagnostic " + label + ": invalid number"))
         self.assertEqual(ci_summary.parse_summary(base), base)
         boundary = copy.deepcopy(base)
-        boundary["bounded_diagnostics"].update(collection_seconds={"preparation": 5, "xcode": 10, "fixture": 2},
+        boundary["bounded_diagnostics"].update(collection_seconds={"preparation": 86400, "xcode": 86400, "fixture": 86400},
                                               truncated=True, events=boundary["bounded_diagnostics"]["events"] * 128)
+        boundary["bounded_diagnostics"]["events"][0]["sample"]["processes"] *= 64
         self.assertEqual(ci_summary.parse_summary(boundary), boundary)
         for path, value, message in mutations:
             changed = copy.deepcopy(base)

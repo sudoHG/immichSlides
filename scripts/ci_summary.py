@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+FIELD = "bounded_diagnostics"
 OUTCOMES = {"passed", "failed", "skipped", "flaky-passed", "crashed", "timed-out", "not-run", "needs-human-review"}
 ATTEMPT_OUTCOMES = OUTCOMES - {"flaky-passed"}
 STRICT_DIMENSIONS = {"device", "configuration", "suite", "scenario", "fixture"}
@@ -240,7 +241,7 @@ def validate_archive_download(receipt, summary):
 
 
 def validate_summary_v1(payload):
-    optional = {"archive_download", "bounded_diagnostics"} & payload.keys()
+    optional = {"archive_download", FIELD} & payload.keys()
     fields(payload, {"schema_version", "identity", "source", "run", "hashes", "toolchain", "population",
                      "infrastructure", "status"} | optional, "summary")
     require(type(payload["schema_version"]) is int and payload["schema_version"] == 1, "invalid summary version")
@@ -304,9 +305,9 @@ def validate_summary_v1(payload):
     require(payload["status"] in {"passed", "failed", "unverified"}, "invalid producer status")
     if "archive_download" in payload:
         validate_archive_download(payload["archive_download"], payload)
-    if "bounded_diagnostics" in payload:
+    if FIELD in payload:
         from ci_bounded_diagnostics import validate_receipt
-        validate_receipt(payload["bounded_diagnostics"])
+        validate_receipt(payload[FIELD])
 
 
 # A successor needs an installed validator before it is admitted by a reader.
@@ -388,9 +389,9 @@ def render_markdown(payload):
                      f"manifest digest={matches['manifest']}; tar digest={matches['tar']}; size={matches['size']}; "
                      f"transfer/extract={measurements['transfer_extract_seconds']}; gate={measurements['gate_seconds']}; "
                      f"free disk={measurements['free_disk_bytes']}; failure={receipt['failure_reason'] or 'none'}.")
-    if "bounded_diagnostics" in payload:
+    if FIELD in payload:
         from ci_bounded_diagnostics import render_receipt
-        lines.append(render_receipt(payload["bounded_diagnostics"]))
+        lines.append(render_receipt(payload[FIELD]))
     return "\n".join(lines) + "\n"
 
 

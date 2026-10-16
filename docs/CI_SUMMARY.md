@@ -102,7 +102,11 @@ source-free unit tools carry `ci_bounded_diagnostics.py` with their other reader
 The object has exactly `schema_version: 1`, `collection_seconds`, boolean
 `truncated`, and `events` (at most 512 entries). `collection_seconds` contains
 exactly `preparation`, `xcode` and `fixture`: finite nonnegative diagnostic
-collection seconds, capped at 5, 10 and 2 respectively for the entire job.
+collection seconds up to a sanity cap of 86,400, or null when unavailable.
+The approved job collection budgets remain 5, 10 and 2 seconds respectively;
+Markdown marks measured values above those budgets as `over budget` and nulls
+as `unavailable`. Budget enforcement belongs to the producers and their
+mocked-clock tests; an overrun or missing measurement must not discard a summary.
 `truncated` means collection or retention stopped at a cap; absent measurements
 remain unavailable and never prove health. Readers validate shape and bounds,
 not that a producer actually enforced its collection deadlines.
@@ -112,13 +116,13 @@ Every event has exactly these fields:
 | Field | Meaning |
 | --- | --- |
 | `scope` | `preparation`, `xcode` or `fixture` |
-| `phase` | Preparation: `preparation`, `simulator-boot`, `simulator-bootstatus`, `simulator-container`; Xcode: `unknown`, `xcodebuild`, `build`, `test-launch`, `test-execution`, `official-export`; fixture: `import`, `fixture-build`, `image-generation`, `fixture-generation`, `manifest`, `bind`, `ready-write` |
+| `phase` | Preparation: `simulator-preparation`, `simulator-readiness`, `simulator-boot`, `simulator-bootstatus`, `simulator-container`; Xcode: `unknown`, `xcodebuild`, `build`, `test-launch`, `test-execution`, `official-export`; fixture: `import`, `fixture-build`, `image-generation`, `fixture-generation`, `manifest`, `bind`, `ready-write` |
 | `state` | `started`, `completed`, `spawn-started`, `spawn-completed`, `communicate-started`, `timeout`, `kill-started`, `kill-completed`, `reap-started`, `reap-completed`, `before-kill`, `after-reap` |
 | `sequence` | Nonnegative integer invocation identifier, at most 2^31 - 1; event times share that invocation's start |
 | `elapsed_seconds` | Finite nonnegative offset from invocation start, at most 86,400; permits evidence of deadline overruns |
 | `cpu_seconds` | Finite nonnegative CPU time, at most 10^12, or null |
 | `sample` | Null or the fixed statistics object below |
-| `input_sha256` | Null or a lowercase SHA-256 of deterministic public fixture inputs, allowed only for fixture scope; never hash private inputs |
+| `input_sha256` | Null or a lowercase SHA-256 of deterministic public fixture inputs, allowed only in fixture scope on `image-generation` or `fixture-generation`; never hash private inputs |
 | `official_exports` | Null or exactly boolean `bundle`, `summary`, `tests`, allowed only for Xcode scope; existence is not proof of a complete or passing export |
 
 Statistics contain exactly `cpu_percent` (0–100 or null), `memory_free_bytes`
@@ -136,7 +140,7 @@ Names are limited to `simctl`, `CoreSimulatorService`, `Simulator`, `launchd_sim
 Unknown keys, free text, command arguments, paths, environment and server data
 are refused. The JSON publication scanner validates nested receipts and rejects
 duplicate keys in a document containing this field. Summary Markdown displays
-collection costs, event count, truncation and the last phase per scope; detailed
+collection costs, event count, truncation and the last retained phase per scope; detailed
 measurements stay in the summary JSON. Trusted report failure/missing counts and
 issue decisions do not consume the measurements.
 

@@ -3,6 +3,8 @@
 import json
 import re
 
+from ci_summary import FIELD
+
 FAILURE_PHASES = frozenset({"interval_setup", "hidden_controls", "visible_scene_capture", "background_return",
                             "continue_timing", "paused_hold", "settings_navigation", "control_action", "unknown",
                             "firstboot_setup", "cold_relaunch", "mode_selection", "playback_entry", "history_navigation",
@@ -417,9 +419,9 @@ def test_node_diagnostics(payload):
 def validate_diagnostic_fields(value):
     """Reject free text, unpaired fields and non-string values, without echoing them."""
     if isinstance(value, dict):
-        if "bounded_diagnostics" in value:
+        if FIELD in value:
             from ci_bounded_diagnostics import validate_receipt
-            validate_receipt(value["bounded_diagnostics"])
+            validate_receipt(value[FIELD])
         if VALIDATOR_FAILURE_FIELD in value:
             validate_validator_failure_message(value[VALIDATOR_FAILURE_FIELD])
         if DIAGNOSTIC_FIELDS & value.keys():
@@ -436,7 +438,6 @@ def validate_diagnostic_fields(value):
 
 
 def scan_diagnostic_json(data):
-    FIELD = "bounded_diagnostics"
     diagnostic_fields = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIELD}
     bounded_seen = False
     duplicate_seen = False
@@ -457,5 +458,6 @@ def scan_diagnostic_json(data):
             raise ValueError("duplicate bounded diagnostic JSON key")
     except (json.JSONDecodeError, UnicodeDecodeError):
         ascii_keys = re.sub(rb"\\u00([0-9a-fA-F]{2})", lambda match: bytes([int(match[1], 16)]), data)
-        if any(('"' + field + '"').encode() in ascii_keys for field in diagnostic_fields):
+        if ('"' + FIELD + '"').encode() in ascii_keys or any(
+                ('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}):
             raise ValueError("invalid failure diagnostic JSON")
