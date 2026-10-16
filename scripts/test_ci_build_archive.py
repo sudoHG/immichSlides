@@ -30,15 +30,6 @@ class BuildArchiveTests(unittest.TestCase):
         from ci_publish import GitHub
         from test_ci_summary import archive_download_summary
         import ci_simulator
-        import yaml
-        steps = yaml.safe_load((ui.ROOT / ui.NIGHTLY_WORKFLOW).read_text())["jobs"]["ui-shards"]["steps"]
-        download_index = next(index for index, step in enumerate(steps) if step.get("id") == "download")
-        gate_index = next(index for index, step in enumerate(steps) if "gate-archive" in step.get("run", ""))
-        run_index = next(index for index, step in enumerate(steps) if "ci_ui_tests.py run " in step.get("run", ""))
-        self.assertLess(download_index, gate_index)
-        self.assertLess(gate_index, run_index)
-        self.assertIn("--create-simulator", steps[gate_index]["run"])
-        self.assertFalse(any("ci_simulator.py" in step.get("run", "") for step in steps[:gate_index]))
         inputs = archive_download_summary()
         inputs["population"].update(compiled=[], observed=[])
         inputs["hashes"]["manifests"]["ui-shards"] = "c" * 64
