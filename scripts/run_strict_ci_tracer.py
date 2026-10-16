@@ -187,7 +187,7 @@ def main(argv=None):
         cases = [case for case in manifest["cases"] if case["platform"] == args.platform]
     identities = [test_identity("strict", case["suite"], **{key: case[key] for key in ("device", "configuration", "suite", "scenario", "fixture")}) for case in cases]
     identity_failure = None
-    if nightly:
+    if nightly and not args.preparation_failed:
         identity_failure = {"schema_version": 1, "run": {"id": os.environ.get("GITHUB_RUN_ID"),
                             "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1"))},
                             "job": "nightly-strict", "shard": args.shard, "phase": "identity-collection",

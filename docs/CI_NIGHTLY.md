@@ -75,6 +75,9 @@ retention; it skips review export and the corresponding `nightly-strict` records
 upload so the receipt stays eligible. Successful identity collection writes no
 receipt, including when a later build or case fails. Source identity collection
 remains after simulator preparation, with the existing Git timeout and no retry.
+In `--preparation-failed` accounting mode, an identity failure writes no receipt
+and preserves the generic missing-evidence reason: simulator preparation was the
+original failure, so accounting must not relabel it as an identity failure.
 
 For missing strict or UI cases, the reporter can also associate the current
 attempt's GitHub job with its check-run annotations. A failure annotation with the
