@@ -1000,10 +1000,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             messages = set()
             for node in ast.walk(module):
                 argument = None
-                if (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
-                        and isinstance(node.exc.func, ast.Name)
-                        and node.exc.func.id in {"AlbumServerContractError", "IdentityAssertionError", "FilterContractError"}
-                        and node.exc.args):
+                if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) and node.exc.args:
                     argument = node.exc.args[0]
                 elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                       and node.func.id == "_require_named_png"):

@@ -60,6 +60,7 @@ VALIDATOR_FIXED_PREFIXES = (
     "A server switch requires the B server URL",
     "A server switch must use the suite runner with screen recording",
     # strict_e2e_photo_identity.py
+    "Scene probe fields must be text",
     "Visual suites need Pillow. Run python3 -m pip install Pillow first, then run journey-b / pause-window / tvos-flow / tvos-album / tvos-person / tvos-switch.",
     "Unrecognizable input: unreadable public glyph slot: screenshot cannot be decoded",
     "unreadable public glyph slot: single photo color or public texture is missing; slot 1 (both axes)",
