@@ -66,8 +66,18 @@ and associate it with the current run/attempt's verified scheduling record. Such
 a receipt changes only the public missing reason to `identity-collection-failed`;
 it supplies no source identity, compilation or execution evidence. A shard with a
 valid interval summary or any corresponding records artifact cannot use this receipt.
-The identity-failure producer path will upload only the standalone receipt. The tracer
-producer must be activated separately after reader support reaches main.
+Before collecting source identity, the nightly tracer prepares the receipt from
+the selected versioned matrix cases and the current job's run/attempt coordinates.
+If identity collection raises, it writes only `identity-failure.json` and preserves
+the original failure. The workflow uploads it as
+`nightly-identity-<shard>-<run>-<attempt>` with the strict artifacts' seven-day
+retention; it skips review export and the corresponding `nightly-strict` records
+upload so the receipt stays eligible. Successful identity collection writes no
+receipt, including when a later build or case fails. Source identity collection
+remains after simulator preparation, with the existing Git timeout and no retry.
+In `--preparation-failed` accounting mode, an identity failure writes no receipt
+and preserves the generic missing-evidence reason: simulator preparation was the
+original failure, so accounting must not relabel it as an identity failure.
 
 For missing strict or UI cases, the reporter can also associate the current
 attempt's GitHub job with its check-run annotations. A failure annotation with the

@@ -1158,6 +1158,67 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def test_identity_success_writes_no_early_failure_receipt_even_when_a_later_case_fails(self):
+        for nightly, runner_exit in ((True, 0), (True, 2)):
+            with self.subTest(nightly=nightly, runner_exit=runner_exit), tempfile.TemporaryDirectory() as directory:
+                code, records, _trace, summary = self._produce_validator_records(
+                    Path(directory), "no public glyph", nightly=nightly, runner_exit=runner_exit)
+                self.assertEqual(0 if runner_exit == 0 else 1, code)
+                self.assertEqual("passed" if runner_exit == 0 else "failed", summary["status"])
+                self.assertFalse((records.parent / "identity-failure.json").exists())
+
+    def test_nightly_cancellation_and_later_source_metadata_failure_do_not_write_an_identity_receipt(self):
+        import run_strict_ci_tracer as tracer
+        from ci_local import Interrupted
+        from ci_summary import ContractError
+        identity = {"schema_version": 1, "event": "schedule", "repository": "sudoHG/immichSlides",
+                    "ref": "refs/heads/main", "commit_sha": "0" * 40, "tree_sha": "0" * 40}
+        for phase, failure in (("identity", Interrupted(signal.SIGTERM)),
+                               ("source", ContractError("GITHUB_WORKFLOW_REF does not identify this repository's workflow"))):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.object(tracer, "run_identity", return_value=identity,
+                                      side_effect=failure if phase == "identity" else None), \
+                    mock.patch.object(tracer, "workspace_preflight"), \
+                    mock.patch.object(tracer, "source_metadata", side_effect=failure if phase == "source" else None), \
+                    mock.patch.object(tracer, "run_runner") as runner:
+                output = Path(directory) / "trace"
+                with self.assertRaisesRegex(type(failure), "^" + re.escape(str(failure)) + "$") as raised:
+                    tracer.main(["--platform", "ios", "--destination", "unused",
+                        "--manifest", str(tracer.ROOT / "scripts/nightly-matrix.json"),
+                        "--shard", "iphone-immichSlides-iOS-debug-0", "--output-dir", str(output)])
+                self.assertIs(failure, raised.exception)
+                self.assertEqual([], list(output.iterdir()))
+                runner.assert_not_called()
+
+    def test_preparation_failure_accounting_identity_timeout_keeps_no_identity_receipt(self):
+        import run_strict_ci_tracer as tracer
+        timeout = subprocess.TimeoutExpired(["git", "rev-parse", "HEAD"], 30)
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {
+                "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule", "GITHUB_REPOSITORY": "sudoHG/immichSlides"}), \
+                mock.patch("run_host_checks.subprocess.check_output", side_effect=timeout) as identity_process, \
+                mock.patch.object(tracer, "run_runner") as runner:
+            output = Path(directory) / "trace"
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                tracer.main(["--platform", "ios", "--destination", "unused",
+                    "--manifest", str(tracer.ROOT / "scripts/nightly-matrix.json"),
+                    "--shard", "iphone-immichSlides-iOS-debug-0", "--output-dir", str(output), "--preparation-failed"])
+            self.assertIs(timeout, raised.exception)
+            identity_process.assert_called_once()
+            self.assertEqual([], list(output.iterdir()))
+            runner.assert_not_called()
+
+    def test_non_nightly_identity_timeout_keeps_the_original_failure_without_a_receipt(self):
+        import run_strict_ci_tracer as tracer
+        timeout = subprocess.TimeoutExpired(["git", "rev-parse", "HEAD"], 30)
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {
+                "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule", "GITHUB_REPOSITORY": "sudoHG/immichSlides"}), \
+                mock.patch("run_host_checks.subprocess.check_output", side_effect=timeout):
+            output = Path(directory) / "trace"
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                tracer.main(["--platform", "ios", "--destination", "unused", "--output-dir", str(output)])
+            self.assertIs(timeout, raised.exception)
+            self.assertEqual([], list(output.iterdir()))
+
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
                                    receipt_suite="tvos-server-switch-display", nightly=False):
         import run_strict_ci_tracer as tracer

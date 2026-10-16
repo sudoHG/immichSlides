@@ -15,6 +15,46 @@ from test_ci_summary import valid_summary
 
 
 class NightlyVerdictTests(unittest.TestCase):
+    def test_identity_failure_upload_is_standalone_and_only_runs_when_the_receipt_exists(self):
+        import os
+        import subprocess
+        import tempfile
+        import yaml
+        root = Path(__file__).parent.parent
+        steps = yaml.safe_load((root / ".github/workflows/ci-nightly.yml").read_text())["jobs"]["strict"]["steps"]
+        probe = next(step for step in steps if step.get("id") == "identity_failure")
+        upload = next(step for step in steps if step.get("with", {}).get("name", "").startswith("nightly-identity-"))
+        records = next(step for step in steps if step.get("with", {}).get("name", "").startswith("nightly-strict-"))
+        review = next(step for step in steps if step.get("id") == "review")
+        self.assertEqual("always()", probe["if"])
+        self.assertEqual("always() && steps.identity_failure.outputs.exists == 'true'", upload["if"])
+        for step in (records, review):
+            self.assertEqual("always() && steps.identity_failure.outputs.exists != 'true'", step["if"])
+        self.assertEqual("nightly-identity-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}", upload["with"]["name"])
+        self.assertEqual(records["uses"], upload["uses"])
+        self.assertEqual(records["with"]["path"].removesuffix("/records") + "/identity-failure.json", upload["with"]["path"])
+        self.assertEqual(records["with"]["retention-days"], upload["with"]["retention-days"])
+        self.assertEqual("error", upload["with"]["if-no-files-found"])
+        accounting = next(step for step in steps if "--preparation-failed" in step.get("run", ""))
+        cleanup = next(step for step in steps if "rm -rf" in step.get("run", ""))
+        self.assertLess(steps.index(accounting), steps.index(probe))
+        self.assertLess(steps.index(probe), steps.index(review))
+        self.assertLess(steps.index(probe), steps.index(upload))
+        self.assertLess(steps.index(upload), steps.index(cleanup))
+        for exists in (False, True):
+            with self.subTest(receipt_exists=exists), tempfile.TemporaryDirectory() as directory:
+                temporary = Path(directory)
+                receipt = temporary / "nightly-strict/identity-failure.json"
+                receipt.parent.mkdir()
+                if exists:
+                    receipt.write_text("{}")
+                outputs = temporary / "step-output"
+                completed = subprocess.run(["bash", "-eu", "-c", probe["run"]],
+                    env={**os.environ, "RUNNER_TEMP": str(temporary), "GITHUB_OUTPUT": str(outputs)},
+                    capture_output=True, text=True, timeout=5)
+                self.assertEqual(0, completed.returncode, completed.stderr)
+                self.assertEqual("exists=true\n" if exists else "", outputs.read_text() if outputs.exists() else "")
+
     def test_preparation_failure_keeps_all_cases_failed_and_zero_cases_executed(self):
         from ci_nightly import aggregate_nightly
         cases = [ci_summary.test_identity("strict", "p2-exif", device="ipad", configuration="Debug",

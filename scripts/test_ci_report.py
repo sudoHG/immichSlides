@@ -109,9 +109,32 @@ class ReporterTests(unittest.TestCase):
                          capacity={"shard_intervals": intervals})
         members[("nightly-aggregate-10-1", "nightly.json")] = aggregate
         members[("nightly-plan-10-1", "plan.json")] = copy.deepcopy(plan)
-        receipt = {"schema_version": 1, "job": "nightly-strict", "shard": target["id"],
-                   "run": {"id": "10", "attempt": 1}, "phase": "identity-collection",
-                   "reason": "identity-collection-failed", "declared": cases}
+        import run_strict_ci_tracer as tracer
+        from ci_nightly import parse_identity_failure
+        for failure in (subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD"],
+                            output=b"private identity output", stderr=b"private identity error"),
+                        subprocess.TimeoutExpired(["git", "rev-parse", "HEAD"], 30,
+                            output=b"private identity output", stderr=b"private identity error")):
+            def identity_failure(command, **options):
+                self.assertEqual(["git", "rev-parse", "HEAD"], command)
+                self.assertEqual(30, options["timeout"])
+                raise failure
+            with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+                    "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule", "GITHUB_REPOSITORY": identity["repository"],
+                    "GITHUB_RUN_ID": plan["run"]["id"], "GITHUB_RUN_ATTEMPT": str(plan["run"]["attempt"]),
+                    "GITHUB_SHA": "f" * 40, "GITHUB_REF": "refs/heads/main"}), \
+                    patch("run_host_checks.subprocess.check_output", side_effect=identity_failure) as identity_process:
+                output = Path(directory) / "trace"
+                with self.assertRaises(type(failure)) as raised:
+                    tracer.main(["--platform", target["platform"], "--destination", "unused",
+                                 "--manifest", str(matrix_path), "--shard", target["id"], "--output-dir", str(output)])
+                self.assertIs(failure, raised.exception)
+                identity_process.assert_called_once()
+                self.assertEqual(["identity-failure.json"], [path.name for path in output.iterdir()])
+                receipt = json.loads((output / "identity-failure.json").read_text())
+                self.assertEqual({"schema_version": 1, "job": "nightly-strict", "shard": target["id"],
+                    "run": plan["run"], "phase": "identity-collection", "reason": "identity-collection-failed", "declared": cases}, receipt)
+                self.assertEqual(receipt, parse_identity_failure(receipt, plan["run"], target["id"], cases))
         receipt_name = "nightly-identity-" + target["id"] + "-10-1"
         variants = {"identity": "identity-collection-failed", "runner": "hosted-runner-disconnected",
             **{name: None for name in ("receipt-run", "receipt-attempt", "receipt-attempt-bool", "receipt-job", "receipt-shard", "receipt-version",

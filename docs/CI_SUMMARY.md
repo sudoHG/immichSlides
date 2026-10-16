@@ -176,9 +176,16 @@ aggregate identity, tested tree, matrix digest and exact scheduled shards. Only
 cases still missing from that attempt receive the reason; the receipt never
 contributes compiled or executed evidence, and cannot establish an explicit pass
 or close an issue. Invalid, duplicate, expired or foreign-attempt receipts leave
-the ordinary missing-evidence failure intact. Reader installation does not enable
-tracer emission; activation requires a separate producer change after this reader
-has reached main.
+the ordinary missing-evidence failure intact. Following the reader-first merge,
+the nightly tracer emits this standalone receipt only when source identity
+collection or validation raises an exception, preserving that failure. This
+includes Git failures, checkout/`GITHUB_SHA` mismatches and unsupported events;
+cancellation signals do not produce the receipt. Preparation-failure accounting
+also excludes it, as described in [the nightly guide](CI_NIGHTLY.md#early-failure-diagnostics).
+It writes no receipt after successful identity collection; the failure path skips
+review export and the records artifact
+upload. The selected versioned matrix supplies the declared cases, while the
+reporter independently verifies their scheduling binding.
 
 ### Prepared archive download receipt
 

@@ -232,19 +232,34 @@ jobs:
             --manifest scripts/nightly-matrix.json --shard "$NIGHTLY_SHARD" \
             --platform "$NIGHTLY_PLATFORM" --destination "${NIGHTLY_DESTINATION:-unavailable}" \
             --output-dir "$RUNNER_TEMP/nightly-strict" --preparation-failed
+      - name: Check for a standalone identity failure receipt
+        id: identity_failure
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/nightly-strict/identity-failure.json"; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          fi
       - name: Export scanned public fixture review packages
         id: review
-        if: always()
+        if: always() && steps.identity_failure.outputs.exists != 'true'
         run: |
           "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/ci_review_packages.py export-shard \
             --input-dir "$RUNNER_TEMP/nightly-strict" --output-dir "$RUNNER_TEMP/p2-review-packages"
           echo 'safe=true' >> "$GITHUB_OUTPUT"
       - name: Publish compact records and package hash bindings even after failure
-        if: always()
+        if: always() && steps.identity_failure.outputs.exists != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nightly-strict-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/nightly-strict/records
+          retention-days: 7
+          if-no-files-found: error
+      - name: Publish the standalone identity failure receipt
+        if: always() && steps.identity_failure.outputs.exists == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-identity-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nightly-strict/identity-failure.json
           retention-days: 7
           if-no-files-found: error
       - name: Publish P2 packages for maintainer review
