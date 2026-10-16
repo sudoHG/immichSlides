@@ -117,6 +117,7 @@ class ReporterTests(unittest.TestCase):
             **{name: None for name in ("receipt-run", "receipt-attempt", "receipt-attempt-bool", "receipt-job", "receipt-shard", "receipt-version",
                 "receipt-phase", "receipt-reason", "receipt-cases", "receipt-extra", "receipt-expired", "receipt-duplicate", "receipt-executed",
                 "matrix-empty", "summary-not-run", "receipt-summary-not-run", "receipt-summary-failed", "receipt-record-present", "receipt-corrupt",
+                "runner-summary-failed", "plan-corrupt",
                 "previous-attempt", "plan-run", "plan-hashes", "annotation-level", "annotation-message",
                 "plan-identity", "plan-source", "plan-version", "plan-shards", "plan-tree", "matrix-source", "plan-expired", "plan-duplicate", "plan-absent",
                 "job-attempt", "job-status", "job-conclusion", "job-name", "check-url", "annotations-unavailable")},
@@ -146,13 +147,13 @@ class ReporterTests(unittest.TestCase):
                 saved[(active_receipt_name, "identity-failure.json")] = supplied
                 if variant == "matrix-empty":
                     saved[("nightly-aggregate-10-1", "nightly.json")]["matrix"] = {}
-                stopped = variant in {"summary-not-run", "receipt-summary-not-run", "receipt-summary-failed"}
+                stopped = variant in {"receipt-summary-not-run", "receipt-summary-failed", "runner-summary-failed"}
                 if stopped or variant == "receipt-record-present":
                     summary = copy.deepcopy(target_summary)
                     summary["population"].update(compiled=[], observed=[observation(case, "not-run", 0,
                         exit_code=None, reason="strict-tracer-failed") for case in cases])
                     summary["status"] = "failed"
-                    if variant == "receipt-summary-failed":
+                    if variant in {"receipt-summary-failed", "runner-summary-failed"}:
                         for item in summary["population"]["observed"]:
                             item["outcome"] = "failed"
                     saved[("nightly-strict-" + target["id"] + "-10-1", "summary.json")] = summary
@@ -161,6 +162,28 @@ class ReporterTests(unittest.TestCase):
                         raw = saved[("nightly-aggregate-10-1", "nightly.json")]
                         raw["capacity"]["shard_intervals"].append({"shard": target["id"]})
                         raw["observed"].extend(summary["population"]["observed"])
+                if variant == "summary-not-run":
+                    informational_shard = next(shard for shard in planned if shard["id"] != failed_summary["run"]["shard"]
+                        and any(case["suite"] == "filter-vision" for case in shard["cases"]))
+                    name = "nightly-strict-" + informational_shard["id"] + "-10-1"
+                    summary = saved[(name, "summary.json")]
+                    informational_cases = summary["population"]["declared"]
+                    informational_keys = {ci_report.identity_key(case) for case in informational_cases}
+                    expected_missing = [{"identity": case, "reason": "missing or invalid shard evidence"} for case in cases]
+                    expected_missing.extend({"identity": test_identity("strict", method["identifier"], **phase["identity"]["dimensions"]),
+                        "reason": "official-method-not-observed"} for phase in saved[(name, "trace.json")]["warm"]
+                        if phase["identity"]["dimensions"]["suite"] != "filter-vision" for method in phase["official_methods"])
+                    summary["population"].update(compiled=[], observed=[observation(case, "not-run", 0,
+                        exit_code=None, reason="strict-tracer-failed") for case in informational_cases])
+                    summary["status"] = "failed"
+                    saved[(name, "trace.json")] = {"cold": [], "warm": []}
+                    raw = saved[("nightly-aggregate-10-1", "nightly.json")]
+                    raw["matrix"]["missing"].extend(informational_cases)
+                    raw["matrix"]["executed"] -= len(informational_cases)
+                    for collection in ("observed", "informational"):
+                        raw[collection] = [item for item in raw[collection] if ci_report.identity_key(item["identity"]) not in informational_keys]
+                        raw[collection].extend(item for item in summary["population"]["observed"]
+                            if collection == "observed" or item["identity"]["dimensions"]["suite"] == "filter-vision")
                 if variant == "plan-run":
                     saved[("nightly-plan-10-1", "plan.json")]["run"]["attempt"] = 2
                 if variant == "plan-hashes":
@@ -221,18 +244,19 @@ class ReporterTests(unittest.TestCase):
                                 from ci_publish import GitHubRequestError
                                 raise GitHubRequestError("private-transient-error", http_status=503, retry_delay=1)
                             return annotations
-                        if variant == "receipt-corrupt" and path.endswith("/zip"):
+                        if variant in {"receipt-corrupt", "plan-corrupt"} and path.endswith("/zip"):
                             return b"not a ZIP archive"
                         raise AssertionError(path)
                 api = API()
-                if use_receipt:
+                if use_receipt or variant == "summary-not-run":
                     job["name"] = "unrelated"
                 def git_output(command, **options):
                     if command[1] == "rev-parse":
                         return (b"d" if variant == "plan-tree" else b"b") * 40 + b"\n"
                     return matrix + (b" " if variant == "matrix-source" else b"")
                 def read_member(api, artifact, member):
-                    if artifact["expired"] or variant == "receipt-corrupt" and member == "identity-failure.json":
+                    if (artifact["expired"] or variant == "receipt-corrupt" and member == "identity-failure.json"
+                            or variant == "plan-corrupt" and member == "plan.json"):
                         return json_member(api, artifact, member)
                     return saved[(artifact["name"], member)]
                 with patch("ci_publish.json_member", side_effect=read_member), \
@@ -242,12 +266,17 @@ class ReporterTests(unittest.TestCase):
                     report = read_run(api, run, {})
                 self.assertEqual("failed", report["status"])
                 self.assertIn(failed_method, [item["identity"] for item in report["observed"] if item["outcome"] == "failed"])
-                self.assertEqual(0 if variant == "matrix-empty" else 129, report["diagnostics"]["counts"]["executed_cases"])
+                expected_executed = 0 if variant == "matrix-empty" else 129 - len(informational_cases) if variant == "summary-not-run" else 129
+                self.assertEqual(expected_executed, report["diagnostics"]["counts"]["executed_cases"])
                 if variant == "matrix-empty":
                     self.assertEqual([], report["diagnostics"]["missing"])
+                elif variant == "summary-not-run":
+                    self.assertCountEqual(expected_missing, report["diagnostics"]["missing"])
+                    self.assertEqual(len((baseline_keys - informational_keys)
+                        | {ci_report.identity_key(item["identity"]) for item in expected_missing}), report["diagnostics"]["counts"]["declared"])
                 elif stopped:
                     expected = stopped_missing + ([{"identity": case, "reason": "strict-case-infrastructure-or-unverified-failure"}
-                        for case in cases] if variant == "receipt-summary-failed" else [])
+                        for case in cases] if variant in {"receipt-summary-failed", "runner-summary-failed"} else [])
                     self.assertCountEqual(expected, report["diagnostics"]["missing"])
                     self.assertEqual(len(baseline_keys | {ci_report.identity_key(item["identity"]) for item in expected}),
                                      report["diagnostics"]["counts"]["declared"])
@@ -256,7 +285,7 @@ class ReporterTests(unittest.TestCase):
                     self.assertCountEqual(cases, [item["identity"] for item in report["diagnostics"]["missing"]])
                 self.assertTrue(report["observed"], "other shards' verified results must survive")
                 self.assertTrue(all(item["outcome"] != "not-run" for item in report["observed"]))
-                if not stopped:
+                if not stopped and variant != "summary-not-run":
                     self.assertTrue(all(item["reason"] == (reason or "missing or invalid shard evidence")
                                         for item in report["diagnostics"]["missing"]))
                 if reason:
@@ -283,7 +312,7 @@ class ReporterTests(unittest.TestCase):
                                      & set(report["diagnostics"]["infrastructure"]))
                 self.assertNotIn("private", json.dumps(ci_report.compact_entry(report, set())))
                 self.assertFalse(api.retry_reads)
-                if variant in {"job-name", "job-status", "job-conclusion", "check-url", "job-attempt"}:
+                if variant in {"job-name", "job-status", "job-conclusion", "check-url", "job-attempt", "runner-summary-failed"}:
                     self.assertEqual(0, api.annotation_calls)
                 if variant == "annotation-retry":
                     self.assertEqual(2, api.annotation_calls)
@@ -805,6 +834,16 @@ class ReporterTests(unittest.TestCase):
                     incomplete = ci_report.nightly_attempt(api, run, 1, artifacts)
                     self.assertTrue(any("nightly UI" in error for error in incomplete["diagnostics"]["infrastructure"]))
                     self.assertEqual(9, incomplete["diagnostics"]["counts"]["declared"])
+                    if change == "missing sample":
+                        with patch.object(api, "repo", return_value={"total_count": 1, "jobs": [lost_job]}, create=True), \
+                                patch.object(api, "annotations", return_value=[{"annotation_level": "failure",
+                                    "message": "The hosted runner lost communication with the server. private-detail"}], create=True) as annotation_reader:
+                            retained = ci_report.nightly_attempt(api, run, 1, artifacts)
+                        self.assertEqual([{"identity": plan["shards"][0]["declared"][0], "reason": "nightly-ui-sample-missing"}],
+                                         retained["diagnostics"]["missing"])
+                        self.assertEqual(incomplete["diagnostics"], retained["diagnostics"])
+                        self.assertNotIn("private-detail", json.dumps(retained))
+                        annotation_reader.assert_not_called()
                     tracked = plan["shards"][1]["declared"][0]
                     opened = issue_decision(None, tracked, [entry(outcome="failed") | {
                         "observed": [observation(tracked, "failed", 1)]}], registry_referenced=False)["state"]

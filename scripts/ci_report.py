@@ -635,7 +635,9 @@ def nightly_failure_reasons(api, run, attempt, artifacts, raw, missing):
     absent = {identity_key(item["identity"]) for item in missing}
     reasons, jobs = {}, {}
     for shard in raw.get("ui", {}).get("plan", {}).get("shards", []):
-        jobs[f"ui-{shard['device']}-{shard['shard']}"] = {identity_key(item) for item in shard["declared"]}
+        job_name = f"ui-{shard['device']}-{shard['shard']}"
+        if not any(item["name"] == f"{job_name}-{run['id']}-{attempt}" for item in artifacts):
+            jobs[job_name] = {identity_key(item) for item in shard["declared"]}
     plans = [item for item in artifacts if item["name"] == f"nightly-plan-{run['id']}-{attempt}"]
     summary_shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
     if raw.get("diagnostic_shard") in {None, "strict-only"} and raw["matrix"].get("missing", []) and len(plans) == 1 and not plans[0]["expired"]:
@@ -653,18 +655,19 @@ def nightly_failure_reasons(api, run, attempt, artifacts, raw, missing):
             for shard in plan["shards"]:
                 declared = [case_identity(case) for case in shard["cases"]]
                 keys = {identity_key(item) for item in declared}
-                jobs["nightly-strict-" + shard["id"]] = keys
                 matches = [item for item in artifacts if item["name"] == f"nightly-identity-{shard['id']}-{run['id']}-{attempt}"]
                 has_records = shard["id"] in summary_shards or any(
                     item["name"] == f"nightly-strict-{shard['id']}-{run['id']}-{attempt}" for item in artifacts)
-                if not has_records and keys <= absent and len(matches) == 1 and not matches[0]["expired"]:
+                if not has_records:
+                    jobs["nightly-strict-" + shard["id"]] = keys
+                if not has_records and len(matches) == 1 and not matches[0]["expired"]:
                     try:
                         receipt = parse_identity_failure(json_member(api, matches[0], "identity-failure.json"),
                             {"id": str(run["id"]), "attempt": attempt}, shard["id"], declared)
                         reasons.update({key: receipt["reason"] for key in keys})
                     except (ContractError, KeyError, TypeError, ValueError, zipfile.BadZipFile):
                         pass  # Invalid untrusted diagnostics never replace missing evidence.
-        except (ContractError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+        except (ContractError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
             pass
     candidates = {name: keys & absent for name, keys in jobs.items() if keys & absent}
     if not candidates:

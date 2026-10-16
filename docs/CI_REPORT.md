@@ -84,7 +84,10 @@ a formal summary, compiled/executed result or recovery proof. This reader suppor
 does not activate the tracer producer.
 
 For a missing strict or UI shard, current-attempt GitHub job metadata binds its
-check-run annotation endpoint. Only the failure-level hosted-runner communication
+check-run annotation endpoint. Candidates exclude strict shards with an interval
+summary or a matching records artifact, and UI shards with a matching UI artifact.
+A disconnect after records upload therefore keeps the summary's existing failure
+reason. Only the failure-level hosted-runner communication
 loss marker becomes `hosted-runner-disconnected`. The existing GitHub client's
 bounded GET retry implementation is enabled only for annotation reads, within the
 existing reporter request budget. Annotation text and API errors are withheld;
