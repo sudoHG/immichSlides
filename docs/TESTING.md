@@ -172,25 +172,31 @@ Return false at the deadline without a final condition call. The current-asset p
 snapshot value and records snapshot failures separately from an absent probe; timeout
 attachments include the failure count and last snapshot error. Its failure-message
 suffix contains only the count and numeric error code. Playback-entry timeout text
-retains the last Settings poll and its playback-marker observation; unknown
-attributes stay unknown when a snapshot fails. Diagnostic reads never restart the
+retains the last successful Settings poll and its playback-marker observation. A failed
+snapshot leaves that observation intact and sets `lastSnapshotSucceeded=false`;
+attributes are unknown only until a snapshot first succeeds. Diagnostic reads never restart the
 deadline or turn a timeout into success.
-The iOS control-bar tap helper uses the centre of the same snapshot frame for a real
-coordinate tap, relative to the stable window. Its eight-second control-appearance
-budget includes observation, reveal, tap and outcome verification and never restarts.
-Settings must reach a Settings entry or the playback toggle; Play/Pause must change to
-the opposite state; enabled Next/Previous must change scene identity. A disabled
-boundary control still receives a real tap and must retain its disabled state and scene;
-the caller's history assertions remain authoritative. Navigation and toggle actions
-are sent once to avoid double-advancing or flipping back during a slow transition.
-Settings may be tapped again only while a fresh snapshot still shows its playback
-button. Every outcome is checked before the same deadline; a late observation fails.
-Readiness and tap polls reveal only when a snapshot with the playback marker shows
-the control absent or outside the window, once per hidden streak. They never reveal
-on every visible iteration. Timeout suffixes include the last sanitized observation,
-snapshot error count/code, iteration count and aggregate snapshot/reveal/tap/verify
-durations. Verify time includes its snapshot time; no extra diagnostic snapshot runs
-after timeout. Playback History Settings uses the same bounded snapshot waiter, without
+The iOS control-bar tap helper reveals before each tap attempt, then takes a window
+snapshot and performs a real coordinate tap at that frame's centre, relative to the
+stable window. The playback-area tap only shows the bar and restarts auto-hide; it
+does not hide an already visible bar. The existing eight-second appearance budget
+starts after the first reveal and never restarts. Next/Previous/Play-Pause receive
+one real tap and return immediately; their callers retain their scene-change,
+Play/Pause and EXIF retry budgets. The shared helper does not compare their values.
+Only Settings verifies an outcome: a Settings entry or the playback toggle. Before
+another Settings attempt, its snapshot must still show playback and contain neither
+`global.back.button` nor any `settings.*` identifier. Observing either navigation
+signal permanently suppresses further taps while the helper waits for its outcome.
+Each retry reveals and takes a fresh snapshot. A late Settings outcome never passes.
+Wait-only Settings callers refresh auto-hide once immediately before success and
+check the original deadline again afterward. A hidden streak permits one initial
+reveal and one further reveal if it lasts longer than one second; polls do not
+reveal on every visible iteration. Fixed timeout prefixes distinguish readiness,
+no tap and no Settings outcome in the public failure mapper. Private suffixes include
+the last sanitized observation, error count/code, iteration/tap counts, boolean
+Settings outcome/navigation fields and aggregate snapshot/reveal/tap/verify durations.
+Verify time includes its snapshot time; no extra diagnostic snapshot runs after
+timeout. Playback History Settings uses the same bounded snapshot waiter, without
 the generic waiter's final condition call. Playback History
 Play/Pause polls, including manual lifecycle pause/resume, read the value from one
 fallible application snapshot per poll and reveal an absent control within the original deadline.

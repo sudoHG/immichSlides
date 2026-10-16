@@ -38,33 +38,13 @@ struct SlideshowControlBarButtonObservation {
     }
     var isReady: Bool { button?.isEnabled == true && isInsideWindow }
 
-    // Values used for outcome comparison never enter public diagnostics.
-    private var sceneIdentity: String? {
-        if let manifest = snapshots["slideshow.smartfill.currentManifest.flag"] {
-            return SharedSceneEvidenceManifest.parseKeyValueFields(manifest.label)["ledgerSceneAssets"]
-        }
-        return snapshots["slideshow.currentAssetId.flag"]?.label
+    var hasSettingsOutcome: Bool {
+        snapshots.keys.contains { $0.hasPrefix("settings.item.") }
+            || snapshots["settings.playback.autoPlay.toggle"] != nil
     }
 
-    func hasTapOutcome(since before: Self) -> Bool {
-        switch identifier {
-        case "slideshow.control.settings.button":
-            return snapshots.keys.contains { $0.hasPrefix("settings.item.") }
-                || snapshots["settings.playback.autoPlay.toggle"] != nil
-        case "slideshow.control.playPause.button":
-            let previous = (before.button?.value as? String)?.lowercased()
-            let expected = previous == "pause" ? "play" : previous == "play" ? "pause" : nil
-            return expected != nil && (button?.value as? String)?.lowercased() == expected
-        case "slideshow.control.next.button", "slideshow.control.previous.button":
-            // Disabled boundary controls still receive a real tap; callers judge the retained history.
-            if before.button?.isEnabled == false {
-                return button?.isEnabled == false && sceneIdentity == before.sceneIdentity
-            }
-            guard let previous = before.sceneIdentity, let current = sceneIdentity else { return false }
-            return current != previous
-        default:
-            return false
-        }
+    var hasSettingsNavigationEvidence: Bool {
+        snapshots["global.back.button"] != nil || snapshots.keys.contains { $0.hasPrefix("settings.") }
     }
 
     var diagnostic: String {
@@ -78,6 +58,10 @@ struct SlideshowControlBarTiming {
     var tapSeconds: TimeInterval = .zero
     var verifySeconds: TimeInterval = .zero
     var iterations = 0
+    var tapCount = 0
+    var shouldVerifySettingsOutcome = false
+    var hasSettingsOutcome = false
+    var didObserveSettingsNavigation = false
     var snapshotErrors = 0
     var lastErrorCode: Int?
     var didReadLastSnapshot = false
@@ -88,7 +72,13 @@ struct SlideshowControlBarTiming {
             format: "snapshot=%.3fs, reveal=%.3fs, tap=%.3fs, verify=%.3fs",
             snapshotSeconds, revealSeconds, tapSeconds, verifySeconds)
         return
-            "\(lastObservation), lastSnapshotSucceeded=\(didReadLastSnapshot), snapshotErrors=\(snapshotErrors), lastError=\(lastErrorCode.map(String.init) ?? "none"), iterations=\(iterations), \(phases)"
+            "\(lastObservation), lastSnapshotSucceeded=\(didReadLastSnapshot), snapshotErrors=\(snapshotErrors), lastError=\(lastErrorCode.map(String.init) ?? "none"), iterations=\(iterations), tapCount=\(tapCount), settingsOutcomeExpected=\(shouldVerifySettingsOutcome), settingsOutcomeObserved=\(hasSettingsOutcome), settingsNavigationObserved=\(didObserveSettingsNavigation), \(phases)"
+    }
+
+    mutating func reveal(app: XCUIApplication) {
+        let startedAt = Date()
+        app.tap()
+        revealSeconds += Date().timeIntervalSince(startedAt)
     }
 
     mutating func observe(app: XCUIApplication, identifier: String) -> SlideshowControlBarButtonObservation? {
@@ -131,25 +121,36 @@ extension XCUIApplication {
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         var timing = SlideshowControlBarTiming()
-        var didRevealHiddenControls = false
+        var hiddenSince: Date?
+        var hiddenRevealCount = 0
         while Date() < deadline {
             let observation = timing.observe(app: self, identifier: "slideshow.control.settings.button")
             guard Date() < deadline else { break }
             if let observation {
-                if observation.isReady { return true }
+                if observation.isReady {
+                    timing.reveal(app: self)
+                    guard Date() < deadline else { break }
+                    return true
+                }
                 if observation.isInsideWindow {
-                    didRevealHiddenControls = false
-                } else if observation.hasPlaybackMarker, !didRevealHiddenControls {
-                    let startedAt = Date()
-                    tap()
-                    timing.revealSeconds += Date().timeIntervalSince(startedAt)
-                    didRevealHiddenControls = true
+                    hiddenSince = nil
+                    hiddenRevealCount = 0
+                } else if observation.hasPlaybackMarker {
+                    let startedAt = hiddenSince ?? Date()
+                    hiddenSince = startedAt
+                    if hiddenRevealCount == 0
+                        || (hiddenRevealCount == 1
+                            && Date().timeIntervalSince(startedAt) > TestWait.seconds(.product(1)))
+                    {
+                        timing.reveal(app: self)
+                        hiddenRevealCount += 1
+                    }
                 }
             }
             guard Date() < deadline else { break }
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(pollSeconds)))
         }
-        onTimeout(timing.diagnostic)
+        onTimeout("The slideshow Settings waiter did not become ready before the deadline. (\(timing.diagnostic))")
         return false
     }
 
@@ -164,28 +165,39 @@ extension XCUIApplication {
     func tapSlideshowControlBarButton(
         identifier: String, file: StaticString = #filePath, line: UInt = #line
     ) {
-        let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
         var timing = SlideshowControlBarTiming()
-        var didRevealHiddenControls = false
-        var tappedObservation: SlideshowControlBarButtonObservation?
+        timing.shouldVerifySettingsOutcome = identifier == "slideshow.control.settings.button"
+        // A playback-area tap only shows the bar and resets auto-hide; it never toggles it off.
+        timing.reveal(app: self)
+        let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
+        var isTapAttemptPrepared = true
+        var shouldRevealForNextTap = false
         while Date() < deadline {
+            if shouldRevealForNextTap {
+                timing.reveal(app: self)
+                shouldRevealForNextTap = false
+                isTapAttemptPrepared = true
+                guard Date() < deadline else { break }
+            }
             let verifyStartedAt = Date()
             let observation = timing.observe(app: self, identifier: identifier)
-            let hasOutcome =
-                observation.flatMap { observed in
-                    tappedObservation.map { observed.hasTapOutcome(since: $0) }
-                } ?? false
-            if tappedObservation != nil { timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt) }
+            if timing.tapCount > 0 {
+                timing.hasSettingsOutcome = observation?.hasSettingsOutcome ?? false
+                timing.didObserveSettingsNavigation =
+                    timing.didObserveSettingsNavigation || observation?.hasSettingsNavigationEvidence == true
+                timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt)
+            }
             guard Date() < deadline else { break }
-            if hasOutcome { return }
+            if timing.hasSettingsOutcome { return }
             if let observation {
-                if observation.isInsideWindow, let button = observation.button {
-                    didRevealHiddenControls = false
-                    // Navigation/toggle actions are sent once, so a slow outcome cannot double-advance or flip back.
-                    // Settings may be tapped again while a fresh snapshot still shows playback, within this deadline.
-                    if tappedObservation == nil || identifier == "slideshow.control.settings.button" {
+                // Once navigation starts, the first Settings tap is delivered; never tap an incoming page.
+                if !timing.didObserveSettingsNavigation, observation.isInsideWindow,
+                    let button = observation.button
+                {
+                    if isTapAttemptPrepared {
                         let frame = button.frame
                         let startedAt = Date()
+                        timing.tapCount += 1
                         windows.firstMatch.coordinate(withNormalizedOffset: .zero)
                             .withOffset(
                                 CGVector(
@@ -193,22 +205,28 @@ extension XCUIApplication {
                                     dy: frame.midY - observation.windowFrame.minY)
                             ).tap()
                         timing.tapSeconds += Date().timeIntervalSince(startedAt)
-                        tappedObservation = tappedObservation ?? observation
+                        // Callers own scene-change, Play/Pause and EXIF budgets after one real tap.
+                        if !timing.shouldVerifySettingsOutcome { return }
+                        isTapAttemptPrepared = false
+                    } else if observation.hasPlaybackMarker {
+                        // The next attempt must reveal, then take a new frame snapshot before tapping.
+                        shouldRevealForNextTap = true
                     }
-                } else if observation.hasPlaybackMarker, !didRevealHiddenControls {
-                    let startedAt = Date()
-                    tap()
-                    timing.revealSeconds += Date().timeIntervalSince(startedAt)
-                    didRevealHiddenControls = true
                 }
             }
             guard Date() < deadline else { break }
             RunLoop.current.run(
                 until: min(deadline, Date().addingTimeInterval(UITestSupportWaitTiming.identityPollSeconds)))
         }
-        XCTFail(
-            "The slideshow control must be fully inside the window before tapping: \(identifier) (outcomeVerified=false, \(timing.diagnostic))",
-            file: file, line: line)
+        if timing.tapCount == 0 {
+            XCTFail(
+                "The slideshow control never became tappable before the deadline. (\(timing.diagnostic))",
+                file: file, line: line)
+        } else {
+            XCTFail(
+                "The slideshow Settings tap had no observed outcome before the deadline. (\(timing.diagnostic))",
+                file: file, line: line)
+        }
     }
 }
 #endif
