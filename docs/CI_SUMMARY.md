@@ -71,8 +71,9 @@ GitHub event, workflow and run metadata. `check_all.sh` does not enable CI ident
 ## Version 1
 
 [`scripts/ci_summary.py`](../scripts/ci_summary.py) is the authoritative, executable
-schema and validator. All top-level fields below are required; the paired failure
-diagnostics and strict validator receipt on observations and attempts are explicitly optional. Other unknown fields and versions,
+schema and validator. All top-level fields below are required; the prepared archive
+download receipt below and the paired failure diagnostics and strict validator receipt
+on observations and attempts are explicitly optional. Other unknown fields and versions,
 duplicate JSON keys and identities, booleans used as integers, non-finite durations,
 malformed hashes, and incomplete strict identities are rejected. This validates
 producer data, not its provenance or a trusted verdict.
@@ -88,6 +89,47 @@ producer data, not its provenance or a trusted verdict.
 | `population` | `declared`, `compiled`, `observed`, `deselected`, `removed_by_pr` arrays |
 | `infrastructure` | Version 1 array of `{code, message}` diagnostics, never silently omitted; codes distinguish coverage, policy and population diagnostics from infrastructure outcomes |
 | `status` | Producer execution status: `passed`, `failed`, `unverified` |
+
+### Prepared archive download receipt
+
+The optional top-level `archive_download` object is accepted only on version 1
+nightly UI shard summaries (`ui-iphone`, `ui-ipad`, `ui-appletv`, tier `ui`, a nonempty
+shard, and `schedule` or `workflow_dispatch` from `ci-nightly.yml`). Historical
+field-free records remain valid. No producer emits this field yet: the reader must
+reach main before a separate producer PR enables it.
+
+The receipt has exactly these fields; unknown fields and free-text reasons are rejected.
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | Integer `1` |
+| `artifact_id` | Integer immutable artifact ID from 1 through 2^63 - 1 (signed 64-bit diagnostic ceiling); not independent proof of API provenance |
+| `action_outcome` | `success`, `failure`, `cancelled`, or `skipped` |
+| `member_bytes` | Exactly `manifest.json` and `build.tar.gz`, each an integer byte count from 0 through the existing 128 MiB UI download cap, or null |
+| `digests_matched` | Exactly `manifest` and `tar`, each boolean or null (not reached) |
+| `size_matched` | Boolean or null; tar size compared with its manifest |
+| `transfer_extract_seconds` | Finite elapsed action time from 0 through 6600 seconds (the 110-minute UI job cap), or null when unavailable; transfer and extraction are combined |
+| `gate_seconds` | Finite elapsed validation/publication time from 0 through 6600 seconds, or null when unavailable |
+| `free_disk_bytes` | Integer available bytes from 0 through 1 PiB (2^50 bytes), or null when unavailable |
+| `failure_reason` | Null for a successful gate, otherwise one of the closed-set codes below |
+
+Failure codes are `archive-member-missing`, `archive-member-extra`,
+`archive-size-mismatch`, `archive-hash-mismatch`, `archive-identity-mismatch`,
+`archive-toolchain-mismatch`, `archive-manifest-invalid`, `archive-download-incomplete`,
+`archive-gate-timeout`, and `archive-publish-failed`. A failed receipt requires
+`status: failed`, a matching infrastructure code, no compiled tests, and only
+`not-run` test attempts (or no observations). It cannot count as a product failure
+or evidence of test execution. A successful receipt requires action success,
+positive member sizes and all three integrity checks true. Timing and disk
+measurements may be null even on success, so unavailable diagnostics cannot prevent
+writing an otherwise valid summary. Failure receipt measurements are diagnostics;
+the reader validates their types and bounds but does not cross-check them against
+the reason. The enclosing summary already provides run/attempt coordinates;
+observed archive coordinate mismatches use `archive-identity-mismatch`, without
+duplicating those coordinates in the receipt. It does not excuse any later test
+or infrastructure failure. Summary Markdown displays the compact measurements
+and reason. An invalid shard summary can make the trusted reporter drop the whole
+nightly attempt, rather than only that shard.
 
 Source repository/event must match the identity. CI requires a workflow path below
 `.github/workflows/`, a run ID and a boolean fork-origin flag. The producer derives

@@ -15,6 +15,15 @@ ATTEMPT_OUTCOMES = OUTCOMES - {"flaky-passed"}
 STRICT_DIMENSIONS = {"device", "configuration", "suite", "scenario", "fixture"}
 NON_INFRASTRUCTURE_DIAGNOSTICS = {"coverage-failed": "Coverage", "policy-proposed": "Policy",
                                   "population-invalid": "Population"}
+ARCHIVE_DOWNLOAD_FAILURES = frozenset({
+    "archive-member-missing", "archive-member-extra", "archive-size-mismatch", "archive-hash-mismatch",
+    "archive-identity-mismatch", "archive-toolchain-mismatch", "archive-manifest-invalid",
+    "archive-download-incomplete", "archive-gate-timeout", "archive-publish-failed",
+})
+ARCHIVE_DOWNLOAD_MAX_MEMBER_BYTES = 128 * 1024 * 1024  # Boundary tests bind this to the existing UI download cap.
+ARCHIVE_DOWNLOAD_MAX_SECONDS = 110 * 60
+ARCHIVE_DOWNLOAD_MAX_DISK_BYTES = 2**50  # 1 PiB diagnostic ceiling.
+ARCHIVE_DOWNLOAD_MAX_ARTIFACT_ID = 2**63 - 1
 
 
 class ContractError(ValueError):
@@ -183,9 +192,57 @@ def validate_observation(entry):
                 "single outcome must match its attempt")
 
 
+def validate_archive_download(receipt, summary):
+    fields(receipt, {"schema_version", "artifact_id", "action_outcome",
+                     "member_bytes", "digests_matched", "size_matched", "transfer_extract_seconds", "gate_seconds",
+                     "free_disk_bytes", "failure_reason"}, "archive download receipt")
+    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1,
+            "unsupported archive download receipt")
+    run = summary["run"]
+    require(summary["source"]["workflow_path"] == ".github/workflows/ci-nightly.yml"
+            and summary["identity"]["event"] in {"schedule", "workflow_dispatch"} and run["tier"] == "ui"
+            and run["job"] in {"ui-iphone", "ui-ipad", "ui-appletv"} and bool(run["shard"]),
+            "archive download receipt requires a nightly UI shard")
+    integer(receipt["artifact_id"], 1, "archive artifact ID")
+    require(receipt["artifact_id"] <= ARCHIVE_DOWNLOAD_MAX_ARTIFACT_ID, "archive artifact ID exceeds bound")
+    require(receipt["action_outcome"] in ("success", "failure", "cancelled", "skipped"),
+            "invalid archive download action outcome")
+    reason = receipt["failure_reason"]
+    require(reason is None or reason in tuple(ARCHIVE_DOWNLOAD_FAILURES), "invalid archive download failure reason")
+    fields(receipt["member_bytes"], {"manifest.json", "build.tar.gz"}, "archive member bytes")
+    for value in receipt["member_bytes"].values():
+        if value is not None:
+            integer(value, 0, "archive member bytes")
+            require(value <= ARCHIVE_DOWNLOAD_MAX_MEMBER_BYTES, "archive member bytes exceed bound")
+    fields(receipt["digests_matched"], {"manifest", "tar"}, "archive digest matches")
+    for value in receipt["digests_matched"].values():
+        require(value is None or type(value) is bool, "archive digest match must be boolean or null")
+    require(receipt["size_matched"] is None or type(receipt["size_matched"]) is bool,
+            "archive size match must be boolean or null")
+    for key in ("transfer_extract_seconds", "gate_seconds"):
+        if receipt[key] is not None:
+            duration(receipt[key])
+            require(receipt[key] <= ARCHIVE_DOWNLOAD_MAX_SECONDS, "archive elapsed seconds exceed bound")
+    if receipt["free_disk_bytes"] is not None:
+        integer(receipt["free_disk_bytes"], 0, "archive free disk bytes")
+        require(receipt["free_disk_bytes"] <= ARCHIVE_DOWNLOAD_MAX_DISK_BYTES, "archive free disk bytes exceed bound")
+    if reason is None:
+        require(receipt["action_outcome"] == "success" and receipt["size_matched"] is True
+                and all(value is True for value in receipt["digests_matched"].values())
+                and all(value is not None and value > 0 for value in receipt["member_bytes"].values()),
+                "successful archive gate requires complete integrity checks")
+    else:
+        require(summary["status"] == "failed" and any(item["code"] == reason for item in summary["infrastructure"])
+                and not summary["population"]["compiled"]
+                and all(attempt["outcome"] == "not-run" for item in summary["population"]["observed"]
+                        for attempt in item["attempts"]),
+                "failed archive gate requires failed infrastructure and no executed or compiled tests")
+
+
 def validate_summary_v1(payload):
+    optional = {"archive_download"} & payload.keys()
     fields(payload, {"schema_version", "identity", "source", "run", "hashes", "toolchain", "population",
-                     "infrastructure", "status"}, "summary")
+                     "infrastructure", "status"} | optional, "summary")
     require(type(payload["schema_version"]) is int and payload["schema_version"] == 1, "invalid summary version")
     identity = parse_identity(payload["identity"])
     source = payload["source"]
@@ -245,6 +302,8 @@ def validate_summary_v1(payload):
         string(entry["code"], "infrastructure code")
         string(entry["message"], "infrastructure message")
     require(payload["status"] in {"passed", "failed", "unverified"}, "invalid producer status")
+    if "archive_download" in payload:
+        validate_archive_download(payload["archive_download"], payload)
 
 
 # A successor needs an installed validator before it is admitted by a reader.
@@ -312,6 +371,15 @@ def render_markdown(payload):
     for entry in payload["infrastructure"]:
         category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure")
         lines.append(f"\n{category}: {markdown_text(entry['code'])}: {markdown_text(entry['message'])}")
+    if "archive_download" in payload:
+        receipt = payload["archive_download"]
+        matches = {key: "unknown" if value is None else "yes" if value else "no"
+                   for key, value in {**receipt["digests_matched"], "size": receipt["size_matched"]}.items()}
+        sizes = "; ".join(f"{key}={value}" for key, value in receipt["member_bytes"].items())
+        lines.append(f"\nArchive download: action={receipt['action_outcome']}; {sizes}; "
+                     f"manifest digest={matches['manifest']}; tar digest={matches['tar']}; size={matches['size']}; "
+                     f"transfer/extract={receipt['transfer_extract_seconds']} s; gate={receipt['gate_seconds']} s; "
+                     f"free disk={receipt['free_disk_bytes']} bytes; failure={receipt['failure_reason'] or 'none'}.")
     return "\n".join(lines) + "\n"
 
 

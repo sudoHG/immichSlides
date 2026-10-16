@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from ci_summary import (ContractError, decode, identity_key, markdown_text, parse_identity,
+from ci_summary import (ARCHIVE_DOWNLOAD_FAILURES, ContractError, decode, identity_key, markdown_text, parse_identity,
                         parse_summary, require, validate_observation, validate_test_identity,
                         NON_INFRASTRUCTURE_DIAGNOSTICS, observation, test_identity)
 from ci_publish import GitHub
@@ -317,6 +317,11 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
                 outcome = "unverified"
         night = state["nights"].setdefault(day, {})
         record = {"attempt": entry["run"]["attempt"], "outcome": outcome}
+        if identity == NIGHTLY_INFRASTRUCTURE:
+            reasons = (set(entry["diagnostics"]["infrastructure"])
+                       | set((old or {}).get("archive_failure_reasons", []))) & ARCHIVE_DOWNLOAD_FAILURES
+            if reasons:
+                record["archive_failure_reasons"] = sorted(reasons)
         if old is None or old["attempt"] <= record["attempt"]:
             if outcome == "failed" and (old is None or old["outcome"] != "failed" or old["attempt"] < record["attempt"]):
                 new_failure |= state["last_failure"] is None or day >= state["last_failure"]
@@ -569,6 +574,9 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
             and (ui["verdict"]["status"] != "failed" or raw["status"] == "failed"), "nightly UI status differs")
     verdict = copy.deepcopy(ui["verdict"])
     verdict["infrastructure"] = []
+    # Only validated closed-set receipt reasons cross the public reporting boundary.
+    verdict["infrastructure"].extend(sorted({summary["archive_download"]["failure_reason"] for summary in summaries
+        if summary.get("archive_download", {}).get("failure_reason") is not None}))
     for shard, planned in zip(verdict["shards"], plan["shards"]):
         declared = {identity_key(item) for item in planned["declared"]}
         failures = [item for item in verdict["observed"] if identity_key(item["identity"]) in declared and item["outcome"] in FAILURES]
@@ -835,14 +843,19 @@ def read_state(issue):
 
 def issue_body(issue, state, repository):
     existing = ((issue or {}).get("body") or "").split(SECTION)[0]
+    archive_column = state["identity"] == NIGHTLY_INFRASTRUCTURE
+    archive_header = " Archive gate reason |" if archive_column else ""
+    archive_separator = " --- |" if archive_column else ""
     lines = ["CI nightly tracking: " + text(identity_key(state["identity"])) + ".", "",
              f"Failure nights: {state['failure_nights']}; first: {state['first_failure']}; last: {state['last_failure']}.",
              "Explicit pass nights after the last failure: " + ", ".join(state["explicit_pass_nights"]) + ".",
              "Closure requires three distinct UTC nights with explicit passes and no registry reference.", "",
-             "| UTC night | Run | Outcome |", "| --- | --- | --- |"]
+             "| UTC night | Run | Outcome |" + archive_header, "| --- | --- | --- |" + archive_separator]
     for day, runs in sorted(state["nights"].items()):
         for run, item in sorted(runs.items()):
-            lines.append(f"| {day} | [Run {run}, attempt {item['attempt']}](https://github.com/{repository}/actions/runs/{run}) | {item['outcome']} |")
+            reasons = sorted(set(item.get("archive_failure_reasons", [])) & ARCHIVE_DOWNLOAD_FAILURES)
+            archive_cell = " " + (", ".join(reasons) or "—") + " |" if archive_column else ""
+            lines.append(f"| {day} | [Run {run}, attempt {item['attempt']}](https://github.com/{repository}/actions/runs/{run}) | {item['outcome']} |" + archive_cell)
     lines.append(MARKER + json.dumps(state, sort_keys=True, separators=(",", ":")) + " -->")
     body = existing + SECTION + "\n".join(lines)
     require(len(body.encode()) < 65000, "issue history exceeds GitHub limit; human reconciliation needed")
