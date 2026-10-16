@@ -1235,6 +1235,8 @@ class GroupProducerTests(unittest.TestCase):
                                       registry_value=self.registry)
 
     def test_cloud_recomputation_matches_the_github_functional_packed_selection(self):
+        from test_ci_build_archive import share_ui_source_fixture
+        share_ui_source_fixture(self)
         import json
         import subprocess
         import ci_ui_tests as producer

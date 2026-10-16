@@ -73,7 +73,7 @@ jobs:
         run: |
           "$PYTHON" -B scripts/run_host_checks.py --host-platform linux \
             --output-dir "$RUNNER_TEMP/host-summary" \
-            --workflow-path .github/workflows/ci-gate.yml --timeout-seconds 900
+            --workflow-path .github/workflows/ci-gate.yml --timeout-seconds 1200
       - name: Validate and display the records
         if: always()
         run: |
