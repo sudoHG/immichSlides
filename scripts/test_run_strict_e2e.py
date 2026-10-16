@@ -966,6 +966,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
     def test_scanner_checks_validator_receipts_including_duplicate_and_malformed_json(self):
         message = "unreadable public glyph slot; slot 1 (horizontal); screenshot person-normal.png"
+        overlong = ("no public glyph; screenshot person-normal.png" + "; context unresolved" * 16
+                    + "; slot 1 (horizontal)" * 7).replace("slot 1 (", "slot 10 (", 1)
         with tempfile.TemporaryDirectory() as raw:
             evidence = Path(raw)
             path = evidence / "record.json"
@@ -973,17 +975,66 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 path.write_text(json.dumps({"validator_failure_message": value}))
                 strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
                 self.assertEqual("PASS", json.loads((evidence / "sensitive-scan.json").read_text())["result"])
-            for raw_json in (json.dumps({"validator_failure_message": message + "; PRIVATE_SENTINEL"}),
-                             json.dumps({"validator_failure_message": message + "; server 192.0.2.1"}),
+            for raw_json in (json.dumps({"validator_failure_message": message + "; server 192.0.2.1"}),
                              json.dumps({"validator_failure_message": message + "; pixels (0, 0, 0)"}),
-                             json.dumps({"validator_failure_message": message + " " * 512}),
+                             json.dumps({"validator_failure_message": overlong}),
                              '{"validator_failure_message":"unresolved","validator_failure_message":"unresolved"}',
                              '{"validator_failure_message":"unresolved"'):
                 with self.subTest(raw_json=raw_json):
                     path.write_text(raw_json)
-                    with self.assertRaisesRegex(CommandError, "redaction scan found"):
+                    with self.assertRaisesRegex(CommandError, "redaction scan found") as raised:
                         strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+                    self.assertNotIn("192.0.2.1", str(raised.exception))
                     self.assertEqual("FAIL", json.loads((evidence / "sensitive-scan.json").read_text())["result"])
+
+    def test_real_contract_failures_keep_public_context_and_redact_dynamic_identifiers(self):
+        from album_server_narrow_contract import AlbumServerContractError, evaluate_server_switch_evidence
+        from strict_e2e_filter_contract import FilterContractError, evaluate_filter_visual_identity
+        from strict_e2e_photo_identity import IdentityAssertionError, public_frame_photos_from_bytes
+        from strict_e2e_filter_contract_test_fixtures import _write_person_suite
+        from test_album_server_narrow_contract import _fixture_png, _write_server_switch_pass
+        from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+        from ci_failure_diagnostics import public_validator_failure_message, validate_validator_failure_message
+        frame = FrameGlyphBoundaryTests._pair("a", 2, 3, horizontal=True, unreadable_slot=1)
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            _write_server_switch_pass(evidence)
+            (evidence / "server-switch-a-play-1.png").write_bytes(frame)
+            with self.assertRaisesRegex(AlbumServerContractError, "^unreadable public glyph slot") as raised:
+                evaluate_server_switch_evidence(evidence)
+            message = str(raised.exception)
+            validate_validator_failure_message(message)
+            self.assertEqual(message, public_validator_failure_message(message))
+            self.assertIn("screenshot server-switch-a-play-1.png", message)
+            _write_person_suite(evidence, conflict=["A1", "A2", "A3"])
+            (evidence / "person-normal.png").write_bytes(frame)
+            with self.assertRaisesRegex(FilterContractError, "^unreadable public glyph slot") as raised:
+                evaluate_filter_visual_identity(evidence, "tvos-person", fixture_set="a")
+            message = str(raised.exception)
+            validate_validator_failure_message(message)
+            self.assertEqual(message, public_validator_failure_message(message))
+            self.assertIn("screenshot person-normal.png", message)
+            _write_server_switch_pass(evidence)
+            (evidence / "display-before.png").write_bytes(_fixture_png("A1", "b"))
+            with self.assertRaisesRegex(AlbumServerContractError, "^The fixture yields no multi-photo screen;") as raised:
+                evaluate_server_switch_evidence(evidence)
+            message = str(raised.exception) + "; context unresolved"
+            validate_validator_failure_message(message)
+            self.assertEqual(message, public_validator_failure_message(str(raised.exception)))
+            _write_server_switch_pass(evidence)
+            (evidence / "observed-ids.json").write_text(json.dumps({
+                "identity_source": "ui_accessibility_identifier", "ids": ["album-a-private-name"],
+                "raw_identifiers": ["albumFilter.album.album-a-private-name.button"]}))
+            with self.assertRaisesRegex(FilterContractError, "^Cross-server stale IDs remain:") as raised:
+                evaluate_server_switch_evidence(evidence)
+            self.assertEqual("[redacted validator failure]", public_validator_failure_message(str(raised.exception)))
+        with self.assertRaisesRegex(IdentityAssertionError, "^unreadable public glyph: UnidentifiedImageError$") as raised:
+            public_frame_photos_from_bytes(b"unreadable fixture")
+        message = str(raised.exception) + "; context unresolved"
+        validate_validator_failure_message(message)
+        self.assertEqual(message, public_validator_failure_message(str(raised.exception)))
+        self.assertEqual("[redacted validator failure]",
+                         public_validator_failure_message("unreadable public glyph: PrivateServerError; context unresolved"))
 
     def test_diagnostic_read_failure_retains_official_failure_and_unknown_enums(self):
         import subprocess

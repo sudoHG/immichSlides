@@ -180,12 +180,17 @@ participate in outcome, population, retry or verdict evaluation.
 
 The separate `validator_failure_message` field is reader-only preparation: current
 strict producers do not emit it. Readers accept at most 512 characters from the
-reviewed public scene-reader grammar, or the fixed `unresolved` / `[redacted validator failure]`
+reviewed public validator grammar, or the fixed `unresolved` / `[redacted validator failure]`
 markers. It is independent of the XCTest diagnostic pair. Historical field-free
 records remain valid. Refused values are never echoed in validation errors;
 the sensitive-output scanner checks this field recursively, including duplicate keys
-and malformed JSON. The reporter redacts an unsafe optional trace receipt while
-retaining the existing failed case and exit code.
+and malformed JSON, only where invoked. **`records/` is uploaded unscanned.** The
+producer contract requires writing only `public_validator_failure_message(...)`
+output to trace and summary, never raw errors. An invalid summary value invalidates
+the whole shard. The reporter has one optional-trace trust boundary; its redaction
+retains the failed case and exit code but cannot protect an already uploaded artifact.
+The [strict receipt contract](CI_STRICT_RUNNER.md#public-validator-failure-receipts)
+defines the mandatory PR 2 producer-injection test and the optional upload-scan follow-up.
 
 Outcomes are `passed`, `failed`, `skipped`, `crashed`, `timed-out`, `not-run`,
 `needs-human-review`, or aggregate `flaky-passed`. A skip requires a reason.

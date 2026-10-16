@@ -148,7 +148,7 @@ def method_observations(raw, trace):
             if contract_failed:
                 failure = observation(case, case_outcome, 0, exit_code=phase.get("exit_code"), reason="strict-case-contract-failed")
                 from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD, public_validator_failure_message
-                if VALIDATOR_FAILURE_FIELD in phase:
+                if case_outcome == "failed" and VALIDATOR_FAILURE_FIELD in phase:
                     message = public_validator_failure_message(phase[VALIDATOR_FAILURE_FIELD])
                     failure[VALIDATOR_FAILURE_FIELD] = failure["attempts"][0][VALIDATOR_FAILURE_FIELD] = message
                 observed.append(failure)
@@ -374,11 +374,11 @@ def text(value):
 
 
 def failure_details(item):
-    from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD, public_validator_failure_message
+    from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD
     details = {"identity": item["identity"], "outcome": item["outcome"],
                "exit_codes": [attempt["exit_code"] for attempt in item["attempts"]]}
     if VALIDATOR_FAILURE_FIELD in item:
-        details[VALIDATOR_FAILURE_FIELD] = public_validator_failure_message(item[VALIDATOR_FAILURE_FIELD])
+        details[VALIDATOR_FAILURE_FIELD] = item[VALIDATOR_FAILURE_FIELD]
     return details
 
 
@@ -394,10 +394,9 @@ def render_entry(entry):
         lines.append("Fork results are self-reported; approval is separate from test evidence.")
     if entry.get("not_evaluated_reason"):
         lines.append("Not evaluated: " + text(entry["not_evaluated_reason"]) + ".")
-    from ci_failure_diagnostics import public_validator_failure_message
     lines += ["", "| Failing identity | Outcome | Exit codes | Validator failure |", "| --- | --- | --- | --- |"]
     lines.extend(f"| {text(identity_key(item['identity']))} | {item['outcome']} | {text(item['exit_codes'])} | "
-                 f"{text(public_validator_failure_message(item['validator_failure_message'])) if 'validator_failure_message' in item else '—'} |"
+                 f"{text(item['validator_failure_message']) if 'validator_failure_message' in item else '—'} |"
                  for item in diagnostics["failures"][:50])
     lines.extend(f"Missing evidence: {text(identity_key(item['identity']))}: {item['reason']}."
                  for item in diagnostics["missing"][:50])

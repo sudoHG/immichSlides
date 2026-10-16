@@ -172,11 +172,14 @@ only when `automated_contract_failed` records an explicit `FAIL` from the runner
 contract receipt and every selected official method passed with valid warm-build evidence.
 The tracer currently exports that boolean without the contract's raw error text.
 The prepared reader accepts `validator_failure_message` only on the existing
-case-contract failure path, scans it against the fixed public grammar and 512-character
-bound, and copies it to the case observation and attempt. Unsafe optional trace text
+case-contract failure path with outcome `failed`, scans it once against the fixed
+public grammar and 512-character bound, and copies it to the case observation and attempt. Unsafe optional trace text
 becomes `[redacted validator failure]`; a supplied null becomes `unresolved`.
-The nightly failing-identity table has a `Validator failure` column, with a dash for
-historical rows lacking the field. No raw runner message is substituted. Producer
+The failing-identity table has a `Validator failure` column, with a dash for any row
+without a receipt, including official-method failures, UI failures and historical rows.
+No raw runner message is substituted. `records/` is uploaded unscanned; the producer
+must write only the public helper's output, because an invalid summary value invalidates
+the shard and report-side redaction cannot protect an uploaded artifact. Producer
 activation must follow the reader's merge to main; see
 [reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
 Timeouts, export

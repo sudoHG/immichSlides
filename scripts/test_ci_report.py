@@ -52,10 +52,12 @@ class ReporterTests(unittest.TestCase):
                  "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
         historical, _ = ci_report.method_observations(shard, {"warm": [phase]})
         self.assertTrue(all("validator_failure_message" not in item for item in historical))
+        overlong = ("no public glyph; screenshot person-normal.png" + "; context unresolved" * 16
+                    + "; slot 1 (horizontal)" * 7).replace("slot 1 (", "slot 10 (", 1)
         cases = ((message, message), (None, "unresolved"),
                  (message + "; https://private.invalid/api", "[redacted validator failure]"),
                  (message.replace("person-normal.png", "/private/person-normal.png"), "[redacted validator failure]"),
-                 (message + " " * 512, "[redacted validator failure]"))
+                 (overlong, "[redacted validator failure]"))
         for supplied, expected in cases:
             with self.subTest(supplied=supplied):
                 warm = dict(phase)
@@ -78,6 +80,13 @@ class ReporterTests(unittest.TestCase):
                 self.assertIn("| Validator failure |", render_entry(compact))
                 self.assertIn(expected, unescape(render_entry(compact)))
                 self.assertNotIn("private.invalid", json.dumps(compact))
+        for outcome in ("crashed", "timed-out"):
+            with self.subTest(outcome=outcome):
+                shard["population"]["observed"] = [observation(case, outcome, 1, exit_code=2)]
+                observed, _ = ci_report.method_observations(shard, {"warm": [{**phase, "validator_failure_message": message}]})
+                failed = next(item for item in observed if item["identity"] == case)
+                ci_report.validate_observation(failed)
+                self.assertEqual(outcome, failed["outcome"])
 
     def test_nightly_preparation_failure_tracks_missing_cases_under_one_infrastructure_issue(self):
         from ci_nightly import aggregate_nightly

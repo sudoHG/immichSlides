@@ -495,19 +495,42 @@ XCTest diagnostics below remain separate from post-test validator failures.
 
 The value is at most 512 characters. The reviewed grammar in
 [`ci_failure_diagnostics.py`](../scripts/ci_failure_diagnostics.py) preserves existing
-public scene-reader prefixes plus screenshot basenames from its fixed public list,
+fixed public validator prefixes from `album_server_narrow_contract.py`,
+`strict_e2e_photo_identity.py` and `strict_e2e_filter_contract.py`, plus screenshot
+basenames from their actual scene-reader calls,
 slot indices, horizontal/vertical/both-axis labels, fixture A/B letters and counts.
 Unavailable context can be `unresolved` or a prefix followed by `; context unresolved`.
+The public helper appends that suffix to a recognized bare prefix. Interpolated
+messages remain excluded except the existing count/letter/slot/axis grammar and
+the closed `unreadable public glyph:` exception names: `AttributeError`, `IndexError`,
+`KeyError`, `OSError`, `TypeError`, `UnidentifiedImageError` and `ValueError`.
+Screenshot names come only from `public_scene_photos_from_bytes` callers: `history-*`,
+`pause-immediate`, `pause-after-10s`, `resumed`, `album-playback-N`, `person-normal`,
+`person-no-faces`, `person-conflict-normal(-N)`, `album-switch-b-play-N` and
+`server-switch-a-play-1` (all `.png`). No names are reserved for a future producer.
 Unrecognized prefixes, filenames and suffixes are refused rather than treated as public
 text. The grammar accepts no URLs, keys, server addresses, directory paths, private
 xcresult text or pixel arrays. It does not decode images or change a visual check.
 
-The existing sensitive-output scan validates the new field in JSON recursively,
-including its length and duplicate/malformed fields; existing sensitive-value
-scanning remains mandatory. The report reader applies the same grammar to optional
-trace receipts and retains `[redacted validator failure]` when scanning fails,
-without dropping or reclassifying the failed case. Summary readers reject unsafe
-field values. Valid messages survive aggregation and compact history and appear in
+The existing sensitive-output scan validates the field only in the directories
+where that scan is invoked: case evidence, P2 recordings and review packages.
+It checks length and duplicate/malformed fields, alongside existing sensitive-value
+scanning. **`records/` is uploaded unscanned**, including on failure. A future producer
+must therefore write only `public_validator_failure_message(...)` output to both
+`records/trace.json` and `records/summary.json`, never the raw validator error.
+The helper returns `[redacted validator failure]` on refusal instead of dropping
+the case. An invalid value written directly to a summary invalidates the entire
+shard; reporter-side redaction cannot repair an already public artifact.
+
+PR 2 must test the real producer with a URL, directory path or ID injected into
+`visual-identity-runner.json`: trace and summary must contain only the fixed
+redaction marker, retaining the failed case and exit code. Aggregation must consume
+that actual producer summary. An upload scan for `records/` is an optional follow-up
+requiring maintainer approval; this reader change adds no workflow step.
+
+The report reader applies the grammar once at its optional trace boundary and
+copies a receipt only for outcome `failed`; it retains the redaction marker on refusal.
+Valid messages survive aggregation and compact history and appear in
 the [nightly failure table](CI_REPORT.md#method-identities-and-reruns).
 Historical traces and summaries without the field remain valid and gain no new claim.
 

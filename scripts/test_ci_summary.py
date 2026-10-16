@@ -85,23 +85,31 @@ class SummaryContractTests(unittest.TestCase):
             self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
         for value, prefix in ((None, "validator failure message"), ("", "validator failure message"),
                               (boundary.replace("slot 1 (", "slot 10 (", 1), "validator failure message exceeds"),
-                              (message.replace("person-normal.png", "private-name.png"), "validator failure message is not public")):
+                              (message.replace("person-normal.png", "private-name.png"), "validator failure message is not public"),
+                              (message + "; server 192.0.2.1", "validator failure message is not public"),
+                              (message.replace("person-normal.png", "display-after.png"), "validator failure message is not public")):
             with self.subTest(value=value):
                 broken = copy.deepcopy(summary)
                 broken["population"]["observed"][0]["validator_failure_message"] = value
-                with self.assertRaisesRegex(ci_summary.ContractError, prefix):
+                with self.assertRaisesRegex(ci_summary.ContractError, prefix) as raised:
                     ci_summary.parse_summary(json.dumps(broken))
-        for target in ("observation kind", "observation outcome", "attempt"):
-            with self.subTest(target=target):
+                self.assertNotIn("private-name", str(raised.exception))
+                self.assertNotIn("192.0.2.1", str(raised.exception))
+        for level, change in (("observation", "kind"), ("observation", "outcome"),
+                              ("attempt", "kind"), ("attempt", "outcome")):
+            with self.subTest(level=level, change=change):
                 broken = copy.deepcopy(summary)
                 item = broken["population"]["observed"][0]
-                if target == "observation kind":
+                item.pop("validator_failure_message")
+                item["attempts"][0].pop("validator_failure_message")
+                target = item if level == "observation" else item["attempts"][0]
+                target["validator_failure_message"] = message
+                if change == "kind":
                     item["identity"] = ci_summary.test_identity("host", "format")
-                elif target == "observation outcome":
-                    item["outcome"] = "passed"
                 else:
-                    item["attempts"][0].update(outcome="passed", exit_code=0)
-                with self.assertRaisesRegex(ci_summary.ContractError, "validator failure message requires a failed strict"):
+                    target["outcome"] = "passed"
+                with self.assertRaisesRegex(ci_summary.ContractError,
+                        "validator failure message requires a failed strict " + level + "$"):
                     ci_summary.parse_summary(broken)
 
     def test_partitioned_python_execution_preserves_exact_discovery_and_runs_only_its_members(self):
