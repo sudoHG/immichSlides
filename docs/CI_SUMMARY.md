@@ -72,7 +72,7 @@ GitHub event, workflow and run metadata. `check_all.sh` does not enable CI ident
 
 [`scripts/ci_summary.py`](../scripts/ci_summary.py) is the authoritative, executable
 schema and validator. All top-level fields below are required; the paired failure
-diagnostics on observations and attempts are explicitly optional. Other unknown fields and versions,
+diagnostics and strict validator receipt on observations and attempts are explicitly optional. Other unknown fields and versions,
 duplicate JSON keys and identities, booleans used as integers, non-finite durations,
 malformed hashes, and incomplete strict identities are rejected. This validates
 producer data, not its provenance or a trusted verdict.
@@ -168,14 +168,29 @@ nonnegative finite `duration_seconds`, integer or null `exit_code`, string or nu
 | --- | --- |
 | `failure_phase` | String from the fixed [public failure diagnostics](CI_STRICT_RUNNER.md#public-failure-diagnostics) allowlist; paired with `failure_class` |
 | `failure_class` | String from the same contract's fixed class allowlist; paired with `failure_phase` |
+| `validator_failure_message` | Optional bounded public text on failed strict observations/attempts; see [public validator failure receipts](CI_STRICT_RUNNER.md#public-validator-failure-receipts) |
 
-These two fields are optional in both summary versions 1 and 2. When either is
+The paired `failure_phase` and `failure_class` enums are optional in both summary versions 1 and 2. When either is
 present on an observation or attempt, both must be present and allowlisted strings;
 free text, unpaired fields and all other unknown fields remain invalid. Historical
 records without the pair remain valid. Strict/UI producers label failed methods,
 use `unknown` for unavailable or ambiguous diagnostics, and retain the first
 failure's labels on an observation after a listed retry passes. The enums do not
 participate in outcome, population, retry or verdict evaluation.
+
+The separate `validator_failure_message` field is reader-only preparation: current
+strict producers do not emit it. Readers accept at most 512 characters from the
+reviewed public validator grammar, or the fixed `unresolved` / `[redacted validator failure]`
+markers. It is independent of the XCTest diagnostic pair. Historical field-free
+records remain valid. Refused values are never echoed in validation errors;
+the sensitive-output scanner checks this field recursively, including duplicate keys
+and malformed JSON, only where invoked. **`records/` is uploaded unscanned.** The
+producer contract requires writing only `public_validator_failure_message(...)`
+output to trace and summary, never raw errors. An invalid summary value invalidates
+the whole shard. The reporter has one optional-trace trust boundary; its redaction
+retains the failed case and exit code but cannot protect an already uploaded artifact.
+The [strict receipt contract](CI_STRICT_RUNNER.md#public-validator-failure-receipts)
+defines the mandatory PR 2 producer-injection test and the optional upload-scan follow-up.
 
 Outcomes are `passed`, `failed`, `skipped`, `crashed`, `timed-out`, `not-run`,
 `needs-human-review`, or aggregate `flaky-passed`. A skip requires a reason.
@@ -221,6 +236,11 @@ together, a PR or descendant branch whose `base_sha` predates the reader can hav
 its entire record refused when a failed or `flaky-passed` UI observation contains
 the new fields. This transition risk must be stated in the PR; acceptance of the
 fields requires the updated reader in the trusted base.
+
+The validator receipt rollout uses two PRs: first install reader/scanner/report
+acceptance without changing producer output, then, only after that reader is on
+main, activate the strict producer. A stacked producer PR opened before the first
+PR reaches main still uses the old trusted base and is not a safe substitute.
 
 ## Prepared version 2: scoped official discovery
 

@@ -146,7 +146,12 @@ def method_observations(raw, trace):
                 and phase.get("log_present") is True and phase.get("build_operations") == 0
                 and phase.get("products_unchanged") is True)
             if contract_failed:
-                observed.append(observation(case, case_outcome, 0, exit_code=phase.get("exit_code"), reason="strict-case-contract-failed"))
+                failure = observation(case, case_outcome, 0, exit_code=phase.get("exit_code"), reason="strict-case-contract-failed")
+                from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD, public_validator_failure_message
+                if case_outcome == "failed" and VALIDATOR_FAILURE_FIELD in phase:
+                    message = public_validator_failure_message(phase[VALIDATOR_FAILURE_FIELD])
+                    failure[VALIDATOR_FAILURE_FIELD] = failure["attempts"][0][VALIDATOR_FAILURE_FIELD] = message
+                observed.append(failure)
             else:
                 missing.append({"identity": case, "reason": "strict-case-infrastructure-or-unverified-failure"})
         elif (case_outcome in {"passed", "needs-human-review"} and seen == wanted.keys()
@@ -223,8 +228,7 @@ def summary_diagnostics(summaries, evidence_errors=()):
         for item in observed.values():
             counts[item["outcome"]] += 1
             if item["outcome"] in FAILURES:
-                failures.append({"identity": item["identity"], "outcome": item["outcome"],
-                                 "exit_codes": [attempt["exit_code"] for attempt in item["attempts"]]})
+                failures.append(failure_details(item))
             elif item["outcome"] == "skipped":
                 # Candidate error messages are never copied into issues or history.
                 skips.append(item["identity"])
@@ -369,6 +373,15 @@ def text(value):
     return markdown_text(value).replace("@", "&#64;").replace("[", "&#91;").replace("]", "&#93;")
 
 
+def failure_details(item):
+    from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD
+    details = {"identity": item["identity"], "outcome": item["outcome"],
+               "exit_codes": [attempt["exit_code"] for attempt in item["attempts"]]}
+    if VALIDATOR_FAILURE_FIELD in item:
+        details[VALIDATOR_FAILURE_FIELD] = item[VALIDATOR_FAILURE_FIELD]
+    return details
+
+
 def render_entry(entry):
     source, run, diagnostics = entry["source"], entry["run"], entry["diagnostics"]
     url = f"https://github.com/{source['repository']}/actions/runs/{run['id']}"
@@ -381,8 +394,9 @@ def render_entry(entry):
         lines.append("Fork results are self-reported; approval is separate from test evidence.")
     if entry.get("not_evaluated_reason"):
         lines.append("Not evaluated: " + text(entry["not_evaluated_reason"]) + ".")
-    lines += ["", "| Failing identity | Outcome | Exit codes |", "| --- | --- | --- |"]
-    lines.extend(f"| {text(identity_key(item['identity']))} | {item['outcome']} | {text(item['exit_codes'])} |"
+    lines += ["", "| Failing identity | Outcome | Exit codes | Validator failure |", "| --- | --- | --- | --- |"]
+    lines.extend(f"| {text(identity_key(item['identity']))} | {item['outcome']} | {text(item['exit_codes'])} | "
+                 f"{text(item['validator_failure_message']) if 'validator_failure_message' in item else '—'} |"
                  for item in diagnostics["failures"][:50])
     lines.extend(f"Missing evidence: {text(identity_key(item['identity']))}: {item['reason']}."
                  for item in diagnostics["missing"][:50])
@@ -649,8 +663,7 @@ def nightly_attempt(api, run, attempt, artifacts):
                       ui_deselected=ui["matrix"]["deselected"])
         infrastructure.extend(ui["infrastructure"])
     entry.update(observed=observed, diagnostics={"counts": dict(counts), "missing": missing, "infrastructure": infrastructure,
-        "failures": [{"identity": item["identity"], "outcome": item["outcome"],
-                      "exit_codes": [a["exit_code"] for a in item["attempts"]]} for item in observed if item["outcome"] in FAILURES]})
+        "failures": [failure_details(item) for item in observed if item["outcome"] in FAILURES]})
     # The strict aggregate accepts explicit passes/flaky-passes only, not skips.
     accepted_skips = sum(len(item["verdict"].get("expected_skips", [])) for item in ui["shards"]) if ui is not None else 0
     entry["health"] = observation_metrics(observed, unexpected_skips=counts["skipped"] - accepted_skips)

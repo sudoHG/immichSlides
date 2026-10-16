@@ -485,6 +485,61 @@ nonzero exits remain failures. Filter-person combines its three session exports
 and requires all three passes. Exit 0 means all automated tracer checks completed,
 not release eligibility.
 
+### Public validator failure receipts
+
+Reader-only preparation accepts an optional `validator_failure_message` on a warm
+trace and on failed strict summary observations/attempts. The strict tracer still
+emits only `automated_contract_failed`; producer activation is a separate PR after
+this reader is on main, following [reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
+XCTest diagnostics below remain separate from post-test validator failures.
+
+The value is at most 512 characters. The reviewed grammar in
+[`ci_failure_diagnostics.py`](../scripts/ci_failure_diagnostics.py) preserves existing
+fixed public validator prefixes from `album_server_narrow_contract.py`,
+`strict_e2e_photo_identity.py`, `strict_e2e_filter_contract.py` and
+`strict_e2e_filter_manifest.py`, plus screenshot basenames from their actual calls,
+slot indices, horizontal/vertical/both-axis labels, fixture A/B letters and counts.
+Unavailable context can be `unresolved` or a prefix followed by `; context unresolved`.
+The public helper appends that suffix to a recognized bare prefix. Interpolated
+messages are limited to the existing count/letter/slot/axis grammar, the public
+pattern mismatch (allowlisted screenshot stem, expected fixture `a`/`b`, observed
+`a`/`b`/`None`), and the unrecognizable-input message (classifier status and public
+photo mark or `None`). AST synchronization tests pin the literal tables and these
+closed sets to their contract sources without adding image dependencies to the
+isolated reader. The closed `unreadable public glyph:` exception names are `AttributeError`, `IndexError`,
+`KeyError`, `OSError`, `TypeError`, `UnidentifiedImageError` and `ValueError`.
+Screenshot names come from `public_scene_photos_from_bytes` and server-switch
+`_require_public_pattern` callers: `history-*`,
+`pause-immediate`, `pause-after-10s`, `resumed`, `album-playback-N`, `person-normal`,
+`person-no-faces`, `person-conflict-normal(-N)`, `album-switch-b-play-N`,
+`server-switch-a-play-1` and `switch-b-play-1`/`switch-b-play-2` (all `.png`).
+No names are reserved for a future producer.
+Unrecognized prefixes, filenames and suffixes are refused rather than treated as public
+text. The grammar accepts no URLs, keys, server addresses, directory paths, private
+xcresult text or pixel arrays. It does not decode images or change a visual check.
+
+The existing sensitive-output scan also covers UI, unit, fixture and flaky outputs.
+On the strict path it validates the field in case evidence, P2 recordings and review packages.
+It checks length and duplicate/malformed fields, alongside existing sensitive-value
+scanning. **`records/` is uploaded unscanned**, including on failure. A future producer
+must therefore write only `public_validator_failure_message(...)` output to both
+`records/trace.json` and `records/summary.json`, never the raw validator error.
+The helper returns `[redacted validator failure]` on refusal instead of dropping
+the case. An invalid value written directly to a summary invalidates the entire
+shard; reporter-side redaction cannot repair an already public artifact.
+
+PR 2 must test the real producer with a URL, directory path or ID injected into
+`visual-identity-runner.json`: trace and summary must contain only the fixed
+redaction marker, retaining the failed case and exit code. Aggregation must consume
+that actual producer summary. An upload scan for `records/` is an optional follow-up
+requiring maintainer approval; this reader change adds no workflow step.
+
+The report reader applies the grammar once at its optional trace boundary and
+copies a receipt only for outcome `failed`; it retains the redaction marker on refusal.
+Valid messages survive aggregation and compact history and appear in
+the [nightly failure table](CI_REPORT.md#method-identities-and-reruns).
+Historical traces and summaries without the field remain valid and gain no new claim.
+
 ### Public failure diagnostics
 
 Failed method nodes in `official-tests*.json` and the tracer's

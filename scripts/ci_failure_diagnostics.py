@@ -13,6 +13,208 @@ FAILURE_CLASSES = frozenset({"interval_readback", "hidden_controls", "scene_iden
                              "evidence_capture", "probe_readback", "fixture_response", "exif_visibility",
                              "exif_correspondence"})
 DIAGNOSTIC_FIELDS = frozenset({"failure_phase", "failure_class"})
+VALIDATOR_FAILURE_FIELD = "validator_failure_message"
+VALIDATOR_FAILURE_MAX_LENGTH = 512
+VALIDATOR_FAILURE_REDACTED = "[redacted validator failure]"
+
+# Fixed raise arguments and _require_named_png messages from the reviewed public contracts.
+# Source synchronization guards keep these literal and closed-set copies current
+# without importing image/fixture dependencies into the isolated trusted reader.
+VALIDATOR_FIXED_PREFIXES = (
+    # album_server_narrow_contract.py
+    "Selectors must be Target/Class/method",
+    "The same official method was counted more than once",
+    "Zero executions or skips cannot be reported as success",
+    "empty-album.json start_enabled may be not applicable only for the Settings filter editor entry",
+    "empty-album.json start_enabled must be a recorded Boolean or the Settings editor not-applicable marker",
+    "Album-empty member-manifest does not match the requested fixture",
+    "Empty-selection start button id does not match the frozen contract",
+    "Request logs, index or probes cannot serve as identity truth",
+    "The target album needs screenshots of at least two different public identities",
+    "The two playback screenshots must be different public identities; an asset ID is not visual proof",
+    "The empty album must be the controlled empty fixture; the selection cannot be faked",
+    "The empty-album branch cannot use a probe or enum in place of the screen",
+    "The empty-result copy must come from the frozen existing production resource",
+    "Missing empty-album result screenshot",
+    "After the empty album, photos from the old non-empty pool must not keep playing",
+    "Missing screenshot of A's selected scope and photo",
+    "server-switch-a-play-1: every slot must show the public pattern a",
+    "After switching servers there must be a screenshot of B's public pattern",
+    "After switching servers the screen is still the same as A",
+    "An A screen must not pass as B",
+    "Missing B save-success screen",
+    "Missing screen showing the old selection cleared",
+    "ids in observed-ids.json must be a list of strings",
+    "Empty observations cannot pass",
+    "Observations assembled from the expected manifest cannot pass",
+    "A server switch requires a non-empty continuous recording",
+    "The server-switch recording was not finalized",
+    "Display policy cannot pass on enum/probe alone",
+    "Missing multi-photo before, real settings action, or stable single-photo after screenshot",
+    "A still frame mid-transition cannot pass",
+    "The fixture yields no multi-photo screen; fix the fixture/preconditions first",
+    "After the change the screen must be a stable single-photo public identity",
+    "Still multi-photo after the change; cannot pass as single-photo",
+    "Display policy did not take effect",
+    "Unrecognizable input: empty-album result screenshot cannot be decoded",
+    "A server switch requires the B server URL",
+    "A server switch must use the suite runner with screen recording",
+    # strict_e2e_photo_identity.py
+    "Scene probe fields must be text",
+    "Visual suites need Pillow. Run python3 -m pip install Pillow first, then run journey-b / pause-window / tvos-flow / tvos-album / tvos-person / tvos-switch.",
+    "Unrecognizable input: unreadable public glyph slot: screenshot cannot be decoded",
+    "unreadable public glyph slot: single photo color or public texture is missing; slot 1 (both axes)",
+    "unreadable public glyph slot: conflicting public background patterns",
+    "no public glyph",
+    "system overlay box is outside the public frame",
+    "unreadable public glyph slot",
+    "Still the original photo after the first forward step",
+    "Still the same photo after the second forward step",
+    "The first back step must return to the first forward photo",
+    "Photo changed after pausing over 10 seconds",
+    "Still the same photo after resuming playback; it did not advance",
+    "Scene round-trip pixels and index sequence disagree: pause publication changed",
+    # strict_e2e_filter_contract.py
+    "Empty playback membership cannot count as passing",
+    "Repeated members cannot count as passing",
+    "missing visual input person-conflict-normal.png",
+    "single-photo surround still shows a sharp public photo mark; a second photo cannot count as background",
+    "single-photo surround still has sharp public photo color-block edges; it cannot count as a blurred background",
+    "single-photo surround still has unexplained sharp texture; it cannot be cropped away as blurred background",
+    "single-photo surround does not match this photo's blurred background; multi-photo or unknown-frame risk remains",
+    "display-policy screenshot is too small to check photo regions",
+    "standalone display-policy suite must use fixture A only",
+    "display-policy screenshot identity must come from public fixture photo marks",
+    "Display strategy must be set through the real UI",
+    "display policy must change from SmartFill to single-photo mode",
+    "missing the finite list of before-change candidate screenshots",
+    "Before-change screenshot candidates exceed one complete finite rotation of the target album",
+    "before-change candidate screenshots must be numbered consecutively in real order",
+    "must use the first candidate screenshot in the finite rotation that meets the before-change multi-photo condition",
+    "found extra candidate screenshots after the first one that met the condition",
+    "display-before.png must keep the raw screenshot of the first valid candidate",
+    "The before-change frame must be recognizable as a public fixture photo",
+    "Multiple before-change photos cannot be faked by a transition",
+    "The before-change frame must actually show at least two different photos",
+    "The before-change frame must contain only fixture A; do not mix fixtures A and B or unknown content",
+    "after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning",
+    "The after-change frame must be a recognizable, stable single-photo frame",
+    "after-change frame must be a recognizable single-photo frame",
+    "Request logs, indexes, and probes cannot be used as identity truth",
+    "empty-selection.json start_enabled must be a Boolean",
+    "member manifest fixture does not match runner fixture",
+    "member manifest is not the frozen contract",
+    "wins is not a product filter outcome",
+    "Simulator Vision cannot substitute for a device; soloOnly must not be marked PASS",
+    "An empty selection cannot start playback",
+    "empty selection after server switch must come from the actual filter editor",
+    "Unrecognizable input: target album screenshot cannot be decoded",
+    "album replacement identity must come from real UI accessibility identifiers",
+    "after replacement, UI identifiers must confirm the non-target album is selected",
+    "after switching to the non-target album, the default mode must still be filtered playback",
+    "after clearing filters and leaving the editor, the default mode must return to random playback",
+    "start button id does not match the frozen contract",
+    "empty-selection.json fields are incomplete",
+    "empty-selection.json album_ids must contain only strings",
+    "wins is not a product filter outcome and cannot be asserted as a filter result",
+    "person-results.json is missing cases",
+    "person-results.json is missing solo_only",
+    "simulator Vision must fail or be UNVERIFIED",
+    "observed-ids.json ids must be a list of strings",
+    "single-photo identity after server switch must come from public fixture photo marks",
+    "Single-photo mode must be applied through the real UI after switching servers",
+    "single-photo frame after server switch still shows multiple photos",
+    "vision-environment.json is missing vision_available",
+    "device Vision is missing qualified_marks / face_counts",
+    "device Vision face_counts must contain only integers",
+    "request log has no checkable lines",
+)
+VALIDATOR_MANIFEST_PREFIXES = (
+    "a person filter must be a separate person_id + mode",
+    "member manifest fixture set is unknown",
+    "member-manifest labels do not match classify_screenshot: must cover all five photos",
+    "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
+    "member-manifest labels do not match classify_screenshot: missing person_cases",
+    "member-manifest independent object sets do not match fixture derivation",
+    "fixture hash has drifted from the frozen contract",
+    "member manifest is not the frozen contract",
+    "member manifest fixture hash does not match the frozen contract",
+    "Request logs, indexes, and probes cannot be used as identity truth",
+    "Empty playback membership cannot count as passing",
+    "An empty selection cannot start",
+    "start button state does not match the selection contract",
+    "Simulator Vision cannot substitute for a device; soloOnly must not be marked PASS",
+    "Vision unavailable; soloOnly must not pass by accident",
+    "An empty soloOnly result cannot pass by coincidence from an empty set",
+)
+VALIDATOR_FIXTURE_PATTERNS = ("a", "b", None)
+VALIDATOR_IDENTITY_STATUSES = ("UNRECOGNIZABLE", "BLACK", "BLANK", "TRANSITION", "MATCH")
+VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", None)
+
+# No arbitrary filename, exception suffix or pixel values.
+# See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the staged contract.
+_VALIDATOR_SCREENSHOT_STEM = (
+    r"(?:person-normal|person-no-faces|person-conflict-normal(?:-[1-9][0-9]?)?|"
+    r"album-playback-[123]|album-switch-b-play-[12]|server-switch-a-play-1|switch-b-play-[12]|"
+    r"history-(?:start|first-next|second-next|first-previous|second-previous)|"
+    r"pause-immediate|pause-after-10s|resumed)"
+)
+_VALIDATOR_SCREENSHOT = _VALIDATOR_SCREENSHOT_STEM + r"\.png"
+_VALIDATOR_PREFIX = (
+    r"(?:Unrecognizable input: )?(?:no public glyph|mixed public glyphs|"
+    r"unreadable public glyph slot(?:: (?:single photo color or public texture is missing|"
+    r"public photo colors are missing or mixed|conflicting public background patterns|"
+    r"foreign public background pattern|screenshot cannot be decoded))?|"
+    r"every slot must show the public glyph of fixture [AB]|"
+    r"unreadable public glyph: (?:AttributeError|IndexError|KeyError|OSError|TypeError|"
+    r"UnidentifiedImageError|ValueError))"
+)
+_VALIDATOR_EXPECTED_PATTERN = "(?:" + "|".join(re.escape(value) for value in VALIDATOR_FIXTURE_PATTERNS
+                                             if value is not None) + ")"
+_VALIDATOR_PATTERN = "(?:" + "|".join(re.escape(str(value)) for value in VALIDATOR_FIXTURE_PATTERNS) + ")"
+_VALIDATOR_STATUS = "(?:" + "|".join(map(re.escape, VALIDATOR_IDENTITY_STATUSES)) + ")"
+_VALIDATOR_MARK = "(?:" + "|".join(re.escape(str(value)) for value in VALIDATOR_IDENTITY_MARKS) + ")"
+_VALIDATOR_PREFIX = (
+    "(?:" + _VALIDATOR_PREFIX + "|"
+    + "|".join(map(re.escape, VALIDATOR_FIXED_PREFIXES + VALIDATOR_MANIFEST_PREFIXES))
+    + rf"|{_VALIDATOR_SCREENSHOT_STEM} public pattern must be {_VALIDATOR_EXPECTED_PATTERN}, got {_VALIDATOR_PATTERN}"
+    + rf"|Unrecognizable input cannot count as passing: status={_VALIDATOR_STATUS} mark={_VALIDATOR_MARK})"
+)
+_VALIDATOR_PREFIX_ONLY = re.compile(_VALIDATOR_PREFIX)
+_VALIDATOR_COUNT = r"(?:0|[1-9][0-9]{0,2})"
+_VALIDATOR_AXIS = r"(?:horizontal|vertical|both axes)"
+_VALIDATOR_CONTEXT = (
+    rf"(?:screenshot {_VALIDATOR_SCREENSHOT}|slot {_VALIDATOR_COUNT} \({_VALIDATOR_AXIS}\)|"
+    rf"{_VALIDATOR_COUNT} slots? \({_VALIDATOR_AXIS}\)|"
+    rf"(?:horizontal|vertical) axis, (?:slot count unresolved|{_VALIDATOR_COUNT} completed slots?)|"
+    rf"observed fixture [AB] in all {_VALIDATOR_COUNT} slots? \({_VALIDATOR_AXIS}\)|"
+    r"horizontal and vertical axes disagree|slot count and axes unresolved|context unresolved)"
+)
+_VALIDATOR_MESSAGE = re.compile(rf"{_VALIDATOR_PREFIX}(?:; {_VALIDATOR_CONTEXT}){{1,32}}")
+
+
+def validate_validator_failure_message(value):
+    """Validate public text without echoing refused candidate values."""
+    if not isinstance(value, str) or not value:
+        raise ValueError("validator failure message must be nonempty text")
+    if len(value) > VALIDATOR_FAILURE_MAX_LENGTH:
+        raise ValueError("validator failure message exceeds length bound")
+    if value not in {"unresolved", VALIDATOR_FAILURE_REDACTED} and _VALIDATOR_MESSAGE.fullmatch(value) is None:
+        raise ValueError("validator failure message is not public context")
+
+
+def public_validator_failure_message(value):
+    """Keep a failed record when its optional candidate receipt is unsafe."""
+    if value is None:
+        return "unresolved"
+    if (isinstance(value, str) and _VALIDATOR_PREFIX_ONLY.fullmatch(value) is not None
+            and _VALIDATOR_MESSAGE.fullmatch(value) is None):
+        value += "; context unresolved"
+    try:
+        scan_diagnostic_json(json.dumps({VALIDATOR_FAILURE_FIELD: value}).encode())
+    except (ValueError, TypeError):
+        return VALIDATOR_FAILURE_REDACTED
+    return value
 
 # Reviewed prefixes from AccessLifecycleContract (+Controls/+TransitionTiming),
 # AccessLifecycleIOSUITests (+Settings/+Navigation), PlaybackHistoryIOSUITests
@@ -206,6 +408,8 @@ def test_node_diagnostics(payload):
 def validate_diagnostic_fields(value):
     """Reject free text, unpaired fields and non-string values, without echoing them."""
     if isinstance(value, dict):
+        if VALIDATOR_FAILURE_FIELD in value:
+            validate_validator_failure_message(value[VALIDATOR_FAILURE_FIELD])
         if DIAGNOSTIC_FIELDS & value.keys():
             if not DIAGNOSTIC_FIELDS <= value.keys():
                 raise ValueError("failure diagnostics require both enum fields")
@@ -223,7 +427,7 @@ def scan_diagnostic_json(data):
     def object_pairs(pairs):
         value = {}
         for key, child in pairs:
-            if key in DIAGNOSTIC_FIELDS and key in value:
+            if key in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD} and key in value:
                 raise ValueError("duplicate failure diagnostic field")
             value[key] = child
         validate_diagnostic_fields(value)
@@ -231,5 +435,5 @@ def scan_diagnostic_json(data):
     try:
         json.loads(data, object_pairs_hook=object_pairs)
     except (json.JSONDecodeError, UnicodeDecodeError):
-        if any(('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS):
+        if any(('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}):
             raise ValueError("invalid failure diagnostic JSON")

@@ -137,21 +137,28 @@ def observation(identity, outcome, duration_seconds, *, reason=None, message=Non
 
 
 def validate_observation(entry):
-    from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, validate_diagnostic_fields
+    from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, VALIDATOR_FAILURE_FIELD, validate_diagnostic_fields
     require(isinstance(entry, dict), "observation must be an object")
     try:
         validate_diagnostic_fields(entry)
     except ValueError as error:
         raise ContractError(str(error)) from error
-    fields(entry, {"identity", "outcome", "duration_seconds", "attempts"} | (DIAGNOSTIC_FIELDS & entry.keys()), "observation")
+    optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}
+    fields(entry, {"identity", "outcome", "duration_seconds", "attempts"} | (optional & entry.keys()), "observation")
     validate_test_identity(entry["identity"])
     require(entry["outcome"] in OUTCOMES, "invalid outcome")
+    if VALIDATOR_FAILURE_FIELD in entry:
+        require(entry["identity"]["kind"] == "strict" and entry["outcome"] == "failed",
+                "validator failure message requires a failed strict observation")
     duration(entry["duration_seconds"])
     require(isinstance(entry["attempts"], list) and bool(entry["attempts"]), "attempts must be nonempty")
     for number, attempt in enumerate(entry["attempts"], 1):
         require(isinstance(attempt, dict), "attempt must be an object")
         fields(attempt, {"number", "outcome", "duration_seconds", "exit_code", "reason", "message"}
-               | (DIAGNOSTIC_FIELDS & attempt.keys()), "attempt")
+               | (optional & attempt.keys()), "attempt")
+        if VALIDATOR_FAILURE_FIELD in attempt:
+            require(entry["identity"]["kind"] == "strict" and attempt["outcome"] == "failed",
+                    "validator failure message requires a failed strict attempt")
         integer(attempt["number"], 1, "attempt number")
         require(attempt["number"] == number, "attempts must be consecutive")
         require(attempt["outcome"] in ATTEMPT_OUTCOMES, "invalid attempt outcome")
