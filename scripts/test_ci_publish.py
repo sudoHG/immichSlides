@@ -2667,7 +2667,7 @@ class OtherUITests: XCTestCase { func testPlay() {} }
 
     def test_complete_gate_requires_both_unit_populations_and_refuses_host_impersonation(self):
         modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES}
-        for name in ("ci_flaky.py", "ci_failure_diagnostics.py"):
+        for name in ("ci_flaky.py", "ci_failure_diagnostics.py", "ci_bounded_diagnostics.py"):
             dependency = Path(__file__).parent / name
             if dependency.exists():
                 modules[name] = dependency.read_text()
@@ -2676,6 +2676,9 @@ class OtherUITests: XCTestCase { func testPlay() {} }
             self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False),
                              {"state": "pending", "description": "unit tier not yet produced"})
             record, jobs, summaries = gate_fixture(units=True)
+            self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "success")
+            from test_ci_summary import bounded_diagnostics_receipt
+            summaries[0]["bounded_diagnostics"] = bounded_diagnostics_receipt()
             self.assertEqual(evaluate_records(record, RUN, jobs, summaries, approved=False, fork=False)["state"], "success")
             units = [summary for summary in summaries if summary["run"]["tier"] == "unit"]
             for summary in units:

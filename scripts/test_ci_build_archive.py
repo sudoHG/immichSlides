@@ -672,9 +672,11 @@ class BuildArchiveTests(unittest.TestCase):
         # Declarations survive without any source; they cannot be copied from enumeration.
         declared = units.read_declarations(staged, {"identity": self.identity, "platform": "ios"})
         self.assertEqual(declared, [{"kind": "swift", "key": "ExampleTests/works", "dimensions": {"platform": "ios"}}])
-        from test_ci_summary import valid_summary
+        from test_ci_summary import bounded_diagnostics_receipt, valid_summary
         from textwrap import dedent
-        (staged / "input-summary.json").write_text(json.dumps(valid_summary()))
+        input_summary = valid_summary()
+        input_summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
+        (staged / "input-summary.json").write_text(json.dumps(input_summary))
         relocated_checks = dedent("""
             import json, subprocess, sys
             from pathlib import Path
