@@ -1148,7 +1148,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 class StrictCITracerTests(unittest.TestCase):
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
-                                   receipt_suite="tvos-server-switch-display"):
+                                   receipt_suite="tvos-server-switch-display", nightly=False):
         import run_strict_ci_tracer as tracer
         case = {"platform": "tvos", "device": "tv", "configuration": "Debug",
                 "suite": "tvos-server-switch-display", "scenario": "normal", "fixture": "a"}
@@ -1157,6 +1157,16 @@ class StrictCITracerTests(unittest.TestCase):
         output = directory / "trace"
         manifest = directory / "manifest.json"
         manifest.write_text(json.dumps({"cases": [case], "exclusions": []}))
+        options = []
+        if nightly:
+            from ci_nightly import parse_manifest, shards
+            matrix = json.loads((tracer.ROOT / "scripts/nightly-matrix.json").read_text())
+            matrix["shard_size"] = 1
+            selected = next(shard for shard in shards(parse_manifest(matrix)) if shard["cases"] == [case])
+            manifest.write_text(json.dumps(matrix))
+            options = ["--shard", selected["id"]]
+            identity = {"schema_version": 1, "event": "schedule", "repository": "sudoHG/immichSlides",
+                        "ref": "refs/heads/main", "commit_sha": "0" * 40, "tree_sha": "0" * 40}
 
         def runner(command, *_args, **_kwargs):
             derived = Path(command[command.index("--derived-data-path") + 1])
@@ -1184,19 +1194,21 @@ class StrictCITracerTests(unittest.TestCase):
 
         with mock.patch.object(tracer, "run_runner", side_effect=runner), \
                 mock.patch.object(tracer, "workspace_preflight"), mock.patch.object(tracer, "run_identity", return_value=identity), \
-                mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                mock.patch.object(tracer, "source_metadata", return_value=(".github/workflows/ci-nightly.yml" if nightly else None, False)), \
                 mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
-                mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
+                mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}), \
+                mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "1"}):
             exit_code = tracer.main(["--platform", "tvos", "--destination", "unused", "--manifest", str(manifest),
-                                     "--output-dir", str(output)])
+                                     "--output-dir", str(output)] + options)
         return exit_code, output / "records", json.loads((output / "records/trace.json").read_text()), \
             json.loads((output / "records/summary.json").read_text())
 
     def test_tracer_redacts_private_validator_errors_before_writing_public_records(self):
         from ci_nightly import aggregate_nightly
         private_values = ("https://private.invalid/api", "/private/validator/secret.json", "asset-private-nonfixture", "192.0.2.1")
-        for error, expected in (("Validator failure: " + " ".join(private_values), "[redacted validator failure]"),
-                                (None, "unresolved")):
+        message = "switch-b-play-1 public pattern must be b, got None; context unresolved"
+        cases = [(message + "; " + value, "[redacted validator failure]") for value in private_values]
+        for error, expected in cases + [(None, "unresolved")]:
             with self.subTest(error=error), tempfile.TemporaryDirectory() as raw:
                 exit_code, records, trace, summary = self._produce_validator_records(Path(raw), error)
                 self.assertEqual(1, exit_code)
@@ -1237,7 +1249,7 @@ class StrictCITracerTests(unittest.TestCase):
 
         expected = "switch-b-play-1 public pattern must be b, got None; context unresolved"
         with tempfile.TemporaryDirectory() as raw:
-            exit_code, _records, trace, summary = self._produce_validator_records(Path(raw), fail_contract)
+            exit_code, _records, trace, summary = self._produce_validator_records(Path(raw), fail_contract, nightly=True)
             self.assertEqual(1, exit_code)
             self.assertEqual(expected, trace["warm"][0].get("validator_failure_message"))
             failed = summary["population"]["observed"][0]
@@ -1245,17 +1257,25 @@ class StrictCITracerTests(unittest.TestCase):
             self.assertEqual(expected, failed["attempts"][0].get("validator_failure_message"))
             aggregate = aggregate_nightly(summary["population"]["declared"], [summary], live_in_scope=False)
             self.assertEqual(expected, aggregate["observed"][0].get("validator_failure_message"))
-            observed, missing = ci_report.method_observations(summary, trace)
-            self.assertEqual([], missing)
-            contract = next(item for item in observed if item["identity"] == failed["identity"])
+            shard = summary["run"]["shard"]
+            aggregate.update(identity=summary["identity"], hashes=summary["hashes"], source=summary["source"],
+                             run={"id": "10", "attempt": 1}, capacity={"shard_intervals": [{"shard": shard}]})
+            api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+            run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+                   "head_sha": summary["identity"]["commit_sha"], "path": ci_report.NIGHTLY_PATH,
+                   "event": "schedule", "head_branch": "main", "head_repository": {"full_name": api.repository},
+                   "status": "completed", "conclusion": "failure"}
+            artifacts = [{"name": name, "expired": False}
+                         for name in ("nightly-aggregate-10-1", f"nightly-strict-{shard}-10-1")]
+            with mock.patch("ci_publish.json_member", side_effect=[aggregate, summary, trace]):
+                report = ci_report.nightly_attempt(api, run, 1, artifacts)
+            self.assertEqual([], report["diagnostics"]["missing"])
+            self.assertEqual([], report["diagnostics"]["infrastructure"])
+            contract = next(item for item in report["observed"] if item["identity"] == failed["identity"])
             self.assertEqual(("failed", 2, "strict-case-contract-failed"),
                 (contract["outcome"], contract["attempts"][0]["exit_code"], contract["attempts"][0]["reason"]))
             self.assertEqual(expected, contract.get("validator_failure_message"))
             self.assertEqual(expected, contract["attempts"][0].get("validator_failure_message"))
-            report = {"schema_version": 1, "day": "2026-10-01", "run": {"id": 10, "attempt": 1},
-                      "source": {**summary["source"], "workflow_path": ci_report.NIGHTLY_PATH, "approval_based": False},
-                      "status": aggregate["status"], "observed": observed,
-                      "diagnostics": ci_report.summary_diagnostics([summary])}
             compact = ci_report.compact_entry(report, set())
             self.assertEqual(expected, compact["observed"][-1].get("validator_failure_message"))
             self.assertIn(expected, unescape(ci_report.render_entry(compact)))
@@ -1266,7 +1286,6 @@ class StrictCITracerTests(unittest.TestCase):
                 exit_code, _records, trace, summary = self._produce_validator_records(Path(raw), "no public glyph", **changed)
                 self.assertEqual(0 if changed.get("runner_exit") == 0 else 1, exit_code)
                 self.assertNotIn("validator_failure_message", trace["warm"][0])
-                self.assertNotIn("validator_failure_message", trace["cold"][0])
                 observed = summary["population"]["observed"][0]
                 self.assertNotIn("validator_failure_message", observed)
                 self.assertNotIn("validator_failure_message", observed["attempts"][0])

@@ -102,6 +102,7 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
         observed.append(observation(result["identity"], outcome, result["duration_seconds"],
             reason="P2 contract requires signed human review" if outcome == "needs-human-review" else None,
             exit_code=result["exit_code"]))
+        # The collector only adds receipts to failed phases; keep this check as defence in depth.
         if outcome == "failed" and VALIDATOR_FAILURE_FIELD in result:
             observed[-1][VALIDATOR_FAILURE_FIELD] = observed[-1]["attempts"][0][VALIDATOR_FAILURE_FIELD] = result[VALIDATOR_FAILURE_FIELD]
     declared_keys = {identity_key(item) for item in declared}
@@ -300,7 +301,8 @@ def main(argv=None):
         if contract_failed:
             observed, _ = evaluate_tracer([phase["identity"]], [phase])
             if observed[0]["outcome"] == "failed":
-                # records/ is uploaded unscanned; raw validator errors stay in case evidence.
+                # records/ is uploaded unscanned; sanitize before copying the candidate.
+                # The existing CommandError relay can still expose raw errors in public job logs.
                 phase[VALIDATOR_FAILURE_FIELD] = public_validator_failure_message(contract.get("error"))
         results.append(phase)
         if official is not None and official["totalTestCount"] > 0:
