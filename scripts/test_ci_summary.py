@@ -83,7 +83,177 @@ def archive_download_summary():
     return summary
 
 
+def bounded_diagnostics_receipt():
+    return {"schema_version": 1, "collection_seconds": {"preparation": 0.1, "xcode": 0.2, "fixture": 0.01},
+        "truncated": False, "events": [
+            {"scope": "preparation", "phase": "simulator-readiness", "state": "timeout", "sequence": 1,
+             "elapsed_seconds": 301.5, "cpu_seconds": 0.01, "input_sha256": None, "official_exports": None,
+             "sample": {"cpu_percent": 25.0, "memory_free_bytes": 1000, "load_average": [2.0, 1.0, 1.0],
+                 "runner_hosted": True, "image_version": [20261006, 244, 1],
+                 "processes": [{"name": "simctl", "state": "sleeping", "count": 1,
+                                "cpu_percent": 0.0, "rss_bytes": 1024}]}},
+            {"scope": "xcode", "phase": "test-execution", "state": "before-kill", "sequence": 2,
+             "elapsed_seconds": 600.0, "cpu_seconds": None, "sample": None, "input_sha256": None,
+             "official_exports": {"bundle": True, "summary": False, "tests": False}},
+            {"scope": "fixture", "phase": "import", "state": "started", "sequence": 3,
+             "elapsed_seconds": 0.0, "cpu_seconds": 0.0, "sample": None, "input_sha256": None,
+             "official_exports": None},
+            {"scope": "fixture", "phase": "image-generation", "state": "started", "sequence": 3,
+             "elapsed_seconds": 0.1, "cpu_seconds": 0.02, "sample": None, "input_sha256": "e" * 64,
+             "official_exports": None}]}
+
+
 class SummaryContractTests(unittest.TestCase):
+    def test_bounded_diagnostic_scanner_refuses_nested_private_duplicate_and_broken_receipts(self):
+        from ci_failure_diagnostics import scan_diagnostic_json
+        receipt = bounded_diagnostics_receipt()
+        safe = json.dumps({"nested": [{"bounded_diagnostics": receipt}]})
+        scan_diagnostic_json(safe.encode())
+        private = copy.deepcopy(receipt)
+        private["events"][0]["sample"]["processes"][0]["name"] = "private-application"
+        for raw, message in ((json.dumps({"nested": [{"bounded_diagnostics": private}]}),
+                              "bounded diagnostic process: invalid name"),
+                             ('{"bounded_diagnostics":' + json.dumps(receipt) + ',"bounded_diagnostics":' + json.dumps(receipt) + '}',
+                              "duplicate failure diagnostic field"),
+                             ('{"bounded_diagnostics":' + json.dumps(receipt).replace('"scope": "preparation"',
+                                 '"scope": "private-scope", "scope": "preparation"', 1) + '}',
+                              "duplicate bounded diagnostic JSON key"),
+                             ('{"bounded_diagnostics":', "invalid failure diagnostic JSON"),
+                             ('{"bounde\\u0064_diagnostics":', "invalid failure diagnostic JSON")):
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, "^" + re.escape(message) + "$") as raised:
+                    scan_diagnostic_json(raw.encode())
+                self.assertNotIn("private-", str(raised.exception))
+
+    def test_bounded_diagnostics_round_trip_preserves_failure_and_not_run_accounting(self):
+        from ci_failure_diagnostics import scan_diagnostic_json
+        summary = archive_download_summary()
+        summary.pop("archive_download")
+        summary["status"] = "failed"
+        case = summary["population"]["declared"][0]
+        summary["population"].update(compiled=[], observed=[ci_summary.observation(case, "not-run", 0, exit_code=None)])
+        summary["infrastructure"] = [{"code": "simulator-preparation-failed", "message": "Preparation failed"}]
+        summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
+        with tempfile.TemporaryDirectory() as directory:
+            ci_summary.write_summary(summary, Path(directory))
+            data = Path(directory, "summary.json").read_bytes()
+            self.assertEqual(ci_summary.parse_summary(data.decode()), summary)
+            scan_diagnostic_json(data)
+            rendered = Path(directory, "summary.md").read_text()
+            self.assertIn("Bounded diagnostics (measurements only)", rendered)
+            for detail in ("preparation=0.1 s", "xcode=0.2 s", "fixture=0.01 s", "events=4", "truncated=no",
+                           "Last retained phase", "simulator-readiness/timeout", "test-execution/before-kill", "image-generation/started"):
+                self.assertIn(detail, rendered)
+            self.assertNotIn("(over budget)", rendered)
+
+        summary["bounded_diagnostics"]["events"][0]["phase"] = "simulator-preparation"
+        self.assertEqual(ci_summary.parse_summary(summary), summary)
+        self.assertIn("simulator-preparation/timeout", ci_summary.render_markdown(summary))
+
+    def test_bounded_diagnostics_retains_over_budget_and_unavailable_collection_times(self):
+        for measurements, details in (({"preparation": 5.001, "xcode": 10.001, "fixture": 2.001},
+                                      ("preparation=5.001 s (over budget)", "xcode=10.001 s (over budget)",
+                                       "fixture=2.001 s (over budget)")),
+                                     ({"preparation": None, "xcode": None, "fixture": None},
+                                      ("preparation=unavailable", "xcode=unavailable", "fixture=unavailable"))):
+            with self.subTest(measurements=measurements):
+                summary = valid_summary()
+                summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
+                summary["bounded_diagnostics"]["collection_seconds"] = measurements
+                self.assertEqual(ci_summary.parse_summary(summary), summary)
+                rendered = ci_summary.render_markdown(summary)
+                for detail in details:
+                    self.assertIn(detail, rendered)
+
+    def test_bounded_diagnostics_accepts_missing_sample_statistics_and_empty_processes(self):
+        for processes in ([{"name": "simctl", "state": "unknown", "count": 1,
+                            "cpu_percent": None, "rss_bytes": None}], []):
+            with self.subTest(processes=processes):
+                summary = valid_summary()
+                summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
+                summary["bounded_diagnostics"]["events"][0]["sample"] = {
+                    "cpu_percent": None, "memory_free_bytes": None, "load_average": None,
+                    "runner_hosted": None, "image_version": None, "processes": processes}
+                self.assertEqual(ci_summary.parse_summary(summary), summary)
+                rendered = ci_summary.render_markdown(summary)
+                diagnostics = rendered.partition("Bounded diagnostics (measurements only):")[2]
+                self.assertIn("simulator-readiness/timeout", diagnostics)
+                self.assertNotIn("None", diagnostics)
+
+    def test_bounded_diagnostics_rejects_single_private_or_unbounded_measurements(self):
+        base = archive_download_summary()
+        base.pop("archive_download")
+        base["bounded_diagnostics"] = bounded_diagnostics_receipt()
+        receipt = ("bounded_diagnostics",)
+        event = (*receipt, "events", 0)
+        sample = (*event, "sample")
+        process = (*sample, "processes", 0)
+        mutations = [
+            (receipt, None, "bounded diagnostics: invalid fields"),
+            ((*receipt, "schema_version"), True, "bounded diagnostics: unsupported version"),
+            ((*receipt, "collection_seconds"), {}, "bounded diagnostics collection: invalid fields"),
+            ((*receipt, "collection_seconds", "preparation"), 86401, "bounded diagnostics preparation collection: invalid number"),
+            ((*receipt, "collection_seconds", "xcode"), 86401, "bounded diagnostics xcode collection: invalid number"),
+            ((*receipt, "collection_seconds", "fixture"), 86401, "bounded diagnostics fixture collection: invalid number"),
+            ((*receipt, "truncated"), 0, "bounded diagnostics: truncated must be boolean"),
+            ((*receipt, "events"), {}, "bounded diagnostics: invalid event count"),
+            ((*receipt, "events"), base["bounded_diagnostics"]["events"] * 129, "bounded diagnostics: invalid event count"),
+            (event, {}, "bounded diagnostic event: invalid fields"),
+            ((*event, "scope"), "private-server", "bounded diagnostic event: invalid scope"),
+            ((*event, "phase"), "private-command", "bounded diagnostic event: invalid phase"),
+            ((*event, "phase"), "import", "bounded diagnostic event: invalid phase"),
+            ((*event, "state"), "private-output", "bounded diagnostic event: invalid state"),
+            ((*event, "sequence"), True, "bounded diagnostic sequence: invalid number"),
+            ((*event, "sequence"), 0.5, "bounded diagnostic sequence: invalid number"),
+            ((*event, "sequence"), 2**31, "bounded diagnostic sequence: invalid number"),
+            ((*event, "input_sha256"), "e" * 64, "bounded diagnostic event: invalid public input hash"),
+            ((*receipt, "events", 3, "input_sha256"), "private-input", "bounded diagnostic event: invalid public input hash"),
+            ((*receipt, "events", 2, "input_sha256"), "e" * 64, "bounded diagnostic event: invalid public input hash"),
+            ((*event, "official_exports"), {"bundle": True, "summary": False, "tests": False},
+             "bounded diagnostic event: exports require xcode scope"),
+            ((*receipt, "events", 1, "official_exports"), {}, "bounded diagnostic exports: invalid fields"),
+            ((*receipt, "events", 1, "official_exports", "tests"), "private-path", "bounded diagnostic exports: invalid boolean"),
+            (sample, {}, "bounded diagnostic sample: invalid fields"),
+            ((*sample, "runner_hosted"), "private-environment", "bounded diagnostic sample: invalid runner flag"),
+            ((*sample, "image_version"), "private-image", "bounded diagnostic image version: invalid vector"),
+            ((*sample, "image_version", 0), True, "bounded diagnostic image component: invalid number"),
+            ((*sample, "image_version", 0), 0.5, "bounded diagnostic image component: invalid number"),
+            ((*sample, "image_version", 0), 2**31, "bounded diagnostic image component: invalid number"),
+            ((*sample, "memory_free_bytes"), 0.5, "bounded diagnostic memory: invalid number"),
+            ((*sample, "load_average"), [1, 2], "bounded diagnostic load: invalid vector"),
+            ((*sample, "load_average", 0), -1, "bounded diagnostic load: invalid number"),
+            ((*sample, "processes"), base["bounded_diagnostics"]["events"][0]["sample"]["processes"] * 65,
+             "bounded diagnostic sample: invalid process count"),
+            (process, {}, "bounded diagnostic process: invalid fields"),
+            ((*process, "name"), "private-process", "bounded diagnostic process: invalid name"),
+            ((*process, "state"), "private-state", "bounded diagnostic process: invalid state"),
+            ((*process, "count"), 0, "bounded diagnostic process count: invalid number"),
+            ((*process, "count"), 65537, "bounded diagnostic process count: invalid number"),
+            ((*process, "rss_bytes"), 0.5, "bounded diagnostic process memory: invalid number"),
+        ]
+        for field, maximum in (("elapsed_seconds", 86400), ("cpu_seconds", 10**12)):
+            for invalid in (-1, True, float("nan"), float("inf"), "private-statistic", maximum + 1):
+                mutations.append(((*event, field), invalid, "bounded diagnostic " + field + ": invalid number"))
+        for path, maximum, label in ((*sample, "cpu_percent"), 100, "cpu"), ((*sample, "memory_free_bytes"), 2**50, "memory"), \
+                ((*process, "cpu_percent"), 10**6, "process cpu"), ((*process, "rss_bytes"), 2**50, "process memory"):
+            mutations.append((path, maximum + 1, "bounded diagnostic " + label + ": invalid number"))
+        self.assertEqual(ci_summary.parse_summary(base), base)
+        boundary = copy.deepcopy(base)
+        boundary["bounded_diagnostics"].update(collection_seconds={"preparation": 86400, "xcode": 86400, "fixture": 86400},
+                                              truncated=True, events=boundary["bounded_diagnostics"]["events"] * 128)
+        boundary["bounded_diagnostics"]["events"][0]["sample"]["processes"] *= 64
+        self.assertEqual(ci_summary.parse_summary(boundary), boundary)
+        for path, value, message in mutations:
+            changed = copy.deepcopy(base)
+            target = changed
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path, value=value):
+                with self.assertRaisesRegex(ci_summary.ContractError, "^" + re.escape(message) + "$") as raised:
+                    ci_summary.parse_summary(changed)
+                self.assertNotIn("private-", str(raised.exception))
+
     def test_nightly_archive_receipt_accepts_historical_success_and_not_run_failures(self):
         summary = archive_download_summary()
         historical = {key: value for key, value in summary.items() if key != "archive_download"}

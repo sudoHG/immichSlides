@@ -28,7 +28,7 @@ from ci_ui_shards import DEVICES, MANIFEST_PATH, default_plan_population, parse_
 BASE_MODULES = ("ci_summary.py", "ci_population.py", "ci_verdict.py", "ui_test_inventory.py",
                 "run_host_checks.py")
 OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py", "ci_ui_selection.py", "ci_ui_packing.py", "ci_ui_test_kinds.py",
-                         "ci_ui_discovery.py", "ci_failure_diagnostics.py")
+                         "ci_ui_discovery.py", "ci_failure_diagnostics.py", "ci_bounded_diagnostics.py")
 UI_WORKFLOW_PATH = ".github/workflows/ci-ui.yml"
 # The only dynamic matrix value a UI producer may use; admission binds it to trusted shard names.
 DYNAMIC_UI_SHARDS = {scope: "${{ fromJSON(needs.archive.outputs." + scope + "_shards) }}"

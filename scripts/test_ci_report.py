@@ -481,6 +481,10 @@ class ReporterTests(unittest.TestCase):
             return blobs[command[-1].split(":", 1)[1]]
         with patch("ci_publish.json_member", side_effect=lambda api, artifact, member: members[(artifact["name"], member)]), \
                 patch("subprocess.check_output", side_effect=git_output), patch("ci_report.on_main", return_value=True):
+            from test_ci_summary import bounded_diagnostics_receipt
+            ui_without_receipt = ci_report.nightly_ui_attempt(api, run, 1, artifacts, raw)
+            summaries[0]["bounded_diagnostics"] = bounded_diagnostics_receipt()
+            self.assertEqual(ci_report.nightly_ui_attempt(api, run, 1, artifacts, raw), ui_without_receipt)
             report = ci_report.nightly_attempt(api, run, 1, artifacts)
             self.assertEqual(9, report["diagnostics"]["counts"]["ui_executed"])
             failed = [item for item in report["observed"] if item["outcome"] == "failed"]
